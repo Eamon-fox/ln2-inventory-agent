@@ -1,0 +1,43 @@
+meta:
+  box_layout:
+    rows: 9
+    cols: 9
+
+inventory:
+  - id: 1
+    parent_cell_line: NCCIT
+    short_name: NCCIT_ctrl_A
+    plasmid_name: pLenti-empty
+    plasmid_id: p0001
+    box: 1
+    positions: [1, 2, 3]
+    frozen_at: "2026-02-01"
+    thaw_log: null
+    note: seed clone
+
+  - id: 2
+    parent_cell_line: K562
+    short_name: K562_dTAG_B
+    plasmid_name: pGEMT-N-RTCB-dTAG
+    plasmid_id: p260101-1
+    box: 2
+    positions: [15]
+    frozen_at: "2026-02-03"
+    thaw_log: null
+    note: keep for validation
+
+  - id: 3
+    parent_cell_line: HeLa
+    short_name: HeLa_archive_C
+    plasmid_name: null
+    plasmid_id: null
+    box: 3
+    positions: []
+    frozen_at: "2025-12-20"
+    thaw_log: null
+    note: fully consumed record example
+    thaw_events:
+      - date: "2026-01-05"
+        action: thaw
+        positions: [21]
+        note: revived for assay

@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+"""
+快速展示指定 ID 的完整原始 YAML 数据
+用于让用户确认查询结果的准确性
+"""
+
+import argparse
+import sys
+import yaml  # Keep for yaml.dump
+
+# Import from lib
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from lib.yaml_ops import load_yaml
+from lib.config import YAML_PATH
+
+def show_raw_entries(yaml_path, ids):
+    """展示指定 ID 的原始 YAML 条目"""
+    data = load_yaml(yaml_path)
+    inventory = data.get('inventory', [])
+
+    found_ids = set()
+    results = []
+
+    for entry in inventory:
+        if entry['id'] in ids:
+            found_ids.add(entry['id'])
+            results.append(entry)
+
+    if not results:
+        print(f"未找到 ID: {', '.join(map(str, ids))}")
+        return 1
+
+    # 按 ID 排序
+    results.sort(key=lambda x: x['id'])
+
+    # 输出原始 YAML
+    for i, entry in enumerate(results):
+        if i > 0:
+            print()  # 条目之间空行
+        print(f"# === ID {entry['id']} ===")
+        # 使用 yaml.dump 保持格式
+        yaml_str = yaml.dump([entry], allow_unicode=True, default_flow_style=False, sort_keys=False)
+        # 移除开头的 "- " 并调整缩进
+        lines = yaml_str.split('\n')
+        if lines[0].startswith('- '):
+            lines[0] = lines[0][2:]  # 移除 "- "
+        for line in lines:
+            if line:
+                # 减少一级缩进
+                if line.startswith('  '):
+                    print(line[2:])
+                else:
+                    print(line)
+
+    # 检查是否有缺失的 ID
+    missing_ids = set(ids) - found_ids
+    if missing_ids:
+        print(f"\n⚠️  未找到的 ID: {', '.join(map(str, sorted(missing_ids)))}", file=sys.stderr)
+        return 1
+
+    return 0
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="展示指定 ID 的完整原始 YAML 数据",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  # 展示单个条目
+  python show_raw.py 168
+
+  # 展示多个条目
+  python show_raw.py 166 167 168
+
+  # 指定 YAML 文件
+  python show_raw.py 168 --yaml /path/to/file.yaml
+        """
+    )
+
+    parser.add_argument(
+        "ids",
+        type=int,
+        nargs='+',
+        help="要展示的条目 ID（可以指定多个）"
+    )
+
+    parser.add_argument(
+        "--yaml",
+        default=YAML_PATH,
+        help="YAML 文件路径（默认: %(default)s）"
+    )
+
+    args = parser.parse_args()
+
+    try:
+        return show_raw_entries(args.yaml, args.ids)
+    except FileNotFoundError:
+        print(f"错误: 找不到文件 {args.yaml}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"错误: {e}", file=sys.stderr)
+        return 1
+
+if __name__ == "__main__":
+    sys.exit(main())

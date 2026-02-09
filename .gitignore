@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.env
+ln2_inventory.yaml
+ln2_inventory_backups/
+ln2_inventory_audit.jsonl
+ln2_inventory.html
+.ln2_inventory_http_server.json

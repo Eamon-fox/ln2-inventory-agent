@@ -1,0 +1,23 @@
+{
+  "yaml_path": "./ln2_inventory.yaml",
+  "preview": {
+    "host": "127.0.0.1",
+    "preferred_port": 8000,
+    "max_port_scan": 50,
+    "state_file": ".ln2_inventory_http_server.json"
+  },
+  "safety": {
+    "backup_dir_name": "ln2_inventory_backups",
+    "backup_keep_count": 200,
+    "audit_log_file": "ln2_inventory_audit.jsonl",
+    "total_empty_warning_threshold": 20,
+    "box_empty_warning_threshold": 5,
+    "yaml_size_warning_mb": 5
+  },
+  "schema": {
+    "box_range": [1, 5],
+    "position_range": [1, 81],
+    "valid_actions": ["取出", "复苏", "扔掉"],
+    "valid_cell_lines": []
+  }
+}
