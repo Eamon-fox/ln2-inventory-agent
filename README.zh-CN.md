@@ -2,6 +2,8 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
+> 先说明：这个项目本质上是 **Claude Code 的 agent skill**（见 `SKILL.md`），同时也可以独立作为 Python CLI 工具运行。
+
 用于管理液氮罐库存的命令行工具。支持记录冻存细胞样本、复苏/取出操作以及多盒位点占用情况。
 
 数据保存在单个 YAML 文件中，所有操作都通过带校验的脚本完成，不需要手动改 YAML。
