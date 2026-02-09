@@ -5,6 +5,9 @@ This directory contains a minimal desktop GUI scaffold that calls the unified To
 Current status:
 
 - `Overview` is the default first tab with per-box grid visualization (9x9 style)
+- `AI Copilot` tab supports natural-language requests via ReAct runtime
+- AI Copilot provides quick prompts and structured output (`计划 -> 预览 -> 执行结果 -> 审计记录`)
+- AI Copilot supports mock mode (default) and LiteLLM model mode
 - Overview supports clickable cells and a detail panel (ID/cell/short/frozen/plasmid/note)
 - Overview includes summary cards (records, capacity, occupied, empty, occupancy rate, 7-day ops)
 - Overview supports filters (box/cell/keyword/show-empty) for focused browsing
@@ -23,6 +26,7 @@ Current status:
 - Rollback panel supports backup listing and rollback by selected path/latest
 - Rollback now requires explicit confirmation with backup path/time/size
 - GUI calls go through `GuiToolBridge` with `channel="gui"`
+- AI tool traces are mapped to audit events by `trace_id`
 
 Run:
 

@@ -13,7 +13,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from app_gui.tool_bridge import GuiToolBridge
-from lib.config import YAML_PATH
+from lib.config import AUDIT_LOG_FILE, YAML_PATH
 from lib.validators import parse_positions
 from lib.yaml_ops import load_yaml, write_html_snapshot
 
@@ -38,6 +38,7 @@ def _cell_color(parent_cell_line):
 def main():
     try:
         from PySide6.QtCore import QDate, QSettings, Qt
+        from PySide6.QtGui import QFont, QFontDatabase
         from PySide6.QtWidgets import (
             QApplication,
             QCheckBox,
@@ -71,6 +72,24 @@ def main():
         print("PySide6 is not installed. Install it with: pip install PySide6")
         return 1
 
+    def _pick_cjk_font():
+        # Prefer widely available CJK-capable fonts to avoid tofu squares.
+        candidates = [
+            "Noto Sans CJK SC",
+            "Source Han Sans SC",
+            "WenQuanYi Zen Hei",
+            "Microsoft YaHei",
+            "PingFang SC",
+            "SimHei",
+            "Droid Sans Fallback",
+            "Droid Sans",
+        ]
+        available = set(QFontDatabase().families())
+        for family in candidates:
+            if family in available:
+                return QFont(family, 10)
+        return None
+
     class MainWindow(QMainWindow):
         def __init__(self):
             super().__init__()
@@ -90,6 +109,7 @@ def main():
             self.overview_box_groups = {}
             self.overview_selected = None
             self.query_last_mode = "records"
+            self.ai_history = []
 
             container = QWidget()
             root = QVBoxLayout(container)
@@ -110,6 +130,7 @@ def main():
 
             self.tabs = QTabWidget()
             self.tab_overview = self.tabs.addTab(self._build_overview_tab(), "Overview")
+            self.tab_ai = self.tabs.addTab(self._build_ai_tab(), "AI Copilot")
             self.tab_query = self.tabs.addTab(self._build_query_tab(), "Query")
             self.tab_add = self.tabs.addTab(self._build_add_tab(), "Add Entry")
             self.tab_thaw = self.tabs.addTab(self._build_thaw_tab(), "Thaw / Batch")
@@ -165,11 +186,19 @@ def main():
             if 0 <= tab_idx < self.tabs.count():
                 self.tabs.setCurrentIndex(tab_idx)
 
+            self.ai_model.setText(self.settings.value("ai/model", "", type=str) or "")
+            self.ai_mock.setChecked(self.settings.value("ai/mock", True, type=bool))
+            self.ai_steps.setValue(self.settings.value("ai/max_steps", 8, type=int))
+            self.on_ai_mode_changed()
+
         def _save_ui_settings(self):
             self.settings.setValue("ui/current_yaml_path", self.current_yaml_path)
             self.settings.setValue("ui/current_actor_id", self.current_actor_id)
             self.settings.setValue("ui/current_tab", self.tabs.currentIndex())
             self.settings.setValue("ui/geometry", self.saveGeometry())
+            self.settings.setValue("ai/model", self.ai_model.text().strip())
+            self.settings.setValue("ai/mock", self.ai_mock.isChecked())
+            self.settings.setValue("ai/max_steps", self.ai_steps.value())
             self._save_table_widths(self.query_table, "tables/query_widths")
             self._save_table_widths(self.backup_table, "tables/backup_widths")
 
@@ -247,6 +276,10 @@ def main():
             goto_query_btn = QPushButton("Go Query")
             goto_query_btn.clicked.connect(lambda: self.tabs.setCurrentIndex(self.tab_query))
             action_row.addWidget(goto_query_btn)
+
+            goto_ai_btn = QPushButton("Go AI")
+            goto_ai_btn.clicked.connect(lambda: self.tabs.setCurrentIndex(self.tab_ai))
+            action_row.addWidget(goto_ai_btn)
 
             goto_add_btn = QPushButton("Go Add")
             goto_add_btn.clicked.connect(lambda: self.tabs.setCurrentIndex(self.tab_add))
@@ -339,6 +372,95 @@ def main():
             body.addWidget(detail, 1)
 
             layout.addLayout(body, 1)
+            return tab
+
+        def _build_ai_tab(self):
+            tab = QWidget()
+            layout = QVBoxLayout(tab)
+
+            controls = QGroupBox("Agent Controls")
+            controls_form = QFormLayout(controls)
+            self.ai_model = QLineEdit()
+            self.ai_model.setPlaceholderText("e.g. anthropic/claude-3-5-sonnet")
+
+            self.ai_steps = QSpinBox()
+            self.ai_steps.setRange(1, 20)
+            self.ai_steps.setValue(8)
+
+            self.ai_mock = QCheckBox("Mock LLM (no external API)")
+            self.ai_mock.setChecked(True)
+            self.ai_mock.stateChanged.connect(self.on_ai_mode_changed)
+
+            controls_form.addRow("Model", self.ai_model)
+            controls_form.addRow("Max Steps", self.ai_steps)
+            controls_form.addRow("", self.ai_mock)
+            layout.addWidget(controls)
+
+            prompt_box = QGroupBox("Prompt")
+            prompt_layout = QVBoxLayout(prompt_box)
+
+            examples = QHBoxLayout()
+            examples.addWidget(QLabel("Quick prompts"))
+
+            quick_prompts = [
+                (
+                    "Find K562",
+                    "Find K562-related records and summarize count with a few representative rows.",
+                ),
+                (
+                    "Takeout Today",
+                    "List today's takeout/thaw/discard events and summarize by action.",
+                ),
+                (
+                    "Suggest Slots",
+                    "Recommend 2 consecutive empty slots, prefer boxes with more free space, and explain why.",
+                ),
+            ]
+            for label, text in quick_prompts:
+                btn = QPushButton(label)
+                btn.clicked.connect(lambda _checked=False, value=text: self.on_ai_use_prompt(value))
+                examples.addWidget(btn)
+            examples.addStretch()
+            prompt_layout.addLayout(examples)
+
+            self.ai_prompt = QTextEdit()
+            self.ai_prompt.setPlaceholderText("Type a natural-language request for LN2 inventory...")
+            self.ai_prompt.setFixedHeight(110)
+            prompt_layout.addWidget(self.ai_prompt)
+
+            run_row = QHBoxLayout()
+            self.ai_run_btn = QPushButton("Run Agent")
+            self.ai_run_btn.clicked.connect(self.on_run_ai_agent)
+            run_row.addWidget(self.ai_run_btn)
+
+            ai_clear_btn = QPushButton("Clear AI Panel")
+            ai_clear_btn.clicked.connect(self.on_ai_clear)
+            run_row.addWidget(ai_clear_btn)
+            run_row.addStretch()
+            prompt_layout.addLayout(run_row)
+
+            layout.addWidget(prompt_box)
+
+            body = QHBoxLayout()
+
+            chat_box = QGroupBox("AI Chat")
+            chat_layout = QVBoxLayout(chat_box)
+            self.ai_chat = QTextEdit()
+            self.ai_chat.setReadOnly(True)
+            self.ai_chat.setPlaceholderText("Conversation timeline will appear here.")
+            chat_layout.addWidget(self.ai_chat)
+            body.addWidget(chat_box, 1)
+
+            report_box = QGroupBox("Plan / Preview / Result / Audit")
+            report_layout = QVBoxLayout(report_box)
+            self.ai_report = QTextEdit()
+            self.ai_report.setReadOnly(True)
+            self.ai_report.setPlaceholderText("Structured agent output will appear here.")
+            report_layout.addWidget(self.ai_report)
+            body.addWidget(report_box, 2)
+
+            layout.addLayout(body, 1)
+            self.on_ai_mode_changed()
             return tab
 
         def _build_query_tab(self):
@@ -446,7 +568,7 @@ def main():
             self.t_date.setDisplayFormat("yyyy-MM-dd")
             self.t_date.setDate(QDate.currentDate())
             self.t_action = QComboBox()
-            self.t_action.addItems(["取出", "复苏", "扔掉"])
+            self.t_action.addItems(["Takeout", "Thaw", "Discard"])
             self.t_note = QLineEdit()
             self.t_dry_run = QCheckBox("Dry Run")
             self.t_dry_run.setChecked(True)
@@ -473,7 +595,7 @@ def main():
             self.b_date.setDisplayFormat("yyyy-MM-dd")
             self.b_date.setDate(QDate.currentDate())
             self.b_action = QComboBox()
-            self.b_action.addItems(["取出", "复苏", "扔掉"])
+            self.b_action.addItems(["Takeout", "Thaw", "Discard"])
             self.b_note = QLineEdit()
             self.b_dry_run = QCheckBox("Dry Run")
             self.b_dry_run.setChecked(True)
@@ -573,7 +695,7 @@ def main():
                         rec_id = item.get("id")
                         short_name = item.get("short_name")
                         positions = item.get("positions")
-                        lines.append(f"ID {rec_id} ({short_name}): 位置 {positions}")
+                        lines.append(f"ID {rec_id} ({short_name}): positions {positions}")
                     elif item:
                         lines.append(str(item))
 
@@ -590,7 +712,7 @@ def main():
                 extra = len(lines) - len(preview)
                 preview_text = "\n".join(f"- {line}" for line in preview)
                 if extra > 0:
-                    preview_text += f"\n- ... 另外 {extra} 条"
+                    preview_text += f"\n- ... and {extra} more"
                 dialog.setInformativeText(preview_text)
                 dialog.setDetailedText("\n".join(lines))
 
@@ -724,6 +846,197 @@ def main():
 
         def _warn(self, message):
             QMessageBox.warning(self, "Input Error", message)
+
+        def on_ai_mode_changed(self):
+            use_mock = self.ai_mock.isChecked()
+            self.ai_model.setEnabled(not use_mock)
+            if use_mock:
+                self.ai_model.setPlaceholderText("Mock mode enabled: no external LLM call")
+            else:
+                self.ai_model.setPlaceholderText("e.g. anthropic/claude-3-5-sonnet")
+
+        def on_ai_use_prompt(self, prompt):
+            self.ai_prompt.setPlainText(str(prompt or "").strip())
+            self.ai_prompt.setFocus()
+
+        def on_ai_clear(self):
+            self.ai_chat.clear()
+            self.ai_report.clear()
+            self.ai_history = []
+            self._notify("AI conversation memory cleared", level="success")
+
+        def _append_ai_chat(self, role, text):
+            stamp = datetime.now().strftime("%H:%M:%S")
+            block = f"[{stamp}] {role}\n{text}"
+            if self.ai_chat.toPlainText().strip():
+                self.ai_chat.append("")
+            self.ai_chat.append(block)
+
+        def _append_ai_history(self, role, content, max_turns=20):
+            role_text = str(role or "").strip().lower()
+            if role_text not in {"user", "assistant"}:
+                return
+            content_text = str(content or "").strip()
+            if not content_text:
+                return
+            self.ai_history.append({"role": role_text, "content": content_text})
+            if max_turns and len(self.ai_history) > max_turns:
+                self.ai_history = self.ai_history[-max_turns:]
+
+        def _compact_json(self, value, max_chars=200):
+            try:
+                text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+            except Exception:
+                text = str(value)
+            text = text.replace("\n", " ")
+            if len(text) <= max_chars:
+                return text
+            return text[: max_chars - 3] + "..."
+
+        def _load_audit_events_for_trace(self, trace_id, limit=30):
+            if not trace_id:
+                return []
+
+            audit_path = os.path.join(os.path.dirname(os.path.abspath(self._yaml_path())), AUDIT_LOG_FILE)
+            if not os.path.exists(audit_path):
+                return []
+
+            rows = []
+            try:
+                with open(audit_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            event = json.loads(line)
+                        except Exception:
+                            continue
+                        if event.get("trace_id") == trace_id:
+                            rows.append(event)
+            except Exception:
+                return []
+
+            return rows[-max(1, int(limit)) :]
+
+        def _build_ai_report_text(self, run_result, audit_rows):
+            scratchpad = run_result.get("scratchpad", []) if isinstance(run_result, dict) else []
+            lines = []
+
+            lines.append("Plan")
+            if scratchpad:
+                for item in scratchpad:
+                    lines.append(
+                        f"- Step {item.get('step')}: {item.get('action')} | thought: {item.get('thought') or '-'}"
+                    )
+            else:
+                lines.append("- No tool steps (model may finish directly)")
+
+            lines.append("")
+            lines.append("Preview")
+            preview_rows = []
+            for item in scratchpad:
+                obs = item.get("observation")
+                if not isinstance(obs, dict):
+                    continue
+                if obs.get("dry_run") or ("preview" in obs):
+                    preview_payload = obs.get("preview")
+                    if preview_payload is None:
+                        preview_payload = obs.get("result")
+                    preview_rows.append(
+                        f"- Step {item.get('step')} {item.get('action')}: {self._compact_json(preview_payload)}"
+                    )
+            if preview_rows:
+                lines.extend(preview_rows)
+            else:
+                lines.append("- No dry-run preview output in this run")
+
+            lines.append("")
+            lines.append("Execution Result")
+            if scratchpad:
+                for item in scratchpad:
+                    obs = item.get("observation")
+                    if not isinstance(obs, dict):
+                        lines.append(f"- Step {item.get('step')} {item.get('action')}: invalid observation")
+                        continue
+                    status = "OK" if obs.get("ok") else f"FAIL/{obs.get('error_code', 'unknown')}"
+                    summary = obs.get("message")
+                    if not summary and obs.get("result") is not None:
+                        summary = self._compact_json(obs.get("result"))
+                    if not summary and obs.get("preview") is not None:
+                        summary = self._compact_json(obs.get("preview"))
+                    if not summary:
+                        summary = "(no message)"
+                    lines.append(f"- Step {item.get('step')} {item.get('action')}: {status} | {summary}")
+            else:
+                lines.append("- No execution steps")
+
+            lines.append("")
+            lines.append("Audit")
+            if audit_rows:
+                for event in audit_rows:
+                    if not isinstance(event, dict):
+                        continue
+                    err = (event.get("error") or {}).get("error_code")
+                    lines.append(
+                        "- "
+                        + " | ".join(
+                            [
+                                str(event.get("timestamp", "-")),
+                                str(event.get("action", "-")),
+                                str(event.get("status", "-")),
+                                f"error={err or '-'}",
+                            ]
+                        )
+                    )
+            else:
+                lines.append("- No audit events found for this trace_id")
+
+            lines.append("")
+            lines.append("Final")
+            lines.append(str(run_result.get("final") or "(empty final answer)"))
+            return "\n".join(lines)
+
+        def on_run_ai_agent(self):
+            prompt = self.ai_prompt.toPlainText().strip()
+            if not prompt:
+                self._warn("Please input a natural-language request first.")
+                return
+
+            payload = self.bridge.run_agent_query(
+                yaml_path=self._yaml_path(),
+                query=prompt,
+                model=self.ai_model.text().strip() or None,
+                max_steps=self.ai_steps.value(),
+                mock=self.ai_mock.isChecked(),
+                history=self.ai_history,
+            )
+            response = payload if isinstance(payload, dict) else {"ok": False, "message": "Unexpected response"}
+            self._emit(response)
+
+            raw_result = response.get("result")
+            run_result = raw_result if isinstance(raw_result, dict) else {}
+            trace_id = run_result.get("trace_id")
+            audit_rows = self._load_audit_events_for_trace(trace_id)
+            self.ai_report.setPlainText(self._build_ai_report_text(run_result, audit_rows))
+
+            final_text = str(run_result.get("final") or response.get("message") or "")
+            self._append_ai_chat("You", prompt)
+            self._append_ai_chat("Agent", final_text)
+            self._append_ai_history("user", prompt)
+            self._append_ai_history("assistant", final_text)
+
+            self._refresh_overview(update_output=False)
+            self._refresh_backups_table(update_output=False)
+
+            if response.get("ok"):
+                scratchpad = run_result.get("scratchpad")
+                if not isinstance(scratchpad, list):
+                    scratchpad = []
+                step_count = run_result.get("steps", len(scratchpad))
+                self._notify(f"AI run completed in {step_count} step(s)", level="success")
+            else:
+                self._handle_tool_failure(response, "AI run failed", dialog_title="AI Agent Failed")
 
         def _selected_backup_path(self):
             row = self.backup_table.currentRow()
@@ -1200,7 +1513,7 @@ def main():
             rec_id = int(record.get("id"))
             self.t_id.setValue(rec_id)
             self.t_position.setValue(position)
-            self.t_action.setCurrentText("取出")
+            self.t_action.setCurrentText("Takeout")
             self.tabs.setCurrentIndex(self.tab_thaw)
             self._notify(f"Prefilled thaw form: ID {rec_id}, position {position} (box {box_num})", level="success")
 
@@ -1426,6 +1739,9 @@ def main():
                 self._handle_tool_failure(payload, "Rollback failed", dialog_title="Rollback Failed")
 
     app = QApplication(sys.argv)
+    cjk_font = _pick_cjk_font()
+    if cjk_font is not None:
+        app.setFont(cjk_font)
     win = MainWindow()
     win.show()
     return app.exec()

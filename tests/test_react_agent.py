@@ -33,6 +33,16 @@ class _SequenceLLM:
         return self._outputs.pop(0)
 
 
+class _CapturePromptLLM:
+    def __init__(self):
+        self.last_messages = None
+
+    def complete(self, messages, temperature=0.0):
+        _ = temperature
+        self.last_messages = messages
+        return '{"thought":"memory check","action":"finish","action_input":{},"final":"ok"}'
+
+
 class ReactAgentTests(unittest.TestCase):
     def test_react_agent_calls_tool_then_finishes(self):
         with tempfile.TemporaryDirectory(prefix="ln2_react_") as temp_dir:
@@ -87,6 +97,33 @@ class ReactAgentTests(unittest.TestCase):
             obs = result["scratchpad"][0]["observation"]
             self.assertTrue(obs["ok"])
             self.assertEqual(1, obs["result"]["count"])
+
+    def test_react_agent_includes_conversation_history_in_prompt(self):
+        llm = _CapturePromptLLM()
+        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml", actor_id="react-test")
+        agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=2)
+
+        history = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello there"},
+            {"role": "tool", "content": "ignored"},
+        ]
+        result = agent.run("repeat your last response", conversation_history=history)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(2, result.get("conversation_history_used"))
+        messages = llm.last_messages
+        if not isinstance(messages, list):
+            self.fail("LLM should receive a message list")
+        self.assertGreaterEqual(len(messages), 2)
+
+        prompt_payload = json.loads(messages[1]["content"])
+        memory = prompt_payload.get("conversation_history")
+        if not isinstance(memory, list):
+            self.fail("conversation_history should be a list")
+        self.assertEqual(2, len(memory))
+        self.assertEqual("user", memory[0]["role"])
+        self.assertEqual("assistant", memory[1]["role"])
 
 
 if __name__ == "__main__":

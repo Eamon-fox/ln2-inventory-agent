@@ -1,5 +1,10 @@
 """GUI-facing bridge to the unified Tool API."""
 
+import os
+
+from agent.llm_client import LiteLLMClient, MockLLMClient
+from agent.react_agent import ReactAgent
+from agent.tool_runner import AgentToolRunner
 from lib.tool_api import (
     build_actor_context,
     parse_batch_entries,
@@ -95,3 +100,59 @@ class GuiToolBridge:
             actor_context=self._ctx(),
             source="app_gui",
         )
+
+    def run_agent_query(self, yaml_path, query, model=None, max_steps=8, mock=True, history=None):
+        prompt = str(query or "").strip()
+        if not prompt:
+            return {
+                "ok": False,
+                "error_code": "empty_query",
+                "message": "Please input a natural-language request.",
+            }
+
+        try:
+            steps = int(max_steps)
+        except Exception:
+            return {
+                "ok": False,
+                "error_code": "invalid_max_steps",
+                "message": f"max_steps must be an integer: {max_steps}",
+            }
+        if steps < 1 or steps > 20:
+            return {
+                "ok": False,
+                "error_code": "invalid_max_steps",
+                "message": "max_steps must be between 1 and 20",
+            }
+
+        chosen_model = (model or "").strip() or os.environ.get("LITELLM_MODEL")
+        if not mock and not chosen_model:
+            return {
+                "ok": False,
+                "error_code": "model_required",
+                "message": "Set a model or LITELLM_MODEL, or enable mock mode.",
+            }
+
+        try:
+            llm = MockLLMClient() if mock else LiteLLMClient(model=chosen_model)
+            runner = AgentToolRunner(
+                yaml_path=yaml_path,
+                actor_id=f"{self._actor_id}-agent",
+                session_id=self._session_id,
+            )
+            agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=steps)
+            result = agent.run(prompt, conversation_history=history)
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error_code": "agent_runtime_failed",
+                "message": str(exc),
+                "result": None,
+            }
+
+        return {
+            "ok": bool(result.get("ok")),
+            "result": result,
+            "mode": "mock" if mock else "litellm",
+            "model": None if mock else chosen_model,
+        }

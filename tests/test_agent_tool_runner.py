@@ -66,6 +66,42 @@ class AgentToolRunnerTests(unittest.TestCase):
             self.assertEqual(1, response["result"]["count"])
             self.assertEqual(2, response["result"]["records"][0]["id"])
 
+    def test_query_inventory_ignores_unknown_kwargs(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_query_unknown_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        {
+                            "id": 2,
+                            "parent_cell_line": "K562",
+                            "short_name": "k562-a",
+                            "box": 2,
+                            "positions": [10],
+                            "frozen_at": "2026-02-10",
+                        }
+                    ]
+                ),
+                path=str(yaml_path),
+                auto_html=False,
+                auto_server=False,
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run(
+                "query_inventory",
+                {
+                    "cell": "K562",
+                    "limit": 3,
+                    "offset": 0,
+                    "unused": "value",
+                },
+            )
+            self.assertTrue(response["ok"])
+            self.assertEqual(1, response["result"]["count"])
+            self.assertEqual(2, response["result"]["records"][0]["id"])
+
     def test_add_entry_writes_agent_audit_fields(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_add_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"

@@ -44,6 +44,36 @@ class AgentToolRunner:
             raise ValueError(f"Missing required integer field: {key}")
         return int(value)
 
+    @staticmethod
+    def _optional_int(payload, key, default=None):
+        value = payload.get(key)
+        if value in (None, ""):
+            return default
+        return int(value)
+
+    @staticmethod
+    def _first_value(payload, *keys):
+        for key in keys:
+            value = payload.get(key)
+            if value not in (None, ""):
+                return value
+        return None
+
+    @staticmethod
+    def _as_bool(value, default=False):
+        if value is None:
+            return bool(default)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        text = str(value).strip().lower()
+        if text in {"1", "true", "yes", "y", "on"}:
+            return True
+        if text in {"0", "false", "no", "n", "off", ""}:
+            return False
+        return bool(default)
+
     def list_tools(self):
         return [
             "query_inventory",
@@ -65,50 +95,75 @@ class AgentToolRunner:
         payload = dict(tool_input or {})
 
         if tool_name == "query_inventory":
-            return tool_query_inventory(yaml_path=self._yaml_path, **payload)
+            try:
+                return tool_query_inventory(
+                    yaml_path=self._yaml_path,
+                    cell=self._first_value(payload, "cell", "cell_line", "parent_cell_line"),
+                    short=self._first_value(payload, "short", "short_name"),
+                    plasmid=self._first_value(payload, "plasmid", "plasmid_name"),
+                    plasmid_id=self._first_value(payload, "plasmid_id"),
+                    box=self._optional_int(payload, "box"),
+                    position=self._optional_int(payload, "position"),
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "error_code": "invalid_tool_input",
+                    "message": str(exc),
+                }
 
         if tool_name == "list_empty_positions":
-            return tool_list_empty_positions(yaml_path=self._yaml_path, box=payload.get("box"))
+            try:
+                return tool_list_empty_positions(
+                    yaml_path=self._yaml_path,
+                    box=self._optional_int(payload, "box"),
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "error_code": "invalid_tool_input",
+                    "message": str(exc),
+                }
 
         if tool_name == "search_records":
             return tool_search_records(
                 yaml_path=self._yaml_path,
                 query=payload.get("query", ""),
                 mode=payload.get("mode", "fuzzy"),
-                max_results=payload.get("max_results"),
-                case_sensitive=bool(payload.get("case_sensitive", False)),
+                max_results=self._optional_int(payload, "max_results"),
+                case_sensitive=self._as_bool(payload.get("case_sensitive", False), default=False),
             )
 
         if tool_name == "recent_frozen":
             return tool_recent_frozen(
                 yaml_path=self._yaml_path,
-                days=payload.get("days"),
-                count=payload.get("count"),
+                days=self._optional_int(payload, "days"),
+                count=self._optional_int(payload, "count"),
             )
 
         if tool_name == "query_thaw_events":
             return tool_query_thaw_events(
                 yaml_path=self._yaml_path,
                 date=payload.get("date"),
-                days=payload.get("days"),
+                days=self._optional_int(payload, "days"),
                 start_date=payload.get("start_date"),
                 end_date=payload.get("end_date"),
                 action=payload.get("action"),
-                max_records=payload.get("max_records", 0),
+                max_records=self._optional_int(payload, "max_records", default=0),
             )
 
         if tool_name == "collect_timeline":
             return tool_collect_timeline(
                 yaml_path=self._yaml_path,
-                days=payload.get("days", 30),
-                all_history=bool(payload.get("all_history", False)),
+                days=self._optional_int(payload, "days", default=30),
+                all_history=self._as_bool(payload.get("all_history", False), default=False),
             )
 
         if tool_name == "recommend_positions":
             return tool_recommend_positions(
                 yaml_path=self._yaml_path,
-                count=int(payload.get("count", 2)),
-                box_preference=payload.get("box_preference"),
+                count=self._optional_int(payload, "count", default=2),
+                box_preference=self._optional_int(payload, "box_preference"),
                 strategy=payload.get("strategy", "consecutive"),
             )
 
@@ -116,9 +171,20 @@ class AgentToolRunner:
             return tool_generate_stats(yaml_path=self._yaml_path)
 
         if tool_name == "get_raw_entries":
+            ids = payload.get("ids", [])
+            if isinstance(ids, str):
+                ids = [part.strip() for part in ids.split(",") if part.strip()]
+            try:
+                ids = [int(item) for item in ids]
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "error_code": "invalid_tool_input",
+                    "message": f"Invalid ids field: {exc}",
+                }
             return tool_get_raw_entries(
                 yaml_path=self._yaml_path,
-                ids=payload.get("ids", []),
+                ids=ids,
             )
 
         if tool_name == "add_entry":
@@ -136,7 +202,7 @@ class AgentToolRunner:
                     plasmid_name=payload.get("plasmid_name"),
                     plasmid_id=payload.get("plasmid_id"),
                     note=payload.get("note"),
-                    dry_run=bool(payload.get("dry_run", False)),
+                    dry_run=self._as_bool(payload.get("dry_run", False), default=False),
                     actor_context=self._actor_context(trace_id=trace_id),
                     source="agent.react",
                 )
@@ -156,7 +222,7 @@ class AgentToolRunner:
                     date_str=payload.get("date"),
                     action=payload.get("action", "取出"),
                     note=payload.get("note"),
-                    dry_run=bool(payload.get("dry_run", False)),
+                    dry_run=self._as_bool(payload.get("dry_run", False), default=False),
                     actor_context=self._actor_context(trace_id=trace_id),
                     source="agent.react",
                 )
@@ -178,7 +244,7 @@ class AgentToolRunner:
                     date_str=payload.get("date"),
                     action=payload.get("action", "取出"),
                     note=payload.get("note"),
-                    dry_run=bool(payload.get("dry_run", False)),
+                    dry_run=self._as_bool(payload.get("dry_run", False), default=False),
                     actor_context=self._actor_context(trace_id=trace_id),
                     source="agent.react",
                 )
@@ -193,8 +259,8 @@ class AgentToolRunner:
             return tool_rollback(
                 yaml_path=self._yaml_path,
                 backup_path=payload.get("backup_path"),
-                no_html=bool(payload.get("no_html", True)),
-                no_server=bool(payload.get("no_server", True)),
+                no_html=self._as_bool(payload.get("no_html", True), default=True),
+                no_server=self._as_bool(payload.get("no_server", True), default=True),
                 actor_context=self._actor_context(trace_id=trace_id),
                 source="agent.react",
             )

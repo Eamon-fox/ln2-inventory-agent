@@ -13,6 +13,8 @@ Rules:
 4) If action == 'finish', provide final answer in 'final'.
 5) If action != 'finish', set final to empty string.
 6) Keep thought short.
+7) Use conversation_history to keep continuity across turns.
+8) If user asks about previous responses, answer from conversation_history directly.
 """
 
 
@@ -39,9 +41,31 @@ class ReactAgent:
                     return None
             return None
 
-    def run(self, user_query):
+    @staticmethod
+    def _normalize_history(conversation_history, max_turns=12):
+        if not isinstance(conversation_history, list):
+            return []
+
+        cleaned = []
+        for item in conversation_history:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "").strip().lower()
+            if role not in {"user", "assistant"}:
+                continue
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            cleaned.append({"role": role, "content": content})
+
+        if max_turns and len(cleaned) > max_turns:
+            return cleaned[-max_turns:]
+        return cleaned
+
+    def run(self, user_query, conversation_history=None):
         trace_id = f"trace-{uuid.uuid4().hex}"
         tool_names = self._tools.list_tools()
+        memory = self._normalize_history(conversation_history)
 
         scratch = []
         for step in range(1, self._max_steps + 1):
@@ -50,6 +74,7 @@ class ReactAgent:
                 "trace_id": trace_id,
                 "available_tools": tool_names,
                 "user_query": user_query,
+                "conversation_history": memory,
                 "scratchpad": scratch,
                 "required_json_schema": {
                     "thought": "string",
@@ -85,6 +110,7 @@ class ReactAgent:
                     "trace_id": trace_id,
                     "steps": step,
                     "final": action_obj.get("final", ""),
+                    "conversation_history_used": len(memory),
                     "scratchpad": scratch,
                 }
 
@@ -120,5 +146,6 @@ class ReactAgent:
             "trace_id": trace_id,
             "steps": self._max_steps,
             "final": "Max steps reached without finish action.",
+            "conversation_history_used": len(memory),
             "scratchpad": scratch,
         }
