@@ -1,5 +1,7 @@
 # ln2-inventory
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 CLI toolkit for managing liquid nitrogen tank inventory. Tracks frozen cell line samples, thaw/takeout events, and storage positions across multiple boxes.
 
 Data is stored in a single YAML file. All operations go through validated scripts — no manual YAML editing needed.
