@@ -7,71 +7,11 @@
 import argparse
 import sys
 import os
-from datetime import datetime, timedelta
-from collections import defaultdict
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from lib.yaml_ops import load_yaml
 from lib.config import YAML_PATH
+from lib.tool_api import tool_collect_timeline
 from lib.validators import format_chinese_date
-from lib.thaw_parser import extract_events
-
-
-def extract_thaw_events(rec):
-    """从记录中提取取出/复苏事件，附带 record 引用"""
-    raw_events = extract_events(rec)
-    # Attach record reference for display
-    return [
-        {**ev, "record": rec}
-        for ev in raw_events
-    ]
-
-
-def collect_timeline_events(records, days=None):
-    """
-    收集所有冻存和取出事件
-
-    Returns:
-        dict: {date: {"frozen": [...], "thaw": [...], "takeout": [...], "discard": [...]}}
-    """
-    timeline = defaultdict(lambda: {
-        "frozen": [],
-        "thaw": [],
-        "takeout": [],
-        "discard": []
-    })
-
-    # 设置日期过滤
-    if days:
-        cutoff_date = datetime.now() - timedelta(days=days)
-        cutoff_str = cutoff_date.strftime("%Y-%m-%d")
-    else:
-        cutoff_str = None
-
-    # 收集冻存事件
-    for rec in records:
-        frozen_at = rec.get("frozen_at")
-        if not frozen_at:
-            continue
-        if cutoff_str and frozen_at < cutoff_str:
-            continue
-
-        timeline[frozen_at]["frozen"].append(rec)
-
-    # 收集取出事件
-    for rec in records:
-        thaw_events = extract_thaw_events(rec)
-        for event in thaw_events:
-            date = event["date"]
-            if not date:
-                continue
-            if cutoff_str and date < cutoff_str:
-                continue
-
-            action = event["action"]
-            timeline[date][action].append(event)
-
-    return timeline
 
 
 def display_timeline(timeline, verbose=False):
@@ -224,15 +164,16 @@ def main():
 
     args = parser.parse_args()
 
-    # 加载数据
-    data = load_yaml(args.yaml)
-    records = data.get("inventory", [])
+    response = tool_collect_timeline(
+        yaml_path=args.yaml,
+        days=args.days,
+        all_history=args.all,
+    )
+    if not response.get("ok"):
+        print(f"❌ 错误: {response.get('message', '时间线查询失败')}")
+        return 1
 
-    # 收集时间线事件
-    if args.all:
-        timeline = collect_timeline_events(records, days=None)
-    else:
-        timeline = collect_timeline_events(records, days=args.days)
+    timeline = response["result"]["timeline"]
 
     # 显示时间线
     display_timeline(timeline, verbose=args.verbose)

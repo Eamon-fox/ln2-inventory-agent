@@ -5,14 +5,13 @@ Query thaw/takeout events by date or date range.
 import argparse
 import sys
 import os
-from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from lib.yaml_ops import load_yaml
 from lib.config import YAML_PATH
-from lib.validators import format_chinese_date, normalize_date_arg
+from lib.tool_api import tool_query_thaw_events
+from lib.validators import format_chinese_date
 from lib.thaw_parser import (
-    extract_events, normalize_action, format_positions,
+    format_positions,
     ACTION_LABEL,
 )
 
@@ -60,62 +59,28 @@ def main():
     )
     args = parser.parse_args()
 
-    # 处理日期参数
-    if args.days:
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=args.days)
-        target_dates = None
-        date_range = (start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
-        mode = "days"
-    elif args.start_date and args.end_date:
-        start = normalize_date_arg(args.start_date)
-        end = normalize_date_arg(args.end_date)
-        if not start or not end:
-            print("❌ 错误: 日期格式无效，请使用 YYYY-MM-DD")
-            return 1
-        target_dates = None
-        date_range = (start, end)
-        mode = "range"
-    else:
-        target_date = normalize_date_arg(args.date)
-        if not target_date:
-            print("❌ 错误: 日期格式无效，请使用 YYYY-MM-DD")
-            return 1
-        target_dates = [target_date]
-        date_range = None
-        mode = "single"
-
-    action_filter = normalize_action(args.action) if args.action else None
-    if args.action and not action_filter:
-        print("❌ 错误: 操作类型必须是 取出/复苏/扔掉 或 takeout/thaw/discard")
+    response = tool_query_thaw_events(
+        yaml_path=args.yaml,
+        date=args.date,
+        days=args.days,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        action=args.action,
+        max_records=args.max,
+    )
+    if not response.get("ok"):
+        print(f"❌ 错误: {response.get('message', '查询失败')}")
         return 1
 
-    data = load_yaml(args.yaml)
-    records = data.get("inventory", [])
-
-    matched = []
-    total_events = 0
-    for rec in records:
-        events = extract_events(rec)
-        if not events:
-            continue
-
-        if mode == "single":
-            filtered = [
-                ev for ev in events
-                if ev.get("date") in target_dates
-                and (not action_filter or ev.get("action") == action_filter)
-            ]
-        else:
-            filtered = [
-                ev for ev in events
-                if ev.get("date") and date_range[0] <= ev.get("date") <= date_range[1]
-                and (not action_filter or ev.get("action") == action_filter)
-            ]
-
-        if filtered:
-            matched.append((rec, filtered))
-            total_events += len(filtered)
+    payload = response["result"]
+    mode = payload["mode"]
+    target_dates = payload.get("target_dates")
+    date_range = payload.get("date_range")
+    action_filter = payload.get("action_filter")
+    matched = payload.get("records", [])
+    record_count = payload.get("record_count", len(matched))
+    display_count = payload.get("display_count", len(matched))
+    total_events = payload.get("event_count", 0)
 
     # 显示查询条件
     if mode == "single":
@@ -128,17 +93,17 @@ def main():
 
     if action_filter:
         print(f"🎯 操作: {ACTION_LABEL.get(action_filter, action_filter)}")
-    print(f"✅ 匹配记录: {len(matched)} | 匹配事件: {total_events}")
+    print(f"✅ 匹配记录: {record_count} | 匹配事件: {total_events}")
 
     if not matched:
         return 0
 
-    limit = args.max if args.max and args.max > 0 else len(matched)
-    shown = matched[:limit]
-    if len(matched) > limit:
-        print(f"⚠️  仅显示前 {limit} 条记录（共 {len(matched)} 条）")
+    if record_count > display_count:
+        print(f"⚠️  仅显示前 {display_count} 条记录（共 {record_count} 条）")
 
-    for rec, events in shown:
+    for item in matched:
+        rec = item["record"]
+        events = item["events"]
         print(
             f"- id {rec.get('id')} | {rec.get('parent_cell_line')} | {rec.get('short_name')} | "
             f"盒{rec.get('box')} | 冻存 {rec.get('frozen_at')}"

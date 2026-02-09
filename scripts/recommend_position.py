@@ -7,8 +7,9 @@ import sys
 import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from lib.yaml_ops import load_yaml, compute_occupancy
+from lib.yaml_ops import compute_occupancy
 from lib.config import YAML_PATH, BOX_RANGE
+from lib.tool_api import tool_recommend_positions
 
 
 def get_box_total_slots(layout):
@@ -168,8 +169,17 @@ def main():
         print("错误: 数量必须大于 0")
         return 1
 
-    data = load_yaml(args.yaml)
-    recommendations = recommend_positions(data, args.count, args.box, args.strategy)
+    response = tool_recommend_positions(
+        yaml_path=args.yaml,
+        count=args.count,
+        box_preference=args.box,
+        strategy=args.strategy,
+    )
+    if not response.get("ok"):
+        print(f"错误: {response.get('message', '推荐失败')}")
+        return 1
+
+    recommendations = response["result"]["recommendations"]
     print_recommendations(recommendations, args.count)
 
     return 0

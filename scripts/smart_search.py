@@ -8,12 +8,13 @@
 
 import argparse
 import sys
+import yaml
 
 # Import from lib
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from lib.yaml_ops import load_yaml
-from lib.config import YAML_PATH, PYTHON_PATH, SCRIPTS_DIR
+from lib.config import YAML_PATH
+from lib.tool_api import tool_get_raw_entries, tool_search_records
 
 
 def normalize_query(query):
@@ -33,73 +34,6 @@ def extract_keywords(query):
     # 按空格分词
     keywords = normalized.split()
     return normalized, keywords
-
-
-def search_record_multi_keywords(rec, keywords):
-    """
-    多关键词搜索：所有关键词都要匹配（AND逻辑）
-    """
-    # 将记录转为可搜索的字符串
-    searchable_text = []
-
-    fields = [
-        'id', 'parent_cell_line', 'short_name',
-        'plasmid_name', 'plasmid_id', 'note',
-        'thaw_log', 'box', 'frozen_at'
-    ]
-
-    for field in fields:
-        value = rec.get(field)
-        if value:
-            searchable_text.append(str(value).lower())
-
-    # positions
-    positions = rec.get('positions', [])
-    if positions:
-        searchable_text.append(','.join(str(p) for p in positions))
-
-    # 合并所有可搜索文本
-    full_text = ' '.join(searchable_text)
-
-    # 检查所有关键词是否都出现
-    for keyword in keywords:
-        if keyword.lower() not in full_text:
-            return False
-
-    return True
-
-
-def search_record_exact(rec, query):
-    """精确搜索：完整字符串匹配"""
-    query_lower = query.lower()
-
-    fields = [
-        'parent_cell_line', 'short_name', 'plasmid_name',
-        'plasmid_id', 'note', 'thaw_log'
-    ]
-
-    # Search simple fields
-    for field in fields:
-        value = rec.get(field)
-        if value and query_lower in str(value).lower():
-            return True
-
-    # Search other fields
-    if query_lower in str(rec.get('id', '')).lower():
-        return True
-    if query_lower in str(rec.get('box', '')).lower():
-        return True
-    if query_lower in str(rec.get('frozen_at', '')).lower():
-        return True
-
-    # Search positions
-    positions = rec.get('positions', [])
-    if positions:
-        pos_str = ','.join(str(p) for p in positions)
-        if query_lower in pos_str.lower():
-            return True
-
-    return False
 
 
 def suggest_alternative_queries(query, matches_count):
@@ -173,41 +107,49 @@ def main():
 
     args = parser.parse_args()
 
-    data = load_yaml(args.yaml)
-    records = data.get("inventory", [])
-
-    # 提取关键词
+    # 提取关键词（用于展示）
     normalized_query, keywords = extract_keywords(args.query)
 
-    # 搜索
+    mode = "keywords" if args.keywords else "exact"
+    response = tool_search_records(
+        yaml_path=args.yaml,
+        query=args.query,
+        mode=mode,
+        max_results=args.max,
+    )
+    if not response.get("ok"):
+        print(f"❌ 错误: {response.get('message', '搜索失败')}")
+        return 1
+
+    payload = response["result"]
+    matches = payload["records"]
+    total_count = payload["total_count"]
+
     if args.keywords:
         print(f"🔍 分词搜索模式：{keywords}")
-        matches = [rec for rec in records if search_record_multi_keywords(rec, keywords)]
     else:
         print(f"🔍 精确搜索：'{normalized_query}'")
-        matches = [rec for rec in records if search_record_exact(rec, normalized_query)]
 
     # 结果
-    if not matches:
+    if total_count == 0:
         print(f"\n❌ 未找到匹配的记录")
-        for suggestion in suggest_alternative_queries(normalized_query, 0):
+        for suggestion in payload.get("suggestions", suggest_alternative_queries(normalized_query, 0)):
             print(suggestion)
         return 1
 
-    print(f"\n✅ 找到 {len(matches)} 条记录")
+    print(f"\n✅ 找到 {total_count} 条记录")
 
     # 显示建议
-    suggestions = suggest_alternative_queries(normalized_query, len(matches))
+    suggestions = payload.get("suggestions", suggest_alternative_queries(normalized_query, total_count))
     if suggestions:
         print()
         for suggestion in suggestions:
             print(suggestion)
         print()
 
-    # 限制显示数量
-    display_matches = matches[:args.max]
-    if len(matches) > args.max:
-        print(f"\n⚠️  仅显示前 {args.max} 条（共 {len(matches)} 条）\n")
+    display_matches = matches
+    if total_count > len(display_matches):
+        print(f"\n⚠️  仅显示前 {len(display_matches)} 条（共 {total_count} 条）\n")
 
     # 显示结果
     for rec in display_matches:
@@ -221,14 +163,29 @@ def main():
 
         ids = [rec['id'] for rec in display_matches]
 
-        # 调用 show_raw.py
-        import subprocess
-        cmd = [
-            PYTHON_PATH,
-            os.path.join(SCRIPTS_DIR, "show_raw.py")
-        ] + [str(i) for i in ids]
+        raw_response = tool_get_raw_entries(args.yaml, ids)
+        if not raw_response.get("ok"):
+            print(f"❌ {raw_response.get('message', '获取原始数据失败')}")
+            return 1
 
-        subprocess.run(cmd)
+        for i, entry in enumerate(raw_response["result"]["entries"]):
+            if i > 0:
+                print()
+            print(f"# === ID {entry['id']} ===")
+            yaml_str = yaml.dump([entry], allow_unicode=True, default_flow_style=False, sort_keys=False)
+            lines = yaml_str.split('\n')
+            if lines and lines[0].startswith('- '):
+                lines[0] = lines[0][2:]
+            for line in lines:
+                if line:
+                    if line.startswith('  '):
+                        print(line[2:])
+                    else:
+                        print(line)
+
+        missing = raw_response["result"].get("missing_ids", [])
+        if missing:
+            print(f"\n⚠️  未找到的 ID: {', '.join(str(i) for i in missing)}", file=sys.stderr)
     elif args.raw and len(display_matches) > 20:
         print("\n⚠️  结果超过20条，不自动显示原始数据")
         print(f"💡 手动运行: show_raw.py {' '.join(str(r['id']) for r in display_matches[:10])} ...")

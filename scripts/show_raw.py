@@ -11,25 +11,18 @@ import yaml  # Keep for yaml.dump
 # Import from lib
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from lib.yaml_ops import load_yaml
 from lib.config import YAML_PATH
+from lib.tool_api import tool_get_raw_entries
 
 def show_raw_entries(yaml_path, ids):
     """展示指定 ID 的原始 YAML 条目"""
-    data = load_yaml(yaml_path)
-    inventory = data.get('inventory', [])
-
-    found_ids = set()
-    results = []
-
-    for entry in inventory:
-        if entry['id'] in ids:
-            found_ids.add(entry['id'])
-            results.append(entry)
-
-    if not results:
-        print(f"未找到 ID: {', '.join(map(str, ids))}")
+    response = tool_get_raw_entries(yaml_path, ids)
+    if not response.get("ok"):
+        print(response.get("message", f"未找到 ID: {', '.join(map(str, ids))}"))
         return 1
+
+    payload = response["result"]
+    results = payload["entries"]
 
     # 按 ID 排序
     results.sort(key=lambda x: x['id'])
@@ -54,7 +47,7 @@ def show_raw_entries(yaml_path, ids):
                     print(line)
 
     # 检查是否有缺失的 ID
-    missing_ids = set(ids) - found_ids
+    missing_ids = set(payload.get("missing_ids", []))
     if missing_ids:
         print(f"\n⚠️  未找到的 ID: {', '.join(map(str, sorted(missing_ids)))}", file=sys.stderr)
         return 1

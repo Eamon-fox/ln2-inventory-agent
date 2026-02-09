@@ -5,14 +5,8 @@ import sys
 # Import from lib
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from lib.yaml_ops import load_yaml, compute_occupancy
 from lib.config import YAML_PATH
-
-
-def str_contains(value, query):
-    if value is None:
-        return False
-    return query.lower() in str(value).lower()
+from lib.tool_api import tool_list_empty_positions, tool_query_inventory
 
 
 def format_record(rec, verbose=False):
@@ -44,51 +38,29 @@ def format_record(rec, verbose=False):
         )
 
 
-def filter_records(records, args):
-    out = []
-    for rec in records:
-        if args.cell and not str_contains(rec.get("parent_cell_line"), args.cell):
-            continue
-        if args.short and not str_contains(rec.get("short_name"), args.short):
-            continue
-        if args.plasmid and not str_contains(rec.get("plasmid_name"), args.plasmid):
-            continue
-        if args.plasmid_id and not str_contains(rec.get("plasmid_id"), args.plasmid_id):
-            continue
-        if args.box is not None and rec.get("box") != args.box:
-            continue
-        if args.position is not None:
-            positions = rec.get("positions") or []
-            if args.position not in positions:
-                continue
-        out.append(rec)
-    return out
-
-
-def list_empty(records, args):
+def list_empty(args):
     """List empty positions with better formatting."""
-    layout = load_yaml(args.yaml).get("meta", {}).get("box_layout", {})
-    total = int(layout.get("rows", 9)) * int(layout.get("cols", 9))
-    all_positions = set(range(1, total + 1))
-    occupied = compute_occupancy(records)
+    response = tool_list_empty_positions(args.yaml, box=args.box)
+    if not response.get("ok"):
+        print(f"❌ 错误: {response.get('message', '查询空位失败')}")
+        return 1
 
-    if args.box is not None:
-        boxes = [str(args.box)]
-    else:
-        boxes = list(occupied.keys())
-        if not boxes:
-            boxes = [str(i) for i in range(1, 6)]
+    payload = response["result"]
+    boxes = payload.get("boxes", [])
+    total = payload.get("total_slots", 0)
 
     print(f"\n{'盒子':<6} {'空闲位置数':<12} {'空闲位置列表'}")
     print("-" * 60)
 
-    for box in boxes:
-        used = set(occupied.get(str(box), []))
-        empty = sorted(all_positions - used)
+    for item in boxes:
+        box = item["box"]
+        empty = item["empty_positions"]
         empty_str = ','.join(str(p) for p in empty)
         if len(empty_str) > 40:
             empty_str = empty_str[:37] + "..."
         print(f"{box:<6} {len(empty):>4}/{total:<7} {empty_str}")
+
+    return 0
 
 
 def main():
@@ -104,14 +76,23 @@ def main():
     parser.add_argument("--verbose", "-v", action="store_true", help="verbose output format")
     args = parser.parse_args()
 
-    data = load_yaml(args.yaml)
-    records = data.get("inventory", [])
-
     if args.empty:
-        list_empty(records, args)
-        return 0
+        return list_empty(args)
 
-    matches = filter_records(records, args)
+    response = tool_query_inventory(
+        yaml_path=args.yaml,
+        cell=args.cell,
+        short=args.short,
+        plasmid=args.plasmid,
+        plasmid_id=args.plasmid_id,
+        box=args.box,
+        position=args.position,
+    )
+    if not response.get("ok"):
+        print(f"❌ 错误: {response.get('message', '查询失败')}")
+        return 1
+
+    matches = response["result"]["records"]
     if not matches:
         print("未找到匹配记录")
         return 1

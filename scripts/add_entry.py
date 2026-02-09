@@ -8,10 +8,9 @@ import sys
 # Import from lib
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from lib.config import YAML_PATH, VALID_CELL_LINES, BOX_RANGE
-from lib.yaml_ops import load_yaml, write_yaml
-from lib.validators import validate_date, parse_positions
-from lib.operations import get_next_id, check_position_conflicts
+from lib.config import YAML_PATH, BOX_RANGE
+from lib.tool_api import build_actor_context, tool_add_entry
+from lib.validators import parse_positions
 
 
 def add_entry(
@@ -26,126 +25,66 @@ def add_entry(
     note=None,
     dry_run=False
 ):
-    """
-    添加新的冻存记录
+    """添加新的冻存记录（CLI wrapper for unified Tool API）。"""
+    actor_context = build_actor_context(actor_type="human", channel="cli")
+    result = tool_add_entry(
+        yaml_path=yaml_path,
+        parent_cell_line=parent_cell_line,
+        short_name=short_name,
+        box=box,
+        positions=positions,
+        frozen_at=frozen_at,
+        plasmid_name=plasmid_name,
+        plasmid_id=plasmid_id,
+        note=note,
+        dry_run=dry_run,
+        actor_context=actor_context,
+        source="scripts/add_entry.py",
+    )
 
-    Args:
-        yaml_path: YAML文件路径
-        parent_cell_line: 亲本细胞系名称
-        short_name: 简称
-        box: 盒子编号 1-5
-        positions: 位置列表
-        frozen_at: 冻存日期 YYYY-MM-DD
-        plasmid_name: 质粒名称（可选）
-        plasmid_id: 质粒ID（可选）
-        note: 备注（可选）
-        dry_run: 是否只预览不实际修改
-    """
-    # 验证参数
-    if VALID_CELL_LINES and parent_cell_line not in VALID_CELL_LINES:
-        print(f"❌ 错误: parent_cell_line 必须是以下之一:")
-        for cl in VALID_CELL_LINES:
-            print(f"   - {cl}")
-        print(f"\n   你输入的是: {parent_cell_line!r}")
-        print(f"   如需新增细胞系，请在配置文件中更新 schema.valid_cell_lines")
+    if not result.get("ok"):
+        error_code = result.get("error_code")
+        if error_code == "invalid_cell_line":
+            print("❌ 错误: parent_cell_line 必须是以下之一:")
+            for cl in result.get("allowed_cell_lines", []):
+                print(f"   - {cl}")
+            print(f"\n   你输入的是: {parent_cell_line!r}")
+            print("   如需新增细胞系，请在配置文件中更新 schema.valid_cell_lines")
+        elif error_code == "position_conflict":
+            print("\n❌ 错误: 位置冲突！以下位置已被占用:\n")
+            for conf in result.get("conflicts", []):
+                print(f"  - ID {conf['id']} ({conf['short_name']}): 位置 {conf['positions']}")
+            print(f"\n请使用其他位置或运行 'python query_inventory.py --empty --box {box}' 查看空位\n")
+        else:
+            print(f"❌ 错误: {result.get('message', '添加失败')}")
         return 1
 
-    if not validate_date(frozen_at):
-        print(f"❌ 错误: 日期格式无效，请使用 YYYY-MM-DD 格式（如 2026-01-08）")
-        return 1
+    preview = result.get("preview", {})
+    new_id = preview.get("id")
 
-    if box < BOX_RANGE[0] or box > BOX_RANGE[1]:
-        print(f"❌ 错误: 盒子编号必须在 {BOX_RANGE[0]}-{BOX_RANGE[1]} 之间")
-        return 1
-
-    if not positions:
-        print(f"❌ 错误: 必须指定至少一个位置")
-        return 1
-
-    # 加载数据
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as e:
-        print(f"❌ 错误: 无法读取YAML文件: {e}")
-        return 1
-
-    records = data.get("inventory", [])
-
-    # 检查位置冲突
-    conflicts = check_position_conflicts(records, box, positions)
-    if conflicts:
-        print(f"\n❌ 错误: 位置冲突！以下位置已被占用:\n")
-        for conf in conflicts:
-            print(f"  - ID {conf['id']} ({conf['short_name']}): 位置 {conf['positions']}")
-        print(f"\n请使用其他位置或运行 'python query_inventory.py --empty --box {box}' 查看空位\n")
-        return 1
-
-    # 生成新ID
-    new_id = get_next_id(records)
-
-    # 创建新记录
-    new_record = {
-        "id": new_id,
-        "parent_cell_line": parent_cell_line,
-        "short_name": short_name,
-        "plasmid_name": plasmid_name,
-        "plasmid_id": plasmid_id,
-        "box": box,
-        "positions": positions,
-        "frozen_at": frozen_at,
-        "thaw_log": None,
-        "note": note
-    }
-
-    # 显示预览
     print(f"\n{'=' * 60}")
-    print(f"📋 新记录预览")
+    print("📋 新记录预览")
     print(f"{'=' * 60}")
     print(f"ID:          {new_id} (自动分配)")
-    print(f"细胞系:      {parent_cell_line}")
-    print(f"简称:        {short_name}")
-    print(f"质粒名称:    {plasmid_name or '(未指定)'}")
-    print(f"质粒ID:      {plasmid_id or '(未指定)'}")
-    print(f"盒子:        {box}")
-    print(f"位置:        {positions}")
-    print(f"冻存日期:    {frozen_at}")
-    print(f"备注:        {note or '(无)'}")
+    print(f"细胞系:      {preview.get('parent_cell_line')}")
+    print(f"简称:        {preview.get('short_name')}")
+    print(f"质粒名称:    {preview.get('plasmid_name') or '(未指定)'}")
+    print(f"质粒ID:      {preview.get('plasmid_id') or '(未指定)'}")
+    print(f"盒子:        {preview.get('box')}")
+    print(f"位置:        {preview.get('positions')}")
+    print(f"冻存日期:    {preview.get('frozen_at')}")
+    print(f"备注:        {preview.get('note') or '(无)'}")
     print(f"{'=' * 60}\n")
 
-    if dry_run:
+    if result.get("dry_run"):
         print("ℹ️  这是预览模式，未实际修改文件")
         print("   移除 --dry-run 参数以执行实际添加\n")
         return 0
 
-    # 执行添加
-    try:
-        records.append(new_record)
-
-        # 写入文件
-        write_yaml(
-            data,
-            yaml_path,
-            audit_meta={
-                "action": "add_entry",
-                "source": "scripts/add_entry.py",
-                "details": {
-                    "new_id": new_id,
-                    "box": box,
-                    "positions": positions,
-                    "parent_cell_line": parent_cell_line,
-                    "short_name": short_name,
-                },
-            },
-        )
-
-        print(f"✅ 成功！新记录已添加")
-        print(f"✅ 占用位置信息已自动重建")
-        print(f"\n新记录 ID: {new_id}\n")
-        return 0
-
-    except Exception as e:
-        print(f"❌ 错误: 添加失败: {e}")
-        return 1
+    print("✅ 成功！新记录已添加")
+    print("✅ 占用位置信息已自动重建")
+    print(f"\n新记录 ID: {new_id}\n")
+    return 0
 
 
 def main():

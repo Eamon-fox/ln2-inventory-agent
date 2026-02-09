@@ -9,8 +9,9 @@ from collections import defaultdict
 # Import from lib
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from lib.yaml_ops import load_yaml, compute_occupancy
+from lib.yaml_ops import compute_occupancy
 from lib.config import YAML_PATH, BOX_RANGE
+from lib.tool_api import tool_generate_stats
 
 
 def get_box_total_slots(layout):
@@ -143,18 +144,24 @@ def main():
     parser.add_argument("--box", type=int, help="Show visualization for specific box only")
     args = parser.parse_args()
 
-    data = load_yaml(args.yaml)
+    response = tool_generate_stats(args.yaml)
+    if not response.get("ok"):
+        print(f"❌ 错误: {response.get('message', '统计失败')}")
+        return 1
+
+    payload = response["result"]
+    data = payload["data"]
+    stats = payload["stats"]
+    occupancy = payload["occupancy"]
 
     # If only box visualization is requested
     if args.box:
         layout = data.get("meta", {}).get("box_layout", {})
-        occupancy = compute_occupancy(data.get("inventory", []))
         occupied = occupancy.get(str(args.box), [])
         print(visualize_box(args.box, occupied, layout))
         return 0
 
-    # Generate and print stats
-    stats = generate_stats(data)
+    # Print stats
     print_stats(stats, data, show_visual=args.visual)
 
     return 0

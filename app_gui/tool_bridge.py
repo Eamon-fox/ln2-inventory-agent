@@ -1,0 +1,97 @@
+"""GUI-facing bridge to the unified Tool API."""
+
+from lib.tool_api import (
+    build_actor_context,
+    parse_batch_entries,
+    tool_add_entry,
+    tool_batch_thaw,
+    tool_collect_timeline,
+    tool_generate_stats,
+    tool_list_empty_positions,
+    tool_list_backups,
+    tool_query_inventory,
+    tool_record_thaw,
+    tool_rollback,
+)
+
+
+class GuiToolBridge:
+    """Thin adapter that stamps GUI actor metadata on tool calls."""
+
+    def __init__(self, actor_id="gui-user", session_id=None):
+        self._actor_id = actor_id
+        self._session_id = session_id
+
+    def set_actor(self, actor_id=None, session_id=None):
+        if actor_id:
+            self._actor_id = actor_id
+        if session_id:
+            self._session_id = session_id
+
+    def _ctx(self):
+        return build_actor_context(
+            actor_type="human",
+            channel="gui",
+            actor_id=self._actor_id,
+            session_id=self._session_id,
+        )
+
+    def query_inventory(self, yaml_path, **filters):
+        return tool_query_inventory(yaml_path=yaml_path, **filters)
+
+    def list_empty_positions(self, yaml_path, box=None):
+        return tool_list_empty_positions(yaml_path=yaml_path, box=box)
+
+    def generate_stats(self, yaml_path):
+        return tool_generate_stats(yaml_path=yaml_path)
+
+    def collect_timeline(self, yaml_path, days=7, all_history=False):
+        return tool_collect_timeline(yaml_path=yaml_path, days=days, all_history=all_history)
+
+    def list_backups(self, yaml_path):
+        backups = tool_list_backups(yaml_path)
+        return {
+            "ok": True,
+            "result": {
+                "count": len(backups),
+                "backups": backups,
+            },
+        }
+
+    def add_entry(self, yaml_path, **payload):
+        return tool_add_entry(
+            yaml_path=yaml_path,
+            actor_context=self._ctx(),
+            source="app_gui",
+            **payload,
+        )
+
+    def record_thaw(self, yaml_path, **payload):
+        return tool_record_thaw(
+            yaml_path=yaml_path,
+            actor_context=self._ctx(),
+            source="app_gui",
+            **payload,
+        )
+
+    def batch_thaw(self, yaml_path, **payload):
+        return tool_batch_thaw(
+            yaml_path=yaml_path,
+            actor_context=self._ctx(),
+            source="app_gui",
+            **payload,
+        )
+
+    def batch_thaw_from_text(self, yaml_path, entries_text, **payload):
+        entries = parse_batch_entries(entries_text)
+        return self.batch_thaw(yaml_path=yaml_path, entries=entries, **payload)
+
+    def rollback(self, yaml_path, backup_path=None, no_html=True, no_server=True):
+        return tool_rollback(
+            yaml_path=yaml_path,
+            backup_path=backup_path,
+            no_html=no_html,
+            no_server=no_server,
+            actor_context=self._ctx(),
+            source="app_gui",
+        )

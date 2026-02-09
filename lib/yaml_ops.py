@@ -10,6 +10,7 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 from datetime import datetime
 
 import yaml
@@ -27,9 +28,17 @@ from .config import (
     YAML_PATH,
     YAML_SIZE_WARNING_MB,
 )
+from .validators import format_validation_errors, validate_inventory
 
 
 _SERVER_PROCS = {}
+
+
+def _ensure_inventory_integrity(data, prefix="完整性校验失败"):
+    """Raise ValueError when inventory invariants are broken."""
+    errors, _warnings = validate_inventory(data)
+    if errors:
+        raise ValueError(format_validation_errors(errors, prefix=prefix))
 
 
 def _abs_path(path):
@@ -465,12 +474,31 @@ def _build_audit_event(
     meta = dict(audit_meta or {})
     details = meta.get("details")
 
+    actor_type = meta.get("actor_type") or "system"
+    actor_id = meta.get("actor_id") or getpass.getuser()
+    channel = meta.get("channel") or "unknown"
+    session_id = meta.get("session_id") or f"session-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    trace_id = meta.get("trace_id") or f"trace-{uuid.uuid4().hex}"
+    tool_name = meta.get("tool_name")
+    tool_input = meta.get("tool_input")
+    status = meta.get("status") or "success"
+    error = meta.get("error")
+
     event = {
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "user": getpass.getuser(),
         "host": socket.gethostname(),
         "action": meta.get("action", "write_yaml"),
         "source": meta.get("source", "lib.yaml_ops.write_yaml"),
+        "actor_type": actor_type,
+        "actor_id": actor_id,
+        "channel": channel,
+        "session_id": session_id,
+        "trace_id": trace_id,
+        "tool_name": tool_name,
+        "tool_input": tool_input,
+        "status": status,
+        "error": error,
         "yaml_path": yaml_abs,
         "backup_path": backup_path,
         "preview_url": preview_url,
@@ -523,9 +551,13 @@ def write_yaml(
         auto_html: Whether to refresh HTML snapshot after writing YAML
         auto_server: Whether to ensure local HTTP preview server is running
         auto_backup: Whether to create backup before overwrite
-        audit_meta: Optional dict for audit fields: action/source/details
+        audit_meta: Optional dict for audit fields.
+            Common keys: action/source/details, plus actor_type, actor_id,
+            channel, session_id, trace_id, tool_name, tool_input, status, error.
     """
     yaml_abs = _abs_path(path)
+
+    _ensure_inventory_integrity(data, prefix="写入被阻止：库存完整性校验失败")
 
     before_data = None
     if os.path.exists(yaml_abs):
@@ -612,6 +644,12 @@ def rollback_yaml(
 
     if not os.path.exists(target_backup):
         raise FileNotFoundError(f"备份不存在: {target_backup}")
+
+    backup_data = load_yaml(target_backup)
+    _ensure_inventory_integrity(
+        backup_data,
+        prefix=f"回滚被阻止：目标备份不满足完整性约束 ({os.path.basename(target_backup)})",
+    )
 
     before_data = load_yaml(yaml_abs)
 

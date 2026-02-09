@@ -7,12 +7,12 @@
 import argparse
 import sys
 import os
-from datetime import datetime, timedelta
+import yaml
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from lib.yaml_ops import load_yaml
 from lib.config import YAML_PATH
-from lib.validators import parse_date, format_chinese_date
+from lib.tool_api import tool_get_raw_entries, tool_recent_frozen
+from lib.validators import format_chinese_date
 from lib.thaw_parser import format_positions
 
 
@@ -27,46 +27,6 @@ def get_thaw_summary(rec):
     if lines:
         return lines[0][:50]  # 限制长度
     return None
-
-
-def query_recent_frozen(records, days=None, count=None):
-    """
-    查询最近冻存的记录
-
-    Args:
-        records: 所有记录
-        days: 查询最近N天（优先级高）
-        count: 查询最近N条
-
-    Returns:
-        按日期降序排列的记录列表
-    """
-    # 过滤有效记录
-    valid_records = []
-    for rec in records:
-        frozen_at = rec.get("frozen_at")
-        if not frozen_at:
-            continue
-        dt = parse_date(frozen_at)
-        if not dt:
-            continue
-        valid_records.append((dt, rec))
-
-    # 按日期降序排序
-    valid_records.sort(key=lambda x: x[0], reverse=True)
-
-    # 按天数过滤
-    if days is not None:
-        cutoff_date = datetime.now() - timedelta(days=days)
-        filtered = [(dt, rec) for dt, rec in valid_records if dt >= cutoff_date]
-        return [rec for dt, rec in filtered]
-
-    # 按条数限制
-    if count is not None:
-        return [rec for dt, rec in valid_records[:count]]
-
-    # 默认返回最近10条
-    return [rec for dt, rec in valid_records[:10]]
 
 
 def main():
@@ -122,17 +82,17 @@ def main():
 
     args = parser.parse_args()
 
-    # 加载数据
-    data = load_yaml(args.yaml)
-    records = data.get("inventory", [])
-
     # 默认查询冻存记录
     if not args.frozen:
         args.frozen = True
 
     # 查询冻存记录
     if args.frozen:
-        results = query_recent_frozen(records, days=args.days, count=args.count)
+        response = tool_recent_frozen(args.yaml, days=args.days, count=args.count)
+        if not response.get("ok"):
+            print(f"❌ 错误: {response.get('message', '查询失败')}")
+            return 1
+        results = response["result"]["records"]
 
         if not results:
             print("❌ 未找到符合条件的冻存记录")
@@ -191,15 +151,25 @@ def main():
             print("="*60 + "\n")
 
             ids = [rec['id'] for rec in results]
-            import subprocess
-            from lib.config import PYTHON_PATH, SCRIPTS_DIR
+            raw_response = tool_get_raw_entries(args.yaml, ids)
+            if not raw_response.get("ok"):
+                print(f"❌ {raw_response.get('message', '获取原始数据失败')}")
+                return 1
 
-            cmd = [
-                PYTHON_PATH,
-                os.path.join(SCRIPTS_DIR, "show_raw.py")
-            ] + [str(i) for i in ids]
-
-            subprocess.run(cmd)
+            for i, entry in enumerate(raw_response["result"]["entries"]):
+                if i > 0:
+                    print()
+                print(f"# === ID {entry['id']} ===")
+                yaml_str = yaml.dump([entry], allow_unicode=True, default_flow_style=False, sort_keys=False)
+                lines = yaml_str.split('\n')
+                if lines and lines[0].startswith('- '):
+                    lines[0] = lines[0][2:]
+                for line in lines:
+                    if line:
+                        if line.startswith('  '):
+                            print(line[2:])
+                        else:
+                            print(line)
 
     return 0
 

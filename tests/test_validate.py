@@ -60,8 +60,9 @@ class ValidatePositionsTests(unittest.TestCase):
         errors, warnings = validate_record(rec, 0, LAYOUT)
 
         self.assertEqual([], warnings)
-        self.assertEqual(1, len(errors))
-        self.assertIn("positions", errors[0])
+        self.assertGreaterEqual(len(errors), 1)
+        self.assertTrue(any("positions" in err for err in errors))
+        self.assertTrue(any("action" in err for err in errors))
 
     def test_positions_must_be_list(self):
         rec = make_record(positions="1")

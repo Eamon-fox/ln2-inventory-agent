@@ -8,55 +8,8 @@ import sys
 # Import from lib
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from lib.yaml_ops import load_yaml
 from lib.config import YAML_PATH
-
-
-def search_record(rec, query):
-    """Search all text fields in a record for query string."""
-    query_lower = query.lower()
-
-    # Fields to search
-    searchable_fields = [
-        'parent_cell_line',
-        'short_name',
-        'plasmid_name',
-        'plasmid_id',
-        'note',
-        'thaw_log'
-    ]
-
-    # Also search ID, box, positions as strings
-    if query_lower in str(rec.get('id', '')).lower():
-        return True
-    if query_lower in str(rec.get('box', '')).lower():
-        return True
-    if query_lower in str(rec.get('frozen_at', '')).lower():
-        return True
-
-    # Search positions
-    positions = rec.get('positions', [])
-    if positions:
-        pos_str = ','.join(str(p) for p in positions)
-        if query_lower in pos_str.lower():
-            return True
-
-    # Search text fields
-    for field in searchable_fields:
-        value = rec.get(field)
-        if value and query_lower in str(value).lower():
-            return True
-
-    return False
-
-
-def highlight_text(text, query):
-    """Highlight query in text (simple version)."""
-    if not text or not query:
-        return text
-    # For simplicity, just return original text
-    # Could add color codes here if needed
-    return text
+from lib.tool_api import tool_search_records
 
 
 def format_record(rec, query, verbose=False):
@@ -96,11 +49,16 @@ def main():
     parser.add_argument("--case-sensitive", "-c", action="store_true", help="区分大小写")
     args = parser.parse_args()
 
-    data = load_yaml(args.yaml)
-    records = data.get("inventory", [])
-
-    # Search all records
-    matches = [rec for rec in records if search_record(rec, args.query)]
+    response = tool_search_records(
+        yaml_path=args.yaml,
+        query=args.query,
+        mode="fuzzy",
+        case_sensitive=args.case_sensitive,
+    )
+    if not response.get("ok"):
+        print(f"❌ 错误: {response.get('message', '搜索失败')}")
+        return 1
+    matches = response["result"]["records"]
 
     if not matches:
         print(f"\n未找到包含 '{args.query}' 的记录")

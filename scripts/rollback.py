@@ -10,7 +10,7 @@ from datetime import datetime
 # Import from lib
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from lib.config import YAML_PATH
-from lib.yaml_ops import list_yaml_backups, rollback_yaml
+from lib.tool_api import build_actor_context, tool_list_backups, tool_rollback
 
 
 def format_backup_line(path):
@@ -42,7 +42,7 @@ def main():
     parser.add_argument("--no-server", action="store_true", help="回滚后不启动/复用 HTTP 预览服务")
     args = parser.parse_args()
 
-    backups = list_yaml_backups(args.yaml)
+    backups = tool_list_backups(args.yaml)
 
     if args.list:
         if not backups:
@@ -60,21 +60,19 @@ def main():
 
     target = args.backup or backups[0]
 
-    try:
-        result = rollback_yaml(
-            path=args.yaml,
-            backup_path=target,
-            auto_html=not args.no_html,
-            auto_server=not args.no_server,
-            audit_meta={
-                "action": "rollback",
-                "source": "scripts/rollback.py",
-                "details": {"requested_backup": target},
-            },
-        )
-    except Exception as exc:
-        print(f"❌ 回滚失败: {exc}")
+    actor_context = build_actor_context(actor_type="human", channel="cli")
+    response = tool_rollback(
+        yaml_path=args.yaml,
+        backup_path=target,
+        no_html=args.no_html,
+        no_server=args.no_server,
+        actor_context=actor_context,
+        source="scripts/rollback.py",
+    )
+    if not response.get("ok"):
+        print(f"❌ {response.get('message', '回滚失败')}")
         return 1
+    result = response["result"]
 
     print("✅ 回滚成功")
     print(f"   恢复来源: {result['restored_from']}")

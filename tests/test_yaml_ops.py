@@ -118,6 +118,11 @@ class YamlOpsSafetyTests(unittest.TestCase):
             self.assertEqual("tests", last["source"])
             self.assertIn(2, last["changed_ids"]["added"])
             self.assertTrue(last["backup_path"])
+            self.assertIn("actor_type", last)
+            self.assertIn("channel", last)
+            self.assertTrue(last.get("session_id"))
+            self.assertTrue(last.get("trace_id"))
+            self.assertEqual("success", last.get("status"))
 
     def test_rollback_yaml_restores_latest_backup(self):
         with tempfile.TemporaryDirectory(prefix="ln2_rollback_") as temp_dir:
@@ -143,6 +148,46 @@ class YamlOpsSafetyTests(unittest.TestCase):
             self.assertEqual([1], restored["inventory"][0]["positions"])
             self.assertTrue(Path(result["restored_from"]).exists())
             self.assertTrue(Path(result["snapshot_before_rollback"]).exists())
+
+    def test_write_yaml_rejects_invalid_inventory(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_write_guard_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            invalid = make_data([make_record(1, box=99, positions=[1])])
+
+            with self.assertRaises(ValueError) as ctx:
+                write_yaml(invalid, path=str(yaml_path), auto_html=False, auto_server=False)
+
+            self.assertIn("完整性校验失败", str(ctx.exception))
+            self.assertFalse(yaml_path.exists())
+
+    def test_rollback_yaml_blocks_invalid_backup(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_rollback_guard_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                auto_html=False,
+                auto_server=False,
+            )
+
+            invalid_backup = Path(temp_dir) / "inventory.invalid.bak"
+            invalid_backup.write_text(
+                "meta:\n  box_layout:\n    rows: 9\n    cols: 9\ninventory:\n  - id: 1\n    parent_cell_line: NCCIT\n    short_name: bad\n    box: 1\n    positions: []\n    frozen_at: 2025-01-01\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(ValueError) as ctx:
+                rollback_yaml(
+                    path=str(yaml_path),
+                    backup_path=str(invalid_backup),
+                    auto_html=False,
+                    auto_server=False,
+                )
+
+            self.assertIn("回滚被阻止", str(ctx.exception))
+            current = load_yaml(str(yaml_path))
+            self.assertEqual([1], current["inventory"][0]["positions"])
 
 
 if __name__ == "__main__":

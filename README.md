@@ -18,6 +18,9 @@ Data is stored in a single YAML file. All operations go through validated script
 - **Backup & rollback**: automatic timestamped backups, one-click restore
 - **Audit log**: JSONL log of all modifications
 - **Fully configurable**: box count, grid size, position range, cell line whitelist — all via JSON config
+- **Unified Tool API**: shared by CLI, GUI, and AI agent runtime
+- **GUI starter**: desktop scaffold in `app_gui/` (query/add/thaw panels)
+- **ReAct runtime**: agent loop in `agent/` with LiteLLM or mock mode
 
 ## Quick Start
 
@@ -96,11 +99,32 @@ See [`references/ln2_config.sample.json`](references/ln2_config.sample.json) for
 
 This project can also be installed as a [Claude Code](https://claude.ai/code) skill. See [`SKILL.md`](SKILL.md) for AI agent integration instructions.
 
+## GUI (M2 starter)
+
+```bash
+pip install PySide6
+python app_gui/main.py
+```
+
+## ReAct Agent Runtime
+
+```bash
+# mock mode (no external model call)
+python agent/run_agent.py "query K562 records" --mock
+
+# real model mode (via LiteLLM)
+pip install litellm
+export LITELLM_MODEL="anthropic/claude-3-5-sonnet"
+python agent/run_agent.py "mark ID 10 position 23 as takeout today"
+```
+
 ## Project Structure
 
 ```
 scripts/          # 16 CLI scripts (query, modify, utility)
 lib/              # Shared library (config, YAML ops, validation)
+agent/            # ReAct runtime + tool dispatcher + LLM adapters
+app_gui/          # Desktop GUI scaffold
 tests/            # Unit tests (pytest)
 references/       # Sample files and documentation
 SKILL.md          # Claude Code skill definition
@@ -110,6 +134,8 @@ SKILL.md          # Claude Code skill definition
 
 - Python 3.8+
 - PyYAML
+- Optional: PySide6 (GUI)
+- Optional: LiteLLM (real-model agent mode)
 
 ## License
 
