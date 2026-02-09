@@ -53,6 +53,17 @@ def write_raw_yaml(path, data):
     )
 
 
+def read_audit_rows(temp_dir):
+    audit_path = Path(temp_dir) / "ln2_inventory_audit.jsonl"
+    if not audit_path.exists():
+        return []
+    return [
+        json.loads(line)
+        for line in audit_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
 class ToolApiTests(unittest.TestCase):
     def test_tool_add_entry_writes_actor_metadata(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_add_") as temp_dir:
@@ -198,6 +209,44 @@ class ToolApiTests(unittest.TestCase):
             self.assertEqual("integrity_validation_failed", result["error_code"])
             self.assertTrue(any("重复的 ID" in err for err in result.get("errors", [])))
 
+            rows = read_audit_rows(temp_dir)
+            self.assertEqual(1, len(rows))
+            last = rows[-1]
+            self.assertEqual("add_entry", last["action"])
+            self.assertEqual("failed", last.get("status"))
+            self.assertEqual("integrity_validation_failed", (last.get("error") or {}).get("error_code"))
+
+    def test_tool_add_entry_invalid_date_writes_failed_audit(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_bad_date_audit_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                auto_html=False,
+                auto_server=False,
+            )
+
+            result = tool_add_entry(
+                yaml_path=str(yaml_path),
+                parent_cell_line="K562",
+                short_name="clone-invalid-date",
+                box=1,
+                positions=[2],
+                frozen_at="2026/02/10",
+                auto_html=False,
+                auto_server=False,
+            )
+
+            self.assertFalse(result["ok"])
+            self.assertEqual("invalid_date", result["error_code"])
+
+            rows = read_audit_rows(temp_dir)
+            self.assertGreaterEqual(len(rows), 2)
+            last = rows[-1]
+            self.assertEqual("add_entry", last["action"])
+            self.assertEqual("failed", last.get("status"))
+            self.assertEqual("invalid_date", (last.get("error") or {}).get("error_code"))
+
     def test_tool_record_thaw_rejects_malformed_thaw_events(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_bad_events_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
@@ -313,6 +362,13 @@ class ToolApiTests(unittest.TestCase):
             self.assertFalse(result["ok"])
             self.assertEqual("rollback_backup_invalid", result["error_code"])
             self.assertEqual(str(bad_backup), result["backup_path"])
+
+            rows = read_audit_rows(temp_dir)
+            self.assertGreaterEqual(len(rows), 2)
+            last = rows[-1]
+            self.assertEqual("rollback", last["action"])
+            self.assertEqual("failed", last.get("status"))
+            self.assertEqual("rollback_backup_invalid", (last.get("error") or {}).get("error_code"))
 
     def test_tool_query_inventory_filters(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_query_") as temp_dir:

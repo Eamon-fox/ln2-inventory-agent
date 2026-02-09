@@ -514,6 +514,28 @@ def _build_audit_event(
     return event
 
 
+def append_audit_event(
+    yaml_path,
+    before_data=None,
+    after_data=None,
+    backup_path=None,
+    preview_url=None,
+    warnings=None,
+    audit_meta=None,
+):
+    """Append one audit event and return the audit log path."""
+    event = _build_audit_event(
+        yaml_path=yaml_path,
+        before_data=before_data,
+        after_data=after_data,
+        backup_path=backup_path,
+        preview_url=preview_url,
+        warnings=warnings,
+        audit_meta=audit_meta,
+    )
+    return _append_audit_event(yaml_path, event)
+
+
 def write_html_snapshot(data, yaml_path=YAML_PATH, output_path=None):
     """Render and write the HTML inventory snapshot.
 
@@ -604,7 +626,7 @@ def write_yaml(
         warnings.append(size_warning)
 
     try:
-        event = _build_audit_event(
+        append_audit_event(
             yaml_path=yaml_abs,
             before_data=before_data,
             after_data=data,
@@ -613,7 +635,6 @@ def write_yaml(
             warnings=warnings,
             audit_meta=audit_meta,
         )
-        _append_audit_event(yaml_abs, event)
     except Exception as exc:
         print(f"warning: failed to append audit log: {exc}", file=sys.stderr)
 
@@ -689,7 +710,7 @@ def rollback_yaml(
     )
     meta["details"] = details
 
-    event = _build_audit_event(
+    append_audit_event(
         yaml_path=yaml_abs,
         before_data=before_data,
         after_data=after_data,
@@ -698,7 +719,6 @@ def rollback_yaml(
         warnings=warnings,
         audit_meta=meta,
     )
-    _append_audit_event(yaml_abs, event)
 
     return {
         "restored_from": target_backup,

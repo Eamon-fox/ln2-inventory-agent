@@ -16,7 +16,14 @@ from .validators import (
     validate_date,
     validate_inventory,
 )
-from .yaml_ops import compute_occupancy, list_yaml_backups, load_yaml, rollback_yaml, write_yaml
+from .yaml_ops import (
+    append_audit_event,
+    compute_occupancy,
+    list_yaml_backups,
+    load_yaml,
+    rollback_yaml,
+    write_yaml,
+)
 
 
 _DEFAULT_SESSION_ID = f"session-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
@@ -92,6 +99,93 @@ def _validate_data_or_error(data, message_prefix="写入被阻止：完整性校
     }
 
 
+def _append_failed_audit(
+    yaml_path,
+    action,
+    source,
+    tool_name,
+    actor_context=None,
+    details=None,
+    tool_input=None,
+    error_code=None,
+    message=None,
+    errors=None,
+    before_data=None,
+):
+    """Best-effort audit append for blocked/failed write operations."""
+    meta = _build_audit_meta(
+        action=action,
+        source=source,
+        tool_name=tool_name,
+        actor_context=actor_context,
+        details=details,
+        tool_input=tool_input,
+    )
+    meta["status"] = "failed"
+    error_payload = {
+        "error_code": error_code,
+        "message": message,
+    }
+    if errors:
+        error_payload["errors"] = errors
+    meta["error"] = error_payload
+
+    snapshot = before_data if isinstance(before_data, dict) else None
+    try:
+        append_audit_event(
+            yaml_path=yaml_path,
+            before_data=snapshot,
+            after_data=snapshot,
+            backup_path=None,
+            preview_url=None,
+            warnings=[],
+            audit_meta=meta,
+        )
+    except Exception:
+        # Failure auditing must never change tool behavior.
+        return
+
+
+def _failure_result(
+    yaml_path,
+    action,
+    source,
+    tool_name,
+    error_code,
+    message,
+    actor_context=None,
+    details=None,
+    tool_input=None,
+    before_data=None,
+    errors=None,
+    extra=None,
+):
+    payload = {
+        "ok": False,
+        "error_code": error_code,
+        "message": message,
+    }
+    if errors is not None:
+        payload["errors"] = errors
+    if extra:
+        payload.update(extra)
+
+    _append_failed_audit(
+        yaml_path=yaml_path,
+        action=action,
+        source=source,
+        tool_name=tool_name,
+        actor_context=actor_context,
+        details=details,
+        tool_input=tool_input,
+        error_code=error_code,
+        message=message,
+        errors=errors,
+        before_data=before_data,
+    )
+    return payload
+
+
 def tool_add_entry(
     yaml_path,
     parent_cell_line,
@@ -110,53 +204,103 @@ def tool_add_entry(
     auto_backup=True,
 ):
     """Add a new frozen entry using the shared tool flow."""
+    action = "add_entry"
+    tool_name = "tool_add_entry"
+    tool_input = {
+        "parent_cell_line": parent_cell_line,
+        "short_name": short_name,
+        "box": box,
+        "positions": list(positions) if isinstance(positions, list) else positions,
+        "frozen_at": frozen_at,
+        "plasmid_name": plasmid_name,
+        "plasmid_id": plasmid_id,
+        "note": note,
+        "dry_run": bool(dry_run),
+    }
+
     if VALID_CELL_LINES and parent_cell_line not in VALID_CELL_LINES:
-        return {
-            "ok": False,
-            "error_code": "invalid_cell_line",
-            "message": f"parent_cell_line 不在允许列表中: {parent_cell_line}",
-            "allowed_cell_lines": list(VALID_CELL_LINES),
-        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=action,
+            source=source,
+            tool_name=tool_name,
+            error_code="invalid_cell_line",
+            message=f"parent_cell_line 不在允许列表中: {parent_cell_line}",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            details={"parent_cell_line": parent_cell_line},
+            extra={"allowed_cell_lines": list(VALID_CELL_LINES)},
+        )
 
     if not validate_date(frozen_at):
-        return {
-            "ok": False,
-            "error_code": "invalid_date",
-            "message": f"日期格式无效: {frozen_at}",
-        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=action,
+            source=source,
+            tool_name=tool_name,
+            error_code="invalid_date",
+            message=f"日期格式无效: {frozen_at}",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            details={"frozen_at": frozen_at},
+        )
 
     if box < BOX_RANGE[0] or box > BOX_RANGE[1]:
-        return {
-            "ok": False,
-            "error_code": "invalid_box",
-            "message": f"盒子编号必须在 {BOX_RANGE[0]}-{BOX_RANGE[1]} 之间",
-        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=action,
+            source=source,
+            tool_name=tool_name,
+            error_code="invalid_box",
+            message=f"盒子编号必须在 {BOX_RANGE[0]}-{BOX_RANGE[1]} 之间",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            details={"box": box},
+        )
 
     if not positions:
-        return {
-            "ok": False,
-            "error_code": "empty_positions",
-            "message": "必须指定至少一个位置",
-        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=action,
+            source=source,
+            tool_name=tool_name,
+            error_code="empty_positions",
+            message="必须指定至少一个位置",
+            actor_context=actor_context,
+            tool_input=tool_input,
+        )
 
     try:
         data = load_yaml(yaml_path)
     except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "load_failed",
-            "message": f"无法读取YAML文件: {exc}",
-        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=action,
+            source=source,
+            tool_name=tool_name,
+            error_code="load_failed",
+            message=f"无法读取YAML文件: {exc}",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            details={"load_error": str(exc)},
+        )
 
     records = data.get("inventory", [])
     conflicts = check_position_conflicts(records, box, positions)
     if conflicts:
-        return {
-            "ok": False,
-            "error_code": "position_conflict",
-            "message": "位置冲突",
-            "conflicts": conflicts,
-        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=action,
+            source=source,
+            tool_name=tool_name,
+            error_code="position_conflict",
+            message="位置冲突",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+            details={"box": box, "positions": list(positions), "conflict_count": len(conflicts)},
+            extra={"conflicts": conflicts},
+        )
 
     new_id = get_next_id(records)
     new_record = {
@@ -196,11 +340,44 @@ def tool_add_entry(
         candidate_data = deepcopy(data)
         candidate_inventory = candidate_data.setdefault("inventory", [])
         if not isinstance(candidate_inventory, list):
-            return _validate_data_or_error(candidate_data)
+            validation_error = _validate_data_or_error(candidate_data) or {
+                "error_code": "integrity_validation_failed",
+                "message": "写入被阻止：完整性校验失败",
+                "errors": [],
+            }
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=action,
+                source=source,
+                tool_name=tool_name,
+                error_code=validation_error.get("error_code", "integrity_validation_failed"),
+                message=validation_error.get("message", "写入被阻止：完整性校验失败"),
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                errors=validation_error.get("errors"),
+            )
         candidate_inventory.append(new_record)
         validation_error = _validate_data_or_error(candidate_data)
         if validation_error:
-            return validation_error
+            validation_error = validation_error or {
+                "error_code": "integrity_validation_failed",
+                "message": "写入被阻止：完整性校验失败",
+                "errors": [],
+            }
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=action,
+                source=source,
+                tool_name=tool_name,
+                error_code=validation_error.get("error_code", "integrity_validation_failed"),
+                message=validation_error.get("message", "写入被阻止：完整性校验失败"),
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                errors=validation_error.get("errors"),
+                details={"new_id": new_id, "box": box, "positions": list(positions)},
+            )
 
         write_yaml(
             candidate_data,
@@ -209,9 +386,9 @@ def tool_add_entry(
             auto_server=auto_server,
             auto_backup=auto_backup,
             audit_meta=_build_audit_meta(
-                action="add_entry",
+                action=action,
                 source=source,
-                tool_name="tool_add_entry",
+                tool_name=tool_name,
                 actor_context=actor_context,
                 details={
                     "new_id": new_id,
@@ -230,11 +407,18 @@ def tool_add_entry(
             ),
         )
     except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "write_failed",
-            "message": f"添加失败: {exc}",
-        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=action,
+            source=source,
+            tool_name=tool_name,
+            error_code="write_failed",
+            message=f"添加失败: {exc}",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+            details={"new_id": new_id, "box": box},
+        )
 
     return {
         "ok": True,
@@ -259,55 +443,104 @@ def tool_record_thaw(
     auto_backup=True,
 ):
     """Record one thaw/takeout/discard operation via shared tool flow."""
+    audit_action = "record_thaw"
+    tool_name = "tool_record_thaw"
+    tool_input = {
+        "record_id": record_id,
+        "position": position,
+        "date": date_str,
+        "action": action,
+        "note": note,
+        "dry_run": bool(dry_run),
+    }
+
     if not validate_date(date_str):
-        return {
-            "ok": False,
-            "error_code": "invalid_date",
-            "message": f"日期格式无效: {date_str}",
-        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="invalid_date",
+            message=f"日期格式无效: {date_str}",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            details={"date": date_str},
+        )
 
     if position < POSITION_RANGE[0] or position > POSITION_RANGE[1]:
-        return {
-            "ok": False,
-            "error_code": "invalid_position",
-            "message": f"位置编号必须在 {POSITION_RANGE[0]}-{POSITION_RANGE[1]} 之间",
-        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="invalid_position",
+            message=f"位置编号必须在 {POSITION_RANGE[0]}-{POSITION_RANGE[1]} 之间",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            details={"position": position},
+        )
 
     action_en = normalize_action(action)
     if not action_en:
-        return {
-            "ok": False,
-            "error_code": "invalid_action",
-            "message": "操作类型必须是 取出/复苏/扔掉",
-        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="invalid_action",
+            message="操作类型必须是 取出/复苏/扔掉",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            details={"action": action},
+        )
     action_cn = ACTION_LABEL.get(action_en, action)
 
     try:
         data = load_yaml(yaml_path)
     except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "load_failed",
-            "message": f"无法读取YAML文件: {exc}",
-        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="load_failed",
+            message=f"无法读取YAML文件: {exc}",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            details={"load_error": str(exc)},
+        )
 
     records = data.get("inventory", [])
     idx, record = find_record_by_id(records, record_id)
     if record is None:
-        return {
-            "ok": False,
-            "error_code": "record_not_found",
-            "message": f"未找到 ID={record_id} 的记录",
-        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="record_not_found",
+            message=f"未找到 ID={record_id} 的记录",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+            details={"record_id": record_id},
+        )
 
     positions = record.get("positions", [])
     if position not in positions:
-        return {
-            "ok": False,
-            "error_code": "position_not_found",
-            "message": f"位置 {position} 不在记录 #{record_id} 的现有位置中",
-            "current_positions": positions,
-        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="position_not_found",
+            message=f"位置 {position} 不在记录 #{record_id} 的现有位置中",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+            details={"record_id": record_id, "position": position},
+            extra={"current_positions": positions},
+        )
 
     new_positions = [p for p in positions if p != position]
     new_event = {"date": date_str, "action": action_en, "positions": [position]}
@@ -339,19 +572,73 @@ def tool_record_thaw(
         candidate_data = deepcopy(data)
         candidate_records = candidate_data.get("inventory", [])
         if not isinstance(candidate_records, list):
-            return _validate_data_or_error(candidate_data)
+            validation_error = _validate_data_or_error(candidate_data) or {
+                "error_code": "integrity_validation_failed",
+                "message": "写入被阻止：完整性校验失败",
+                "errors": [],
+            }
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code=validation_error.get("error_code", "integrity_validation_failed"),
+                message=validation_error.get("message", "写入被阻止：完整性校验失败"),
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                errors=validation_error.get("errors"),
+            )
         candidate_records[idx]["positions"] = new_positions
         thaw_events = candidate_records[idx].get("thaw_events")
         if thaw_events is None:
             candidate_records[idx]["thaw_events"] = []
             thaw_events = candidate_records[idx]["thaw_events"]
         if not isinstance(thaw_events, list):
-            return _validate_data_or_error(candidate_data)
+            validation_error = _validate_data_or_error(candidate_data) or {
+                "error_code": "integrity_validation_failed",
+                "message": "写入被阻止：完整性校验失败",
+                "errors": [],
+            }
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code=validation_error.get("error_code", "integrity_validation_failed"),
+                message=validation_error.get("message", "写入被阻止：完整性校验失败"),
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                errors=validation_error.get("errors"),
+            )
         thaw_events.append(new_event)
 
         validation_error = _validate_data_or_error(candidate_data)
         if validation_error:
-            return validation_error
+            validation_error = validation_error or {
+                "error_code": "integrity_validation_failed",
+                "message": "写入被阻止：完整性校验失败",
+                "errors": [],
+            }
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code=validation_error.get("error_code", "integrity_validation_failed"),
+                message=validation_error.get("message", "写入被阻止：完整性校验失败"),
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                errors=validation_error.get("errors"),
+                details={
+                    "record_id": record_id,
+                    "position": position,
+                    "action": action_en,
+                    "date": date_str,
+                },
+            )
 
         write_yaml(
             candidate_data,
@@ -360,9 +647,9 @@ def tool_record_thaw(
             auto_server=auto_server,
             auto_backup=auto_backup,
             audit_meta=_build_audit_meta(
-                action="record_thaw",
+                action=audit_action,
                 source=source,
-                tool_name="tool_record_thaw",
+                tool_name=tool_name,
                 actor_context=actor_context,
                 details={
                     "record_id": record_id,
@@ -381,11 +668,18 @@ def tool_record_thaw(
             ),
         )
     except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "write_failed",
-            "message": f"更新失败: {exc}",
-        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="write_failed",
+            message=f"更新失败: {exc}",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+            details={"record_id": record_id, "position": position, "action": action_en},
+        )
 
     return {
         "ok": True,
@@ -412,36 +706,69 @@ def tool_batch_thaw(
     auto_backup=True,
 ):
     """Record batch thaw/takeout/discard operations via shared tool flow."""
+    audit_action = "batch_thaw"
+    tool_name = "tool_batch_thaw"
+    tool_input = {
+        "entries": list(entries) if isinstance(entries, (list, tuple)) else entries,
+        "date": date_str,
+        "action": action,
+        "note": note,
+        "dry_run": bool(dry_run),
+    }
+
     if not validate_date(date_str):
-        return {
-            "ok": False,
-            "error_code": "invalid_date",
-            "message": f"日期格式无效: {date_str}",
-        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="invalid_date",
+            message=f"日期格式无效: {date_str}",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            details={"date": date_str},
+        )
 
     if not entries:
-        return {
-            "ok": False,
-            "error_code": "empty_entries",
-            "message": "未指定任何操作",
-        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="empty_entries",
+            message="未指定任何操作",
+            actor_context=actor_context,
+            tool_input=tool_input,
+        )
 
     action_en = normalize_action(action)
     if not action_en:
-        return {
-            "ok": False,
-            "error_code": "invalid_action",
-            "message": "操作类型必须是 取出/复苏/扔掉",
-        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="invalid_action",
+            message="操作类型必须是 取出/复苏/扔掉",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            details={"action": action},
+        )
 
     try:
         data = load_yaml(yaml_path)
     except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "load_failed",
-            "message": f"无法读取YAML文件: {exc}",
-        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="load_failed",
+            message=f"无法读取YAML文件: {exc}",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            details={"load_error": str(exc)},
+        )
 
     records = data.get("inventory", [])
     operations = []
@@ -474,13 +801,20 @@ def tool_batch_thaw(
         )
 
     if errors:
-        return {
-            "ok": False,
-            "error_code": "validation_failed",
-            "message": "批量操作参数校验失败",
-            "errors": errors,
-            "operations": operations,
-        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="validation_failed",
+            message="批量操作参数校验失败",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+            errors=errors,
+            extra={"operations": operations},
+            details={"error_count": len(errors)},
+        )
 
     preview = {
         "date": date_str,
@@ -513,7 +847,23 @@ def tool_batch_thaw(
         candidate_data = deepcopy(data)
         candidate_records = candidate_data.get("inventory", [])
         if not isinstance(candidate_records, list):
-            return _validate_data_or_error(candidate_data)
+            validation_error = _validate_data_or_error(candidate_data) or {
+                "error_code": "integrity_validation_failed",
+                "message": "写入被阻止：完整性校验失败",
+                "errors": [],
+            }
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code=validation_error.get("error_code", "integrity_validation_failed"),
+                message=validation_error.get("message", "写入被阻止：完整性校验失败"),
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                errors=validation_error.get("errors"),
+            )
 
         for op in operations:
             idx = op["idx"]
@@ -532,12 +882,45 @@ def tool_batch_thaw(
                 candidate_records[idx]["thaw_events"] = []
                 thaw_events = candidate_records[idx]["thaw_events"]
             if not isinstance(thaw_events, list):
-                return _validate_data_or_error(candidate_data)
+                validation_error = _validate_data_or_error(candidate_data) or {
+                    "error_code": "integrity_validation_failed",
+                    "message": "写入被阻止：完整性校验失败",
+                    "errors": [],
+                }
+                return _failure_result(
+                    yaml_path=yaml_path,
+                    action=audit_action,
+                    source=source,
+                    tool_name=tool_name,
+                    error_code=validation_error.get("error_code", "integrity_validation_failed"),
+                    message=validation_error.get("message", "写入被阻止：完整性校验失败"),
+                    actor_context=actor_context,
+                    tool_input=tool_input,
+                    before_data=data,
+                    errors=validation_error.get("errors"),
+                )
             thaw_events.append(new_event)
 
         validation_error = _validate_data_or_error(candidate_data)
         if validation_error:
-            return validation_error
+            validation_error = validation_error or {
+                "error_code": "integrity_validation_failed",
+                "message": "写入被阻止：完整性校验失败",
+                "errors": [],
+            }
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code=validation_error.get("error_code", "integrity_validation_failed"),
+                message=validation_error.get("message", "写入被阻止：完整性校验失败"),
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                errors=validation_error.get("errors"),
+                details={"count": len(operations), "action": action_en, "date": date_str},
+            )
 
         write_yaml(
             candidate_data,
@@ -546,9 +929,9 @@ def tool_batch_thaw(
             auto_server=auto_server,
             auto_backup=auto_backup,
             audit_meta=_build_audit_meta(
-                action="batch_thaw",
+                action=audit_action,
                 source=source,
-                tool_name="tool_batch_thaw",
+                tool_name=tool_name,
                 actor_context=actor_context,
                 details={
                     "count": len(operations),
@@ -565,11 +948,18 @@ def tool_batch_thaw(
             ),
         )
     except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "write_failed",
-            "message": f"批量更新失败: {exc}",
-        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="write_failed",
+            message=f"批量更新失败: {exc}",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+            details={"count": len(operations), "action": action_en, "date": date_str},
+        )
 
     return {
         "ok": True,
@@ -596,32 +986,74 @@ def tool_rollback(
     source="tool_api",
 ):
     """Rollback inventory YAML using shared tool flow."""
+    audit_action = "rollback"
+    tool_name = "tool_rollback"
+    tool_input = {
+        "backup_path": backup_path,
+        "no_html": bool(no_html),
+        "no_server": bool(no_server),
+    }
+    current_data = None
+    try:
+        current_data = load_yaml(yaml_path)
+    except Exception:
+        current_data = None
+
     backups = list_yaml_backups(yaml_path)
     if not backups and not backup_path:
-        return {
-            "ok": False,
-            "error_code": "no_backups",
-            "message": "无可用备份，无法回滚",
-        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="no_backups",
+            message="无可用备份，无法回滚",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=current_data,
+        )
 
     target = backup_path or backups[0]
     try:
         backup_data = load_yaml(target)
     except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "backup_load_failed",
-            "message": f"无法读取备份文件: {exc}",
-        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="backup_load_failed",
+            message=f"无法读取备份文件: {exc}",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=current_data,
+            details={"requested_backup": target},
+        )
 
     validation_error = _validate_data_or_error(
         backup_data,
         message_prefix="回滚被阻止：目标备份不满足完整性约束",
     )
     if validation_error:
-        validation_error["error_code"] = "rollback_backup_invalid"
-        validation_error["backup_path"] = target
-        return validation_error
+        validation_error = validation_error or {
+            "error_code": "rollback_backup_invalid",
+            "message": "回滚被阻止：目标备份不满足完整性约束",
+            "errors": [],
+        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="rollback_backup_invalid",
+            message=validation_error.get("message", "回滚被阻止：目标备份不满足完整性约束"),
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=current_data,
+            errors=validation_error.get("errors"),
+            details={"requested_backup": target},
+            extra={"backup_path": target},
+        )
 
     try:
         result = rollback_yaml(
@@ -630,24 +1062,27 @@ def tool_rollback(
             auto_html=not no_html,
             auto_server=not no_server,
             audit_meta=_build_audit_meta(
-                action="rollback",
+                action=audit_action,
                 source=source,
-                tool_name="tool_rollback",
+                tool_name=tool_name,
                 actor_context=actor_context,
                 details={"requested_backup": target},
-                tool_input={
-                    "backup_path": backup_path,
-                    "no_html": bool(no_html),
-                    "no_server": bool(no_server),
-                },
+                tool_input=tool_input,
             ),
         )
     except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "rollback_failed",
-            "message": f"回滚失败: {exc}",
-        }
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="rollback_failed",
+            message=f"回滚失败: {exc}",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=current_data,
+            details={"requested_backup": target},
+        )
 
     return {
         "ok": True,
