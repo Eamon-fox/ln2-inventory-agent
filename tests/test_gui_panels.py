@@ -240,21 +240,20 @@ class GuiPanelRegressionTests(unittest.TestCase):
         single_actions = [panel.t_action.itemText(i) for i in range(panel.t_action.count())]
         batch_actions = [panel.b_action.itemText(i) for i in range(panel.b_action.count())]
 
-        self.assertIn("Move", single_actions)
-        self.assertIn("Move", batch_actions)
+        self.assertNotIn("Move", single_actions)
+        self.assertNotIn("Move", batch_actions)
 
-    def test_operations_panel_move_enables_to_position_and_batch_columns(self):
+        mode_keys = [panel.op_mode_combo.itemData(i) for i in range(panel.op_mode_combo.count())]
+        self.assertIn("move", mode_keys)
+
+    def test_operations_panel_move_tab_has_from_and_to_position(self):
         panel = self._new_operations_panel()
 
-        panel.t_action.setCurrentText("Takeout")
-        self.assertFalse(panel.t_to_position.isEnabled())
-
-        panel.t_action.setCurrentText("Move")
-        self.assertTrue(panel.t_to_position.isEnabled())
-
-        panel.b_action.setCurrentText("Move")
-        self.assertEqual(3, panel.b_table.columnCount())
-        self.assertEqual("To", panel.b_table.horizontalHeaderItem(2).text())
+        self.assertTrue(hasattr(panel, "m_from_position"))
+        self.assertTrue(hasattr(panel, "m_to_position"))
+        self.assertEqual(3, panel.bm_table.columnCount())
+        self.assertEqual("From", panel.bm_table.horizontalHeaderItem(1).text())
+        self.assertEqual("To", panel.bm_table.horizontalHeaderItem(2).text())
 
     def test_operations_panel_single_move_passes_to_position(self):
         panel = self._new_operations_panel()
@@ -262,14 +261,14 @@ class GuiPanelRegressionTests(unittest.TestCase):
         panel.bridge = bridge
         panel._confirm_execute = lambda *_args, **_kwargs: True
 
-        panel.t_action.setCurrentText("Move")
-        panel.t_id.setValue(11)
-        panel.t_position.setValue(5)
-        panel.t_to_position.setValue(8)
-        panel.on_record_thaw()
+        panel.m_id.setValue(11)
+        panel.m_from_position.setValue(5)
+        panel.m_to_position.setValue(8)
+        panel.on_record_move()
 
         self.assertIsNotNone(bridge.last_record_payload)
         self.assertEqual(8, bridge.last_record_payload.get("to_position"))
+        self.assertEqual(5, bridge.last_record_payload.get("position"))
 
     def test_operations_panel_batch_move_table_collects_triples(self):
         panel = self._new_operations_panel()
@@ -277,15 +276,24 @@ class GuiPanelRegressionTests(unittest.TestCase):
         panel.bridge = bridge
         panel._confirm_execute = lambda *_args, **_kwargs: True
 
-        panel.b_action.setCurrentText("Move")
-        panel.b_table.setRowCount(1)
-        panel.b_table.setItem(0, 0, panel._make_table_item("12"))
-        panel.b_table.setItem(0, 1, panel._make_table_item("23"))
-        panel.b_table.setItem(0, 2, panel._make_table_item("31"))
+        panel.bm_table.setRowCount(1)
+        panel.bm_table.setItem(0, 0, self._make_table_item("12"))
+        panel.bm_table.setItem(0, 1, self._make_table_item("23"))
+        panel.bm_table.setItem(0, 2, self._make_table_item("31"))
 
-        panel.on_batch_thaw()
+        panel.on_batch_move()
 
         self.assertEqual([(12, 23, 31)], bridge.last_batch_payload.get("entries"))
+
+    def test_operations_panel_move_batch_section_collapsed_by_default(self):
+        panel = self._new_operations_panel()
+
+        self.assertTrue(panel.m_batch_group.isHidden())
+        self.assertEqual("Show Batch Move", panel.m_batch_toggle_btn.text())
+
+        panel.m_batch_toggle_btn.setChecked(True)
+        self.assertFalse(panel.m_batch_group.isHidden())
+        self.assertEqual("Hide Batch Move", panel.m_batch_toggle_btn.text())
 
     def test_operations_panel_emits_completion_on_success_without_dry_run_gate(self):
         panel = self._new_operations_panel()

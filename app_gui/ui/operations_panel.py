@@ -48,6 +48,7 @@ class OperationsPanel(QWidget):
         self.op_mode_combo = QComboBox()
         modes = [
             ("thaw", "Takeout"),
+            ("move", "Move"),
             ("add", "Add Entry"),
             ("query", "Query"),
             ("rollback", "Rollback"),
@@ -64,6 +65,7 @@ class OperationsPanel(QWidget):
         self.op_mode_indexes = {
             "add": self.op_stack.addWidget(self._build_add_tab()),
             "thaw": self.op_stack.addWidget(self._build_thaw_tab()),
+            "move": self.op_stack.addWidget(self._build_move_tab()),
             "query": self.op_stack.addWidget(self._build_query_tab()),
             "rollback": self.op_stack.addWidget(self._build_rollback_tab()),
             "audit": self.op_stack.addWidget(self._build_audit_tab()),
@@ -165,6 +167,7 @@ class OperationsPanel(QWidget):
 
         self.records_cache = normalized
         self._refresh_thaw_record_context()
+        self._refresh_move_record_context()
 
     def set_prefill(self, source_info):
         self.t_prefill_source = source_info
@@ -238,7 +241,7 @@ class OperationsPanel(QWidget):
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
-        single = QGroupBox("Single Operation (Takeout/Thaw/Discard/Move)")
+        single = QGroupBox("Single Operation (Takeout/Thaw/Discard)")
         single_form = QFormLayout(single)
         self.t_id = QSpinBox()
         self.t_id.setRange(1, 999999)
@@ -251,16 +254,11 @@ class OperationsPanel(QWidget):
         self.t_date.setDisplayFormat("yyyy-MM-dd")
         self.t_date.setDate(QDate.currentDate())
         self.t_action = QComboBox()
-        self.t_action.addItems(["Takeout", "Thaw", "Discard", "Move"])
-        self.t_action.currentIndexChanged.connect(self._on_single_action_changed)
-        self.t_to_position = QSpinBox()
-        self.t_to_position.setRange(1, 999)
-        self.t_to_position.valueChanged.connect(self._refresh_thaw_record_context)
+        self.t_action.addItems(["Takeout", "Thaw", "Discard"])
         self.t_note = QLineEdit()
 
         single_form.addRow("Record ID", self.t_id)
         single_form.addRow("Position", self.t_position)
-        single_form.addRow("To Position (Move)", self.t_to_position)
         single_form.addRow("Date", self.t_date)
         single_form.addRow("Action", self.t_action)
         single_form.addRow("Note", self.t_note)
@@ -308,7 +306,7 @@ class OperationsPanel(QWidget):
         self.t_batch_toggle_btn.toggled.connect(self.on_toggle_batch_section)
         layout.addWidget(self.t_batch_toggle_btn)
 
-        self.t_batch_group = QGroupBox("Batch Operation (Takeout/Thaw/Discard/Move)")
+        self.t_batch_group = QGroupBox("Batch Operation (Takeout/Thaw/Discard)")
         batch_form = QFormLayout(self.t_batch_group)
         self.b_entries = QLineEdit()
         self.b_entries.setPlaceholderText("e.g. 182:23,183:41")
@@ -317,8 +315,7 @@ class OperationsPanel(QWidget):
         self.b_date.setDisplayFormat("yyyy-MM-dd")
         self.b_date.setDate(QDate.currentDate())
         self.b_action = QComboBox()
-        self.b_action.addItems(["Takeout", "Thaw", "Discard", "Move"])
-        self.b_action.currentIndexChanged.connect(self._on_batch_action_changed)
+        self.b_action.addItems(["Takeout", "Thaw", "Discard"])
         self.b_note = QLineEdit()
 
         batch_form.addRow("Entries (text)", self.b_entries)
@@ -353,9 +350,123 @@ class OperationsPanel(QWidget):
         self.b_apply_btn.clicked.connect(self.on_batch_thaw)
         batch_form.addRow("", self.b_apply_btn)
         layout.addWidget(self.t_batch_group)
-        self._on_single_action_changed()
-        self._on_batch_action_changed()
         self.on_toggle_batch_section(False)
+        layout.addStretch(1)
+        return tab
+
+    # --- MOVE TAB ---
+    def _build_move_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        # --- Single Move ---
+        single = QGroupBox("Single Move (Relocate / Swap)")
+        single_form = QFormLayout(single)
+        self.m_id = QSpinBox()
+        self.m_id.setRange(1, 999999)
+        self.m_id.valueChanged.connect(self._refresh_move_record_context)
+        self.m_from_position = QSpinBox()
+        self.m_from_position.setRange(1, 999)
+        self.m_from_position.valueChanged.connect(self._refresh_move_record_context)
+        self.m_to_position = QSpinBox()
+        self.m_to_position.setRange(1, 999)
+        self.m_to_position.valueChanged.connect(self._refresh_move_record_context)
+        self.m_date = QDateEdit()
+        self.m_date.setCalendarPopup(True)
+        self.m_date.setDisplayFormat("yyyy-MM-dd")
+        self.m_date.setDate(QDate.currentDate())
+        self.m_note = QLineEdit()
+
+        single_form.addRow("Record ID", self.m_id)
+        single_form.addRow("From Position", self.m_from_position)
+        single_form.addRow("To Position", self.m_to_position)
+        single_form.addRow("Date", self.m_date)
+        single_form.addRow("Note", self.m_note)
+
+        self.m_apply_btn = QPushButton("Execute Single Move")
+        self._style_execute_button(self.m_apply_btn)
+        self.m_apply_btn.clicked.connect(self.on_record_move)
+        single_form.addRow("", self.m_apply_btn)
+        layout.addWidget(single)
+
+        # --- Context ---
+        context_box = QGroupBox("Selected Record Context")
+        context_form = QFormLayout(context_box)
+        self.m_ctx_status = QLabel("No prefill yet.")
+        self.m_ctx_status.setWordWrap(True)
+        self.m_ctx_id = QLabel("-")
+        self.m_ctx_cell = QLabel("-")
+        self.m_ctx_short = QLabel("-")
+        self.m_ctx_box = QLabel("-")
+        self.m_ctx_positions = QLabel("-")
+        self.m_ctx_target = QLabel("-")
+        self.m_ctx_check = QLabel("-")
+        self.m_ctx_frozen = QLabel("-")
+        self.m_ctx_plasmid = QLabel("-")
+        self.m_ctx_events = QLabel("-")
+        self.m_ctx_note = QLabel("-")
+
+        context_form.addRow("Status", self.m_ctx_status)
+        context_form.addRow("ID", self.m_ctx_id)
+        context_form.addRow("Cell", self.m_ctx_cell)
+        context_form.addRow("Short", self.m_ctx_short)
+        context_form.addRow("Box", self.m_ctx_box)
+        context_form.addRow("All Pos", self.m_ctx_positions)
+        context_form.addRow("Move", self.m_ctx_target)
+        context_form.addRow("Check", self.m_ctx_check)
+        context_form.addRow("Frozen", self.m_ctx_frozen)
+        context_form.addRow("Plasmid", self.m_ctx_plasmid)
+        context_form.addRow("History", self.m_ctx_events)
+        context_form.addRow("Note", self.m_ctx_note)
+        layout.addWidget(context_box)
+
+        # --- Batch Move (collapsible) ---
+        self.m_batch_toggle_btn = QPushButton("Show Batch Move")
+        self.m_batch_toggle_btn.setCheckable(True)
+        self.m_batch_toggle_btn.toggled.connect(self._on_toggle_move_batch_section)
+        layout.addWidget(self.m_batch_toggle_btn)
+
+        self.m_batch_group = QGroupBox("Batch Move")
+        batch_form = QFormLayout(self.m_batch_group)
+        self.bm_entries = QLineEdit()
+        self.bm_entries.setPlaceholderText("e.g. 182:23->31,183:41->42")
+        self.bm_date = QDateEdit()
+        self.bm_date.setCalendarPopup(True)
+        self.bm_date.setDisplayFormat("yyyy-MM-dd")
+        self.bm_date.setDate(QDate.currentDate())
+        self.bm_note = QLineEdit()
+
+        batch_form.addRow("Entries (text)", self.bm_entries)
+
+        self.bm_table = QTableWidget()
+        self.bm_table.setColumnCount(3)
+        self.bm_table.setHorizontalHeaderLabels(["Record ID", "From", "To"])
+        self.bm_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.bm_table.setRowCount(1)
+        self.bm_table.setMaximumHeight(120)
+        batch_form.addRow("Or use table", self.bm_table)
+
+        table_btn_widget = QWidget()
+        table_btn_row = QHBoxLayout(table_btn_widget)
+        table_btn_row.setContentsMargins(0, 0, 0, 0)
+        bm_add_row_btn = QPushButton("+ Row")
+        bm_add_row_btn.clicked.connect(self._move_batch_add_row)
+        bm_remove_row_btn = QPushButton("- Row")
+        bm_remove_row_btn.clicked.connect(self._move_batch_remove_row)
+        table_btn_row.addWidget(bm_add_row_btn)
+        table_btn_row.addWidget(bm_remove_row_btn)
+        table_btn_row.addStretch()
+        batch_form.addRow("", table_btn_widget)
+
+        batch_form.addRow("Date", self.bm_date)
+        batch_form.addRow("Note", self.bm_note)
+
+        self.bm_apply_btn = QPushButton("Execute Batch Move")
+        self._style_execute_button(self.bm_apply_btn)
+        self.bm_apply_btn.clicked.connect(self.on_batch_move)
+        batch_form.addRow("", self.bm_apply_btn)
+        layout.addWidget(self.m_batch_group)
+        self._on_toggle_move_batch_section(False)
         layout.addStretch(1)
         return tab
 
@@ -469,24 +580,12 @@ class OperationsPanel(QWidget):
     def _is_move_action_text(action_text):
         return str(action_text or "").strip().lower() == "move"
 
-    def _on_single_action_changed(self):
-        is_move = self._is_move_action_text(self.t_action.currentText())
-        self.t_to_position.setEnabled(is_move)
-        self.t_to_position.setToolTip("Required when action is Move." if is_move else "Only used for Move action.")
-        self._refresh_thaw_record_context()
-
-    def _on_batch_action_changed(self):
-        is_move = self._is_move_action_text(self.b_action.currentText())
-        self.b_entries.setPlaceholderText(
-            "e.g. 182:23->31,183:41->42" if is_move else "e.g. 182:23,183:41"
-        )
-
-        col_count = 3 if is_move else 2
-        headers = ["Record ID", "From", "To"] if is_move else ["Record ID", "Position"]
-        if self.b_table.columnCount() != col_count:
-            self.b_table.setColumnCount(col_count)
-        self.b_table.setHorizontalHeaderLabels(headers)
-        self.b_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+    def _on_toggle_move_batch_section(self, checked):
+        visible = bool(checked)
+        if hasattr(self, "m_batch_group"):
+            self.m_batch_group.setVisible(visible)
+        if hasattr(self, "m_batch_toggle_btn"):
+            self.m_batch_toggle_btn.setText("Hide Batch Move" if visible else "Show Batch Move")
 
     def _ensure_today_defaults(self):
         today = QDate.currentDate()
@@ -494,7 +593,7 @@ class OperationsPanel(QWidget):
         if today == anchor:
             return
 
-        for attr in ("a_date", "t_date", "b_date"):
+        for attr in ("a_date", "t_date", "b_date", "m_date", "bm_date"):
             widget = getattr(self, attr, None)
             if widget is not None and widget.date() == anchor:
                 widget.setDate(today)
@@ -510,8 +609,6 @@ class OperationsPanel(QWidget):
     def _refresh_thaw_record_context(self):
         record_id = self.t_id.value()
         source_position = self.t_position.value()
-        move_target = self.t_to_position.value() if hasattr(self, "t_to_position") else None
-        is_move = self._is_move_action_text(self.t_action.currentText()) if hasattr(self, "t_action") else False
         record = self._lookup_record(record_id)
 
         source_text = "-"
@@ -522,7 +619,7 @@ class OperationsPanel(QWidget):
                 source_text = f"Box {source_box}:{source_prefill}"
         self.t_ctx_source.setText(source_text)
 
-        target_text = f"{source_position} -> {move_target}" if is_move else (str(source_position) if source_position else "-")
+        target_text = str(source_position) if source_position else "-"
         self.t_ctx_target.setText(target_text)
         self.t_ctx_id.setText(str(record_id) if record_id else "-")
 
@@ -581,9 +678,6 @@ class OperationsPanel(QWidget):
         if not pos_ok:
             self.t_ctx_check.setText("WARNING - position NOT in record")
             self.t_ctx_check.setStyleSheet("color: #b91c1c;")
-        elif is_move and move_target == source_position:
-            self.t_ctx_check.setText("WARNING - move target equals source")
-            self.t_ctx_check.setStyleSheet("color: #b91c1c;")
         else:
             self.t_ctx_check.setText("OK - position in record")
             self.t_ctx_check.setStyleSheet("color: #15803d;")
@@ -636,17 +730,11 @@ class OperationsPanel(QWidget):
         yaml_path = self.yaml_path_getter()
 
         action_text = self.t_action.currentText()
-        is_move = self._is_move_action_text(action_text)
-        to_position = self.t_to_position.value() if is_move else None
-        if is_move and to_position == self.t_position.value():
-            self.status_message.emit("Move operation requires a different To Position.", 4000, "error")
-            return
 
         details = (
             f"ID: {self.t_id.value()}\n"
             f"Position: {self.t_position.value()}\n"
-            + (f"To Position: {to_position}\n" if is_move else "")
-            + f"Action: {action_text}"
+            f"Action: {action_text}"
         )
         if not self._confirm_execute("Confirm Operation", details):
             return
@@ -655,12 +743,173 @@ class OperationsPanel(QWidget):
             yaml_path=yaml_path,
             record_id=self.t_id.value(),
             position=self.t_position.value(),
-            to_position=to_position,
             date_str=self.t_date.date().toString("yyyy-MM-dd"),
             action=action_text,
             note=self.t_note.text() or None,
         )
         self._handle_response(response, "Single Operation")
+
+    def on_record_move(self):
+        self._ensure_today_defaults()
+        yaml_path = self.yaml_path_getter()
+
+        from_pos = self.m_from_position.value()
+        to_pos = self.m_to_position.value()
+        if from_pos == to_pos:
+            self.status_message.emit("Move: From and To positions must be different.", 4000, "error")
+            return
+
+        details = (
+            f"ID: {self.m_id.value()}\n"
+            f"From: {from_pos}\n"
+            f"To: {to_pos}"
+        )
+        if not self._confirm_execute("Confirm Move", details):
+            return
+
+        response = self.bridge.record_thaw(
+            yaml_path=yaml_path,
+            record_id=self.m_id.value(),
+            position=from_pos,
+            to_position=to_pos,
+            date_str=self.m_date.date().toString("yyyy-MM-dd"),
+            action="Move",
+            note=self.m_note.text() or None,
+        )
+        self._handle_response(response, "Single Operation")
+
+    def _move_batch_add_row(self):
+        self.bm_table.insertRow(self.bm_table.rowCount())
+
+    def _move_batch_remove_row(self):
+        row = self.bm_table.currentRow()
+        if row >= 0:
+            self.bm_table.removeRow(row)
+        elif self.bm_table.rowCount() > 0:
+            self.bm_table.removeRow(self.bm_table.rowCount() - 1)
+
+    def _collect_move_batch_from_table(self):
+        """Collect move entries from the move batch table. Returns list of 3-tuples or None."""
+        entries = []
+        for row in range(self.bm_table.rowCount()):
+            id_item = self.bm_table.item(row, 0)
+            from_item = self.bm_table.item(row, 1)
+            to_item = self.bm_table.item(row, 2)
+
+            if not id_item or not from_item or not to_item:
+                continue
+
+            id_text = id_item.text().strip()
+            from_text = from_item.text().strip()
+            to_text = to_item.text().strip()
+
+            if not id_text or not from_text or not to_text:
+                continue
+
+            try:
+                entries.append((int(id_text), int(from_text), int(to_text)))
+            except ValueError as exc:
+                raise ValueError(f"Row {row + 1}: invalid Record ID / From / To") from exc
+
+        return entries if entries else None
+
+    def on_batch_move(self):
+        self._ensure_today_defaults()
+        yaml_path = self.yaml_path_getter()
+
+        try:
+            entries = self._collect_move_batch_from_table()
+        except ValueError as exc:
+            self.status_message.emit(str(exc), 3000, "error")
+            return
+
+        if entries is None:
+            entries_text = self.bm_entries.text().strip()
+            try:
+                entries = parse_batch_entries(entries_text)
+            except ValueError as exc:
+                self.status_message.emit(str(exc), 3000, "error")
+                return
+
+        def _entry_text(entry):
+            if isinstance(entry, (list, tuple)) and len(entry) == 3:
+                return f"{entry[0]}:{entry[1]}->{entry[2]}"
+            return str(entry)
+
+        summary = ", ".join(_entry_text(entry) for entry in entries)
+        if not self._confirm_execute("Confirm Batch Move", f"Entries: {summary}"):
+            return
+
+        response = self.bridge.batch_thaw(
+            yaml_path=yaml_path,
+            entries=entries,
+            date_str=self.bm_date.date().toString("yyyy-MM-dd"),
+            action="Move",
+            note=self.bm_note.text() or None,
+        )
+        self._handle_response(response, "Batch Operation")
+
+    def _refresh_move_record_context(self):
+        if not hasattr(self, "m_ctx_status"):
+            return
+
+        record_id = self.m_id.value()
+        from_pos = self.m_from_position.value()
+        to_pos = self.m_to_position.value()
+        record = self._lookup_record(record_id)
+
+        self.m_ctx_target.setText(f"{from_pos} -> {to_pos}")
+        self.m_ctx_id.setText(str(record_id) if record_id else "-")
+
+        if not record:
+            self.m_ctx_status.setText("Record not found in cache.")
+            self.m_ctx_status.setStyleSheet("color: #b45309;")
+            for lbl in [
+                self.m_ctx_cell, self.m_ctx_short, self.m_ctx_box,
+                self.m_ctx_positions, self.m_ctx_check, self.m_ctx_frozen,
+                self.m_ctx_plasmid, self.m_ctx_events, self.m_ctx_note,
+            ]:
+                lbl.setText("-")
+            return
+
+        self.m_ctx_status.setText("Record context loaded.")
+        self.m_ctx_status.setStyleSheet("color: #15803d;")
+        self.m_ctx_cell.setText(str(record.get("parent_cell_line") or "-"))
+        self.m_ctx_short.setText(str(record.get("short_name") or "-"))
+        self.m_ctx_box.setText(str(record.get("box") or "-"))
+
+        positions = record.get("positions") or []
+        self.m_ctx_positions.setText(positions_to_text(positions))
+        self.m_ctx_frozen.setText(str(record.get("frozen_at") or "-"))
+        plasmid = record.get("plasmid_name") or record.get("plasmid_id") or "-"
+        self.m_ctx_plasmid.setText(str(plasmid))
+        self.m_ctx_note.setText(str(record.get("note") or "-"))
+
+        events = record.get("thaw_events") or []
+        if events:
+            last = events[-1]
+            last_date = str(last.get("date") or "-")
+            last_action = str(last.get("action") or "-")
+            last_pos = positions_to_text(last.get("positions") or [])
+            self.m_ctx_events.setText(f"{len(events)} events; last: {last_date} {last_action} [{last_pos}]")
+        else:
+            self.m_ctx_events.setText("No history")
+
+        pos_ok = False
+        try:
+            pos_ok = int(from_pos) in {int(p) for p in positions}
+        except Exception:
+            pos_ok = False
+
+        if not pos_ok:
+            self.m_ctx_check.setText("WARNING - from position NOT in record")
+            self.m_ctx_check.setStyleSheet("color: #b91c1c;")
+        elif from_pos == to_pos:
+            self.m_ctx_check.setText("WARNING - from and to are the same")
+            self.m_ctx_check.setStyleSheet("color: #b91c1c;")
+        else:
+            self.m_ctx_check.setText("OK - position in record")
+            self.m_ctx_check.setStyleSheet("color: #15803d;")
 
     def _batch_add_row(self):
         self.b_table.insertRow(self.b_table.rowCount())
@@ -675,30 +924,22 @@ class OperationsPanel(QWidget):
     def _collect_batch_from_table(self):
         """Collect entries from the mini-table. Returns list of tuples or None if empty."""
         entries = []
-        is_move = self._is_move_action_text(self.b_action.currentText())
         for row in range(self.b_table.rowCount()):
             id_item = self.b_table.item(row, 0)
-            from_item = self.b_table.item(row, 1)
-            to_item = self.b_table.item(row, 2) if is_move else None
+            pos_item = self.b_table.item(row, 1)
 
-            if not id_item or not from_item:
+            if not id_item or not pos_item:
                 continue
 
             id_text = id_item.text().strip()
-            from_text = from_item.text().strip()
-            to_text = to_item.text().strip() if (to_item is not None) else ""
+            pos_text = pos_item.text().strip()
 
-            if not id_text or not from_text or (is_move and not to_text):
+            if not id_text or not pos_text:
                 continue
 
             try:
-                if is_move:
-                    entries.append((int(id_text), int(from_text), int(to_text)))
-                else:
-                    entries.append((int(id_text), int(from_text)))
+                entries.append((int(id_text), int(pos_text)))
             except ValueError as exc:
-                if is_move:
-                    raise ValueError(f"Row {row + 1}: invalid Record ID / From / To") from exc
                 raise ValueError(f"Row {row + 1}: invalid Record ID or Position") from exc
 
         return entries if entries else None
