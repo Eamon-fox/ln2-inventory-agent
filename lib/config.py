@@ -14,10 +14,23 @@ import sys
 CONFIG_ENV_VAR = "LN2_CONFIG_FILE"
 
 
+def _get_app_dir():
+    """Return project root: _MEIPASS when frozen (PyInstaller), else normal parent dir."""
+    if getattr(sys, "frozen", False):
+        return sys._MEIPASS
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _default_yaml_path():
+    if getattr(sys, "frozen", False):
+        return os.path.join(os.path.dirname(sys.executable), "ln2_inventory.yaml")
+    return os.path.join(os.getcwd(), "ln2_inventory.yaml")
+
+
 DEFAULT_CONFIG = {
-    "yaml_path": os.path.join(os.getcwd(), "ln2_inventory.yaml"),
+    "yaml_path": _default_yaml_path(),
     "python_path": sys.executable,
-    "scripts_dir": os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"),
+    "scripts_dir": os.path.join(_get_app_dir(), "scripts"),
     "safety": {
         "backup_dir_name": "ln2_inventory_backups",
         "backup_keep_count": 200,

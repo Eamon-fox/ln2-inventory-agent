@@ -432,6 +432,8 @@ def write_yaml(
     except Exception as exc:
         print(f"warning: failed to append audit log: {exc}", file=sys.stderr)
 
+    return backup_path
+
 
 def rollback_yaml(
     path=YAML_PATH,

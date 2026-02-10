@@ -378,7 +378,7 @@ def tool_add_entry(
                 details={"new_id": new_id, "box": box, "positions": list(positions)},
             )
 
-        write_yaml(
+        _backup_path = write_yaml(
             candidate_data,
             yaml_path,
             auto_html=auto_html,
@@ -424,6 +424,7 @@ def tool_add_entry(
         "dry_run": False,
         "preview": preview,
         "result": {"new_id": new_id, "record": new_record},
+        "backup_path": _backup_path,
     }
 
 
@@ -639,7 +640,7 @@ def tool_record_thaw(
                 },
             )
 
-        write_yaml(
+        _backup_path = write_yaml(
             candidate_data,
             yaml_path,
             auto_html=auto_html,
@@ -688,6 +689,7 @@ def tool_record_thaw(
             "record_id": record_id,
             "remaining_positions": new_positions,
         },
+        "backup_path": _backup_path,
     }
 
 
@@ -921,7 +923,7 @@ def tool_batch_thaw(
                 details={"count": len(operations), "action": action_en, "date": date_str},
             )
 
-        write_yaml(
+        _backup_path = write_yaml(
             candidate_data,
             yaml_path,
             auto_html=auto_html,
@@ -968,6 +970,7 @@ def tool_batch_thaw(
             "count": len(operations),
             "record_ids": [op["record_id"] for op in operations],
         },
+        "backup_path": _backup_path,
     }
 
 

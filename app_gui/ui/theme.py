@@ -1,9 +1,55 @@
-from PySide6.QtGui import QColor, QPalette
+import os
+
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 from PySide6.QtCore import Qt
+
+# CJK fallback font paths (checked in order; non-existent entries are skipped)
+_CJK_FONT_CANDIDATES = [
+    # Windows
+    os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "msyh.ttc"),
+    os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "msyhbd.ttc"),
+    os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "simsun.ttc"),
+    # Linux
+    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/google-droid/DroidSansFallback.ttf",
+    "/usr/share/fonts/truetype/droid/DroidSansFallback.ttf",
+    "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",
+]
+
+
+def _setup_cjk_font(app):
+    """Load a CJK-capable font and set an application-wide font with fallbacks."""
+    loaded_family = None
+    for path in _CJK_FONT_CANDIDATES:
+        if not os.path.isfile(path):
+            continue
+        fid = QFontDatabase.addApplicationFont(path)
+        if fid < 0:
+            continue
+        families = QFontDatabase.applicationFontFamilies(fid)
+        if families:
+            loaded_family = families[0]
+            break
+
+    # Build font with CJK fallback chain
+    font = QFont("Ubuntu")
+    font.setPointSize(10)
+    fallbacks = [
+        "Cantarell",
+        "DejaVu Sans",
+    ]
+    if loaded_family:
+        fallbacks.append(loaded_family)
+    fallbacks.extend(["Microsoft YaHei", "Noto Sans CJK SC", "WenQuanYi Micro Hei", "Droid Sans", "sans-serif"])
+    font.setFamilies([font.family()] + fallbacks)
+    app.setFont(font)
+
 
 def apply_dark_theme(app):
     """Applies a modern dark theme to the QApplication."""
     app.setStyle("Fusion")
+    _setup_cjk_font(app)
 
     dark_palette = QPalette()
 

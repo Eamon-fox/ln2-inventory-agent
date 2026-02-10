@@ -4,17 +4,21 @@ import os
 import sys
 from PySide6.QtCore import Qt, QSettings
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, 
-    QHBoxLayout, QPushButton, QLabel, QSplitter, 
-    QMessageBox, QDialog, QFormLayout, QLineEdit, 
+    QApplication, QMainWindow, QWidget, QVBoxLayout,
+    QHBoxLayout, QPushButton, QLabel, QSplitter,
+    QMessageBox, QDialog, QFormLayout, QLineEdit,
     QDialogButtonBox, QFileDialog
 )
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
+if getattr(sys, "frozen", False):
+    ROOT = sys._MEIPASS
+else:
+    ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if ROOT not in sys.path:
+        sys.path.insert(0, ROOT)
 
 from app_gui.tool_bridge import GuiToolBridge
+from app_gui.gui_config import load_gui_config, save_gui_config, DEFAULT_CONFIG_FILE
 from lib.config import YAML_PATH
 from app_gui.ui.theme import apply_dark_theme
 from app_gui.ui.overview_panel import OverviewPanel
@@ -27,16 +31,36 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("LN2 Inventory Agent")
         self.resize(1300, 900)
 
-        self.settings = QSettings("EamonFox", "LN2InventoryAgent")
-        self.current_yaml_path = self.settings.value("ui/current_yaml_path", YAML_PATH, type=str) or YAML_PATH
-        self.current_actor_id = self.settings.value("ui/current_actor_id", "gui-user", type=str) or "gui-user"
-        
+        self.settings = QSettings("EamonFox", "LN2InventoryAgent")  # kept for geometry only
+        self.gui_config = load_gui_config()
+
+        # One-time migration from QSettings if unified config file does not exist yet
+        if not os.path.isfile(DEFAULT_CONFIG_FILE):
+            migrated_yaml = self.settings.value("ui/current_yaml_path", "", type=str)
+            migrated_actor = self.settings.value("ui/current_actor_id", "", type=str)
+            migrated_model = self.settings.value("ai/model", "", type=str)
+            migrated_mock = self.settings.value("ai/mock", True, type=bool)
+            migrated_steps = self.settings.value("ai/max_steps", 8, type=int)
+            if migrated_yaml:
+                self.gui_config["yaml_path"] = migrated_yaml
+            if migrated_actor:
+                self.gui_config["actor_id"] = migrated_actor
+            self.gui_config["ai"] = {
+                "model": migrated_model or "",
+                "mock": migrated_mock,
+                "max_steps": migrated_steps,
+            }
+            save_gui_config(self.gui_config)
+
+        self.current_yaml_path = self.gui_config.get("yaml_path") or YAML_PATH
+        self.current_actor_id = self.gui_config.get("actor_id") or "gui-user"
+
         self.bridge = GuiToolBridge(actor_id=self.current_actor_id)
-        
+
         self.setup_ui()
         self.connect_signals()
         self.restore_ui_settings()
-        
+
         self.statusBar().showMessage("Ready", 2000)
         # Initial load
         self.overview_panel.refresh()
@@ -65,7 +89,7 @@ class MainWindow(QMainWindow):
         # Panels
         splitter = QSplitter(Qt.Horizontal)
         splitter.setChildrenCollapsible(False)
-        
+
         self.overview_panel = OverviewPanel(self.bridge, lambda: self.current_yaml_path)
         self.operations_panel = OperationsPanel(self.bridge, lambda: self.current_yaml_path)
         self.ai_panel = AIPanel(self.bridge, lambda: self.current_yaml_path)
@@ -76,7 +100,7 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self.overview_panel)
         splitter.addWidget(self.operations_panel)
         splitter.addWidget(self.ai_panel)
-        
+
         splitter.setStretchFactor(0, 6)
         splitter.setStretchFactor(1, 4)
         splitter.setStretchFactor(2, 4)
@@ -87,16 +111,17 @@ class MainWindow(QMainWindow):
     def connect_signals(self):
         # Overview -> Operations
         self.overview_panel.request_prefill.connect(self.operations_panel.set_prefill)
+        self.overview_panel.request_add_prefill.connect(self.operations_panel.set_add_prefill)
         self.overview_panel.request_quick_add.connect(lambda: self.operations_panel.set_mode("add"))
         self.overview_panel.request_quick_thaw.connect(lambda: self.operations_panel.set_mode("thaw"))
         self.overview_panel.data_loaded.connect(self.operations_panel.update_records_cache)
-        
+
         # Operations -> Overview
         self.operations_panel.operation_completed.connect(self.on_operation_completed)
-        
+
         # AI -> Overview
         self.ai_panel.operation_completed.connect(self.on_operation_completed)
-        
+
         # Status messages
         self.overview_panel.status_message.connect(self.show_status)
         self.operations_panel.status_message.connect(self.show_status)
@@ -108,12 +133,6 @@ class MainWindow(QMainWindow):
     def on_operation_completed(self, success):
         if success:
             self.overview_panel.refresh()
-            # Also update operations cache if needed, but overview refresh fetches new data.
-            # Ideally overview sends data to operations.
-            # We can hook into overview's refresh.
-            # But wait, overview doesn't emit data_loaded signal.
-            # I should modify OverviewPanel to emit `data_loaded(dict)`.
-            pass
 
     def _update_dataset_label(self):
         self.dataset_label.setText(f"Dataset: {self.current_yaml_path} | Actor: {self.current_actor_id}")
@@ -158,7 +177,7 @@ class MainWindow(QMainWindow):
 
         yaml_edit = QLineEdit(self.current_yaml_path)
         browse_btn = QPushButton("Browse")
-        
+
         row = QHBoxLayout()
         row.addWidget(yaml_edit, 1)
         row.addWidget(browse_btn)
@@ -185,20 +204,21 @@ class MainWindow(QMainWindow):
             self.bridge.set_actor(self.current_actor_id)
             self._update_dataset_label()
             self.overview_panel.refresh()
+            # Persist immediately
+            self.gui_config["yaml_path"] = self.current_yaml_path
+            self.gui_config["actor_id"] = self.current_actor_id
+            save_gui_config(self.gui_config)
 
     def restore_ui_settings(self):
         geometry = self.settings.value("ui/geometry")
         if geometry:
             self.restoreGeometry(geometry)
-        
-        # Restore panel states
-        op_mode = self.settings.value("ui/current_operation_mode", "thaw", type=str)
-        self.operations_panel.set_mode(op_mode)
-        
-        # AI Settings
-        self.ai_panel.ai_model.setText(self.settings.value("ai/model", "", type=str) or "")
-        self.ai_panel.ai_mock.setChecked(self.settings.value("ai/mock", True, type=bool))
-        self.ai_panel.ai_steps.setValue(self.settings.value("ai/max_steps", 8, type=int))
+
+        # AI settings from unified config
+        ai_cfg = self.gui_config.get("ai", {})
+        self.ai_panel.ai_model.setText(ai_cfg.get("model", "") or "")
+        self.ai_panel.ai_mock.setChecked(ai_cfg.get("mock", True))
+        self.ai_panel.ai_steps.setValue(ai_cfg.get("max_steps", 8))
         self.ai_panel.on_mode_changed()
 
     def closeEvent(self, event):
@@ -207,22 +227,25 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
 
-        self.settings.setValue("ui/current_yaml_path", self.current_yaml_path)
-        self.settings.setValue("ui/current_actor_id", self.current_actor_id)
+        # Window geometry to QSettings (binary blob)
         self.settings.setValue("ui/geometry", self.saveGeometry())
-        
-        # Panel states
-        self.settings.setValue("ui/current_operation_mode", self.operations_panel.current_operation_mode)
-        self.settings.setValue("ai/model", self.ai_panel.ai_model.text().strip())
-        self.settings.setValue("ai/mock", self.ai_panel.ai_mock.isChecked())
-        self.settings.setValue("ai/max_steps", self.ai_panel.ai_steps.value())
-        
+
+        # Everything else to unified config
+        self.gui_config["yaml_path"] = self.current_yaml_path
+        self.gui_config["actor_id"] = self.current_actor_id
+        self.gui_config["ai"] = {
+            "model": self.ai_panel.ai_model.text().strip(),
+            "mock": self.ai_panel.ai_mock.isChecked(),
+            "max_steps": self.ai_panel.ai_steps.value(),
+        }
+        save_gui_config(self.gui_config)
+
         super().closeEvent(event)
 
 def main():
     app = QApplication(sys.argv)
     apply_dark_theme(app)
-    
+
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

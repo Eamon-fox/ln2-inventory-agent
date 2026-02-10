@@ -25,6 +25,7 @@ class OverviewPanel(QWidget):
     request_prefill = Signal(dict)
     request_quick_add = Signal()
     request_quick_thaw = Signal()
+    request_add_prefill = Signal(dict)
     # Use object to preserve non-string dict keys (Qt map coercion can drop int keys).
     data_loaded = Signal(object)
 
@@ -522,13 +523,11 @@ class OverviewPanel(QWidget):
             })
             self.status_message.emit(f"Double-click: Prefill Thaw for ID {rec_id}", 2000)
         else:
-            # Quick Add (future: prefill add form with box/pos)
-            # For now just switch to Add tab, maybe prefill fields?
-            # OperationsPanel doesn't have set_add_prefill yet, but we can emit a signal or just switch mode.
-            self.request_quick_add.emit()
-            # If we want to prefill, we'd need to extend OperationsPanel. 
-            # Let's just switch mode and notify.
-            self.status_message.emit(f"Double-click: Switch to Add Entry (Box {box_num} Pos {position})", 2000)
+            self.request_add_prefill.emit({
+                "box": int(box_num),
+                "position": int(position),
+            })
+            self.status_message.emit(f"Double-click: Prefill Add Entry (Box {box_num} Pos {position})", 2000)
 
     def on_cell_hovered(self, box_num, position, force=False):
         hover_key = (box_num, position)

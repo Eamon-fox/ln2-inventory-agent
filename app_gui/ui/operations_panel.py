@@ -2,7 +2,7 @@ import json
 import os
 import csv
 from datetime import datetime
-from PySide6.QtCore import Qt, Signal, QDate
+from PySide6.QtCore import Qt, Signal, QDate, QTimer
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QLineEdit, QComboBox,
@@ -28,6 +28,10 @@ class OperationsPanel(QWidget):
         self.query_last_mode = "records"
         self.t_prefill_source = None
         self._default_date_anchor = QDate.currentDate()
+        self._last_operation_backup = None
+        self._undo_timer = None
+        self._undo_remaining = 0
+        self._audit_events = []
 
         self.setup_ui()
 
@@ -47,6 +51,7 @@ class OperationsPanel(QWidget):
             ("add", "Add Entry"),
             ("query", "Query"),
             ("rollback", "Rollback"),
+            ("audit", "Audit Log"),
         ]
         for mode_key, mode_label in modes:
             self.op_mode_combo.addItem(mode_label, mode_key)
@@ -61,8 +66,32 @@ class OperationsPanel(QWidget):
             "thaw": self.op_stack.addWidget(self._build_thaw_tab()),
             "query": self.op_stack.addWidget(self._build_query_tab()),
             "rollback": self.op_stack.addWidget(self._build_rollback_tab()),
+            "audit": self.op_stack.addWidget(self._build_audit_tab()),
         }
         layout.addWidget(self.op_stack, 3)
+
+        # Result Summary Card
+        self.result_card = QGroupBox("Last Result")
+        result_card_layout = QVBoxLayout(self.result_card)
+        result_card_layout.setContentsMargins(8, 8, 8, 8)
+        self.result_summary = QLabel("No operations performed yet.")
+        self.result_summary.setWordWrap(True)
+        self.result_summary.setTextFormat(Qt.RichText)
+        result_card_layout.addWidget(self.result_summary)
+        self.result_card.setVisible(False)
+        layout.addWidget(self.result_card)
+
+        # Undo Button
+        self.undo_btn = QPushButton("Undo Last Operation")
+        self.undo_btn.setEnabled(False)
+        self.undo_btn.setStyleSheet(
+            "QPushButton { background-color: #92400e; color: white; font-weight: bold;"
+            " border: 1px solid #78350f; }"
+            " QPushButton:hover { background-color: #b45309; }"
+            " QPushButton:disabled { background-color: #1e293b; color: #64748b; }"
+        )
+        self.undo_btn.clicked.connect(self.on_undo_last)
+        layout.addWidget(self.undo_btn)
 
         # Output Panel
         output_header = QHBoxLayout()
@@ -146,6 +175,14 @@ class OperationsPanel(QWidget):
         self.t_action.setCurrentText("Takeout")
         self._refresh_thaw_record_context()
         self.set_mode("thaw")
+
+    def set_add_prefill(self, source_info):
+        """Pre-fill the Add Entry form with box and position from overview."""
+        if "box" in source_info:
+            self.a_box.setValue(int(source_info["box"]))
+        if "position" in source_info:
+            self.a_positions.setText(str(source_info["position"]))
+        self.set_mode("add")
 
     def _setup_table(self, table, headers, sortable=True):
         table.setRowCount(0)
@@ -278,7 +315,29 @@ class OperationsPanel(QWidget):
         self.b_action.addItems(["Takeout", "Thaw", "Discard"])
         self.b_note = QLineEdit()
 
-        batch_form.addRow("Entries", self.b_entries)
+        batch_form.addRow("Entries (text)", self.b_entries)
+
+        # Mini-table for visual batch entry
+        self.b_table = QTableWidget()
+        self.b_table.setColumnCount(2)
+        self.b_table.setHorizontalHeaderLabels(["Record ID", "Position"])
+        self.b_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.b_table.setRowCount(1)
+        self.b_table.setMaximumHeight(120)
+        batch_form.addRow("Or use table", self.b_table)
+
+        table_btn_widget = QWidget()
+        table_btn_row = QHBoxLayout(table_btn_widget)
+        table_btn_row.setContentsMargins(0, 0, 0, 0)
+        b_add_row_btn = QPushButton("+ Row")
+        b_add_row_btn.clicked.connect(self._batch_add_row)
+        b_remove_row_btn = QPushButton("- Row")
+        b_remove_row_btn.clicked.connect(self._batch_remove_row)
+        table_btn_row.addWidget(b_add_row_btn)
+        table_btn_row.addWidget(b_remove_row_btn)
+        table_btn_row.addStretch()
+        batch_form.addRow("", table_btn_widget)
+
         batch_form.addRow("Date", self.b_date)
         batch_form.addRow("Action", self.b_action)
         batch_form.addRow("Note", self.b_note)
@@ -547,18 +606,56 @@ class OperationsPanel(QWidget):
         )
         self._handle_response(response, "Single Operation")
 
+    def _batch_add_row(self):
+        self.b_table.insertRow(self.b_table.rowCount())
+
+    def _batch_remove_row(self):
+        row = self.b_table.currentRow()
+        if row >= 0:
+            self.b_table.removeRow(row)
+        elif self.b_table.rowCount() > 0:
+            self.b_table.removeRow(self.b_table.rowCount() - 1)
+
+    def _collect_batch_from_table(self):
+        """Collect entries from the mini-table. Returns list of dicts or None if empty."""
+        entries = []
+        for row in range(self.b_table.rowCount()):
+            id_item = self.b_table.item(row, 0)
+            pos_item = self.b_table.item(row, 1)
+            if id_item and pos_item:
+                id_text = id_item.text().strip()
+                pos_text = pos_item.text().strip()
+                if id_text and pos_text:
+                    try:
+                        entries.append({
+                            "record_id": int(id_text),
+                            "position": int(pos_text),
+                        })
+                    except ValueError:
+                        raise ValueError(f"Row {row + 1}: invalid Record ID or Position")
+        return entries if entries else None
+
     def on_batch_thaw(self):
         self._ensure_today_defaults()
         yaml_path = self.yaml_path_getter()
-        entries_text = self.b_entries.text().strip()
-        
+
+        # Try table first, fall back to text input
         try:
-            entries = parse_batch_entries(entries_text)
+            entries = self._collect_batch_from_table()
         except ValueError as exc:
             self.status_message.emit(str(exc), 3000, "error")
             return
 
-        if not self._confirm_execute("Confirm Batch", f"Entries: {entries_text}"):
+        if entries is None:
+            entries_text = self.b_entries.text().strip()
+            try:
+                entries = parse_batch_entries(entries_text)
+            except ValueError as exc:
+                self.status_message.emit(str(exc), 3000, "error")
+                return
+
+        summary = ", ".join(f"{e.get('record_id')}:{e.get('position')}" for e in entries)
+        if not self._confirm_execute("Confirm Batch", f"Entries: {summary}"):
             return
 
         response = self.bridge.batch_thaw(
@@ -573,15 +670,77 @@ class OperationsPanel(QWidget):
     def _handle_response(self, response, context):
         payload = response if isinstance(response, dict) else {}
         self.output.setPlainText(json.dumps(payload, ensure_ascii=False, indent=2))
-        
+        self._display_result_summary(response, context)
+
         ok = payload.get("ok", False)
         msg = payload.get("message", "Unknown result")
-        
+
         if ok:
             self.status_message.emit(f"{context}: Success", 3000, "success")
             self.operation_completed.emit(True)
+            # Enable undo if backup_path available
+            backup_path = payload.get("backup_path")
+            if backup_path:
+                self._last_operation_backup = backup_path
+                self._enable_undo(timeout_sec=30)
         else:
             self.status_message.emit(f"{context} Failed: {msg}", 5000, "error")
+            self.operation_completed.emit(False)
+
+    def _display_result_summary(self, response, context):
+        """Show a human-readable summary card for the operation result."""
+        payload = response if isinstance(response, dict) else {}
+        ok = payload.get("ok", False)
+        preview = payload.get("preview", {}) or {}
+        result = payload.get("result", {}) or {}
+
+        if ok:
+            lines = [f"<b style='color: #22c55e;'>{context}: Success</b>"]
+
+            if context == "Add Entry":
+                new_id = result.get("new_id", "?")
+                cell = preview.get("parent_cell_line", "")
+                short = preview.get("short_name", "")
+                box = preview.get("box", "")
+                positions = preview.get("positions", [])
+                pos_text = ",".join(str(p) for p in positions)
+                lines.append(f"Added ID {new_id}: {cell} / {short} to Box {box}, Pos [{pos_text}]")
+
+            elif context == "Single Operation":
+                rid = preview.get("record_id", "?")
+                action = preview.get("action_en", preview.get("action_cn", ""))
+                pos = preview.get("position", "?")
+                before = preview.get("positions_before", [])
+                after = preview.get("positions_after", [])
+                lines.append(f"ID {rid}: {action} position {pos}")
+                if before or after:
+                    lines.append(
+                        f"Positions: [{','.join(str(p) for p in before)}]"
+                        f" -> [{','.join(str(p) for p in after)}]"
+                    )
+
+            elif context == "Batch Operation":
+                count = result.get("count", preview.get("count", 0))
+                ids = result.get("record_ids", [])
+                lines.append(f"Processed {count} entries on IDs: {', '.join(str(i) for i in ids)}")
+
+            elif context == "Rollback" or context == "Undo":
+                restored = result.get("restored_from", "?")
+                lines.append(f"Restored from: {os.path.basename(str(restored))}")
+
+            self.result_summary.setText("<br/>".join(lines))
+            self.result_card.setStyleSheet("QGroupBox { border: 1px solid #22c55e; }")
+        else:
+            msg = payload.get("message", "Unknown error")
+            error_code = payload.get("error_code", "")
+            lines = [f"<b style='color: #ef4444;'>{context}: Failed</b>"]
+            lines.append(str(msg))
+            if error_code:
+                lines.append(f"<span style='color: #94a3b8;'>Code: {error_code}</span>")
+            self.result_summary.setText("<br/>".join(lines))
+            self.result_card.setStyleSheet("QGroupBox { border: 1px solid #ef4444; }")
+
+        self.result_card.setVisible(True)
 
     # --- Query & Rollback Stubs (simplified) ---
     def on_query_records(self):
@@ -730,7 +889,7 @@ class OperationsPanel(QWidget):
     def _do_rollback(self, path):
         if not self._confirm_execute("Rollback", f"Restore from {path or 'Latest'}?"):
             return
-            
+
         resp = self.bridge.rollback(
             self.yaml_path_getter(),
             backup_path=path,
@@ -738,3 +897,178 @@ class OperationsPanel(QWidget):
         self._handle_response(resp, "Rollback")
         if resp.get("ok"):
             self.on_refresh_backups()
+
+    # --- AUDIT TAB ---
+    def _build_audit_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        filter_form = QFormLayout()
+
+        self.audit_start_date = QDateEdit()
+        self.audit_start_date.setCalendarPopup(True)
+        self.audit_start_date.setDisplayFormat("yyyy-MM-dd")
+        self.audit_start_date.setDate(QDate.currentDate().addDays(-7))
+        filter_form.addRow("From", self.audit_start_date)
+
+        self.audit_end_date = QDateEdit()
+        self.audit_end_date.setCalendarPopup(True)
+        self.audit_end_date.setDisplayFormat("yyyy-MM-dd")
+        self.audit_end_date.setDate(QDate.currentDate())
+        filter_form.addRow("To", self.audit_end_date)
+
+        self.audit_action_filter = QComboBox()
+        self.audit_action_filter.addItems(["All", "add_entry", "record_thaw", "batch_thaw", "rollback"])
+        filter_form.addRow("Action", self.audit_action_filter)
+
+        self.audit_status_filter = QComboBox()
+        self.audit_status_filter.addItems(["All", "success", "failed"])
+        filter_form.addRow("Status", self.audit_status_filter)
+
+        layout.addLayout(filter_form)
+
+        btn_row = QHBoxLayout()
+        load_btn = QPushButton("Load Audit Log")
+        load_btn.clicked.connect(self.on_load_audit)
+        btn_row.addWidget(load_btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        self.audit_info = QLabel("Click 'Load Audit Log' to view events.")
+        layout.addWidget(self.audit_info)
+
+        self.audit_table = QTableWidget()
+        layout.addWidget(self.audit_table, 1)
+        self._setup_table(
+            self.audit_table,
+            ["Timestamp", "Action", "Actor", "Status", "Channel", "Details"],
+            sortable=True,
+        )
+        self.audit_table.cellClicked.connect(self._on_audit_row_clicked)
+
+        return tab
+
+    def on_load_audit(self):
+        """Load and display audit events from JSONL file."""
+        yaml_path = self.yaml_path_getter()
+        yaml_abs = os.path.abspath(yaml_path)
+        from lib.config import AUDIT_LOG_FILE
+        audit_path = os.path.join(os.path.dirname(yaml_abs), AUDIT_LOG_FILE)
+
+        if not os.path.isfile(audit_path):
+            self.audit_info.setText(f"Audit file not found: {audit_path}")
+            return
+
+        start = self.audit_start_date.date().toString("yyyy-MM-dd")
+        end = self.audit_end_date.date().toString("yyyy-MM-dd")
+        action_filter = self.audit_action_filter.currentText()
+        status_filter = self.audit_status_filter.currentText()
+
+        events = []
+        try:
+            with open(audit_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        ev = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    ts = ev.get("timestamp", "")[:10]
+                    if ts < start or ts > end:
+                        continue
+                    if action_filter != "All" and ev.get("action") != action_filter:
+                        continue
+                    if status_filter != "All" and ev.get("status") != status_filter:
+                        continue
+
+                    events.append(ev)
+        except Exception as exc:
+            self.audit_info.setText(f"Failed to load audit: {exc}")
+            return
+
+        # Newest first
+        events.reverse()
+        self._audit_events = events
+
+        self._setup_table(
+            self.audit_table,
+            ["Timestamp", "Action", "Actor", "Status", "Channel", "Details"],
+            sortable=True,
+        )
+        for row, ev in enumerate(events):
+            self.audit_table.insertRow(row)
+            self.audit_table.setItem(row, 0, QTableWidgetItem(ev.get("timestamp", "")))
+            self.audit_table.setItem(row, 1, QTableWidgetItem(ev.get("action", "")))
+            self.audit_table.setItem(row, 2, QTableWidgetItem(ev.get("actor_id", "")))
+            self.audit_table.setItem(row, 3, QTableWidgetItem(ev.get("status", "")))
+            self.audit_table.setItem(row, 4, QTableWidgetItem(ev.get("channel", "")))
+
+            details = ev.get("details") or {}
+            error = ev.get("error") or {}
+            if ev.get("status") == "failed":
+                summary = str(error.get("message", ""))[:80] if error else str(details)[:80]
+            else:
+                summary = json.dumps(details, ensure_ascii=False)[:80] if details else ""
+            self.audit_table.setItem(row, 5, QTableWidgetItem(summary))
+
+        self.audit_info.setText(f"Showing {len(events)} audit events ({start} to {end})")
+
+    def _on_audit_row_clicked(self, row, _col):
+        """Show full JSON of selected audit event in output panel."""
+        if row >= len(self._audit_events):
+            return
+        ev = self._audit_events[row]
+        self.output.setPlainText(json.dumps(ev, ensure_ascii=False, indent=2))
+        self.output.setVisible(True)
+        self.output_toggle_btn.setChecked(True)
+
+    # --- UNDO ---
+
+    def _enable_undo(self, timeout_sec=30):
+        """Enable the undo button with an auto-disable countdown."""
+        self.undo_btn.setEnabled(True)
+        self._undo_remaining = timeout_sec
+        self.undo_btn.setText(f"Undo Last Operation ({self._undo_remaining}s)")
+
+        if self._undo_timer is not None:
+            self._undo_timer.stop()
+
+        self._undo_timer = QTimer(self)
+        self._undo_timer.timeout.connect(self._undo_tick)
+        self._undo_timer.start(1000)
+
+    def _undo_tick(self):
+        self._undo_remaining -= 1
+        if self._undo_remaining <= 0:
+            self._disable_undo()
+        else:
+            self.undo_btn.setText(f"Undo Last Operation ({self._undo_remaining}s)")
+
+    def _disable_undo(self):
+        if self._undo_timer is not None:
+            self._undo_timer.stop()
+            self._undo_timer = None
+        self.undo_btn.setEnabled(False)
+        self.undo_btn.setText("Undo Last Operation")
+        self._last_operation_backup = None
+
+    def on_undo_last(self):
+        if not self._last_operation_backup:
+            self.status_message.emit("No operation to undo.", 3000, "error")
+            return
+
+        if not self._confirm_execute(
+            "Undo",
+            f"Restore from backup:\n{os.path.basename(self._last_operation_backup)}?",
+        ):
+            return
+
+        response = self.bridge.rollback(
+            self.yaml_path_getter(),
+            backup_path=self._last_operation_backup,
+        )
+        self._disable_undo()
+        self._handle_response(response, "Undo")
