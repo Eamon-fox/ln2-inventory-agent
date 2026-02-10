@@ -59,6 +59,15 @@ class _ToolsSensitiveLLM:
         return {"role": "assistant", "content": "direct fallback answer", "tool_calls": []}
 
 
+class _StreamingLLM:
+    def stream_chat(self, messages, tools=None, temperature=0.0):
+        _ = messages
+        _ = tools
+        _ = temperature
+        yield {"type": "answer", "text": "Hello"}
+        yield {"type": "answer", "text": " world"}
+
+
 class ReactAgentTests(unittest.TestCase):
     def test_react_agent_calls_tool_then_finishes(self):
         with tempfile.TemporaryDirectory(prefix="ln2_react_") as temp_dir:
@@ -270,6 +279,20 @@ class ReactAgentTests(unittest.TestCase):
         self.assertGreaterEqual(len(llm.calls), 2)
         self.assertTrue(llm.calls[0]["tools_enabled"])
         self.assertFalse(llm.calls[-1]["tools_enabled"])
+
+    def test_react_agent_emits_incremental_chunk_events_from_stream_chat(self):
+        llm = _StreamingLLM()
+        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml", actor_id="react-test")
+        agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=2)
+        events = []
+
+        result = agent.run("say hello", on_event=lambda e: events.append(dict(e)))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("Hello world", result["final"])
+
+        chunks = [e.get("data") for e in events if e.get("event") == "chunk"]
+        self.assertEqual(["Hello", " world"], chunks)
 
 
 if __name__ == "__main__":

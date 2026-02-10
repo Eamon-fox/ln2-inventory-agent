@@ -84,6 +84,22 @@ class LLMClient(ABC):
         """Return assistant response payload with optional tool calls."""
         raise NotImplementedError
 
+    def stream_chat(self, messages, tools=None, temperature=0.0):
+        """Yield normalized stream events (answer/tool_call/error)."""
+        response = self.chat(messages, tools=tools, temperature=temperature)
+        if not isinstance(response, dict):
+            yield {"type": "error", "error": "Invalid model response payload"}
+            return
+
+        content = str(response.get("content") or "")
+        if content:
+            yield {"type": "answer", "text": content}
+
+        tool_calls = response.get("tool_calls") or []
+        for tool_call in tool_calls:
+            if isinstance(tool_call, dict):
+                yield {"type": "tool_call", "tool_call": tool_call}
+
     def complete(self, messages, temperature=0.0):
         """Compatibility wrapper returning assistant text only."""
         response = self.chat(messages, tools=None, temperature=temperature)
@@ -248,7 +264,7 @@ class DeepSeekLLMClient(LLMClient):
             )
         return finalized
 
-    def chat(self, messages, tools=None, temperature=0.0):
+    def _build_request(self, messages, tools=None, temperature=0.0):
         payload = {
             "model": self._model,
             "messages": messages,
@@ -261,7 +277,7 @@ class DeepSeekLLMClient(LLMClient):
 
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         endpoint = f"{self._base_url}/chat/completions"
-        req = urlrequest.Request(
+        return urlrequest.Request(
             endpoint,
             data=body,
             method="POST",
@@ -272,7 +288,56 @@ class DeepSeekLLMClient(LLMClient):
             },
         )
 
-        answer_chunks = []
+    def _yield_events_from_chunk(self, chunk, pending_tool_calls):
+        choices = chunk.get("choices") if isinstance(chunk, dict) else None
+        if not isinstance(choices, list) or not choices:
+            return
+
+        choice = choices[0] if isinstance(choices[0], dict) else {}
+        delta = choice.get("delta") if isinstance(choice, dict) else {}
+        message = choice.get("message") if isinstance(choice, dict) else {}
+        delta = delta if isinstance(delta, dict) else {}
+        message = message if isinstance(message, dict) else {}
+
+        # Stream mode should prefer incremental delta chunks.
+        content = self._normalize_content(delta.get("content"))
+        if not content:
+            content = self._normalize_content(message.get("content"))
+        if content:
+            yield {"type": "answer", "text": content}
+
+        raw_tool_calls = delta.get("tool_calls") or message.get("tool_calls") or []
+        if isinstance(raw_tool_calls, list):
+            for tool_call in raw_tool_calls:
+                self._accumulate_tool_call(pending_tool_calls, tool_call)
+
+        finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+        if finish_reason == "tool_calls" and pending_tool_calls:
+            for tool_call in self._finalize_tool_calls(pending_tool_calls):
+                yield {"type": "tool_call", "tool_call": tool_call}
+            pending_tool_calls.clear()
+
+    def _yield_events_from_plain_payload(self, payload_obj, pending_tool_calls):
+        choices = payload_obj.get("choices") if isinstance(payload_obj, dict) else None
+        if not isinstance(choices, list) or not choices:
+            return
+
+        choice = choices[0] if isinstance(choices[0], dict) else {}
+        message = choice.get("message") if isinstance(choice, dict) else {}
+        message = message if isinstance(message, dict) else {}
+
+        content = self._extract_content_from_choice(choice, message)
+        if content:
+            yield {"type": "answer", "text": content}
+
+        raw_tool_calls = message.get("tool_calls") or choice.get("tool_calls") or []
+        if isinstance(raw_tool_calls, list):
+            for tool_call in raw_tool_calls:
+                self._accumulate_tool_call(pending_tool_calls, tool_call)
+
+    def stream_chat(self, messages, tools=None, temperature=0.0):
+        req = self._build_request(messages, tools=tools, temperature=temperature)
+
         pending_tool_calls = {}
         saw_sse = False
         plain_lines = []
@@ -304,49 +369,24 @@ class DeepSeekLLMClient(LLMClient):
                             message = err.get("message") or json.dumps(err, ensure_ascii=False)
                         else:
                             message = str(err)
-                        raise RuntimeError(f"DeepSeek API error: {message}")
+                        yield {"type": "error", "error": f"DeepSeek API error: {message}"}
+                        return
 
-                    choices = chunk.get("choices") if isinstance(chunk, dict) else None
-                    if not isinstance(choices, list) or not choices:
-                        continue
-
-                    choice = choices[0] if isinstance(choices[0], dict) else {}
-                    delta = choice.get("delta") if isinstance(choice, dict) else {}
-                    message = choice.get("message") if isinstance(choice, dict) else {}
-                    delta = delta if isinstance(delta, dict) else {}
-                    message = message if isinstance(message, dict) else {}
-
-                    content = self._normalize_content(delta.get("content"))
-                    if not content:
-                        content = self._extract_content_from_choice(choice, message)
-                    if content:
-                        answer_chunks.append(content)
-
-                    raw_tool_calls = delta.get("tool_calls") or message.get("tool_calls") or []
-                    if isinstance(raw_tool_calls, list):
-                        for tool_call in raw_tool_calls:
-                            self._accumulate_tool_call(pending_tool_calls, tool_call)
+                    for event in self._yield_events_from_chunk(chunk, pending_tool_calls):
+                        yield event
 
             if not saw_sse and plain_lines:
                 joined = "\n".join(plain_lines)
                 try:
                     payload_obj = json.loads(joined)
-                    choices = payload_obj.get("choices") if isinstance(payload_obj, dict) else None
-                    if isinstance(choices, list) and choices:
-                        choice = choices[0] if isinstance(choices[0], dict) else {}
-                        message = choice.get("message") if isinstance(choice, dict) else {}
-                        message = message if isinstance(message, dict) else {}
-
-                        content = self._extract_content_from_choice(choice, message)
-                        if content:
-                            answer_chunks.append(content)
-
-                        raw_tool_calls = message.get("tool_calls") or choice.get("tool_calls") or []
-                        if isinstance(raw_tool_calls, list):
-                            for tool_call in raw_tool_calls:
-                                self._accumulate_tool_call(pending_tool_calls, tool_call)
+                    for event in self._yield_events_from_plain_payload(payload_obj, pending_tool_calls):
+                        yield event
                 except Exception:
                     pass
+
+            if pending_tool_calls:
+                for tool_call in self._finalize_tool_calls(pending_tool_calls):
+                    yield {"type": "tool_call", "tool_call": tool_call}
 
         except urlerror.HTTPError as exc:
             body_text = ""
@@ -357,15 +397,33 @@ class DeepSeekLLMClient(LLMClient):
             detail = f"HTTP {exc.code}"
             if body_text:
                 detail = f"{detail}: {body_text}"
-            raise RuntimeError(f"DeepSeek request failed ({detail})") from exc
+            yield {"type": "error", "error": f"DeepSeek request failed ({detail})"}
         except urlerror.URLError as exc:
-            raise RuntimeError(f"DeepSeek request failed: {exc.reason}") from exc
+            yield {"type": "error", "error": f"DeepSeek request failed: {exc.reason}"}
 
-        content = "".join(answer_chunks).strip()
-        tool_calls = self._finalize_tool_calls(pending_tool_calls)
+    def chat(self, messages, tools=None, temperature=0.0):
+        content_parts = []
+        tool_calls = []
+
+        for event in self.stream_chat(messages, tools=tools, temperature=temperature):
+            if not isinstance(event, dict):
+                continue
+
+            event_type = str(event.get("type") or "").strip().lower()
+            if event_type == "answer":
+                text = str(event.get("text") or "")
+                if text:
+                    content_parts.append(text)
+            elif event_type == "tool_call":
+                tool_call = event.get("tool_call")
+                if isinstance(tool_call, dict):
+                    tool_calls.append(tool_call)
+            elif event_type == "error":
+                raise RuntimeError(str(event.get("error") or "DeepSeek stream failed"))
+
         return {
             "role": "assistant",
-            "content": content,
+            "content": "".join(content_parts).strip(),
             "tool_calls": tool_calls,
         }
 

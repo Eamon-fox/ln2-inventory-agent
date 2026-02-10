@@ -111,6 +111,33 @@ class GuiPanelRegressionTests(unittest.TestCase):
         call_names = [name for name, _value in panel.ai_chat.calls]
         self.assertIn("insertMarkdown", call_names)
 
+    def test_ai_panel_stream_chunk_updates_chat_incrementally(self):
+        panel = self._new_ai_panel()
+        panel.ai_chat = _FakeChatNoMarkdown()
+
+        panel.on_progress({"event": "run_start", "trace_id": "trace-stream"})
+        panel.on_progress({"event": "chunk", "trace_id": "trace-stream", "data": "hello"})
+
+        chunk_calls = [
+            value for name, value in panel.ai_chat.calls
+            if name == "insertPlainText"
+        ]
+        self.assertIn("hello", chunk_calls)
+
+    def test_ai_panel_finished_does_not_duplicate_streamed_final(self):
+        panel = self._new_ai_panel()
+        panel.ai_chat = _FakeChatNoMarkdown()
+
+        panel.on_progress({"event": "run_start", "trace_id": "trace-stream"})
+        panel.on_progress({"event": "chunk", "trace_id": "trace-stream", "data": "hello"})
+        panel.on_finished({"ok": True, "result": {"final": "hello", "trace_id": "trace-stream"}})
+
+        chunk_calls = [
+            value for name, value in panel.ai_chat.calls
+            if name == "insertPlainText"
+        ]
+        self.assertEqual(1, chunk_calls.count("hello"))
+
     def test_ai_panel_finished_uses_wrapped_result_shape(self):
         panel = self._new_ai_panel()
 

@@ -110,16 +110,38 @@ class ReactAgent:
         }
 
     @staticmethod
+    def _parse_tool_arguments(raw_args):
+        if isinstance(raw_args, dict):
+            return raw_args
+        if raw_args in (None, ""):
+            return {}
+        if isinstance(raw_args, str):
+            try:
+                parsed = json.loads(raw_args)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                return None
+        return None
+
+    @staticmethod
     def _normalize_tool_call(raw_call, index):
         if not isinstance(raw_call, dict):
             return None
 
         call_id = str(raw_call.get("id") or f"call_{uuid.uuid4().hex[:12]}_{index}").strip()
         name = str(raw_call.get("name") or raw_call.get("tool") or "").strip()
+        arguments = raw_call.get("arguments")
+
+        if (not name or not isinstance(arguments, dict)) and isinstance(raw_call.get("function"), dict):
+            function = raw_call.get("function") or {}
+            if not name:
+                name = str(function.get("name") or "").strip()
+            if not isinstance(arguments, dict):
+                arguments = ReactAgent._parse_tool_arguments(function.get("arguments"))
+
         if not name:
             return None
-
-        arguments = raw_call.get("arguments")
         if not isinstance(arguments, dict):
             return None
 
@@ -186,6 +208,76 @@ class ReactAgent:
             "tool_call_id": tool_call_id,
             "observation": observation,
             "output_text": self._serialize_tool_output(observation),
+        }
+
+    def _collect_model_response(self, messages, tool_schemas, trace_id, step, on_event):
+        stream_fn = getattr(self._llm, "stream_chat", None)
+        if callable(stream_fn):
+            iterator = stream_fn(messages, tools=tool_schemas, temperature=0.0)
+        else:
+            fallback_response = self._llm.chat(messages, tools=tool_schemas, temperature=0.0)
+
+            def _fallback_iter():
+                if not isinstance(fallback_response, dict):
+                    yield {"type": "error", "error": "LLM client returned non-dict response payload."}
+                    return
+                content = str(fallback_response.get("content") or "")
+                if content:
+                    yield {"type": "answer", "text": content}
+                for raw_tool_call in fallback_response.get("tool_calls") or []:
+                    yield {"type": "tool_call", "tool_call": raw_tool_call}
+
+            iterator = _fallback_iter()
+
+        if not hasattr(iterator, "__iter__"):
+            return {
+                "error": "LLM stream handler returned non-iterable payload.",
+                "content": "",
+                "tool_calls": [],
+            }
+
+        answer_parts = []
+        tool_calls = []
+        for raw_event in getattr(iterator, "__iter__", lambda: iter(()))():
+            if not isinstance(raw_event, dict):
+                continue
+
+            event_type = str(raw_event.get("type") or "").strip().lower()
+            if event_type == "answer":
+                chunk = str(raw_event.get("text") or "")
+                if chunk:
+                    answer_parts.append(chunk)
+                    self._emit_event(
+                        on_event,
+                        {
+                            "event": "chunk",
+                            "type": "chunk",
+                            "trace_id": trace_id,
+                            "step": step,
+                            "data": chunk,
+                            "meta": {"channel": "answer"},
+                        },
+                    )
+                continue
+
+            if event_type == "tool_call":
+                raw_tool_call = raw_event.get("tool_call")
+                normalized = self._normalize_tool_call(raw_tool_call, len(tool_calls))
+                if normalized:
+                    tool_calls.append(normalized)
+                continue
+
+            if event_type == "error":
+                return {
+                    "error": str(raw_event.get("error") or "LLM stream failed"),
+                    "content": "".join(answer_parts).strip(),
+                    "tool_calls": tool_calls,
+                }
+
+        return {
+            "error": None,
+            "content": "".join(answer_parts).strip(),
+            "tool_calls": tool_calls,
         }
 
     def _request_direct_answer(self, messages):
@@ -258,12 +350,19 @@ class ReactAgent:
                 },
             )
 
-            model_response = self._llm.chat(messages, tools=tool_schemas, temperature=0.0)
-            if not isinstance(model_response, dict):
+            model_response = self._collect_model_response(
+                messages=messages,
+                tool_schemas=tool_schemas,
+                trace_id=trace_id,
+                step=step,
+                on_event=on_event,
+            )
+
+            if model_response.get("error"):
                 observation = {
                     "ok": False,
-                    "error_code": "invalid_model_response",
-                    "message": "LLM client returned non-dict response payload.",
+                    "error_code": "llm_stream_failed",
+                    "message": str(model_response.get("error") or "LLM stream failed"),
                 }
                 self._emit_event(
                     on_event,
@@ -283,38 +382,21 @@ class ReactAgent:
                     "ok": False,
                     "trace_id": trace_id,
                     "steps": step,
-                    "final": "Agent failed: invalid LLM response payload.",
+                    "final": "Agent failed: LLM stream error.",
                     "conversation_history_used": len(memory),
                 }
 
             assistant_content = str(model_response.get("content") or "").strip()
-            final_fallback = model_response.get("final")
-            if not assistant_content and isinstance(final_fallback, str):
-                assistant_content = final_fallback.strip()
-
             if assistant_content:
                 answer_buf.append(assistant_content)
                 current_answer_buf.append(assistant_content)
-                self._emit_event(
-                    on_event,
-                    {
-                        "event": "chunk",
-                        "type": "chunk",
-                        "trace_id": trace_id,
-                        "step": step,
-                        "data": assistant_content,
-                        "meta": {"channel": "answer"},
-                    },
-                )
 
-            raw_tool_calls = model_response.get("tool_calls") or []
-            normalized_tool_calls = []
-            for index, raw_call in enumerate(raw_tool_calls):
-                normalized = self._normalize_tool_call(raw_call, index)
-                if normalized:
-                    normalized_tool_calls.append(normalized)
+            normalized_tool_calls = model_response.get("tool_calls") or []
 
-            if raw_tool_calls and not normalized_tool_calls:
+            if normalized_tool_calls is None:
+                normalized_tool_calls = []
+
+            if model_response.get("tool_calls") and not normalized_tool_calls:
                 observation = {
                     "ok": False,
                     "error_code": "invalid_tool_call",

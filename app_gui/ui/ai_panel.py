@@ -26,6 +26,8 @@ class AIPanel(QWidget):
         self.ai_run_thread = None
         self.ai_run_worker = None
         self.ai_active_trace_id = None
+        self.ai_streaming_active = False
+        self.ai_stream_buffer = ""
 
         self.setup_ui()
 
@@ -211,15 +213,14 @@ class AIPanel(QWidget):
         self.ai_report.clear()
         self.ai_history = []
         self.ai_active_trace_id = None
+        self.ai_streaming_active = False
+        self.ai_stream_buffer = ""
         self.status_message.emit("AI memory cleared", 2000)
 
-    def _append_chat(self, role, text):
+    def _append_chat_header(self, role):
         stamp = datetime.now().strftime("%H:%M:%S")
-        
-        # Markdown rendering
-        # We can construct HTML for better look
         color = "#38bdf8" if role == "Agent" else "#a3e635" # Blue for agent, Green for user
-        
+ 
         html = f"""
         <div style="margin-bottom: 8px;">
             <span style="color: {color}; font-weight: bold;">[{stamp}] {role}</span>
@@ -227,8 +228,35 @@ class AIPanel(QWidget):
         </div>
         """
         self.ai_chat.append(html)
+
+    def _append_chat(self, role, text):
+        self._append_chat_header(role)
         self._insert_chat_markdown(text)
         self.ai_chat.append("\n") # Spacer
+
+    def _begin_stream_chat(self, role="Agent"):
+        if self.ai_streaming_active:
+            return
+        self.ai_streaming_active = True
+        self.ai_stream_buffer = ""
+        self._append_chat_header(role)
+
+    def _append_stream_chunk(self, text):
+        chunk = str(text or "")
+        if not chunk:
+            return
+        if not self.ai_streaming_active:
+            self._begin_stream_chat("Agent")
+        self.ai_stream_buffer += chunk
+        self.ai_chat.insertPlainText(chunk)
+        if hasattr(self.ai_chat, "ensureCursorVisible"):
+            self.ai_chat.ensureCursorVisible()
+
+    def _end_stream_chat(self):
+        if not self.ai_streaming_active:
+            return
+        self.ai_chat.append("\n")
+        self.ai_streaming_active = False
 
     def _insert_chat_markdown(self, text):
         markdown_text = str(text or "")
@@ -260,6 +288,8 @@ class AIPanel(QWidget):
         self._append_history("user", prompt)
         self.ai_prompt.clear()
         self.ai_active_trace_id = None
+        self.ai_streaming_active = False
+        self.ai_stream_buffer = ""
         self.ai_report.clear()
         self.status_message.emit("Agent thinking...", 2000)
         
@@ -350,6 +380,12 @@ class AIPanel(QWidget):
             self.ai_report.append(line)
             return
 
+        if event_type == "chunk":
+            chunk = event.get("data")
+            if isinstance(chunk, str) and chunk:
+                self._append_stream_chunk(chunk)
+            return
+
         if event_type == "error":
             err = event.get("data") or event.get("message") or "unknown error"
             self.ai_report.append(f"Agent error: {err}")
@@ -399,8 +435,18 @@ class AIPanel(QWidget):
         if not final_text:
             final_text = "Agent finished without a final message."
             self.ai_report.append("Protocol warning: result.final is empty.")
-        
-        self._append_chat("Agent", final_text)
+
+        streamed_text = self.ai_stream_buffer.strip()
+        if self.ai_streaming_active:
+            self._end_stream_chat()
+
+        if not streamed_text:
+            self._append_chat("Agent", final_text)
+        elif final_text.strip() != streamed_text:
+            # Keep a final canonical message if streamed chunks differ.
+            self._append_chat("Agent", final_text)
+
+        self.ai_stream_buffer = ""
         self._append_history("assistant", final_text)
 
         self.operation_completed.emit(bool(response.get("ok")))

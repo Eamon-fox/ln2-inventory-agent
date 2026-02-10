@@ -112,6 +112,49 @@ class LlmContentNormalizationTests(unittest.TestCase):
 
 
 class DeepSeekClientParseTests(unittest.TestCase):
+    def test_stream_chat_yields_incremental_answer_and_tool_call(self):
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}, clear=False):
+            client = DeepSeekLLMClient(model="deepseek-chat")
+
+        tool_chunk = {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_a",
+                                "function": {
+                                    "name": "query_inventory",
+                                    "arguments": '{"cell":"K562"}',
+                                },
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        }
+
+        lines = [
+            f"data: {json.dumps({'choices': [{'delta': {'content': 'Hel'}}]})}",
+            f"data: {json.dumps({'choices': [{'delta': {'content': 'lo'}}]})}",
+            f"data: {json.dumps(tool_chunk)}",
+            "data: [DONE]",
+        ]
+
+        with patch("agent.llm_client.urlrequest.urlopen", return_value=_FakeUrlopenResponse(lines)):
+            events = list(client.stream_chat(messages=[{"role": "user", "content": "hi"}], tools=[{"type": "function"}]))
+
+        answer_parts = [evt.get("text") for evt in events if evt.get("type") == "answer"]
+        self.assertEqual(["Hel", "lo"], answer_parts)
+
+        tool_events = [evt for evt in events if evt.get("type") == "tool_call"]
+        self.assertEqual(1, len(tool_events))
+        tool_call = tool_events[0].get("tool_call") or {}
+        self.assertEqual("query_inventory", tool_call.get("name"))
+        self.assertEqual({"cell": "K562"}, tool_call.get("arguments"))
+
     def test_chat_parses_sse_content_and_tool_calls(self):
         with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}, clear=False):
             client = DeepSeekLLMClient(model="deepseek-chat")
