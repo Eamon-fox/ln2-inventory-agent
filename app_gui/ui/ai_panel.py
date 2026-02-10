@@ -1,5 +1,6 @@
 from datetime import datetime
 from PySide6.QtCore import Qt, Signal, QThread, QEvent
+from PySide6.QtGui import QTextDocumentFragment
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QLineEdit, QComboBox, QCheckBox, 
@@ -112,6 +113,7 @@ class AIPanel(QWidget):
         chat_layout = QVBoxLayout(chat_box)
         self.ai_chat = QTextEdit()
         self.ai_chat.setReadOnly(True)
+        self.ai_chat.setAcceptRichText(True)
         self.ai_chat.setPlaceholderText("Conversation timeline will appear here.")
         chat_layout.addWidget(self.ai_chat)
         layout.addWidget(chat_box, 3)
@@ -225,11 +227,25 @@ class AIPanel(QWidget):
         </div>
         """
         self.ai_chat.append(html)
-        if hasattr(self.ai_chat, "insertMarkdown"):
-            self.ai_chat.insertMarkdown(text)
-        else:
-            self.ai_chat.insertPlainText(text)
+        self._insert_chat_markdown(text)
         self.ai_chat.append("\n") # Spacer
+
+    def _insert_chat_markdown(self, text):
+        markdown_text = str(text or "")
+        if hasattr(self.ai_chat, "insertMarkdown"):
+            self.ai_chat.insertMarkdown(markdown_text)
+            return
+
+        # Qt fallback for runtimes where QTextEdit has no insertMarkdown.
+        if hasattr(QTextDocumentFragment, "fromMarkdown") and hasattr(self.ai_chat, "textCursor"):
+            cursor = self.ai_chat.textCursor()
+            fragment = QTextDocumentFragment.fromMarkdown(markdown_text)
+            cursor.insertFragment(fragment)
+            if hasattr(self.ai_chat, "setTextCursor"):
+                self.ai_chat.setTextCursor(cursor)
+            return
+
+        self.ai_chat.insertPlainText(markdown_text)
 
     def on_run_ai_agent(self):
         if self.ai_run_inflight:

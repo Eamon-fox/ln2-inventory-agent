@@ -37,6 +37,17 @@ class _FakeChatNoMarkdown:
         self.calls.append(("insertPlainText", text))
 
 
+class _FakeChatWithMarkdown:
+    def __init__(self):
+        self.calls = []
+
+    def append(self, text):
+        self.calls.append(("append", text))
+
+    def insertMarkdown(self, text):
+        self.calls.append(("insertMarkdown", text))
+
+
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
 class GuiPanelRegressionTests(unittest.TestCase):
     @classmethod
@@ -90,6 +101,15 @@ class GuiPanelRegressionTests(unittest.TestCase):
 
         call_names = [name for name, _value in panel.ai_chat.calls]
         self.assertIn("insertPlainText", call_names)
+
+    def test_ai_panel_append_chat_prefers_insert_markdown_when_available(self):
+        panel = self._new_ai_panel()
+        panel.ai_chat = _FakeChatWithMarkdown()
+
+        panel._append_chat("Agent", "**bold**")
+
+        call_names = [name for name, _value in panel.ai_chat.calls]
+        self.assertIn("insertMarkdown", call_names)
 
     def test_ai_panel_finished_uses_wrapped_result_shape(self):
         panel = self._new_ai_panel()
