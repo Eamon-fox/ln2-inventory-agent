@@ -238,7 +238,7 @@ class OperationsPanel(QWidget):
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
-        single = QGroupBox("Single Thaw / Takeout")
+        single = QGroupBox("Single Operation (Takeout/Thaw/Discard/Move)")
         single_form = QFormLayout(single)
         self.t_id = QSpinBox()
         self.t_id.setRange(1, 999999)
@@ -251,11 +251,16 @@ class OperationsPanel(QWidget):
         self.t_date.setDisplayFormat("yyyy-MM-dd")
         self.t_date.setDate(QDate.currentDate())
         self.t_action = QComboBox()
-        self.t_action.addItems(["Takeout", "Thaw", "Discard"])
+        self.t_action.addItems(["Takeout", "Thaw", "Discard", "Move"])
+        self.t_action.currentIndexChanged.connect(self._on_single_action_changed)
+        self.t_to_position = QSpinBox()
+        self.t_to_position.setRange(1, 999)
+        self.t_to_position.valueChanged.connect(self._refresh_thaw_record_context)
         self.t_note = QLineEdit()
 
         single_form.addRow("Record ID", self.t_id)
         single_form.addRow("Position", self.t_position)
+        single_form.addRow("To Position (Move)", self.t_to_position)
         single_form.addRow("Date", self.t_date)
         single_form.addRow("Action", self.t_action)
         single_form.addRow("Note", self.t_note)
@@ -303,7 +308,7 @@ class OperationsPanel(QWidget):
         self.t_batch_toggle_btn.toggled.connect(self.on_toggle_batch_section)
         layout.addWidget(self.t_batch_toggle_btn)
 
-        self.t_batch_group = QGroupBox("Batch Thaw / Takeout")
+        self.t_batch_group = QGroupBox("Batch Operation (Takeout/Thaw/Discard/Move)")
         batch_form = QFormLayout(self.t_batch_group)
         self.b_entries = QLineEdit()
         self.b_entries.setPlaceholderText("e.g. 182:23,183:41")
@@ -312,7 +317,8 @@ class OperationsPanel(QWidget):
         self.b_date.setDisplayFormat("yyyy-MM-dd")
         self.b_date.setDate(QDate.currentDate())
         self.b_action = QComboBox()
-        self.b_action.addItems(["Takeout", "Thaw", "Discard"])
+        self.b_action.addItems(["Takeout", "Thaw", "Discard", "Move"])
+        self.b_action.currentIndexChanged.connect(self._on_batch_action_changed)
         self.b_note = QLineEdit()
 
         batch_form.addRow("Entries (text)", self.b_entries)
@@ -347,6 +353,8 @@ class OperationsPanel(QWidget):
         self.b_apply_btn.clicked.connect(self.on_batch_thaw)
         batch_form.addRow("", self.b_apply_btn)
         layout.addWidget(self.t_batch_group)
+        self._on_single_action_changed()
+        self._on_batch_action_changed()
         self.on_toggle_batch_section(False)
         layout.addStretch(1)
         return tab
@@ -457,6 +465,29 @@ class OperationsPanel(QWidget):
             QPushButton:hover { background-color: #dc2626; }
         """)
 
+    @staticmethod
+    def _is_move_action_text(action_text):
+        return str(action_text or "").strip().lower() == "move"
+
+    def _on_single_action_changed(self):
+        is_move = self._is_move_action_text(self.t_action.currentText())
+        self.t_to_position.setEnabled(is_move)
+        self.t_to_position.setToolTip("Required when action is Move." if is_move else "Only used for Move action.")
+        self._refresh_thaw_record_context()
+
+    def _on_batch_action_changed(self):
+        is_move = self._is_move_action_text(self.b_action.currentText())
+        self.b_entries.setPlaceholderText(
+            "e.g. 182:23->31,183:41->42" if is_move else "e.g. 182:23,183:41"
+        )
+
+        col_count = 3 if is_move else 2
+        headers = ["Record ID", "From", "To"] if is_move else ["Record ID", "Position"]
+        if self.b_table.columnCount() != col_count:
+            self.b_table.setColumnCount(col_count)
+        self.b_table.setHorizontalHeaderLabels(headers)
+        self.b_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+
     def _ensure_today_defaults(self):
         today = QDate.currentDate()
         anchor = getattr(self, "_default_date_anchor", today)
@@ -478,25 +509,37 @@ class OperationsPanel(QWidget):
 
     def _refresh_thaw_record_context(self):
         record_id = self.t_id.value()
-        target_position = self.t_position.value()
+        source_position = self.t_position.value()
+        move_target = self.t_to_position.value() if hasattr(self, "t_to_position") else None
+        is_move = self._is_move_action_text(self.t_action.currentText()) if hasattr(self, "t_action") else False
         record = self._lookup_record(record_id)
 
         source_text = "-"
         if self.t_prefill_source:
             source_box = self.t_prefill_source.get("box")
-            source_position = self.t_prefill_source.get("position")
-            if source_box is not None and source_position is not None:
-                source_text = f"Box {source_box}:{source_position}"
+            source_prefill = self.t_prefill_source.get("position")
+            if source_box is not None and source_prefill is not None:
+                source_text = f"Box {source_box}:{source_prefill}"
         self.t_ctx_source.setText(source_text)
 
-        self.t_ctx_target.setText(str(target_position) if target_position else "-")
+        target_text = f"{source_position} -> {move_target}" if is_move else (str(source_position) if source_position else "-")
+        self.t_ctx_target.setText(target_text)
         self.t_ctx_id.setText(str(record_id) if record_id else "-")
 
         if not record:
             self.t_ctx_status.setText("Record not found in cache.")
             self.t_ctx_status.setStyleSheet("color: #b45309;")
-            for lbl in [self.t_ctx_cell, self.t_ctx_short, self.t_ctx_box, self.t_ctx_positions, 
-                        self.t_ctx_check, self.t_ctx_frozen, self.t_ctx_plasmid, self.t_ctx_events, self.t_ctx_note]:
+            for lbl in [
+                self.t_ctx_cell,
+                self.t_ctx_short,
+                self.t_ctx_box,
+                self.t_ctx_positions,
+                self.t_ctx_check,
+                self.t_ctx_frozen,
+                self.t_ctx_plasmid,
+                self.t_ctx_events,
+                self.t_ctx_note,
+            ]:
                 lbl.setText("-")
             return
 
@@ -505,7 +548,7 @@ class OperationsPanel(QWidget):
         else:
             self.t_ctx_status.setText("Record context loaded.")
         self.t_ctx_status.setStyleSheet("color: #15803d;")
-        
+
         self.t_ctx_cell.setText(str(record.get("parent_cell_line") or "-"))
         self.t_ctx_short.setText(str(record.get("short_name") or "-"))
         self.t_ctx_box.setText(str(record.get("box") or "-"))
@@ -516,7 +559,7 @@ class OperationsPanel(QWidget):
         plasmid = record.get("plasmid_name") or record.get("plasmid_id") or "-"
         self.t_ctx_plasmid.setText(str(plasmid))
         self.t_ctx_note.setText(str(record.get("note") or "-"))
-        
+
         # History
         events = record.get("thaw_events") or []
         if events:
@@ -531,15 +574,19 @@ class OperationsPanel(QWidget):
         # Check
         pos_ok = False
         try:
-            pos_ok = int(target_position) in {int(p) for p in positions}
-        except Exception: pass
-        
-        if pos_ok:
-            self.t_ctx_check.setText("OK - position in record")
-            self.t_ctx_check.setStyleSheet("color: #15803d;")
-        else:
+            pos_ok = int(source_position) in {int(p) for p in positions}
+        except Exception:
+            pos_ok = False
+
+        if not pos_ok:
             self.t_ctx_check.setText("WARNING - position NOT in record")
             self.t_ctx_check.setStyleSheet("color: #b91c1c;")
+        elif is_move and move_target == source_position:
+            self.t_ctx_check.setText("WARNING - move target equals source")
+            self.t_ctx_check.setStyleSheet("color: #b91c1c;")
+        else:
+            self.t_ctx_check.setText("OK - position in record")
+            self.t_ctx_check.setStyleSheet("color: #15803d;")
 
     def _confirm_execute(self, title, details):
         msg = QMessageBox(self)
@@ -588,10 +635,18 @@ class OperationsPanel(QWidget):
         self._ensure_today_defaults()
         yaml_path = self.yaml_path_getter()
 
+        action_text = self.t_action.currentText()
+        is_move = self._is_move_action_text(action_text)
+        to_position = self.t_to_position.value() if is_move else None
+        if is_move and to_position == self.t_position.value():
+            self.status_message.emit("Move operation requires a different To Position.", 4000, "error")
+            return
+
         details = (
             f"ID: {self.t_id.value()}\n"
             f"Position: {self.t_position.value()}\n"
-            f"Action: {self.t_action.currentText()}"
+            + (f"To Position: {to_position}\n" if is_move else "")
+            + f"Action: {action_text}"
         )
         if not self._confirm_execute("Confirm Operation", details):
             return
@@ -600,8 +655,9 @@ class OperationsPanel(QWidget):
             yaml_path=yaml_path,
             record_id=self.t_id.value(),
             position=self.t_position.value(),
+            to_position=to_position,
             date_str=self.t_date.date().toString("yyyy-MM-dd"),
-            action=self.t_action.currentText(),
+            action=action_text,
             note=self.t_note.text() or None,
         )
         self._handle_response(response, "Single Operation")
@@ -617,22 +673,34 @@ class OperationsPanel(QWidget):
             self.b_table.removeRow(self.b_table.rowCount() - 1)
 
     def _collect_batch_from_table(self):
-        """Collect entries from the mini-table. Returns list of dicts or None if empty."""
+        """Collect entries from the mini-table. Returns list of tuples or None if empty."""
         entries = []
+        is_move = self._is_move_action_text(self.b_action.currentText())
         for row in range(self.b_table.rowCount()):
             id_item = self.b_table.item(row, 0)
-            pos_item = self.b_table.item(row, 1)
-            if id_item and pos_item:
-                id_text = id_item.text().strip()
-                pos_text = pos_item.text().strip()
-                if id_text and pos_text:
-                    try:
-                        entries.append({
-                            "record_id": int(id_text),
-                            "position": int(pos_text),
-                        })
-                    except ValueError:
-                        raise ValueError(f"Row {row + 1}: invalid Record ID or Position")
+            from_item = self.b_table.item(row, 1)
+            to_item = self.b_table.item(row, 2) if is_move else None
+
+            if not id_item or not from_item:
+                continue
+
+            id_text = id_item.text().strip()
+            from_text = from_item.text().strip()
+            to_text = to_item.text().strip() if (to_item is not None) else ""
+
+            if not id_text or not from_text or (is_move and not to_text):
+                continue
+
+            try:
+                if is_move:
+                    entries.append((int(id_text), int(from_text), int(to_text)))
+                else:
+                    entries.append((int(id_text), int(from_text)))
+            except ValueError as exc:
+                if is_move:
+                    raise ValueError(f"Row {row + 1}: invalid Record ID / From / To") from exc
+                raise ValueError(f"Row {row + 1}: invalid Record ID or Position") from exc
+
         return entries if entries else None
 
     def on_batch_thaw(self):
@@ -654,7 +722,24 @@ class OperationsPanel(QWidget):
                 self.status_message.emit(str(exc), 3000, "error")
                 return
 
-        summary = ", ".join(f"{e.get('record_id')}:{e.get('position')}" for e in entries)
+        def _entry_text(entry):
+            if isinstance(entry, dict):
+                rid = entry.get("record_id", entry.get("id"))
+                source_pos = entry.get("position", entry.get("from_position"))
+                target_pos = entry.get("to_position")
+                if target_pos is not None:
+                    return f"{rid}:{source_pos}->{target_pos}"
+                return f"{rid}:{source_pos}"
+
+            if isinstance(entry, (list, tuple)):
+                if len(entry) == 3:
+                    return f"{entry[0]}:{entry[1]}->{entry[2]}"
+                if len(entry) == 2:
+                    return f"{entry[0]}:{entry[1]}"
+
+            return str(entry)
+
+        summary = ", ".join(_entry_text(entry) for entry in entries)
         if not self._confirm_execute("Confirm Batch", f"Entries: {summary}"):
             return
 
@@ -710,9 +795,13 @@ class OperationsPanel(QWidget):
                 rid = preview.get("record_id", "?")
                 action = preview.get("action_en", preview.get("action_cn", ""))
                 pos = preview.get("position", "?")
+                to_pos = preview.get("to_position")
                 before = preview.get("positions_before", [])
                 after = preview.get("positions_after", [])
-                lines.append(f"ID {rid}: {action} position {pos}")
+                if to_pos is not None:
+                    lines.append(f"ID {rid}: {action} {pos} -> {to_pos}")
+                else:
+                    lines.append(f"ID {rid}: {action} position {pos}")
                 if before or after:
                     lines.append(
                         f"Positions: [{','.join(str(p) for p in before)}]"

@@ -59,6 +59,9 @@ python scripts/record_thaw.py --id 5 --position 30 --date 2026-02-01
 
 # Batch
 python scripts/batch_thaw.py --entries "5:30,6:12" --date 2026-02-01 --action 复苏
+
+# Move/reorg (real relocation; swaps if target is occupied)
+python scripts/record_thaw.py --id 5 --position 30 --to-position 31 --date 2026-02-01 --action move --note "reorg"
 ```
 
 ### Query
@@ -91,7 +94,7 @@ See [`references/ln2_config.sample.json`](references/ln2_config.sample.json) for
 - `schema.box_range` — number of boxes (default `[1, 5]`)
 - `schema.position_range` — positions per box (default `[1, 81]` for 9x9 grid)
 - `schema.valid_cell_lines` — optional whitelist (empty = accept any)
-- `schema.valid_actions` — thaw action types
+- `schema.valid_actions` — operation types (`取出`, `复苏`, `扔掉`, `移动`)
 - `safety.*` — backup rotation, warning thresholds
 
 ## Use as a Claude Code Skill

@@ -8,23 +8,27 @@ ACTION_ALIAS = {
     "复苏": "thaw",
     "扔掉": "discard",
     "丢掉": "discard",
+    "移动": "move",
+    "整理": "move",
     "takeout": "takeout",
     "thaw": "thaw",
     "discard": "discard",
+    "move": "move",
 }
 
 ACTION_LABEL = {
     "takeout": "取出",
     "thaw": "复苏",
     "discard": "扔掉",
+    "move": "移动",
 }
 
 
 def normalize_action(action):
     """Normalize action to canonical English form.
 
-    Accepts Chinese or English values. Returns ``takeout``/``thaw``/``discard``
-    or ``None`` for unrecognized input.
+    Accepts Chinese or English values. Returns ``takeout``/``thaw``/``discard``/
+    ``move`` or ``None`` for unrecognized input.
     """
     if action is None:
         return None
@@ -55,6 +59,10 @@ def extract_thaw_positions(rec):
     thawed = set()
     thaw_events = rec.get("thaw_events") or []
     for ev in thaw_events:
+        action = normalize_action(ev.get("action"))
+        # Move/reorg is bookkeeping and should not mark position as depleted.
+        if action == "move":
+            continue
         pos = ev.get("positions")
         if pos is None:
             continue

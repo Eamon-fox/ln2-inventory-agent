@@ -15,6 +15,7 @@ from lib.tool_api import (
     build_actor_context,
     tool_add_entry,
     tool_batch_thaw,
+    tool_collect_timeline,
     tool_record_thaw,
     tool_rollback,
 )
@@ -180,6 +181,167 @@ class ToolApiTests(unittest.TestCase):
             current = load_yaml(str(yaml_path))
             self.assertEqual([], current["inventory"][0]["positions"])
             self.assertEqual([], current["inventory"][1]["positions"])
+
+    def test_tool_record_thaw_move_updates_positions_and_appends_event(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_move_single_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1, 2])]),
+                path=str(yaml_path),
+                auto_html=False,
+                auto_server=False,
+            )
+
+            result = tool_record_thaw(
+                yaml_path=str(yaml_path),
+                record_id=1,
+                position=1,
+                to_position=3,
+                date_str="2026-02-10",
+                action="move",
+                note="reorg",
+                auto_html=False,
+                auto_server=False,
+            )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual("move", result["preview"]["action_en"])
+            self.assertEqual(3, result["preview"]["to_position"])
+            self.assertEqual([1, 2], result["preview"]["positions_before"])
+            self.assertEqual([3, 2], result["preview"]["positions_after"])
+
+            current = load_yaml(str(yaml_path))
+            self.assertEqual([3, 2], current["inventory"][0]["positions"])
+            events = current["inventory"][0].get("thaw_events") or []
+            self.assertEqual(1, len(events))
+            self.assertEqual("move", events[-1].get("action"))
+            self.assertEqual([1], events[-1].get("positions"))
+            self.assertEqual(1, events[-1].get("from_position"))
+            self.assertEqual(3, events[-1].get("to_position"))
+
+    def test_tool_record_thaw_move_swaps_with_occupied_position(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_move_swap_single_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        make_record(1, box=1, positions=[1]),
+                        make_record(2, box=1, positions=[2]),
+                    ]
+                ),
+                path=str(yaml_path),
+                auto_html=False,
+                auto_server=False,
+            )
+
+            result = tool_record_thaw(
+                yaml_path=str(yaml_path),
+                record_id=1,
+                position=1,
+                to_position=2,
+                date_str="2026-02-10",
+                action="移动",
+                auto_html=False,
+                auto_server=False,
+            )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(2, result["preview"].get("swap_with_record_id"))
+
+            current = load_yaml(str(yaml_path))
+            self.assertEqual([2], current["inventory"][0]["positions"])
+            self.assertEqual([1], current["inventory"][1]["positions"])
+
+            source_events = current["inventory"][0].get("thaw_events") or []
+            swap_events = current["inventory"][1].get("thaw_events") or []
+            self.assertEqual(1, len(source_events))
+            self.assertEqual(1, len(swap_events))
+            self.assertEqual(2, source_events[-1].get("to_position"))
+            self.assertEqual(1, swap_events[-1].get("to_position"))
+
+    def test_tool_record_thaw_move_requires_to_position(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_move_require_to_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                auto_html=False,
+                auto_server=False,
+            )
+
+            result = tool_record_thaw(
+                yaml_path=str(yaml_path),
+                record_id=1,
+                position=1,
+                date_str="2026-02-10",
+                action="move",
+                auto_html=False,
+                auto_server=False,
+            )
+
+            self.assertFalse(result["ok"])
+            self.assertEqual("invalid_move_target", result["error_code"])
+
+    def test_tool_batch_thaw_move_updates_positions_and_swaps(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_move_batch_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        make_record(1, box=1, positions=[1]),
+                        make_record(2, box=1, positions=[2]),
+                        make_record(3, box=1, positions=[3]),
+                    ]
+                ),
+                path=str(yaml_path),
+                auto_html=False,
+                auto_server=False,
+            )
+
+            result = tool_batch_thaw(
+                yaml_path=str(yaml_path),
+                entries="1:1->2,3:3->4",
+                date_str="2026-02-10",
+                action="移动",
+                auto_html=False,
+                auto_server=False,
+            )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual("move", result["preview"]["action_en"])
+            self.assertEqual(2, result["result"]["count"])
+            self.assertEqual([1, 2, 3], result["result"]["affected_record_ids"])
+
+            current = load_yaml(str(yaml_path))
+            self.assertEqual([2], current["inventory"][0]["positions"])
+            self.assertEqual([1], current["inventory"][1]["positions"])
+            self.assertEqual([4], current["inventory"][2]["positions"])
+
+            self.assertEqual(1, len(current["inventory"][0].get("thaw_events") or []))
+            self.assertEqual(1, len(current["inventory"][1].get("thaw_events") or []))
+            self.assertEqual(1, len(current["inventory"][2].get("thaw_events") or []))
+
+    def test_tool_batch_thaw_move_rejects_non_move_entry_shape(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_move_batch_shape_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                auto_html=False,
+                auto_server=False,
+            )
+
+            result = tool_batch_thaw(
+                yaml_path=str(yaml_path),
+                entries=[(1, 1)],
+                date_str="2026-02-10",
+                action="move",
+                auto_html=False,
+                auto_server=False,
+            )
+
+            self.assertFalse(result["ok"])
+            self.assertEqual("validation_failed", result["error_code"])
 
     def test_tool_add_entry_rejects_duplicate_ids_in_inventory(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_dup_") as temp_dir:
@@ -432,6 +594,7 @@ class ToolApiTests(unittest.TestCase):
             rec["thaw_events"] = [
                 {"date": "2026-02-10", "action": "thaw", "positions": [1]},
                 {"date": "2026-02-11", "action": "takeout", "positions": [2]},
+                {"date": "2026-02-12", "action": "move", "positions": [2]},
             ]
             write_yaml(
                 make_data([rec]),
@@ -451,6 +614,36 @@ class ToolApiTests(unittest.TestCase):
             self.assertEqual(1, payload["record_count"])
             self.assertEqual(1, payload["event_count"])
             self.assertEqual("thaw", payload["records"][0]["events"][0]["action"])
+
+            move_response = tool_query_thaw_events(
+                str(yaml_path),
+                date="2026-02-12",
+                action="移动",
+            )
+            self.assertTrue(move_response["ok"])
+            move_payload = move_response["result"]
+            self.assertEqual(1, move_payload["event_count"])
+            self.assertEqual("move", move_payload["records"][0]["events"][0]["action"])
+
+    def test_tool_collect_timeline_includes_move_counts(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_timeline_move_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            rec = make_record(1, box=1, positions=[2])
+            rec["thaw_events"] = [
+                {"date": "2026-02-10", "action": "move", "positions": [1]},
+            ]
+            write_yaml(
+                make_data([rec]),
+                path=str(yaml_path),
+                auto_html=False,
+                auto_server=False,
+            )
+
+            response = tool_collect_timeline(str(yaml_path), all_history=True)
+            self.assertTrue(response["ok"])
+            summary = response["result"]["summary"]
+            self.assertEqual(1, summary["move"])
+            self.assertGreaterEqual(summary["total_ops"], 1)
 
     def test_tool_recommend_positions_and_raw_entries(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_misc_") as temp_dir:

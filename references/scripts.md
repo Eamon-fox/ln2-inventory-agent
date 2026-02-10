@@ -17,10 +17,10 @@
 | Script | Purpose | Required Parameters |
 |--------|---------|---------------------|
 | `add_entry.py` | Add new frozen entry | `--parent-cell-line`, `--short-name`, `--box`, `--positions`, `--frozen-at` |
-| `record_thaw.py` | Record single thaw | `--id`, `--position`, `--date` |
-| `batch_thaw.py` | Batch thaw operations | `--entries`, `--date` |
+| `record_thaw.py` | Record single operation (takeout/thaw/discard/move) | `--id`, `--position`, `--date` (`move` also needs `--to-position`) |
+| `batch_thaw.py` | Batch operations (takeout/thaw/discard/move) | `--entries`, `--date` (`move` uses `id:from->to`) |
 
-Note: Use `--note` for special cases (e.g., "复苏", "送人", "扔掉")
+Note: Use `--note` for special cases (e.g., "复苏", "送人", "扔掉", "移动整理"); move supports real relocation/swap
 
 ## Utility Scripts
 
@@ -65,7 +65,7 @@ python validate.py --yaml references/ln2_inventory.sample.yaml
 
 ## Common Parameters
 
-- `--note` - Note for special cases (复苏, 送人, 扔掉, etc.)
+- `--note` - Note for special cases (复苏, 送人, 扔掉, 移动整理, etc.)
 - `--dry-run` - Preview mode (no modification)
 - `--raw` - Display raw YAML data
 - `--keywords` - Keyword search (AND logic)
@@ -85,4 +85,4 @@ python validate.py --yaml references/ln2_inventory.sample.yaml
 
 ## Valid Actions
 
-`取出` | `复苏` | `扔掉`
+`取出` | `复苏` | `扔掉` | `移动`

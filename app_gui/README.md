@@ -36,6 +36,7 @@ Current status:
 - Thaw panel shows rich prefill context (cell/short/box/all positions/target check/frozen/plasmid/history/note)
 - Batch thaw operation is placed in an independent collapsible section in the Takeout panel
 - Inputs are typed widgets (spin boxes/date pickers/action dropdowns) to reduce format errors
+- Action dropdown supports Takeout / Thaw / Discard / Move (Move requires `To Position`; supports real relocation/swap)
 - Manual operations are execute-only (no dry-run toggle in GUI)
 - Execute actions (Add/Single/Batch) are highlighted in red and require confirmation before write
 - Rollback panel supports backup listing and rollback by selected path/latest

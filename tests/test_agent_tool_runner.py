@@ -283,6 +283,59 @@ class AgentToolRunnerTests(unittest.TestCase):
             )
             self.assertTrue(response["ok"])
 
+    def test_record_thaw_move_supports_target_position_aliases(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_move_alias_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                auto_html=False,
+                auto_server=False,
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run(
+                "record_thaw",
+                {
+                    "id": 1,
+                    "pos": 1,
+                    "to_pos": 2,
+                    "thaw_date": "2026-02-10",
+                    "action": "move",
+                },
+            )
+
+            self.assertTrue(response["ok"])
+            current = load_yaml(str(yaml_path))
+            self.assertEqual([2], current["inventory"][0]["positions"])
+
+    def test_record_thaw_move_missing_target_returns_hint(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_move_hint_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                auto_html=False,
+                auto_server=False,
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run(
+                "record_thaw",
+                {
+                    "record_id": 1,
+                    "position": 1,
+                    "date": "2026-02-10",
+                    "action": "move",
+                },
+            )
+
+            self.assertFalse(response["ok"])
+            self.assertEqual("invalid_move_target", response["error_code"])
+            self.assertIn("to_position", response.get("_hint", ""))
+
     def test_tool_specs_expose_required_fields(self):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
         specs = runner.tool_specs()
@@ -297,6 +350,9 @@ class AgentToolRunnerTests(unittest.TestCase):
             ["fuzzy", "exact", "keywords"],
             search_params["mode"].get("enum"),
         )
+
+        self.assertIn("record_thaw", specs)
+        self.assertIn("to_position", specs["record_thaw"].get("optional", []))
 
         schemas = runner.tool_schemas()
         search_schema = next(

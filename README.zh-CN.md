@@ -59,6 +59,9 @@ python scripts/record_thaw.py --id 5 --position 30 --date 2026-02-01
 
 # 批量
 python scripts/batch_thaw.py --entries "5:30,6:12" --date 2026-02-01 --action 复苏
+
+# 移动整理（真实换位/搬移；目标被占用时自动换位）
+python scripts/record_thaw.py --id 5 --position 30 --to-position 31 --date 2026-02-01 --action move --note "整理换位"
 ```
 
 ### 查询
@@ -92,7 +95,7 @@ export LN2_CONFIG_FILE=/path/to/my_config.json
 - `schema.box_range`：盒子范围（默认 `[1, 5]`）
 - `schema.position_range`：每盒位置范围（默认 `[1, 81]`，即 9x9）
 - `schema.valid_cell_lines`：可选白名单（空列表表示允许任意细胞系）
-- `schema.valid_actions`：复苏/取出动作类型
+- `schema.valid_actions`：操作类型（`取出`、`复苏`、`扔掉`、`移动`）
 - `safety.*`：备份保留数、告警阈值等
 
 ## 作为 Claude Code Skill 使用

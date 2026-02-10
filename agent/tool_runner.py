@@ -117,6 +117,7 @@ class AgentToolRunner:
             "max_records",
             "record_id",
             "box_preference",
+            "to_position",
         }
         boolean_fields = {
             "case_sensitive",
@@ -210,6 +211,12 @@ class AgentToolRunner:
             "query_thaw_events": {
                 "required": [],
                 "optional": ["date", "days", "start_date", "end_date", "action", "max_records"],
+                "params": {
+                    "action": {
+                        "type": "string",
+                        "description": "Action filter. Use one of: 取出/复苏/扔掉/移动 or takeout/thaw/discard/move.",
+                    },
+                },
             },
             "collect_timeline": {
                 "required": [],
@@ -241,17 +248,34 @@ class AgentToolRunner:
             },
             "record_thaw": {
                 "required": ["record_id", "position", "date"],
-                "optional": ["action", "note", "dry_run"],
+                "optional": ["action", "to_position", "note", "dry_run"],
                 "aliases": {
                     "record_id": ["id"],
                     "position": ["pos", "slot"],
+                    "to_position": ["to_pos", "target_position"],
                     "note": ["notes", "memo"],
+                },
+                "params": {
+                    "action": {
+                        "type": "string",
+                        "description": "Use one of: 取出/复苏/扔掉/移动 or takeout/thaw/discard/move.",
+                    },
+                    "to_position": {
+                        "type": "integer",
+                        "description": "Target position for move action. Required when action is 移动/move.",
+                    },
                 },
             },
             "batch_thaw": {
                 "required": ["entries"],
                 "optional": ["date", "action", "note", "dry_run"],
-                "notes": "entries can be list[[record_id, position], ...] or '182:23,183:41'.",
+                "notes": "entries can be list[[record_id, position], ...] or '182:23,183:41'; for move use '182:23->31,183:41->42'.",
+                "params": {
+                    "action": {
+                        "type": "string",
+                        "description": "Use one of: 取出/复苏/扔掉/移动 or takeout/thaw/discard/move.",
+                    },
+                },
             },
             "rollback": {
                 "required": [],
@@ -336,6 +360,9 @@ class AgentToolRunner:
         if error_code == "position_conflict":
             return "Choose free slots via `list_empty_positions` or `recommend_positions`, then retry."
 
+        if error_code == "invalid_move_target":
+            return "For move operations, provide a valid `to_position` different from source position."
+
         if error_code in {"invalid_date"}:
             return "Use date format `YYYY-MM-DD` (for example: 2026-02-10)."
 
@@ -343,7 +370,7 @@ class AgentToolRunner:
             return "Provide integer values in the configured inventory range."
 
         if error_code == "invalid_action":
-            return "Use a supported action value such as 取出 / 复苏 / 扔掉."
+            return "Use a supported action value such as 取出 / 复苏 / 扔掉 / 移动."
 
         if error_code in {"empty_positions", "empty_entries"}:
             return "Provide at least one target position or entry before retrying."
@@ -544,6 +571,7 @@ class AgentToolRunner:
                 normalized["record_id"] = self._first_value(payload, "record_id", "id")
                 normalized["position"] = self._first_value(payload, "position", "pos", "slot")
                 normalized["date"] = self._first_value(payload, "date", "thaw_date")
+                normalized["to_position"] = self._first_value(payload, "to_position", "to_pos", "target_position")
                 normalized["note"] = self._first_value(payload, "note", "notes", "memo")
                 return tool_record_thaw(
                     yaml_path=self._yaml_path,
@@ -551,6 +579,11 @@ class AgentToolRunner:
                     position=self._required_int(normalized, "position"),
                     date_str=normalized.get("date"),
                     action=payload.get("action", "取出"),
+                    to_position=(
+                        self._optional_int(normalized, "to_position")
+                        if normalized.get("to_position") not in (None, "")
+                        else None
+                    ),
                     note=normalized.get("note"),
                     dry_run=self._as_bool(payload.get("dry_run", False), default=False),
                     actor_context=self._actor_context(trace_id=trace_id),

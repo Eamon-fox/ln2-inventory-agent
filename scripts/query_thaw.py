@@ -34,6 +34,9 @@ def main():
   # 查询最近30天的复苏记录
   query_thaw.py --days 30 --action 复苏
 
+  # 查询移动整理记录
+  query_thaw.py --days 30 --action 移动
+
   # 查询日期范围
   query_thaw.py --start-date 2026-01-01 --end-date 2026-01-08
         """
@@ -51,7 +54,7 @@ def main():
     parser.add_argument("--end-date", help="结束日期 YYYY-MM-DD（配合 --start-date 使用）")
     parser.add_argument(
         "--action", default=None,
-        help="操作类型（取出/复苏/扔掉 或 takeout/thaw/discard）",
+        help="操作类型（取出/复苏/扔掉/移动 或 takeout/thaw/discard/move）",
     )
     parser.add_argument(
         "--max", type=int, default=0,

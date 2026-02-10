@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 显示液氮罐操作时间线
-包括冻存和取出操作的历史记录
+包括冻存和各类出入库操作的历史记录
 """
 
 import argparse
@@ -36,9 +36,10 @@ def display_timeline(timeline, verbose=False):
         thaw_count = len(events["thaw"])
         takeout_count = len(events["takeout"])
         discard_count = len(events["discard"])
+        move_count = len(events.get("move", []))
 
         # 跳过没有操作的日期
-        if frozen_count + thaw_count + takeout_count + discard_count == 0:
+        if frozen_count + thaw_count + takeout_count + discard_count + move_count == 0:
             continue
 
         print(f"\n{date} ({date_cn})")
@@ -83,6 +84,16 @@ def display_timeline(timeline, verbose=False):
                 if discard_count > 5:
                     print(f"      ... 还有 {discard_count - 5} 条")
 
+        # 显示移动整理操作
+        if move_count > 0:
+            print(f"  🔁 移动: {move_count} 管")
+            if verbose:
+                for event in events["move"][:5]:
+                    rec = event["record"]
+                    print(f"      • {rec.get('parent_cell_line')} | {rec.get('short_name')}")
+                if move_count > 5:
+                    print(f"      ... 还有 {move_count - 5} 条")
+
     print("\n")
 
 
@@ -92,16 +103,18 @@ def display_summary(timeline):
     total_thaw = 0
     total_takeout = 0
     total_discard = 0
+    total_move = 0
 
     for date, events in timeline.items():
         total_frozen += len(events["frozen"])
         total_thaw += len(events["thaw"])
         total_takeout += len(events["takeout"])
         total_discard += len(events["discard"])
+        total_move += len(events.get("move", []))
 
-    total_ops = total_frozen + total_thaw + total_takeout + total_discard
+    total_ops = total_frozen + total_thaw + total_takeout + total_discard + total_move
     active_days = len([d for d, e in timeline.items()
-                       if len(e["frozen"]) + len(e["thaw"]) + len(e["takeout"]) + len(e["discard"]) > 0])
+                       if len(e["frozen"]) + len(e["thaw"]) + len(e["takeout"]) + len(e["discard"]) + len(e.get("move", [])) > 0])
 
     print(f"{'='*70}")
     print(f"📊 统计摘要")
@@ -112,6 +125,7 @@ def display_summary(timeline):
     print(f"    🧪 复苏: {total_thaw} 管")
     print(f"    📤 取出: {total_takeout} 管")
     print(f"    🗑️  扔掉: {total_discard} 管")
+    print(f"    🔁 移动: {total_move} 管")
     print(f"{'='*70}\n")
 
 

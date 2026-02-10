@@ -55,6 +55,8 @@ class _FakeOperationsBridge:
         self.last_add_payload = None
         self.last_query_filters = None
         self.last_empty_box = None
+        self.last_record_payload = None
+        self.last_batch_payload = None
         self.add_response = {"ok": True, "result": {"new_id": 99}}
         self.query_response = {
             "ok": True,
@@ -100,6 +102,23 @@ class _FakeOperationsBridge:
         self.last_empty_box = box
         return self.empty_response
 
+    def record_thaw(self, yaml_path, **payload):
+        self.last_record_payload = {"yaml_path": yaml_path, **payload}
+        return {"ok": True, "preview": payload, "result": {"record_id": payload.get("record_id")}}
+
+    def batch_thaw(self, yaml_path, **payload):
+        self.last_batch_payload = {"yaml_path": yaml_path, **payload}
+        entries = payload.get("entries") or []
+        record_ids = []
+        for entry in entries:
+            if isinstance(entry, (list, tuple)) and entry:
+                record_ids.append(entry[0])
+        return {
+            "ok": True,
+            "preview": {"count": len(entries), "operations": []},
+            "result": {"count": len(entries), "record_ids": record_ids},
+        }
+
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
 class GuiPanelRegressionTests(unittest.TestCase):
@@ -115,6 +134,12 @@ class GuiPanelRegressionTests(unittest.TestCase):
 
     def _new_overview_panel(self):
         return OverviewPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+
+    @staticmethod
+    def _make_table_item(text):
+        from PySide6.QtWidgets import QTableWidgetItem
+
+        return QTableWidgetItem(text)
 
     def test_operations_panel_refreshes_stale_default_dates(self):
         panel = self._new_operations_panel()
@@ -208,6 +233,59 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertFalse(hasattr(panel, "a_dry_run"))
         self.assertFalse(hasattr(panel, "t_dry_run"))
         self.assertFalse(hasattr(panel, "b_dry_run"))
+
+    def test_operations_panel_action_dropdown_supports_move(self):
+        panel = self._new_operations_panel()
+
+        single_actions = [panel.t_action.itemText(i) for i in range(panel.t_action.count())]
+        batch_actions = [panel.b_action.itemText(i) for i in range(panel.b_action.count())]
+
+        self.assertIn("Move", single_actions)
+        self.assertIn("Move", batch_actions)
+
+    def test_operations_panel_move_enables_to_position_and_batch_columns(self):
+        panel = self._new_operations_panel()
+
+        panel.t_action.setCurrentText("Takeout")
+        self.assertFalse(panel.t_to_position.isEnabled())
+
+        panel.t_action.setCurrentText("Move")
+        self.assertTrue(panel.t_to_position.isEnabled())
+
+        panel.b_action.setCurrentText("Move")
+        self.assertEqual(3, panel.b_table.columnCount())
+        self.assertEqual("To", panel.b_table.horizontalHeaderItem(2).text())
+
+    def test_operations_panel_single_move_passes_to_position(self):
+        panel = self._new_operations_panel()
+        bridge = _FakeOperationsBridge()
+        panel.bridge = bridge
+        panel._confirm_execute = lambda *_args, **_kwargs: True
+
+        panel.t_action.setCurrentText("Move")
+        panel.t_id.setValue(11)
+        panel.t_position.setValue(5)
+        panel.t_to_position.setValue(8)
+        panel.on_record_thaw()
+
+        self.assertIsNotNone(bridge.last_record_payload)
+        self.assertEqual(8, bridge.last_record_payload.get("to_position"))
+
+    def test_operations_panel_batch_move_table_collects_triples(self):
+        panel = self._new_operations_panel()
+        bridge = _FakeOperationsBridge()
+        panel.bridge = bridge
+        panel._confirm_execute = lambda *_args, **_kwargs: True
+
+        panel.b_action.setCurrentText("Move")
+        panel.b_table.setRowCount(1)
+        panel.b_table.setItem(0, 0, panel._make_table_item("12"))
+        panel.b_table.setItem(0, 1, panel._make_table_item("23"))
+        panel.b_table.setItem(0, 2, panel._make_table_item("31"))
+
+        panel.on_batch_thaw()
+
+        self.assertEqual([(12, 23, 31)], bridge.last_batch_payload.get("entries"))
 
     def test_operations_panel_emits_completion_on_success_without_dry_run_gate(self):
         panel = self._new_operations_panel()

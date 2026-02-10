@@ -81,6 +81,17 @@ class ValidatePositionsTests(unittest.TestCase):
                 )
                 self.assertTrue(has_depletion_history(rec))
 
+    def test_move_action_is_valid_but_not_depletion(self):
+        rec = make_record(
+            positions=[1],
+            thaw_events=[{"date": "2025-01-02", "action": "move", "positions": [1]}],
+        )
+        errors, warnings = validate_record(rec, 0, LAYOUT)
+
+        self.assertEqual([], warnings)
+        self.assertEqual([], errors)
+        self.assertFalse(has_depletion_history(rec))
+
 
 if __name__ == "__main__":
     unittest.main()

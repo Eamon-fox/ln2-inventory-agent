@@ -42,7 +42,7 @@ DEFAULT_CONFIG = {
     "schema": {
         "box_range": [1, 5],
         "position_range": [1, 81],
-        "valid_actions": ["取出", "复苏", "扔掉"],
+        "valid_actions": ["取出", "复苏", "扔掉", "移动"],
         "valid_cell_lines": [],
     },
 }

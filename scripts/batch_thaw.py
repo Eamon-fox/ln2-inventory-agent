@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-批量记录多个冻存管的取出/复苏操作
+批量记录多个冻存管的取出/复苏/扔掉/移动操作
 """
 import argparse
 import sys
@@ -22,7 +22,7 @@ def parse_entries(entries_str):
 
 
 def batch_thaw(yaml_path, entries, date_str, action="取出", note=None, dry_run=False):
-    """批量记录取出/复苏/扔掉（CLI wrapper for unified Tool API）。"""
+    """批量记录取出/复苏/扔掉/移动（CLI wrapper for unified Tool API）。"""
     actor_context = build_actor_context(actor_type="human", channel="cli")
     result = tool_batch_thaw(
         yaml_path=yaml_path,
@@ -60,7 +60,11 @@ def batch_thaw(yaml_path, entries, date_str, action="取出", note=None, dry_run
 
     for i, op in enumerate(operations, 1):
         print(f"{i}. ID={op.get('record_id')}: {op.get('parent_cell_line')} - {op.get('short_name')}")
-        print(f"   盒子 {op.get('box')}, 取出位置 {op.get('position')}")
+        to_pos = op.get("to_position")
+        if to_pos is not None:
+            print(f"   盒子 {op.get('box')}, 移动 {op.get('position')} -> {to_pos}")
+        else:
+            print(f"   盒子 {op.get('box')}, 取出位置 {op.get('position')}")
         print(f"   位置: {op.get('old_positions')} → {op.get('new_positions')}")
         print()
 
@@ -79,7 +83,7 @@ def batch_thaw(yaml_path, entries, date_str, action="取出", note=None, dry_run
 
 def main():
     parser = argparse.ArgumentParser(
-        description="批量记录液氮罐冻存管的取出操作",
+        description="批量记录液氮罐冻存管操作（取出/复苏/扔掉/移动）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
@@ -94,6 +98,13 @@ def main():
     --date 2026-01-08 \\
     --note "复苏培养"
 
+  # 批量记录移动整理（真实换位/搬移）
+  python batch_thaw.py \\
+    --entries "182:23->31,183:41->42" \\
+    --date 2026-01-08 \\
+    --action move \\
+    --note "盘点整理"
+
   # 预览模式（不实际修改）
   python batch_thaw.py \\
     --entries "182:23,183:41" \\
@@ -102,7 +113,8 @@ def main():
 
 输入格式:
   --entries "id1:position1,id2:position2,..."
-  例如: "182:23,183:41,184:43"
+  --entries "id1:from1->to1,id2:from2->to2,..."  # move
+  例如: "182:23,183:41,184:43" 或 "182:23->31,183:41->42"
         """
     )
 
@@ -110,7 +122,7 @@ def main():
         "--entries",
         type=str,
         required=True,
-        help="批量操作列表，格式: 'id1:pos1,id2:pos2,...'（必填）"
+        help="批量操作列表，格式: 'id1:pos1,id2:pos2,...' 或 'id1:from->to,...'（必填）"
     )
     parser.add_argument(
         "--date",
@@ -118,8 +130,8 @@ def main():
         required=True,
         help="日期 YYYY-MM-DD 格式（必填，如 2026-01-08）"
     )
-    parser.add_argument("--note", type=str, help="备注信息（可选，如：复苏、送人、扔掉）")
-    parser.add_argument("--action", type=str, default="取出", help="操作类型（取出/复苏/扔掉，默认取出）")
+    parser.add_argument("--note", type=str, help="备注信息（可选，如：复苏、送人、扔掉、移动整理）")
+    parser.add_argument("--action", type=str, default="取出", help="操作类型（取出/复苏/扔掉/移动，默认取出）")
     parser.add_argument("--yaml", default=YAML_PATH, help="YAML文件路径")
     parser.add_argument("--dry-run", action="store_true", help="预览模式，不实际修改文件")
 

@@ -47,18 +47,95 @@ def build_actor_context(
 
 
 def parse_batch_entries(entries_str):
-    """Parse batch input format: ``id1:pos1,id2:pos2,...``."""
+    """Parse batch input format.
+
+    Supports:
+    - ``id1:pos1,id2:pos2,...`` (takeout/thaw/discard)
+    - ``id1:from1->to1,id2:from2->to2,...`` (move)
+    """
     result = []
     try:
         for entry in str(entries_str).split(","):
             entry = entry.strip()
             if not entry:
                 continue
-            record_id, position = entry.split(":")
-            result.append((int(record_id), int(position)))
+            record_id_text, pos_text = entry.split(":", 1)
+            record_id = int(record_id_text)
+            pos_text = pos_text.strip()
+            if "->" in pos_text:
+                from_pos_text, to_pos_text = pos_text.split("->", 1)
+                result.append((record_id, int(from_pos_text), int(to_pos_text)))
+            elif ">" in pos_text:
+                from_pos_text, to_pos_text = pos_text.split(">", 1)
+                result.append((record_id, int(from_pos_text), int(to_pos_text)))
+            else:
+                result.append((record_id, int(pos_text)))
     except Exception as exc:
-        raise ValueError(f"输入格式错误: {exc}. 正确格式示例: '182:23,183:41,184:43'")
+        raise ValueError(
+            "输入格式错误: "
+            f"{exc}. 正确格式示例: '182:23,183:41' 或 '182:23->31,183:41->42'"
+        )
     return result
+
+
+def _coerce_batch_entry(entry):
+    """Normalize one batch entry to a tuple of ints.
+
+    Accepts tuple/list forms ``(record_id, position)`` or ``(record_id, from_pos, to_pos)``
+    and dict forms with common aliases.
+    """
+    if isinstance(entry, dict):
+        record_id = entry.get("record_id", entry.get("id"))
+        from_pos = entry.get("position")
+        if from_pos is None:
+            from_pos = entry.get("from_position", entry.get("from_pos", entry.get("from")))
+        to_pos = entry.get("to_position")
+        if to_pos is None:
+            to_pos = entry.get("to_pos", entry.get("target_position", entry.get("target_pos")))
+
+        if record_id is None or from_pos is None:
+            raise ValueError("每个条目必须包含 record_id/id 和 position/from_position")
+        if to_pos is None:
+            return (int(record_id), int(from_pos))
+        return (int(record_id), int(from_pos), int(to_pos))
+
+    if isinstance(entry, (list, tuple)):
+        if len(entry) == 2:
+            return (int(entry[0]), int(entry[1]))
+        if len(entry) == 3:
+            return (int(entry[0]), int(entry[1]), int(entry[2]))
+        raise ValueError("每个条目必须是 (record_id, position) 或 (record_id, from_position, to_position)")
+
+    raise ValueError("每个条目必须是 tuple/list/dict")
+
+
+def _replace_position_once(positions, old_pos, new_pos):
+    """Replace the first occurrence of old_pos with new_pos."""
+    replaced = False
+    updated = []
+    for pos in positions:
+        if not replaced and pos == old_pos:
+            updated.append(new_pos)
+            replaced = True
+        else:
+            updated.append(pos)
+    return updated, replaced
+
+
+def _build_move_event(date_str, from_position, to_position, note=None, paired_record_id=None):
+    """Build normalized move event payload."""
+    event = {
+        "date": date_str,
+        "action": "move",
+        "positions": [from_position],
+        "from_position": from_position,
+        "to_position": to_position,
+    }
+    if paired_record_id is not None:
+        event["paired_record_id"] = paired_record_id
+    if note:
+        event["note"] = note
+    return event
 
 
 def _build_audit_meta(action, source, tool_name, actor_context=None, details=None, tool_input=None):
@@ -435,6 +512,7 @@ def tool_record_thaw(
     date_str,
     action="取出",
     note=None,
+    to_position=None,
     dry_run=False,
     actor_context=None,
     source="tool_api",
@@ -442,12 +520,13 @@ def tool_record_thaw(
     auto_server=None,
     auto_backup=True,
 ):
-    """Record one thaw/takeout/discard operation via shared tool flow."""
+    """Record one thaw/takeout/discard/move operation via shared tool flow."""
     audit_action = "record_thaw"
     tool_name = "tool_record_thaw"
     tool_input = {
         "record_id": record_id,
         "position": position,
+        "to_position": to_position,
         "date": date_str,
         "action": action,
         "note": note,
@@ -488,12 +567,65 @@ def tool_record_thaw(
             source=source,
             tool_name=tool_name,
             error_code="invalid_action",
-            message="操作类型必须是 取出/复苏/扔掉",
+            message="操作类型必须是 取出/复苏/扔掉/移动",
             actor_context=actor_context,
             tool_input=tool_input,
             details={"action": action},
         )
     action_cn = ACTION_LABEL.get(action_en, action)
+
+    move_to_position = None
+    if action_en == "move":
+        if to_position in (None, ""):
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="invalid_move_target",
+                message="移动操作必须提供 to_position（目标位置）",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                details={"record_id": record_id, "position": position},
+            )
+        try:
+            move_to_position = int(to_position)
+        except (TypeError, ValueError):
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="invalid_move_target",
+                message=f"目标位置必须是整数: {to_position}",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                details={"to_position": to_position},
+            )
+        if move_to_position < POSITION_RANGE[0] or move_to_position > POSITION_RANGE[1]:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="invalid_position",
+                message=f"目标位置编号必须在 {POSITION_RANGE[0]}-{POSITION_RANGE[1]} 之间",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                details={"to_position": move_to_position},
+            )
+        if move_to_position == position:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="invalid_move_target",
+                message="移动操作的起始位置与目标位置不能相同",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                details={"position": position, "to_position": move_to_position},
+            )
 
     try:
         data = load_yaml(yaml_path)
@@ -542,10 +674,98 @@ def tool_record_thaw(
             extra={"current_positions": positions},
         )
 
-    new_positions = [p for p in positions if p != position]
-    new_event = {"date": date_str, "action": action_en, "positions": [position]}
-    if note:
-        new_event["note"] = note
+    swap_target = None
+    swap_target_new_positions = None
+    swap_target_event = None
+
+    if action_en == "move":
+        new_positions, replaced = _replace_position_once(list(positions), position, move_to_position)
+        if not replaced:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="position_not_found",
+                message=f"位置 {position} 不在记录 #{record_id} 的现有位置中",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"record_id": record_id, "position": position},
+                extra={"current_positions": positions},
+            )
+
+        box = record.get("box")
+        for other_idx, other in enumerate(records):
+            if other.get("box") != box:
+                continue
+            other_positions = other.get("positions") or []
+            if move_to_position in other_positions:
+                if other_idx == idx:
+                    return _failure_result(
+                        yaml_path=yaml_path,
+                        action=audit_action,
+                        source=source,
+                        tool_name=tool_name,
+                        error_code="invalid_move_target",
+                        message=f"目标位置 {move_to_position} 已属于记录 #{record_id}，无需移动",
+                        actor_context=actor_context,
+                        tool_input=tool_input,
+                        before_data=data,
+                        details={"record_id": record_id, "to_position": move_to_position},
+                    )
+
+                swap_target_new_positions, swap_replaced = _replace_position_once(
+                    list(other_positions),
+                    move_to_position,
+                    position,
+                )
+                if not swap_replaced:
+                    return _failure_result(
+                        yaml_path=yaml_path,
+                        action=audit_action,
+                        source=source,
+                        tool_name=tool_name,
+                        error_code="position_conflict",
+                        message="目标位置冲突，无法完成换位",
+                        actor_context=actor_context,
+                        tool_input=tool_input,
+                        before_data=data,
+                        details={
+                            "record_id": record_id,
+                            "position": position,
+                            "to_position": move_to_position,
+                            "swap_record_id": other.get("id"),
+                        },
+                    )
+
+                swap_target = {
+                    "idx": other_idx,
+                    "record": other,
+                    "old_positions": list(other_positions),
+                }
+                break
+
+        new_event = _build_move_event(
+            date_str=date_str,
+            from_position=position,
+            to_position=move_to_position,
+            note=note,
+            paired_record_id=swap_target["record"].get("id") if swap_target else None,
+        )
+        if swap_target:
+            swap_target_event = _build_move_event(
+                date_str=date_str,
+                from_position=move_to_position,
+                to_position=position,
+                note=note,
+                paired_record_id=record_id,
+            )
+    else:
+        new_positions = [p for p in positions if p != position]
+        new_event = {"date": date_str, "action": action_en, "positions": [position]}
+        if note:
+            new_event["note"] = note
 
     preview = {
         "record_id": record_id,
@@ -555,11 +775,17 @@ def tool_record_thaw(
         "action_en": action_en,
         "action_cn": action_cn,
         "position": position,
+        "to_position": move_to_position,
         "note": note,
         "date": date_str,
         "positions_before": positions,
         "positions_after": new_positions,
     }
+    if swap_target:
+        preview["swap_with_record_id"] = swap_target["record"].get("id")
+        preview["swap_with_short_name"] = swap_target["record"].get("short_name")
+        preview["swap_positions_before"] = swap_target["old_positions"]
+        preview["swap_positions_after"] = swap_target_new_positions
 
     if dry_run:
         return {
@@ -589,6 +815,7 @@ def tool_record_thaw(
                 before_data=data,
                 errors=validation_error.get("errors"),
             )
+
         candidate_records[idx]["positions"] = new_positions
         thaw_events = candidate_records[idx].get("thaw_events")
         if thaw_events is None:
@@ -614,6 +841,35 @@ def tool_record_thaw(
             )
         thaw_events.append(new_event)
 
+        affected_record_ids = [record_id]
+        if swap_target:
+            swap_idx = swap_target["idx"]
+            candidate_records[swap_idx]["positions"] = swap_target_new_positions
+            swap_events = candidate_records[swap_idx].get("thaw_events")
+            if swap_events is None:
+                candidate_records[swap_idx]["thaw_events"] = []
+                swap_events = candidate_records[swap_idx]["thaw_events"]
+            if not isinstance(swap_events, list):
+                validation_error = _validate_data_or_error(candidate_data) or {
+                    "error_code": "integrity_validation_failed",
+                    "message": "写入被阻止：完整性校验失败",
+                    "errors": [],
+                }
+                return _failure_result(
+                    yaml_path=yaml_path,
+                    action=audit_action,
+                    source=source,
+                    tool_name=tool_name,
+                    error_code=validation_error.get("error_code", "integrity_validation_failed"),
+                    message=validation_error.get("message", "写入被阻止：完整性校验失败"),
+                    actor_context=actor_context,
+                    tool_input=tool_input,
+                    before_data=data,
+                    errors=validation_error.get("errors"),
+                )
+            swap_events.append(swap_target_event)
+            affected_record_ids.append(swap_target["record"].get("id"))
+
         validation_error = _validate_data_or_error(candidate_data)
         if validation_error:
             validation_error = validation_error or {
@@ -635,6 +891,7 @@ def tool_record_thaw(
                 details={
                     "record_id": record_id,
                     "position": position,
+                    "to_position": move_to_position,
                     "action": action_en,
                     "date": date_str,
                 },
@@ -655,12 +912,15 @@ def tool_record_thaw(
                     "record_id": record_id,
                     "box": record.get("box"),
                     "position": position,
+                    "to_position": move_to_position,
                     "action": action_en,
                     "date": date_str,
+                    "affected_record_ids": affected_record_ids,
                 },
                 tool_input={
                     "record_id": record_id,
                     "position": position,
+                    "to_position": move_to_position,
                     "date": date_str,
                     "action": action,
                     "note": note,
@@ -678,17 +938,28 @@ def tool_record_thaw(
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=data,
-            details={"record_id": record_id, "position": position, "action": action_en},
+            details={
+                "record_id": record_id,
+                "position": position,
+                "to_position": move_to_position,
+                "action": action_en,
+            },
         )
+
+    result_payload = {
+        "record_id": record_id,
+        "remaining_positions": new_positions,
+    }
+    if move_to_position is not None:
+        result_payload["to_position"] = move_to_position
+    if swap_target:
+        result_payload["swap_with_record_id"] = swap_target["record"].get("id")
 
     return {
         "ok": True,
         "dry_run": False,
         "preview": preview,
-        "result": {
-            "record_id": record_id,
-            "remaining_positions": new_positions,
-        },
+        "result": result_payload,
         "backup_path": _backup_path,
     }
 
@@ -706,7 +977,7 @@ def tool_batch_thaw(
     auto_server=None,
     auto_backup=True,
 ):
-    """Record batch thaw/takeout/discard operations via shared tool flow."""
+    """Record batch thaw/takeout/discard/move operations via shared tool flow."""
     audit_action = "batch_thaw"
     tool_name = "tool_batch_thaw"
     tool_input = {
@@ -750,10 +1021,47 @@ def tool_batch_thaw(
             source=source,
             tool_name=tool_name,
             error_code="invalid_action",
-            message="操作类型必须是 取出/复苏/扔掉",
+            message="操作类型必须是 取出/复苏/扔掉/移动",
             actor_context=actor_context,
             tool_input=tool_input,
             details={"action": action},
+        )
+
+    if isinstance(entries, str):
+        try:
+            entries = parse_batch_entries(entries)
+        except ValueError as exc:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="validation_failed",
+                message="批量操作参数校验失败",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                errors=[str(exc)],
+            )
+
+    normalized_entries = []
+    normalize_errors = []
+    for idx, entry in enumerate(entries, 1):
+        try:
+            normalized_entries.append(_coerce_batch_entry(entry))
+        except Exception as exc:
+            normalize_errors.append(f"第{idx}条: {exc}")
+
+    if normalize_errors:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="validation_failed",
+            message="批量操作参数校验失败",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            errors=normalize_errors,
         )
 
     try:
@@ -775,7 +1083,301 @@ def tool_batch_thaw(
     operations = []
     errors = []
 
-    for record_id, position in entries:
+    if action_en == "move":
+        simulated_positions = {}
+        position_owner = {}
+        events_by_idx = defaultdict(list)
+        touched_indices = set()
+
+        for idx, rec in enumerate(records):
+            rec_positions = list(rec.get("positions") or [])
+            simulated_positions[idx] = rec_positions
+            box = rec.get("box")
+            for pos in rec_positions:
+                key = (box, pos)
+                if key in position_owner and position_owner[key] != idx:
+                    errors.append(f"盒子 {box} 位置 {pos} 已存在冲突，无法执行移动")
+                else:
+                    position_owner[key] = idx
+
+        for row_idx, entry in enumerate(normalized_entries, 1):
+            if len(entry) != 3:
+                errors.append(f"第{row_idx}条: move 操作必须使用 id:from->to 格式")
+                continue
+
+            record_id, from_pos, to_pos = entry
+            if from_pos < POSITION_RANGE[0] or from_pos > POSITION_RANGE[1]:
+                errors.append(
+                    f"第{row_idx}条 ID {record_id}: 起始位置 {from_pos} 必须在 {POSITION_RANGE[0]}-{POSITION_RANGE[1]} 之间"
+                )
+                continue
+            if to_pos < POSITION_RANGE[0] or to_pos > POSITION_RANGE[1]:
+                errors.append(
+                    f"第{row_idx}条 ID {record_id}: 目标位置 {to_pos} 必须在 {POSITION_RANGE[0]}-{POSITION_RANGE[1]} 之间"
+                )
+                continue
+            if from_pos == to_pos:
+                errors.append(f"第{row_idx}条 ID {record_id}: 起始位置与目标位置不能相同")
+                continue
+
+            idx, record = find_record_by_id(records, record_id)
+            if record is None:
+                errors.append(f"第{row_idx}条 ID {record_id}: 未找到该记录")
+                continue
+
+            source_before = list(simulated_positions.get(idx, []))
+            if from_pos not in source_before:
+                errors.append(f"第{row_idx}条 ID {record_id}: 起始位置 {from_pos} 不在现有位置 {source_before} 中")
+                continue
+
+            source_after, replaced = _replace_position_once(source_before, from_pos, to_pos)
+            if not replaced:
+                errors.append(f"第{row_idx}条 ID {record_id}: 无法在现有位置中替换 {from_pos}")
+                continue
+
+            box = record.get("box")
+            dest_idx = position_owner.get((box, to_pos))
+            if dest_idx == idx:
+                errors.append(f"第{row_idx}条 ID {record_id}: 目标位置 {to_pos} 已属于该记录")
+                continue
+
+            dest_before = None
+            dest_after = None
+            dest_record = None
+            if dest_idx is not None:
+                dest_record = records[dest_idx]
+                dest_before = list(simulated_positions.get(dest_idx, []))
+                dest_after, dest_replaced = _replace_position_once(dest_before, to_pos, from_pos)
+                if not dest_replaced:
+                    errors.append(
+                        f"第{row_idx}条 ID {record_id}: 目标位置 {to_pos} 冲突，记录 #{dest_record.get('id')} 无法换位"
+                    )
+                    continue
+
+            simulated_positions[idx] = source_after
+            touched_indices.add(idx)
+            if dest_idx is None:
+                position_owner.pop((box, from_pos), None)
+            else:
+                simulated_positions[dest_idx] = dest_after
+                touched_indices.add(dest_idx)
+                position_owner[(box, from_pos)] = dest_idx
+            position_owner[(box, to_pos)] = idx
+
+            source_event = _build_move_event(
+                date_str=date_str,
+                from_position=from_pos,
+                to_position=to_pos,
+                note=note,
+                paired_record_id=dest_record.get("id") if dest_record else None,
+            )
+            events_by_idx[idx].append(source_event)
+
+            if dest_record is not None:
+                events_by_idx[dest_idx].append(
+                    _build_move_event(
+                        date_str=date_str,
+                        from_position=to_pos,
+                        to_position=from_pos,
+                        note=note,
+                        paired_record_id=record_id,
+                    )
+                )
+
+            op = {
+                "idx": idx,
+                "record_id": record_id,
+                "record": record,
+                "position": from_pos,
+                "to_position": to_pos,
+                "old_positions": source_before,
+                "new_positions": source_after,
+            }
+            if dest_record is not None:
+                op["swap_with_record_id"] = dest_record.get("id")
+                op["swap_with_short_name"] = dest_record.get("short_name")
+                op["swap_old_positions"] = dest_before
+                op["swap_new_positions"] = dest_after
+            operations.append(op)
+
+        if errors:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="validation_failed",
+                message="批量操作参数校验失败",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                errors=errors,
+                extra={"operations": operations},
+                details={"error_count": len(errors)},
+            )
+
+        preview = {
+            "date": date_str,
+            "action_en": action_en,
+            "action_cn": ACTION_LABEL.get(action_en, action),
+            "note": note,
+            "count": len(operations),
+            "operations": [
+                {
+                    "record_id": op["record_id"],
+                    "parent_cell_line": op["record"].get("parent_cell_line"),
+                    "short_name": op["record"].get("short_name"),
+                    "box": op["record"].get("box"),
+                    "position": op["position"],
+                    "to_position": op.get("to_position"),
+                    "old_positions": op["old_positions"],
+                    "new_positions": op["new_positions"],
+                    "swap_with_record_id": op.get("swap_with_record_id"),
+                }
+                for op in operations
+            ],
+        }
+
+        if dry_run:
+            return {
+                "ok": True,
+                "dry_run": True,
+                "preview": preview,
+            }
+
+        try:
+            candidate_data = deepcopy(data)
+            candidate_records = candidate_data.get("inventory", [])
+            if not isinstance(candidate_records, list):
+                validation_error = _validate_data_or_error(candidate_data) or {
+                    "error_code": "integrity_validation_failed",
+                    "message": "写入被阻止：完整性校验失败",
+                    "errors": [],
+                }
+                return _failure_result(
+                    yaml_path=yaml_path,
+                    action=audit_action,
+                    source=source,
+                    tool_name=tool_name,
+                    error_code=validation_error.get("error_code", "integrity_validation_failed"),
+                    message=validation_error.get("message", "写入被阻止：完整性校验失败"),
+                    actor_context=actor_context,
+                    tool_input=tool_input,
+                    before_data=data,
+                    errors=validation_error.get("errors"),
+                )
+
+            for idx in touched_indices:
+                candidate_records[idx]["positions"] = list(simulated_positions[idx])
+
+            for idx in touched_indices:
+                events = events_by_idx.get(idx) or []
+                if not events:
+                    continue
+                thaw_events = candidate_records[idx].get("thaw_events")
+                if thaw_events is None:
+                    candidate_records[idx]["thaw_events"] = []
+                    thaw_events = candidate_records[idx]["thaw_events"]
+                if not isinstance(thaw_events, list):
+                    validation_error = _validate_data_or_error(candidate_data) or {
+                        "error_code": "integrity_validation_failed",
+                        "message": "写入被阻止：完整性校验失败",
+                        "errors": [],
+                    }
+                    return _failure_result(
+                        yaml_path=yaml_path,
+                        action=audit_action,
+                        source=source,
+                        tool_name=tool_name,
+                        error_code=validation_error.get("error_code", "integrity_validation_failed"),
+                        message=validation_error.get("message", "写入被阻止：完整性校验失败"),
+                        actor_context=actor_context,
+                        tool_input=tool_input,
+                        before_data=data,
+                        errors=validation_error.get("errors"),
+                    )
+                thaw_events.extend(events)
+
+            validation_error = _validate_data_or_error(candidate_data)
+            if validation_error:
+                validation_error = validation_error or {
+                    "error_code": "integrity_validation_failed",
+                    "message": "写入被阻止：完整性校验失败",
+                    "errors": [],
+                }
+                return _failure_result(
+                    yaml_path=yaml_path,
+                    action=audit_action,
+                    source=source,
+                    tool_name=tool_name,
+                    error_code=validation_error.get("error_code", "integrity_validation_failed"),
+                    message=validation_error.get("message", "写入被阻止：完整性校验失败"),
+                    actor_context=actor_context,
+                    tool_input=tool_input,
+                    before_data=data,
+                    errors=validation_error.get("errors"),
+                    details={"count": len(operations), "action": action_en, "date": date_str},
+                )
+
+            affected_ids = sorted({records[idx].get("id") for idx in touched_indices})
+            _backup_path = write_yaml(
+                candidate_data,
+                yaml_path,
+                auto_html=auto_html,
+                auto_server=auto_server,
+                auto_backup=auto_backup,
+                audit_meta=_build_audit_meta(
+                    action=audit_action,
+                    source=source,
+                    tool_name=tool_name,
+                    actor_context=actor_context,
+                    details={
+                        "count": len(operations),
+                        "action": action_en,
+                        "date": date_str,
+                        "record_ids": [op["record_id"] for op in operations],
+                        "affected_record_ids": affected_ids,
+                    },
+                    tool_input={
+                        "entries": list(normalized_entries),
+                        "date": date_str,
+                        "action": action,
+                        "note": note,
+                    },
+                ),
+            )
+        except Exception as exc:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="write_failed",
+                message=f"批量更新失败: {exc}",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"count": len(operations), "action": action_en, "date": date_str},
+            )
+
+        return {
+            "ok": True,
+            "dry_run": False,
+            "preview": preview,
+            "result": {
+                "count": len(operations),
+                "record_ids": [op["record_id"] for op in operations],
+                "affected_record_ids": affected_ids,
+            },
+            "backup_path": _backup_path,
+        }
+
+    for row_idx, entry in enumerate(normalized_entries, 1):
+        if len(entry) != 2:
+            errors.append(f"第{row_idx}条: 非移动操作必须使用 id:position 格式")
+            continue
+
+        record_id, position = entry
         if position < POSITION_RANGE[0] or position > POSITION_RANGE[1]:
             errors.append(f"ID {record_id}: 位置编号 {position} 必须在 {POSITION_RANGE[0]}-{POSITION_RANGE[1]} 之间")
             continue
@@ -941,7 +1543,7 @@ def tool_batch_thaw(
                     "record_ids": [op["record_id"] for op in operations],
                 },
                 tool_input={
-                    "entries": list(entries),
+                    "entries": list(normalized_entries),
                     "date": date_str,
                     "action": action,
                     "note": note,
@@ -1347,13 +1949,13 @@ def tool_query_thaw_events(
     action=None,
     max_records=0,
 ):
-    """Query thaw/takeout/discard events by date mode and action."""
+    """Query thaw/takeout/discard/move events by date mode and action."""
     action_filter = normalize_action(action) if action else None
     if action and not action_filter:
         return {
             "ok": False,
             "error_code": "invalid_action",
-            "message": "操作类型必须是 取出/复苏/扔掉 或 takeout/thaw/discard",
+            "message": "操作类型必须是 取出/复苏/扔掉/移动 或 takeout/thaw/discard/move",
         }
 
     if days:
@@ -1446,7 +2048,7 @@ def tool_query_thaw_events(
 
 
 def _collect_timeline_events(records, days=None):
-    timeline = defaultdict(lambda: {"frozen": [], "thaw": [], "takeout": [], "discard": []})
+    timeline = defaultdict(lambda: {"frozen": [], "thaw": [], "takeout": [], "discard": [], "move": []})
     cutoff_str = None
     if days:
         cutoff_str = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
@@ -1464,7 +2066,7 @@ def _collect_timeline_events(records, days=None):
             if cutoff_str and date < cutoff_str:
                 continue
             action = ev.get("action")
-            if action not in {"thaw", "takeout", "discard"}:
+            if action not in {"thaw", "takeout", "discard", "move"}:
                 continue
             timeline[date][action].append({**ev, "record": rec})
     return timeline
@@ -1488,17 +2090,20 @@ def tool_collect_timeline(yaml_path, days=30, all_history=False):
     total_thaw = 0
     total_takeout = 0
     total_discard = 0
+    total_move = 0
     active_days = 0
     for _, events in timeline.items():
         frozen = len(events["frozen"])
         thaw = len(events["thaw"])
         takeout = len(events["takeout"])
         discard = len(events["discard"])
+        move = len(events["move"])
         total_frozen += frozen
         total_thaw += thaw
         total_takeout += takeout
         total_discard += discard
-        if frozen + thaw + takeout + discard > 0:
+        total_move += move
+        if frozen + thaw + takeout + discard + move > 0:
             active_days += 1
 
     return {
@@ -1508,11 +2113,12 @@ def tool_collect_timeline(yaml_path, days=30, all_history=False):
             "sorted_dates": sorted(timeline.keys(), reverse=True),
             "summary": {
                 "active_days": active_days,
-                "total_ops": total_frozen + total_thaw + total_takeout + total_discard,
+                "total_ops": total_frozen + total_thaw + total_takeout + total_discard + total_move,
                 "frozen": total_frozen,
                 "thaw": total_thaw,
                 "takeout": total_takeout,
                 "discard": total_discard,
+                "move": total_move,
             },
         },
     }
