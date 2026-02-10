@@ -93,6 +93,25 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual(today, panel.t_date.date())
         self.assertEqual(today, panel.b_date.date())
 
+    def test_operations_panel_cache_normalizes_string_keys(self):
+        panel = self._new_operations_panel()
+        panel.update_records_cache(
+            {
+                "1": {
+                    "id": 1,
+                    "parent_cell_line": "K562",
+                    "short_name": "k562-a",
+                    "box": 1,
+                    "positions": [1],
+                    "frozen_at": "2026-02-10",
+                }
+            }
+        )
+
+        record = panel._lookup_record(1)
+        self.assertIsInstance(record, dict)
+        self.assertEqual(1, int(record.get("id")))
+
     def test_ai_panel_append_chat_falls_back_when_insert_markdown_missing(self):
         panel = self._new_ai_panel()
         panel.ai_chat = _FakeChatNoMarkdown()
@@ -137,6 +156,44 @@ class GuiPanelRegressionTests(unittest.TestCase):
             if name == "insertPlainText"
         ]
         self.assertEqual(1, chunk_calls.count("hello"))
+
+    def test_ai_panel_shows_tool_progress_in_chat(self):
+        panel = self._new_ai_panel()
+        panel.ai_chat = _FakeChatNoMarkdown()
+
+        panel.on_progress({"event": "run_start", "trace_id": "trace-tool"})
+        panel.on_progress(
+            {
+                "event": "tool_start",
+                "trace_id": "trace-tool",
+                "data": {"name": "query_thaw_events"},
+            }
+        )
+        panel.on_progress(
+            {
+                "event": "tool_end",
+                "trace_id": "trace-tool",
+                "step": 1,
+                "data": {"name": "query_thaw_events"},
+                "observation": {"ok": True},
+            }
+        )
+
+        text_calls = [value for name, value in panel.ai_chat.calls if name == "insertPlainText"]
+        merged = "\n".join(text_calls)
+        self.assertIn("Running `query_thaw_events`...", merged)
+        self.assertIn("finished: **OK**", merged)
+
+    def test_ai_panel_rewrites_streamed_markdown_on_finish(self):
+        panel = self._new_ai_panel()
+
+        panel.on_progress({"event": "run_start", "trace_id": "trace-md"})
+        panel.on_progress({"event": "chunk", "trace_id": "trace-md", "data": "**bold**"})
+        panel.on_finished({"ok": True, "result": {"final": "**bold**", "trace_id": "trace-md"}})
+
+        rendered_text = panel.ai_chat.toPlainText()
+        self.assertIn("bold", rendered_text)
+        self.assertNotIn("**bold**", rendered_text)
 
     def test_ai_panel_finished_uses_wrapped_result_shape(self):
         panel = self._new_ai_panel()

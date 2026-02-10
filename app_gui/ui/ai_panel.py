@@ -1,6 +1,6 @@
 from datetime import datetime
 from PySide6.QtCore import Qt, Signal, QThread, QEvent
-from PySide6.QtGui import QTextDocumentFragment
+from PySide6.QtGui import QTextCursor, QTextDocumentFragment
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QLineEdit, QComboBox, QCheckBox, 
@@ -28,6 +28,8 @@ class AIPanel(QWidget):
         self.ai_active_trace_id = None
         self.ai_streaming_active = False
         self.ai_stream_buffer = ""
+        self.ai_stream_start_pos = None
+        self.ai_last_stream_block = None
 
         self.setup_ui()
 
@@ -215,11 +217,19 @@ class AIPanel(QWidget):
         self.ai_active_trace_id = None
         self.ai_streaming_active = False
         self.ai_stream_buffer = ""
+        self.ai_stream_start_pos = None
+        self.ai_last_stream_block = None
         self.status_message.emit("AI memory cleared", 2000)
 
     def _append_chat_header(self, role):
         stamp = datetime.now().strftime("%H:%M:%S")
-        color = "#38bdf8" if role == "Agent" else "#a3e635" # Blue for agent, Green for user
+        color_map = {
+            "Agent": "#38bdf8",
+            "You": "#a3e635",
+            "Tool": "#f59e0b",
+            "System": "#f97316",
+        }
+        color = color_map.get(role, "#a3e635")
  
         html = f"""
         <div style="margin-bottom: 8px;">
@@ -239,7 +249,12 @@ class AIPanel(QWidget):
             return
         self.ai_streaming_active = True
         self.ai_stream_buffer = ""
+        self.ai_stream_start_pos = None
+        self.ai_last_stream_block = None
         self._append_chat_header(role)
+        if hasattr(self.ai_chat, "textCursor"):
+            cursor = self.ai_chat.textCursor()
+            self.ai_stream_start_pos = cursor.position()
 
     def _append_stream_chunk(self, text):
         chunk = str(text or "")
@@ -255,11 +270,31 @@ class AIPanel(QWidget):
     def _end_stream_chat(self):
         if not self.ai_streaming_active:
             return
+
+        start_pos = self.ai_stream_start_pos
+        end_pos = None
+        if hasattr(self.ai_chat, "textCursor"):
+            end_pos = self.ai_chat.textCursor().position()
+        self.ai_last_stream_block = {
+            "start": start_pos,
+            "end": end_pos,
+            "text": self.ai_stream_buffer,
+        }
+
         self.ai_chat.append("\n")
         self.ai_streaming_active = False
+        self.ai_stream_start_pos = None
 
     def _insert_chat_markdown(self, text):
         markdown_text = str(text or "")
+        cursor = self.ai_chat.textCursor() if hasattr(self.ai_chat, "textCursor") else None
+        self._insert_markdown_with_cursor(cursor, markdown_text)
+
+    def _insert_markdown_with_cursor(self, cursor, markdown_text):
+        markdown_text = str(markdown_text or "")
+        if cursor is not None and hasattr(self.ai_chat, "setTextCursor"):
+            self.ai_chat.setTextCursor(cursor)
+
         if hasattr(self.ai_chat, "insertMarkdown"):
             self.ai_chat.insertMarkdown(markdown_text)
             return
@@ -274,6 +309,26 @@ class AIPanel(QWidget):
             return
 
         self.ai_chat.insertPlainText(markdown_text)
+
+    def _replace_stream_block_with_markdown(self, block, markdown_text):
+        if not isinstance(block, dict):
+            return False
+        start = block.get("start")
+        end = block.get("end")
+        if start is None or end is None:
+            return False
+        if not hasattr(self.ai_chat, "textCursor"):
+            return False
+
+        try:
+            cursor = self.ai_chat.textCursor()
+            cursor.setPosition(int(start))
+            cursor.setPosition(int(end), QTextCursor.KeepAnchor)
+            cursor.removeSelectedText()
+            self._insert_markdown_with_cursor(cursor, markdown_text)
+            return True
+        except Exception:
+            return False
 
     def on_run_ai_agent(self):
         if self.ai_run_inflight:
@@ -290,6 +345,8 @@ class AIPanel(QWidget):
         self.ai_active_trace_id = None
         self.ai_streaming_active = False
         self.ai_stream_buffer = ""
+        self.ai_stream_start_pos = None
+        self.ai_last_stream_block = None
         self.ai_report.clear()
         self.status_message.emit("Agent thinking...", 2000)
         
@@ -378,6 +435,18 @@ class AIPanel(QWidget):
             if hint:
                 line += f" | hint: {hint}"
             self.ai_report.append(line)
+            self._append_chat("Tool", f"`{name}` finished: **{status}**")
+            if hint:
+                self._append_chat("Tool", f"Hint: {hint}")
+            return
+
+        if event_type == "tool_start":
+            if self.ai_streaming_active:
+                self._end_stream_chat()
+
+            data = event.get("data") or {}
+            name = str(data.get("name") or event.get("action") or "tool")
+            self._append_chat("Tool", f"Running `{name}`...")
             return
 
         if event_type == "chunk":
@@ -439,14 +508,27 @@ class AIPanel(QWidget):
         streamed_text = self.ai_stream_buffer.strip()
         if self.ai_streaming_active:
             self._end_stream_chat()
+            streamed_text = str((self.ai_last_stream_block or {}).get("text") or "").strip()
+
+        used_stream_markdown_rewrite = False
+        if streamed_text and final_text.strip() == streamed_text:
+            used_stream_markdown_rewrite = self._replace_stream_block_with_markdown(
+                self.ai_last_stream_block,
+                final_text,
+            )
 
         if not streamed_text:
             self._append_chat("Agent", final_text)
         elif final_text.strip() != streamed_text:
             # Keep a final canonical message if streamed chunks differ.
             self._append_chat("Agent", final_text)
+        elif not used_stream_markdown_rewrite:
+            # Could not rewrite in-place (e.g. limited chat stub); avoid duplicate append.
+            pass
 
         self.ai_stream_buffer = ""
+        self.ai_stream_start_pos = None
+        self.ai_last_stream_block = None
         self._append_history("assistant", final_text)
 
         self.operation_completed.emit(bool(response.get("ok")))

@@ -25,7 +25,8 @@ class OverviewPanel(QWidget):
     request_prefill = Signal(dict)
     request_quick_add = Signal()
     request_quick_thaw = Signal()
-    data_loaded = Signal(dict)
+    # Use object to preserve non-string dict keys (Qt map coercion can drop int keys).
+    data_loaded = Signal(object)
 
     def __init__(self, bridge, yaml_path_getter):
         super().__init__()

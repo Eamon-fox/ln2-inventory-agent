@@ -104,7 +104,29 @@ class OperationsPanel(QWidget):
         self.output_toggle_btn.setText("Hide Raw JSON" if visible else "Show Raw JSON")
 
     def update_records_cache(self, records_dict):
-        self.records_cache = records_dict
+        normalized = {}
+
+        if isinstance(records_dict, dict):
+            items = list(records_dict.items())
+        elif isinstance(records_dict, list):
+            items = []
+            for record in records_dict:
+                if isinstance(record, dict):
+                    items.append((record.get("id"), record))
+        else:
+            items = []
+
+        for key, record in items:
+            if not isinstance(record, dict):
+                continue
+
+            rid = key if key is not None else record.get("id")
+            try:
+                normalized[int(rid)] = record
+            except (TypeError, ValueError):
+                continue
+
+        self.records_cache = normalized
         self._refresh_thaw_record_context()
 
     def set_prefill(self, source_info):
