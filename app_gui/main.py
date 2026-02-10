@@ -115,17 +115,23 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(container)
 
     def connect_signals(self):
-        # Overview -> Operations
+        # Overview -> Operations (Plan staging)
+        self.overview_panel.plan_items_requested.connect(
+            self.operations_panel.add_plan_items)
+
+        # Overview -> Operations (prefill)
         self.overview_panel.request_prefill.connect(self.operations_panel.set_prefill)
         self.overview_panel.request_add_prefill.connect(self.operations_panel.set_add_prefill)
         self.overview_panel.request_quick_add.connect(lambda: self.operations_panel.set_mode("add"))
         self.overview_panel.request_quick_thaw.connect(lambda: self.operations_panel.set_mode("thaw"))
         self.overview_panel.data_loaded.connect(self.operations_panel.update_records_cache)
 
-        # Operations -> Overview
+        # Operations -> Overview (refresh after execution)
         self.operations_panel.operation_completed.connect(self.on_operation_completed)
 
-        # AI -> Overview
+        # AI -> Plan staging
+        self.ai_panel.plan_items_staged.connect(
+            self.operations_panel.add_plan_items)
         self.ai_panel.operation_completed.connect(self.on_operation_completed)
 
         # Status messages

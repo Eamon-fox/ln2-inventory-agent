@@ -15,6 +15,7 @@ import json
 
 class AIPanel(QWidget):
     operation_completed = Signal(bool)
+    plan_items_staged = Signal(list)
     status_message = Signal(str, int) # msg, timeout
 
     def __init__(self, bridge, yaml_path_getter):
@@ -455,6 +456,7 @@ class AIPanel(QWidget):
         
         self.ai_run_thread.started.connect(self.ai_run_worker.run)
         self.ai_run_worker.progress.connect(self.on_progress)
+        self.ai_run_worker.plan_staged.connect(self.plan_items_staged.emit)
         self.ai_run_worker.finished.connect(self.on_finished)
         self.ai_run_worker.finished.connect(self.ai_run_thread.quit)
         self.ai_run_worker.finished.connect(self.ai_run_worker.deleteLater)

@@ -127,7 +127,7 @@ class GuiToolBridge:
             source="app_gui",
         )
 
-    def run_agent_query(self, yaml_path, query, model=None, max_steps=8, mock=True, history=None, on_event=None):
+    def run_agent_query(self, yaml_path, query, model=None, max_steps=8, mock=True, history=None, on_event=None, plan_sink=None):
         prompt = str(query or "").strip()
         if not prompt:
             return {
@@ -162,6 +162,7 @@ class GuiToolBridge:
                 yaml_path=yaml_path,
                 actor_id=f"{self._actor_id}-agent",
                 session_id=self._session_id,
+                plan_sink=plan_sink,
             )
             agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=steps)
             result = agent.run(prompt, conversation_history=history, on_event=on_event)

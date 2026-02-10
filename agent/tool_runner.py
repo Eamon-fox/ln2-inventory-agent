@@ -19,14 +19,17 @@ from lib.tool_api import (
 )
 from lib.validators import parse_positions
 
+_WRITE_TOOLS = {"add_entry", "record_thaw", "batch_thaw"}
+
 
 class AgentToolRunner:
     """Executes named tools with normalized input payloads."""
 
-    def __init__(self, yaml_path, actor_id="react-agent", session_id=None):
+    def __init__(self, yaml_path, actor_id="react-agent", session_id=None, plan_sink=None):
         self._yaml_path = yaml_path
         self._actor_id = actor_id
         self._session_id = session_id
+        self._plan_sink = plan_sink
 
     def _actor_context(self, trace_id=None):
         return build_actor_context(
@@ -412,8 +415,211 @@ class AgentToolRunner:
             return self._with_hint(tool_name, payload)
         return self._with_hint(tool_name, response)
 
+    # --- Plan staging (human-in-the-loop) ---
+
+    _ACTION_MAP = {
+        "取出": "takeout", "takeout": "takeout",
+        "解冻": "thaw", "thaw": "thaw",
+        "丢弃": "discard", "discard": "discard",
+        "移动": "move", "move": "move",
+    }
+
+    def _lookup_record_info(self, record_id):
+        """Quick lookup to get (box, label) for a record ID."""
+        try:
+            result = tool_get_raw_entries(yaml_path=self._yaml_path, ids=[record_id])
+            if result.get("ok"):
+                entries = result.get("result", {}).get("entries", [])
+                if entries:
+                    rec = entries[0]
+                    box = int(rec.get("box", 0))
+                    label = rec.get("short_name") or rec.get("parent_cell_line") or "-"
+                    return box, label
+        except Exception:
+            pass
+        return 0, "-"
+
+    def _stage_to_plan(self, tool_name, payload, trace_id=None):
+        """Intercept write ops and stage as PlanItems for human approval."""
+        from app_gui.plan_model import validate_plan_item
+
+        items = []
+
+        if tool_name == "add_entry":
+            parent_cell_line = self._first_value(payload, "parent_cell_line", "cell", "cell_line") or ""
+            short_name = self._first_value(payload, "short_name", "short", "name") or ""
+            box_raw = self._first_value(payload, "box", "box_num")
+            positions_raw = payload.get("positions")
+            if positions_raw in (None, ""):
+                positions_raw = self._first_value(payload, "position", "slot")
+            try:
+                positions = self._normalize_positions(positions_raw) or []
+                box = int(box_raw) if box_raw is not None else 0
+            except (ValueError, TypeError) as exc:
+                return self._with_hint(tool_name, {
+                    "ok": False, "error_code": "invalid_tool_input",
+                    "message": str(exc),
+                })
+
+            items.append({
+                "action": "add",
+                "box": box,
+                "position": positions[0] if positions else 1,
+                "record_id": None,
+                "label": short_name or parent_cell_line or "-",
+                "source": "ai",
+                "payload": {
+                    "parent_cell_line": parent_cell_line,
+                    "short_name": short_name,
+                    "box": box,
+                    "positions": positions,
+                    "frozen_at": self._first_value(payload, "frozen_at", "date"),
+                    "plasmid_name": self._first_value(payload, "plasmid_name", "plasmid"),
+                    "plasmid_id": payload.get("plasmid_id"),
+                    "note": self._first_value(payload, "note", "notes", "memo"),
+                },
+            })
+
+        elif tool_name == "record_thaw":
+            try:
+                rid = int(self._first_value(payload, "record_id", "id"))
+                pos = int(self._first_value(payload, "position", "pos", "slot"))
+            except (ValueError, TypeError) as exc:
+                return self._with_hint(tool_name, {
+                    "ok": False, "error_code": "invalid_tool_input",
+                    "message": f"record_id and position are required integers: {exc}",
+                })
+
+            action_raw = payload.get("action", "Takeout")
+            action_lower = self._ACTION_MAP.get(str(action_raw).strip().lower(), "takeout")
+
+            to_pos_raw = self._first_value(payload, "to_position", "to_pos", "target_position")
+            to_pos = None
+            if to_pos_raw not in (None, ""):
+                to_pos = int(to_pos_raw)
+                action_lower = "move"
+
+            box, label = self._lookup_record_info(rid)
+
+            item = {
+                "action": action_lower,
+                "box": box,
+                "position": pos,
+                "record_id": rid,
+                "label": label,
+                "source": "ai",
+                "payload": {
+                    "record_id": rid,
+                    "position": pos,
+                    "date_str": self._first_value(payload, "date", "thaw_date"),
+                    "action": str(action_raw).strip(),
+                    "note": self._first_value(payload, "note", "notes", "memo"),
+                },
+            }
+            if to_pos is not None:
+                item["to_position"] = to_pos
+                item["payload"]["to_position"] = to_pos
+            items.append(item)
+
+        elif tool_name == "batch_thaw":
+            entries = payload.get("entries")
+            if isinstance(entries, str):
+                try:
+                    entries = parse_batch_entries(entries)
+                except ValueError as exc:
+                    return self._with_hint(tool_name, {
+                        "ok": False, "error_code": "invalid_tool_input",
+                        "message": str(exc),
+                    })
+
+            if not entries:
+                return self._with_hint(tool_name, {
+                    "ok": False, "error_code": "invalid_tool_input",
+                    "message": "entries is required and cannot be empty",
+                })
+
+            action_raw = payload.get("action", "Takeout")
+            action_lower = self._ACTION_MAP.get(str(action_raw).strip().lower(), "takeout")
+
+            for entry in entries:
+                to_pos = None
+                if isinstance(entry, (list, tuple)):
+                    if len(entry) >= 3:
+                        rid, pos, to_pos = int(entry[0]), int(entry[1]), int(entry[2])
+                    elif len(entry) == 2:
+                        rid, pos = int(entry[0]), int(entry[1])
+                    else:
+                        continue
+                elif isinstance(entry, dict):
+                    rid = int(entry.get("record_id", entry.get("id", 0)))
+                    pos = int(entry.get("position", entry.get("from_position", 0)))
+                    tp = entry.get("to_position")
+                    if tp is not None:
+                        to_pos = int(tp)
+                else:
+                    continue
+
+                box, label = self._lookup_record_info(rid)
+                item_action = "move" if to_pos is not None else action_lower
+
+                item = {
+                    "action": item_action,
+                    "box": box,
+                    "position": pos,
+                    "record_id": rid,
+                    "label": label,
+                    "source": "ai",
+                    "payload": {
+                        "record_id": rid,
+                        "position": pos,
+                        "date_str": payload.get("date"),
+                        "action": str(action_raw).strip(),
+                        "note": payload.get("note"),
+                    },
+                }
+                if to_pos is not None:
+                    item["to_position"] = to_pos
+                    item["payload"]["to_position"] = to_pos
+                items.append(item)
+
+        # Validate and sink
+        staged = []
+        errors = []
+        for item in items:
+            err = validate_plan_item(item)
+            if err:
+                errors.append(err)
+            else:
+                self._plan_sink(item)
+                staged.append(item)
+
+        if errors and not staged:
+            return self._with_hint(tool_name, {
+                "ok": False,
+                "error_code": "plan_validation_failed",
+                "message": f"All items rejected: {'; '.join(errors)}",
+            })
+
+        summary = [
+            f"{s['action']} {s['label']} @ Box {s['box']}:{s['position']}"
+            for s in staged
+        ]
+        return {
+            "ok": True,
+            "staged": True,
+            "message": (
+                f"Staged {len(staged)} operation(s) for human approval in Plan tab: "
+                + "; ".join(summary)
+            ),
+            "result": {"staged_count": len(staged)},
+        }
+
     def run(self, tool_name, tool_input, trace_id=None):
         payload = dict(tool_input or {})
+
+        # Intercept write operations when plan_sink is set
+        if tool_name in _WRITE_TOOLS and self._plan_sink is not None:
+            return self._stage_to_plan(tool_name, payload, trace_id)
 
         if tool_name == "query_inventory":
             return self._safe_call(

@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import date, datetime
 from PySide6.QtCore import Qt, Signal, QEvent
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, 
-    QPushButton, QLineEdit, QComboBox, QCheckBox, QScrollArea, 
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
+    QPushButton, QLineEdit, QComboBox, QCheckBox, QScrollArea,
     QSizePolicy, QGroupBox, QMenu, QApplication
 )
 from app_gui.ui.utils import cell_color
@@ -28,6 +28,7 @@ class OverviewPanel(QWidget):
     request_add_prefill = Signal(dict)
     # Use object to preserve non-string dict keys (Qt map coercion can drop int keys).
     data_loaded = Signal(object)
+    plan_items_requested = Signal(list)
 
     def __init__(self, bridge, yaml_path_getter):
         super().__init__()
@@ -43,6 +44,8 @@ class OverviewPanel(QWidget):
         self.overview_selected_key = None
         self.overview_hover_key = None
         self.overview_records_by_id = {}
+        self.overview_selected_keys = set()
+        self.select_mode = False
 
         self.setup_ui()
 
@@ -83,6 +86,12 @@ class OverviewPanel(QWidget):
         goto_thaw_btn = QPushButton("Quick Takeout")
         goto_thaw_btn.clicked.connect(self.request_quick_thaw.emit)
         action_row.addWidget(goto_thaw_btn)
+
+        self.ov_select_btn = QPushButton("Select")
+        self.ov_select_btn.setCheckable(True)
+        self.ov_select_btn.toggled.connect(self._on_select_mode_toggled)
+        action_row.addWidget(self.ov_select_btn)
+
         action_row.addStretch()
         layout.addLayout(action_row)
 
@@ -139,6 +148,25 @@ class OverviewPanel(QWidget):
         self.ov_hover_hint.setWordWrap(True)
         layout.addWidget(self.ov_hover_hint)
 
+        # Selection Action Bar (hidden by default)
+        sel_bar_layout = QHBoxLayout()
+        sel_bar_layout.setSpacing(6)
+        self.ov_sel_count = QLabel("0 selected")
+        self.ov_sel_count.setStyleSheet("font-weight: bold;")
+        sel_bar_layout.addWidget(self.ov_sel_count)
+        for action_name in ("Takeout", "Thaw", "Discard"):
+            btn = QPushButton(action_name)
+            btn.clicked.connect(lambda _checked=False, a=action_name: self._on_quick_action(a))
+            sel_bar_layout.addWidget(btn)
+        sel_clear_btn = QPushButton("Clear")
+        sel_clear_btn.clicked.connect(self._clear_all_selections)
+        sel_bar_layout.addWidget(sel_clear_btn)
+        sel_bar_layout.addStretch()
+        self.ov_selection_bar = QWidget()
+        self.ov_selection_bar.setLayout(sel_bar_layout)
+        self.ov_selection_bar.setVisible(False)
+        layout.addWidget(self.ov_selection_bar)
+
         # Grid Area
         self.ov_scroll = QScrollArea()
         self.ov_scroll.setWidgetResizable(True)
@@ -179,6 +207,8 @@ class OverviewPanel(QWidget):
             self.ov_status.setText(f"Failed to load overview: {stats_response.get('message', 'unknown error')}")
             self.overview_records_by_id = {}
             self.overview_selected_key = None
+            self.overview_selected_keys.clear()
+            self._update_selection_bar()
             self._reset_detail()
             return
 
@@ -267,6 +297,8 @@ class OverviewPanel(QWidget):
         self.overview_box_live_labels = {}
         self.overview_box_groups = {}
         self.overview_selected_key = None
+        self.overview_selected_keys.clear()
+        self._update_selection_bar()
         self._reset_detail()
 
         total_slots = rows * cols
@@ -321,7 +353,8 @@ class OverviewPanel(QWidget):
         self.overview_shape = (rows, cols, tuple(box_numbers))
 
     def _paint_cell(self, button, box_num, position, record):
-        is_selected = self.overview_selected_key == (box_num, position)
+        is_selected = (self.overview_selected_key == (box_num, position)
+                       or (box_num, position) in self.overview_selected_keys)
         if record:
             short = str(record.get("short_name") or "")
             label = short[:6] if short else str(position)
@@ -406,15 +439,13 @@ class OverviewPanel(QWidget):
     def _clear_selected_cell(self):
         key = self.overview_selected_key
         self.overview_selected_key = None
-        if key is None:
-            return
-
-        button = self.overview_cells.get(key)
-        if button is None:
-            return
-
-        rec = self.overview_pos_map.get(key)
-        self._paint_cell(button, key[0], key[1], rec)
+        if key is not None:
+            button = self.overview_cells.get(key)
+            if button is not None:
+                rec = self.overview_pos_map.get(key)
+                self._paint_cell(button, key[0], key[1], rec)
+        if self.overview_selected_keys:
+            self._clear_all_selections()
 
     def _refresh_filter_options(self, records, box_numbers):
         prev_box = self.ov_filter_box.currentData()
@@ -489,6 +520,13 @@ class OverviewPanel(QWidget):
                 self._clear_selected_cell()
                 self._reset_detail()
 
+        # Remove hidden cells from multi-select
+        hidden_keys = {k for k in self.overview_selected_keys
+                       if not self.overview_cells.get(k, QPushButton()).isVisible()}
+        if hidden_keys:
+            self.overview_selected_keys -= hidden_keys
+            self._update_selection_bar()
+
         self.ov_status.setText(
             f"Filter matched {visible_slots} slots across {visible_boxes} boxes | {datetime.now().strftime('%H:%M:%S')}"
         )
@@ -507,7 +545,10 @@ class OverviewPanel(QWidget):
         self._apply_filters()
 
     def on_cell_clicked(self, box_num, position):
-        self.on_cell_hovered(box_num, position, force=True)
+        if self.select_mode:
+            self._toggle_cell_selection(box_num, position)
+        else:
+            self.on_cell_hovered(box_num, position, force=True)
 
     def on_cell_double_clicked(self, box_num, position):
         record = self.overview_pos_map.get((box_num, position))
@@ -595,3 +636,75 @@ class OverviewPanel(QWidget):
                 "position": int(position),
                 "record_id": rec_id,
             })
+
+    # --- Multi-select ---
+
+    def _on_select_mode_toggled(self, checked):
+        self.select_mode = checked
+        self.ov_select_btn.setText("Exit Select" if checked else "Select")
+        if checked:
+            self._clear_selected_cell()
+        else:
+            self._clear_all_selections()
+
+    def _toggle_cell_selection(self, box_num, position):
+        key = (box_num, position)
+        record = self.overview_pos_map.get(key)
+        if not record:
+            return
+        if key in self.overview_selected_keys:
+            self.overview_selected_keys.discard(key)
+        else:
+            self.overview_selected_keys.add(key)
+        button = self.overview_cells.get(key)
+        if button is not None:
+            self._paint_cell(button, box_num, position, record)
+        self._update_selection_bar()
+
+    def _clear_all_selections(self):
+        old_keys = list(self.overview_selected_keys)
+        self.overview_selected_keys.clear()
+        for key in old_keys:
+            button = self.overview_cells.get(key)
+            if button is not None:
+                rec = self.overview_pos_map.get(key)
+                self._paint_cell(button, key[0], key[1], rec)
+        self._update_selection_bar()
+
+    def _update_selection_bar(self):
+        n = len(self.overview_selected_keys)
+        self.ov_sel_count.setText(f"{n} selected")
+        self.ov_selection_bar.setVisible(n > 0)
+
+    def _on_quick_action(self, action_name):
+        items = []
+        for key in sorted(self.overview_selected_keys):
+            box_num, position = key
+            record = self.overview_pos_map.get(key)
+            if not record:
+                continue
+            rec_id = int(record.get("id"))
+            label = record.get("short_name") or record.get("parent_cell_line") or "-"
+            items.append({
+                "action": action_name.lower(),
+                "box": box_num,
+                "position": position,
+                "record_id": rec_id,
+                "label": label,
+                "source": "human",
+                "payload": {
+                    "record_id": rec_id,
+                    "position": position,
+                    "date_str": date.today().isoformat(),
+                    "action": action_name,
+                    "note": f"Quick {action_name.lower()} from Overview",
+                },
+            })
+
+        if not items:
+            self.status_message.emit("No valid records selected.", 2000)
+            return
+
+        self._clear_all_selections()
+        self.plan_items_requested.emit(items)
+        self.status_message.emit(f"Added {len(items)} item(s) to Plan.", 2000)

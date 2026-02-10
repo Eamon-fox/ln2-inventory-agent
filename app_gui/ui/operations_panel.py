@@ -1,16 +1,19 @@
 import json
 import os
 import csv
-from datetime import datetime
-from PySide6.QtCore import Qt, Signal, QDate, QTimer
+import tempfile
+from datetime import date, datetime
+from PySide6.QtCore import Qt, Signal, QDate, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QLineEdit, QComboBox,
-    QStackedWidget, QTableWidget, QTableWidgetItem, 
-    QHeaderView, QFileDialog, QMessageBox, QGroupBox, 
+    QStackedWidget, QTableWidget, QTableWidgetItem,
+    QHeaderView, QFileDialog, QMessageBox, QGroupBox,
     QFormLayout, QDateEdit, QSpinBox, QTextEdit
 )
 from app_gui.ui.utils import positions_to_text
+from app_gui.plan_model import validate_plan_item, render_operation_sheet
 from lib.tool_api import parse_batch_entries
 from lib.validators import parse_positions
 
@@ -24,6 +27,7 @@ class OperationsPanel(QWidget):
         self.yaml_path_getter = yaml_path_getter
         
         self.records_cache = {}
+        self.plan_items = []
         self.current_operation_mode = "thaw"
         self.query_last_mode = "records"
         self.t_prefill_source = None
@@ -50,6 +54,7 @@ class OperationsPanel(QWidget):
             ("thaw", "Takeout"),
             ("move", "Move"),
             ("add", "Add Entry"),
+            ("plan", "Plan"),
             ("query", "Query"),
             ("rollback", "Rollback"),
             ("audit", "Audit Log"),
@@ -66,6 +71,7 @@ class OperationsPanel(QWidget):
             "add": self.op_stack.addWidget(self._build_add_tab()),
             "thaw": self.op_stack.addWidget(self._build_thaw_tab()),
             "move": self.op_stack.addWidget(self._build_move_tab()),
+            "plan": self.op_stack.addWidget(self._build_plan_tab()),
             "query": self.op_stack.addWidget(self._build_query_tab()),
             "rollback": self.op_stack.addWidget(self._build_rollback_tab()),
             "audit": self.op_stack.addWidget(self._build_audit_tab()),
@@ -229,8 +235,8 @@ class OperationsPanel(QWidget):
         form.addRow("Note", self.a_note)
         layout.addLayout(form)
 
-        self.a_apply_btn = QPushButton("Execute Add Entry")
-        self._style_execute_button(self.a_apply_btn)
+        self.a_apply_btn = QPushButton("Add to Plan")
+        self._style_stage_button(self.a_apply_btn)
         self.a_apply_btn.clicked.connect(self.on_add_entry)
         layout.addWidget(self.a_apply_btn)
         layout.addStretch(1)
@@ -263,8 +269,8 @@ class OperationsPanel(QWidget):
         single_form.addRow("Action", self.t_action)
         single_form.addRow("Note", self.t_note)
 
-        self.t_apply_btn = QPushButton("Execute Single Operation")
-        self._style_execute_button(self.t_apply_btn)
+        self.t_apply_btn = QPushButton("Add to Plan")
+        self._style_stage_button(self.t_apply_btn)
         self.t_apply_btn.clicked.connect(self.on_record_thaw)
         single_form.addRow("", self.t_apply_btn)
         layout.addWidget(single)
@@ -345,8 +351,8 @@ class OperationsPanel(QWidget):
         batch_form.addRow("Action", self.b_action)
         batch_form.addRow("Note", self.b_note)
 
-        self.b_apply_btn = QPushButton("Execute Batch Operation")
-        self._style_execute_button(self.b_apply_btn)
+        self.b_apply_btn = QPushButton("Add to Plan")
+        self._style_stage_button(self.b_apply_btn)
         self.b_apply_btn.clicked.connect(self.on_batch_thaw)
         batch_form.addRow("", self.b_apply_btn)
         layout.addWidget(self.t_batch_group)
@@ -383,8 +389,8 @@ class OperationsPanel(QWidget):
         single_form.addRow("Date", self.m_date)
         single_form.addRow("Note", self.m_note)
 
-        self.m_apply_btn = QPushButton("Execute Single Move")
-        self._style_execute_button(self.m_apply_btn)
+        self.m_apply_btn = QPushButton("Add to Plan")
+        self._style_stage_button(self.m_apply_btn)
         self.m_apply_btn.clicked.connect(self.on_record_move)
         single_form.addRow("", self.m_apply_btn)
         layout.addWidget(single)
@@ -461,12 +467,54 @@ class OperationsPanel(QWidget):
         batch_form.addRow("Date", self.bm_date)
         batch_form.addRow("Note", self.bm_note)
 
-        self.bm_apply_btn = QPushButton("Execute Batch Move")
-        self._style_execute_button(self.bm_apply_btn)
+        self.bm_apply_btn = QPushButton("Add to Plan")
+        self._style_stage_button(self.bm_apply_btn)
         self.bm_apply_btn.clicked.connect(self.on_batch_move)
         batch_form.addRow("", self.bm_apply_btn)
         layout.addWidget(self.m_batch_group)
         self._on_toggle_move_batch_section(False)
+        layout.addStretch(1)
+        return tab
+
+    # --- PLAN TAB ---
+    def _build_plan_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        self.plan_empty_label = QLabel(
+            "No operations staged yet.\n"
+            "Use the forms or Overview to add operations to the plan."
+        )
+        self.plan_empty_label.setAlignment(Qt.AlignCenter)
+        self.plan_empty_label.setStyleSheet("color: #64748b; padding: 20px;")
+        layout.addWidget(self.plan_empty_label)
+
+        self.plan_table = QTableWidget()
+        self._setup_table(
+            self.plan_table,
+            ["Source", "Action", "Box", "Pos", "\u2192Pos", "Label", "Note"],
+            sortable=False,
+        )
+        self.plan_table.setVisible(False)
+        layout.addWidget(self.plan_table, 1)
+
+        btn_row = QHBoxLayout()
+        self.plan_exec_btn = QPushButton("Execute All")
+        self._style_execute_button(self.plan_exec_btn)
+        self.plan_exec_btn.clicked.connect(self.execute_plan)
+        btn_row.addWidget(self.plan_exec_btn)
+
+        self.plan_print_btn = QPushButton("Print")
+        self.plan_print_btn.clicked.connect(self.print_plan)
+        btn_row.addWidget(self.plan_print_btn)
+
+        self.plan_clear_btn = QPushButton("Clear")
+        self.plan_clear_btn.clicked.connect(self.clear_plan)
+        btn_row.addWidget(self.plan_clear_btn)
+
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
         layout.addStretch(1)
         return tab
 
@@ -574,6 +622,17 @@ class OperationsPanel(QWidget):
                 border: 1px solid #7f1d1d;
             }
             QPushButton:hover { background-color: #dc2626; }
+        """)
+
+    def _style_stage_button(self, btn):
+        btn.setStyleSheet("""
+            QPushButton {
+                background-color: #1d4ed8;
+                color: white;
+                font-weight: bold;
+                border: 1px solid #1e3a8a;
+            }
+            QPushButton:hover { background-color: #2563eb; }
         """)
 
     @staticmethod
@@ -694,7 +753,6 @@ class OperationsPanel(QWidget):
 
     def on_add_entry(self):
         self._ensure_today_defaults()
-        yaml_path = self.yaml_path_getter()
         positions_text = self.a_positions.text().strip()
 
         try:
@@ -703,55 +761,58 @@ class OperationsPanel(QWidget):
             self.status_message.emit(str(exc), 5000, "error")
             return
 
-        details = "\n".join([
-            f"Cell: {self.a_parent.text()}",
-            f"Short: {self.a_short.text()}",
-            f"Box: {self.a_box.value()}",
-            f"Positions: {positions_text}",
-        ])
-        if not self._confirm_execute("Confirm Add", details):
-            return
-
-        response = self.bridge.add_entry(
-            yaml_path=yaml_path,
-            parent_cell_line=self.a_parent.text(),
-            short_name=self.a_short.text(),
-            box=self.a_box.value(),
-            positions=positions,
-            frozen_at=self.a_date.date().toString("yyyy-MM-dd"),
-            plasmid_name=self.a_plasmid.text() or None,
-            plasmid_id=self.a_plasmid_id.text() or None,
-            note=self.a_note.text() or None,
-        )
-        self._handle_response(response, "Add Entry")
+        item = {
+            "action": "add",
+            "box": self.a_box.value(),
+            "position": positions[0],
+            "record_id": None,
+            "label": self.a_short.text() or self.a_parent.text() or "-",
+            "source": "human",
+            "payload": {
+                "parent_cell_line": self.a_parent.text(),
+                "short_name": self.a_short.text(),
+                "box": self.a_box.value(),
+                "positions": positions,
+                "frozen_at": self.a_date.date().toString("yyyy-MM-dd"),
+                "plasmid_name": self.a_plasmid.text() or None,
+                "plasmid_id": self.a_plasmid_id.text() or None,
+                "note": self.a_note.text() or None,
+            },
+        }
+        self.add_plan_items([item])
 
     def on_record_thaw(self):
         self._ensure_today_defaults()
-        yaml_path = self.yaml_path_getter()
-
         action_text = self.t_action.currentText()
 
-        details = (
-            f"ID: {self.t_id.value()}\n"
-            f"Position: {self.t_position.value()}\n"
-            f"Action: {action_text}"
-        )
-        if not self._confirm_execute("Confirm Operation", details):
-            return
+        record = self._lookup_record(self.t_id.value())
+        label = "-"
+        box = 0
+        if record:
+            label = record.get("short_name") or record.get("parent_cell_line") or "-"
+            box = int(record.get("box", 0))
+        elif self.t_prefill_source:
+            box = int(self.t_prefill_source.get("box", 0))
 
-        response = self.bridge.record_thaw(
-            yaml_path=yaml_path,
-            record_id=self.t_id.value(),
-            position=self.t_position.value(),
-            date_str=self.t_date.date().toString("yyyy-MM-dd"),
-            action=action_text,
-            note=self.t_note.text() or None,
-        )
-        self._handle_response(response, "Single Operation")
+        item = {
+            "action": action_text.lower(),
+            "box": box,
+            "position": self.t_position.value(),
+            "record_id": self.t_id.value(),
+            "label": label,
+            "source": "human",
+            "payload": {
+                "record_id": self.t_id.value(),
+                "position": self.t_position.value(),
+                "date_str": self.t_date.date().toString("yyyy-MM-dd"),
+                "action": action_text,
+                "note": self.t_note.text().strip() or None,
+            },
+        }
+        self.add_plan_items([item])
 
     def on_record_move(self):
         self._ensure_today_defaults()
-        yaml_path = self.yaml_path_getter()
 
         from_pos = self.m_from_position.value()
         to_pos = self.m_to_position.value()
@@ -759,24 +820,31 @@ class OperationsPanel(QWidget):
             self.status_message.emit("Move: From and To positions must be different.", 4000, "error")
             return
 
-        details = (
-            f"ID: {self.m_id.value()}\n"
-            f"From: {from_pos}\n"
-            f"To: {to_pos}"
-        )
-        if not self._confirm_execute("Confirm Move", details):
-            return
+        record = self._lookup_record(self.m_id.value())
+        label = "-"
+        box = 0
+        if record:
+            label = record.get("short_name") or record.get("parent_cell_line") or "-"
+            box = int(record.get("box", 0))
 
-        response = self.bridge.record_thaw(
-            yaml_path=yaml_path,
-            record_id=self.m_id.value(),
-            position=from_pos,
-            to_position=to_pos,
-            date_str=self.m_date.date().toString("yyyy-MM-dd"),
-            action="Move",
-            note=self.m_note.text() or None,
-        )
-        self._handle_response(response, "Single Operation")
+        item = {
+            "action": "move",
+            "box": box,
+            "position": from_pos,
+            "to_position": to_pos,
+            "record_id": self.m_id.value(),
+            "label": label,
+            "source": "human",
+            "payload": {
+                "record_id": self.m_id.value(),
+                "position": from_pos,
+                "to_position": to_pos,
+                "date_str": self.m_date.date().toString("yyyy-MM-dd"),
+                "action": "Move",
+                "note": self.m_note.text().strip() or None,
+            },
+        }
+        self.add_plan_items([item])
 
     def _move_batch_add_row(self):
         self.bm_table.insertRow(self.bm_table.rowCount())
@@ -815,7 +883,6 @@ class OperationsPanel(QWidget):
 
     def on_batch_move(self):
         self._ensure_today_defaults()
-        yaml_path = self.yaml_path_getter()
 
         try:
             entries = self._collect_move_batch_from_table()
@@ -831,23 +898,46 @@ class OperationsPanel(QWidget):
                 self.status_message.emit(str(exc), 3000, "error")
                 return
 
-        def _entry_text(entry):
+        date_str = self.bm_date.date().toString("yyyy-MM-dd")
+        note = self.bm_note.text().strip() or None
+
+        items = []
+        for entry in entries:
             if isinstance(entry, (list, tuple)) and len(entry) == 3:
-                return f"{entry[0]}:{entry[1]}->{entry[2]}"
-            return str(entry)
+                rid, from_pos, to_pos = int(entry[0]), int(entry[1]), int(entry[2])
+            elif isinstance(entry, dict):
+                rid = int(entry.get("record_id", entry.get("id", 0)))
+                from_pos = int(entry.get("position", entry.get("from_position", 0)))
+                to_pos = int(entry.get("to_position", 0))
+            else:
+                continue
 
-        summary = ", ".join(_entry_text(entry) for entry in entries)
-        if not self._confirm_execute("Confirm Batch Move", f"Entries: {summary}"):
-            return
+            record = self._lookup_record(rid)
+            label = "-"
+            box = 0
+            if record:
+                label = record.get("short_name") or record.get("parent_cell_line") or "-"
+                box = int(record.get("box", 0))
 
-        response = self.bridge.batch_thaw(
-            yaml_path=yaml_path,
-            entries=entries,
-            date_str=self.bm_date.date().toString("yyyy-MM-dd"),
-            action="Move",
-            note=self.bm_note.text() or None,
-        )
-        self._handle_response(response, "Batch Operation")
+            items.append({
+                "action": "move",
+                "box": box,
+                "position": from_pos,
+                "to_position": to_pos,
+                "record_id": rid,
+                "label": label,
+                "source": "human",
+                "payload": {
+                    "record_id": rid,
+                    "position": from_pos,
+                    "to_position": to_pos,
+                    "date_str": date_str,
+                    "action": "Move",
+                    "note": note,
+                },
+            })
+
+        self.add_plan_items(items)
 
     def _refresh_move_record_context(self):
         if not hasattr(self, "m_ctx_status"):
@@ -946,7 +1036,6 @@ class OperationsPanel(QWidget):
 
     def on_batch_thaw(self):
         self._ensure_today_defaults()
-        yaml_path = self.yaml_path_getter()
 
         # Try table first, fall back to text input
         try:
@@ -963,35 +1052,44 @@ class OperationsPanel(QWidget):
                 self.status_message.emit(str(exc), 3000, "error")
                 return
 
-        def _entry_text(entry):
+        action_text = self.b_action.currentText()
+        date_str = self.b_date.date().toString("yyyy-MM-dd")
+        note = self.b_note.text().strip() or None
+
+        items = []
+        for entry in entries:
             if isinstance(entry, dict):
-                rid = entry.get("record_id", entry.get("id"))
-                source_pos = entry.get("position", entry.get("from_position"))
-                target_pos = entry.get("to_position")
-                if target_pos is not None:
-                    return f"{rid}:{source_pos}->{target_pos}"
-                return f"{rid}:{source_pos}"
+                rid = int(entry.get("record_id", entry.get("id", 0)))
+                pos = int(entry.get("position", entry.get("from_position", 0)))
+            elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                rid, pos = int(entry[0]), int(entry[1])
+            else:
+                continue
 
-            if isinstance(entry, (list, tuple)):
-                if len(entry) == 3:
-                    return f"{entry[0]}:{entry[1]}->{entry[2]}"
-                if len(entry) == 2:
-                    return f"{entry[0]}:{entry[1]}"
+            record = self._lookup_record(rid)
+            label = "-"
+            box = 0
+            if record:
+                label = record.get("short_name") or record.get("parent_cell_line") or "-"
+                box = int(record.get("box", 0))
 
-            return str(entry)
+            items.append({
+                "action": action_text.lower(),
+                "box": box,
+                "position": pos,
+                "record_id": rid,
+                "label": label,
+                "source": "human",
+                "payload": {
+                    "record_id": rid,
+                    "position": pos,
+                    "date_str": date_str,
+                    "action": action_text,
+                    "note": note,
+                },
+            })
 
-        summary = ", ".join(_entry_text(entry) for entry in entries)
-        if not self._confirm_execute("Confirm Batch", f"Entries: {summary}"):
-            return
-
-        response = self.bridge.batch_thaw(
-            yaml_path=yaml_path,
-            entries=entries,
-            date_str=self.b_date.date().toString("yyyy-MM-dd"),
-            action=self.b_action.currentText(),
-            note=self.b_note.text() or None,
-        )
-        self._handle_response(response, "Batch Operation")
+        self.add_plan_items(items)
 
     def _handle_response(self, response, context):
         payload = response if isinstance(response, dict) else {}
@@ -1071,6 +1169,224 @@ class OperationsPanel(QWidget):
             self.result_card.setStyleSheet("QGroupBox { border: 1px solid #ef4444; }")
 
         self.result_card.setVisible(True)
+
+    # --- PLAN OPERATIONS ---
+
+    def add_plan_items(self, items):
+        """Validate and add items to the plan staging area."""
+        added = 0
+        for item in items:
+            err = validate_plan_item(item)
+            if err:
+                self.status_message.emit(f"Plan rejected: {err}", 4000, "error")
+                continue
+            self.plan_items.append(item)
+            added += 1
+
+        if added:
+            self._refresh_plan_table()
+            self._update_plan_badge()
+            self.set_mode("plan")
+            self.status_message.emit(f"Added {added} item(s) to plan.", 2000, "info")
+
+    def _refresh_plan_table(self):
+        has_items = bool(self.plan_items)
+        self.plan_empty_label.setVisible(not has_items)
+        self.plan_table.setVisible(has_items)
+
+        self._setup_table(
+            self.plan_table,
+            ["Source", "Action", "Box", "Pos", "\u2192Pos", "Label", "Note"],
+            sortable=False,
+        )
+
+        for row, item in enumerate(self.plan_items):
+            self.plan_table.insertRow(row)
+            self.plan_table.setItem(row, 0, QTableWidgetItem(item.get("source", "")))
+            self.plan_table.setItem(row, 1, QTableWidgetItem(str(item.get("action", "")).capitalize()))
+            self.plan_table.setItem(row, 2, QTableWidgetItem(str(item.get("box", ""))))
+            pos = item.get("position", "")
+            self.plan_table.setItem(row, 3, QTableWidgetItem(str(pos)))
+            to_pos = item.get("to_position")
+            self.plan_table.setItem(row, 4, QTableWidgetItem(str(to_pos) if to_pos else ""))
+            self.plan_table.setItem(row, 5, QTableWidgetItem(str(item.get("label", ""))))
+            note = (item.get("payload") or {}).get("note", "") or ""
+            self.plan_table.setItem(row, 6, QTableWidgetItem(str(note)))
+
+    def _update_plan_badge(self):
+        count = len(self.plan_items)
+        idx = self.op_mode_combo.findData("plan")
+        if idx >= 0:
+            text = f"Plan ({count})" if count else "Plan"
+            self.op_mode_combo.setItemText(idx, text)
+
+    def execute_plan(self):
+        """Execute all staged plan items after user confirmation."""
+        if not self.plan_items:
+            self.status_message.emit("No items in plan to execute.", 3000, "error")
+            return
+
+        summary_lines = []
+        for item in self.plan_items:
+            action = item.get("action", "?")
+            label = item.get("label", "?")
+            pos = item.get("position", "?")
+            line = f"  {action}: {label} @ Box {item.get('box', '?')}:{pos}"
+            to_pos = item.get("to_position")
+            if to_pos:
+                line += f" \u2192 {to_pos}"
+            summary_lines.append(line)
+
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowTitle("Execute Plan")
+        msg.setText(f"Execute {len(self.plan_items)} operation(s)?")
+        msg.setInformativeText("\n".join(summary_lines[:20]))
+        if len(summary_lines) > 20:
+            msg.setDetailedText("\n".join(summary_lines))
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.setDefaultButton(QMessageBox.No)
+        if msg.exec() != QMessageBox.Yes:
+            return
+
+        yaml_path = self.yaml_path_getter()
+        results = []
+        remaining = list(self.plan_items)
+        last_backup = None
+
+        # Phase 1: add
+        adds = [it for it in remaining if it["action"] == "add"]
+        for item in adds:
+            payload = dict(item["payload"])
+            response = self.bridge.add_entry(yaml_path=yaml_path, **payload)
+            if not response.get("ok"):
+                results.append(("FAIL", item, response))
+                self._show_plan_result(results, remaining)
+                return
+            results.append(("OK", item, response))
+            remaining.remove(item)
+            backup = response.get("backup_path")
+            if backup:
+                last_backup = backup
+
+        # Phase 2: move (batch)
+        moves = [it for it in remaining if it["action"] == "move"]
+        if moves:
+            entries = []
+            for item in moves:
+                p = item["payload"]
+                entries.append((p["record_id"], p["position"], p["to_position"]))
+            first_move = moves[0]["payload"]
+            response = self.bridge.batch_thaw(
+                yaml_path=yaml_path,
+                entries=entries,
+                date_str=first_move.get("date_str", date.today().isoformat()),
+                action="Move",
+                note=first_move.get("note"),
+            )
+            if not response.get("ok"):
+                results.append(("FAIL", moves[0], response))
+                self._show_plan_result(results, remaining)
+                return
+            for item in moves:
+                results.append(("OK", item, response))
+                remaining.remove(item)
+            backup = response.get("backup_path")
+            if backup:
+                last_backup = backup
+
+        # Phase 3: takeout/thaw/discard (group by action)
+        for action_name in ("Takeout", "Thaw", "Discard"):
+            action_items = [it for it in remaining if it["action"] == action_name.lower()]
+            if not action_items:
+                continue
+            entries = []
+            for item in action_items:
+                p = item["payload"]
+                entries.append((p["record_id"], p["position"]))
+            first = action_items[0]["payload"]
+            response = self.bridge.batch_thaw(
+                yaml_path=yaml_path,
+                entries=entries,
+                date_str=first.get("date_str", date.today().isoformat()),
+                action=action_name,
+                note=first.get("note"),
+            )
+            if not response.get("ok"):
+                results.append(("FAIL", action_items[0], response))
+                self._show_plan_result(results, remaining)
+                return
+            for item in action_items:
+                results.append(("OK", item, response))
+                remaining.remove(item)
+            backup = response.get("backup_path")
+            if backup:
+                last_backup = backup
+
+        # All done
+        self.plan_items.clear()
+        self._refresh_plan_table()
+        self._update_plan_badge()
+        self._show_plan_result(results, remaining)
+        self.operation_completed.emit(True)
+
+        if last_backup:
+            self._last_operation_backup = last_backup
+            self._enable_undo(timeout_sec=30)
+
+    def _show_plan_result(self, results, remaining):
+        ok_count = sum(1 for r in results if r[0] == "OK")
+        fail_count = sum(1 for r in results if r[0] == "FAIL")
+
+        if fail_count:
+            self.plan_items = remaining
+            self._refresh_plan_table()
+            self._update_plan_badge()
+
+            fail_item = [r for r in results if r[0] == "FAIL"][-1]
+            error_msg = fail_item[2].get("message", "Unknown error")
+            lines = [
+                "<b style='color: #ef4444;'>Plan execution stopped</b>",
+                f"Completed: {ok_count}, Failed: {fail_count}, Remaining: {len(remaining)}",
+                f"Error: {error_msg}",
+            ]
+            self.result_summary.setText("<br/>".join(lines))
+            self.result_card.setStyleSheet("QGroupBox { border: 1px solid #ef4444; }")
+        else:
+            lines = [
+                "<b style='color: #22c55e;'>Plan executed successfully</b>",
+                f"Completed: {ok_count} operation(s)",
+            ]
+            self.result_summary.setText("<br/>".join(lines))
+            self.result_card.setStyleSheet("QGroupBox { border: 1px solid #22c55e; }")
+
+        self.result_card.setVisible(True)
+
+        output_data = [
+            {"status": r[0], "action": r[1].get("action"), "label": r[1].get("label")}
+            for r in results
+        ]
+        self.output.setPlainText(json.dumps(output_data, ensure_ascii=False, indent=2))
+
+    def print_plan(self):
+        if not self.plan_items:
+            self.status_message.emit("No items in plan to print.", 3000, "error")
+            return
+
+        html = render_operation_sheet(self.plan_items)
+        tmp = tempfile.NamedTemporaryFile(
+            suffix=".html", delete=False, mode="w", encoding="utf-8"
+        )
+        tmp.write(html)
+        tmp.close()
+        QDesktopServices.openUrl(QUrl.fromLocalFile(tmp.name))
+        self.status_message.emit("Operation sheet opened in browser.", 2000, "info")
+
+    def clear_plan(self):
+        self.plan_items.clear()
+        self._refresh_plan_table()
+        self._update_plan_badge()
+        self.status_message.emit("Plan cleared.", 2000, "info")
 
     # --- Query & Rollback Stubs (simplified) ---
     def on_query_records(self):

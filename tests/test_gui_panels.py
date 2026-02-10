@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
 
 try:
     from PySide6.QtCore import QDate
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QMessageBox
 
     from app_gui.ui.ai_panel import AIPanel
     from app_gui.ui.overview_panel import OverviewPanel
@@ -22,6 +22,7 @@ try:
 except Exception:
     QDate = None
     QApplication = None
+    QMessageBox = None
     AIPanel = None
     OverviewPanel = None
     OperationsPanel = None
@@ -195,9 +196,6 @@ class GuiPanelRegressionTests(unittest.TestCase):
 
     def test_operations_panel_add_entry_parses_positions_text(self):
         panel = self._new_operations_panel()
-        bridge = _FakeOperationsBridge()
-        panel.bridge = bridge
-        panel._confirm_execute = lambda *_args, **_kwargs: True
 
         panel.a_parent.setText("K562")
         panel.a_short.setText("K562_clone12")
@@ -206,8 +204,11 @@ class GuiPanelRegressionTests(unittest.TestCase):
 
         panel.on_add_entry()
 
-        self.assertIsNotNone(bridge.last_add_payload)
-        self.assertEqual([30, 31, 32, 35], bridge.last_add_payload.get("positions"))
+        self.assertEqual(1, len(panel.plan_items))
+        item = panel.plan_items[0]
+        self.assertEqual("add", item["action"])
+        self.assertEqual([30, 31, 32, 35], item["payload"]["positions"])
+        self.assertEqual("K562_clone12", item["label"])
 
     def test_operations_panel_add_entry_rejects_invalid_positions_text(self):
         panel = self._new_operations_panel()
@@ -223,12 +224,14 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertTrue(messages)
         self.assertIn("位置格式错误", messages[-1][0])
 
-    def test_operations_panel_uses_execute_only_buttons(self):
+    def test_operations_panel_uses_add_to_plan_buttons(self):
         panel = self._new_operations_panel()
 
-        self.assertEqual("Execute Add Entry", panel.a_apply_btn.text())
-        self.assertEqual("Execute Single Operation", panel.t_apply_btn.text())
-        self.assertEqual("Execute Batch Operation", panel.b_apply_btn.text())
+        self.assertEqual("Add to Plan", panel.a_apply_btn.text())
+        self.assertEqual("Add to Plan", panel.t_apply_btn.text())
+        self.assertEqual("Add to Plan", panel.b_apply_btn.text())
+        self.assertEqual("Add to Plan", panel.m_apply_btn.text())
+        self.assertEqual("Add to Plan", panel.bm_apply_btn.text())
 
         self.assertFalse(hasattr(panel, "a_dry_run"))
         self.assertFalse(hasattr(panel, "t_dry_run"))
@@ -257,24 +260,29 @@ class GuiPanelRegressionTests(unittest.TestCase):
 
     def test_operations_panel_single_move_passes_to_position(self):
         panel = self._new_operations_panel()
-        bridge = _FakeOperationsBridge()
-        panel.bridge = bridge
-        panel._confirm_execute = lambda *_args, **_kwargs: True
+        panel.update_records_cache({
+            11: {"id": 11, "parent_cell_line": "K562", "short_name": "K562-move",
+                 "box": 2, "positions": [5, 8]},
+        })
 
         panel.m_id.setValue(11)
         panel.m_from_position.setValue(5)
         panel.m_to_position.setValue(8)
         panel.on_record_move()
 
-        self.assertIsNotNone(bridge.last_record_payload)
-        self.assertEqual(8, bridge.last_record_payload.get("to_position"))
-        self.assertEqual(5, bridge.last_record_payload.get("position"))
+        self.assertEqual(1, len(panel.plan_items))
+        item = panel.plan_items[0]
+        self.assertEqual("move", item["action"])
+        self.assertEqual(8, item["to_position"])
+        self.assertEqual(5, item["position"])
+        self.assertEqual(8, item["payload"]["to_position"])
 
     def test_operations_panel_batch_move_table_collects_triples(self):
         panel = self._new_operations_panel()
-        bridge = _FakeOperationsBridge()
-        panel.bridge = bridge
-        panel._confirm_execute = lambda *_args, **_kwargs: True
+        panel.update_records_cache({
+            12: {"id": 12, "parent_cell_line": "K562", "short_name": "K562-bm",
+                 "box": 3, "positions": [23, 31]},
+        })
 
         panel.bm_table.setRowCount(1)
         panel.bm_table.setItem(0, 0, self._make_table_item("12"))
@@ -283,7 +291,12 @@ class GuiPanelRegressionTests(unittest.TestCase):
 
         panel.on_batch_move()
 
-        self.assertEqual([(12, 23, 31)], bridge.last_batch_payload.get("entries"))
+        self.assertEqual(1, len(panel.plan_items))
+        item = panel.plan_items[0]
+        self.assertEqual("move", item["action"])
+        self.assertEqual(12, item["record_id"])
+        self.assertEqual(23, item["position"])
+        self.assertEqual(31, item["to_position"])
 
     def test_operations_panel_move_batch_section_collapsed_by_default(self):
         panel = self._new_operations_panel()
@@ -420,6 +433,233 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual((1, 1), panel.overview_selected_key)
         self.assertEqual([{"box": 1, "position": 1}], emitted)
         self.assertIn("#16a34a", button.styleSheet())
+
+    def test_overview_select_mode_toggle(self):
+        panel = self._new_overview_panel()
+        self.assertFalse(panel.select_mode)
+        panel.ov_select_btn.setChecked(True)
+        self.assertTrue(panel.select_mode)
+        self.assertEqual(panel.ov_select_btn.text(), "Exit Select")
+        panel.ov_select_btn.setChecked(False)
+        self.assertFalse(panel.select_mode)
+        self.assertEqual(panel.ov_select_btn.text(), "Select")
+
+    def test_overview_multi_select_toggle_cell(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=2, box_numbers=[1])
+        rec1 = {"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "positions": [1]}
+        rec2 = {"id": 2, "parent_cell_line": "K562", "short_name": "B", "box": 1, "positions": [2]}
+        panel.overview_pos_map = {(1, 1): rec1, (1, 2): rec2}
+        for key, rec in panel.overview_pos_map.items():
+            panel._paint_cell(panel.overview_cells[key], key[0], key[1], rec)
+
+        panel.ov_select_btn.setChecked(True)
+
+        # Select cell (1,1)
+        panel.on_cell_clicked(1, 1)
+        self.assertIn((1, 1), panel.overview_selected_keys)
+        self.assertIn("#16a34a", panel.overview_cells[(1, 1)].styleSheet())
+
+        # Select cell (1,2)
+        panel.on_cell_clicked(1, 2)
+        self.assertIn((1, 2), panel.overview_selected_keys)
+        self.assertEqual(len(panel.overview_selected_keys), 2)
+
+        # Toggle off cell (1,1)
+        panel.on_cell_clicked(1, 1)
+        self.assertNotIn((1, 1), panel.overview_selected_keys)
+        self.assertEqual(len(panel.overview_selected_keys), 1)
+
+        # Empty cell should not be selectable
+        panel.overview_pos_map.pop((1, 2))
+        panel.on_cell_clicked(1, 2)
+        # (1,2) was toggled off since no record
+        # It was already in the set; _toggle_cell_selection checks for record
+        # After pop, clicking (1,2) should be ignored since no record
+
+    def test_overview_selection_bar_visibility(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
+        rec = {"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "positions": [1]}
+        panel.overview_pos_map = {(1, 1): rec}
+        panel._paint_cell(panel.overview_cells[(1, 1)], 1, 1, rec)
+
+        self.assertTrue(panel.ov_selection_bar.isHidden())
+
+        panel.ov_select_btn.setChecked(True)
+        panel.on_cell_clicked(1, 1)
+        self.assertFalse(panel.ov_selection_bar.isHidden())
+        self.assertIn("1 selected", panel.ov_sel_count.text())
+
+        panel._clear_all_selections()
+        self.assertTrue(panel.ov_selection_bar.isHidden())
+        self.assertIn("0 selected", panel.ov_sel_count.text())
+
+    def test_overview_quick_action_emits_plan_items(self):
+        bridge = _FakeOperationsBridge()
+        panel = OverviewPanel(bridge=bridge, yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        panel._rebuild_boxes(rows=1, cols=2, box_numbers=[1])
+        rec1 = {"id": 10, "parent_cell_line": "K562", "short_name": "A", "box": 1, "positions": [1]}
+        rec2 = {"id": 11, "parent_cell_line": "K562", "short_name": "B", "box": 1, "positions": [2]}
+        panel.overview_pos_map = {(1, 1): rec1, (1, 2): rec2}
+
+        panel.ov_select_btn.setChecked(True)
+        panel.on_cell_clicked(1, 1)
+        panel.on_cell_clicked(1, 2)
+        self.assertEqual(len(panel.overview_selected_keys), 2)
+
+        emitted = []
+        panel.plan_items_requested.connect(lambda items: emitted.append(items))
+        panel._on_quick_action("Takeout")
+
+        self.assertEqual(1, len(emitted))
+        items = emitted[0]
+        self.assertEqual(2, len(items))
+        ids = sorted([it["record_id"] for it in items])
+        self.assertEqual([10, 11], ids)
+        for it in items:
+            self.assertEqual("takeout", it["action"])
+            self.assertEqual("human", it["source"])
+        self.assertEqual(len(panel.overview_selected_keys), 0)
+
+    def test_overview_clear_selections(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=2, box_numbers=[1])
+        rec1 = {"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "positions": [1]}
+        rec2 = {"id": 2, "parent_cell_line": "K562", "short_name": "B", "box": 1, "positions": [2]}
+        panel.overview_pos_map = {(1, 1): rec1, (1, 2): rec2}
+        for key, rec in panel.overview_pos_map.items():
+            panel._paint_cell(panel.overview_cells[key], key[0], key[1], rec)
+
+        panel.ov_select_btn.setChecked(True)
+        panel.on_cell_clicked(1, 1)
+        panel.on_cell_clicked(1, 2)
+        self.assertEqual(len(panel.overview_selected_keys), 2)
+
+        panel._clear_all_selections()
+        self.assertEqual(len(panel.overview_selected_keys), 0)
+        self.assertNotIn("#16a34a", panel.overview_cells[(1, 1)].styleSheet())
+        self.assertNotIn("#16a34a", panel.overview_cells[(1, 2)].styleSheet())
+
+    # --- Plan tab tests ---
+
+    def test_plan_tab_exists_in_mode_selector(self):
+        panel = self._new_operations_panel()
+        mode_keys = [panel.op_mode_combo.itemData(i) for i in range(panel.op_mode_combo.count())]
+        self.assertIn("plan", mode_keys)
+        self.assertTrue(hasattr(panel, "plan_table"))
+        self.assertTrue(hasattr(panel, "plan_exec_btn"))
+
+    def test_add_plan_items_populates_table(self):
+        panel = self._new_operations_panel()
+        items = [
+            {
+                "action": "takeout",
+                "box": 1,
+                "position": 5,
+                "record_id": 10,
+                "label": "K562_A",
+                "source": "human",
+                "payload": {
+                    "record_id": 10,
+                    "position": 5,
+                    "date_str": "2026-02-10",
+                    "action": "Takeout",
+                    "note": "test",
+                },
+            },
+        ]
+        panel.add_plan_items(items)
+
+        self.assertEqual(1, len(panel.plan_items))
+        self.assertEqual(1, panel.plan_table.rowCount())
+        self.assertEqual("human", panel.plan_table.item(0, 0).text())
+        self.assertEqual("Takeout", panel.plan_table.item(0, 1).text())
+        self.assertEqual("plan", panel.current_operation_mode)
+
+        # Badge should show count
+        idx = panel.op_mode_combo.findData("plan")
+        self.assertIn("1", panel.op_mode_combo.itemText(idx))
+
+    def test_add_plan_items_validates_and_rejects_invalid(self):
+        panel = self._new_operations_panel()
+        messages = []
+        panel.status_message.connect(lambda msg, timeout, level: messages.append(msg))
+
+        invalid_items = [
+            {
+                "action": "takeout",
+                "box": -1,  # invalid: must be >= 0
+                "position": 5,
+                "record_id": 10,
+                "label": "test",
+                "source": "human",
+                "payload": {},
+            },
+        ]
+        panel.add_plan_items(invalid_items)
+
+        self.assertEqual(0, len(panel.plan_items))
+        self.assertTrue(any("rejected" in m.lower() for m in messages))
+
+    def test_execute_plan_calls_bridge_and_clears(self):
+        panel = self._new_operations_panel()
+        bridge = _FakeOperationsBridge()
+        panel.bridge = bridge
+        panel.yaml_path_getter = lambda: "/tmp/inventory.yaml"
+
+        items = [
+            {
+                "action": "takeout",
+                "box": 1,
+                "position": 5,
+                "record_id": 10,
+                "label": "K562_A",
+                "source": "human",
+                "payload": {
+                    "record_id": 10,
+                    "position": 5,
+                    "date_str": "2026-02-10",
+                    "action": "Takeout",
+                    "note": "test",
+                },
+            },
+        ]
+        panel.add_plan_items(items)
+        self.assertEqual(1, len(panel.plan_items))
+
+        emitted = []
+        panel.operation_completed.connect(lambda ok: emitted.append(ok))
+
+        # Mock QMessageBox to auto-confirm
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        self.assertIsNotNone(bridge.last_batch_payload)
+        self.assertEqual("Takeout", bridge.last_batch_payload["action"])
+        self.assertEqual(0, len(panel.plan_items))
+        self.assertEqual([True], emitted)
+
+    def test_operations_panel_record_thaw_creates_plan_item(self):
+        panel = self._new_operations_panel()
+        panel.update_records_cache({
+            5: {"id": 5, "parent_cell_line": "K562", "short_name": "K562_test",
+                "box": 2, "positions": [10]},
+        })
+
+        panel.t_id.setValue(5)
+        panel.t_position.setValue(10)
+        panel.t_action.setCurrentText("Takeout")
+        panel.on_record_thaw()
+
+        self.assertEqual(1, len(panel.plan_items))
+        item = panel.plan_items[0]
+        self.assertEqual("takeout", item["action"])
+        self.assertEqual(2, item["box"])
+        self.assertEqual(10, item["position"])
+        self.assertEqual(5, item["record_id"])
+        self.assertEqual("K562_test", item["label"])
 
     def test_ai_panel_append_chat_falls_back_when_insert_markdown_missing(self):
         panel = self._new_ai_panel()
@@ -589,3 +829,70 @@ class GuiPanelRegressionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ToolRunnerPlanSinkTests(unittest.TestCase):
+    """Test that AgentToolRunner stages write operations when plan_sink is set."""
+
+    def setUp(self):
+        self.staged = []
+        self.sink = lambda item: self.staged.append(item)
+
+    def _make_runner(self, yaml_path="/tmp/inventory.yaml"):
+        from agent.tool_runner import AgentToolRunner
+        return AgentToolRunner(
+            yaml_path=yaml_path,
+            actor_id="test-agent",
+            plan_sink=self.sink,
+        )
+
+    def test_read_tool_not_intercepted(self):
+        runner = self._make_runner()
+        result = runner.run("query_inventory", {"cell": "K562"})
+        # Should execute normally (may fail if YAML not found, but not staged)
+        self.assertEqual(0, len(self.staged))
+
+    def test_add_entry_staged(self):
+        runner = self._make_runner()
+        result = runner.run("add_entry", {
+            "parent_cell_line": "K562",
+            "short_name": "K562_test",
+            "box": 1,
+            "positions": [30],
+        })
+        self.assertTrue(result.get("staged"))
+        self.assertEqual(1, len(self.staged))
+        item = self.staged[0]
+        self.assertEqual("add", item["action"])
+        self.assertEqual("ai", item["source"])
+        self.assertEqual(1, item["box"])
+
+    def test_record_thaw_staged(self):
+        runner = self._make_runner()
+        result = runner.run("record_thaw", {
+            "record_id": 5,
+            "position": 10,
+            "action": "Takeout",
+        })
+        self.assertTrue(result.get("staged"))
+        self.assertEqual(1, len(self.staged))
+        item = self.staged[0]
+        self.assertEqual("takeout", item["action"])
+        self.assertEqual(5, item["record_id"])
+        self.assertEqual(10, item["position"])
+
+    def test_without_plan_sink_executes_normally(self):
+        from agent.tool_runner import AgentToolRunner
+        runner = AgentToolRunner(
+            yaml_path="/tmp/inventory.yaml",
+            actor_id="test-agent",
+        )
+        # Without plan_sink, add_entry should attempt execution (may error but not stage)
+        result = runner.run("add_entry", {
+            "parent_cell_line": "K562",
+            "short_name": "test",
+            "box": 1,
+            "positions": [1],
+        })
+        self.assertFalse(result.get("staged", False))
+        self.assertEqual(0, len(self.staged))
