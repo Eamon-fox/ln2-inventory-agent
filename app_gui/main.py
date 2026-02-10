@@ -14,6 +14,7 @@ if ROOT not in sys.path:
 
 from app_gui.tool_bridge import GuiToolBridge
 from lib.config import AUDIT_LOG_FILE, YAML_PATH
+from lib.tool_api import parse_batch_entries
 from lib.validators import parse_positions
 from lib.yaml_ops import load_yaml, write_html_snapshot
 
@@ -37,7 +38,7 @@ def _cell_color(parent_cell_line):
 
 def main():
     try:
-        from PySide6.QtCore import QDate, QSettings, Qt
+        from PySide6.QtCore import QDate, QEvent, QObject, QSettings, QThread, Qt, Signal
         from PySide6.QtGui import QFont, QFontDatabase
         from PySide6.QtWidgets import (
             QApplication,
@@ -60,10 +61,11 @@ def main():
             QPushButton,
             QScrollArea,
             QSizePolicy,
+            QSplitter,
             QSpinBox,
+            QStackedWidget,
             QTableWidget,
             QTableWidgetItem,
-            QTabWidget,
             QTextEdit,
             QVBoxLayout,
             QWidget,
@@ -90,6 +92,47 @@ def main():
                 return QFont(family, 10)
         return None
 
+    class _AgentRunWorker(QObject):
+        finished = Signal(dict)
+        progress = Signal(dict)
+
+        def __init__(self, bridge, yaml_path, query, model, max_steps, mock, history):
+            super().__init__()
+            self._bridge = bridge
+            self._yaml_path = yaml_path
+            self._query = query
+            self._model = model
+            self._max_steps = max_steps
+            self._mock = mock
+            self._history = history
+
+        def run(self):
+            try:
+                payload = self._bridge.run_agent_query(
+                    yaml_path=self._yaml_path,
+                    query=self._query,
+                    model=self._model,
+                    max_steps=self._max_steps,
+                    mock=self._mock,
+                    history=self._history,
+                    on_event=self._emit_progress,
+                )
+                if not isinstance(payload, dict):
+                    payload = {"ok": False, "message": "Unexpected response"}
+            except Exception as exc:
+                payload = {
+                    "ok": False,
+                    "error_code": "agent_runtime_failed",
+                    "message": str(exc),
+                    "result": None,
+                }
+            self.finished.emit(payload)
+
+        def _emit_progress(self, event):
+            if not isinstance(event, dict):
+                return
+            self.progress.emit(event)
+
     class MainWindow(QMainWindow):
         def __init__(self):
             super().__init__()
@@ -108,11 +151,19 @@ def main():
             self.overview_box_live_labels = {}
             self.overview_box_groups = {}
             self.overview_selected = None
+            self.overview_hover_key = None
+            self.overview_records_by_id = {}
+            self.t_prefill_source = None
             self.query_last_mode = "records"
             self.ai_history = []
+            self.ai_run_inflight = False
+            self.ai_run_thread = None
+            self.ai_run_worker = None
 
             container = QWidget()
             root = QVBoxLayout(container)
+            root.setContentsMargins(8, 8, 8, 8)
+            root.setSpacing(8)
 
             top = QHBoxLayout()
             self.dataset_label = QLabel()
@@ -126,28 +177,21 @@ def main():
             settings_btn = QPushButton("Settings")
             settings_btn.clicked.connect(self.on_open_settings)
             top.addWidget(settings_btn)
+
+            preview_btn = QPushButton("Preview HTML")
+            preview_btn.clicked.connect(self.on_open_html_preview)
+            top.addWidget(preview_btn)
             root.addLayout(top)
 
-            self.tabs = QTabWidget()
-            self.tab_overview = self.tabs.addTab(self._build_overview_tab(), "Overview")
-            self.tab_ai = self.tabs.addTab(self._build_ai_tab(), "AI Copilot")
-            self.tab_query = self.tabs.addTab(self._build_query_tab(), "Query")
-            self.tab_add = self.tabs.addTab(self._build_add_tab(), "Add Entry")
-            self.tab_thaw = self.tabs.addTab(self._build_thaw_tab(), "Thaw / Batch")
-            self.tab_rollback = self.tabs.addTab(self._build_rollback_tab(), "Rollback")
-            root.addWidget(self.tabs, 3)
-
-            output_header = QHBoxLayout()
-            output_header.addWidget(QLabel("Response JSON"))
-            clear_btn = QPushButton("Clear")
-            clear_btn.clicked.connect(lambda: self.output.clear())
-            output_header.addWidget(clear_btn)
-            output_header.addStretch()
-            root.addLayout(output_header)
-
-            self.output = QTextEdit()
-            self.output.setReadOnly(True)
-            root.addWidget(self.output, 2)
+            splitter = QSplitter(Qt.Horizontal)
+            splitter.setChildrenCollapsible(False)
+            splitter.addWidget(self._build_overview_tab())
+            splitter.addWidget(self._build_operations_panel())
+            splitter.addWidget(self._build_ai_tab())
+            splitter.setStretchFactor(0, 6)
+            splitter.setStretchFactor(1, 4)
+            splitter.setStretchFactor(2, 4)
+            root.addWidget(splitter, 1)
 
             self.setCentralWidget(container)
             self.statusBar().showMessage("Ready", 2000)
@@ -182,9 +226,8 @@ def main():
             if geometry:
                 self.restoreGeometry(geometry)
 
-            tab_idx = self.settings.value("ui/current_tab", 0, type=int)
-            if 0 <= tab_idx < self.tabs.count():
-                self.tabs.setCurrentIndex(tab_idx)
+            op_mode = self.settings.value("ui/current_operation_mode", "thaw", type=str)
+            self._set_operation_mode(op_mode or "thaw")
 
             self.ai_model.setText(self.settings.value("ai/model", "", type=str) or "")
             self.ai_mock.setChecked(self.settings.value("ai/mock", True, type=bool))
@@ -194,7 +237,7 @@ def main():
         def _save_ui_settings(self):
             self.settings.setValue("ui/current_yaml_path", self.current_yaml_path)
             self.settings.setValue("ui/current_actor_id", self.current_actor_id)
-            self.settings.setValue("ui/current_tab", self.tabs.currentIndex())
+            self.settings.setValue("ui/current_operation_mode", getattr(self, "current_operation_mode", "thaw"))
             self.settings.setValue("ui/geometry", self.saveGeometry())
             self.settings.setValue("ai/model", self.ai_model.text().strip())
             self.settings.setValue("ai/mock", self.ai_mock.isChecked())
@@ -203,8 +246,33 @@ def main():
             self._save_table_widths(self.backup_table, "tables/backup_widths")
 
         def closeEvent(self, event):
+            if self.ai_run_inflight:
+                self._warn("AI run is still in progress. Please wait for it to finish.")
+                event.ignore()
+                return
             self._save_ui_settings()
             super().closeEvent(event)
+
+        def eventFilter(self, obj, event):
+            if (
+                event.type() == QEvent.KeyPress
+                and obj is getattr(self, "ai_prompt", None)
+                and event.key() in (Qt.Key_Return, Qt.Key_Enter)
+            ):
+                mods = event.modifiers()
+                if mods & Qt.ShiftModifier:
+                    return False
+                if mods & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier):
+                    return False
+                self.on_run_ai_agent()
+                return True
+
+            if event.type() in (QEvent.Enter, QEvent.HoverEnter, QEvent.HoverMove, QEvent.MouseMove):
+                box_num = obj.property("overview_box")
+                position = obj.property("overview_position")
+                if box_num is not None and position is not None:
+                    self.on_overview_cell_hovered(int(box_num), int(position))
+            return super().eventFilter(obj, event)
 
         def _setup_table(self, table, headers, width_key=None, sortable=True):
             table.setRowCount(0)
@@ -238,20 +306,107 @@ def main():
         def _build_summary_card(self, title, initial="-"):
             card = QGroupBox(title)
             card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(8, 6, 8, 6)
             value_label = QLabel(initial)
-            value_label.setStyleSheet("font-size: 20px; font-weight: 700;")
+            value_label.setAlignment(Qt.AlignCenter)
+            value_label.setStyleSheet("font-size: 16px; font-weight: 700;")
             card_layout.addWidget(value_label)
             return card, value_label
+
+        def _build_operations_panel(self):
+            panel = QWidget()
+            layout = QVBoxLayout(panel)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(6)
+
+            mode_row = QHBoxLayout()
+            mode_row.addWidget(QLabel("Manual Action"))
+            mode_row.addStretch()
+
+            self.op_mode_combo = QComboBox()
+            modes = [
+                ("thaw", "Takeout / Batch"),
+                ("add", "Add Entry"),
+                ("query", "Query"),
+                ("rollback", "Rollback"),
+            ]
+            for mode_key, mode_label in modes:
+                self.op_mode_combo.addItem(mode_label, mode_key)
+            self.op_mode_combo.currentIndexChanged.connect(self.on_operation_mode_changed)
+            mode_row.addWidget(self.op_mode_combo)
+            layout.addLayout(mode_row)
+
+            self.op_stack = QStackedWidget()
+            self.op_mode_indexes = {
+                "add": self.op_stack.addWidget(self._build_add_tab()),
+                "thaw": self.op_stack.addWidget(self._build_thaw_tab()),
+                "query": self.op_stack.addWidget(self._build_query_tab()),
+                "rollback": self.op_stack.addWidget(self._build_rollback_tab()),
+            }
+            layout.addWidget(self.op_stack, 3)
+
+            output_header = QHBoxLayout()
+            self.output_toggle_btn = QPushButton("Show Raw JSON")
+            self.output_toggle_btn.setCheckable(True)
+            self.output_toggle_btn.toggled.connect(self.on_toggle_output_panel)
+            output_header.addWidget(self.output_toggle_btn)
+            output_header.addStretch()
+            clear_btn = QPushButton("Clear")
+            clear_btn.clicked.connect(lambda: self.output.clear())
+            output_header.addWidget(clear_btn)
+            layout.addLayout(output_header)
+
+            self.output = QTextEdit()
+            self.output.setReadOnly(True)
+            self.output.setMinimumHeight(180)
+            self.output.setVisible(False)
+            layout.addWidget(self.output, 2)
+
+            self._set_operation_mode("thaw")
+            return panel
+
+        def _set_operation_mode(self, mode):
+            target = mode if mode in getattr(self, "op_mode_indexes", {}) else "thaw"
+            if target not in self.op_mode_indexes:
+                return
+
+            self.op_stack.setCurrentIndex(self.op_mode_indexes[target])
+            self.current_operation_mode = target
+
+            if hasattr(self, "op_mode_combo"):
+                idx = self.op_mode_combo.findData(target)
+                if idx >= 0 and idx != self.op_mode_combo.currentIndex():
+                    self.op_mode_combo.blockSignals(True)
+                    self.op_mode_combo.setCurrentIndex(idx)
+                    self.op_mode_combo.blockSignals(False)
+
+        def on_operation_mode_changed(self, _index=None):
+            self._set_operation_mode(self.op_mode_combo.currentData())
+
+        def on_toggle_output_panel(self, checked):
+            visible = bool(checked)
+            self.output.setVisible(visible)
+            self.output_toggle_btn.setText("Hide Raw JSON" if visible else "Show Raw JSON")
+
+        def on_toggle_ai_controls(self, checked):
+            visible = bool(checked)
+            self.ai_controls_box.setVisible(visible)
+            self.ai_toggle_controls_btn.setText("Hide Advanced" if visible else "Show Advanced")
+
+        def on_toggle_ai_report(self, checked):
+            visible = bool(checked)
+            self.ai_report_box.setVisible(visible)
+            self.ai_toggle_report_btn.setText("Hide Plan Details" if visible else "Show Plan Details")
 
         def _build_overview_tab(self):
             tab = QWidget()
             layout = QVBoxLayout(tab)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(6)
 
             summary_row = QHBoxLayout()
             summary_row.setSpacing(6)
             card, self.ov_total_records_value = self._build_summary_card("Total Records")
-            summary_row.addWidget(card)
-            card, self.ov_total_capacity_value = self._build_summary_card("Total Capacity")
             summary_row.addWidget(card)
             card, self.ov_occupied_value = self._build_summary_card("Occupied")
             summary_row.addWidget(card)
@@ -259,75 +414,79 @@ def main():
             summary_row.addWidget(card)
             card, self.ov_rate_value = self._build_summary_card("Occupancy Rate")
             summary_row.addWidget(card)
-            card, self.ov_ops7_value = self._build_summary_card("Ops (7d)")
-            summary_row.addWidget(card)
             layout.addLayout(summary_row)
+
+            # Keep secondary metrics available without dedicating extra cards.
+            self.ov_total_capacity_value = QLabel("-")
+            self.ov_ops7_value = QLabel("-")
+            self.ov_meta_stats = QLabel("Capacity: - | Ops (7d): -")
+            self.ov_meta_stats.setStyleSheet("color: #64748b;")
+            layout.addWidget(self.ov_meta_stats)
 
             action_row = QHBoxLayout()
             action_row.setSpacing(6)
-            refresh_btn = QPushButton("Refresh Overview")
+            refresh_btn = QPushButton("Refresh")
             refresh_btn.clicked.connect(self.on_refresh_overview)
             action_row.addWidget(refresh_btn)
 
-            html_btn = QPushButton("Open HTML Preview")
-            html_btn.clicked.connect(self.on_open_html_preview)
-            action_row.addWidget(html_btn)
-
-            goto_query_btn = QPushButton("Go Query")
-            goto_query_btn.clicked.connect(lambda: self.tabs.setCurrentIndex(self.tab_query))
-            action_row.addWidget(goto_query_btn)
-
-            goto_ai_btn = QPushButton("Go AI")
-            goto_ai_btn.clicked.connect(lambda: self.tabs.setCurrentIndex(self.tab_ai))
-            action_row.addWidget(goto_ai_btn)
-
-            goto_add_btn = QPushButton("Go Add")
-            goto_add_btn.clicked.connect(lambda: self.tabs.setCurrentIndex(self.tab_add))
+            goto_add_btn = QPushButton("Quick Add")
+            goto_add_btn.clicked.connect(lambda: self._set_operation_mode("add"))
             action_row.addWidget(goto_add_btn)
 
-            goto_thaw_btn = QPushButton("Go Thaw")
-            goto_thaw_btn.clicked.connect(lambda: self.tabs.setCurrentIndex(self.tab_thaw))
+            goto_thaw_btn = QPushButton("Quick Takeout")
+            goto_thaw_btn.clicked.connect(lambda: self._set_operation_mode("thaw"))
             action_row.addWidget(goto_thaw_btn)
-
-            goto_rollback_btn = QPushButton("Go Rollback")
-            goto_rollback_btn.clicked.connect(lambda: self.tabs.setCurrentIndex(self.tab_rollback))
-            action_row.addWidget(goto_rollback_btn)
             action_row.addStretch()
             layout.addLayout(action_row)
 
             filter_row = QHBoxLayout()
             filter_row.setSpacing(6)
-            filter_row.addWidget(QLabel("Filter"))
+            filter_row.addWidget(QLabel("Search"))
 
             self.ov_filter_keyword = QLineEdit()
-            self.ov_filter_keyword.setPlaceholderText("keyword: ID / short / cell / plasmid / note")
+            self.ov_filter_keyword.setPlaceholderText("ID / short / cell / plasmid / note")
             self.ov_filter_keyword.textChanged.connect(self._apply_overview_filters)
             filter_row.addWidget(self.ov_filter_keyword, 2)
+
+            self.ov_filter_toggle_btn = QPushButton("More Filters")
+            self.ov_filter_toggle_btn.setCheckable(True)
+            self.ov_filter_toggle_btn.toggled.connect(self.on_overview_toggle_filters)
+            filter_row.addWidget(self.ov_filter_toggle_btn)
+            layout.addLayout(filter_row)
+
+            advanced_filter_row = QHBoxLayout()
+            advanced_filter_row.setSpacing(6)
 
             self.ov_filter_box = QComboBox()
             self.ov_filter_box.addItem("All boxes", None)
             self.ov_filter_box.currentIndexChanged.connect(self._apply_overview_filters)
-            filter_row.addWidget(self.ov_filter_box)
+            advanced_filter_row.addWidget(self.ov_filter_box)
 
             self.ov_filter_cell = QComboBox()
             self.ov_filter_cell.addItem("All cells", None)
             self.ov_filter_cell.currentIndexChanged.connect(self._apply_overview_filters)
-            filter_row.addWidget(self.ov_filter_cell, 1)
+            advanced_filter_row.addWidget(self.ov_filter_cell, 1)
 
             self.ov_filter_show_empty = QCheckBox("Show Empty")
             self.ov_filter_show_empty.setChecked(True)
             self.ov_filter_show_empty.stateChanged.connect(self._apply_overview_filters)
-            filter_row.addWidget(self.ov_filter_show_empty)
+            advanced_filter_row.addWidget(self.ov_filter_show_empty)
 
             clear_filter_btn = QPushButton("Clear Filter")
             clear_filter_btn.clicked.connect(self.on_overview_clear_filters)
-            filter_row.addWidget(clear_filter_btn)
-            layout.addLayout(filter_row)
+            advanced_filter_row.addWidget(clear_filter_btn)
+            advanced_filter_row.addStretch()
+
+            self.ov_filter_advanced_widget = self._wrap_layout_widget(advanced_filter_row)
+            self.ov_filter_advanced_widget.setVisible(False)
+            layout.addWidget(self.ov_filter_advanced_widget)
 
             self.ov_status = QLabel("Overview status")
             layout.addWidget(self.ov_status)
 
-            body = QHBoxLayout()
+            self.ov_hover_hint = QLabel("Hover a slot to preview details.")
+            self.ov_hover_hint.setStyleSheet("color: #64748b;")
+            layout.addWidget(self.ov_hover_hint)
 
             self.ov_scroll = QScrollArea()
             self.ov_scroll.setWidgetResizable(True)
@@ -338,48 +497,30 @@ def main():
             self.ov_boxes_layout.setHorizontalSpacing(4)
             self.ov_boxes_layout.setVerticalSpacing(6)
             self.ov_scroll.setWidget(self.ov_boxes_widget)
-            body.addWidget(self.ov_scroll, 3)
-
-            detail = QGroupBox("Cell Detail")
-            detail_form = QFormLayout(detail)
-            self.ov_detail_id = QLabel("-")
-            self.ov_detail_location = QLabel("-")
-            self.ov_detail_parent = QLabel("-")
-            self.ov_detail_short = QLabel("-")
-            self.ov_detail_frozen = QLabel("-")
-            self.ov_detail_plasmid = QLabel("-")
-            self.ov_detail_note = QLabel("-")
-            detail_form.addRow("ID", self.ov_detail_id)
-            detail_form.addRow("Location", self.ov_detail_location)
-            detail_form.addRow("Cell", self.ov_detail_parent)
-            detail_form.addRow("Short", self.ov_detail_short)
-            detail_form.addRow("Frozen", self.ov_detail_frozen)
-            detail_form.addRow("Plasmid", self.ov_detail_plasmid)
-            detail_form.addRow("Note", self.ov_detail_note)
-
-            detail_actions = QHBoxLayout()
-            self.ov_copy_id_btn = QPushButton("Copy ID")
-            self.ov_copy_id_btn.clicked.connect(self.on_overview_copy_id)
-            self.ov_copy_id_btn.setEnabled(False)
-            detail_actions.addWidget(self.ov_copy_id_btn)
-
-            self.ov_prefill_btn = QPushButton("Prefill to Thaw")
-            self.ov_prefill_btn.clicked.connect(self.on_overview_prefill_to_thaw)
-            self.ov_prefill_btn.setEnabled(False)
-            detail_actions.addWidget(self.ov_prefill_btn)
-            detail_form.addRow("", self._wrap_layout_widget(detail_actions))
-
-            body.addWidget(detail, 1)
-
-            layout.addLayout(body, 1)
+            layout.addWidget(self.ov_scroll, 1)
             return tab
 
         def _build_ai_tab(self):
             tab = QWidget()
             layout = QVBoxLayout(tab)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(6)
 
-            controls = QGroupBox("Agent Controls")
-            controls_form = QFormLayout(controls)
+            toggle_row = QHBoxLayout()
+            self.ai_toggle_controls_btn = QPushButton("Show Advanced")
+            self.ai_toggle_controls_btn.setCheckable(True)
+            self.ai_toggle_controls_btn.toggled.connect(self.on_toggle_ai_controls)
+            toggle_row.addWidget(self.ai_toggle_controls_btn)
+
+            self.ai_toggle_report_btn = QPushButton("Show Plan Details")
+            self.ai_toggle_report_btn.setCheckable(True)
+            self.ai_toggle_report_btn.toggled.connect(self.on_toggle_ai_report)
+            toggle_row.addWidget(self.ai_toggle_report_btn)
+            toggle_row.addStretch()
+            layout.addLayout(toggle_row)
+
+            self.ai_controls_box = QGroupBox("Agent Controls")
+            controls_form = QFormLayout(self.ai_controls_box)
             self.ai_model = QLineEdit()
             self.ai_model.setPlaceholderText("e.g. anthropic/claude-3-5-sonnet")
 
@@ -394,7 +535,7 @@ def main():
             controls_form.addRow("Model", self.ai_model)
             controls_form.addRow("Max Steps", self.ai_steps)
             controls_form.addRow("", self.ai_mock)
-            layout.addWidget(controls)
+            layout.addWidget(self.ai_controls_box)
 
             prompt_box = QGroupBox("Prompt")
             prompt_layout = QVBoxLayout(prompt_box)
@@ -424,8 +565,11 @@ def main():
             prompt_layout.addLayout(examples)
 
             self.ai_prompt = QTextEdit()
-            self.ai_prompt.setPlaceholderText("Type a natural-language request for LN2 inventory...")
-            self.ai_prompt.setFixedHeight(110)
+            self.ai_prompt.setPlaceholderText(
+                "Type a natural-language request... (Enter to send, Shift+Enter for newline)"
+            )
+            self.ai_prompt.setFixedHeight(90)
+            self.ai_prompt.installEventFilter(self)
             prompt_layout.addWidget(self.ai_prompt)
 
             run_row = QHBoxLayout()
@@ -439,27 +583,26 @@ def main():
             run_row.addStretch()
             prompt_layout.addLayout(run_row)
 
-            layout.addWidget(prompt_box)
-
-            body = QHBoxLayout()
-
             chat_box = QGroupBox("AI Chat")
             chat_layout = QVBoxLayout(chat_box)
             self.ai_chat = QTextEdit()
             self.ai_chat.setReadOnly(True)
             self.ai_chat.setPlaceholderText("Conversation timeline will appear here.")
             chat_layout.addWidget(self.ai_chat)
-            body.addWidget(chat_box, 1)
+            layout.addWidget(chat_box, 3)
 
-            report_box = QGroupBox("Plan / Preview / Result / Audit")
-            report_layout = QVBoxLayout(report_box)
+            self.ai_report_box = QGroupBox("Plan / Preview / Result / Audit")
+            report_layout = QVBoxLayout(self.ai_report_box)
             self.ai_report = QTextEdit()
             self.ai_report.setReadOnly(True)
             self.ai_report.setPlaceholderText("Structured agent output will appear here.")
             report_layout.addWidget(self.ai_report)
-            body.addWidget(report_box, 2)
+            layout.addWidget(self.ai_report_box, 1)
 
-            layout.addLayout(body, 1)
+            # Keep the input composer at the bottom for chat-style interaction.
+            layout.addWidget(prompt_box)
+            self.ai_controls_box.setVisible(False)
+            self.ai_report_box.setVisible(False)
             self.on_ai_mode_changed()
             return tab
 
@@ -561,8 +704,10 @@ def main():
             single_form = QFormLayout(single)
             self.t_id = QSpinBox()
             self.t_id.setRange(1, 999999)
+            self.t_id.valueChanged.connect(self.on_thaw_fields_changed)
             self.t_position = QSpinBox()
             self.t_position.setRange(1, 999)
+            self.t_position.valueChanged.connect(self.on_thaw_fields_changed)
             self.t_date = QDateEdit()
             self.t_date.setCalendarPopup(True)
             self.t_date.setDisplayFormat("yyyy-MM-dd")
@@ -585,6 +730,50 @@ def main():
             self.t_apply_btn.clicked.connect(self.on_record_thaw)
             single_form.addRow("", self.t_apply_btn)
             layout.addWidget(single)
+
+            context_box = QGroupBox("Selected Record Context")
+            context_form = QFormLayout(context_box)
+            self.t_ctx_status = QLabel("No prefill yet. Right-click slot -> Prefill to Thaw.")
+            self.t_ctx_status.setStyleSheet("color: #64748b;")
+            self.t_ctx_status.setWordWrap(True)
+            self.t_ctx_source = QLabel("-")
+            self.t_ctx_id = QLabel("-")
+            self.t_ctx_cell = QLabel("-")
+            self.t_ctx_short = QLabel("-")
+            self.t_ctx_box = QLabel("-")
+            self.t_ctx_positions = QLabel("-")
+            self.t_ctx_target = QLabel("-")
+            self.t_ctx_check = QLabel("-")
+            self.t_ctx_frozen = QLabel("-")
+            self.t_ctx_plasmid = QLabel("-")
+            self.t_ctx_events = QLabel("-")
+            self.t_ctx_note = QLabel("-")
+
+            for label in [
+                self.t_ctx_status,
+                self.t_ctx_positions,
+                self.t_ctx_target,
+                self.t_ctx_check,
+                self.t_ctx_plasmid,
+                self.t_ctx_events,
+                self.t_ctx_note,
+            ]:
+                label.setWordWrap(True)
+
+            context_form.addRow("Status", self.t_ctx_status)
+            context_form.addRow("Source Slot", self.t_ctx_source)
+            context_form.addRow("Record ID", self.t_ctx_id)
+            context_form.addRow("Cell", self.t_ctx_cell)
+            context_form.addRow("Short", self.t_ctx_short)
+            context_form.addRow("Box", self.t_ctx_box)
+            context_form.addRow("All Positions", self.t_ctx_positions)
+            context_form.addRow("Target Position", self.t_ctx_target)
+            context_form.addRow("Position Check", self.t_ctx_check)
+            context_form.addRow("Frozen At", self.t_ctx_frozen)
+            context_form.addRow("Plasmid", self.t_ctx_plasmid)
+            context_form.addRow("Thaw History", self.t_ctx_events)
+            context_form.addRow("Note", self.t_ctx_note)
+            layout.addWidget(context_box)
 
             batch = QGroupBox("Batch Thaw / Takeout")
             batch_form = QFormLayout(batch)
@@ -735,13 +924,130 @@ def main():
                 self._show_tool_error_dialog(dialog_title, status_message, lines)
 
         def _update_action_button_labels(self):
-            self.a_apply_btn.setText("Preview Add Entry" if self.a_dry_run.isChecked() else "Execute Add Entry")
-            self.t_apply_btn.setText(
-                "Preview Single Operation" if self.t_dry_run.isChecked() else "Execute Single Operation"
-            )
-            self.b_apply_btn.setText(
-                "Preview Batch Operation" if self.b_dry_run.isChecked() else "Execute Batch Operation"
-            )
+            if hasattr(self, "a_apply_btn") and hasattr(self, "a_dry_run"):
+                self.a_apply_btn.setText("Preview Add Entry" if self.a_dry_run.isChecked() else "Execute Add Entry")
+            if hasattr(self, "t_apply_btn") and hasattr(self, "t_dry_run"):
+                self.t_apply_btn.setText(
+                    "Preview Single Operation" if self.t_dry_run.isChecked() else "Execute Single Operation"
+                )
+            if hasattr(self, "b_apply_btn") and hasattr(self, "b_dry_run"):
+                self.b_apply_btn.setText(
+                    "Preview Batch Operation" if self.b_dry_run.isChecked() else "Execute Batch Operation"
+                )
+
+        def _lookup_record_by_id(self, record_id):
+            try:
+                key = int(record_id)
+            except Exception:
+                return None
+            record = self.overview_records_by_id.get(key)
+            return record if isinstance(record, dict) else None
+
+        def _positions_text(self, positions):
+            if not positions:
+                return "-"
+            try:
+                normalized = sorted({int(p) for p in positions})
+            except Exception:
+                normalized = [str(p) for p in positions]
+                return ",".join(normalized)
+            return ",".join(str(p) for p in normalized)
+
+        def _thaw_history_text(self, record):
+            events = record.get("thaw_events")
+            if not isinstance(events, list) or not events:
+                return "No thaw history"
+            last = events[-1] if isinstance(events[-1], dict) else {}
+            last_date = str(last.get("date") or "-")
+            last_action = str(last.get("action") or "-")
+            last_positions = self._positions_text(last.get("positions") or [])
+            return f"{len(events)} event(s); last: {last_date} {last_action} [{last_positions}]"
+
+        def on_thaw_fields_changed(self, _value=None):
+            self._refresh_thaw_record_context()
+
+        def _refresh_thaw_record_context(self):
+            if not hasattr(self, "t_ctx_status"):
+                return
+
+            record_id = self.t_id.value() if hasattr(self, "t_id") else None
+            target_position = self.t_position.value() if hasattr(self, "t_position") else None
+            record = self._lookup_record_by_id(record_id)
+
+            source_text = "-"
+            source = self.t_prefill_source if isinstance(self.t_prefill_source, dict) else None
+            if source:
+                source_text = f"Box {source.get('box')} Pos {source.get('position')}"
+            self.t_ctx_source.setText(source_text)
+
+            self.t_ctx_target.setText(str(target_position) if target_position else "-")
+            self.t_ctx_id.setText(str(record_id) if record_id else "-")
+
+            if not record:
+                if source:
+                    self.t_ctx_status.setText("Record not found in current dataset. Please verify ID/position.")
+                    self.t_ctx_status.setStyleSheet("color: #b45309;")
+                else:
+                    self.t_ctx_status.setText("No prefill yet. Right-click slot -> Prefill to Thaw.")
+                    self.t_ctx_status.setStyleSheet("color: #64748b;")
+                self.t_ctx_cell.setText("-")
+                self.t_ctx_short.setText("-")
+                self.t_ctx_box.setText("-")
+                self.t_ctx_positions.setText("-")
+                self.t_ctx_check.setText("-")
+                self.t_ctx_check.setStyleSheet("color: #64748b;")
+                self.t_ctx_frozen.setText("-")
+                self.t_ctx_plasmid.setText("-")
+                self.t_ctx_events.setText("-")
+                self.t_ctx_note.setText("-")
+                return
+
+            self.t_ctx_cell.setText(str(record.get("parent_cell_line") or "-"))
+            self.t_ctx_short.setText(str(record.get("short_name") or "-"))
+            self.t_ctx_box.setText(str(record.get("box") or "-"))
+
+            positions = record.get("positions") or []
+            self.t_ctx_positions.setText(self._positions_text(positions))
+            self.t_ctx_frozen.setText(str(record.get("frozen_at") or "-"))
+            plasmid = record.get("plasmid_name") or record.get("plasmid_id") or "-"
+            self.t_ctx_plasmid.setText(str(plasmid))
+            self.t_ctx_events.setText(self._thaw_history_text(record))
+            self.t_ctx_note.setText(str(record.get("note") or "-"))
+
+            target_pos_value = None
+            try:
+                if isinstance(target_position, int):
+                    target_pos_value = target_position
+                elif isinstance(target_position, str) and target_position.strip():
+                    target_pos_value = int(target_position.strip())
+                pos_ok = target_pos_value in {int(p) for p in positions}
+            except Exception:
+                pos_ok = False
+            if pos_ok:
+                self.t_ctx_check.setText("OK - target position belongs to this record")
+                self.t_ctx_check.setStyleSheet("color: #15803d;")
+            else:
+                self.t_ctx_check.setText("WARNING - target position is NOT in this record")
+                self.t_ctx_check.setStyleSheet("color: #b91c1c;")
+
+            source_record_id = None
+            if source:
+                raw_source_id = source.get("record_id")
+                if isinstance(raw_source_id, int):
+                    source_record_id = raw_source_id
+                elif isinstance(raw_source_id, str) and raw_source_id.strip():
+                    try:
+                        source_record_id = int(raw_source_id.strip())
+                    except Exception:
+                        source_record_id = None
+
+            record_id_value = record_id if isinstance(record_id, int) else None
+            if source and source_record_id is not None and record_id_value is not None and source_record_id == record_id_value:
+                self.t_ctx_status.setText("Prefill context loaded from overview slot.")
+                self.t_ctx_status.setStyleSheet("color: #15803d;")
+            else:
+                self.t_ctx_status.setText("Record context loaded from current ID field.")
+                self.t_ctx_status.setStyleSheet("color: #64748b;")
 
         def _reload_all_views(self, emit_payload=False):
             self._refresh_overview(update_output=emit_payload)
@@ -997,21 +1303,89 @@ def main():
             lines.append(str(run_result.get("final") or "(empty final answer)"))
             return "\n".join(lines)
 
-        def on_run_ai_agent(self):
-            prompt = self.ai_prompt.toPlainText().strip()
-            if not prompt:
-                self._warn("Please input a natural-language request first.")
-                return
+        def _set_ai_run_busy(self, busy):
+            self.ai_run_inflight = bool(busy)
+            if self.ai_run_inflight:
+                self.ai_run_btn.setEnabled(False)
+                self.ai_run_btn.setText("Running...")
+            else:
+                self.ai_run_btn.setEnabled(True)
+                self.ai_run_btn.setText("Run Agent")
 
-            payload = self.bridge.run_agent_query(
+        def _start_ai_run(self, prompt):
+            model = self.ai_model.text().strip() or None
+            history = [dict(item) for item in self.ai_history if isinstance(item, dict)]
+            worker = _AgentRunWorker(
+                bridge=self.bridge,
                 yaml_path=self._yaml_path(),
                 query=prompt,
-                model=self.ai_model.text().strip() or None,
+                model=model,
                 max_steps=self.ai_steps.value(),
                 mock=self.ai_mock.isChecked(),
-                history=self.ai_history,
+                history=history,
             )
-            response = payload if isinstance(payload, dict) else {"ok": False, "message": "Unexpected response"}
+            thread = QThread(self)
+            worker.moveToThread(thread)
+
+            thread.started.connect(worker.run)
+            worker.progress.connect(self._on_ai_run_progress)
+            worker.finished.connect(self._on_ai_run_finished)
+            worker.finished.connect(thread.quit)
+            worker.finished.connect(worker.deleteLater)
+            thread.finished.connect(thread.deleteLater)
+            thread.finished.connect(self._on_ai_run_thread_finished)
+
+            self.ai_run_thread = thread
+            self.ai_run_worker = worker
+            self._set_ai_run_busy(True)
+            thread.start()
+
+        def _on_ai_run_progress(self, event):
+            if not isinstance(event, dict):
+                return
+
+            event_type = str(event.get("type") or "").strip()
+            if event_type == "run_start":
+                trace_id = str(event.get("trace_id") or "")
+                if trace_id:
+                    self.statusBar().showMessage(f"Agent running ({trace_id[:12]}...)", 2500)
+                return
+
+            if event_type == "step_start":
+                step = event.get("step")
+                if step is not None:
+                    self.statusBar().showMessage(f"Agent step {step}...", 2000)
+                return
+
+            if event_type != "step_end":
+                return
+
+            step = event.get("step")
+            action = str(event.get("action") or "tool")
+            raw_obs = event.get("observation")
+            obs = raw_obs if isinstance(raw_obs, dict) else {}
+            status = "OK" if obs.get("ok") else f"FAIL/{obs.get('error_code', 'unknown')}"
+            summary = obs.get("message")
+            preview_val = obs.get("preview")
+            result_val = obs.get("result")
+            if not summary and preview_val is not None:
+                summary = self._compact_json(preview_val, max_chars=120)
+            if not summary and result_val is not None:
+                summary = self._compact_json(result_val, max_chars=120)
+
+            line = f"Step {step}: {action} -> {status}" if step is not None else f"{action} -> {status}"
+            if summary:
+                line = f"{line} | {summary}"
+            self._append_ai_chat("Agent", line)
+
+        def _on_ai_run_thread_finished(self):
+            self.ai_run_thread = None
+            self.ai_run_worker = None
+
+        def _on_ai_run_finished(self, response):
+            self._set_ai_run_busy(False)
+            response = response if isinstance(response, dict) else {"ok": False, "message": "Unexpected response"}
+
             self._emit(response)
 
             raw_result = response.get("result")
@@ -1021,9 +1395,7 @@ def main():
             self.ai_report.setPlainText(self._build_ai_report_text(run_result, audit_rows))
 
             final_text = str(run_result.get("final") or response.get("message") or "")
-            self._append_ai_chat("You", prompt)
             self._append_ai_chat("Agent", final_text)
-            self._append_ai_history("user", prompt)
             self._append_ai_history("assistant", final_text)
 
             self._refresh_overview(update_output=False)
@@ -1037,6 +1409,22 @@ def main():
                 self._notify(f"AI run completed in {step_count} step(s)", level="success")
             else:
                 self._handle_tool_failure(response, "AI run failed", dialog_title="AI Agent Failed")
+
+        def on_run_ai_agent(self):
+            if self.ai_run_inflight:
+                self.statusBar().showMessage("AI is running... Enter is disabled until this run finishes.", 2500)
+                return
+
+            prompt = self.ai_prompt.toPlainText().strip()
+            if not prompt:
+                self._warn("Please input a natural-language request first.")
+                return
+
+            self._append_ai_chat("You", prompt)
+            self._append_ai_history("user", prompt)
+            self.ai_prompt.clear()
+            self.statusBar().showMessage("Agent is thinking...", 2000)
+            self._start_ai_run(prompt)
 
         def _selected_backup_path(self):
             row = self.backup_table.currentRow()
@@ -1071,41 +1459,39 @@ def main():
             msg.setDefaultButton(QMessageBox.No)
             return msg.exec() == QMessageBox.Yes
 
+        def _confirm_execute(self, title, details):
+            msg = QMessageBox(self)
+            msg.setIcon(QMessageBox.Warning)
+            msg.setWindowTitle(title)
+            msg.setText("This operation will modify inventory YAML.")
+            msg.setInformativeText(details)
+            msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            msg.setDefaultButton(QMessageBox.No)
+            return msg.exec() == QMessageBox.Yes
+
         def _reset_overview_detail(self):
             self.overview_selected = None
-            self.ov_detail_id.setText("-")
-            self.ov_detail_location.setText("-")
-            self.ov_detail_parent.setText("-")
-            self.ov_detail_short.setText("-")
-            self.ov_detail_frozen.setText("-")
-            self.ov_detail_plasmid.setText("-")
-            self.ov_detail_note.setText("-")
-            self.ov_copy_id_btn.setEnabled(False)
-            self.ov_prefill_btn.setEnabled(False)
+            self.overview_hover_key = None
+            if hasattr(self, "ov_hover_hint"):
+                self.ov_hover_hint.setText("Hover a slot to preview details.")
 
         def _show_overview_detail(self, box_num, position, record):
             self.overview_selected = (box_num, position, record)
-            self.ov_detail_location.setText(f"Box {box_num} Position {position}")
-            if not record:
-                self.ov_detail_id.setText("(empty)")
-                self.ov_detail_parent.setText("-")
-                self.ov_detail_short.setText("-")
-                self.ov_detail_frozen.setText("-")
-                self.ov_detail_plasmid.setText("-")
-                self.ov_detail_note.setText("Available slot")
-                self.ov_copy_id_btn.setEnabled(False)
-                self.ov_prefill_btn.setEnabled(False)
+            if not hasattr(self, "ov_hover_hint"):
                 return
 
-            self.ov_detail_id.setText(str(record.get("id", "-")))
-            self.ov_detail_parent.setText(str(record.get("parent_cell_line", "-")))
-            self.ov_detail_short.setText(str(record.get("short_name", "-")))
-            self.ov_detail_frozen.setText(str(record.get("frozen_at", "-")))
+            if not record:
+                self.ov_hover_hint.setText(f"Box {box_num} Pos {position} | Empty slot")
+                return
+
+            rec_id = str(record.get("id", "-"))
+            cell = str(record.get("parent_cell_line", "-"))
+            short = str(record.get("short_name", "-"))
+            frozen = str(record.get("frozen_at", "-"))
             plasmid = record.get("plasmid_name") or record.get("plasmid_id") or "-"
-            self.ov_detail_plasmid.setText(str(plasmid))
-            self.ov_detail_note.setText(str(record.get("note") or "-"))
-            self.ov_copy_id_btn.setEnabled(True)
-            self.ov_prefill_btn.setEnabled(True)
+            self.ov_hover_hint.setText(
+                f"Box {box_num} Pos {position} | ID {rec_id} | {cell} / {short} | Frozen {frozen} | Plasmid {plasmid}"
+            )
 
         def _paint_overview_cell(self, button, box_num, position, record):
             if record:
@@ -1202,6 +1588,11 @@ def main():
                     c = (position - 1) % cols
                     button = QPushButton(str(position))
                     button.setFixedSize(32, 32)
+                    button.setMouseTracking(True)
+                    button.setAttribute(Qt.WA_Hover, True)
+                    button.setProperty("overview_box", box_num)
+                    button.setProperty("overview_position", position)
+                    button.installEventFilter(self)
                     button.clicked.connect(
                         lambda _checked=False, b=box_num, p=position: self.on_overview_cell_clicked(b, p)
                     )
@@ -1236,12 +1627,30 @@ def main():
 
             if not stats_response.get("ok"):
                 self.ov_status.setText(f"Failed to load overview: {stats_response.get('message', 'unknown error')}")
+                self.overview_records_by_id = {}
                 self._reset_overview_detail()
+                self._refresh_thaw_record_context()
                 return
 
             payload = stats_response.get("result", {})
             data = payload.get("data", {})
             records = data.get("inventory", [])
+            self.overview_records_by_id = {}
+            for rec in records:
+                if not isinstance(rec, dict):
+                    continue
+                rec_id = rec.get("id")
+                key = None
+                if isinstance(rec_id, int):
+                    key = rec_id
+                elif isinstance(rec_id, str) and rec_id.strip():
+                    try:
+                        key = int(rec_id.strip())
+                    except Exception:
+                        key = None
+                if key is None:
+                    continue
+                self.overview_records_by_id[key] = rec
             layout = payload.get("layout", {})
             stats = payload.get("stats", {})
             overall = stats.get("overall", {})
@@ -1279,6 +1688,11 @@ def main():
             else:
                 self.ov_ops7_value.setText("N/A")
 
+            if hasattr(self, "ov_meta_stats"):
+                self.ov_meta_stats.setText(
+                    f"Capacity: {self.ov_total_capacity_value.text()} | Ops (7d): {self.ov_ops7_value.text()}"
+                )
+
             for box_num in box_numbers:
                 stats_item = box_stats.get(str(box_num), {})
                 occupied = stats_item.get("occupied", 0)
@@ -1299,6 +1713,7 @@ def main():
             self.ov_status.setText(
                 f"Loaded {len(records)} records from {yaml_path} | refreshed at {datetime.now().strftime('%H:%M:%S')}"
             )
+            self._refresh_thaw_record_context()
 
         def _refresh_overview_filter_options(self, records, box_numbers):
             prev_box = self.ov_filter_box.currentData()
@@ -1453,20 +1868,37 @@ def main():
             self.bridge.set_actor(actor_id=self.current_actor_id)
             self._emit({"ok": True, "message": f"actor updated: {self.current_actor_id}"})
 
+        def on_overview_toggle_filters(self, checked):
+            visible = bool(checked)
+            self.ov_filter_advanced_widget.setVisible(visible)
+            self.ov_filter_toggle_btn.setText("Hide Filters" if visible else "More Filters")
+
         def on_overview_clear_filters(self):
             self.ov_filter_keyword.clear()
             self.ov_filter_box.setCurrentIndex(0)
             self.ov_filter_cell.setCurrentIndex(0)
             self.ov_filter_show_empty.setChecked(True)
+            if self.ov_filter_toggle_btn.isChecked():
+                self.ov_filter_toggle_btn.setChecked(False)
             self._apply_overview_filters()
 
         def on_overview_cell_clicked(self, box_num, position):
+            self.on_overview_cell_hovered(box_num, position, force=True)
+
+        def on_overview_cell_hovered(self, box_num, position, force=False):
+            hover_key = (box_num, position)
+            if not force and self.overview_hover_key == hover_key:
+                return
+            button = self.overview_cells.get((box_num, position))
+            if button is not None and not button.isVisible():
+                return
             record = self.overview_pos_map.get((box_num, position))
+            self.overview_hover_key = hover_key
             self._show_overview_detail(box_num, position, record)
 
         def on_overview_cell_context_menu(self, box_num, position, global_pos):
             record = self.overview_pos_map.get((box_num, position))
-            self._show_overview_detail(box_num, position, record)
+            self.on_overview_cell_hovered(box_num, position, force=True)
 
             menu = QMenu(self)
             act_copy_loc = menu.addAction(f"Copy Location {box_num}:{position}")
@@ -1511,10 +1943,16 @@ def main():
                 return
 
             rec_id = int(record.get("id"))
+            self.t_prefill_source = {
+                "box": int(box_num),
+                "position": int(position),
+                "record_id": rec_id,
+            }
             self.t_id.setValue(rec_id)
             self.t_position.setValue(position)
             self.t_action.setCurrentText("Takeout")
-            self.tabs.setCurrentIndex(self.tab_thaw)
+            self._refresh_thaw_record_context()
+            self._set_operation_mode("thaw")
             self._notify(f"Prefilled thaw form: ID {rec_id}, position {position} (box {box_num})", level="success")
 
         def on_refresh_overview(self):
@@ -1611,6 +2049,18 @@ def main():
                 return
 
             box_value = self.a_box.value()
+            dry_run = self.a_dry_run.isChecked()
+            if not dry_run:
+                details = (
+                    f"Cell: {self.a_parent.text().strip() or '-'}\n"
+                    f"Short: {self.a_short.text().strip() or '-'}\n"
+                    f"Box: {box_value}\n"
+                    f"Positions: {','.join(str(p) for p in positions)}\n"
+                    f"Frozen at: {self.a_date.date().toString('yyyy-MM-dd')}"
+                )
+                if not self._confirm_execute("Confirm Add Entry", details):
+                    self._notify("Add entry cancelled")
+                    return
 
             response = self.bridge.add_entry(
                 yaml_path=self._yaml_path(),
@@ -1622,7 +2072,7 @@ def main():
                 plasmid_name=self.a_plasmid.text().strip() or None,
                 plasmid_id=self.a_plasmid_id.text().strip() or None,
                 note=self.a_note.text().strip() or None,
-                dry_run=self.a_dry_run.isChecked(),
+                dry_run=dry_run,
             )
             payload = response if isinstance(response, dict) else {"ok": False, "message": "Unexpected response"}
             self._emit(payload)
@@ -1636,15 +2086,49 @@ def main():
         def on_record_thaw(self):
             record_id = self.t_id.value()
             position = self.t_position.value()
+            date_value = self.t_date.date().toString("yyyy-MM-dd")
+            dry_run = self.t_dry_run.isChecked()
+            if not dry_run:
+                record = self._lookup_record_by_id(record_id)
+                if record:
+                    positions = record.get("positions") or []
+                    pos_ok = False
+                    try:
+                        pos_ok = int(position) in {int(p) for p in positions}
+                    except Exception:
+                        pos_ok = False
+                    position_check = "OK" if pos_ok else "WARNING: not in record positions"
+                    details = (
+                        f"Record ID: {record_id}\n"
+                        f"Cell/Short: {record.get('parent_cell_line') or '-'} / {record.get('short_name') or '-'}\n"
+                        f"Box: {record.get('box') or '-'}\n"
+                        f"All Positions: {self._positions_text(positions)}\n"
+                        f"Target Position: {position} ({position_check})\n"
+                        f"Frozen At: {record.get('frozen_at') or '-'}\n"
+                        f"Plasmid: {record.get('plasmid_name') or record.get('plasmid_id') or '-'}\n"
+                        f"Action: {self.t_action.currentText()}\n"
+                        f"Date: {date_value}"
+                    )
+                else:
+                    details = (
+                        f"Record ID: {record_id}\n"
+                        f"Target Position: {position}\n"
+                        "WARNING: Record not found in current dataset\n"
+                        f"Action: {self.t_action.currentText()}\n"
+                        f"Date: {date_value}"
+                    )
+                if not self._confirm_execute("Confirm Single Operation", details):
+                    self._notify("Single operation cancelled")
+                    return
 
             response = self.bridge.record_thaw(
                 yaml_path=self._yaml_path(),
                 record_id=record_id,
                 position=position,
-                date_str=self.t_date.date().toString("yyyy-MM-dd"),
+                date_str=date_value,
                 action=self.t_action.currentText(),
                 note=self.t_note.text().strip() or None,
-                dry_run=self.t_dry_run.isChecked(),
+                dry_run=dry_run,
             )
             payload = response if isinstance(response, dict) else {"ok": False, "message": "Unexpected response"}
             self._emit(payload)
@@ -1656,18 +2140,37 @@ def main():
                 self._handle_tool_failure(payload, "Single operation failed", dialog_title="Single Operation Failed")
 
         def on_batch_thaw(self):
+            entries_text = self.b_entries.text().strip()
             try:
-                response = self.bridge.batch_thaw_from_text(
-                    yaml_path=self._yaml_path(),
-                    entries_text=self.b_entries.text().strip(),
-                    date_str=self.b_date.date().toString("yyyy-MM-dd"),
-                    action=self.b_action.currentText(),
-                    note=self.b_note.text().strip() or None,
-                    dry_run=self.b_dry_run.isChecked(),
-                )
+                entries = parse_batch_entries(entries_text)
             except ValueError as exc:
                 self._warn(str(exc))
                 return
+
+            date_value = self.b_date.date().toString("yyyy-MM-dd")
+            dry_run = self.b_dry_run.isChecked()
+            if not dry_run:
+                preview_pairs = ", ".join(f"{rid}:{pos}" for rid, pos in entries[:6])
+                if len(entries) > 6:
+                    preview_pairs = f"{preview_pairs}, ..."
+                details = (
+                    f"Count: {len(entries)}\n"
+                    f"Action: {self.b_action.currentText()}\n"
+                    f"Date: {date_value}\n"
+                    f"Entries: {preview_pairs}"
+                )
+                if not self._confirm_execute("Confirm Batch Operation", details):
+                    self._notify("Batch operation cancelled")
+                    return
+
+            response = self.bridge.batch_thaw(
+                yaml_path=self._yaml_path(),
+                entries=entries,
+                date_str=date_value,
+                action=self.b_action.currentText(),
+                note=self.b_note.text().strip() or None,
+                dry_run=dry_run,
+            )
             payload = response if isinstance(response, dict) else {"ok": False, "message": "Unexpected response"}
             self._emit(payload)
             self._refresh_overview(update_output=False)

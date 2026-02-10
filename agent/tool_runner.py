@@ -74,6 +74,20 @@ class AgentToolRunner:
             return False
         return bool(default)
 
+    @staticmethod
+    def _normalize_positions(value):
+        if value in (None, ""):
+            return None
+        if isinstance(value, list):
+            return [int(item) for item in value]
+        if isinstance(value, tuple):
+            return [int(item) for item in value]
+        if isinstance(value, (int, float)):
+            return [int(value)]
+        if isinstance(value, str):
+            return parse_positions(value)
+        return value
+
     def list_tools(self):
         return [
             "query_inventory",
@@ -90,6 +104,82 @@ class AgentToolRunner:
             "batch_thaw",
             "rollback",
         ]
+
+    def tool_specs(self):
+        """Compact tool schemas for LLM prompt grounding."""
+        return {
+            "query_inventory": {
+                "required": [],
+                "optional": ["cell", "short", "plasmid", "plasmid_id", "box", "position"],
+                "aliases": {
+                    "cell": ["cell_line", "parent_cell_line"],
+                    "short": ["short_name"],
+                    "plasmid": ["plasmid_name"],
+                },
+            },
+            "list_empty_positions": {
+                "required": [],
+                "optional": ["box"],
+            },
+            "search_records": {
+                "required": ["query"],
+                "optional": ["mode", "max_results", "case_sensitive"],
+            },
+            "recent_frozen": {
+                "required": [],
+                "optional": ["days", "count"],
+            },
+            "query_thaw_events": {
+                "required": [],
+                "optional": ["date", "days", "start_date", "end_date", "action", "max_records"],
+            },
+            "collect_timeline": {
+                "required": [],
+                "optional": ["days", "all_history"],
+            },
+            "recommend_positions": {
+                "required": [],
+                "optional": ["count", "box_preference", "strategy"],
+            },
+            "generate_stats": {
+                "required": [],
+                "optional": [],
+            },
+            "get_raw_entries": {
+                "required": ["ids"],
+                "optional": [],
+            },
+            "add_entry": {
+                "required": ["parent_cell_line", "short_name", "box", "positions", "frozen_at"],
+                "optional": ["plasmid_name", "plasmid_id", "note", "dry_run"],
+                "aliases": {
+                    "parent_cell_line": ["cell", "cell_line"],
+                    "short_name": ["short", "name"],
+                    "positions": ["position", "slot"],
+                    "frozen_at": ["date"],
+                    "note": ["notes", "memo"],
+                },
+                "notes": "positions accepts list[int] or comma string like '1,2,3'.",
+            },
+            "record_thaw": {
+                "required": ["record_id", "position", "date"],
+                "optional": ["action", "note", "dry_run"],
+                "aliases": {
+                    "record_id": ["id"],
+                    "position": ["pos", "slot"],
+                    "note": ["notes", "memo"],
+                },
+            },
+            "batch_thaw": {
+                "required": ["entries"],
+                "optional": ["date", "action", "note", "dry_run"],
+                "notes": "entries can be list[[record_id, position], ...] or '182:23,183:41'.",
+            },
+            "rollback": {
+                "required": [],
+                "optional": ["backup_path", "no_html", "no_server"],
+            },
+        }
 
     def run(self, tool_name, tool_input, trace_id=None):
         payload = dict(tool_input or {})
@@ -189,19 +279,30 @@ class AgentToolRunner:
 
         if tool_name == "add_entry":
             try:
-                positions = payload.get("positions")
-                if isinstance(positions, str):
-                    positions = parse_positions(positions)
+                normalized = dict(payload)
+                normalized["parent_cell_line"] = self._first_value(
+                    payload, "parent_cell_line", "cell", "cell_line"
+                )
+                normalized["short_name"] = self._first_value(payload, "short_name", "short", "name")
+                normalized["box"] = self._first_value(payload, "box", "box_num")
+                normalized["frozen_at"] = self._first_value(payload, "frozen_at", "date")
+                normalized["note"] = self._first_value(payload, "note", "notes", "memo")
+
+                positions_raw = payload.get("positions")
+                if positions_raw in (None, ""):
+                    positions_raw = self._first_value(payload, "position", "slot")
+                positions = self._normalize_positions(positions_raw)
+
                 return tool_add_entry(
                     yaml_path=self._yaml_path,
-                    parent_cell_line=payload.get("parent_cell_line"),
-                    short_name=payload.get("short_name"),
-                    box=self._required_int(payload, "box"),
+                    parent_cell_line=normalized.get("parent_cell_line"),
+                    short_name=normalized.get("short_name"),
+                    box=self._required_int(normalized, "box"),
                     positions=positions,
-                    frozen_at=payload.get("frozen_at"),
-                    plasmid_name=payload.get("plasmid_name"),
+                    frozen_at=normalized.get("frozen_at"),
+                    plasmid_name=self._first_value(payload, "plasmid_name", "plasmid"),
                     plasmid_id=payload.get("plasmid_id"),
-                    note=payload.get("note"),
+                    note=normalized.get("note"),
                     dry_run=self._as_bool(payload.get("dry_run", False), default=False),
                     actor_context=self._actor_context(trace_id=trace_id),
                     source="agent.react",
@@ -211,17 +312,23 @@ class AgentToolRunner:
                     "ok": False,
                     "error_code": "invalid_tool_input",
                     "message": str(exc),
+                    "expected": self.tool_specs().get("add_entry"),
                 }
 
         if tool_name == "record_thaw":
             try:
+                normalized = dict(payload)
+                normalized["record_id"] = self._first_value(payload, "record_id", "id")
+                normalized["position"] = self._first_value(payload, "position", "pos", "slot")
+                normalized["date"] = self._first_value(payload, "date", "thaw_date")
+                normalized["note"] = self._first_value(payload, "note", "notes", "memo")
                 return tool_record_thaw(
                     yaml_path=self._yaml_path,
-                    record_id=self._required_int(payload, "record_id"),
-                    position=self._required_int(payload, "position"),
-                    date_str=payload.get("date"),
+                    record_id=self._required_int(normalized, "record_id"),
+                    position=self._required_int(normalized, "position"),
+                    date_str=normalized.get("date"),
                     action=payload.get("action", "取出"),
-                    note=payload.get("note"),
+                    note=normalized.get("note"),
                     dry_run=self._as_bool(payload.get("dry_run", False), default=False),
                     actor_context=self._actor_context(trace_id=trace_id),
                     source="agent.react",
@@ -231,6 +338,7 @@ class AgentToolRunner:
                     "ok": False,
                     "error_code": "invalid_tool_input",
                     "message": str(exc),
+                    "expected": self.tool_specs().get("record_thaw"),
                 }
 
         if tool_name == "batch_thaw":
@@ -253,6 +361,7 @@ class AgentToolRunner:
                     "ok": False,
                     "error_code": "invalid_tool_input",
                     "message": str(exc),
+                    "expected": self.tool_specs().get("batch_thaw"),
                 }
 
         if tool_name == "rollback":

@@ -89,7 +89,8 @@ class ReactAgentTests(unittest.TestCase):
 
             runner = AgentToolRunner(yaml_path=str(yaml_path), actor_id="react-test")
             agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=4)
-            result = agent.run("Find K562 entries")
+            events = []
+            result = agent.run("Find K562 entries", on_event=lambda e: events.append(dict(e)))
 
             self.assertTrue(result["ok"])
             self.assertEqual("Found one K562 record.", result["final"])
@@ -97,6 +98,12 @@ class ReactAgentTests(unittest.TestCase):
             obs = result["scratchpad"][0]["observation"]
             self.assertTrue(obs["ok"])
             self.assertEqual(1, obs["result"]["count"])
+
+            event_types = [e.get("type") for e in events]
+            self.assertIn("run_start", event_types)
+            self.assertIn("step_start", event_types)
+            self.assertIn("step_end", event_types)
+            self.assertIn("finish", event_types)
 
     def test_react_agent_includes_conversation_history_in_prompt(self):
         llm = _CapturePromptLLM()
@@ -124,6 +131,12 @@ class ReactAgentTests(unittest.TestCase):
         self.assertEqual(2, len(memory))
         self.assertEqual("user", memory[0]["role"])
         self.assertEqual("assistant", memory[1]["role"])
+
+        specs = prompt_payload.get("tool_specs")
+        if not isinstance(specs, dict):
+            self.fail("tool_specs should be a dict")
+        self.assertIn("add_entry", specs)
+        self.assertIn("required", specs["add_entry"])
 
 
 if __name__ == "__main__":

@@ -129,6 +129,42 @@ class GuiBridgeAgentTests(unittest.TestCase):
         self.assertFalse(response["ok"])
         self.assertEqual("invalid_max_steps", response["error_code"])
 
+    def test_run_agent_query_emits_progress_events(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_gui_agent_events_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        {
+                            "id": 1,
+                            "parent_cell_line": "K562",
+                            "short_name": "k562-a",
+                            "box": 1,
+                            "positions": [1],
+                            "frozen_at": "2026-02-10",
+                        }
+                    ]
+                ),
+                path=str(yaml_path),
+                auto_html=False,
+                auto_server=False,
+            )
+
+            bridge = GuiToolBridge(actor_id="gui-test", session_id="session-gui-test")
+            events = []
+            response = bridge.run_agent_query(
+                yaml_path=str(yaml_path),
+                query="Find K562 records",
+                mock=True,
+                on_event=lambda e: events.append(dict(e)),
+            )
+
+            self.assertTrue(response["ok"])
+            event_types = [e.get("type") for e in events]
+            self.assertIn("run_start", event_types)
+            self.assertIn("step_start", event_types)
+            self.assertIn("finish", event_types)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -164,6 +164,67 @@ class AgentToolRunnerTests(unittest.TestCase):
             self.assertFalse(response["ok"])
             self.assertEqual("invalid_tool_input", response["error_code"])
 
+    def test_add_entry_supports_common_alias_fields(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_add_alias_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                auto_html=False,
+                auto_server=False,
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run(
+                "add_entry",
+                {
+                    "cell_line": "K562",
+                    "short": "alias-test",
+                    "box_num": 1,
+                    "position": 2,
+                    "date": "2026-02-10",
+                    "notes": "alias payload",
+                },
+            )
+            self.assertTrue(response["ok"])
+
+            current = load_yaml(str(yaml_path))
+            records = current.get("inventory", [])
+            self.assertEqual(2, len(records))
+            self.assertEqual("K562", records[-1]["parent_cell_line"])
+            self.assertEqual([2], records[-1]["positions"])
+
+    def test_record_thaw_supports_id_and_pos_alias(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_thaw_alias_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                auto_html=False,
+                auto_server=False,
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run(
+                "record_thaw",
+                {
+                    "id": 1,
+                    "pos": 1,
+                    "thaw_date": "2026-02-10",
+                    "action": "取出",
+                },
+            )
+            self.assertTrue(response["ok"])
+
+    def test_tool_specs_expose_required_fields(self):
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        specs = runner.tool_specs()
+        self.assertIn("add_entry", specs)
+        self.assertIn("required", specs["add_entry"])
+        self.assertIn("positions", specs["add_entry"]["required"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -101,7 +101,7 @@ class GuiToolBridge:
             source="app_gui",
         )
 
-    def run_agent_query(self, yaml_path, query, model=None, max_steps=8, mock=True, history=None):
+    def run_agent_query(self, yaml_path, query, model=None, max_steps=8, mock=True, history=None, on_event=None):
         prompt = str(query or "").strip()
         if not prompt:
             return {
@@ -141,7 +141,7 @@ class GuiToolBridge:
                 session_id=self._session_id,
             )
             agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=steps)
-            result = agent.run(prompt, conversation_history=history)
+            result = agent.run(prompt, conversation_history=history, on_event=on_event)
         except Exception as exc:
             return {
                 "ok": False,

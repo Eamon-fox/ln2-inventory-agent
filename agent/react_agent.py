@@ -15,6 +15,8 @@ Rules:
 6) Keep thought short.
 7) Use conversation_history to keep continuity across turns.
 8) If user asks about previous responses, answer from conversation_history directly.
+9) Strictly follow tool_specs for parameter names and required fields.
+10) For write tools (add_entry/record_thaw/batch_thaw/rollback), prefer dry_run=true first, then execute.
 """
 
 
@@ -62,17 +64,48 @@ class ReactAgent:
             return cleaned[-max_turns:]
         return cleaned
 
-    def run(self, user_query, conversation_history=None):
+    @staticmethod
+    def _emit_event(callback, event):
+        if not callable(callback):
+            return
+        try:
+            callback(dict(event or {}))
+        except Exception:
+            return
+
+    def run(self, user_query, conversation_history=None, on_event=None):
         trace_id = f"trace-{uuid.uuid4().hex}"
         tool_names = self._tools.list_tools()
+        if hasattr(self._tools, "tool_specs"):
+            tool_specs = self._tools.tool_specs()
+        else:
+            tool_specs = {}
         memory = self._normalize_history(conversation_history)
+
+        self._emit_event(
+            on_event,
+            {
+                "type": "run_start",
+                "trace_id": trace_id,
+                "max_steps": self._max_steps,
+            },
+        )
 
         scratch = []
         for step in range(1, self._max_steps + 1):
+            self._emit_event(
+                on_event,
+                {
+                    "type": "step_start",
+                    "trace_id": trace_id,
+                    "step": step,
+                },
+            )
             prompt = {
                 "step": step,
                 "trace_id": trace_id,
                 "available_tools": tool_names,
+                "tool_specs": tool_specs,
                 "user_query": user_query,
                 "conversation_history": memory,
                 "scratchpad": scratch,
@@ -92,6 +125,13 @@ class ReactAgent:
             action_obj = self._parse_json(model_text)
 
             if not isinstance(action_obj, dict):
+                invalid_event = {
+                    "type": "step_invalid_json",
+                    "trace_id": trace_id,
+                    "step": step,
+                    "raw": model_text,
+                }
+                self._emit_event(on_event, invalid_event)
                 scratch.append(
                     {
                         "step": step,
@@ -105,6 +145,15 @@ class ReactAgent:
             action_input = action_obj.get("action_input") or {}
 
             if action == "finish":
+                self._emit_event(
+                    on_event,
+                    {
+                        "type": "finish",
+                        "trace_id": trace_id,
+                        "step": step,
+                        "final": action_obj.get("final", ""),
+                    },
+                )
                 return {
                     "ok": True,
                     "trace_id": trace_id,
@@ -115,18 +164,30 @@ class ReactAgent:
                 }
 
             if action not in tool_names:
+                unknown_obs = {
+                    "ok": False,
+                    "error_code": "unknown_tool",
+                    "message": f"Unknown tool: {action}",
+                }
                 scratch.append(
                     {
                         "step": step,
                         "thought": action_obj.get("thought"),
                         "action": action,
                         "action_input": action_input,
-                        "observation": {
-                            "ok": False,
-                            "error_code": "unknown_tool",
-                            "message": f"Unknown tool: {action}",
-                        },
+                        "observation": unknown_obs,
                     }
+                )
+                self._emit_event(
+                    on_event,
+                    {
+                        "type": "step_end",
+                        "trace_id": trace_id,
+                        "step": step,
+                        "action": action,
+                        "action_input": action_input,
+                        "observation": unknown_obs,
+                    },
                 )
                 continue
 
@@ -140,7 +201,26 @@ class ReactAgent:
                     "observation": observation,
                 }
             )
+            self._emit_event(
+                on_event,
+                {
+                    "type": "step_end",
+                    "trace_id": trace_id,
+                    "step": step,
+                    "action": action,
+                    "action_input": action_input,
+                    "observation": observation,
+                },
+            )
 
+        self._emit_event(
+            on_event,
+            {
+                "type": "max_steps",
+                "trace_id": trace_id,
+                "steps": self._max_steps,
+            },
+        )
         return {
             "ok": False,
             "trace_id": trace_id,
