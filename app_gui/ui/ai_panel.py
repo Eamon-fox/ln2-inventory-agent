@@ -1,4 +1,5 @@
 from datetime import datetime
+import time
 from PySide6.QtCore import Qt, Signal, QThread, QEvent
 from PySide6.QtGui import QTextCursor, QTextDocumentFragment
 from PySide6.QtWidgets import (
@@ -30,6 +31,11 @@ class AIPanel(QWidget):
         self.ai_stream_buffer = ""
         self.ai_stream_start_pos = None
         self.ai_last_stream_block = None
+        self.ai_stream_last_render_ts = 0.0
+        self.ai_stream_last_render_len = 0
+        # Re-render markdown frequently enough to feel live, but still throttle CPU churn.
+        self.ai_stream_render_interval_sec = 0.06
+        self.ai_stream_render_min_delta = 8
 
         self.setup_ui()
 
@@ -219,9 +225,12 @@ class AIPanel(QWidget):
         self.ai_stream_buffer = ""
         self.ai_stream_start_pos = None
         self.ai_last_stream_block = None
+        self.ai_stream_last_render_ts = 0.0
+        self.ai_stream_last_render_len = 0
         self.status_message.emit("AI memory cleared", 2000)
 
     def _append_chat_header(self, role):
+        self._move_chat_cursor_to_end()
         stamp = datetime.now().strftime("%H:%M:%S")
         color_map = {
             "Agent": "#38bdf8",
@@ -239,6 +248,13 @@ class AIPanel(QWidget):
         """
         self.ai_chat.append(html)
 
+    def _move_chat_cursor_to_end(self):
+        if not hasattr(self.ai_chat, "textCursor") or not hasattr(self.ai_chat, "setTextCursor"):
+            return
+        cursor = self.ai_chat.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        self.ai_chat.setTextCursor(cursor)
+
     def _append_chat(self, role, text):
         self._append_chat_header(role)
         self._insert_chat_markdown(text)
@@ -251,10 +267,12 @@ class AIPanel(QWidget):
         self.ai_stream_buffer = ""
         self.ai_stream_start_pos = None
         self.ai_last_stream_block = None
+        self.ai_stream_last_render_ts = time.monotonic()
+        self.ai_stream_last_render_len = 0
         self._append_chat_header(role)
+        self._move_chat_cursor_to_end()
         if hasattr(self.ai_chat, "textCursor"):
-            cursor = self.ai_chat.textCursor()
-            self.ai_stream_start_pos = cursor.position()
+            self.ai_stream_start_pos = self.ai_chat.textCursor().position()
 
     def _append_stream_chunk(self, text):
         chunk = str(text or "")
@@ -263,14 +281,72 @@ class AIPanel(QWidget):
         if not self.ai_streaming_active:
             self._begin_stream_chat("Agent")
         self.ai_stream_buffer += chunk
+        self._move_chat_cursor_to_end()
         self.ai_chat.insertPlainText(chunk)
         if hasattr(self.ai_chat, "ensureCursorVisible"):
             self.ai_chat.ensureCursorVisible()
+
+        if self._should_rerender_stream_markdown():
+            self._rerender_stream_markdown_in_place()
+
+    def _should_rerender_stream_markdown(self):
+        if not self.ai_streaming_active:
+            return False
+
+        current_len = len(self.ai_stream_buffer)
+        if current_len <= self.ai_stream_last_render_len:
+            return False
+
+        delta = current_len - self.ai_stream_last_render_len
+        if delta >= max(1, int(self.ai_stream_render_min_delta or 0)):
+            return True
+
+        elapsed = time.monotonic() - float(self.ai_stream_last_render_ts or 0.0)
+        return elapsed >= float(self.ai_stream_render_interval_sec or 0.0)
+
+    def _rerender_stream_markdown_in_place(self, force=False):
+        if not self.ai_streaming_active:
+            return False
+
+        if not force and not self._should_rerender_stream_markdown():
+            return False
+
+        if self.ai_stream_start_pos is None:
+            return False
+        if not hasattr(self.ai_chat, "textCursor"):
+            return False
+
+        self._move_chat_cursor_to_end()
+        end_pos = self.ai_chat.textCursor().position()
+        block = {
+            "start": self.ai_stream_start_pos,
+            "end": end_pos,
+            "text": self.ai_stream_buffer,
+        }
+        ok = self._replace_stream_block_with_markdown(block, self.ai_stream_buffer)
+        if not ok:
+            return False
+
+        self.ai_stream_last_render_ts = time.monotonic()
+        self.ai_stream_last_render_len = len(self.ai_stream_buffer)
+
+        self._move_chat_cursor_to_end()
+        new_end = self.ai_chat.textCursor().position()
+        self.ai_last_stream_block = {
+            "start": self.ai_stream_start_pos,
+            "end": new_end,
+            "text": self.ai_stream_buffer,
+        }
+        return True
 
     def _end_stream_chat(self):
         if not self.ai_streaming_active:
             return
 
+        # Force a final in-place markdown pass for current streamed block.
+        self._rerender_stream_markdown_in_place(force=True)
+
+        self._move_chat_cursor_to_end()
         start_pos = self.ai_stream_start_pos
         end_pos = None
         if hasattr(self.ai_chat, "textCursor"):
@@ -284,9 +360,12 @@ class AIPanel(QWidget):
         self.ai_chat.append("\n")
         self.ai_streaming_active = False
         self.ai_stream_start_pos = None
+        self.ai_stream_last_render_ts = 0.0
+        self.ai_stream_last_render_len = 0
 
     def _insert_chat_markdown(self, text):
         markdown_text = str(text or "")
+        self._move_chat_cursor_to_end()
         cursor = self.ai_chat.textCursor() if hasattr(self.ai_chat, "textCursor") else None
         self._insert_markdown_with_cursor(cursor, markdown_text)
 
@@ -326,6 +405,7 @@ class AIPanel(QWidget):
             cursor.setPosition(int(end), QTextCursor.KeepAnchor)
             cursor.removeSelectedText()
             self._insert_markdown_with_cursor(cursor, markdown_text)
+            self._move_chat_cursor_to_end()
             return True
         except Exception:
             return False
@@ -343,10 +423,14 @@ class AIPanel(QWidget):
         self._append_history("user", prompt)
         self.ai_prompt.clear()
         self.ai_active_trace_id = None
+        if self.ai_streaming_active:
+            self._end_stream_chat()
         self.ai_streaming_active = False
         self.ai_stream_buffer = ""
         self.ai_stream_start_pos = None
         self.ai_last_stream_block = None
+        self.ai_stream_last_render_ts = 0.0
+        self.ai_stream_last_render_len = 0
         self.ai_report.clear()
         self.status_message.emit("Agent thinking...", 2000)
         
@@ -529,6 +613,8 @@ class AIPanel(QWidget):
         self.ai_stream_buffer = ""
         self.ai_stream_start_pos = None
         self.ai_last_stream_block = None
+        self.ai_stream_last_render_ts = 0.0
+        self.ai_stream_last_render_len = 0
         self._append_history("assistant", final_text)
 
         self.operation_completed.emit(bool(response.get("ok")))

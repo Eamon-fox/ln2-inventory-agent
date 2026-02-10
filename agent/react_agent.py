@@ -14,6 +14,7 @@ Rules:
 3) Tool results may include `_hint`; use it to recover from errors.
 4) If enough information is available, answer directly and clearly.
 5) Keep responses concise and operationally accurate.
+6) For greetings/chitchat/clarification-only turns, answer directly without calling tools.
 """
 
 
@@ -334,7 +335,7 @@ class ReactAgent:
             },
         )
 
-        answer_buf = []
+        last_answer_text = ""
         current_answer_buf = []
         forced_final_retry = False
 
@@ -388,7 +389,7 @@ class ReactAgent:
 
             assistant_content = str(model_response.get("content") or "").strip()
             if assistant_content:
-                answer_buf.append(assistant_content)
+                last_answer_text = assistant_content
                 current_answer_buf.append(assistant_content)
 
             normalized_tool_calls = model_response.get("tool_calls") or []
@@ -502,7 +503,7 @@ class ReactAgent:
                 direct_text = self._request_direct_answer(messages)
                 if direct_text:
                     assistant_content = direct_text
-                    answer_buf.append(assistant_content)
+                    last_answer_text = assistant_content
                     current_answer_buf.append(assistant_content)
                     self._emit_event(
                         on_event,
@@ -516,7 +517,7 @@ class ReactAgent:
                         },
                     )
 
-            final_text = "".join(answer_buf).strip()
+            final_text = str(assistant_content or last_answer_text).strip()
             if not final_text:
                 final_text = "I could not generate a complete answer. Please retry."
 
@@ -568,7 +569,7 @@ class ReactAgent:
             },
         )
 
-        final_text = "".join(answer_buf).strip() or "Max steps reached without final answer."
+        final_text = str(last_answer_text).strip() or "Max steps reached without final answer."
         self._emit_event(
             on_event,
             {

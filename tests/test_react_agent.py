@@ -294,6 +294,35 @@ class ReactAgentTests(unittest.TestCase):
         chunks = [e.get("data") for e in events if e.get("event") == "chunk"]
         self.assertEqual(["Hello", " world"], chunks)
 
+    def test_react_agent_final_uses_last_answer_after_tool_steps(self):
+        llm = _SequenceLLM(
+            [
+                {
+                    "role": "assistant",
+                    "content": "I will check stats first.",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "name": "generate_stats",
+                            "arguments": {},
+                        }
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": "Final answer only.",
+                    "tool_calls": [],
+                },
+            ]
+        )
+        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml", actor_id="react-test")
+        agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=3)
+
+        result = agent.run("overview")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("Final answer only.", result["final"])
+
 
 if __name__ == "__main__":
     unittest.main()
