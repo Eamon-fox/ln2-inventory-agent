@@ -1362,10 +1362,20 @@ class OperationsPanel(QWidget):
 
         self.result_card.setVisible(True)
 
-        output_data = [
-            {"status": r[0], "action": r[1].get("action"), "label": r[1].get("label")}
-            for r in results
-        ]
+        output_data = []
+        for r in results:
+            entry = {
+                "status": r[0],
+                "action": r[1].get("action"),
+                "label": r[1].get("label"),
+                "record_id": r[1].get("record_id"),
+                "box": r[1].get("box"),
+                "position": r[1].get("position"),
+            }
+            if r[0] == "FAIL":
+                entry["error"] = r[2].get("message", "Unknown error")
+                entry["error_code"] = r[2].get("error_code", "")
+            output_data.append(entry)
         self.output.setPlainText(json.dumps(output_data, ensure_ascii=False, indent=2))
 
     def print_plan(self):
