@@ -14,7 +14,6 @@
 - **记录复苏/取出**（单条或批量），并写入审计日志
 - **位点管理**：冲突检测、空位查询、智能推荐位点
 - **统计分析**：按盒占用率、细胞系分布、ASCII 网格可视化
-- **HTML 面板**：自动生成交互式总览
 - **备份与回滚**：自动时间戳备份，一键恢复
 - **审计日志**：所有修改写入 JSONL
 - **完全可配置**：盒子数量、网格大小、位置范围、细胞系白名单均可通过 JSON 配置
@@ -113,16 +112,16 @@ python app_gui/main.py
 # mock 模式（不调用外部模型）
 python agent/run_agent.py "查询 K562 记录" --mock
 
-# 真实模型模式（通过 LiteLLM）
-pip install litellm
-export LITELLM_MODEL="anthropic/claude-3-5-sonnet"
+# 真实模型模式（DeepSeek 原生解析）
+export DEEPSEEK_API_KEY="<your-key>"
+export DEEPSEEK_MODEL="deepseek-chat"
 python agent/run_agent.py "把 ID 10 的位置 23 标记为取出，日期今天"
 ```
 
 ## 项目结构
 
 ```text
-scripts/          # 16 个 CLI 脚本（查询、修改、工具）
+scripts/          # 15 个 CLI 脚本（查询、修改、工具）
 lib/              # 公共库（配置、YAML 操作、校验）
 agent/            # ReAct runtime、工具调度、LLM 适配
 app_gui/          # 桌面 GUI 脚手架
@@ -136,7 +135,7 @@ SKILL.md          # Claude Code skill 定义
 - Python 3.8+
 - PyYAML
 - 可选：PySide6（GUI）
-- 可选：LiteLLM（真实模型 agent 模式）
+- 可选：DEEPSEEK_API_KEY（真实模型 agent 模式）
 
 ## 许可证
 

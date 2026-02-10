@@ -163,6 +163,71 @@ class AgentToolRunnerTests(unittest.TestCase):
             response = runner.run("record_thaw", {"position": 1, "date": "2026-02-10"})
             self.assertFalse(response["ok"])
             self.assertEqual("invalid_tool_input", response["error_code"])
+            self.assertTrue(response.get("_hint"))
+            self.assertIn("Required", response.get("_hint", ""))
+
+    def test_unknown_tool_returns_hint(self):
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        response = runner.run("nonexistent_tool", {})
+
+        self.assertFalse(response["ok"])
+        self.assertEqual("unknown_tool", response["error_code"])
+        self.assertTrue(response.get("_hint"))
+        self.assertIn("available tools", response.get("_hint", "").lower())
+
+    def test_search_records_normalizes_keyword_mode_alias(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_search_alias_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([
+                    {
+                        "id": 2,
+                        "parent_cell_line": "K562",
+                        "short_name": "k562-a",
+                        "box": 2,
+                        "positions": [10],
+                        "frozen_at": "2026-02-10",
+                    }
+                ]),
+                path=str(yaml_path),
+                auto_html=False,
+                auto_server=False,
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run("search_records", {"query": "K562", "mode": "keyword"})
+
+            self.assertTrue(response["ok"])
+            self.assertEqual("keywords", response["result"]["mode"])
+            self.assertEqual(1, response["result"]["total_count"])
+
+    def test_search_records_falls_back_to_fuzzy_for_invalid_mode(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_search_mode_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([
+                    {
+                        "id": 3,
+                        "parent_cell_line": "NCCIT",
+                        "short_name": "nccit-abc",
+                        "box": 1,
+                        "positions": [1],
+                        "frozen_at": "2026-02-10",
+                    }
+                ]),
+                path=str(yaml_path),
+                auto_html=False,
+                auto_server=False,
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run("search_records", {"query": "NCCIT", "mode": "bad-mode"})
+
+            self.assertTrue(response["ok"])
+            self.assertEqual("fuzzy", response["result"]["mode"])
+            self.assertEqual(1, response["result"]["total_count"])
 
     def test_add_entry_supports_common_alias_fields(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_add_alias_") as temp_dir:
@@ -224,6 +289,33 @@ class AgentToolRunnerTests(unittest.TestCase):
         self.assertIn("add_entry", specs)
         self.assertIn("required", specs["add_entry"])
         self.assertIn("positions", specs["add_entry"]["required"])
+
+        self.assertIn("search_records", specs)
+        search_params = specs["search_records"].get("params", {})
+        self.assertIn("mode", search_params)
+        self.assertEqual(
+            ["fuzzy", "exact", "keywords"],
+            search_params["mode"].get("enum"),
+        )
+
+        schemas = runner.tool_schemas()
+        search_schema = next(
+            (
+                item
+                for item in schemas
+                if item.get("function", {}).get("name") == "search_records"
+            ),
+            None,
+        )
+        if not isinstance(search_schema, dict):
+            self.fail("search_records schema should exist")
+        mode_schema = (
+            search_schema.get("function", {})
+            .get("parameters", {})
+            .get("properties", {})
+            .get("mode", {})
+        )
+        self.assertEqual(["fuzzy", "exact", "keywords"], mode_schema.get("enum"))
 
 
 if __name__ == "__main__":

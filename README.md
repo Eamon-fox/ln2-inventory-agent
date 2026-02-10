@@ -14,13 +14,12 @@ Data is stored in a single YAML file. All operations go through validated script
 - **Record thaw/takeout** (single or batch) with audit trail
 - **Position management**: conflict detection, empty slot finder, smart position recommendations
 - **Statistics**: per-box occupancy, cell line distribution, ASCII grid visualization
-- **HTML dashboard**: auto-generated interactive overview
 - **Backup & rollback**: automatic timestamped backups, one-click restore
 - **Audit log**: JSONL log of all modifications
 - **Fully configurable**: box count, grid size, position range, cell line whitelist — all via JSON config
 - **Unified Tool API**: shared by CLI, GUI, and AI agent runtime
 - **GUI starter**: desktop scaffold in `app_gui/` (query/add/thaw panels)
-- **ReAct runtime**: agent loop in `agent/` with LiteLLM or mock mode
+- **ReAct runtime**: agent loop in `agent/` with DeepSeek-native parser or mock mode
 
 ## Quick Start
 
@@ -112,16 +111,16 @@ python app_gui/main.py
 # mock mode (no external model call)
 python agent/run_agent.py "query K562 records" --mock
 
-# real model mode (via LiteLLM)
-pip install litellm
-export LITELLM_MODEL="anthropic/claude-3-5-sonnet"
+# real model mode (DeepSeek-native)
+export DEEPSEEK_API_KEY="<your-key>"
+export DEEPSEEK_MODEL="deepseek-chat"
 python agent/run_agent.py "mark ID 10 position 23 as takeout today"
 ```
 
 ## Project Structure
 
 ```
-scripts/          # 16 CLI scripts (query, modify, utility)
+scripts/          # 15 CLI scripts (query, modify, utility)
 lib/              # Shared library (config, YAML ops, validation)
 agent/            # ReAct runtime + tool dispatcher + LLM adapters
 app_gui/          # Desktop GUI scaffold
@@ -135,7 +134,7 @@ SKILL.md          # Claude Code skill definition
 - Python 3.8+
 - PyYAML
 - Optional: PySide6 (GUI)
-- Optional: LiteLLM (real-model agent mode)
+- Optional: DEEPSEEK_API_KEY (real-model agent mode)
 
 ## License
 

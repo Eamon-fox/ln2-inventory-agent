@@ -32,11 +32,6 @@ class RuntimeConfigTests(unittest.TestCase):
                 "yaml_path": "./data/inventory.yaml",
                 "python_path": "/usr/bin/python3",
                 "scripts_dir": "./scripts",
-                "preview": {
-                    "host": "0.0.0.0",
-                    "preferred_port": 8123,
-                    "max_port_scan": 9,
-                },
                 "safety": {
                     "backup_keep_count": 42,
                     "yaml_size_warning_mb": 1.5,
@@ -50,9 +45,6 @@ class RuntimeConfigTests(unittest.TestCase):
             self.assertEqual(os.path.join(temp_dir, "data", "inventory.yaml"), mod.YAML_PATH)
             self.assertEqual("/usr/bin/python3", mod.PYTHON_PATH)
             self.assertEqual(os.path.join(temp_dir, "scripts"), mod.SCRIPTS_DIR)
-            self.assertEqual("0.0.0.0", mod.PREVIEW_HOST)
-            self.assertEqual(8123, mod.PREVIEW_PREFERRED_PORT)
-            self.assertEqual(9, mod.PREVIEW_MAX_PORT_SCAN)
             self.assertEqual(42, mod.BACKUP_KEEP_COUNT)
             self.assertEqual(1.5, mod.YAML_SIZE_WARNING_MB)
 

@@ -11,7 +11,24 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agent.llm_client import load_opencode_auth_env
+from agent.llm_client import DeepSeekLLMClient, load_opencode_auth_env
+
+
+class _FakeUrlopenResponse:
+    def __init__(self, lines):
+        self._lines = [line.encode("utf-8") for line in lines]
+
+    def __iter__(self):
+        return iter(self._lines)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        _ = exc_type
+        _ = exc
+        _ = tb
+        return False
 
 
 def write_auth_json(path):
@@ -74,6 +91,83 @@ class LlmClientAuthTests(unittest.TestCase):
         result = load_opencode_auth_env(auth_file="/tmp/non-existent-opencode-auth.json")
         self.assertFalse(result["ok"])
         self.assertEqual("missing_auth_file", result.get("reason"))
+
+
+class LlmContentNormalizationTests(unittest.TestCase):
+    def test_normalize_content_handles_nested_blocks(self):
+        payload = [
+            {"type": "text", "text": "Hello"},
+            {"type": "container", "content": [{"text": " world"}]},
+        ]
+
+        text = DeepSeekLLMClient._normalize_content(payload)
+        self.assertEqual("Hello world", text)
+
+    def test_extract_content_from_choice_uses_reasoning_fallback(self):
+        choice = {"message": {}}
+        message = {"content": None, "reasoning_content": "fallback text"}
+
+        text = DeepSeekLLMClient._extract_content_from_choice(choice, message)
+        self.assertEqual("fallback text", text)
+
+
+class DeepSeekClientParseTests(unittest.TestCase):
+    def test_chat_parses_sse_content_and_tool_calls(self):
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}, clear=False):
+            client = DeepSeekLLMClient(model="deepseek-chat")
+
+        tool_call_part1 = {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_1",
+                                "function": {
+                                    "name": "search_records",
+                                    "arguments": '{"query":"K562"',
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        tool_call_part2 = {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "function": {
+                                    "arguments": ',"mode":"keywords"}',
+                                },
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        }
+
+        lines = [
+            f"data: {json.dumps({'choices': [{'delta': {'content': 'Hello '}}]})}",
+            f"data: {json.dumps({'choices': [{'delta': {'content': 'world'}}]})}",
+            f"data: {json.dumps(tool_call_part1)}",
+            f"data: {json.dumps(tool_call_part2)}",
+            "data: [DONE]",
+        ]
+
+        with patch("agent.llm_client.urlrequest.urlopen", return_value=_FakeUrlopenResponse(lines)):
+            response = client.chat(messages=[{"role": "user", "content": "hi"}], tools=[{"type": "function"}])
+
+        self.assertEqual("Hello world", response.get("content"))
+        tool_calls = response.get("tool_calls") or []
+        self.assertEqual(1, len(tool_calls))
+        self.assertEqual("search_records", tool_calls[0].get("name"))
+        self.assertEqual({"query": "K562", "mode": "keywords"}, tool_calls[0].get("arguments"))
 
 
 if __name__ == "__main__":

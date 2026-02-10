@@ -5,11 +5,8 @@ import getpass
 import json
 import os
 import shutil
-import signal
 import socket
-import subprocess
 import sys
-import time
 import uuid
 from datetime import datetime
 
@@ -20,18 +17,11 @@ from .config import (
     BACKUP_KEEP_COUNT,
     BOX_EMPTY_WARNING_THRESHOLD,
     BOX_RANGE,
-    PREVIEW_HOST,
-    PREVIEW_MAX_PORT_SCAN,
-    PREVIEW_PREFERRED_PORT,
-    PREVIEW_SERVER_STATE_FILE,
     TOTAL_EMPTY_WARNING_THRESHOLD,
     YAML_PATH,
     YAML_SIZE_WARNING_MB,
 )
 from .validators import format_validation_errors, validate_inventory
-
-
-_SERVER_PROCS = {}
 
 
 def _ensure_inventory_integrity(data, prefix="完整性校验失败"):
@@ -51,160 +41,6 @@ def load_yaml(path=YAML_PATH):
     abs_path = _abs_path(path)
     with open(abs_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
-
-
-def _server_state_path(directory):
-    return os.path.join(directory, PREVIEW_SERVER_STATE_FILE)
-
-
-def _load_server_state(directory):
-    path = _server_state_path(directory)
-    if not os.path.exists(path):
-        return None
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            state = json.load(f)
-        if not isinstance(state, dict):
-            return None
-        return state
-    except Exception:
-        return None
-
-
-def _save_server_state(directory, pid, host, port):
-    path = _server_state_path(directory)
-    state = {"pid": int(pid), "host": str(host), "port": int(port)}
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(state, f)
-
-
-def _is_pid_alive(pid):
-    try:
-        os.kill(int(pid), 0)
-        return True
-    except (ProcessLookupError, ValueError, OSError):
-        return False
-
-
-def _is_port_open(host, port, timeout=0.2):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.settimeout(timeout)
-        return sock.connect_ex((host, int(port))) == 0
-    finally:
-        sock.close()
-
-
-def _find_available_port(host, preferred_port, max_scan=PREVIEW_MAX_PORT_SCAN):
-    start = int(preferred_port)
-    for candidate in range(start, start + int(max_scan)):
-        if not _is_port_open(host, candidate):
-            return candidate
-    return None
-
-
-def ensure_http_server(
-    directory,
-    html_name="ln2_inventory.html",
-    host=PREVIEW_HOST,
-    preferred_port=PREVIEW_PREFERRED_PORT,
-):
-    """Ensure a local file server is available for browser preview.
-
-    Returns:
-        tuple[str, bool]: (preview_url, started_now)
-    """
-    root = os.path.abspath(directory)
-    state = _load_server_state(root)
-    if state:
-        state_pid = state.get("pid")
-        state_host = state.get("host")
-        state_port = state.get("port")
-        if (
-            isinstance(state_pid, int)
-            and isinstance(state_port, int)
-            and state_host == host
-            and _is_pid_alive(state_pid)
-            and _is_port_open(host, state_port)
-        ):
-            return f"http://{host}:{state_port}/{html_name}", False
-        try:
-            os.remove(_server_state_path(root))
-        except OSError:
-            pass
-
-    port = _find_available_port(host, preferred_port, max_scan=PREVIEW_MAX_PORT_SCAN)
-    if port is None:
-        raise RuntimeError(f"no available preview port near {preferred_port}")
-
-    cmd = [
-        sys.executable,
-        "-m",
-        "http.server",
-        str(port),
-        "--bind",
-        host,
-        "--directory",
-        root,
-    ]
-    proc = subprocess.Popen(
-        cmd,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-        close_fds=True,
-    )
-
-    for _ in range(20):
-        if _is_port_open(host, port):
-            _SERVER_PROCS[root] = proc
-            _save_server_state(root, proc.pid, host, port)
-            return f"http://{host}:{port}/{html_name}", True
-        time.sleep(0.1)
-
-    raise RuntimeError("preview server failed to start")
-
-
-def stop_http_server(directory):
-    """Best-effort stop for the managed preview server."""
-    root = os.path.abspath(directory)
-    state = _load_server_state(root)
-    if not state:
-        return False
-
-    pid = state.get("pid")
-    proc = _SERVER_PROCS.pop(root, None)
-
-    if proc is not None:
-        try:
-            proc.terminate()
-            proc.wait(timeout=1.0)
-        except Exception:
-            try:
-                proc.kill()
-                proc.wait(timeout=1.0)
-            except Exception:
-                pass
-
-    try:
-        if isinstance(pid, int) and _is_pid_alive(pid):
-            os.kill(pid, signal.SIGTERM)
-            for _ in range(10):
-                if not _is_pid_alive(pid):
-                    break
-                time.sleep(0.05)
-            if _is_pid_alive(pid):
-                os.kill(pid, signal.SIGKILL)
-    except OSError:
-        pass
-
-    try:
-        os.remove(_server_state_path(root))
-    except OSError:
-        pass
-
-    return True
 
 
 def _backup_dir(yaml_path):
@@ -457,7 +293,6 @@ def _build_audit_event(
     before_data,
     after_data,
     backup_path,
-    preview_url,
     warnings,
     audit_meta,
 ):
@@ -501,7 +336,6 @@ def _build_audit_event(
         "error": error,
         "yaml_path": yaml_abs,
         "backup_path": backup_path,
-        "preview_url": preview_url,
         "size_bytes": size_bytes,
         "size_mb": round(size_mb, 4) if size_mb is not None else None,
         "warnings": warnings or [],
@@ -519,7 +353,6 @@ def append_audit_event(
     before_data=None,
     after_data=None,
     backup_path=None,
-    preview_url=None,
     warnings=None,
     audit_meta=None,
 ):
@@ -529,39 +362,17 @@ def append_audit_event(
         before_data=before_data,
         after_data=after_data,
         backup_path=backup_path,
-        preview_url=preview_url,
         warnings=warnings,
         audit_meta=audit_meta,
     )
     return _append_audit_event(yaml_path, event)
 
 
-def write_html_snapshot(data, yaml_path=YAML_PATH, output_path=None):
-    """Render and write the HTML inventory snapshot.
-
-    Args:
-        data: Inventory data dict
-        yaml_path: Source YAML path (used to derive default HTML output path)
-        output_path: Optional explicit HTML output path
-
-    Returns:
-        str: Written HTML file path
-    """
-    # Lazy import to avoid import cycles at module import time.
-    from scripts.generate_html import generate_html
-
-    html_path = output_path or os.path.join(os.path.dirname(_abs_path(yaml_path)), "ln2_inventory.html")
-    html = generate_html(data)
-    with open(html_path, "w", encoding="utf-8") as f:
-        f.write(html)
-    return html_path
-
-
 def write_yaml(
     data,
     path=YAML_PATH,
-    auto_html=True,
-    auto_server=True,
+    auto_html=None,
+    auto_server=None,
     auto_backup=True,
     audit_meta=None,
 ):
@@ -570,13 +381,16 @@ def write_yaml(
     Args:
         data: Inventory data dict
         path: YAML output path
-        auto_html: Whether to refresh HTML snapshot after writing YAML
-        auto_server: Whether to ensure local HTTP preview server is running
+        auto_html: Deprecated/ignored (kept for compatibility)
+        auto_server: Deprecated/ignored (kept for compatibility)
         auto_backup: Whether to create backup before overwrite
         audit_meta: Optional dict for audit fields.
             Common keys: action/source/details, plus actor_type, actor_id,
             channel, session_id, trace_id, tool_name, tool_input, status, error.
     """
+    _ = auto_html
+    _ = auto_server
+
     yaml_abs = _abs_path(path)
 
     _ensure_inventory_integrity(data, prefix="写入被阻止：库存完整性校验失败")
@@ -600,25 +414,6 @@ def write_yaml(
     with open(yaml_abs, "w", encoding="utf-8") as f:
         yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False, width=120)
 
-    html_path = None
-    if auto_html:
-        try:
-            html_path = write_html_snapshot(data, yaml_path=yaml_abs)
-        except Exception as exc:
-            # Keep YAML write as the source-of-truth operation.
-            print(f"warning: failed to refresh HTML snapshot: {exc}", file=sys.stderr)
-
-    preview_url = None
-    if auto_server and html_path:
-        try:
-            html_name = os.path.basename(html_path)
-            preview_dir = os.path.dirname(os.path.abspath(html_path))
-            preview_url, started_now = ensure_http_server(preview_dir, html_name=html_name)
-            status = "started" if started_now else "running"
-            print(f"preview server {status}: {preview_url}")
-        except Exception as exc:
-            print(f"warning: failed to start preview server: {exc}", file=sys.stderr)
-
     warnings = []
     warnings.extend(emit_capacity_warnings(data))
     size_warning = emit_yaml_size_warning(path=yaml_abs)
@@ -631,7 +426,6 @@ def write_yaml(
             before_data=before_data,
             after_data=data,
             backup_path=backup_path,
-            preview_url=preview_url,
             warnings=warnings,
             audit_meta=audit_meta,
         )
@@ -642,14 +436,12 @@ def write_yaml(
 def rollback_yaml(
     path=YAML_PATH,
     backup_path=None,
-    auto_html=True,
-    auto_server=True,
     audit_meta=None,
 ):
     """Rollback YAML to latest (or specified) backup.
 
     Returns:
-        dict: restored_from, snapshot_before_rollback, preview_url
+        dict: restored_from, snapshot_before_rollback
     """
     yaml_abs = _abs_path(path)
     if not os.path.exists(yaml_abs):
@@ -680,18 +472,6 @@ def rollback_yaml(
 
     after_data = load_yaml(yaml_abs)
 
-    html_path = None
-    if auto_html:
-        html_path = write_html_snapshot(after_data, yaml_path=yaml_abs)
-
-    preview_url = None
-    if auto_server and html_path:
-        html_name = os.path.basename(html_path)
-        preview_dir = os.path.dirname(os.path.abspath(html_path))
-        preview_url, started_now = ensure_http_server(preview_dir, html_name=html_name)
-        status = "started" if started_now else "running"
-        print(f"preview server {status}: {preview_url}")
-
     warnings = []
     warnings.extend(emit_capacity_warnings(after_data))
     size_warning = emit_yaml_size_warning(path=yaml_abs)
@@ -715,7 +495,6 @@ def rollback_yaml(
         before_data=before_data,
         after_data=after_data,
         backup_path=pre_rollback_snapshot,
-        preview_url=preview_url,
         warnings=warnings,
         audit_meta=meta,
     )
@@ -723,5 +502,4 @@ def rollback_yaml(
     return {
         "restored_from": target_backup,
         "snapshot_before_rollback": pre_rollback_snapshot,
-        "preview_url": preview_url,
     }

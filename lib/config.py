@@ -18,12 +18,6 @@ DEFAULT_CONFIG = {
     "yaml_path": os.path.join(os.getcwd(), "ln2_inventory.yaml"),
     "python_path": sys.executable,
     "scripts_dir": os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"),
-    "preview": {
-        "host": "127.0.0.1",
-        "preferred_port": 8000,
-        "max_port_scan": 50,
-        "state_file": ".ln2_inventory_http_server.json",
-    },
     "safety": {
         "backup_dir_name": "ln2_inventory_backups",
         "backup_keep_count": 200,
@@ -153,20 +147,6 @@ def _as_list(name, value, fallback):
 YAML_PATH = RUNTIME_CONFIG["yaml_path"]
 PYTHON_PATH = RUNTIME_CONFIG["python_path"]
 SCRIPTS_DIR = RUNTIME_CONFIG["scripts_dir"]
-
-# Preview server
-PREVIEW_HOST = RUNTIME_CONFIG["preview"]["host"]
-PREVIEW_PREFERRED_PORT = _as_int(
-    "preview.preferred_port",
-    RUNTIME_CONFIG["preview"].get("preferred_port"),
-    DEFAULT_CONFIG["preview"]["preferred_port"],
-)
-PREVIEW_MAX_PORT_SCAN = _as_int(
-    "preview.max_port_scan",
-    RUNTIME_CONFIG["preview"].get("max_port_scan"),
-    DEFAULT_CONFIG["preview"]["max_port_scan"],
-)
-PREVIEW_SERVER_STATE_FILE = RUNTIME_CONFIG["preview"]["state_file"]
 
 # Safety / operations
 BACKUP_DIR_NAME = RUNTIME_CONFIG["safety"]["backup_dir_name"]

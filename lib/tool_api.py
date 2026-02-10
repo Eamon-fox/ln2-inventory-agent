@@ -137,7 +137,6 @@ def _append_failed_audit(
             before_data=snapshot,
             after_data=snapshot,
             backup_path=None,
-            preview_url=None,
             warnings=[],
             audit_meta=meta,
         )
@@ -199,8 +198,8 @@ def tool_add_entry(
     dry_run=False,
     actor_context=None,
     source="tool_api",
-    auto_html=True,
-    auto_server=True,
+    auto_html=None,
+    auto_server=None,
     auto_backup=True,
 ):
     """Add a new frozen entry using the shared tool flow."""
@@ -438,8 +437,8 @@ def tool_record_thaw(
     dry_run=False,
     actor_context=None,
     source="tool_api",
-    auto_html=True,
-    auto_server=True,
+    auto_html=None,
+    auto_server=None,
     auto_backup=True,
 ):
     """Record one thaw/takeout/discard operation via shared tool flow."""
@@ -701,8 +700,8 @@ def tool_batch_thaw(
     dry_run=False,
     actor_context=None,
     source="tool_api",
-    auto_html=True,
-    auto_server=True,
+    auto_html=None,
+    auto_server=None,
     auto_backup=True,
 ):
     """Record batch thaw/takeout/discard operations via shared tool flow."""
@@ -980,8 +979,6 @@ def tool_list_backups(yaml_path):
 def tool_rollback(
     yaml_path,
     backup_path=None,
-    no_html=False,
-    no_server=False,
     actor_context=None,
     source="tool_api",
 ):
@@ -990,8 +987,6 @@ def tool_rollback(
     tool_name = "tool_rollback"
     tool_input = {
         "backup_path": backup_path,
-        "no_html": bool(no_html),
-        "no_server": bool(no_server),
     }
     current_data = None
     try:
@@ -1059,8 +1054,6 @@ def tool_rollback(
         result = rollback_yaml(
             path=yaml_path,
             backup_path=target,
-            auto_html=not no_html,
-            auto_server=not no_server,
             audit_meta=_build_audit_meta(
                 action=audit_action,
                 source=source,

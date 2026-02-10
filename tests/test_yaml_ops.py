@@ -1,10 +1,8 @@
 import json
-import socket
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from urllib.request import urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,11 +10,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from lib.yaml_ops import (
-    ensure_http_server,
     list_yaml_backups,
     load_yaml,
     rollback_yaml,
-    stop_http_server,
     write_yaml,
 )
 
@@ -39,44 +35,17 @@ def make_data(records):
     }
 
 
-class YamlOpsPreviewTests(unittest.TestCase):
-    def test_write_yaml_creates_html_snapshot(self):
+class YamlOpsWriteTests(unittest.TestCase):
+    def test_write_yaml_persists_inventory(self):
         with tempfile.TemporaryDirectory(prefix="ln2_yaml_ops_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             data = make_data([])
 
-            write_yaml(data, path=str(yaml_path), auto_html=True, auto_server=False)
+            write_yaml(data, path=str(yaml_path))
 
-            html_path = Path(temp_dir) / "ln2_inventory.html"
-            self.assertTrue(html_path.exists())
-            html_text = html_path.read_text(encoding="utf-8")
-            self.assertIn('id="search-input"', html_text)
-            self.assertIn('id="detail-panel"', html_text)
-
-    def test_ensure_http_server_starts_and_reuses_process(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_preview_") as temp_dir:
-            html_path = Path(temp_dir) / "ln2_inventory.html"
-            html_path.write_text("<html><body>ok</body></html>", encoding="utf-8")
-
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.bind(("127.0.0.1", 0))
-            port = sock.getsockname()[1]
-            sock.close()
-
-            try:
-                url, started = ensure_http_server(temp_dir, preferred_port=port)
-                self.assertTrue(started)
-                self.assertIn(f":{port}/ln2_inventory.html", url)
-
-                with urlopen(url, timeout=2) as resp:
-                    body = resp.read().decode("utf-8")
-                self.assertIn("ok", body)
-
-                url2, started2 = ensure_http_server(temp_dir, preferred_port=port)
-                self.assertFalse(started2)
-                self.assertEqual(url, url2)
-            finally:
-                stop_http_server(temp_dir)
+            self.assertTrue(yaml_path.exists())
+            loaded = load_yaml(str(yaml_path))
+            self.assertEqual([], loaded.get("inventory", []))
 
 
 class YamlOpsSafetyTests(unittest.TestCase):
@@ -88,8 +57,6 @@ class YamlOpsSafetyTests(unittest.TestCase):
             write_yaml(
                 data_v1,
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -100,8 +67,6 @@ class YamlOpsSafetyTests(unittest.TestCase):
             write_yaml(
                 data_v2,
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "add_entry", "source": "tests"},
             )
 
@@ -131,16 +96,14 @@ class YamlOpsSafetyTests(unittest.TestCase):
             data_v1 = make_data([make_record(1, box=1, positions=[1])])
             data_v2 = make_data([make_record(1, box=1, positions=[9])])
 
-            write_yaml(data_v1, path=str(yaml_path), auto_html=False, auto_server=False)
-            write_yaml(data_v2, path=str(yaml_path), auto_html=False, auto_server=False)
+            write_yaml(data_v1, path=str(yaml_path))
+            write_yaml(data_v2, path=str(yaml_path))
 
             current = load_yaml(str(yaml_path))
             self.assertEqual([9], current["inventory"][0]["positions"])
 
             result = rollback_yaml(
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"source": "tests"},
             )
 
@@ -155,7 +118,7 @@ class YamlOpsSafetyTests(unittest.TestCase):
             invalid = make_data([make_record(1, box=99, positions=[1])])
 
             with self.assertRaises(ValueError) as ctx:
-                write_yaml(invalid, path=str(yaml_path), auto_html=False, auto_server=False)
+                write_yaml(invalid, path=str(yaml_path))
 
             self.assertIn("完整性校验失败", str(ctx.exception))
             self.assertFalse(yaml_path.exists())
@@ -167,8 +130,6 @@ class YamlOpsSafetyTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, box=1, positions=[1])]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
             )
 
             invalid_backup = Path(temp_dir) / "inventory.invalid.bak"
@@ -181,8 +142,6 @@ class YamlOpsSafetyTests(unittest.TestCase):
                 rollback_yaml(
                     path=str(yaml_path),
                     backup_path=str(invalid_backup),
-                    auto_html=False,
-                    auto_server=False,
                 )
 
             self.assertIn("回滚被阻止", str(ctx.exception))

@@ -16,7 +16,7 @@ Current status:
 - AI run executes in background; only send is blocked while waiting, input/editing stays responsive
 - User message is appended to chat immediately on send, then agent response arrives asynchronously
 - AI panel streams step-by-step progress in chat while the agent is running
-- AI Copilot supports mock mode (default) and LiteLLM model mode
+- AI Copilot supports mock mode (default) and DeepSeek model mode
 - Overview supports hover/click slot preview with a compact detail hint line
 - Hover preview is handled with enter/move events for immediate slot detail updates
 - Overview includes summary cards (records, capacity, occupied, empty, occupancy rate, 7-day ops)

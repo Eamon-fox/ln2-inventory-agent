@@ -334,8 +334,6 @@ class ToolApiTests(unittest.TestCase):
                 box=1,
                 positions=[11],
                 frozen_at="2026-02-10",
-                auto_html=False,
-                auto_server=False,
             )
 
             self.assertFalse(result["ok"])
@@ -355,8 +353,6 @@ class ToolApiTests(unittest.TestCase):
             result = tool_rollback(
                 yaml_path=str(yaml_path),
                 backup_path=str(bad_backup),
-                no_html=True,
-                no_server=True,
             )
 
             self.assertFalse(result["ok"])

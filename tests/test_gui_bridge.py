@@ -104,9 +104,9 @@ class GuiBridgeAgentTests(unittest.TestCase):
             self.assertTrue(response["ok"])
             self.assertEqual(2, response["result"].get("conversation_history_used"))
 
-    def test_run_agent_query_requires_model_when_not_mock(self):
+    def test_run_agent_query_requires_api_key_when_not_mock(self):
         bridge = GuiToolBridge()
-        with patch.dict(os.environ, {"LITELLM_MODEL": ""}, clear=False):
+        with patch("app_gui.tool_bridge.DeepSeekLLMClient", side_effect=RuntimeError("DEEPSEEK_API_KEY is required")):
             response = bridge.run_agent_query(
                 yaml_path="/tmp/does_not_matter.yaml",
                 query="show stats",
@@ -115,7 +115,7 @@ class GuiBridgeAgentTests(unittest.TestCase):
             )
 
         self.assertFalse(response["ok"])
-        self.assertEqual("model_required", response["error_code"])
+        self.assertEqual("api_key_required", response["error_code"])
 
     def test_run_agent_query_rejects_bad_max_steps(self):
         bridge = GuiToolBridge()
@@ -128,6 +128,18 @@ class GuiBridgeAgentTests(unittest.TestCase):
 
         self.assertFalse(response["ok"])
         self.assertEqual("invalid_max_steps", response["error_code"])
+
+    def test_run_agent_query_rejects_invalid_agent_result(self):
+        bridge = GuiToolBridge()
+        with patch("app_gui.tool_bridge.ReactAgent.run", return_value="bad-payload"):
+            response = bridge.run_agent_query(
+                yaml_path="/tmp/does_not_matter.yaml",
+                query="show stats",
+                mock=True,
+            )
+
+        self.assertFalse(response["ok"])
+        self.assertEqual("invalid_agent_result", response["error_code"])
 
     def test_run_agent_query_emits_progress_events(self):
         with tempfile.TemporaryDirectory(prefix="ln2_gui_agent_events_") as temp_dir:
@@ -160,10 +172,11 @@ class GuiBridgeAgentTests(unittest.TestCase):
             )
 
             self.assertTrue(response["ok"])
-            event_types = [e.get("type") for e in events]
-            self.assertIn("run_start", event_types)
-            self.assertIn("step_start", event_types)
-            self.assertIn("finish", event_types)
+            event_names = [e.get("event") for e in events]
+            self.assertIn("run_start", event_names)
+            self.assertIn("step_start", event_names)
+            self.assertIn("final", event_names)
+            self.assertIn("stream_end", event_names)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 
 import os
 
-from agent.llm_client import LiteLLMClient, MockLLMClient
+from agent.llm_client import DeepSeekLLMClient, MockLLMClient
 from agent.react_agent import ReactAgent
 from agent.tool_runner import AgentToolRunner
 from lib.tool_api import (
@@ -91,12 +91,10 @@ class GuiToolBridge:
         entries = parse_batch_entries(entries_text)
         return self.batch_thaw(yaml_path=yaml_path, entries=entries, **payload)
 
-    def rollback(self, yaml_path, backup_path=None, no_html=True, no_server=True):
+    def rollback(self, yaml_path, backup_path=None):
         return tool_rollback(
             yaml_path=yaml_path,
             backup_path=backup_path,
-            no_html=no_html,
-            no_server=no_server,
             actor_context=self._ctx(),
             source="app_gui",
         )
@@ -108,6 +106,7 @@ class GuiToolBridge:
                 "ok": False,
                 "error_code": "empty_query",
                 "message": "Please input a natural-language request.",
+                "result": None,
             }
 
         try:
@@ -117,24 +116,20 @@ class GuiToolBridge:
                 "ok": False,
                 "error_code": "invalid_max_steps",
                 "message": f"max_steps must be an integer: {max_steps}",
+                "result": None,
             }
         if steps < 1 or steps > 20:
             return {
                 "ok": False,
                 "error_code": "invalid_max_steps",
                 "message": "max_steps must be between 1 and 20",
+                "result": None,
             }
 
-        chosen_model = (model or "").strip() or os.environ.get("LITELLM_MODEL")
-        if not mock and not chosen_model:
-            return {
-                "ok": False,
-                "error_code": "model_required",
-                "message": "Set a model or LITELLM_MODEL, or enable mock mode.",
-            }
+        chosen_model = (model or "").strip() or os.environ.get("DEEPSEEK_MODEL") or "deepseek-chat"
 
         try:
-            llm = MockLLMClient() if mock else LiteLLMClient(model=chosen_model)
+            llm = MockLLMClient() if mock else DeepSeekLLMClient(model=chosen_model)
             runner = AgentToolRunner(
                 yaml_path=yaml_path,
                 actor_id=f"{self._actor_id}-agent",
@@ -142,6 +137,21 @@ class GuiToolBridge:
             )
             agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=steps)
             result = agent.run(prompt, conversation_history=history, on_event=on_event)
+        except RuntimeError as exc:
+            message = str(exc)
+            if not mock and "DEEPSEEK_API_KEY is required" in message:
+                return {
+                    "ok": False,
+                    "error_code": "api_key_required",
+                    "message": "Set DEEPSEEK_API_KEY (or auth file) or enable mock mode.",
+                    "result": None,
+                }
+            return {
+                "ok": False,
+                "error_code": "agent_runtime_failed",
+                "message": message,
+                "result": None,
+            }
         except Exception as exc:
             return {
                 "ok": False,
@@ -150,9 +160,25 @@ class GuiToolBridge:
                 "result": None,
             }
 
+        if not isinstance(result, dict):
+            return {
+                "ok": False,
+                "error_code": "invalid_agent_result",
+                "message": "Agent returned non-dict result payload.",
+                "result": None,
+            }
+
+        if "final" not in result:
+            return {
+                "ok": False,
+                "error_code": "invalid_agent_result",
+                "message": "Agent result is missing `final`.",
+                "result": None,
+            }
+
         return {
             "ok": bool(result.get("ok")),
             "result": result,
-            "mode": "mock" if mock else "litellm",
+            "mode": "mock" if mock else "deepseek",
             "model": None if mock else chosen_model,
         }

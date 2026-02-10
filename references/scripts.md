@@ -54,7 +54,6 @@ export LN2_CONFIG_FILE=/absolute/path/to/ln2_config.json
 All key parameters can be configured in one file:
 
 - paths: `yaml_path`, `python_path`, `scripts_dir`
-- preview: `preview.host`, `preview.preferred_port`, `preview.max_port_scan`
 - safety: `backup_keep_count`, `total_empty_warning_threshold`, `box_empty_warning_threshold`, `yaml_size_warning_mb`
 - schema: `box_range`, `position_range`, `valid_actions`, `valid_cell_lines`
 

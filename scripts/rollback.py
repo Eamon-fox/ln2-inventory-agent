@@ -38,8 +38,6 @@ def main():
     parser.add_argument("--yaml", default=YAML_PATH, help="YAML文件路径")
     parser.add_argument("--list", action="store_true", help="列出可用备份并退出")
     parser.add_argument("--backup", help="指定要恢复的备份文件路径")
-    parser.add_argument("--no-html", action="store_true", help="回滚后不刷新 HTML 快照")
-    parser.add_argument("--no-server", action="store_true", help="回滚后不启动/复用 HTTP 预览服务")
     args = parser.parse_args()
 
     backups = tool_list_backups(args.yaml)
@@ -64,8 +62,6 @@ def main():
     response = tool_rollback(
         yaml_path=args.yaml,
         backup_path=target,
-        no_html=args.no_html,
-        no_server=args.no_server,
         actor_context=actor_context,
         source="scripts/rollback.py",
     )
@@ -77,8 +73,6 @@ def main():
     print("✅ 回滚成功")
     print(f"   恢复来源: {result['restored_from']}")
     print(f"   回滚前快照: {result['snapshot_before_rollback']}")
-    if result.get("preview_url"):
-        print(f"   预览地址: {result['preview_url']}")
     return 0
 
 
