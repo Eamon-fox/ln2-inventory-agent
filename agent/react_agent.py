@@ -310,7 +310,7 @@ class ReactAgent:
         messages = [
             {
                 "role": "system",
-                "content": SYSTEM_PROMPT,
+                "content": SYSTEM_PROMPT + f"\nCurrent time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
                 "timestamp": datetime.now().timestamp(),
             },
             self._build_runtime_context_message(tool_specs),
