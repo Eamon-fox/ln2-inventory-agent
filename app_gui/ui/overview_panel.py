@@ -39,7 +39,7 @@ class OverviewPanel(QWidget):
         self.overview_pos_map = {}
         self.overview_box_live_labels = {}
         self.overview_box_groups = {}
-        self.overview_selected = None
+        self.overview_selected_key = None
         self.overview_hover_key = None
         self.overview_records_by_id = {}
 
@@ -177,6 +177,7 @@ class OverviewPanel(QWidget):
         if not stats_response.get("ok"):
             self.ov_status.setText(f"Failed to load overview: {stats_response.get('message', 'unknown error')}")
             self.overview_records_by_id = {}
+            self.overview_selected_key = None
             self._reset_detail()
             return
 
@@ -264,6 +265,7 @@ class OverviewPanel(QWidget):
         self.overview_cells = {}
         self.overview_box_live_labels = {}
         self.overview_box_groups = {}
+        self.overview_selected_key = None
         self._reset_detail()
 
         total_slots = rows * cols
@@ -318,6 +320,7 @@ class OverviewPanel(QWidget):
         self.overview_shape = (rows, cols, tuple(box_numbers))
 
     def _paint_cell(self, button, box_num, position, record):
+        is_selected = self.overview_selected_key == (box_num, position)
         if record:
             short = str(record.get("short_name") or "")
             label = short[:6] if short else str(position)
@@ -341,13 +344,13 @@ class OverviewPanel(QWidget):
                 "QPushButton {"
                 f"background-color: {color};"
                 "color: white;"
-                "border: 1px solid #1f2937;"
+                f"border: {'2px' if is_selected else '1px'} solid {'#16a34a' if is_selected else '#1f2937'};"
                 "border-radius: 4px;"
                 "font-size: 10px;"
                 "font-weight: 700;"
                 "padding: 1px;"
                 "}"
-                "QPushButton:hover { border: 2px solid #f8fafc; }"
+                f"QPushButton:hover {{ border: 2px solid {'#16a34a' if is_selected else '#f8fafc'}; }}"
             )
             searchable = " ".join(
                 [
@@ -372,16 +375,45 @@ class OverviewPanel(QWidget):
                 "QPushButton {"
                 "background-color: #0f3460;"
                 "color: #94a3b8;"
-                "border: 1px solid #1e293b;"
+                f"border: {'2px' if is_selected else '1px'} solid {'#16a34a' if is_selected else '#1e293b'};"
                 "border-radius: 4px;"
                 "font-size: 9px;"
                 "padding: 1px;"
                 "}"
-                "QPushButton:hover { border: 2px solid #38bdf8; background-color: #1e293b; }"
+                f"QPushButton:hover {{ border: 2px solid {'#16a34a' if is_selected else '#38bdf8'}; background-color: #1e293b; }}"
             )
             button.setProperty("search_text", f"empty box {box_num} position {position}".lower())
             button.setProperty("cell_line", "")
             button.setProperty("is_empty", True)
+
+    def _set_selected_cell(self, box_num, position):
+        new_key = (box_num, position)
+        old_key = self.overview_selected_key
+        if old_key == new_key:
+            return
+
+        self.overview_selected_key = new_key
+        for key in (old_key, new_key):
+            if key is None:
+                continue
+            button = self.overview_cells.get(key)
+            if button is None:
+                continue
+            rec = self.overview_pos_map.get(key)
+            self._paint_cell(button, key[0], key[1], rec)
+
+    def _clear_selected_cell(self):
+        key = self.overview_selected_key
+        self.overview_selected_key = None
+        if key is None:
+            return
+
+        button = self.overview_cells.get(key)
+        if button is None:
+            return
+
+        rec = self.overview_pos_map.get(key)
+        self._paint_cell(button, key[0], key[1], rec)
 
     def _refresh_filter_options(self, records, box_numbers):
         prev_box = self.ov_filter_box.currentData()
@@ -450,10 +482,10 @@ class OverviewPanel(QWidget):
             if live:
                 live.setText(f"Filtered: Occupied {stat['occ']} | Empty {stat['emp']}")
 
-        if self.overview_selected:
-            box_num, position, _record = self.overview_selected
-            selected_button = self.overview_cells.get((box_num, position))
+        if self.overview_selected_key:
+            selected_button = self.overview_cells.get(self.overview_selected_key)
             if selected_button and not selected_button.isVisible():
+                self._clear_selected_cell()
                 self._reset_detail()
 
         self.ov_status.setText(
@@ -479,6 +511,8 @@ class OverviewPanel(QWidget):
     def on_cell_double_clicked(self, box_num, position):
         record = self.overview_pos_map.get((box_num, position))
         if record:
+            self._set_selected_cell(box_num, position)
+            self.on_cell_hovered(box_num, position, force=True)
             # Prefill thaw
             rec_id = int(record.get("id"))
             self.request_prefill.emit({
@@ -508,12 +542,10 @@ class OverviewPanel(QWidget):
         self._show_detail(box_num, position, record)
 
     def _reset_detail(self):
-        self.overview_selected = None
         self.overview_hover_key = None
         self.ov_hover_hint.setText("Hover a slot to preview details.")
 
     def _show_detail(self, box_num, position, record):
-        self.overview_selected = (box_num, position, record)
         if not record:
             self.ov_hover_hint.setText(f"Box {box_num} Pos {position} | Empty slot")
             return
@@ -555,6 +587,7 @@ class OverviewPanel(QWidget):
             self.status_message.emit(f"Copied ID {rid}", 2000)
             return
         if act_prefill is not None and selected == act_prefill:
+            self._set_selected_cell(box_num, position)
             rec_id = int(record.get("id"))
             self.request_prefill.emit({
                 "box": int(box_num),

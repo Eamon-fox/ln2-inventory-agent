@@ -42,7 +42,20 @@ class GuiToolBridge:
         )
 
     def query_inventory(self, yaml_path, **filters):
-        return tool_query_inventory(yaml_path=yaml_path, **filters)
+        aliases = {
+            "parent_cell_line": "cell",
+            "short_name": "short",
+            "plasmid_name": "plasmid",
+        }
+        allowed = {"cell", "short", "plasmid", "plasmid_id", "box", "position"}
+
+        normalized = {}
+        for key, value in filters.items():
+            mapped_key = aliases.get(key, key)
+            if mapped_key in allowed:
+                normalized[mapped_key] = value
+
+        return tool_query_inventory(yaml_path=yaml_path, **normalized)
 
     def list_empty_positions(self, yaml_path, box=None):
         return tool_list_empty_positions(yaml_path=yaml_path, box=box)

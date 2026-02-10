@@ -34,9 +34,10 @@ Current status:
 - Add Entry panel wired to `tool_add_entry`
 - Single and batch thaw panels wired to `tool_record_thaw` / `tool_batch_thaw`
 - Thaw panel shows rich prefill context (cell/short/box/all positions/target check/frozen/plasmid/history/note)
+- Batch thaw operation is placed in an independent collapsible section in the Takeout panel
 - Inputs are typed widgets (spin boxes/date pickers/action dropdowns) to reduce format errors
-- Operation buttons now reflect dry-run state (`Preview` vs `Execute`)
-- Non-dry-run `Execute` actions (Add/Single/Batch) show a confirmation dialog before write
+- Manual operations are execute-only (no dry-run toggle in GUI)
+- Execute actions (Add/Single/Batch) are highlighted in red and require confirmation before write
 - Rollback panel supports backup listing and rollback by selected path/latest
 - Rollback now requires explicit confirmation with backup path/time/size
 - GUI calls go through `GuiToolBridge` with `channel="gui"`

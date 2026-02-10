@@ -5,13 +5,14 @@ from datetime import datetime
 from PySide6.QtCore import Qt, Signal, QDate
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-    QPushButton, QLineEdit, QComboBox, QCheckBox, 
+    QPushButton, QLineEdit, QComboBox,
     QStackedWidget, QTableWidget, QTableWidgetItem, 
     QHeaderView, QFileDialog, QMessageBox, QGroupBox, 
     QFormLayout, QDateEdit, QSpinBox, QTextEdit
 )
-from app_gui.ui.utils import positions_to_text, compact_json
+from app_gui.ui.utils import positions_to_text
 from lib.tool_api import parse_batch_entries
+from lib.validators import parse_positions
 
 class OperationsPanel(QWidget):
     operation_completed = Signal(bool) # success?
@@ -42,7 +43,7 @@ class OperationsPanel(QWidget):
 
         self.op_mode_combo = QComboBox()
         modes = [
-            ("thaw", "Takeout / Batch"),
+            ("thaw", "Takeout"),
             ("add", "Add Entry"),
             ("query", "Query"),
             ("rollback", "Rollback"),
@@ -102,6 +103,13 @@ class OperationsPanel(QWidget):
         visible = bool(checked)
         self.output.setVisible(visible)
         self.output_toggle_btn.setText("Hide Raw JSON" if visible else "Show Raw JSON")
+
+    def on_toggle_batch_section(self, checked):
+        visible = bool(checked)
+        if hasattr(self, "t_batch_group"):
+            self.t_batch_group.setVisible(visible)
+        if hasattr(self, "t_batch_toggle_btn"):
+            self.t_batch_toggle_btn.setText("Hide Batch Operation" if visible else "Show Batch Operation")
 
     def update_records_cache(self, records_dict):
         normalized = {}
@@ -170,9 +178,6 @@ class OperationsPanel(QWidget):
         self.a_plasmid = QLineEdit()
         self.a_plasmid_id = QLineEdit()
         self.a_note = QLineEdit()
-        self.a_dry_run = QCheckBox("Dry Run")
-        self.a_dry_run.setChecked(True)
-        self.a_dry_run.stateChanged.connect(self._update_action_button_labels)
 
         form.addRow("Parent Cell Line", self.a_parent)
         form.addRow("Short Name", self.a_short)
@@ -182,10 +187,10 @@ class OperationsPanel(QWidget):
         form.addRow("Plasmid Name", self.a_plasmid)
         form.addRow("Plasmid ID", self.a_plasmid_id)
         form.addRow("Note", self.a_note)
-        form.addRow("", self.a_dry_run)
         layout.addLayout(form)
 
-        self.a_apply_btn = QPushButton("Preview Add Entry")
+        self.a_apply_btn = QPushButton("Execute Add Entry")
+        self._style_execute_button(self.a_apply_btn)
         self.a_apply_btn.clicked.connect(self.on_add_entry)
         layout.addWidget(self.a_apply_btn)
         layout.addStretch(1)
@@ -211,18 +216,15 @@ class OperationsPanel(QWidget):
         self.t_action = QComboBox()
         self.t_action.addItems(["Takeout", "Thaw", "Discard"])
         self.t_note = QLineEdit()
-        self.t_dry_run = QCheckBox("Dry Run")
-        self.t_dry_run.setChecked(True)
-        self.t_dry_run.stateChanged.connect(self._update_action_button_labels)
 
         single_form.addRow("Record ID", self.t_id)
         single_form.addRow("Position", self.t_position)
         single_form.addRow("Date", self.t_date)
         single_form.addRow("Action", self.t_action)
         single_form.addRow("Note", self.t_note)
-        single_form.addRow("", self.t_dry_run)
 
-        self.t_apply_btn = QPushButton("Preview Single Operation")
+        self.t_apply_btn = QPushButton("Execute Single Operation")
+        self._style_execute_button(self.t_apply_btn)
         self.t_apply_btn.clicked.connect(self.on_record_thaw)
         single_form.addRow("", self.t_apply_btn)
         layout.addWidget(single)
@@ -259,8 +261,13 @@ class OperationsPanel(QWidget):
         context_form.addRow("Note", self.t_ctx_note)
         layout.addWidget(context_box)
 
-        batch = QGroupBox("Batch Thaw / Takeout")
-        batch_form = QFormLayout(batch)
+        self.t_batch_toggle_btn = QPushButton("Show Batch Operation")
+        self.t_batch_toggle_btn.setCheckable(True)
+        self.t_batch_toggle_btn.toggled.connect(self.on_toggle_batch_section)
+        layout.addWidget(self.t_batch_toggle_btn)
+
+        self.t_batch_group = QGroupBox("Batch Thaw / Takeout")
+        batch_form = QFormLayout(self.t_batch_group)
         self.b_entries = QLineEdit()
         self.b_entries.setPlaceholderText("e.g. 182:23,183:41")
         self.b_date = QDateEdit()
@@ -270,22 +277,19 @@ class OperationsPanel(QWidget):
         self.b_action = QComboBox()
         self.b_action.addItems(["Takeout", "Thaw", "Discard"])
         self.b_note = QLineEdit()
-        self.b_dry_run = QCheckBox("Dry Run")
-        self.b_dry_run.setChecked(True)
-        self.b_dry_run.stateChanged.connect(self._update_action_button_labels)
 
         batch_form.addRow("Entries", self.b_entries)
         batch_form.addRow("Date", self.b_date)
         batch_form.addRow("Action", self.b_action)
         batch_form.addRow("Note", self.b_note)
-        batch_form.addRow("", self.b_dry_run)
 
-        self.b_apply_btn = QPushButton("Preview Batch Operation")
+        self.b_apply_btn = QPushButton("Execute Batch Operation")
+        self._style_execute_button(self.b_apply_btn)
         self.b_apply_btn.clicked.connect(self.on_batch_thaw)
         batch_form.addRow("", self.b_apply_btn)
-        layout.addWidget(batch)
+        layout.addWidget(self.t_batch_group)
+        self.on_toggle_batch_section(False)
         layout.addStretch(1)
-        self._update_action_button_labels()
         return tab
 
     # --- QUERY TAB ---
@@ -383,39 +387,16 @@ class OperationsPanel(QWidget):
 
     # --- LOGIC ---
 
-    def _update_action_button_labels(self):
-        # Add Entry
-        if hasattr(self, "a_apply_btn"):
-            is_dry = self.a_dry_run.isChecked()
-            self.a_apply_btn.setText("Preview Add Entry" if is_dry else "Execute Add Entry")
-            self._style_execute_button(self.a_apply_btn, is_dry)
-            
-        # Thaw
-        if hasattr(self, "t_apply_btn"):
-            is_dry = self.t_dry_run.isChecked()
-            self.t_apply_btn.setText("Preview Single Operation" if is_dry else "Execute Single Operation")
-            self._style_execute_button(self.t_apply_btn, is_dry)
-        
-        # Batch
-        if hasattr(self, "b_apply_btn"):
-            is_dry = self.b_dry_run.isChecked()
-            self.b_apply_btn.setText("Preview Batch Operation" if is_dry else "Execute Batch Operation")
-            self._style_execute_button(self.b_apply_btn, is_dry)
-
-    def _style_execute_button(self, btn, is_dry):
-        if is_dry:
-            btn.setStyleSheet("") # Default
-        else:
-            # Danger / Warning style
-            btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #b91c1c; 
-                    color: white; 
-                    font-weight: bold;
-                    border: 1px solid #7f1d1d;
-                }
-                QPushButton:hover { background-color: #dc2626; }
-            """)
+    def _style_execute_button(self, btn):
+        btn.setStyleSheet("""
+            QPushButton {
+                background-color: #b91c1c;
+                color: white;
+                font-weight: bold;
+                border: 1px solid #7f1d1d;
+            }
+            QPushButton:hover { background-color: #dc2626; }
+        """)
 
     def _ensure_today_defaults(self):
         today = QDate.currentDate()
@@ -443,7 +424,10 @@ class OperationsPanel(QWidget):
 
         source_text = "-"
         if self.t_prefill_source:
-            source_text = f"Box {self.t_prefill_source.get('box')} Pos {self.t_prefill_source.get('position')}"
+            source_box = self.t_prefill_source.get("box")
+            source_position = self.t_prefill_source.get("position")
+            if source_box is not None and source_position is not None:
+                source_text = f"Box {source_box}:{source_position}"
         self.t_ctx_source.setText(source_text)
 
         self.t_ctx_target.setText(str(target_position) if target_position else "-")
@@ -457,7 +441,10 @@ class OperationsPanel(QWidget):
                 lbl.setText("-")
             return
 
-        self.t_ctx_status.setText("Record context loaded.")
+        if self.t_prefill_source:
+            self.t_ctx_status.setText("Record loaded - form auto-filled.")
+        else:
+            self.t_ctx_status.setText("Record context loaded.")
         self.t_ctx_status.setStyleSheet("color: #15803d;")
         
         self.t_ctx_cell.setText(str(record.get("parent_cell_line") or "-"))
@@ -508,45 +495,47 @@ class OperationsPanel(QWidget):
     def on_add_entry(self):
         self._ensure_today_defaults()
         yaml_path = self.yaml_path_getter()
-        dry_run = self.a_dry_run.isChecked()
-        
-        if not dry_run:
-            details = "\n".join([
-                f"Cell: {self.a_parent.text()}",
-                f"Short: {self.a_short.text()}",
-                f"Box: {self.a_box.value()}",
-                f"Positions: {self.a_positions.text()}",
-            ])
-            if not self._confirm_execute("Confirm Add", details):
-                return
+        positions_text = self.a_positions.text().strip()
+
+        try:
+            positions = parse_positions(positions_text)
+        except ValueError as exc:
+            self.status_message.emit(str(exc), 5000, "error")
+            return
+
+        details = "\n".join([
+            f"Cell: {self.a_parent.text()}",
+            f"Short: {self.a_short.text()}",
+            f"Box: {self.a_box.value()}",
+            f"Positions: {positions_text}",
+        ])
+        if not self._confirm_execute("Confirm Add", details):
+            return
 
         response = self.bridge.add_entry(
             yaml_path=yaml_path,
             parent_cell_line=self.a_parent.text(),
             short_name=self.a_short.text(),
             box=self.a_box.value(),
-            positions=self.a_positions.text(),
+            positions=positions,
             frozen_at=self.a_date.date().toString("yyyy-MM-dd"),
             plasmid_name=self.a_plasmid.text() or None,
             plasmid_id=self.a_plasmid_id.text() or None,
             note=self.a_note.text() or None,
-            dry_run=dry_run
         )
         self._handle_response(response, "Add Entry")
 
     def on_record_thaw(self):
         self._ensure_today_defaults()
         yaml_path = self.yaml_path_getter()
-        dry_run = self.t_dry_run.isChecked()
-        
-        if not dry_run:
-            details = (
-                f"ID: {self.t_id.value()}\n"
-                f"Position: {self.t_position.value()}\n"
-                f"Action: {self.t_action.currentText()}"
-            )
-            if not self._confirm_execute("Confirm Operation", details):
-                return
+
+        details = (
+            f"ID: {self.t_id.value()}\n"
+            f"Position: {self.t_position.value()}\n"
+            f"Action: {self.t_action.currentText()}"
+        )
+        if not self._confirm_execute("Confirm Operation", details):
+            return
 
         response = self.bridge.record_thaw(
             yaml_path=yaml_path,
@@ -555,14 +544,12 @@ class OperationsPanel(QWidget):
             date_str=self.t_date.date().toString("yyyy-MM-dd"),
             action=self.t_action.currentText(),
             note=self.t_note.text() or None,
-            dry_run=dry_run
         )
         self._handle_response(response, "Single Operation")
 
     def on_batch_thaw(self):
         self._ensure_today_defaults()
         yaml_path = self.yaml_path_getter()
-        dry_run = self.b_dry_run.isChecked()
         entries_text = self.b_entries.text().strip()
         
         try:
@@ -570,10 +557,9 @@ class OperationsPanel(QWidget):
         except ValueError as exc:
             self.status_message.emit(str(exc), 3000, "error")
             return
-            
-        if not dry_run:
-            if not self._confirm_execute("Confirm Batch", f"Entries: {entries_text}"):
-                return
+
+        if not self._confirm_execute("Confirm Batch", f"Entries: {entries_text}"):
+            return
 
         response = self.bridge.batch_thaw(
             yaml_path=yaml_path,
@@ -581,7 +567,6 @@ class OperationsPanel(QWidget):
             date_str=self.b_date.date().toString("yyyy-MM-dd"),
             action=self.b_action.currentText(),
             note=self.b_note.text() or None,
-            dry_run=dry_run
         )
         self._handle_response(response, "Batch Operation")
 
@@ -594,15 +579,12 @@ class OperationsPanel(QWidget):
         
         if ok:
             self.status_message.emit(f"{context}: Success", 3000, "success")
-            dry = payload.get("result", {}).get("dry_run", False)
-            if not dry:
-                self.operation_completed.emit(True)
+            self.operation_completed.emit(True)
         else:
             self.status_message.emit(f"{context} Failed: {msg}", 5000, "error")
 
     # --- Query & Rollback Stubs (simplified) ---
     def on_query_records(self):
-        # Implementation similar to original
         box = self.q_box.value()
         box_val = box if box > 0 else None
         pos = self.q_position.value()
@@ -610,28 +592,65 @@ class OperationsPanel(QWidget):
         
         response = self.bridge.query_inventory(
             self.yaml_path_getter(),
-            parent_cell_line=self.q_cell.text() or None,
-            short_name=self.q_short.text() or None,
-            plasmid_name=self.q_plasmid.text() or None,
+            cell=self.q_cell.text() or None,
+            short=self.q_short.text() or None,
+            plasmid=self.q_plasmid.text() or None,
             plasmid_id=self.q_plasmid_id.text() or None,
             box=box_val,
             position=pos_val
         )
-        self._render_query_results(response.get("result", []))
+
+        payload = response if isinstance(response, dict) else {}
+        result = payload.get("result", {})
+        records = []
+        if isinstance(result, dict):
+            records = result.get("records", [])
+        elif isinstance(result, list):
+            records = result
+        if not isinstance(records, list):
+            records = []
+
+        self._render_query_results(records)
         self.query_last_mode = "records"
-        self.output.setPlainText(json.dumps(response, ensure_ascii=False, indent=2))
+        self.output.setPlainText(json.dumps(payload, ensure_ascii=False, indent=2))
+
+        if not payload.get("ok", False):
+            self.status_message.emit(
+                f"Query failed: {payload.get('message', 'Unknown result')}",
+                5000,
+                "error",
+            )
 
     def on_list_empty(self):
         box = self.q_box.value()
         box_val = box if box > 0 else None
         response = self.bridge.list_empty_positions(self.yaml_path_getter(), box=box_val)
-        self._render_empty_results(response.get("result", []))
+
+        payload = response if isinstance(response, dict) else {}
+        result = payload.get("result", {})
+        boxes = []
+        if isinstance(result, dict):
+            boxes = result.get("boxes", [])
+        elif isinstance(result, list):
+            boxes = result
+        if not isinstance(boxes, list):
+            boxes = []
+
+        self._render_empty_results(boxes)
         self.query_last_mode = "empty"
-        self.output.setPlainText(json.dumps(response, ensure_ascii=False, indent=2))
+        self.output.setPlainText(json.dumps(payload, ensure_ascii=False, indent=2))
+
+        if not payload.get("ok", False):
+            self.status_message.emit(
+                f"List empty failed: {payload.get('message', 'Unknown result')}",
+                5000,
+                "error",
+            )
 
     def _render_query_results(self, records):
         self._setup_table(self.query_table, ["ID", "Cell", "Short", "Box", "Positions", "Frozen", "Plasmid", "Note"])
-        for row, rec in enumerate(records):
+        rows = [rec for rec in records if isinstance(rec, dict)]
+        for row, rec in enumerate(rows):
             self.query_table.insertRow(row)
             self.query_table.setItem(row, 0, QTableWidgetItem(str(rec.get("id"))))
             self.query_table.setItem(row, 1, QTableWidgetItem(str(rec.get("parent_cell_line"))))
@@ -641,7 +660,7 @@ class OperationsPanel(QWidget):
             self.query_table.setItem(row, 5, QTableWidgetItem(str(rec.get("frozen_at"))))
             self.query_table.setItem(row, 6, QTableWidgetItem(str(rec.get("plasmid_id", ""))))
             self.query_table.setItem(row, 7, QTableWidgetItem(str(rec.get("note", ""))))
-        self.query_info.setText(f"Found {len(records)} records.")
+        self.query_info.setText(f"Found {len(rows)} records.")
 
     def _render_empty_results(self, boxes):
         self._setup_table(self.query_table, ["Box", "Empty/Total", "Positions"], sortable=False)
