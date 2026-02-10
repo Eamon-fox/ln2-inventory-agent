@@ -251,11 +251,12 @@ class AgentToolRunner:
             },
             "record_thaw": {
                 "required": ["record_id", "position", "date"],
-                "optional": ["action", "to_position", "note", "dry_run"],
+                "optional": ["action", "to_position", "to_box", "note", "dry_run"],
                 "aliases": {
                     "record_id": ["id"],
                     "position": ["pos", "slot"],
                     "to_position": ["to_pos", "target_position"],
+                    "to_box": ["target_box", "new_box", "dest_box"],
                     "note": ["notes", "memo"],
                 },
                 "params": {
@@ -267,16 +268,24 @@ class AgentToolRunner:
                         "type": "integer",
                         "description": "Target position for move action. Required when action is 移动/move.",
                     },
+                    "to_box": {
+                        "type": "integer",
+                        "description": "Target box for cross-box move. If provided, the record's box field is updated.",
+                    },
                 },
             },
             "batch_thaw": {
                 "required": ["entries"],
-                "optional": ["date", "action", "note", "dry_run"],
-                "notes": "entries can be list[[record_id, position], ...] or '182:23,183:41'; for move use '182:23->31,183:41->42'.",
+                "optional": ["date", "action", "to_box", "note", "dry_run"],
+                "notes": "entries can be list[[record_id, position], ...] or '182:23,183:41'; for move use '182:23->31,183:41->42'; for cross-box move use '4:5->4:1' (id:from->to:target_box) or set to_box for all entries.",
                 "params": {
                     "action": {
                         "type": "string",
                         "description": "Use one of: 取出/复苏/扔掉/移动 or takeout/thaw/discard/move.",
+                    },
+                    "to_box": {
+                        "type": "integer",
+                        "description": "Target box for ALL entries in this batch (cross-box move). Each entry moves to this box.",
                     },
                 },
             },
@@ -499,6 +508,9 @@ class AgentToolRunner:
                 to_pos = int(to_pos_raw)
                 action_lower = "move"
 
+            to_box_raw = self._first_value(payload, "to_box", "target_box", "new_box", "dest_box")
+            to_box = int(to_box_raw) if to_box_raw not in (None, "") else None
+
             box, label = self._lookup_record_info(rid)
 
             item = {
@@ -519,6 +531,9 @@ class AgentToolRunner:
             if to_pos is not None:
                 item["to_position"] = to_pos
                 item["payload"]["to_position"] = to_pos
+            if to_box is not None:
+                item["to_box"] = to_box
+                item["payload"]["to_box"] = to_box
             items.append(item)
 
         elif tool_name == "batch_thaw":
@@ -541,10 +556,18 @@ class AgentToolRunner:
             action_raw = payload.get("action", "Takeout")
             action_lower = self._ACTION_MAP.get(str(action_raw).strip().lower(), "takeout")
 
+            # batch-level to_box (applies to all entries unless overridden)
+            batch_to_box_raw = self._first_value(payload, "to_box", "target_box", "new_box", "dest_box")
+            batch_to_box = int(batch_to_box_raw) if batch_to_box_raw not in (None, "") else None
+
             for entry in entries:
                 to_pos = None
+                entry_to_box = batch_to_box
                 if isinstance(entry, (list, tuple)):
-                    if len(entry) >= 3:
+                    if len(entry) >= 4:
+                        rid, pos, to_pos = int(entry[0]), int(entry[1]), int(entry[2])
+                        entry_to_box = int(entry[3])
+                    elif len(entry) >= 3:
                         rid, pos, to_pos = int(entry[0]), int(entry[1]), int(entry[2])
                     elif len(entry) == 2:
                         rid, pos = int(entry[0]), int(entry[1])
@@ -556,6 +579,9 @@ class AgentToolRunner:
                     tp = entry.get("to_position")
                     if tp is not None:
                         to_pos = int(tp)
+                    tb = entry.get("to_box")
+                    if tb is not None:
+                        entry_to_box = int(tb)
                 else:
                     continue
 
@@ -580,6 +606,9 @@ class AgentToolRunner:
                 if to_pos is not None:
                     item["to_position"] = to_pos
                     item["payload"]["to_position"] = to_pos
+                if entry_to_box is not None:
+                    item["to_box"] = entry_to_box
+                    item["payload"]["to_box"] = entry_to_box
                 items.append(item)
 
         # Validate and sink
@@ -778,6 +807,7 @@ class AgentToolRunner:
                 normalized["position"] = self._first_value(payload, "position", "pos", "slot")
                 normalized["date"] = self._first_value(payload, "date", "thaw_date")
                 normalized["to_position"] = self._first_value(payload, "to_position", "to_pos", "target_position")
+                normalized["to_box"] = self._first_value(payload, "to_box", "target_box", "new_box", "dest_box")
                 normalized["note"] = self._first_value(payload, "note", "notes", "memo")
                 return tool_record_thaw(
                     yaml_path=self._yaml_path,
@@ -788,6 +818,11 @@ class AgentToolRunner:
                     to_position=(
                         self._optional_int(normalized, "to_position")
                         if normalized.get("to_position") not in (None, "")
+                        else None
+                    ),
+                    to_box=(
+                        self._optional_int(normalized, "to_box")
+                        if normalized.get("to_box") not in (None, "")
                         else None
                     ),
                     note=normalized.get("note"),
@@ -807,6 +842,25 @@ class AgentToolRunner:
                 entries = payload.get("entries")
                 if isinstance(entries, str):
                     entries = parse_batch_entries(entries)
+                to_box_raw = self._first_value(payload, "to_box", "target_box", "new_box", "dest_box")
+                to_box = (
+                    self._optional_int({"to_box": to_box_raw}, "to_box")
+                    if to_box_raw not in (None, "")
+                    else None
+                )
+                if to_box is not None and isinstance(entries, list):
+                    expanded = []
+                    for e in entries:
+                        if isinstance(e, (list, tuple)):
+                            if len(e) == 3:
+                                expanded.append((*e, to_box))
+                            elif len(e) == 2:
+                                expanded.append((*e,))
+                            else:
+                                expanded.append(e)
+                        else:
+                            expanded.append(e)
+                    entries = expanded
                 return tool_batch_thaw(
                     yaml_path=self._yaml_path,
                     entries=entries,

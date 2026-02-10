@@ -278,6 +278,8 @@ def check_duplicate_ids(records):
     id_map = {}
     errors = []
     for idx, rec in enumerate(records):
+        if not isinstance(rec, dict):
+            continue
         rec_id = rec.get("id")
         if rec_id is None:
             continue
@@ -293,6 +295,8 @@ def check_position_conflicts(records):
     """Check active double-occupancy conflicts by (box, position)."""
     usage = defaultdict(list)
     for idx, rec in enumerate(records):
+        if not isinstance(rec, dict):
+            continue
         box = rec.get("box")
         if box is None:
             continue

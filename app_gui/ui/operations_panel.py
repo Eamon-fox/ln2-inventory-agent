@@ -377,6 +377,9 @@ class OperationsPanel(QWidget):
         self.m_to_position = QSpinBox()
         self.m_to_position.setRange(1, 999)
         self.m_to_position.valueChanged.connect(self._refresh_move_record_context)
+        self.m_to_box = QSpinBox()
+        self.m_to_box.setRange(0, 99)
+        self.m_to_box.setSpecialValueText("Same box")
         self.m_date = QDateEdit()
         self.m_date.setCalendarPopup(True)
         self.m_date.setDisplayFormat("yyyy-MM-dd")
@@ -386,6 +389,7 @@ class OperationsPanel(QWidget):
         single_form.addRow("Record ID", self.m_id)
         single_form.addRow("From Position", self.m_from_position)
         single_form.addRow("To Position", self.m_to_position)
+        single_form.addRow("To Box", self.m_to_box)
         single_form.addRow("Date", self.m_date)
         single_form.addRow("Note", self.m_note)
 
@@ -445,8 +449,8 @@ class OperationsPanel(QWidget):
         batch_form.addRow("Entries (text)", self.bm_entries)
 
         self.bm_table = QTableWidget()
-        self.bm_table.setColumnCount(3)
-        self.bm_table.setHorizontalHeaderLabels(["Record ID", "From", "To"])
+        self.bm_table.setColumnCount(4)
+        self.bm_table.setHorizontalHeaderLabels(["Record ID", "From", "To", "To Box"])
         self.bm_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.bm_table.setRowCount(1)
         self.bm_table.setMaximumHeight(120)
@@ -816,7 +820,8 @@ class OperationsPanel(QWidget):
 
         from_pos = self.m_from_position.value()
         to_pos = self.m_to_position.value()
-        if from_pos == to_pos:
+        to_box = self.m_to_box.value() if self.m_to_box.value() > 0 else None
+        if from_pos == to_pos and to_box is None:
             self.status_message.emit("Move: From and To positions must be different.", 4000, "error")
             return
 
@@ -844,6 +849,9 @@ class OperationsPanel(QWidget):
                 "note": self.m_note.text().strip() or None,
             },
         }
+        if to_box is not None:
+            item["to_box"] = to_box
+            item["payload"]["to_box"] = to_box
         self.add_plan_items([item])
 
     def _move_batch_add_row(self):
@@ -857,12 +865,13 @@ class OperationsPanel(QWidget):
             self.bm_table.removeRow(self.bm_table.rowCount() - 1)
 
     def _collect_move_batch_from_table(self):
-        """Collect move entries from the move batch table. Returns list of 3-tuples or None."""
+        """Collect move entries from the move batch table. Returns list of 3- or 4-tuples or None."""
         entries = []
         for row in range(self.bm_table.rowCount()):
             id_item = self.bm_table.item(row, 0)
             from_item = self.bm_table.item(row, 1)
             to_item = self.bm_table.item(row, 2)
+            to_box_item = self.bm_table.item(row, 3)
 
             if not id_item or not from_item or not to_item:
                 continue
@@ -875,7 +884,12 @@ class OperationsPanel(QWidget):
                 continue
 
             try:
-                entries.append((int(id_text), int(from_text), int(to_text)))
+                entry = (int(id_text), int(from_text), int(to_text))
+                if to_box_item:
+                    tb_text = to_box_item.text().strip()
+                    if tb_text:
+                        entry = entry + (int(tb_text),)
+                entries.append(entry)
             except ValueError as exc:
                 raise ValueError(f"Row {row + 1}: invalid Record ID / From / To") from exc
 
@@ -903,12 +917,22 @@ class OperationsPanel(QWidget):
 
         items = []
         for entry in entries:
-            if isinstance(entry, (list, tuple)) and len(entry) == 3:
-                rid, from_pos, to_pos = int(entry[0]), int(entry[1]), int(entry[2])
+            to_box = None
+            if isinstance(entry, (list, tuple)):
+                if len(entry) >= 4:
+                    rid, from_pos, to_pos = int(entry[0]), int(entry[1]), int(entry[2])
+                    to_box = int(entry[3])
+                elif len(entry) == 3:
+                    rid, from_pos, to_pos = int(entry[0]), int(entry[1]), int(entry[2])
+                else:
+                    continue
             elif isinstance(entry, dict):
                 rid = int(entry.get("record_id", entry.get("id", 0)))
                 from_pos = int(entry.get("position", entry.get("from_position", 0)))
                 to_pos = int(entry.get("to_position", 0))
+                tb = entry.get("to_box")
+                if tb is not None:
+                    to_box = int(tb)
             else:
                 continue
 
@@ -919,7 +943,7 @@ class OperationsPanel(QWidget):
                 label = record.get("short_name") or record.get("parent_cell_line") or "-"
                 box = int(record.get("box", 0))
 
-            items.append({
+            item = {
                 "action": "move",
                 "box": box,
                 "position": from_pos,
@@ -935,7 +959,11 @@ class OperationsPanel(QWidget):
                     "action": "Move",
                     "note": note,
                 },
-            })
+            }
+            if to_box is not None:
+                item["to_box"] = to_box
+                item["payload"]["to_box"] = to_box
+            items.append(item)
 
         self.add_plan_items(items)
 
@@ -1196,7 +1224,7 @@ class OperationsPanel(QWidget):
 
         self._setup_table(
             self.plan_table,
-            ["Source", "Action", "Box", "Pos", "\u2192Pos", "Label", "Note"],
+            ["Source", "Action", "Box", "Pos", "\u2192Pos", "\u2192Box", "Label", "Note"],
             sortable=False,
         )
 
@@ -1209,9 +1237,11 @@ class OperationsPanel(QWidget):
             self.plan_table.setItem(row, 3, QTableWidgetItem(str(pos)))
             to_pos = item.get("to_position")
             self.plan_table.setItem(row, 4, QTableWidgetItem(str(to_pos) if to_pos else ""))
-            self.plan_table.setItem(row, 5, QTableWidgetItem(str(item.get("label", ""))))
+            to_box = item.get("to_box")
+            self.plan_table.setItem(row, 5, QTableWidgetItem(str(to_box) if to_box else ""))
+            self.plan_table.setItem(row, 6, QTableWidgetItem(str(item.get("label", ""))))
             note = (item.get("payload") or {}).get("note", "") or ""
-            self.plan_table.setItem(row, 6, QTableWidgetItem(str(note)))
+            self.plan_table.setItem(row, 7, QTableWidgetItem(str(note)))
 
     def _update_plan_badge(self):
         count = len(self.plan_items)
@@ -1233,8 +1263,12 @@ class OperationsPanel(QWidget):
             pos = item.get("position", "?")
             line = f"  {action}: {label} @ Box {item.get('box', '?')}:{pos}"
             to_pos = item.get("to_position")
+            to_box = item.get("to_box")
             if to_pos:
-                line += f" \u2192 {to_pos}"
+                if to_box:
+                    line += f" \u2192 Box {to_box}:{to_pos}"
+                else:
+                    line += f" \u2192 {to_pos}"
             summary_lines.append(line)
 
         msg = QMessageBox(self)
@@ -1275,7 +1309,10 @@ class OperationsPanel(QWidget):
             entries = []
             for item in moves:
                 p = item["payload"]
-                entries.append((p["record_id"], p["position"], p["to_position"]))
+                entry = (p["record_id"], p["position"], p["to_position"])
+                if "to_box" in p:
+                    entry = entry + (p["to_box"],)
+                entries.append(entry)
             first_move = moves[0]["payload"]
             response = self.bridge.batch_thaw(
                 yaml_path=yaml_path,

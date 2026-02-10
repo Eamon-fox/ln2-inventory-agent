@@ -15,6 +15,9 @@ Rules:
 4) If enough information is available, answer directly and clearly.
 5) Keep responses concise and operationally accurate.
 6) For greetings/chitchat/clarification-only turns, answer directly without calling tools.
+7) For move operations: to change a tube's box, use `to_box` parameter in record_thaw or batch_thaw.
+   When moving cross-box, move ALL positions of the record together.
+   batch_thaw entries format for cross-box: '4:5->4:1' (id:from->to:target_box).
 """
 
 

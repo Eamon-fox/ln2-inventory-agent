@@ -182,6 +182,36 @@ class ToolApiTests(unittest.TestCase):
             self.assertEqual([], current["inventory"][0]["positions"])
             self.assertEqual([], current["inventory"][1]["positions"])
 
+    def test_tool_batch_thaw_same_record_multiple_positions(self):
+        """Batch takeout of two positions from the same record should remove both."""
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_batch_same_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [make_record(1, box=5, positions=[33, 34, 35])]
+                ),
+                path=str(yaml_path),
+                auto_html=False,
+                auto_server=False,
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            result = tool_batch_thaw(
+                yaml_path=str(yaml_path),
+                entries=[(1, 33), (1, 34)],
+                date_str="2026-02-10",
+                action="取出",
+                source="tests/test_tool_api.py",
+                auto_html=False,
+                auto_server=False,
+            )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(2, result["result"]["count"])
+
+            current = load_yaml(str(yaml_path))
+            self.assertEqual([35], current["inventory"][0]["positions"])
+
     def test_tool_record_thaw_move_updates_positions_and_appends_event(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_move_single_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"

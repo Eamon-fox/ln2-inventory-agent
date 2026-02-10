@@ -2,11 +2,12 @@
 
 from collections import defaultdict
 from datetime import date
+from typing import Dict, List, Optional
 
 _VALID_ACTIONS = {"takeout", "thaw", "discard", "move", "add"}
 
 
-def validate_plan_item(item: dict) -> str | None:
+def validate_plan_item(item: dict) -> Optional[str]:
     """Return an error message if *item* is invalid, or ``None`` if OK."""
     action = str(item.get("action", "")).lower()
     if action not in _VALID_ACTIONS:
@@ -26,6 +27,10 @@ def validate_plan_item(item: dict) -> str | None:
             return "to_position must be a positive integer for move"
         if to == pos:
             return "to_position must differ from position"
+        to_box = item.get("to_box")
+        if to_box is not None:
+            if not isinstance(to_box, int) or to_box < 1:
+                return "to_box must be a positive integer"
 
     if action != "add":
         rid = item.get("record_id")
@@ -41,9 +46,9 @@ def validate_plan_item(item: dict) -> str | None:
     return None
 
 
-def render_operation_sheet(items: list[dict]) -> str:
+def render_operation_sheet(items):
     """Generate a printable HTML operation sheet grouped by box."""
-    by_box: dict[int, list[dict]] = defaultdict(list)
+    by_box = defaultdict(list)
     for item in items:
         by_box[item.get("box", 0)].append(item)
 

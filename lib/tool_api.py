@@ -13,8 +13,10 @@ from .validators import (
     format_validation_errors,
     normalize_date_arg,
     parse_date,
+    validate_box,
     validate_date,
     validate_inventory,
+    validate_position,
 )
 from .yaml_ops import (
     append_audit_event,
@@ -51,7 +53,8 @@ def parse_batch_entries(entries_str):
 
     Supports:
     - ``id1:pos1,id2:pos2,...`` (takeout/thaw/discard)
-    - ``id1:from1->to1,id2:from2->to2,...`` (move)
+    - ``id1:from1->to1,id2:from2->to2,...`` (move within same box)
+    - ``id1:from1->to1:box,id2:from2->to2:box,...`` (cross-box move)
     """
     result = []
     try:
@@ -59,21 +62,28 @@ def parse_batch_entries(entries_str):
             entry = entry.strip()
             if not entry:
                 continue
-            record_id_text, pos_text = entry.split(":", 1)
-            record_id = int(record_id_text)
-            pos_text = pos_text.strip()
+            parts = entry.split(":")
+            record_id = int(parts[0])
+            pos_text = parts[1].strip() if len(parts) >= 2 else ""
+            to_box = int(parts[2]) if len(parts) >= 3 else None
             if "->" in pos_text:
                 from_pos_text, to_pos_text = pos_text.split("->", 1)
-                result.append((record_id, int(from_pos_text), int(to_pos_text)))
+                tup = (record_id, int(from_pos_text), int(to_pos_text))
+                if to_box is not None:
+                    tup = tup + (to_box,)
+                result.append(tup)
             elif ">" in pos_text:
                 from_pos_text, to_pos_text = pos_text.split(">", 1)
-                result.append((record_id, int(from_pos_text), int(to_pos_text)))
+                tup = (record_id, int(from_pos_text), int(to_pos_text))
+                if to_box is not None:
+                    tup = tup + (to_box,)
+                result.append(tup)
             else:
                 result.append((record_id, int(pos_text)))
     except Exception as exc:
         raise ValueError(
             "输入格式错误: "
-            f"{exc}. 正确格式示例: '182:23,183:41' 或 '182:23->31,183:41->42'"
+            f"{exc}. 正确格式示例: '182:23,183:41' 或 '182:23->31,183:41->42' 或 '182:23->31:1' (cross-box)"
         )
     return result
 
@@ -92,11 +102,14 @@ def _coerce_batch_entry(entry):
         to_pos = entry.get("to_position")
         if to_pos is None:
             to_pos = entry.get("to_pos", entry.get("target_position", entry.get("target_pos")))
+        to_box = entry.get("to_box")
 
         if record_id is None or from_pos is None:
             raise ValueError("每个条目必须包含 record_id/id 和 position/from_position")
         if to_pos is None:
             return (int(record_id), int(from_pos))
+        if to_box is not None:
+            return (int(record_id), int(from_pos), int(to_pos), int(to_box))
         return (int(record_id), int(from_pos), int(to_pos))
 
     if isinstance(entry, (list, tuple)):
@@ -104,7 +117,9 @@ def _coerce_batch_entry(entry):
             return (int(entry[0]), int(entry[1]))
         if len(entry) == 3:
             return (int(entry[0]), int(entry[1]), int(entry[2]))
-        raise ValueError("每个条目必须是 (record_id, position) 或 (record_id, from_position, to_position)")
+        if len(entry) == 4:
+            return (int(entry[0]), int(entry[1]), int(entry[2]), int(entry[3]))
+        raise ValueError("每个条目必须是 (record_id, position) 或 (record_id, from_position, to_position[, to_box])")
 
     raise ValueError("每个条目必须是 tuple/list/dict")
 
@@ -122,7 +137,8 @@ def _replace_position_once(positions, old_pos, new_pos):
     return updated, replaced
 
 
-def _build_move_event(date_str, from_position, to_position, note=None, paired_record_id=None):
+def _build_move_event(date_str, from_position, to_position, note=None,
+                      paired_record_id=None, from_box=None, to_box=None):
     """Build normalized move event payload."""
     event = {
         "date": date_str,
@@ -131,6 +147,10 @@ def _build_move_event(date_str, from_position, to_position, note=None, paired_re
         "from_position": from_position,
         "to_position": to_position,
     }
+    if from_box is not None:
+        event["from_box"] = from_box
+    if to_box is not None:
+        event["to_box"] = to_box
     if paired_record_id is not None:
         event["paired_record_id"] = paired_record_id
     if note:
@@ -513,6 +533,7 @@ def tool_record_thaw(
     action="取出",
     note=None,
     to_position=None,
+    to_box=None,
     dry_run=False,
     actor_context=None,
     source="tool_api",
@@ -527,6 +548,7 @@ def tool_record_thaw(
         "record_id": record_id,
         "position": position,
         "to_position": to_position,
+        "to_box": to_box,
         "date": date_str,
         "action": action,
         "note": note,
@@ -696,55 +718,97 @@ def tool_record_thaw(
             )
 
         box = record.get("box")
-        for other_idx, other in enumerate(records):
-            if other.get("box") != box:
-                continue
-            other_positions = other.get("positions") or []
-            if move_to_position in other_positions:
-                if other_idx == idx:
-                    return _failure_result(
-                        yaml_path=yaml_path,
-                        action=audit_action,
-                        source=source,
-                        tool_name=tool_name,
-                        error_code="invalid_move_target",
-                        message=f"目标位置 {move_to_position} 已属于记录 #{record_id}，无需移动",
-                        actor_context=actor_context,
-                        tool_input=tool_input,
-                        before_data=data,
-                        details={"record_id": record_id, "to_position": move_to_position},
-                    )
+        cross_box = to_box is not None and to_box != box
 
-                swap_target_new_positions, swap_replaced = _replace_position_once(
-                    list(other_positions),
-                    move_to_position,
-                    position,
+        if cross_box:
+            if not validate_box(to_box):
+                return _failure_result(
+                    yaml_path=yaml_path,
+                    action=audit_action,
+                    source=source,
+                    tool_name=tool_name,
+                    error_code="invalid_box",
+                    message=f"目标盒子编号 {to_box} 超出范围 ({BOX_RANGE[0]}-{BOX_RANGE[1]})",
+                    actor_context=actor_context,
+                    tool_input=tool_input,
+                    before_data=data,
+                    details={"to_box": to_box},
                 )
-                if not swap_replaced:
+            # Cross-box: check if target (to_box, to_pos) is occupied
+            target_box = to_box
+            for other_idx, other in enumerate(records):
+                if other.get("box") != target_box:
+                    continue
+                other_positions = other.get("positions") or []
+                if move_to_position in other_positions:
                     return _failure_result(
                         yaml_path=yaml_path,
                         action=audit_action,
                         source=source,
                         tool_name=tool_name,
                         error_code="position_conflict",
-                        message="目标位置冲突，无法完成换位",
+                        message=f"目标盒子 {target_box} 位置 {move_to_position} 已被记录 #{other.get('id')} 占用",
                         actor_context=actor_context,
                         tool_input=tool_input,
                         before_data=data,
                         details={
                             "record_id": record_id,
-                            "position": position,
+                            "to_box": target_box,
                             "to_position": move_to_position,
-                            "swap_record_id": other.get("id"),
+                            "blocking_record_id": other.get("id"),
                         },
                     )
+        else:
+            # Same-box: existing swap logic
+            for other_idx, other in enumerate(records):
+                if other.get("box") != box:
+                    continue
+                other_positions = other.get("positions") or []
+                if move_to_position in other_positions:
+                    if other_idx == idx:
+                        return _failure_result(
+                            yaml_path=yaml_path,
+                            action=audit_action,
+                            source=source,
+                            tool_name=tool_name,
+                            error_code="invalid_move_target",
+                            message=f"目标位置 {move_to_position} 已属于记录 #{record_id}，无需移动",
+                            actor_context=actor_context,
+                            tool_input=tool_input,
+                            before_data=data,
+                            details={"record_id": record_id, "to_position": move_to_position},
+                        )
 
-                swap_target = {
-                    "idx": other_idx,
-                    "record": other,
-                    "old_positions": list(other_positions),
-                }
-                break
+                    swap_target_new_positions, swap_replaced = _replace_position_once(
+                        list(other_positions),
+                        move_to_position,
+                        position,
+                    )
+                    if not swap_replaced:
+                        return _failure_result(
+                            yaml_path=yaml_path,
+                            action=audit_action,
+                            source=source,
+                            tool_name=tool_name,
+                            error_code="position_conflict",
+                            message="目标位置冲突，无法完成换位",
+                            actor_context=actor_context,
+                            tool_input=tool_input,
+                            before_data=data,
+                            details={
+                                "record_id": record_id,
+                                "position": position,
+                                "to_position": move_to_position,
+                                "swap_record_id": other.get("id"),
+                            },
+                        )
+
+                    swap_target = {
+                        "idx": other_idx,
+                        "record": other,
+                        "old_positions": list(other_positions),
+                    }
+                    break
 
         new_event = _build_move_event(
             date_str=date_str,
@@ -752,6 +816,8 @@ def tool_record_thaw(
             to_position=move_to_position,
             note=note,
             paired_record_id=swap_target["record"].get("id") if swap_target else None,
+            from_box=box if cross_box else None,
+            to_box=to_box if cross_box else None,
         )
         if swap_target:
             swap_target_event = _build_move_event(
@@ -776,6 +842,7 @@ def tool_record_thaw(
         "action_cn": action_cn,
         "position": position,
         "to_position": move_to_position,
+        "to_box": to_box,
         "note": note,
         "date": date_str,
         "positions_before": positions,
@@ -817,6 +884,8 @@ def tool_record_thaw(
             )
 
         candidate_records[idx]["positions"] = new_positions
+        if to_box is not None and to_box != record.get("box"):
+            candidate_records[idx]["box"] = to_box
         thaw_events = candidate_records[idx].get("thaw_events")
         if thaw_events is None:
             candidate_records[idx]["thaw_events"] = []
@@ -1085,6 +1154,7 @@ def tool_batch_thaw(
 
     if action_en == "move":
         simulated_positions = {}
+        simulated_box = {}
         position_owner = {}
         events_by_idx = defaultdict(list)
         touched_indices = set()
@@ -1093,6 +1163,7 @@ def tool_batch_thaw(
             rec_positions = list(rec.get("positions") or [])
             simulated_positions[idx] = rec_positions
             box = rec.get("box")
+            simulated_box[idx] = box
             for pos in rec_positions:
                 key = (box, pos)
                 if key in position_owner and position_owner[key] != idx:
@@ -1101,11 +1172,13 @@ def tool_batch_thaw(
                     position_owner[key] = idx
 
         for row_idx, entry in enumerate(normalized_entries, 1):
-            if len(entry) != 3:
+            if len(entry) < 3:
                 errors.append(f"第{row_idx}条: move 操作必须使用 id:from->to 格式")
                 continue
 
-            record_id, from_pos, to_pos = entry
+            record_id, from_pos, to_pos = entry[0], entry[1], entry[2]
+            entry_to_box = entry[3] if len(entry) >= 4 else None
+
             if from_pos < POSITION_RANGE[0] or from_pos > POSITION_RANGE[1]:
                 errors.append(
                     f"第{row_idx}条 ID {record_id}: 起始位置 {from_pos} 必须在 {POSITION_RANGE[0]}-{POSITION_RANGE[1]} 之间"
@@ -1116,13 +1189,22 @@ def tool_batch_thaw(
                     f"第{row_idx}条 ID {record_id}: 目标位置 {to_pos} 必须在 {POSITION_RANGE[0]}-{POSITION_RANGE[1]} 之间"
                 )
                 continue
-            if from_pos == to_pos:
-                errors.append(f"第{row_idx}条 ID {record_id}: 起始位置与目标位置不能相同")
+            if entry_to_box is not None and not validate_box(entry_to_box):
+                errors.append(
+                    f"第{row_idx}条 ID {record_id}: 目标盒子 {entry_to_box} 超出范围 ({BOX_RANGE[0]}-{BOX_RANGE[1]})"
+                )
                 continue
 
             idx, record = find_record_by_id(records, record_id)
             if record is None:
                 errors.append(f"第{row_idx}条 ID {record_id}: 未找到该记录")
+                continue
+
+            current_box = simulated_box.get(idx, record.get("box"))
+            cross_box = entry_to_box is not None and entry_to_box != current_box
+
+            if not cross_box and from_pos == to_pos:
+                errors.append(f"第{row_idx}条 ID {record_id}: 起始位置与目标位置不能相同")
                 continue
 
             source_before = list(simulated_positions.get(idx, []))
@@ -1135,8 +1217,8 @@ def tool_batch_thaw(
                 errors.append(f"第{row_idx}条 ID {record_id}: 无法在现有位置中替换 {from_pos}")
                 continue
 
-            box = record.get("box")
-            dest_idx = position_owner.get((box, to_pos))
+            target_box = entry_to_box if cross_box else current_box
+            dest_idx = position_owner.get((target_box, to_pos))
             if dest_idx == idx:
                 errors.append(f"第{row_idx}条 ID {record_id}: 目标位置 {to_pos} 已属于该记录")
                 continue
@@ -1145,24 +1227,39 @@ def tool_batch_thaw(
             dest_after = None
             dest_record = None
             if dest_idx is not None:
-                dest_record = records[dest_idx]
-                dest_before = list(simulated_positions.get(dest_idx, []))
-                dest_after, dest_replaced = _replace_position_once(dest_before, to_pos, from_pos)
-                if not dest_replaced:
+                if cross_box:
+                    # Cross-box: no swap support, reject occupied target
+                    dest_record = records[dest_idx]
                     errors.append(
-                        f"第{row_idx}条 ID {record_id}: 目标位置 {to_pos} 冲突，记录 #{dest_record.get('id')} 无法换位"
+                        f"第{row_idx}条 ID {record_id}: 目标盒子 {target_box} 位置 {to_pos} 已被记录 #{dest_record.get('id')} 占用"
                     )
                     continue
+                else:
+                    # Same-box: swap
+                    dest_record = records[dest_idx]
+                    dest_before = list(simulated_positions.get(dest_idx, []))
+                    dest_after, dest_replaced = _replace_position_once(dest_before, to_pos, from_pos)
+                    if not dest_replaced:
+                        errors.append(
+                            f"第{row_idx}条 ID {record_id}: 目标位置 {to_pos} 冲突，记录 #{dest_record.get('id')} 无法换位"
+                        )
+                        continue
 
             simulated_positions[idx] = source_after
             touched_indices.add(idx)
+
+            # Update position_owner and simulated_box
+            old_key = (current_box, from_pos)
             if dest_idx is None:
-                position_owner.pop((box, from_pos), None)
+                position_owner.pop(old_key, None)
             else:
                 simulated_positions[dest_idx] = dest_after
                 touched_indices.add(dest_idx)
-                position_owner[(box, from_pos)] = dest_idx
-            position_owner[(box, to_pos)] = idx
+                position_owner[old_key] = dest_idx
+            position_owner[(target_box, to_pos)] = idx
+
+            if cross_box:
+                simulated_box[idx] = entry_to_box
 
             source_event = _build_move_event(
                 date_str=date_str,
@@ -1170,6 +1267,8 @@ def tool_batch_thaw(
                 to_position=to_pos,
                 note=note,
                 paired_record_id=dest_record.get("id") if dest_record else None,
+                from_box=current_box if cross_box else None,
+                to_box=entry_to_box if cross_box else None,
             )
             events_by_idx[idx].append(source_event)
 
@@ -1193,6 +1292,8 @@ def tool_batch_thaw(
                 "old_positions": source_before,
                 "new_positions": source_after,
             }
+            if entry_to_box is not None:
+                op["to_box"] = entry_to_box
             if dest_record is not None:
                 op["swap_with_record_id"] = dest_record.get("id")
                 op["swap_with_short_name"] = dest_record.get("short_name")
@@ -1269,6 +1370,8 @@ def tool_batch_thaw(
 
             for idx in touched_indices:
                 candidate_records[idx]["positions"] = list(simulated_positions[idx])
+                if simulated_box.get(idx) != records[idx].get("box"):
+                    candidate_records[idx]["box"] = simulated_box[idx]
 
             for idx in touched_indices:
                 events = events_by_idx.get(idx) or []
@@ -1372,6 +1475,10 @@ def tool_batch_thaw(
             "backup_path": _backup_path,
         }
 
+    # Track cumulative position changes per record index so that multiple
+    # entries targeting the same record correctly build on each other.
+    cumulative_positions: dict[int, list[int]] = {}
+
     for row_idx, entry in enumerate(normalized_entries, 1):
         if len(entry) != 2:
             errors.append(f"第{row_idx}条: 非移动操作必须使用 id:position 格式")
@@ -1387,10 +1494,19 @@ def tool_batch_thaw(
             errors.append(f"ID {record_id}: 未找到该记录")
             continue
 
-        old_positions = record.get("positions", [])
-        if position not in old_positions:
-            errors.append(f"ID {record_id}: 位置 {position} 不在现有位置 {old_positions} 中")
+        # Use cumulative positions if this record was already seen,
+        # otherwise start from the original record positions.
+        if idx in cumulative_positions:
+            current_positions = cumulative_positions[idx]
+        else:
+            current_positions = list(record.get("positions", []))
+
+        if position not in current_positions:
+            errors.append(f"ID {record_id}: 位置 {position} 不在现有位置 {current_positions} 中")
             continue
+
+        new_positions = [p for p in current_positions if p != position]
+        cumulative_positions[idx] = new_positions
 
         operations.append(
             {
@@ -1398,8 +1514,8 @@ def tool_batch_thaw(
                 "record_id": record_id,
                 "record": record,
                 "position": position,
-                "old_positions": old_positions.copy(),
-                "new_positions": [p for p in old_positions if p != position],
+                "old_positions": current_positions.copy(),
+                "new_positions": new_positions,
             }
         )
 
