@@ -62,7 +62,8 @@ class AIPanel(QWidget):
         self.ai_controls_box = QGroupBox("Agent Controls")
         controls_form = QFormLayout(self.ai_controls_box)
         self.ai_model = QLineEdit()
-        self.ai_model.setPlaceholderText("e.g. deepseek-chat")
+        self.ai_model.setPlaceholderText("deepseek-chat")
+        self.ai_model.setText("deepseek-chat")
 
         self.ai_steps = QSpinBox()
         self.ai_steps.setRange(1, 20)
@@ -210,7 +211,7 @@ class AIPanel(QWidget):
     def on_mode_changed(self):
         use_mock = self.ai_mock.isChecked()
         self.ai_model.setEnabled(not use_mock)
-        self.ai_model.setPlaceholderText("Mock mode enabled" if use_mock else "e.g. deepseek-chat")
+        self.ai_model.setPlaceholderText("Mock mode enabled" if use_mock else "deepseek-chat")
 
     def set_prompt(self, text):
         self.ai_prompt.setPlainText(str(text or "").strip())
@@ -616,6 +617,9 @@ class AIPanel(QWidget):
         self.ai_stream_last_render_ts = 0.0
         self.ai_stream_last_render_len = 0
         self._append_history("assistant", final_text)
+
+        if response.get("error_code") == "api_key_required":
+            self.status_message.emit("DeepSeek API key missing. See chat for setup steps.", 6000)
 
         self.operation_completed.emit(bool(response.get("ok")))
         

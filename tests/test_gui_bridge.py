@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app_gui.tool_bridge import GuiToolBridge
+from app_gui.gui_config import DEFAULT_CONFIG_FILE
 from lib.yaml_ops import write_yaml
 
 
@@ -116,6 +117,8 @@ class GuiBridgeAgentTests(unittest.TestCase):
 
         self.assertFalse(response["ok"])
         self.assertEqual("api_key_required", response["error_code"])
+        self.assertIn("DEEPSEEK_API_KEY", response["message"])
+        self.assertIn(DEFAULT_CONFIG_FILE, response["message"])
 
     def test_run_agent_query_rejects_bad_max_steps(self):
         bridge = GuiToolBridge()

@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for LN2 Inventory Agent GUI.
+"""PyInstaller spec for LN2 Inventory Agent GUI (onedir build).
 
 Usage (on Windows with PySide6 + PyYAML installed):
     pip install pyinstaller
@@ -33,9 +33,8 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
+    [],
+    exclude_binaries=True,
     [],
     name="LN2InventoryAgent",
     debug=False,
@@ -49,4 +48,15 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name="LN2InventoryAgent",
 )

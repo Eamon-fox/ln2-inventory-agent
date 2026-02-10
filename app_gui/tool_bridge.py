@@ -1,10 +1,12 @@
 """GUI-facing bridge to the unified Tool API."""
 
 import os
+from pathlib import Path
 
 from agent.llm_client import DeepSeekLLMClient, MockLLMClient
 from agent.react_agent import ReactAgent
 from agent.tool_runner import AgentToolRunner
+from app_gui.gui_config import DEFAULT_CONFIG_FILE
 from lib.tool_api import (
     build_actor_context,
     parse_batch_entries,
@@ -18,6 +20,19 @@ from lib.tool_api import (
     tool_record_thaw,
     tool_rollback,
 )
+
+
+def _api_key_setup_hint():
+    auth_file = os.environ.get("OPENCODE_AUTH_FILE") or str(
+        Path.home() / ".local" / "share" / "opencode" / "auth.json"
+    )
+    return (
+        "DeepSeek API key is missing. Configure one of the following before running real model mode:\n"
+        "1) Environment variable: DEEPSEEK_API_KEY\n"
+        f"2) Auth file: {auth_file} (provider key: deepseek)\n"
+        "Tip: GUI advanced options are under 'Show Advanced'.\n"
+        f"GUI settings file: {DEFAULT_CONFIG_FILE}"
+    )
 
 
 class GuiToolBridge:
@@ -156,7 +171,7 @@ class GuiToolBridge:
                 return {
                     "ok": False,
                     "error_code": "api_key_required",
-                    "message": "Set DEEPSEEK_API_KEY (or auth file) or enable mock mode.",
+                    "message": _api_key_setup_hint(),
                     "result": None,
                 }
             return {

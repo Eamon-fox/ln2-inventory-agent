@@ -523,6 +523,8 @@ class OverviewPanel(QWidget):
             })
             self.status_message.emit(f"Double-click: Prefill Thaw for ID {rec_id}", 2000)
         else:
+            self._set_selected_cell(box_num, position)
+            self.on_cell_hovered(box_num, position, force=True)
             self.request_add_prefill.emit({
                 "box": int(box_num),
                 "position": int(position),

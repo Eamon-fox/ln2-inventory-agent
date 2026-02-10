@@ -318,6 +318,23 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual([{"box": 1, "position": 1, "record_id": 5}], emitted)
         self.assertIn("#16a34a", button.styleSheet())
 
+    def test_overview_double_click_empty_slot_sets_selected_border_and_emits_add_prefill(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
+
+        panel.overview_pos_map = {}
+        button = panel.overview_cells[(1, 1)]
+        panel._paint_cell(button, 1, 1, record=None)
+
+        emitted = []
+        panel.request_add_prefill.connect(lambda payload: emitted.append(payload))
+
+        panel.on_cell_double_clicked(1, 1)
+
+        self.assertEqual((1, 1), panel.overview_selected_key)
+        self.assertEqual([{"box": 1, "position": 1}], emitted)
+        self.assertIn("#16a34a", button.styleSheet())
+
     def test_ai_panel_append_chat_falls_back_when_insert_markdown_missing(self):
         panel = self._new_ai_panel()
         panel.ai_chat = _FakeChatNoMarkdown()
@@ -326,6 +343,11 @@ class GuiPanelRegressionTests(unittest.TestCase):
 
         call_names = [name for name, _value in panel.ai_chat.calls]
         self.assertIn("insertPlainText", call_names)
+
+    def test_ai_panel_defaults_model_to_deepseek_chat(self):
+        panel = self._new_ai_panel()
+
+        self.assertEqual("deepseek-chat", panel.ai_model.text())
 
     def test_ai_panel_append_chat_prefers_insert_markdown_when_available(self):
         panel = self._new_ai_panel()
@@ -467,6 +489,16 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertGreaterEqual(len(panel.ai_history), 1)
         self.assertEqual("assistant", panel.ai_history[-1]["role"])
         self.assertIn("protocol error", panel.ai_history[-1]["content"].lower())
+
+    def test_ai_panel_finished_emits_status_for_missing_api_key(self):
+        panel = self._new_ai_panel()
+        messages = []
+        panel.status_message.connect(lambda msg, timeout: messages.append((msg, timeout)))
+
+        panel.on_finished({"ok": False, "error_code": "api_key_required", "result": None})
+
+        self.assertTrue(messages)
+        self.assertIn("api key", messages[-1][0].lower())
 
 
 if __name__ == "__main__":

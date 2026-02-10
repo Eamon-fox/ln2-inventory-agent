@@ -1,6 +1,7 @@
 """Desktop GUI for LN2 inventory operations (Refactored)."""
 
 import os
+import shutil
 import sys
 from PySide6.QtCore import Qt, QSettings
 from PySide6.QtWidgets import (
@@ -18,7 +19,12 @@ else:
         sys.path.insert(0, ROOT)
 
 from app_gui.tool_bridge import GuiToolBridge
-from app_gui.gui_config import load_gui_config, save_gui_config, DEFAULT_CONFIG_FILE
+from app_gui.gui_config import (
+    DEFAULT_CONFIG_DIR,
+    DEFAULT_CONFIG_FILE,
+    load_gui_config,
+    save_gui_config,
+)
 from lib.config import YAML_PATH
 from app_gui.ui.theme import apply_dark_theme
 from app_gui.ui.overview_panel import OverviewPanel
@@ -46,7 +52,7 @@ class MainWindow(QMainWindow):
             if migrated_actor:
                 self.gui_config["actor_id"] = migrated_actor
             self.gui_config["ai"] = {
-                "model": migrated_model or "",
+                "model": migrated_model or "deepseek-chat",
                 "mock": migrated_mock,
                 "max_steps": migrated_steps,
             }
@@ -137,6 +143,30 @@ class MainWindow(QMainWindow):
     def _update_dataset_label(self):
         self.dataset_label.setText(f"Dataset: {self.current_yaml_path} | Actor: {self.current_actor_id}")
 
+    def _resolve_demo_dataset_path(self):
+        """Resolve a stable demo dataset path for both source and frozen builds."""
+        embedded_demo = os.path.join(ROOT, "demo", "ln2_inventory.demo.yaml")
+        if not os.path.isfile(embedded_demo):
+            sibling_demo = os.path.join(os.path.dirname(sys.executable), "demo", "ln2_inventory.demo.yaml")
+            if os.path.isfile(sibling_demo):
+                return os.path.abspath(sibling_demo)
+            return os.path.abspath(embedded_demo)
+
+        # In one-file bundles, _MEIPASS is temporary. Copy demo yaml to user config dir
+        # so users can see and edit the file path from the GUI.
+        if getattr(sys, "frozen", False):
+            stable_demo_dir = os.path.join(DEFAULT_CONFIG_DIR, "demo")
+            stable_demo = os.path.join(stable_demo_dir, "ln2_inventory.demo.yaml")
+            try:
+                os.makedirs(stable_demo_dir, exist_ok=True)
+                if not os.path.isfile(stable_demo):
+                    shutil.copy2(embedded_demo, stable_demo)
+                return os.path.abspath(stable_demo)
+            except Exception:
+                return os.path.abspath(embedded_demo)
+
+        return os.path.abspath(embedded_demo)
+
     def on_quick_start(self):
         msg = QMessageBox(self)
         msg.setWindowTitle("Quick Start")
@@ -151,7 +181,7 @@ class MainWindow(QMainWindow):
         if clicked is btn_current:
             chosen = self.current_yaml_path
         elif clicked is btn_demo:
-            chosen = os.path.join(ROOT, "demo", "ln2_inventory.demo.yaml")
+            chosen = self._resolve_demo_dataset_path()
         elif clicked is btn_custom:
             chosen, _ = QFileDialog.getOpenFileName(
                 self, "Select YAML", os.path.dirname(self.current_yaml_path) or ROOT, "YAML Files (*.yaml *.yml)"
@@ -161,13 +191,21 @@ class MainWindow(QMainWindow):
             return
 
         if not os.path.exists(chosen):
-            QMessageBox.warning(self, "Error", f"YAML file not found: {chosen}")
+            QMessageBox.warning(
+                self,
+                "Error",
+                (
+                    f"YAML file not found: {chosen}\n\n"
+                    "If this is a packaged EXE, build with `pyinstaller ln2_inventory.spec` "
+                    "to include the demo dataset."
+                ),
+            )
             return
 
         self.current_yaml_path = os.path.abspath(chosen)
         self._update_dataset_label()
         self.overview_panel.refresh()
-        self.statusBar().showMessage("Loaded dataset", 3000)
+        self.statusBar().showMessage(f"Loaded dataset: {self.current_yaml_path}", 5000)
 
     def on_open_settings(self):
         dialog = QDialog(self)
@@ -216,7 +254,7 @@ class MainWindow(QMainWindow):
 
         # AI settings from unified config
         ai_cfg = self.gui_config.get("ai", {})
-        self.ai_panel.ai_model.setText(ai_cfg.get("model", "") or "")
+        self.ai_panel.ai_model.setText(ai_cfg.get("model") or "deepseek-chat")
         self.ai_panel.ai_mock.setChecked(ai_cfg.get("mock", True))
         self.ai_panel.ai_steps.setValue(ai_cfg.get("max_steps", 8))
         self.ai_panel.on_mode_changed()
@@ -234,7 +272,7 @@ class MainWindow(QMainWindow):
         self.gui_config["yaml_path"] = self.current_yaml_path
         self.gui_config["actor_id"] = self.current_actor_id
         self.gui_config["ai"] = {
-            "model": self.ai_panel.ai_model.text().strip(),
+            "model": self.ai_panel.ai_model.text().strip() or "deepseek-chat",
             "mock": self.ai_panel.ai_mock.isChecked(),
             "max_steps": self.ai_panel.ai_steps.value(),
         }

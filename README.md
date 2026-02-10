@@ -105,6 +105,18 @@ pip install PySide6
 python app_gui/main.py
 ```
 
+GUI defaults and config:
+
+- AI Copilot default mode is **Mock** (no external API call)
+- Default model id is **`deepseek-chat`**
+- GUI settings file: **`~/.ln2agent/config.yaml`**
+- In packaged/frozen mode, demo dataset is copied to **`~/.ln2agent/demo/ln2_inventory.demo.yaml`** for easy editing
+
+If you disable mock mode and `DEEPSEEK_API_KEY` is missing, GUI will show setup hints directly in chat, including:
+
+- Environment variable: `DEEPSEEK_API_KEY`
+- Auth file (opencode): `~/.local/share/opencode/auth.json` (or path from `OPENCODE_AUTH_FILE`)
+
 ## ReAct Agent Runtime
 
 ```bash
@@ -116,6 +128,32 @@ export DEEPSEEK_API_KEY="<your-key>"
 export DEEPSEEK_MODEL="deepseek-chat"
 python agent/run_agent.py "mark ID 10 position 23 as takeout today"
 ```
+
+## Packaging (Windows EXE)
+
+```bash
+pip install pyinstaller
+pyinstaller ln2_inventory.spec
+```
+
+`ln2_inventory.spec` now builds **one-dir** output: `dist/LN2InventoryAgent/`.
+
+- You should see `LN2InventoryAgent.exe` and bundled files (including `demo/ln2_inventory.demo.yaml`) in that folder.
+- If you instead build with one-file mode (`pyinstaller -F ...`), resources are unpacked to a temp runtime directory (`_MEIPASS`), so demo files are not obvious next to the exe.
+- A **setup installer** (`Setup.exe`) is a separate layer. PyInstaller does not generate an installer UI by itself; this repo now includes an Inno Setup script for that layer.
+
+### Build Setup.exe (Inno Setup)
+
+Script: `installer/windows/LN2InventoryAgent.iss`
+
+```bat
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\windows\LN2InventoryAgent.iss
+```
+
+- Input: `dist/LN2InventoryAgent/` (build this first with PyInstaller)
+- Output: `dist/installer/LN2InventoryAgent-Setup-<version>.exe`
+- Optional version override: set env `LN2_AGENT_VERSION` before running `ISCC`
+- Optional helper script: `scripts/windows/build_installer.bat`
 
 ## Project Structure
 

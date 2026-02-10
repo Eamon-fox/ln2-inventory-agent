@@ -16,7 +16,7 @@ DEFAULT_GUI_CONFIG = {
     "yaml_path": None,  # None => use lib.config.YAML_PATH
     "actor_id": "gui-user",
     "ai": {
-        "model": "",
+        "model": "deepseek-chat",
         "mock": True,
         "max_steps": 8,
     },
@@ -37,6 +37,8 @@ def load_gui_config(path=DEFAULT_CONFIG_FILE):
         if "ai" in data and isinstance(data["ai"], dict):
             merged["ai"] = copy.deepcopy(DEFAULT_GUI_CONFIG["ai"])
             merged["ai"].update(data["ai"])
+        if not str(merged["ai"].get("model") or "").strip():
+            merged["ai"]["model"] = DEFAULT_GUI_CONFIG["ai"]["model"]
         return merged
     except Exception:
         return copy.deepcopy(DEFAULT_GUI_CONFIG)

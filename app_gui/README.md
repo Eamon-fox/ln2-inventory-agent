@@ -50,4 +50,19 @@ pip install PySide6
 python app_gui/main.py
 ```
 
+Config paths and defaults:
+
+- GUI settings: `~/.ln2agent/config.yaml`
+- AI default model: `deepseek-chat`
+- AI default mode: Mock enabled
+- Missing key hint (real mode): GUI chat shows where to set `DEEPSEEK_API_KEY` or auth file
+- Frozen EXE demo dataset path: `~/.ln2agent/demo/ln2_inventory.demo.yaml`
+
+Packaging notes:
+
+- `pyinstaller ln2_inventory.spec` builds one-dir output (`dist/LN2InventoryAgent/`)
+- Inno Setup script is included: `installer/windows/LN2InventoryAgent.iss`
+- Example installer build command: `"C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe" installer\\windows\\LN2InventoryAgent.iss`
+- Output installer: `dist/installer/LN2InventoryAgent-Setup-<version>.exe`
+
 The scaffold is intentionally minimal and exists to unblock M2 implementation.

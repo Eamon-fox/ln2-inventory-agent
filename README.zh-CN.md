@@ -106,6 +106,18 @@ pip install PySide6
 python app_gui/main.py
 ```
 
+GUI 默认行为与配置位置：
+
+- AI Copilot 默认是 **Mock 模式**（不调用外部 API）
+- 默认模型是 **`deepseek-chat`**
+- GUI 配置文件：**`~/.ln2agent/config.yaml`**
+- 打包/冻结运行时，示例数据会复制到 **`~/.ln2agent/demo/ln2_inventory.demo.yaml`**，方便直接看到和编辑
+
+如果关闭 Mock 模式但没有配置 `DEEPSEEK_API_KEY`，GUI 会在聊天区直接提示配置位置，包括：
+
+- 环境变量：`DEEPSEEK_API_KEY`
+- 认证文件（opencode）：`~/.local/share/opencode/auth.json`（或 `OPENCODE_AUTH_FILE` 指定路径）
+
 ## ReAct Agent 运行时
 
 ```bash
@@ -117,6 +129,32 @@ export DEEPSEEK_API_KEY="<your-key>"
 export DEEPSEEK_MODEL="deepseek-chat"
 python agent/run_agent.py "把 ID 10 的位置 23 标记为取出，日期今天"
 ```
+
+## 打包（Windows EXE）
+
+```bash
+pip install pyinstaller
+pyinstaller ln2_inventory.spec
+```
+
+`ln2_inventory.spec` 现在默认产出 **one-dir** 结构：`dist/LN2InventoryAgent/`。
+
+- 目录里会包含 `LN2InventoryAgent.exe` 和配套资源（含 `demo/ln2_inventory.demo.yaml`）。
+- 如果使用 one-file（`pyinstaller -F ...`），资源会在运行时解压到临时目录（`_MEIPASS`），所以你会看到“孤零零一个 exe”，demo 文件路径也不直观。
+- 别人双击后先出现“安装向导”通常是额外打了安装包。这个仓库现在已提供 Inno Setup 脚本来生成安装程序。
+
+### 生成 Setup.exe（Inno Setup）
+
+脚本路径：`installer/windows/LN2InventoryAgent.iss`
+
+```bat
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\windows\LN2InventoryAgent.iss
+```
+
+- 输入目录：`dist/LN2InventoryAgent/`（先用 PyInstaller 生成）
+- 输出文件：`dist/installer/LN2InventoryAgent-Setup-<version>.exe`
+- 可选版本覆盖：运行 `ISCC` 前设置环境变量 `LN2_AGENT_VERSION`
+- 可选辅助脚本：`scripts/windows/build_installer.bat`
 
 ## 项目结构
 
