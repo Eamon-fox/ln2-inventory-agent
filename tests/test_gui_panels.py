@@ -254,9 +254,11 @@ class GuiPanelRegressionTests(unittest.TestCase):
 
         self.assertTrue(hasattr(panel, "m_from_position"))
         self.assertTrue(hasattr(panel, "m_to_position"))
-        self.assertEqual(3, panel.bm_table.columnCount())
+        self.assertTrue(hasattr(panel, "m_to_box"))
+        self.assertEqual(4, panel.bm_table.columnCount())
         self.assertEqual("From", panel.bm_table.horizontalHeaderItem(1).text())
         self.assertEqual("To", panel.bm_table.horizontalHeaderItem(2).text())
+        self.assertEqual("To Box", panel.bm_table.horizontalHeaderItem(3).text())
 
     def test_operations_panel_single_move_passes_to_position(self):
         panel = self._new_operations_panel()
@@ -896,3 +898,324 @@ class ToolRunnerPlanSinkTests(unittest.TestCase):
         })
         self.assertFalse(result.get("staged", False))
         self.assertEqual(0, len(self.staged))
+
+
+# ── Regression tests: plan dedup + execute fallback ──────────────
+
+
+def _make_move_item(record_id, position, to_position, to_box=None, label="test"):
+    """Helper to create a valid move plan item."""
+    item = {
+        "action": "move",
+        "box": 1,
+        "position": position,
+        "to_position": to_position,
+        "record_id": record_id,
+        "label": label,
+        "source": "ai",
+        "payload": {
+            "record_id": record_id,
+            "position": position,
+            "to_position": to_position,
+            "date_str": "2026-02-10",
+            "action": "Move",
+            "note": None,
+        },
+    }
+    if to_box is not None:
+        item["to_box"] = to_box
+        item["payload"]["to_box"] = to_box
+    return item
+
+
+def _make_takeout_item(record_id, position, box=1, label="test"):
+    """Helper to create a valid takeout plan item."""
+    return {
+        "action": "takeout",
+        "box": box,
+        "position": position,
+        "record_id": record_id,
+        "label": label,
+        "source": "ai",
+        "payload": {
+            "record_id": record_id,
+            "position": position,
+            "date_str": "2026-02-10",
+            "action": "Takeout",
+            "note": None,
+        },
+    }
+
+
+class _ConfigurableBridge(_FakeOperationsBridge):
+    """Bridge that can be configured to fail specific calls."""
+
+    def __init__(self):
+        super().__init__()
+        self.batch_should_fail = False
+        self.record_thaw_fail_ids = set()
+        self.record_thaw_calls = []
+        self.batch_thaw_calls = []
+
+    def batch_thaw(self, yaml_path, **payload):
+        self.batch_thaw_calls.append(payload)
+        if self.batch_should_fail:
+            return {
+                "ok": False,
+                "error_code": "validation_failed",
+                "message": "批量操作参数校验失败",
+                "errors": ["第1条: mock error"],
+            }
+        return super().batch_thaw(yaml_path, **payload)
+
+    def record_thaw(self, yaml_path, **payload):
+        self.record_thaw_calls.append(payload)
+        rid = payload.get("record_id")
+        if rid in self.record_thaw_fail_ids:
+            return {
+                "ok": False,
+                "error_code": "validation_failed",
+                "message": f"Record {rid} failed",
+            }
+        return super().record_thaw(yaml_path, **payload)
+
+
+@unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
+class PlanDedupRegressionTests(unittest.TestCase):
+    """Regression: add_plan_items should deduplicate by (action, record_id, position)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._app = QApplication.instance() or QApplication([])
+
+    def _new_panel(self):
+        return OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+
+    def test_duplicate_item_replaces_existing(self):
+        """Staging same (action, record_id, position) should replace, not append."""
+        panel = self._new_panel()
+        item1 = _make_move_item(record_id=4, position=5, to_position=10)
+        item2 = _make_move_item(record_id=4, position=5, to_position=20)  # same key, diff target
+
+        panel.add_plan_items([item1])
+        self.assertEqual(1, len(panel.plan_items))
+        self.assertEqual(10, panel.plan_items[0]["to_position"])
+
+        panel.add_plan_items([item2])
+        self.assertEqual(1, len(panel.plan_items))  # still 1, not 2
+        self.assertEqual(20, panel.plan_items[0]["to_position"])  # updated
+
+    def test_different_positions_are_not_deduped(self):
+        """Items with different positions should NOT be considered duplicates."""
+        panel = self._new_panel()
+        item1 = _make_move_item(record_id=4, position=5, to_position=10)
+        item2 = _make_move_item(record_id=4, position=6, to_position=11)
+
+        panel.add_plan_items([item1, item2])
+        self.assertEqual(2, len(panel.plan_items))
+
+    def test_different_actions_are_not_deduped(self):
+        """Same record+position but different action should NOT be deduped."""
+        panel = self._new_panel()
+        move_item = _make_move_item(record_id=4, position=5, to_position=10)
+        takeout_item = _make_takeout_item(record_id=4, position=5)
+
+        panel.add_plan_items([move_item, takeout_item])
+        self.assertEqual(2, len(panel.plan_items))
+
+    def test_mass_restage_same_items_no_growth(self):
+        """Simulates AI re-staging 10 items — plan should not grow past 10."""
+        panel = self._new_panel()
+        items = [_make_move_item(record_id=i, position=i, to_position=i + 10) for i in range(1, 11)]
+
+        panel.add_plan_items(items)
+        self.assertEqual(10, len(panel.plan_items))
+
+        # AI re-stages same 10 items (possibly with tweaked targets)
+        items_v2 = [_make_move_item(record_id=i, position=i, to_position=i + 20) for i in range(1, 11)]
+        panel.add_plan_items(items_v2)
+        self.assertEqual(10, len(panel.plan_items))  # no duplicates
+
+
+@unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
+class ExecutePlanFallbackRegressionTests(unittest.TestCase):
+    """Regression: batch failure should fallback to individual execution."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._app = QApplication.instance() or QApplication([])
+
+    def _new_panel(self, bridge):
+        panel = OperationsPanel(bridge=bridge, yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        return panel
+
+    def test_move_batch_fails_falls_back_to_individual(self):
+        """When batch_thaw fails, each move should be tried individually via record_thaw."""
+        bridge = _ConfigurableBridge()
+        bridge.batch_should_fail = True
+        panel = self._new_panel(bridge)
+
+        items = [
+            _make_move_item(record_id=1, position=5, to_position=1, to_box=1),
+            _make_move_item(record_id=2, position=10, to_position=2, to_box=1),
+        ]
+        panel.add_plan_items(items)
+        self.assertEqual(2, len(panel.plan_items))
+
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        # batch_thaw called once (failed), then 2 individual record_thaw calls
+        self.assertEqual(1, len(bridge.batch_thaw_calls))
+        self.assertEqual(2, len(bridge.record_thaw_calls))
+        # All items should succeed individually → plan cleared
+        self.assertEqual(0, len(panel.plan_items))
+
+    def test_move_individual_fallback_partial_failure_keeps_failed(self):
+        """When 1 of 3 individual moves fails, only the failed one stays in plan."""
+        bridge = _ConfigurableBridge()
+        bridge.batch_should_fail = True
+        bridge.record_thaw_fail_ids = {2}  # record_id=2 will fail
+        panel = self._new_panel(bridge)
+
+        items = [
+            _make_move_item(record_id=1, position=5, to_position=1),
+            _make_move_item(record_id=2, position=10, to_position=2),
+            _make_move_item(record_id=3, position=15, to_position=3),
+        ]
+        panel.add_plan_items(items)
+
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        # Only the failed item (record_id=2) should remain
+        self.assertEqual(1, len(panel.plan_items))
+        self.assertEqual(2, panel.plan_items[0]["record_id"])
+
+    def test_takeout_batch_fails_falls_back_to_individual(self):
+        """Phase 3: batch failure for takeout also falls back to individual."""
+        bridge = _ConfigurableBridge()
+        bridge.batch_should_fail = True
+        panel = self._new_panel(bridge)
+
+        items = [
+            _make_takeout_item(record_id=1, position=5),
+            _make_takeout_item(record_id=2, position=10),
+        ]
+        panel.add_plan_items(items)
+
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        # batch failed, 2 individual calls succeeded
+        self.assertEqual(2, len(bridge.record_thaw_calls))
+        self.assertEqual(0, len(panel.plan_items))
+
+    def test_batch_success_no_fallback(self):
+        """When batch_thaw succeeds, no individual fallback should be triggered."""
+        bridge = _ConfigurableBridge()
+        bridge.batch_should_fail = False  # batch succeeds
+        panel = self._new_panel(bridge)
+
+        items = [
+            _make_move_item(record_id=1, position=5, to_position=1),
+            _make_move_item(record_id=2, position=10, to_position=2),
+        ]
+        panel.add_plan_items(items)
+
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        # batch called once, no individual calls
+        self.assertEqual(1, len(bridge.batch_thaw_calls))
+        self.assertEqual(0, len(bridge.record_thaw_calls))
+        self.assertEqual(0, len(panel.plan_items))
+
+    def test_phases_continue_after_earlier_failure(self):
+        """Phase 3 should execute even if Phase 2 had failures."""
+        bridge = _ConfigurableBridge()
+        bridge.batch_should_fail = True
+        bridge.record_thaw_fail_ids = {1}  # move for record_id=1 fails
+        panel = self._new_panel(bridge)
+
+        # Phase 2 item (move) + Phase 3 item (takeout)
+        move = _make_move_item(record_id=1, position=5, to_position=1)
+        takeout = _make_takeout_item(record_id=3, position=20)
+        panel.add_plan_items([move, takeout])
+        self.assertEqual(2, len(panel.plan_items))
+
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        # move failed (stays), takeout succeeded (removed)
+        self.assertEqual(1, len(panel.plan_items))
+        self.assertEqual("move", panel.plan_items[0]["action"])
+        self.assertEqual(1, panel.plan_items[0]["record_id"])
+
+    def test_all_fail_keeps_all_in_plan(self):
+        """If every item fails, all should remain in the plan."""
+        bridge = _ConfigurableBridge()
+        bridge.batch_should_fail = True
+        bridge.record_thaw_fail_ids = {1, 2}
+        panel = self._new_panel(bridge)
+
+        items = [
+            _make_move_item(record_id=1, position=5, to_position=1),
+            _make_move_item(record_id=2, position=10, to_position=2),
+        ]
+        panel.add_plan_items(items)
+
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        self.assertEqual(2, len(panel.plan_items))
+
+    def test_dedup_then_execute_end_to_end(self):
+        """Full scenario: stage → execute partial fail → AI re-stages → execute succeeds."""
+        bridge = _ConfigurableBridge()
+        bridge.batch_should_fail = True
+        bridge.record_thaw_fail_ids = {2}
+        panel = self._new_panel(bridge)
+
+        # First stage: 3 items
+        items = [
+            _make_move_item(record_id=1, position=5, to_position=1),
+            _make_move_item(record_id=2, position=10, to_position=2),
+            _make_move_item(record_id=3, position=15, to_position=3),
+        ]
+        panel.add_plan_items(items)
+        self.assertEqual(3, len(panel.plan_items))
+
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        # 1 and 3 succeeded, 2 stays
+        self.assertEqual(1, len(panel.plan_items))
+        self.assertEqual(2, panel.plan_items[0]["record_id"])
+
+        # AI re-stages all 3 (dedup should replace the existing one, add 2 new)
+        items_v2 = [
+            _make_move_item(record_id=1, position=5, to_position=1),
+            _make_move_item(record_id=2, position=10, to_position=4),  # different target
+            _make_move_item(record_id=3, position=15, to_position=3),
+        ]
+        panel.add_plan_items(items_v2)
+        # record_id=2 replaced (1 item), record_id=1 and 3 are new (already executed, but re-staged)
+        self.assertEqual(3, len(panel.plan_items))
+
+        # Now execute again — this time record_id=2 succeeds
+        bridge.record_thaw_fail_ids.clear()
+        bridge.batch_thaw_calls.clear()
+        bridge.record_thaw_calls.clear()
+
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        self.assertEqual(0, len(panel.plan_items))
