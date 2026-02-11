@@ -1201,14 +1201,24 @@ class OperationsPanel(QWidget):
     # --- PLAN OPERATIONS ---
 
     def add_plan_items(self, items):
-        """Validate and add items to the plan staging area."""
+        """Validate and add items to the plan staging area (with dedup)."""
         added = 0
         for item in items:
             err = validate_plan_item(item)
             if err:
                 self.status_message.emit(f"Plan rejected: {err}", 4000, "error")
                 continue
-            self.plan_items.append(item)
+            # Dedup: replace existing item with same (action, record_id, position)
+            key = (item.get("action"), item.get("record_id"), item.get("position"))
+            replaced = False
+            for i, existing in enumerate(self.plan_items):
+                ekey = (existing.get("action"), existing.get("record_id"), existing.get("position"))
+                if key == ekey:
+                    self.plan_items[i] = item
+                    replaced = True
+                    break
+            if not replaced:
+                self.plan_items.append(item)
             added += 1
 
         if added:
@@ -1288,22 +1298,21 @@ class OperationsPanel(QWidget):
         remaining = list(self.plan_items)
         last_backup = None
 
-        # Phase 1: add
+        # Phase 1: add (individual — each add is independent)
         adds = [it for it in remaining if it["action"] == "add"]
         for item in adds:
             payload = dict(item["payload"])
             response = self.bridge.add_entry(yaml_path=yaml_path, **payload)
-            if not response.get("ok"):
+            if response.get("ok"):
+                results.append(("OK", item, response))
+                remaining.remove(item)
+                backup = response.get("backup_path")
+                if backup:
+                    last_backup = backup
+            else:
                 results.append(("FAIL", item, response))
-                self._show_plan_result(results, remaining)
-                return
-            results.append(("OK", item, response))
-            remaining.remove(item)
-            backup = response.get("backup_path")
-            if backup:
-                last_backup = backup
 
-        # Phase 2: move (batch)
+        # Phase 2: move (batch first, fallback to individual on failure)
         moves = [it for it in remaining if it["action"] == "move"]
         if moves:
             entries = []
@@ -1321,18 +1330,37 @@ class OperationsPanel(QWidget):
                 action="Move",
                 note=first_move.get("note"),
             )
-            if not response.get("ok"):
-                results.append(("FAIL", moves[0], response))
-                self._show_plan_result(results, remaining)
-                return
-            for item in moves:
-                results.append(("OK", item, response))
-                remaining.remove(item)
-            backup = response.get("backup_path")
-            if backup:
-                last_backup = backup
+            if response.get("ok"):
+                for item in moves:
+                    results.append(("OK", item, response))
+                    remaining.remove(item)
+                backup = response.get("backup_path")
+                if backup:
+                    last_backup = backup
+            else:
+                # Batch failed — try each move individually
+                for item in moves:
+                    p = item["payload"]
+                    single = self.bridge.record_thaw(
+                        yaml_path=yaml_path,
+                        record_id=p["record_id"],
+                        position=p["position"],
+                        to_position=p["to_position"],
+                        to_box=p.get("to_box"),
+                        date_str=p.get("date_str", date.today().isoformat()),
+                        action="Move",
+                        note=p.get("note"),
+                    )
+                    if single.get("ok"):
+                        results.append(("OK", item, single))
+                        remaining.remove(item)
+                        backup = single.get("backup_path")
+                        if backup:
+                            last_backup = backup
+                    else:
+                        results.append(("FAIL", item, single))
 
-        # Phase 3: takeout/thaw/discard (group by action)
+        # Phase 3: takeout/thaw/discard (batch first, fallback to individual)
         for action_name in ("Takeout", "Thaw", "Discard"):
             action_items = [it for it in remaining if it["action"] == action_name.lower()]
             if not action_items:
@@ -1349,23 +1377,45 @@ class OperationsPanel(QWidget):
                 action=action_name,
                 note=first.get("note"),
             )
-            if not response.get("ok"):
-                results.append(("FAIL", action_items[0], response))
-                self._show_plan_result(results, remaining)
-                return
-            for item in action_items:
-                results.append(("OK", item, response))
-                remaining.remove(item)
-            backup = response.get("backup_path")
-            if backup:
-                last_backup = backup
+            if response.get("ok"):
+                for item in action_items:
+                    results.append(("OK", item, response))
+                    remaining.remove(item)
+                backup = response.get("backup_path")
+                if backup:
+                    last_backup = backup
+            else:
+                # Batch failed — try each item individually
+                for item in action_items:
+                    p = item["payload"]
+                    single = self.bridge.record_thaw(
+                        yaml_path=yaml_path,
+                        record_id=p["record_id"],
+                        position=p["position"],
+                        date_str=p.get("date_str", date.today().isoformat()),
+                        action=action_name,
+                        note=p.get("note"),
+                    )
+                    if single.get("ok"):
+                        results.append(("OK", item, single))
+                        remaining.remove(item)
+                        backup = single.get("backup_path")
+                        if backup:
+                            last_backup = backup
+                    else:
+                        results.append(("FAIL", item, single))
 
-        # All done
-        self.plan_items.clear()
+        # Finalize: keep only failed items in plan
+        if remaining:
+            self.plan_items = remaining
+        else:
+            self.plan_items.clear()
         self._refresh_plan_table()
         self._update_plan_badge()
         self._show_plan_result(results, remaining)
-        self.operation_completed.emit(True)
+
+        if any(r[0] == "OK" for r in results):
+            self.operation_completed.emit(True)
 
         if last_backup:
             self._last_operation_backup = last_backup
