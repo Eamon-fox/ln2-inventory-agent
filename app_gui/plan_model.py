@@ -5,6 +5,8 @@ from datetime import date
 from typing import Dict, List, Optional
 
 _VALID_ACTIONS = {"takeout", "thaw", "discard", "move", "add"}
+# Box range from config
+_BOX_RANGE = (1, 5)
 
 
 def validate_plan_item(item: dict) -> Optional[str]:
@@ -14,12 +16,18 @@ def validate_plan_item(item: dict) -> Optional[str]:
         return f"Unknown action: {item.get('action')}"
 
     box = item.get("box")
-    if not isinstance(box, int) or box < 0:
-        return "box must be a non-negative integer"
+    if not isinstance(box, int):
+        return "box must be an integer"
+    # Allow box=0 for new entries (placeholder before box assignment)
+    if box < 0 or box > _BOX_RANGE[1]:
+        return f"box must be between 0 and {_BOX_RANGE[1]}"
 
     pos = item.get("position")
-    if not isinstance(pos, int) or pos < 1:
-        return "position must be a positive integer"
+    if not isinstance(pos, int):
+        return "position must be an integer"
+    # Position range based on box layout (9x9 = 81 positions per box)
+    if pos < 1 or pos > 81:
+        return "position must be between 1 and 81"
 
     if action == "move":
         to = item.get("to_position")
@@ -38,9 +46,10 @@ def validate_plan_item(item: dict) -> Optional[str]:
             return "record_id must be a positive integer"
     else:
         payload = item.get("payload") or {}
-        if not payload.get("parent_cell_line"):
+        # Allow parent_cell_line and short_name at top level or in payload
+        if not (item.get("parent_cell_line") or payload.get("parent_cell_line")):
             return "parent_cell_line is required for add"
-        if not payload.get("short_name"):
+        if not (item.get("short_name") or payload.get("short_name")):
             return "short_name is required for add"
 
     return None

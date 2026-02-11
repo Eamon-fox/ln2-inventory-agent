@@ -86,7 +86,9 @@ def main():
     total_events = payload.get("event_count", 0)
 
     # 显示查询条件
-    if mode == "single":
+    if mode == "all":
+        print("📅 查询所有操作记录")
+    elif mode == "single":
         date_cn = format_chinese_date(target_dates[0])
         print(f"📅 日期: {target_dates[0]} ({date_cn})")
     elif mode == "days":

@@ -2092,7 +2092,7 @@ def tool_query_thaw_events(
         mode = "range"
         target_dates = None
         date_range = (start, end)
-    else:
+    elif date is not None:
         target = normalize_date_arg(date)
         if not target:
             return {
@@ -2102,6 +2102,11 @@ def tool_query_thaw_events(
             }
         mode = "single"
         target_dates = [target]
+        date_range = None
+    else:
+        # No date specified - return all events
+        mode = "all"
+        target_dates = None
         date_range = None
 
     range_start, range_end = date_range if date_range else (None, None)
@@ -2123,13 +2128,20 @@ def tool_query_thaw_events(
         if not events:
             continue
 
-        if mode == "single":
+        if mode == "all":
+            # Return all events with optional action filter
+            filtered = [
+                ev
+                for ev in events
+                if ev.get("date") and (not action_filter or ev.get("action") == action_filter)
+            ]
+        elif mode == "single":
             filtered = [
                 ev
                 for ev in events
                 if ev.get("date") in target_dates and (not action_filter or ev.get("action") == action_filter)
             ]
-        else:
+        else:  # mode == "range" or "days"
             filtered = [
                 ev
                 for ev in events
@@ -2143,10 +2155,27 @@ def tool_query_thaw_events(
             total_events += len(filtered)
 
     total_record_count = len(matched)
+
+    # Apply max_records to limit number of events (not records)
     if max_records and max_records > 0:
-        records_to_return = matched[:max_records]
+        # Collect all events and limit by max_records
+        all_events = []
+        for m in matched:
+            events_for_record = m["events"][:max_records]
+            remaining = max_records - len(events_for_record)
+            if remaining > 0:
+                max_records = remaining
+                all_events.append({"record": m["record"], "events": events_for_record})
+            else:
+                if events_for_record:
+                    all_events.append({"record": m["record"], "events": events_for_record})
+                break
+        records_to_return = all_events
     else:
         records_to_return = matched
+
+    # Recalculate event_count based on filtered records
+    final_event_count = sum(len(m["events"]) for m in records_to_return)
 
     return {
         "ok": True,
@@ -2158,7 +2187,7 @@ def tool_query_thaw_events(
             "records": records_to_return,
             "record_count": total_record_count,
             "display_count": len(records_to_return),
-            "event_count": total_events,
+            "event_count": final_event_count,
         },
     }
 
@@ -2324,14 +2353,14 @@ def tool_recommend_positions(yaml_path, count, box_preference=None, strategy="co
         box_recs = []
         if strategy in {"consecutive", "any"}:
             for group in _find_consecutive_slots(empty, count)[:3]:
-                box_recs.append({"box": box_key, "positions": group, "reason": "连续位置", "score": 100})
+                box_recs.append({"box": int(box_key), "positions": group, "reason": "连续位置", "score": 100})
 
         if strategy == "same_row":
             for group in _find_same_row_slots(empty, count, layout)[:3]:
-                box_recs.append({"box": box_key, "positions": group, "reason": "同一行", "score": 90})
+                box_recs.append({"box": int(box_key), "positions": group, "reason": "同一行", "score": 90})
 
         if not box_recs:
-            box_recs.append({"box": box_key, "positions": empty[:count], "reason": "最早空位", "score": 50})
+            box_recs.append({"box": int(box_key), "positions": empty[:count], "reason": "最早空位", "score": 50})
 
         recommendations.extend(box_recs)
         if len(recommendations) >= 5:
@@ -2385,23 +2414,39 @@ def tool_generate_stats(yaml_path):
         if rec.get("positions"):
             cell_lines[rec.get("parent_cell_line", "Unknown")] += len(rec.get("positions", []))
 
+    # Flatten the stats structure for easier access, but keep nested structure for backward compatibility
+    stats_nested = {
+        "overall": {
+            "total_occupied": total_occupied,
+            "total_empty": total_capacity - total_occupied,
+            "total_capacity": total_capacity,
+            "occupancy_rate": overall_rate,
+        },
+        "boxes": box_stats,
+        "cell_lines": dict(sorted(cell_lines.items(), key=lambda x: x[1], reverse=True)),
+    }
+
+    stats_result = {
+        # Backward compatibility: keep nested structure
+        "data": data,
+        "layout": layout,
+        "occupancy": occupancy,
+        "stats": stats_nested,
+        # Also provide flattened structure for easier access
+        "total_slots": total_capacity,  # Total slots across all boxes
+        "slots_per_box": total_slots,  # Slots per single box
+        "total_occupied": total_occupied,
+        "total_empty": total_capacity - total_occupied,
+        "total_capacity": total_capacity,
+        "occupancy_rate": overall_rate,
+        "boxes": box_stats,
+        "cell_lines": dict(sorted(cell_lines.items(), key=lambda x: x[1], reverse=True)),
+        "record_count": len(records),
+    }
+
     return {
         "ok": True,
-        "result": {
-            "data": data,
-            "layout": layout,
-            "occupancy": occupancy,
-            "stats": {
-                "overall": {
-                    "total_occupied": total_occupied,
-                    "total_empty": total_capacity - total_occupied,
-                    "total_capacity": total_capacity,
-                    "occupancy_rate": overall_rate,
-                },
-                "boxes": box_stats,
-                "cell_lines": dict(sorted(cell_lines.items(), key=lambda x: x[1], reverse=True)),
-            },
-        },
+        "result": stats_result,
     }
 
 

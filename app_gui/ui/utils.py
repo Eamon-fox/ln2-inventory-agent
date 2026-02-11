@@ -6,7 +6,8 @@ import json
 def positions_to_text(positions):
     if not positions:
         return ""
-    return ",".join(str(p) for p in positions)
+    # Sort positions and add space after each comma for readability
+    return ", ".join(str(p) for p in sorted(positions))
 
 
 def cell_color(parent_cell_line):
