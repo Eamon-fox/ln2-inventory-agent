@@ -52,6 +52,7 @@ class AIPanel(QWidget):
         self.yaml_path_getter = yaml_path_getter
         
         self.ai_history = []
+        self.ai_operation_events = []
         self.ai_run_inflight = False
         self.ai_run_thread = None
         self.ai_run_worker = None
@@ -493,7 +494,22 @@ class AIPanel(QWidget):
     def start_worker(self, prompt):
         model = self.ai_model.text().strip() or None
         history = [dict(item) for item in self.ai_history if isinstance(item, dict)]
-        
+
+        if self.ai_operation_events:
+            recent_events = self.ai_operation_events[-5:]
+            context_parts = ["Recent operations by user:"]
+            for ev in recent_events:
+                ev_type = ev.get("type", "unknown")
+                stats = ev.get("stats", {})
+                summary = ev.get("summary", "")
+                if stats:
+                    context_parts.append(f"- {ev_type}: {stats}")
+                elif summary:
+                    context_parts.append(f"- {ev_type}: {summary}")
+            context_msg = "\n".join(context_parts)
+            history.append({"role": "user", "content": f"[Context] {context_msg}"})
+            history.append({"role": "assistant", "content": "Noted. I can see the recent operations."})
+
         self.ai_run_worker = AgentRunWorker(
             bridge=self.bridge,
             yaml_path=self.yaml_path_getter(),
@@ -690,8 +706,28 @@ class AIPanel(QWidget):
         if len(self.ai_history) > 20:
             self.ai_history = self.ai_history[-20:]
 
+    def on_operation_event(self, event):
+        """Receive operation events from operations panel and display them."""
+        event_type = event.get("type", "unknown")
+        timestamp = event.get("timestamp", datetime.now().isoformat())
+
+        self.ai_operation_events.append(event)
+        if len(self.ai_operation_events) > 20:
+            self.ai_operation_events = self.ai_operation_events[-20:]
+
+        if event_type == "plan_execute_blocked":
+            blocked_count = event.get("blocked_count", 0)
+            self._append_chat("System", f"Plan execution blocked: {blocked_count} item(s) have validation errors.")
+            self.ai_report.append(f"[{timestamp}] Plan blocked: {blocked_count} item(s)")
+
+        elif event_type == "plan_executed":
+            stats = event.get("stats", {})
+            summary = event.get("summary", "")
+            ok = event.get("ok", False)
+            status = "succeeded" if ok else "had issues"
+            self._append_chat("System", f"Plan execution {status}: {summary}")
+            self.ai_report.append(f"[{timestamp}] Plan executed: {stats}")
+
     def _load_audit(self, trace_id, run_result):
-        # Basic audit loading
         self.ai_report.setPlainText(json.dumps(run_result, indent=2))
-        # Could reuse logic from main to load audit log file
         pass

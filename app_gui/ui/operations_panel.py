@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from app_gui.ui.utils import positions_to_text
 from app_gui.plan_model import validate_plan_item, render_operation_sheet
 from app_gui.audit_guide import build_operation_guide_from_audit_events
+from app_gui.plan_executor import preflight_plan, run_plan
 from lib.tool_api import parse_batch_entries
 from lib.validators import parse_positions
 
@@ -49,8 +50,9 @@ TIPS:
 - Use Undo within 10 seconds to reverse mistakes"""
 
 class OperationsPanel(QWidget):
-    operation_completed = Signal(bool) # success?
-    status_message = Signal(str, int, str) # msg, timeout, level
+    operation_completed = Signal(bool)
+    operation_event = Signal(dict)
+    status_message = Signal(str, int, str)
     
     def __init__(self, bridge, yaml_path_getter):
         super().__init__()
@@ -66,6 +68,8 @@ class OperationsPanel(QWidget):
         self._last_operation_backup = None
         self._last_executed_plan = []
         self._last_printable_plan = []
+        self._plan_preflight_report = None
+        self._plan_validation_by_key = {}
         self._undo_timer = None
         self._undo_remaining = 0
         self._audit_events = []
@@ -558,7 +562,7 @@ class OperationsPanel(QWidget):
         self.plan_table = QTableWidget()
         self._setup_table(
             self.plan_table,
-            ["Source", "Action", "Box", "Pos", "\u2192Pos", "Label", "Note"],
+            ["Source", "Action", "Box", "Pos", "\u2192Pos", "\u2192Box", "Label", "Note", "Status"],
             sortable=False,
         )
         self.plan_table.setVisible(False)
@@ -1262,6 +1266,10 @@ class OperationsPanel(QWidget):
 
     # --- PLAN OPERATIONS ---
 
+    def _plan_item_key(self, item):
+        """Generate a unique key for plan item deduplication."""
+        return (item.get("action"), item.get("record_id"), item.get("position"))
+
     def add_plan_items(self, items):
         """Validate and add items to the plan staging area (with dedup)."""
         added = 0
@@ -1270,11 +1278,10 @@ class OperationsPanel(QWidget):
             if err:
                 self.status_message.emit(f"Plan rejected: {err}", 4000, "error")
                 continue
-            # Dedup: replace existing item with same (action, record_id, position)
-            key = (item.get("action"), item.get("record_id"), item.get("position"))
+            key = self._plan_item_key(item)
             replaced = False
             for i, existing in enumerate(self.plan_items):
-                ekey = (existing.get("action"), existing.get("record_id"), existing.get("position"))
+                ekey = self._plan_item_key(existing)
                 if key == ekey:
                     self.plan_items[i] = item
                     replaced = True
@@ -1284,10 +1291,54 @@ class OperationsPanel(QWidget):
             added += 1
 
         if added:
+            self._run_plan_preflight(trigger="add")
             self._refresh_plan_table()
             self._update_plan_badge()
+            self._update_execute_button_state()
             self.set_mode("plan")
             self.status_message.emit(f"Added {added} item(s) to plan.", 2000, "info")
+
+    def _run_plan_preflight(self, trigger="manual"):
+        """Run preflight validation on current plan items."""
+        self._plan_validation_by_key = {}
+        if not self.plan_items:
+            self._plan_preflight_report = None
+            return
+
+        yaml_path = self.yaml_path_getter()
+        if not os.path.isfile(yaml_path):
+            self._plan_preflight_report = {"ok": True, "blocked": False, "items": [], "stats": {"total": len(self.plan_items), "ok": len(self.plan_items), "blocked": 0}}
+            return
+
+        report = preflight_plan(yaml_path, self.plan_items, self.bridge)
+
+        self._plan_preflight_report = report
+        for r in report.get("items", []):
+            item = r.get("item")
+            if item:
+                key = self._plan_item_key(item)
+                self._plan_validation_by_key[key] = {
+                    "ok": r.get("ok"),
+                    "blocked": r.get("blocked"),
+                    "error_code": r.get("error_code"),
+                    "message": r.get("message"),
+                }
+
+    def _update_execute_button_state(self):
+        """Enable/disable Execute button based on preflight results."""
+        if not self.plan_items:
+            self.plan_exec_btn.setEnabled(False)
+            return
+
+        has_blocked = any(
+            v.get("blocked") for v in self._plan_validation_by_key.values()
+        )
+        self.plan_exec_btn.setEnabled(not has_blocked)
+        if has_blocked:
+            blocked_count = sum(1 for v in self._plan_validation_by_key.values() if v.get("blocked"))
+            self.plan_exec_btn.setText(f"Execute ({blocked_count} blocked)")
+        else:
+            self.plan_exec_btn.setText("Execute All")
 
     def _refresh_plan_table(self):
         has_items = bool(self.plan_items)
@@ -1296,7 +1347,7 @@ class OperationsPanel(QWidget):
 
         self._setup_table(
             self.plan_table,
-            ["Source", "Action", "Box", "Pos", "\u2192Pos", "\u2192Box", "Label", "Note"],
+            ["Source", "Action", "Box", "Pos", "\u2192Pos", "\u2192Box", "Label", "Note", "Status"],
             sortable=False,
         )
 
@@ -1315,6 +1366,20 @@ class OperationsPanel(QWidget):
             note = (item.get("payload") or {}).get("note", "") or ""
             self.plan_table.setItem(row, 7, QTableWidgetItem(str(note)))
 
+            key = self._plan_item_key(item)
+            validation = self._plan_validation_by_key.get(key, {})
+            status_item = QTableWidgetItem()
+            if validation.get("blocked"):
+                status_item.setText("BLOCKED")
+                status_item.setForeground(Qt.red)
+                status_item.setToolTip(validation.get("message", ""))
+            elif validation.get("ok"):
+                status_item.setText("READY")
+                status_item.setForeground(Qt.darkGreen)
+            else:
+                status_item.setText("-")
+            self.plan_table.setItem(row, 8, status_item)
+
     def _update_plan_badge(self):
         count = len(self.plan_items)
         idx = self.op_mode_combo.findData("plan")
@@ -1326,6 +1391,20 @@ class OperationsPanel(QWidget):
         """Execute all staged plan items after user confirmation."""
         if not self.plan_items:
             self.status_message.emit("No items in plan to execute.", 3000, "error")
+            return
+
+        if not self._plan_preflight_report:
+            self._run_plan_preflight(trigger="execute")
+
+        if self._plan_preflight_report and self._plan_preflight_report.get("blocked"):
+            blocked_count = self._plan_preflight_report.get("stats", {}).get("blocked", 0)
+            self.status_message.emit(f"Cannot execute: {blocked_count} item(s) blocked.", 4000, "error")
+            self._emit_operation_event({
+                "type": "plan_execute_blocked",
+                "source": "operations_panel",
+                "blocked_count": blocked_count,
+                "report": self._plan_preflight_report,
+            })
             return
 
         summary_lines = []
@@ -1356,138 +1435,51 @@ class OperationsPanel(QWidget):
             return
 
         yaml_path = self.yaml_path_getter()
+        report = run_plan(yaml_path, self.plan_items, self.bridge, mode="execute")
+
         results = []
-        remaining = list(self.plan_items)
-        last_backup = None
+        for r in report.get("items", []):
+            status = "OK" if r.get("ok") else "FAIL"
+            results.append((status, r.get("item"), r.get("response") or {}))
 
-        # Phase 1: add (individual — each add is independent)
-        adds = [it for it in remaining if it["action"] == "add"]
-        for item in adds:
-            payload = dict(item["payload"])
-            response = self.bridge.add_entry(yaml_path=yaml_path, **payload)
-            if response.get("ok"):
-                results.append(("OK", item, response))
-                remaining.remove(item)
-                backup = response.get("backup_path")
-                if backup:
-                    last_backup = backup
-            else:
-                results.append(("FAIL", item, response))
+        remaining = report.get("remaining_items", [])
 
-        # Phase 2: move (batch first, fallback to individual on failure)
-        moves = [it for it in remaining if it["action"] == "move"]
-        if moves:
-            entries = []
-            for item in moves:
-                p = item["payload"]
-                entry = (p["record_id"], p["position"], p["to_position"])
-                if "to_box" in p:
-                    entry = entry + (p["to_box"],)
-                entries.append(entry)
-            first_move = moves[0]["payload"]
-            response = self.bridge.batch_thaw(
-                yaml_path=yaml_path,
-                entries=entries,
-                date_str=first_move.get("date_str", date.today().isoformat()),
-                action="Move",
-                note=first_move.get("note"),
-            )
-            if response.get("ok"):
-                for item in moves:
-                    results.append(("OK", item, response))
-                    remaining.remove(item)
-                backup = response.get("backup_path")
-                if backup:
-                    last_backup = backup
-            else:
-                # Batch failed — try each move individually
-                for item in moves:
-                    p = item["payload"]
-                    single = self.bridge.record_thaw(
-                        yaml_path=yaml_path,
-                        record_id=p["record_id"],
-                        position=p["position"],
-                        to_position=p["to_position"],
-                        to_box=p.get("to_box"),
-                        date_str=p.get("date_str", date.today().isoformat()),
-                        action="Move",
-                        note=p.get("note"),
-                    )
-                    if single.get("ok"):
-                        results.append(("OK", item, single))
-                        remaining.remove(item)
-                        backup = single.get("backup_path")
-                        if backup:
-                            last_backup = backup
-                    else:
-                        results.append(("FAIL", item, single))
-
-        # Phase 3: takeout/thaw/discard (batch first, fallback to individual)
-        for action_name in ("Takeout", "Thaw", "Discard"):
-            action_items = [it for it in remaining if it["action"] == action_name.lower()]
-            if not action_items:
-                continue
-            entries = []
-            for item in action_items:
-                p = item["payload"]
-                entries.append((p["record_id"], p["position"]))
-            first = action_items[0]["payload"]
-            response = self.bridge.batch_thaw(
-                yaml_path=yaml_path,
-                entries=entries,
-                date_str=first.get("date_str", date.today().isoformat()),
-                action=action_name,
-                note=first.get("note"),
-            )
-            if response.get("ok"):
-                for item in action_items:
-                    results.append(("OK", item, response))
-                    remaining.remove(item)
-                backup = response.get("backup_path")
-                if backup:
-                    last_backup = backup
-            else:
-                # Batch failed — try each item individually
-                for item in action_items:
-                    p = item["payload"]
-                    single = self.bridge.record_thaw(
-                        yaml_path=yaml_path,
-                        record_id=p["record_id"],
-                        position=p["position"],
-                        date_str=p.get("date_str", date.today().isoformat()),
-                        action=action_name,
-                        note=p.get("note"),
-                    )
-                    if single.get("ok"):
-                        results.append(("OK", item, single))
-                        remaining.remove(item)
-                        backup = single.get("backup_path")
-                        if backup:
-                            last_backup = backup
-                    else:
-                        results.append(("FAIL", item, single))
-
-        # Finalize: keep only failed items in plan
         if remaining:
             self.plan_items = remaining
         else:
             self.plan_items.clear()
+
+        self._run_plan_preflight(trigger="post_execute")
         self._refresh_plan_table()
         self._update_plan_badge()
+        self._update_execute_button_state()
         self._show_plan_result(results, remaining)
 
         executed_items = [r[1] for r in results if r[0] == "OK"]
         if executed_items:
-            # Keep a printable snapshot even after plan is cleared.
             self._last_printable_plan = list(executed_items)
 
         if any(r[0] == "OK" for r in results):
             self.operation_completed.emit(True)
 
+        last_backup = report.get("backup_path")
         if last_backup and executed_items:
             self._last_operation_backup = last_backup
             self._last_executed_plan = list(executed_items)
             self._enable_undo(timeout_sec=30)
+
+        self._emit_operation_event({
+            "type": "plan_executed",
+            "source": "operations_panel",
+            "ok": report.get("ok"),
+            "stats": report.get("stats"),
+            "summary": report.get("summary"),
+        })
+
+    def _emit_operation_event(self, event):
+        """Emit an operation event for AI panel to consume."""
+        event["timestamp"] = datetime.now().isoformat()
+        self.operation_event.emit(event)
 
     def _show_plan_result(self, results, remaining):
         ok_count = sum(1 for r in results if r[0] == "OK")
@@ -1557,8 +1549,11 @@ class OperationsPanel(QWidget):
 
     def clear_plan(self):
         self.plan_items.clear()
+        self._plan_validation_by_key = {}
+        self._plan_preflight_report = None
         self._refresh_plan_table()
         self._update_plan_badge()
+        self._update_execute_button_state()
         self.status_message.emit("Plan cleared.", 2000, "info")
 
     # --- Query & Rollback Stubs (simplified) ---

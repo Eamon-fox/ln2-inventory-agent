@@ -1480,3 +1480,228 @@ class AuditGuideSelectionRegressionTests(unittest.TestCase):
             panel.on_print_selected_audit_guide()
 
         open_url.assert_called_once()
+
+
+@unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
+class PlanPreflightGuardTests(unittest.TestCase):
+    """Regression: preflight should block execution of invalid plans."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._app = QApplication.instance() or QApplication([])
+
+    def _seed_yaml(self, records):
+        import tempfile
+        from lib.yaml_ops import write_yaml
+
+        tmpdir = tempfile.mkdtemp(prefix="ln2_preflight_")
+        yaml_path = os.path.join(tmpdir, "inventory.yaml")
+        write_yaml(
+            {"meta": {"box_layout": {"rows": 9, "cols": 9}}, "inventory": records},
+            path=yaml_path,
+            auto_html=False,
+            auto_server=False,
+            audit_meta={"action": "seed", "source": "tests"},
+        )
+        return yaml_path, tmpdir
+
+    def _cleanup_yaml(self, tmpdir):
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_add_items_triggers_preflight(self):
+        """Adding items to plan should trigger preflight validation."""
+        records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "positions": [5], "frozen_at": "2025-01-01"}]
+        yaml_path, tmpdir = self._seed_yaml(records)
+
+        try:
+            bridge = _FakeOperationsBridge()
+            panel = OperationsPanel(bridge=bridge, yaml_path_getter=lambda: yaml_path)
+
+            items = [_make_takeout_item(record_id=1, position=5)]
+            panel.add_plan_items(items)
+
+            self.assertIsNotNone(panel._plan_preflight_report)
+            self.assertEqual(1, len(panel._plan_validation_by_key))
+        finally:
+            self._cleanup_yaml(tmpdir)
+
+    def test_preflight_marks_blocked_items_in_table(self):
+        """Blocked items should show BLOCKED status in table."""
+        records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "positions": [5], "frozen_at": "2025-01-01"}]
+        yaml_path, tmpdir = self._seed_yaml(records)
+
+        try:
+            bridge = _FakeOperationsBridge()
+            panel = OperationsPanel(bridge=bridge, yaml_path_getter=lambda: yaml_path)
+
+            items = [_make_takeout_item(record_id=999, position=5)]
+            panel.add_plan_items(items)
+
+            self.assertEqual(1, panel.plan_table.rowCount())
+            status_item = panel.plan_table.item(0, 8)
+            self.assertIsNotNone(status_item)
+            self.assertEqual("BLOCKED", status_item.text())
+        finally:
+            self._cleanup_yaml(tmpdir)
+
+    def test_execute_button_disabled_when_blocked(self):
+        """Execute button should be disabled when plan has blocked items."""
+        records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "positions": [5], "frozen_at": "2025-01-01"}]
+        yaml_path, tmpdir = self._seed_yaml(records)
+
+        try:
+            bridge = _FakeOperationsBridge()
+            panel = OperationsPanel(bridge=bridge, yaml_path_getter=lambda: yaml_path)
+
+            items = [_make_takeout_item(record_id=999, position=5)]
+            panel.add_plan_items(items)
+
+            self.assertFalse(panel.plan_exec_btn.isEnabled())
+        finally:
+            self._cleanup_yaml(tmpdir)
+
+    def test_execute_button_enabled_when_valid(self):
+        """Execute button should be enabled when all items are valid."""
+        records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "positions": [5], "frozen_at": "2025-01-01"}]
+        yaml_path, tmpdir = self._seed_yaml(records)
+
+        try:
+            bridge = _ConfigurableBridge()
+            panel = OperationsPanel(bridge=bridge, yaml_path_getter=lambda: yaml_path)
+
+            items = [_make_move_item(record_id=1, position=5, to_position=10)]
+            panel.add_plan_items(items)
+
+            self.assertTrue(panel.plan_exec_btn.isEnabled())
+        finally:
+            self._cleanup_yaml(tmpdir)
+
+
+@unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
+class ExecuteInterceptTests(unittest.TestCase):
+    """Regression: execute should be intercepted when plan is blocked."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._app = QApplication.instance() or QApplication([])
+
+    def _seed_yaml(self, records):
+        import tempfile
+        from lib.yaml_ops import write_yaml
+
+        tmpdir = tempfile.mkdtemp(prefix="ln2_intercept_")
+        yaml_path = os.path.join(tmpdir, "inventory.yaml")
+        write_yaml(
+            {"meta": {"box_layout": {"rows": 9, "cols": 9}}, "inventory": records},
+            path=yaml_path,
+            auto_html=False,
+            auto_server=False,
+            audit_meta={"action": "seed", "source": "tests"},
+        )
+        return yaml_path, tmpdir
+
+    def _cleanup_yaml(self, tmpdir):
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_execute_blocked_does_not_call_bridge(self):
+        """When plan is blocked, execute should not call bridge methods."""
+        records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "positions": [5], "frozen_at": "2025-01-01"}]
+        yaml_path, tmpdir = self._seed_yaml(records)
+
+        try:
+            bridge = _FakeOperationsBridge()
+            panel = OperationsPanel(bridge=bridge, yaml_path_getter=lambda: yaml_path)
+
+            items = [_make_takeout_item(record_id=999, position=5)]
+            panel.add_plan_items(items)
+
+            messages = []
+            panel.status_message.connect(lambda msg, _timeout, _level: messages.append(msg))
+
+            panel.execute_plan()
+
+            self.assertTrue(any("blocked" in m.lower() for m in messages))
+            self.assertIsNone(bridge.last_batch_payload)
+        finally:
+            self._cleanup_yaml(tmpdir)
+
+    def test_execute_blocked_emits_operation_event(self):
+        """Blocked execution should emit operation_event."""
+        records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "positions": [5], "frozen_at": "2025-01-01"}]
+        yaml_path, tmpdir = self._seed_yaml(records)
+
+        try:
+            bridge = _FakeOperationsBridge()
+            panel = OperationsPanel(bridge=bridge, yaml_path_getter=lambda: yaml_path)
+
+            items = [_make_takeout_item(record_id=999, position=5)]
+            panel.add_plan_items(items)
+
+            events = []
+            panel.operation_event.connect(lambda ev: events.append(ev))
+
+            panel.execute_plan()
+
+            self.assertEqual(1, len(events))
+            self.assertEqual("plan_execute_blocked", events[0]["type"])
+        finally:
+            self._cleanup_yaml(tmpdir)
+
+
+@unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
+class OperationEventFeedTests(unittest.TestCase):
+    """Regression: operation events should flow to AI panel."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._app = QApplication.instance() or QApplication([])
+
+    def _new_ai_panel(self):
+        from app_gui.ui.ai_panel import AIPanel
+        return AIPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+
+    def test_ai_panel_receives_operation_events(self):
+        """AI panel should store and display operation events."""
+        panel = self._new_ai_panel()
+
+        panel.on_operation_event({
+            "type": "plan_executed",
+            "timestamp": "2026-02-12T10:00:00",
+            "ok": True,
+            "stats": {"total": 1, "ok": 1, "blocked": 0},
+            "summary": "All 1 operation(s) succeeded.",
+        })
+
+        self.assertEqual(1, len(panel.ai_operation_events))
+        self.assertIn("succeeded", panel.ai_chat.toPlainText().lower())
+
+    def test_ai_panel_limits_operation_events(self):
+        """AI panel should limit stored operation events to prevent memory growth."""
+        panel = self._new_ai_panel()
+
+        for i in range(30):
+            panel.on_operation_event({
+                "type": "plan_executed",
+                "timestamp": f"2026-02-12T10:{i:02d}:00",
+                "ok": True,
+                "stats": {"total": 1, "ok": 1},
+                "summary": f"Event {i}",
+            })
+
+        self.assertLessEqual(len(panel.ai_operation_events), 20)
+
+    def test_ai_panel_shows_blocked_events(self):
+        """AI panel should show blocked execution events."""
+        panel = self._new_ai_panel()
+
+        panel.on_operation_event({
+            "type": "plan_execute_blocked",
+            "timestamp": "2026-02-12T10:00:00",
+            "blocked_count": 2,
+        })
+
+        chat_text = panel.ai_chat.toPlainText().lower()
+        self.assertIn("blocked", chat_text)
+        self.assertIn("2", chat_text)

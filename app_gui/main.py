@@ -394,6 +394,9 @@ class MainWindow(QMainWindow):
         # Operations -> Overview (refresh after execution)
         self.operations_panel.operation_completed.connect(self.on_operation_completed)
 
+        # Operations -> AI (operation events for context)
+        self.operations_panel.operation_event.connect(self.ai_panel.on_operation_event)
+
         # AI -> Plan staging
         self.ai_panel.plan_items_staged.connect(
             self.operations_panel.add_plan_items)
