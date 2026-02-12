@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QFormLayout, QDateEdit, QSpinBox, QTextEdit
 )
 from app_gui.ui.utils import build_panel_header, positions_to_text
+from app_gui.i18n import tr
 from app_gui.plan_model import render_operation_sheet
 from app_gui.plan_gate import validate_plan_batch
 from app_gui.plan_outcome import summarize_plan_execution
@@ -89,20 +90,20 @@ class OperationsPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        layout.addLayout(build_panel_header(self, "Operations", "Operations Help", OPERATIONS_HELP_TEXT))
+        layout.addLayout(build_panel_header(self, tr("operations.title"), tr("operations.helpTitle"), OPERATIONS_HELP_TEXT))
 
         # Mode Selection
         mode_row = QHBoxLayout()
-        mode_row.addWidget(QLabel("Manual Action"))
+        mode_row.addWidget(QLabel(tr("operations.mode")))
         mode_row.addStretch()
 
         self.op_mode_combo = QComboBox()
         modes = [
-            ("thaw", "Takeout"),
-            ("move", "Move"),
-            ("add", "Add Entry"),
-            ("plan", "Plan"),
-            ("query", "Query"),
+            ("thaw", tr("operations.thaw")),
+            ("move", tr("operations.move")),
+            ("add", tr("operations.add")),
+            ("plan", tr("operations.plan")),
+            ("query", tr("operations.query")),
             ("rollback", "Rollback"),
             ("audit", "Audit Log"),
         ]
@@ -302,7 +303,7 @@ class OperationsPanel(QWidget):
         form.addRow("Note", self.a_note)
         layout.addLayout(form)
 
-        self.a_apply_btn = QPushButton("Add to Plan")
+        self.a_apply_btn = QPushButton(tr("operations.addPlan"))
         self._style_stage_button(self.a_apply_btn)
         self.a_apply_btn.clicked.connect(self.on_add_entry)
         layout.addWidget(self.a_apply_btn)

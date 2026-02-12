@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QPushButton, QLabel, QSplitter,
     QMessageBox, QDialog, QFormLayout, QLineEdit,
     QDialogButtonBox, QFileDialog, QGroupBox, QCheckBox,
-    QFrame, QSpacerItem, QSizePolicy
+    QFrame, QSpacerItem, QSizePolicy, QComboBox
 )
 from PySide6.QtGui import QFont
 
@@ -25,6 +25,7 @@ from app_gui.gui_config import (
     load_gui_config,
     save_gui_config,
 )
+from app_gui.i18n import tr, t, set_language
 from app_gui.path_utils import resolve_demo_dataset_path
 from lib.config import YAML_PATH
 from app_gui.ui.theme import apply_dark_theme
@@ -38,7 +39,7 @@ class QuickStartDialog(QDialog):
 
     def __init__(self, parent=None, current_path="", demo_path=""):
         super().__init__(parent)
-        self.setWindowTitle("Welcome to LN2 Inventory Agent")
+        self.setWindowTitle(tr("quickStart.title"))
         self.setMinimumWidth(500)
         self.chosen_path = None
         self.create_new = False
@@ -46,16 +47,12 @@ class QuickStartDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(16)
 
-        title = QLabel("Welcome to LN2 Inventory Agent")
+        title = QLabel(tr("quickStart.title"))
         title.setFont(QFont("", 16, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
 
-        intro = QLabel(
-            "This application helps you manage frozen cell samples\n"
-            "stored in liquid nitrogen tanks.\n\n"
-            "How would you like to start?"
-        )
+        intro = QLabel(tr("quickStart.intro"))
         intro.setAlignment(Qt.AlignCenter)
         intro.setStyleSheet("color: #94a3b8;")
         layout.addWidget(intro)
@@ -64,24 +61,24 @@ class QuickStartDialog(QDialog):
         options_layout.setSpacing(12)
 
         self.btn_demo = self._create_option_button(
-            "[DEMO] Try Demo Data",
-            "Recommended for new users. Load sample data to explore features.",
+            tr("quickStart.demo"),
+            tr("quickStart.demoDesc"),
             "background-color: #1e40af;",
         )
         self.btn_demo.clicked.connect(self._on_demo)
         options_layout.addWidget(self.btn_demo)
 
         self.btn_open = self._create_option_button(
-            "[OPEN] Open Existing File",
-            "Load your own inventory YAML file from disk.",
+            tr("quickStart.open"),
+            tr("quickStart.openDesc"),
             "background-color: #166534;",
         )
         self.btn_open.clicked.connect(self._on_open)
         options_layout.addWidget(self.btn_open)
 
         self.btn_current = self._create_option_button(
-            "[CURRENT] Use Current Path",
-            f"Use the previously configured path:\n{current_path}",
+            tr("quickStart.current"),
+            t("quickStart.currentDesc", path=current_path),
             "background-color: #374151;",
         )
         if not current_path or not os.path.exists(current_path):
@@ -91,8 +88,8 @@ class QuickStartDialog(QDialog):
         options_layout.addWidget(self.btn_current)
 
         self.btn_new = self._create_option_button(
-            "[NEW] Create New Inventory",
-            "Start fresh with an empty inventory file.",
+            tr("quickStart.new"),
+            tr("quickStart.newDesc"),
             "background-color: #7c2d12;",
         )
         self.btn_new.clicked.connect(self._on_new)
@@ -100,7 +97,7 @@ class QuickStartDialog(QDialog):
 
         layout.addLayout(options_layout)
 
-        btn_cancel = QPushButton("Cancel")
+        btn_cancel = QPushButton(tr("quickStart.cancel"))
         btn_cancel.clicked.connect(self.reject)
         layout.addWidget(btn_cancel, alignment=Qt.AlignCenter)
 
@@ -228,6 +225,26 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(user_group)
 
+        from app_gui.i18n import SUPPORTED_LANGUAGES
+        lang_group = QGroupBox(tr("settings.language").rstrip("："))
+        lang_layout = QFormLayout(lang_group)
+
+        self.lang_combo = QComboBox()
+        for code, name in SUPPORTED_LANGUAGES.items():
+            self.lang_combo.addItem(name, code)
+        current_lang = self._config.get("language", "en")
+        idx = self.lang_combo.findData(current_lang)
+        if idx >= 0:
+            self.lang_combo.setCurrentIndex(idx)
+        lang_layout.addRow(tr("settings.language"), self.lang_combo)
+
+        lang_hint = QLabel(tr("settings.languageHint"))
+        lang_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
+        lang_hint.setWordWrap(True)
+        lang_layout.addRow("", lang_hint)
+
+        layout.addWidget(lang_group)
+
         layout.addStretch()
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -247,6 +264,7 @@ class SettingsDialog(QDialog):
             "yaml_path": self.yaml_edit.text().strip(),
             "actor_id": self.actor_edit.text().strip(),
             "api_key": self.api_key_edit.text().strip() or None,
+            "language": self.lang_combo.currentData(),
             "ai": {
                 "mock": self.mock_check.isChecked(),
             },
@@ -256,11 +274,12 @@ class SettingsDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("LN2 Inventory Agent")
+        self.setWindowTitle(tr("app.title"))
         self.resize(1300, 900)
 
         self.settings = QSettings("EamonFox", "LN2InventoryAgent")
         self.gui_config = load_gui_config()
+        set_language(self.gui_config.get("language") or "en")
 
         if self.gui_config.get("api_key") and not os.environ.get("DEEPSEEK_API_KEY"):
             os.environ["DEEPSEEK_API_KEY"] = self.gui_config["api_key"]
@@ -292,7 +311,7 @@ class MainWindow(QMainWindow):
         self.connect_signals()
         self.restore_ui_settings()
 
-        self.statusBar().showMessage("Ready", 2000)
+        self.statusBar().showMessage(tr("app.ready"), 2000)
 
         if os.path.isfile(self.current_yaml_path):
             self.overview_panel.refresh()
@@ -430,6 +449,7 @@ class MainWindow(QMainWindow):
                 "actor_id": self.current_actor_id,
                 "api_key": self.gui_config.get("api_key"),
                 "ai": self.gui_config.get("ai", {}),
+                "language": self.gui_config.get("language", "en"),
             }
         )
         if dialog.exec() != QDialog.Accepted:
@@ -447,6 +467,15 @@ class MainWindow(QMainWindow):
         ai_cfg["mock"] = values["ai"]["mock"]
         self.gui_config["ai"] = ai_cfg
         self.ai_panel.ai_mock.setChecked(ai_cfg.get("mock", True))
+
+        new_lang = values.get("language", "en")
+        if new_lang != self.gui_config.get("language"):
+            self.gui_config["language"] = new_lang
+            QMessageBox.information(
+                self,
+                tr("common.info"),
+                "Language changed. Please restart the application to apply."
+            )
 
         self.bridge.set_actor(self.current_actor_id)
         self._update_dataset_label()

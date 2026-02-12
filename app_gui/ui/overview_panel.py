@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QSizePolicy, QGroupBox, QMenu, QApplication
 )
 from app_gui.ui.utils import build_panel_header, cell_color
+from app_gui.i18n import tr, t
 
 MIME_TYPE_MOVE = "application/x-ln2-move"
 
@@ -136,42 +137,42 @@ class OverviewPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        layout.addLayout(build_panel_header(self, "Overview", "Overview Help", OVERVIEW_HELP_TEXT))
+        layout.addLayout(build_panel_header(self, tr("overview.title"), tr("overview.helpTitle"), OVERVIEW_HELP_TEXT))
 
         # Summary Cards
         summary_row = QHBoxLayout()
         summary_row.setSpacing(6)
         
-        self.ov_total_records_value = self._build_card(summary_row, "Total Records")
-        self.ov_occupied_value = self._build_card(summary_row, "Occupied")
-        self.ov_empty_value = self._build_card(summary_row, "Empty")
-        self.ov_rate_value = self._build_card(summary_row, "Occupancy Rate")
+        self.ov_total_records_value = self._build_card(summary_row, tr("overview.totalRecords"))
+        self.ov_occupied_value = self._build_card(summary_row, tr("overview.occupied"))
+        self.ov_empty_value = self._build_card(summary_row, tr("overview.empty"))
+        self.ov_rate_value = self._build_card(summary_row, tr("overview.occupancyRate"))
         
         layout.addLayout(summary_row)
 
         # Meta Stats
         self.ov_total_capacity_value = QLabel("-")
         self.ov_ops7_value = QLabel("-")
-        self.ov_meta_stats = QLabel("Capacity: - | Ops (7d): -")
+        self.ov_meta_stats = QLabel(f"{tr('overview.capacity')}: - | {tr('overview.ops7d')}: -")
         self.ov_meta_stats.setStyleSheet("color: #64748b;")
         layout.addWidget(self.ov_meta_stats)
 
         # Action Row
         action_row = QHBoxLayout()
         action_row.setSpacing(6)
-        refresh_btn = QPushButton("Refresh")
+        refresh_btn = QPushButton(tr("overview.refresh"))
         refresh_btn.clicked.connect(self.refresh)
         action_row.addWidget(refresh_btn)
 
-        goto_add_btn = QPushButton("Quick Add")
+        goto_add_btn = QPushButton(tr("overview.quickAdd"))
         goto_add_btn.clicked.connect(self.request_quick_add.emit)
         action_row.addWidget(goto_add_btn)
 
-        goto_thaw_btn = QPushButton("Quick Takeout")
+        goto_thaw_btn = QPushButton(tr("overview.quickTakeout"))
         goto_thaw_btn.clicked.connect(self.request_quick_thaw.emit)
         action_row.addWidget(goto_thaw_btn)
 
-        self.ov_select_btn = QPushButton("Select")
+        self.ov_select_btn = QPushButton(tr("overview.select"))
         self.ov_select_btn.setCheckable(True)
         self.ov_select_btn.toggled.connect(self._on_select_mode_toggled)
         action_row.addWidget(self.ov_select_btn)
@@ -182,14 +183,14 @@ class OverviewPanel(QWidget):
         # Filter Row
         filter_row = QHBoxLayout()
         filter_row.setSpacing(6)
-        filter_row.addWidget(QLabel("Search"))
+        filter_row.addWidget(QLabel(tr("overview.search")))
 
         self.ov_filter_keyword = QLineEdit()
-        self.ov_filter_keyword.setPlaceholderText("ID / short / cell / plasmid / note")
+        self.ov_filter_keyword.setPlaceholderText(tr("overview.searchPlaceholder"))
         self.ov_filter_keyword.textChanged.connect(self._apply_filters)
         filter_row.addWidget(self.ov_filter_keyword, 2)
 
-        self.ov_filter_toggle_btn = QPushButton("More Filters")
+        self.ov_filter_toggle_btn = QPushButton(tr("overview.moreFilters"))
         self.ov_filter_toggle_btn.setCheckable(True)
         self.ov_filter_toggle_btn.toggled.connect(self.on_toggle_filters)
         filter_row.addWidget(self.ov_filter_toggle_btn)
@@ -209,12 +210,12 @@ class OverviewPanel(QWidget):
         self.ov_filter_cell.currentIndexChanged.connect(self._apply_filters)
         advanced_filter_row.addWidget(self.ov_filter_cell, 1)
 
-        self.ov_filter_show_empty = QCheckBox("Show Empty")
+        self.ov_filter_show_empty = QCheckBox(tr("overview.showEmpty"))
         self.ov_filter_show_empty.setChecked(True)
         self.ov_filter_show_empty.stateChanged.connect(self._apply_filters)
         advanced_filter_row.addWidget(self.ov_filter_show_empty)
 
-        clear_filter_btn = QPushButton("Clear Filter")
+        clear_filter_btn = QPushButton(tr("overview.clearFilter"))
         clear_filter_btn.clicked.connect(self.on_clear_filters)
         advanced_filter_row.addWidget(clear_filter_btn)
         advanced_filter_row.addStretch()
@@ -227,7 +228,7 @@ class OverviewPanel(QWidget):
         self.ov_status = QLabel("Overview status")
         layout.addWidget(self.ov_status)
 
-        self.ov_hover_hint = QLabel("Hover a slot to preview details.")
+        self.ov_hover_hint = QLabel(tr("overview.hoverHint"))
         self.ov_hover_hint.setStyleSheet("color: #94a3b8; font-weight: bold;")
         self.ov_hover_hint.setWordWrap(True)
         layout.addWidget(self.ov_hover_hint)
@@ -235,14 +236,14 @@ class OverviewPanel(QWidget):
         # Selection Action Bar (hidden by default)
         sel_bar_layout = QHBoxLayout()
         sel_bar_layout.setSpacing(6)
-        self.ov_sel_count = QLabel("0 selected")
+        self.ov_sel_count = QLabel(t("overview.selected", count=0))
         self.ov_sel_count.setStyleSheet("font-weight: bold;")
         sel_bar_layout.addWidget(self.ov_sel_count)
-        for action_name in ("Takeout", "Thaw", "Discard"):
+        for action_name in (tr("overview.takeout"), tr("overview.thaw"), tr("overview.discard")):
             btn = QPushButton(action_name)
             btn.clicked.connect(lambda _checked=False, a=action_name: self._on_quick_action(a))
             sel_bar_layout.addWidget(btn)
-        sel_clear_btn = QPushButton("Clear")
+        sel_clear_btn = QPushButton(tr("overview.clear"))
         sel_clear_btn.clicked.connect(self._clear_all_selections)
         sel_bar_layout.addWidget(sel_clear_btn)
         sel_bar_layout.addStretch()
@@ -630,7 +631,7 @@ class OverviewPanel(QWidget):
 
     def on_toggle_filters(self, checked):
         self.ov_filter_advanced_widget.setVisible(bool(checked))
-        self.ov_filter_toggle_btn.setText("Hide Filters" if checked else "More Filters")
+        self.ov_filter_toggle_btn.setText(tr("overview.hideFilters") if checked else tr("overview.moreFilters"))
 
     def on_clear_filters(self):
         self.ov_filter_keyword.clear()
@@ -768,7 +769,7 @@ class OverviewPanel(QWidget):
 
     def _on_select_mode_toggled(self, checked):
         self.select_mode = checked
-        self.ov_select_btn.setText("Exit Select" if checked else "Select")
+        self.ov_select_btn.setText(tr("overview.exitSelect") if checked else tr("overview.select"))
         if checked:
             self._clear_selected_cell()
         else:

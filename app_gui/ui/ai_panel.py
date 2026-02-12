@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 from app_gui.ui.workers import AgentRunWorker
 from app_gui.ui.utils import build_panel_header, compact_json
 from app_gui.event_compactor import compact_operation_event_for_context
+from app_gui.i18n import tr
 from app_gui.plan_outcome import collect_blocked_items, summarize_plan_execution
 from lib.config import AUDIT_LOG_FILE
 import os
@@ -76,7 +77,7 @@ class AIPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        layout.addLayout(build_panel_header(self, "AI Assistant", "AI Assistant Help", AI_HELP_TEXT))
+        layout.addLayout(build_panel_header(self, tr("ai.title"), tr("ai.helpTitle"), AI_HELP_TEXT))
 
         # Toggles
         toggle_row = QHBoxLayout()
@@ -103,7 +104,7 @@ class AIPanel(QWidget):
         self.ai_steps.setRange(1, 20)
         self.ai_steps.setValue(8)
 
-        self.ai_mock = QCheckBox("Mock LLM (no external API)")
+        self.ai_mock = QCheckBox(tr("ai.mockMode"))
         self.ai_mock.setChecked(True)
         self.ai_mock.stateChanged.connect(self.on_mode_changed)
 
@@ -138,16 +139,16 @@ class AIPanel(QWidget):
         prompt_layout.addWidget(self.ai_prompt)
 
         run_row = QHBoxLayout()
-        self.ai_run_btn = QPushButton("Run Agent")
+        self.ai_run_btn = QPushButton(tr("ai.run"))
         self.ai_run_btn.clicked.connect(self.on_run_ai_agent)
         run_row.addWidget(self.ai_run_btn)
 
-        self.ai_stop_btn = QPushButton("Stop")
+        self.ai_stop_btn = QPushButton(tr("ai.stop"))
         self.ai_stop_btn.setEnabled(False)
         self.ai_stop_btn.clicked.connect(self.on_stop_ai_agent)
         run_row.addWidget(self.ai_stop_btn)
 
-        ai_clear_btn = QPushButton("Clear AI Panel")
+        ai_clear_btn = QPushButton(tr("ai.clear"))
         ai_clear_btn.clicked.connect(self.on_clear)
         run_row.addWidget(ai_clear_btn)
         run_row.addStretch()
