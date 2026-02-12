@@ -357,7 +357,7 @@ class OverviewPanel(QWidget):
             self.ov_ops7_value.setText(tr("common.na"))
 
         self.ov_meta_stats.setText(
-            f"Capacity: {self.ov_total_capacity_value.text()} | Ops (7d): {self.ov_ops7_value.text()}"
+            tr("overview.capacity") + f": {self.ov_total_capacity_value.text()} | " + tr("overview.ops7d") + f": {self.ov_ops7_value.text()}"
         )
 
         for box_num in box_numbers:
@@ -378,7 +378,7 @@ class OverviewPanel(QWidget):
         self._apply_filters()
 
         self.ov_status.setText(
-            f"Loaded {len(records)} records | {datetime.now().strftime('%H:%M:%S')}"
+            t("overview.loadedStatus", count=len(records), time=datetime.now().strftime("%H:%M:%S"))
         )
 
     def _rebuild_boxes(self, rows, cols, box_numbers):

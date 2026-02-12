@@ -159,49 +159,46 @@ class SettingsDialog(QDialog):
 
     def __init__(self, parent=None, config=None):
         super().__init__(parent)
-        self.setWindowTitle("Settings")
+        self.setWindowTitle(tr("settings.title"))
         self.setMinimumWidth(500)
         self._config = config or {}
 
         layout = QVBoxLayout(self)
         layout.setSpacing(16)
 
-        data_group = QGroupBox("Data")
+        data_group = QGroupBox(tr("settings.data"))
         data_layout = QFormLayout(data_group)
 
         yaml_row = QHBoxLayout()
         self.yaml_edit = QLineEdit(self._config.get("yaml_path", ""))
-        yaml_browse = QPushButton("Browse")
+        yaml_browse = QPushButton(tr("settings.browse"))
         yaml_browse.setFixedWidth(80)
         yaml_browse.clicked.connect(self._browse_yaml)
         yaml_row.addWidget(self.yaml_edit, 1)
         yaml_row.addWidget(yaml_browse)
-        data_layout.addRow("Inventory File:", yaml_row)
+        data_layout.addRow(tr("settings.inventoryFile"), yaml_row)
 
-        yaml_hint = QLabel("YAML file containing your cell sample inventory data.")
+        yaml_hint = QLabel(tr("settings.inventoryFileHint"))
         yaml_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
         yaml_hint.setWordWrap(True)
         data_layout.addRow("", yaml_hint)
 
         layout.addWidget(data_group)
 
-        ai_group = QGroupBox("AI Assistant")
+        ai_group = QGroupBox(tr("settings.ai"))
         ai_layout = QFormLayout(ai_group)
 
         self.api_key_edit = QLineEdit(self._config.get("api_key") or "")
         self.api_key_edit.setEchoMode(QLineEdit.Password)
         self.api_key_edit.setPlaceholderText("sk-...")
-        ai_layout.addRow("DeepSeek API Key:", self.api_key_edit)
+        ai_layout.addRow(tr("settings.apiKey"), self.api_key_edit)
 
-        api_hint = QLabel(
-            "Optional. Get your key at platform.deepseek.com\n"
-            "Leave empty to use DEEPSEEK_API_KEY environment variable."
-        )
+        api_hint = QLabel(tr("settings.apiKeyHint"))
         api_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
         api_hint.setWordWrap(True)
         ai_layout.addRow("", api_hint)
 
-        self.mock_check = QCheckBox("Use mock mode (no AI, for testing)")
+        self.mock_check = QCheckBox(tr("settings.mockMode"))
         self.mock_check.setChecked(self._config.get("ai", {}).get("mock", True))
         ai_layout.addRow("", self.mock_check)
 
@@ -330,11 +327,11 @@ class MainWindow(QMainWindow):
         self._update_dataset_label()
         top.addWidget(self.dataset_label, 1)
 
-        quick_start_btn = QPushButton("Quick Start")
+        quick_start_btn = QPushButton(tr("main.quickStart"))
         quick_start_btn.clicked.connect(self.on_quick_start)
         top.addWidget(quick_start_btn)
 
-        settings_btn = QPushButton("Settings")
+        settings_btn = QPushButton(tr("main.settings"))
         settings_btn.clicked.connect(self.on_open_settings)
         top.addWidget(settings_btn)
         root.addLayout(top)

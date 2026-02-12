@@ -328,7 +328,7 @@ class OperationsPanel(QWidget):
         self.t_date.setDisplayFormat("yyyy-MM-dd")
         self.t_date.setDate(QDate.currentDate())
         self.t_action = QComboBox()
-        self.t_action.addItems(["Takeout", "Thaw", "Discard"])
+        self.t_action.addItems([tr("overview.takeout"), tr("overview.thaw"), tr("overview.discard")])
         self.t_note = QLineEdit()
 
         single_form.addRow(tr("operations.recordId"), self.t_id)
@@ -360,19 +360,19 @@ class OperationsPanel(QWidget):
         self.t_ctx_events = QLabel("-")
         self.t_ctx_note = QLabel("-")
 
-        context_form.addRow("Status", self.t_ctx_status)
-        context_form.addRow("Source", self.t_ctx_source)
-        context_form.addRow("ID", self.t_ctx_id)
-        context_form.addRow("Cell", self.t_ctx_cell)
-        context_form.addRow("Short", self.t_ctx_short)
-        context_form.addRow("Box", self.t_ctx_box)
-        context_form.addRow("All Pos", self.t_ctx_positions)
-        context_form.addRow("Target", self.t_ctx_target)
-        context_form.addRow("Check", self.t_ctx_check)
-        context_form.addRow("Frozen", self.t_ctx_frozen)
-        context_form.addRow("Plasmid", self.t_ctx_plasmid)
-        context_form.addRow("History", self.t_ctx_events)
-        context_form.addRow("Note", self.t_ctx_note)
+        context_form.addRow(tr("overview.ctxStatus"), self.t_ctx_status)
+        context_form.addRow(tr("overview.ctxSource"), self.t_ctx_source)
+        context_form.addRow(tr("overview.ctxId"), self.t_ctx_id)
+        context_form.addRow(tr("overview.ctxCell"), self.t_ctx_cell)
+        context_form.addRow(tr("overview.ctxShort"), self.t_ctx_short)
+        context_form.addRow(tr("overview.ctxBox"), self.t_ctx_box)
+        context_form.addRow(tr("overview.ctxAllPos"), self.t_ctx_positions)
+        context_form.addRow(tr("overview.ctxTarget"), self.t_ctx_target)
+        context_form.addRow(tr("overview.ctxCheck"), self.t_ctx_check)
+        context_form.addRow(tr("overview.ctxFrozen"), self.t_ctx_frozen)
+        context_form.addRow(tr("overview.ctxPlasmid"), self.t_ctx_plasmid)
+        context_form.addRow(tr("overview.ctxHistory"), self.t_ctx_events)
+        context_form.addRow(tr("overview.ctxNote"), self.t_ctx_note)
         layout.addWidget(context_box)
 
         # Keep batch controls instantiated for programmatic/API paths, but hide from manual UI.
@@ -436,18 +436,18 @@ class OperationsPanel(QWidget):
         self.m_ctx_events = QLabel("-")
         self.m_ctx_note = QLabel("-")
 
-        context_form.addRow("Status", self.m_ctx_status)
-        context_form.addRow("ID", self.m_ctx_id)
-        context_form.addRow("Cell", self.m_ctx_cell)
-        context_form.addRow("Short", self.m_ctx_short)
-        context_form.addRow("Box", self.m_ctx_box)
-        context_form.addRow("All Pos", self.m_ctx_positions)
-        context_form.addRow("Move", self.m_ctx_target)
-        context_form.addRow("Check", self.m_ctx_check)
-        context_form.addRow("Frozen", self.m_ctx_frozen)
-        context_form.addRow("Plasmid", self.m_ctx_plasmid)
-        context_form.addRow("History", self.m_ctx_events)
-        context_form.addRow("Note", self.m_ctx_note)
+        context_form.addRow(tr("overview.ctxStatus"), self.m_ctx_status)
+        context_form.addRow(tr("overview.ctxId"), self.m_ctx_id)
+        context_form.addRow(tr("overview.ctxCell"), self.m_ctx_cell)
+        context_form.addRow(tr("overview.ctxShort"), self.m_ctx_short)
+        context_form.addRow(tr("overview.ctxBox"), self.m_ctx_box)
+        context_form.addRow(tr("overview.ctxAllPos"), self.m_ctx_positions)
+        context_form.addRow(tr("overview.ctxMove"), self.m_ctx_target)
+        context_form.addRow(tr("overview.ctxCheck"), self.m_ctx_check)
+        context_form.addRow(tr("overview.ctxFrozen"), self.m_ctx_frozen)
+        context_form.addRow(tr("overview.ctxPlasmid"), self.m_ctx_plasmid)
+        context_form.addRow(tr("overview.ctxHistory"), self.m_ctx_events)
+        context_form.addRow(tr("overview.ctxNote"), self.m_ctx_note)
         layout.addWidget(context_box)
 
         # Keep batch controls instantiated for programmatic/API paths, but hide from manual UI.
@@ -471,7 +471,7 @@ class OperationsPanel(QWidget):
         self.b_date.setDisplayFormat("yyyy-MM-dd")
         self.b_date.setDate(QDate.currentDate())
         self.b_action = QComboBox(self.t_batch_group)
-        self.b_action.addItems(["Takeout", "Thaw", "Discard"])
+        self.b_action.addItems([tr("overview.takeout"), tr("overview.thaw"), tr("overview.discard")])
         self.b_note = QLineEdit(self.t_batch_group)
         self.b_table = QTableWidget(self.t_batch_group)
         self.b_table.setColumnCount(2)
@@ -548,7 +548,7 @@ class OperationsPanel(QWidget):
         self.plan_table = QTableWidget()
         self._setup_table(
             self.plan_table,
-            ["Source", "Action", "Box", "Pos", "\u2192Pos", "\u2192Box", "Label", "Note", "Status"],
+            [tr("operations.colSource"), tr("operations.colAction"), tr("operations.colBox"), tr("operations.colPos"), tr("operations.colToPos"), tr("operations.colToBox"), tr("operations.colLabel"), tr("operations.colNote"), tr("operations.colStatus")],
             sortable=False,
         )
         self.plan_table.setVisible(False)
@@ -1277,7 +1277,7 @@ class OperationsPanel(QWidget):
 
         self._setup_table(
             self.plan_table,
-            ["Source", "Action", "Box", "Pos", "\u2192Pos", "\u2192Box", "Label", "Note", "Status"],
+            [tr("operations.colSource"), tr("operations.colAction"), tr("operations.colBox"), tr("operations.colPos"), tr("operations.colToPos"), tr("operations.colToBox"), tr("operations.colLabel"), tr("operations.colNote"), tr("operations.colStatus")],
             sortable=False,
         )
 
@@ -1816,7 +1816,7 @@ class OperationsPanel(QWidget):
         layout.addWidget(self.audit_table, 1)
         self._setup_table(
             self.audit_table,
-            ["Timestamp", "Action", "Actor", "Status", "Channel", "Details"],
+            [tr("operations.colTimestamp"), tr("operations.colAction"), tr("operations.colActor"), tr("operations.colStatus"), tr("operations.colChannel"), tr("operations.colDetails")],
             sortable=True,
         )
         self.audit_table.cellClicked.connect(self._on_audit_row_clicked)
