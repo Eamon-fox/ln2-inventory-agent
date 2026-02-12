@@ -5,8 +5,16 @@ from datetime import date
 from typing import Dict, List, Optional
 
 _VALID_ACTIONS = {"takeout", "thaw", "discard", "move", "add"}
-# Box range from config
 _BOX_RANGE = (1, 5)
+
+
+def _pos_to_coord(pos, cols=9):
+    """Convert position number to row/column coordinate (e.g., 1 -> A1, 10 -> B1)."""
+    if not isinstance(pos, int) or pos < 1:
+        return str(pos)
+    row = (pos - 1) // cols
+    col = (pos - 1) % cols + 1
+    return f"{chr(65 + row)}{col}"
 
 
 def validate_plan_item(item: dict) -> Optional[str]:
@@ -18,14 +26,12 @@ def validate_plan_item(item: dict) -> Optional[str]:
     box = item.get("box")
     if not isinstance(box, int):
         return "box must be an integer"
-    # Allow box=0 for new entries (placeholder before box assignment)
     if box < 0 or box > _BOX_RANGE[1]:
         return f"box must be between 0 and {_BOX_RANGE[1]}"
 
     pos = item.get("position")
     if not isinstance(pos, int):
         return "position must be an integer"
-    # Position range based on box layout (9x9 = 81 positions per box)
     if pos < 1 or pos > 81:
         return "position must be between 1 and 81"
 
@@ -46,7 +52,6 @@ def validate_plan_item(item: dict) -> Optional[str]:
             return "record_id must be a positive integer"
     else:
         payload = item.get("payload") or {}
-        # Allow parent_cell_line and short_name at top level or in payload
         if not (item.get("parent_cell_line") or payload.get("parent_cell_line")):
             return "parent_cell_line is required for add"
         if not (item.get("short_name") or payload.get("short_name")):
@@ -55,64 +60,377 @@ def validate_plan_item(item: dict) -> Optional[str]:
     return None
 
 
-def render_operation_sheet(items):
-    """Generate a printable HTML operation sheet grouped by box."""
-    by_box = defaultdict(list)
-    for item in items:
-        by_box[item.get("box", 0)].append(item)
+def _get_action_display(action):
+    """Get display info for action type."""
+    action_map = {
+        "takeout": ("TAKEOUT", "#f59e0b", "Take out from tank"),
+        "thaw": ("THAW", "#10b981", "Thaw for use"),
+        "discard": ("DISCARD", "#ef4444", "Discard sample"),
+        "move": ("MOVE", "#3b82f6", "Relocate sample"),
+        "add": ("ADD", "#8b5cf6", "Add new sample"),
+    }
+    return action_map.get(str(action).lower(), (str(action).upper(), "#6b7280", ""))
+
+
+def _extract_sample_info(item):
+    """Extract sample information from item."""
+    payload = item.get("payload") or {}
+    return {
+        "cell_line": item.get("parent_cell_line") or payload.get("parent_cell_line") or "",
+        "short_name": item.get("short_name") or payload.get("short_name") or "",
+        "frozen_at": item.get("frozen_at") or payload.get("frozen_at") or "",
+        "passage": item.get("passage") or payload.get("passage") or "",
+    }
+
+
+def render_operation_sheet(items, actor_id=""):
+    """Generate a user-friendly printable HTML operation sheet."""
+    if not items:
+        return """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>LN2 Operation Sheet</title>
+<style>body { font-family: Arial, sans-serif; margin: 40px; color: #666; }</style>
+</head><body><p>No operations to display.</p></body></html>"""
 
     today = date.today().isoformat()
-    rows_html = []
-    for box_num in sorted(by_box):
-        entries = sorted(by_box[box_num], key=lambda x: x.get("position", 0))
-        rows_html.append(
-            f'<tr class="box-header"><td colspan="6">'
-            f'<strong>Box {box_num}</strong> ({len(entries)} ops)</td></tr>'
-        )
-        for it in entries:
-            action = str(it.get("action", "")).capitalize()
-            pos = it.get("position", "")
-            to_pos = it.get("to_position")
-            to_box = it.get("to_box")
-            if to_pos and to_box and to_box != box_num:
-                pos_str = f"{pos} &rarr; Box{to_box}:{to_pos}"
-            elif to_pos:
-                pos_str = f"{pos} &rarr; {to_pos}"
+    
+    by_action = defaultdict(list)
+    for item in items:
+        by_action[item.get("action", "unknown")].append(item)
+    
+    action_order = ["takeout", "thaw", "move", "discard", "add"]
+    
+    sections = []
+    op_counter = 1
+    
+    for action in action_order:
+        if action not in by_action:
+            continue
+        
+        action_items = by_action[action]
+        action_name, action_color, action_desc = _get_action_display(action)
+        
+        action_rows = []
+        for item in sorted(action_items, key=lambda x: (x.get("box", 0), x.get("position", 0))):
+            box = item.get("box", 0)
+            pos = item.get("position", 0)
+            to_pos = item.get("to_position")
+            to_box = item.get("to_box")
+            
+            if action == "move" and to_pos:
+                if to_box and to_box != box:
+                    pos_display = f"Box{box}:{_pos_to_coord(pos)} &rarr; Box{to_box}:{_pos_to_coord(to_pos)}"
+                    warning = '<span class="warning">[CROSS-BOX]</span>'
+                else:
+                    pos_display = f"Box{box}:{_pos_to_coord(pos)} &rarr; {_pos_to_coord(to_pos)}"
+                    warning = ""
             else:
-                pos_str = str(pos)
-            label = it.get("label", "-")
-            rid = it.get("record_id")
-            rid_str = f"ID {rid}" if rid else "new"
-            note = (it.get("payload") or {}).get("note", "") or ""
-            source = it.get("source", "")
-            rows_html.append(
-                f"<tr>"
-                f'<td class="chk"><input type="checkbox"></td>'
-                f"<td>{action}</td>"
-                f"<td>{pos_str}</td>"
-                f"<td>{rid_str}</td>"
-                f"<td>{label}</td>"
-                f"<td>{note}</td>"
-                f"</tr>"
-            )
-
-    table = "\n".join(rows_html)
+                pos_display = f"Box{box}:{_pos_to_coord(pos)}"
+                warning = ""
+            
+            sample = _extract_sample_info(item)
+            rid = item.get("record_id")
+            
+            sample_label = f"{sample['cell_line']} / {sample['short_name']}" if sample['cell_line'] else item.get("label", "-")
+            
+            note = (item.get("payload") or {}).get("note", "") or ""
+            
+            action_rows.append(f"""
+            <tr class="op-row">
+                <td class="op-num">{op_counter}</td>
+                <td class="chk-cell"><input type="checkbox" id="op{op_counter}"></td>
+                <td class="pos-cell">{pos_display} {warning}</td>
+                <td class="sample-cell">
+                    <div class="sample-name">{sample_label}</div>
+                    <div class="sample-meta">ID: {rid if rid else 'NEW'}</div>
+                </td>
+                <td class="note-cell">{note}</td>
+                <td class="confirm-cell">
+                    <div class="confirm-line">Time: _______</div>
+                    <div class="confirm-line">Init: _______</div>
+                </td>
+            </tr>""")
+            op_counter += 1
+        
+        sections.append(f"""
+        <div class="action-section" style="border-left: 4px solid {action_color};">
+            <div class="action-header">
+                <span class="action-name" style="background-color: {action_color};">{action_name}</span>
+                <span class="action-count">{len(action_items)} operations</span>
+                <span class="action-desc">{action_desc}</span>
+            </div>
+            <table class="op-table">
+                <thead>
+                    <tr>
+                        <th class="col-num">#</th>
+                        <th class="col-chk">Done</th>
+                        <th class="col-pos">Location</th>
+                        <th class="col-sample">Sample</th>
+                        <th class="col-note">Notes</th>
+                        <th class="col-confirm">Confirmation</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {''.join(action_rows)}
+                </tbody>
+            </table>
+        </div>""")
+    
+    sections_html = "\n".join(sections)
+    
+    takeout_count = len(by_action.get("takeout", [])) + len(by_action.get("thaw", []))
+    move_count = len(by_action.get("move", []))
+    add_count = len(by_action.get("add", []))
+    discard_count = len(by_action.get("discard", []))
+    
     return f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>LN2 Operation Sheet</title>
-<style>
-  body {{ font-family: Arial, sans-serif; margin: 20px; }}
-  h1 {{ font-size: 18px; }}
-  table {{ border-collapse: collapse; width: 100%; }}
-  th, td {{ border: 1px solid #ccc; padding: 4px 8px; font-size: 13px; }}
-  th {{ background: #f0f0f0; text-align: left; }}
-  .box-header td {{ background: #e8e8e8; font-size: 14px; border-top: 2px solid #888; }}
-  .chk {{ width: 24px; text-align: center; }}
-  @media print {{ input[type=checkbox] {{ -webkit-appearance: checkbox; }} }}
-</style></head><body>
-<h1>LN2 Operation Sheet &mdash; {today}</h1>
-<p>Total: {len(items)} operation(s)</p>
-<table>
-<tr><th class="chk"></th><th>Action</th><th>Position</th><th>Record</th><th>Label</th><th>Note</th></tr>
-{table}
-</table>
-</body></html>"""
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>LN2 Operation Sheet - {today}</title>
+    <style>
+        * {{ box-sizing: border-box; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            font-size: 12px;
+            color: #1f2937;
+            background: #fff;
+        }}
+        
+        .header {{
+            border-bottom: 2px solid #1f2937;
+            padding-bottom: 15px;
+            margin-bottom: 20px;
+        }}
+        
+        .header h1 {{
+            margin: 0 0 5px 0;
+            font-size: 20px;
+        }}
+        
+        .header-meta {{
+            display: flex;
+            gap: 30px;
+            color: #6b7280;
+            font-size: 11px;
+        }}
+        
+        .header-meta span {{
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }}
+        
+        .summary {{
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            padding: 10px;
+            background: #f9fafb;
+            border-radius: 6px;
+        }}
+        
+        .summary-item {{
+            padding: 5px 12px;
+            border-radius: 4px;
+            font-weight: 600;
+        }}
+        
+        .action-section {{
+            margin-bottom: 25px;
+            padding-left: 10px;
+        }}
+        
+        .action-header {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+            padding: 8px 0;
+        }}
+        
+        .action-name {{
+            padding: 4px 12px;
+            border-radius: 4px;
+            color: white;
+            font-weight: bold;
+            font-size: 13px;
+        }}
+        
+        .action-count {{
+            color: #6b7280;
+            font-size: 11px;
+        }}
+        
+        .action-desc {{
+            color: #9ca3af;
+            font-size: 10px;
+            font-style: italic;
+        }}
+        
+        .op-table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 10px;
+        }}
+        
+        .op-table th {{
+            background: #f3f4f6;
+            padding: 8px;
+            text-align: left;
+            font-size: 10px;
+            text-transform: uppercase;
+            color: #6b7280;
+            border-bottom: 1px solid #e5e7eb;
+        }}
+        
+        .op-table td {{
+            padding: 10px 8px;
+            border-bottom: 1px solid #e5e7eb;
+            vertical-align: top;
+        }}
+        
+        .op-num {{
+            width: 30px;
+            font-weight: bold;
+            color: #9ca3af;
+            text-align: center;
+        }}
+        
+        .chk-cell {{
+            width: 40px;
+            text-align: center;
+        }}
+        
+        .chk-cell input {{
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+        }}
+        
+        .pos-cell {{
+            font-family: 'SF Mono', 'Consolas', monospace;
+            font-weight: 600;
+            font-size: 13px;
+            color: #1f2937;
+        }}
+        
+        .warning {{
+            color: #ef4444;
+            font-weight: bold;
+            font-size: 10px;
+            margin-left: 5px;
+        }}
+        
+        .sample-name {{
+            font-weight: 600;
+            color: #1f2937;
+        }}
+        
+        .sample-meta {{
+            font-size: 10px;
+            color: #6b7280;
+            margin-top: 2px;
+        }}
+        
+        .note-cell {{
+            color: #6b7280;
+            font-size: 11px;
+            max-width: 150px;
+        }}
+        
+        .confirm-cell {{
+            width: 100px;
+        }}
+        
+        .confirm-line {{
+            font-size: 10px;
+            color: #9ca3af;
+            margin: 2px 0;
+        }}
+        
+        .footer {{
+            margin-top: 30px;
+            padding-top: 15px;
+            border-top: 1px solid #e5e7eb;
+            font-size: 10px;
+            color: #9ca3af;
+        }}
+        
+        .footer-row {{
+            display: flex;
+            gap: 40px;
+            margin-bottom: 10px;
+        }}
+        
+        .sign-box {{
+            border-bottom: 1px solid #d1d5db;
+            width: 200px;
+            display: inline-block;
+            margin-left: 5px;
+        }}
+        
+        .tips {{
+            background: #fef3c7;
+            border: 1px solid #f59e0b;
+            border-radius: 4px;
+            padding: 10px;
+            margin-bottom: 20px;
+            font-size: 11px;
+        }}
+        
+        .tips-title {{
+            font-weight: bold;
+            color: #92400e;
+            margin-bottom: 5px;
+        }}
+        
+        .tips ul {{
+            margin: 0;
+            padding-left: 20px;
+            color: #78350f;
+        }}
+        
+        .tips li {{
+            margin: 2px 0;
+        }}
+        
+        @media print {{
+            body {{ padding: 10px; }}
+            .action-section {{ page-break-inside: avoid; }}
+            .op-table {{ page-break-inside: auto; }}
+            .op-row {{ page-break-inside: avoid; }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>LN2 Tank Operation Sheet</h1>
+        <div class="header-meta">
+            <span>Date: <strong>{today}</strong></span>
+            <span>Operator: <strong>{actor_id or '________________'}</strong></span>
+            <span>Total: <strong>{len(items)} operations</strong></span>
+        </div>
+    </div>
+    
+    <div class="summary">
+        <div class="summary-item" style="background: #fef3c7;">Takeout/Thaw: {takeout_count}</div>
+        <div class="summary-item" style="background: #dbeafe;">Move: {move_count}</div>
+        <div class="summary-item" style="background: #ede9fe;">Add: {add_count}</div>
+        <div class="summary-item" style="background: #fee2e2;">Discard: {discard_count}</div>
+    </div>
+    
+    {sections_html}
+    
+    <div class="footer">
+        <div class="footer-row">
+            <span>Completed by: <span class="sign-box"></span></span>
+            <span>Verified by: <span class="sign-box"></span></span>
+        </div>
+        <div class="footer-row">
+            <span>Notes: <span class="sign-box" style="width: 400px;"></span></span>
+        </div>
+    </div>
+</body>
+</html>"""

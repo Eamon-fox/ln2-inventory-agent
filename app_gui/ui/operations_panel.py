@@ -1545,7 +1545,8 @@ class OperationsPanel(QWidget):
         self._print_operation_sheet(items_to_print)
 
     def _print_operation_sheet(self, items, opened_message="Operation sheet opened in browser."):
-        html = render_operation_sheet(items)
+        actor_id = getattr(self.bridge, "_actor_id", "")
+        html = render_operation_sheet(items, actor_id=actor_id)
         tmp = tempfile.NamedTemporaryFile(
             suffix=".html", delete=False, mode="w", encoding="utf-8"
         )

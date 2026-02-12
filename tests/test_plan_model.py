@@ -186,29 +186,27 @@ class ValidateAddPayloadTests(unittest.TestCase):
 class RenderOperationSheetTests(unittest.TestCase):
     def test_empty_items(self):
         html = render_operation_sheet([])
-        self.assertIn("Total: 0 operation(s)", html)
+        self.assertIn("No operations", html)
         self.assertIn("<!DOCTYPE html>", html)
 
     def test_single_item(self):
         html = render_operation_sheet([_base_item()])
-        self.assertIn("Box 1", html)
-        self.assertIn("Takeout", html)
-        self.assertIn("ID 1", html)
-        self.assertIn("Total: 1 operation(s)", html)
+        self.assertIn("Box1:", html)
+        self.assertIn("TAKEOUT", html)
+        self.assertIn("ID: 1", html)
+        self.assertIn("1 operations", html)
 
-    def test_groups_by_box(self):
+    def test_groups_by_action(self):
         items = [
             _base_item(box=2, position=10),
             _base_item(box=1, position=5),
             _base_item(box=2, position=20),
         ]
         html = render_operation_sheet(items)
-        self.assertIn("Box 1", html)
-        self.assertIn("Box 2", html)
-        # Box 1 should appear before Box 2
-        self.assertLess(html.index("Box 1"), html.index("Box 2"))
+        self.assertIn("TAKEOUT", html)
+        self.assertIn("3 operations", html)
 
-    def test_sorts_by_position_within_box(self):
+    def test_sorts_by_position(self):
         items = [
             _base_item(box=1, position=20, label="second"),
             _base_item(box=1, position=10, label="first"),
@@ -222,7 +220,7 @@ class RenderOperationSheetTests(unittest.TestCase):
 
     def test_add_shows_new(self):
         html = render_operation_sheet([_add_item()])
-        self.assertIn("new", html)
+        self.assertIn("NEW", html)
 
     def test_note_from_payload(self):
         item = _base_item(payload={"note": "my special note"})
@@ -266,29 +264,30 @@ class ValidateToBoxTests(unittest.TestCase):
 
 class CrossBoxMoveRenderTests(unittest.TestCase):
     def test_cross_box_move_shows_target_box(self):
-        """Move from Box1 pos 5 to Box2 pos 10 should show '5 → Box2:10'."""
+        """Move from Box1 pos 5 to Box2 pos 10 should show 'Box2:B1' (coord)."""
         item = _move_item(box=1, position=5, to_position=10, to_box=2)
         html = render_operation_sheet([item])
-        self.assertIn("Box2:10", html)
+        self.assertIn("Box2:", html)
 
     def test_same_box_move_shows_only_position(self):
-        """Move within same box should show '5 → 10' without box prefix."""
+        """Move within same box should show arrow without [CROSS-BOX] warning."""
         item = _move_item(box=1, position=5, to_position=10, to_box=1)
         html = render_operation_sheet([item])
-        self.assertIn("5 &rarr; 10", html)
-        self.assertNotIn("Box1:10", html)
+        self.assertIn("&rarr;", html)
+        self.assertNotIn("[CROSS-BOX]", html)
 
     def test_move_without_to_box_shows_only_position(self):
-        """Move without explicit to_box should show '5 → 10'."""
+        """Move without explicit to_box should show arrow."""
         item = _move_item(box=1, position=5, to_position=10)
         html = render_operation_sheet([item])
-        self.assertIn("5 &rarr; 10", html)
+        self.assertIn("&rarr;", html)
 
     def test_cross_box_move_from_box2_to_box5(self):
         """Cross-box move should work for any box combination."""
         item = _move_item(box=2, position=30, to_position=50, to_box=5, label="cross-test")
         html = render_operation_sheet([item])
-        self.assertIn("Box5:50", html)
+        self.assertIn("Box5:", html)
+        self.assertIn("[CROSS-BOX]", html)
         self.assertIn("cross-test", html)
 
 

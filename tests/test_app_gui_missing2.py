@@ -164,7 +164,8 @@ class PlanModelRenderingTests(unittest.TestCase):
         html = render_operation_sheet(items)
         self.assertIsInstance(html, str)
         self.assertIn("<html", html)
-        self.assertIn("K562-clone1", html)
+        self.assertIn("K562", html)
+        self.assertIn("clone1", html)
 
     def test_render_operation_sheet_multiple_actions(self):
         """Test rendering multiple different actions."""
