@@ -1219,3 +1219,264 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
             panel.execute_plan()
 
         self.assertEqual(0, len(panel.plan_items))
+
+
+class _UndoBridge(_FakeOperationsBridge):
+    """Bridge that supports rollback for undo tests."""
+
+    def __init__(self):
+        super().__init__()
+        self.rollback_called = False
+        self.rollback_backup_path = None
+
+    def rollback(self, yaml_path, backup_path=None):
+        self.rollback_called = True
+        self.rollback_backup_path = backup_path
+        return {"ok": True, "message": "Rolled back", "backup_path": backup_path}
+
+    def batch_thaw(self, yaml_path, **payload):
+        result = super().batch_thaw(yaml_path, **payload)
+        result["backup_path"] = "/tmp/backup_test.yaml"
+        return result
+
+
+@unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
+class UndoRestoresPlanRegressionTests(unittest.TestCase):
+    """Regression: undo should restore executed items back to plan."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._app = QApplication.instance() or QApplication([])
+
+    def _new_panel(self, bridge):
+        return OperationsPanel(bridge=bridge, yaml_path_getter=lambda: "/tmp/inventory.yaml")
+
+    def test_undo_restores_executed_plan_items(self):
+        """After executing plan and undoing, items should return to plan."""
+        bridge = _UndoBridge()
+        panel = self._new_panel(bridge)
+
+        items = [
+            _make_takeout_item(record_id=1, position=5),
+            _make_takeout_item(record_id=2, position=10),
+        ]
+        panel.add_plan_items(items)
+        self.assertEqual(2, len(panel.plan_items))
+
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        self.assertEqual(0, len(panel.plan_items))
+        self.assertTrue(panel.undo_btn.isEnabled())
+        self.assertEqual(2, len(panel._last_executed_plan))
+
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.on_undo_last()
+
+        self.assertTrue(bridge.rollback_called)
+        self.assertEqual(2, len(panel.plan_items))
+        self.assertEqual("takeout", panel.plan_items[0]["action"])
+        self.assertEqual("plan", panel.current_operation_mode)
+
+    def test_undo_clears_last_executed_plan(self):
+        """After undo, _last_executed_plan should be cleared."""
+        bridge = _UndoBridge()
+        panel = self._new_panel(bridge)
+
+        items = [_make_takeout_item(record_id=1, position=5)]
+        panel.add_plan_items(items)
+
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        self.assertEqual(1, len(panel._last_executed_plan))
+
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.on_undo_last()
+
+        self.assertEqual(0, len(panel._last_executed_plan))
+
+    def test_execute_plan_saves_backup_and_executed_items(self):
+        """execute_plan should save backup_path and executed items for undo."""
+        bridge = _UndoBridge()
+        panel = self._new_panel(bridge)
+
+        items = [_make_move_item(record_id=1, position=5, to_position=10)]
+        panel.add_plan_items(items)
+
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        self.assertEqual("/tmp/backup_test.yaml", panel._last_operation_backup)
+        self.assertEqual(1, len(panel._last_executed_plan))
+        self.assertEqual(1, panel._last_executed_plan[0]["record_id"])
+
+    def test_undo_without_executed_plan_does_not_add_items(self):
+        """If no plan was executed (e.g., single operation undo), plan stays empty."""
+        bridge = _UndoBridge()
+        panel = self._new_panel(bridge)
+
+        panel._last_operation_backup = "/tmp/backup.yaml"
+        panel._enable_undo(timeout_sec=30)
+
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.on_undo_last()
+
+        self.assertTrue(bridge.rollback_called)
+        self.assertEqual(0, len(panel.plan_items))
+
+
+@unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
+class PrintPlanRegressionTests(unittest.TestCase):
+    """Regression: printing should support recently executed plans."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._app = QApplication.instance() or QApplication([])
+
+    def _new_panel(self, bridge):
+        return OperationsPanel(bridge=bridge, yaml_path_getter=lambda: "/tmp/inventory.yaml")
+
+    def test_print_plan_uses_last_executed_when_plan_empty(self):
+        bridge = _UndoBridge()
+        panel = self._new_panel(bridge)
+
+        items = [
+            _make_takeout_item(record_id=1, position=5),
+            _make_takeout_item(record_id=2, position=10),
+        ]
+        panel.add_plan_items(items)
+
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        self.assertEqual(0, len(panel.plan_items))
+        self.assertEqual(2, len(panel._last_printable_plan))
+
+        messages = []
+        panel.status_message.connect(lambda msg, _timeout, _level: messages.append(msg))
+
+        with patch("app_gui.ui.operations_panel.QDesktopServices.openUrl", return_value=True) as open_url:
+            panel.print_plan()
+
+        open_url.assert_called_once()
+        self.assertTrue(any("Printing last executed" in msg for msg in messages))
+
+    def test_print_plan_errors_without_current_or_last_plan(self):
+        bridge = _UndoBridge()
+        panel = self._new_panel(bridge)
+
+        messages = []
+        panel.status_message.connect(lambda msg, _timeout, _level: messages.append(msg))
+
+        from unittest.mock import patch
+        with patch("app_gui.ui.operations_panel.QDesktopServices.openUrl", return_value=True) as open_url:
+            panel.print_plan()
+
+        open_url.assert_not_called()
+        self.assertTrue(any("No plan or recent execution to print" in msg for msg in messages))
+
+
+@unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
+class AuditGuideSelectionRegressionTests(unittest.TestCase):
+    """Regression: selected audit rows can generate one merged guide."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._app = QApplication.instance() or QApplication([])
+
+    def _new_panel(self):
+        return OperationsPanel(bridge=_FakeOperationsBridge(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+
+    def _seed_audit_rows(self, panel, events):
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QTableWidgetItem
+
+        panel._audit_events = list(events)
+        panel._setup_table(
+            panel.audit_table,
+            ["Timestamp", "Action", "Actor", "Status", "Channel", "Details"],
+            sortable=True,
+        )
+        for row, event in enumerate(events):
+            panel.audit_table.insertRow(row)
+            ts_item = QTableWidgetItem(event.get("timestamp", ""))
+            ts_item.setData(Qt.UserRole, row)
+            panel.audit_table.setItem(row, 0, ts_item)
+            panel.audit_table.setItem(row, 1, QTableWidgetItem(event.get("action", "")))
+            panel.audit_table.setItem(row, 2, QTableWidgetItem(event.get("actor_id", "gui-user")))
+            panel.audit_table.setItem(row, 3, QTableWidgetItem(event.get("status", "")))
+            panel.audit_table.setItem(row, 4, QTableWidgetItem(event.get("channel", "gui")))
+            panel.audit_table.setItem(row, 5, QTableWidgetItem(""))
+
+    def test_generate_audit_guide_requires_selection(self):
+        panel = self._new_panel()
+
+        messages = []
+        panel.status_message.connect(lambda msg, _timeout, _level: messages.append(msg))
+        panel.on_generate_audit_guide()
+
+        self.assertTrue(any("Select one or more audit rows" in msg for msg in messages))
+
+    def test_selected_audit_rows_generate_merged_printable_guide(self):
+        panel = self._new_panel()
+
+        events = [
+            {
+                "timestamp": "2026-02-12T09:01:00",
+                "action": "record_thaw",
+                "status": "success",
+                "details": {
+                    "action": "move",
+                    "record_id": 9,
+                    "box": 1,
+                    "position": 20,
+                    "to_position": 30,
+                },
+                "tool_input": {
+                    "record_id": 9,
+                    "position": 20,
+                    "to_position": 30,
+                    "action": "Move",
+                },
+            },
+            {
+                "timestamp": "2026-02-12T09:00:00",
+                "action": "record_thaw",
+                "status": "success",
+                "details": {
+                    "action": "move",
+                    "record_id": 9,
+                    "box": 1,
+                    "position": 10,
+                    "to_position": 20,
+                },
+                "tool_input": {
+                    "record_id": 9,
+                    "position": 10,
+                    "to_position": 20,
+                    "action": "Move",
+                },
+            },
+        ]
+        self._seed_audit_rows(panel, events)
+        panel.audit_table.selectAll()
+
+        panel.on_generate_audit_guide()
+
+        self.assertEqual(1, len(panel._last_printable_plan))
+        item = panel._last_printable_plan[0]
+        self.assertEqual("move", item["action"])
+        self.assertEqual(10, item["position"])
+        self.assertEqual(30, item["to_position"])
+
+        from unittest.mock import patch
+        with patch("app_gui.ui.operations_panel.QDesktopServices.openUrl", return_value=True) as open_url:
+            panel.on_print_selected_audit_guide()
+
+        open_url.assert_called_once()

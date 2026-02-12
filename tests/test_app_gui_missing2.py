@@ -195,27 +195,30 @@ class WorkerTests(unittest.TestCase):
 
     def test_worker_basic_execution(self):
         """Test basic AgentRunWorker execution."""
-        from app_gui.workers import AgentRunWorker
+        from app_gui.ui.workers import AgentRunWorker
 
-        mock_agent = Mock()
-        mock_agent.run.return_value = {
+        mock_bridge = Mock()
+        mock_bridge.run_agent_query.return_value = {
             "ok": True,
             "final": "Test answer",
             "conversation_history": [],
         }
 
         worker = AgentRunWorker(
-            query="test query",
-            agent=mock_agent,
+            bridge=mock_bridge,
             yaml_path="/tmp/test.yaml",
-            actor_id="test-actor",
+            query="test query",
+            model="deepseek-chat",
+            max_steps=8,
+            mock=True,
+            history=None,
         )
 
-        # Execute
-        result = worker.run()
+        worker.run()
 
-        self.assertTrue(result.get("ok", False))
-        self.assertIn("final", result)
+        mock_bridge.run_agent_query.assert_called_once()
+        call_kwargs = mock_bridge.run_agent_query.call_args[1]
+        self.assertEqual("test query", call_kwargs["query"])
 
 
 # ── ui/utils.py Tests ───────────────────────────────────────────

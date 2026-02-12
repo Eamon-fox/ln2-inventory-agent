@@ -10,10 +10,12 @@ from PySide6.QtWidgets import (
     QPushButton, QLineEdit, QComboBox,
     QStackedWidget, QTableWidget, QTableWidgetItem,
     QHeaderView, QFileDialog, QMessageBox, QGroupBox,
+    QAbstractItemView,
     QFormLayout, QDateEdit, QSpinBox, QTextEdit
 )
 from app_gui.ui.utils import positions_to_text
 from app_gui.plan_model import validate_plan_item, render_operation_sheet
+from app_gui.audit_guide import build_operation_guide_from_audit_events
 from lib.tool_api import parse_batch_entries
 from lib.validators import parse_positions
 
@@ -33,6 +35,8 @@ class OperationsPanel(QWidget):
         self.t_prefill_source = None
         self._default_date_anchor = QDate.currentDate()
         self._last_operation_backup = None
+        self._last_executed_plan = []
+        self._last_printable_plan = []
         self._undo_timer = None
         self._undo_remaining = 0
         self._audit_events = []
@@ -1414,11 +1418,17 @@ class OperationsPanel(QWidget):
         self._update_plan_badge()
         self._show_plan_result(results, remaining)
 
+        executed_items = [r[1] for r in results if r[0] == "OK"]
+        if executed_items:
+            # Keep a printable snapshot even after plan is cleared.
+            self._last_printable_plan = list(executed_items)
+
         if any(r[0] == "OK" for r in results):
             self.operation_completed.emit(True)
 
-        if last_backup:
+        if last_backup and executed_items:
             self._last_operation_backup = last_backup
+            self._last_executed_plan = list(executed_items)
             self._enable_undo(timeout_sec=30)
 
     def _show_plan_result(self, results, remaining):
@@ -1466,18 +1476,25 @@ class OperationsPanel(QWidget):
         self.output.setPlainText(json.dumps(output_data, ensure_ascii=False, indent=2))
 
     def print_plan(self):
-        if not self.plan_items:
-            self.status_message.emit("No items in plan to print.", 3000, "error")
+        items_to_print = self.plan_items or self._last_printable_plan
+        if not items_to_print:
+            self.status_message.emit("No plan or recent execution to print.", 3000, "error")
             return
 
-        html = render_operation_sheet(self.plan_items)
+        if not self.plan_items:
+            self.status_message.emit("Plan empty. Printing last executed operation sheet.", 2500, "info")
+
+        self._print_operation_sheet(items_to_print)
+
+    def _print_operation_sheet(self, items, opened_message="Operation sheet opened in browser."):
+        html = render_operation_sheet(items)
         tmp = tempfile.NamedTemporaryFile(
             suffix=".html", delete=False, mode="w", encoding="utf-8"
         )
         tmp.write(html)
         tmp.close()
         QDesktopServices.openUrl(QUrl.fromLocalFile(tmp.name))
-        self.status_message.emit("Operation sheet opened in browser.", 2000, "info")
+        self.status_message.emit(opened_message, 2000, "info")
 
     def clear_plan(self):
         self.plan_items.clear()
@@ -1674,6 +1691,15 @@ class OperationsPanel(QWidget):
         load_btn = QPushButton("Load Audit Log")
         load_btn.clicked.connect(self.on_load_audit)
         btn_row.addWidget(load_btn)
+
+        self.audit_guide_btn = QPushButton("Guide from Selected")
+        self.audit_guide_btn.clicked.connect(self.on_generate_audit_guide)
+        btn_row.addWidget(self.audit_guide_btn)
+
+        self.audit_print_selected_btn = QPushButton("Print Selected Guide")
+        self.audit_print_selected_btn.clicked.connect(self.on_print_selected_audit_guide)
+        btn_row.addWidget(self.audit_print_selected_btn)
+
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
@@ -1681,6 +1707,8 @@ class OperationsPanel(QWidget):
         layout.addWidget(self.audit_info)
 
         self.audit_table = QTableWidget()
+        self.audit_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.audit_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         layout.addWidget(self.audit_table, 1)
         self._setup_table(
             self.audit_table,
@@ -1743,7 +1771,9 @@ class OperationsPanel(QWidget):
         )
         for row, ev in enumerate(events):
             self.audit_table.insertRow(row)
-            self.audit_table.setItem(row, 0, QTableWidgetItem(ev.get("timestamp", "")))
+            ts_item = QTableWidgetItem(ev.get("timestamp", ""))
+            ts_item.setData(Qt.UserRole, row)
+            self.audit_table.setItem(row, 0, ts_item)
             self.audit_table.setItem(row, 1, QTableWidgetItem(ev.get("action", "")))
             self.audit_table.setItem(row, 2, QTableWidgetItem(ev.get("actor_id", "")))
             self.audit_table.setItem(row, 3, QTableWidgetItem(ev.get("status", "")))
@@ -1767,6 +1797,94 @@ class OperationsPanel(QWidget):
         self.output.setPlainText(json.dumps(ev, ensure_ascii=False, indent=2))
         self.output.setVisible(True)
         self.output_toggle_btn.setChecked(True)
+
+    def _get_selected_audit_events(self):
+        model = self.audit_table.selectionModel()
+        if model is None:
+            return []
+        selected = []
+        for idx in model.selectedRows():
+            row = idx.row()
+            item = self.audit_table.item(row, 0)
+            source_idx = item.data(Qt.UserRole) if item is not None else row
+            try:
+                event_idx = int(source_idx)
+            except (TypeError, ValueError):
+                event_idx = row
+            if 0 <= event_idx < len(self._audit_events):
+                selected.append((event_idx, self._audit_events[event_idx]))
+
+        dedup = {}
+        for event_idx, event in selected:
+            dedup[event_idx] = event
+        ordered = [dedup[key] for key in sorted(dedup)]
+        return ordered
+
+    def _apply_generated_audit_guide(self, guide, selected_count, print_now=False):
+        items = list(guide.get("items") or [])
+        warnings = list(guide.get("warnings") or [])
+        stats = dict(guide.get("stats") or {})
+
+        self.output.setPlainText(
+            json.dumps(
+                {
+                    "source": "audit_selection",
+                    "selected_events": selected_count,
+                    "stats": stats,
+                    "warnings": warnings,
+                    "items": items,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        self.output.setVisible(True)
+        self.output_toggle_btn.setChecked(True)
+
+        if not items:
+            lines = [
+                "<b style='color: #ef4444;'>Selected audit rows produced no printable operations</b>",
+                f"Selected events: {selected_count}",
+            ]
+            if warnings:
+                lines.append(f"Warnings: {len(warnings)} (see Raw JSON)")
+            self.result_summary.setText("<br/>".join(lines))
+            self.result_card.setStyleSheet("QGroupBox { border: 1px solid #ef4444; }")
+            self.result_card.setVisible(True)
+            self.status_message.emit("No printable guide generated from selected audit rows.", 3500, "error")
+            return
+
+        self._last_printable_plan = list(items)
+        lines = [
+            "<b style='color: #22c55e;'>Guide generated from selected audit rows</b>",
+            f"Selected events: {selected_count}",
+            f"Final operations: {len(items)}",
+        ]
+        if warnings:
+            lines.append(f"Warnings: {len(warnings)} (see Raw JSON)")
+        self.result_summary.setText("<br/>".join(lines))
+        self.result_card.setStyleSheet("QGroupBox { border: 1px solid #22c55e; }")
+        self.result_card.setVisible(True)
+        self.status_message.emit(f"Generated {len(items)} final operation(s) from audit selection.", 2500, "info")
+
+        if print_now:
+            self._print_operation_sheet(items, "Selected audit guide opened in browser.")
+
+    def on_generate_audit_guide(self):
+        selected_events = self._get_selected_audit_events()
+        if not selected_events:
+            self.status_message.emit("Select one or more audit rows first.", 2500, "error")
+            return
+        guide = build_operation_guide_from_audit_events(selected_events)
+        self._apply_generated_audit_guide(guide, selected_count=len(selected_events), print_now=False)
+
+    def on_print_selected_audit_guide(self):
+        selected_events = self._get_selected_audit_events()
+        if not selected_events:
+            self.status_message.emit("Select one or more audit rows first.", 2500, "error")
+            return
+        guide = build_operation_guide_from_audit_events(selected_events)
+        self._apply_generated_audit_guide(guide, selected_count=len(selected_events), print_now=True)
 
     # --- UNDO ---
 
@@ -1797,6 +1915,7 @@ class OperationsPanel(QWidget):
         self.undo_btn.setEnabled(False)
         self.undo_btn.setText("Undo Last Operation")
         self._last_operation_backup = None
+        self._last_executed_plan = []
 
     def on_undo_last(self):
         if not self._last_operation_backup:
@@ -1809,9 +1928,17 @@ class OperationsPanel(QWidget):
         ):
             return
 
+        executed_plan_backup = list(self._last_executed_plan)
         response = self.bridge.rollback(
             self.yaml_path_getter(),
             backup_path=self._last_operation_backup,
         )
         self._disable_undo()
         self._handle_response(response, "Undo")
+        if response.get("ok") and executed_plan_backup:
+            self.plan_items = executed_plan_backup
+            self._refresh_plan_table()
+            self._update_plan_badge()
+            idx = self.op_mode_combo.findData("plan")
+            if idx >= 0:
+                self.op_mode_combo.setCurrentIndex(idx)
