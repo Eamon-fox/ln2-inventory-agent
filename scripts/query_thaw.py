@@ -4,9 +4,9 @@ Query thaw/takeout events by date or date range.
 """
 import argparse
 import sys
-import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+import _bootstrap
+
 from lib.config import YAML_PATH
 from lib.tool_api import tool_query_thaw_events
 from lib.validators import format_chinese_date

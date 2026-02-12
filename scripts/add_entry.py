@@ -5,9 +5,8 @@
 import argparse
 import sys
 
-# Import from lib
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+import _bootstrap
+
 from lib.config import YAML_PATH, BOX_RANGE
 from lib.tool_api import build_actor_context, tool_add_entry
 from lib.validators import parse_positions

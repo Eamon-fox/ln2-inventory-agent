@@ -5,11 +5,10 @@ Global fuzzy search across all fields in LN2 inventory.
 import argparse
 import sys
 
-# Import from lib
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+import _bootstrap
+
 from lib.config import YAML_PATH
-from lib.cli_render import format_record_verbose
+from lib.cli_render import format_record_verbose, print_ai_record_disclaimer
 from lib.tool_api import tool_search_records
 
 
@@ -62,13 +61,7 @@ def main():
         else:
             print(format_record(rec, args.query, verbose=False))
 
-    # Reminder for AI assistants
-    print("\n" + "="*70)
-    print("[WARN]  重要提示给 AI 助手：")
-    print("   请将以上过滤后的记录 **完整展示** 给用户")
-    print("   保留所有字段（包括 note、thaw_log 等），不要简化成表格")
-    print("   可能遗漏关键背景信息！")
-    print("="*70)
+    print_ai_record_disclaimer()
 
     return 0
 

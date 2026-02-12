@@ -4,10 +4,10 @@ Check active position conflicts in LN2 inventory.
 """
 import argparse
 import sys
-import os
 from collections import defaultdict
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+import _bootstrap
+
 from lib.yaml_ops import load_yaml
 from lib.config import YAML_PATH
 from lib.thaw_parser import extract_thaw_positions

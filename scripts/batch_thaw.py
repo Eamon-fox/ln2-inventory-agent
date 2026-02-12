@@ -5,20 +5,14 @@
 import argparse
 import sys
 
-# Import from lib
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+import _bootstrap
+
 from lib.config import YAML_PATH
 from lib.tool_api import (
     build_actor_context,
     parse_batch_entries,
     tool_batch_thaw,
 )
-
-
-def parse_entries(entries_str):
-    """兼容旧名称，内部转发到 unified Tool API 解析器。"""
-    return parse_batch_entries(entries_str)
 
 
 def batch_thaw(yaml_path, entries, date_str, action="取出", note=None, dry_run=False):
@@ -139,7 +133,7 @@ def main():
 
     # 解析输入
     try:
-        entries = parse_entries(args.entries)
+        entries = parse_batch_entries(args.entries)
     except ValueError as e:
         print(f"[ERROR] 错误: {e}\n")
         parser.print_help()

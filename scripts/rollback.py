@@ -7,8 +7,8 @@ import os
 import sys
 from datetime import datetime
 
-# Import from lib
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+import _bootstrap
+
 from lib.config import YAML_PATH
 from lib.tool_api import build_actor_context, tool_list_backups, tool_rollback
 

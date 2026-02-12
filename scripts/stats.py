@@ -6,9 +6,8 @@ import argparse
 import sys
 from collections import defaultdict
 
-# Import from lib
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+import _bootstrap
+
 from lib.yaml_ops import compute_occupancy
 from lib.config import YAML_PATH, BOX_RANGE
 from lib.tool_api import tool_generate_stats

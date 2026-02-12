@@ -6,9 +6,9 @@
 
 import argparse
 import sys
-import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+import _bootstrap
+
 from lib.config import YAML_PATH
 from lib.tool_api import tool_collect_timeline
 from lib.validators import format_chinese_date

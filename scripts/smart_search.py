@@ -9,10 +9,9 @@
 import argparse
 import sys
 
-# Import from lib
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from lib.cli_render import print_raw_entries
+import _bootstrap
+
+from lib.cli_render import print_raw_entries, print_raw_preview_header
 from lib.config import YAML_PATH
 from lib.tool_api import tool_get_raw_entries, tool_search_records
 
@@ -157,9 +156,8 @@ def main():
 
     # 原始数据
     if args.raw and len(display_matches) <= 20:
-        print("\n" + "="*60)
-        print("[PREVIEW] 原始 YAML 数据:")
-        print("="*60 + "\n")
+        print()
+        print_raw_preview_header()
 
         ids = [rec['id'] for rec in display_matches]
 

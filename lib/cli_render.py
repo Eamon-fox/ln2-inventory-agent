@@ -53,3 +53,20 @@ def print_raw_entries(entries: Sequence[Mapping[str, object]]) -> None:
         print(f"# === ID {entry['id']} ===")
         for line in iter_entry_yaml_lines(entry):
             print(line)
+
+
+def print_ai_record_disclaimer() -> None:
+    """Print reminder to keep filtered record output complete."""
+    print("\n" + "=" * 70)
+    print("[WARN]  重要提示给 AI 助手：")
+    print("   请将以上过滤后的记录 **完整展示** 给用户")
+    print("   保留所有字段（包括 note、thaw_log 等），不要简化成表格")
+    print("   可能遗漏关键背景信息！")
+    print("=" * 70)
+
+
+def print_raw_preview_header() -> None:
+    """Print the shared banner for raw YAML preview sections."""
+    print("=" * 60)
+    print("[PREVIEW] 原始 YAML 数据:")
+    print("=" * 60 + "\n")

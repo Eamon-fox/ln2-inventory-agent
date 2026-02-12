@@ -4,9 +4,9 @@ Recommend optimal positions for new frozen samples.
 """
 import argparse
 import sys
-import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+import _bootstrap
+
 from lib.yaml_ops import compute_occupancy
 from lib.config import YAML_PATH, BOX_RANGE
 from lib.tool_api import tool_recommend_positions

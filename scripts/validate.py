@@ -2,10 +2,9 @@
 """Validate LN2 inventory data for errors and inconsistencies."""
 
 import argparse
-import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import _bootstrap
 
 from lib.config import YAML_PATH
 from lib.validators import (

@@ -6,10 +6,10 @@
 
 import argparse
 import sys
-import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from lib.cli_render import print_raw_entries
+import _bootstrap
+
+from lib.cli_render import print_raw_entries, print_raw_preview_header
 from lib.config import YAML_PATH
 from lib.tool_api import tool_get_raw_entries, tool_recent_frozen
 from lib.validators import format_chinese_date
@@ -146,9 +146,7 @@ def main():
 
         # 显示原始数据
         if args.raw:
-            print("="*60)
-            print("[PREVIEW] 原始 YAML 数据:")
-            print("="*60 + "\n")
+            print_raw_preview_header()
 
             ids = [rec['id'] for rec in results]
             raw_response = tool_get_raw_entries(args.yaml, ids)

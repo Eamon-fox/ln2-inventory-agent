@@ -7,9 +7,8 @@
 import argparse
 import sys
 
-# Import from lib
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+import _bootstrap
+
 from lib.cli_render import print_raw_entries
 from lib.config import YAML_PATH
 from lib.tool_api import tool_get_raw_entries
