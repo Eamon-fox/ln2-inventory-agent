@@ -7,8 +7,10 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QPushButton, QLabel, QSplitter,
     QMessageBox, QDialog, QFormLayout, QLineEdit,
-    QDialogButtonBox, QFileDialog
+    QDialogButtonBox, QFileDialog, QGroupBox, QCheckBox,
+    QFrame, QSpacerItem, QSizePolicy
 )
+from PySide6.QtGui import QFont
 
 if getattr(sys, "frozen", False):
     ROOT = sys._MEIPASS
@@ -28,6 +30,265 @@ from app_gui.ui.theme import apply_dark_theme
 from app_gui.ui.overview_panel import OverviewPanel
 from app_gui.ui.operations_panel import OperationsPanel
 from app_gui.ui.ai_panel import AIPanel
+
+
+class QuickStartDialog(QDialog):
+    """Enhanced Quick Start dialog with explanations."""
+
+    def __init__(self, parent=None, current_path="", demo_path=""):
+        super().__init__(parent)
+        self.setWindowTitle("Welcome to LN2 Inventory Agent")
+        self.setMinimumWidth(500)
+        self.chosen_path = None
+        self.create_new = False
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(16)
+
+        title = QLabel("Welcome to LN2 Inventory Agent")
+        title.setFont(QFont("", 16, QFont.Bold))
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+
+        intro = QLabel(
+            "This application helps you manage frozen cell samples\n"
+            "stored in liquid nitrogen tanks.\n\n"
+            "How would you like to start?"
+        )
+        intro.setAlignment(Qt.AlignCenter)
+        intro.setStyleSheet("color: #94a3b8;")
+        layout.addWidget(intro)
+
+        options_layout = QVBoxLayout()
+        options_layout.setSpacing(12)
+
+        self.btn_demo = self._create_option_button(
+            "[DEMO] Try Demo Data",
+            "Recommended for new users. Load sample data to explore features.",
+            "background-color: #1e40af;",
+        )
+        self.btn_demo.clicked.connect(self._on_demo)
+        options_layout.addWidget(self.btn_demo)
+
+        self.btn_open = self._create_option_button(
+            "[OPEN] Open Existing File",
+            "Load your own inventory YAML file from disk.",
+            "background-color: #166534;",
+        )
+        self.btn_open.clicked.connect(self._on_open)
+        options_layout.addWidget(self.btn_open)
+
+        self.btn_current = self._create_option_button(
+            "[CURRENT] Use Current Path",
+            f"Use the previously configured path:\n{current_path}",
+            "background-color: #374151;",
+        )
+        if not current_path or not os.path.exists(current_path):
+            self.btn_current.setEnabled(False)
+            self.btn_current.setStyleSheet("background-color: #1f2937; color: #6b7280;")
+        self.btn_current.clicked.connect(self._on_current)
+        options_layout.addWidget(self.btn_current)
+
+        self.btn_new = self._create_option_button(
+            "[NEW] Create New Inventory",
+            "Start fresh with an empty inventory file.",
+            "background-color: #7c2d12;",
+        )
+        self.btn_new.clicked.connect(self._on_new)
+        options_layout.addWidget(self.btn_new)
+
+        layout.addLayout(options_layout)
+
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.clicked.connect(self.reject)
+        layout.addWidget(btn_cancel, alignment=Qt.AlignCenter)
+
+        self._demo_path = demo_path
+        self._current_path = current_path
+
+    def _create_option_button(self, title, description, style):
+        btn = QPushButton()
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                {style}
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 16px;
+                text-align: left;
+                font-size: 13px;
+            }}
+            QPushButton:hover {{
+                opacity: 0.9;
+            }}
+            QPushButton:disabled {{
+                background-color: #1f2937;
+                color: #6b7280;
+            }}
+        """)
+        btn.setText(f"{title}\n\n{description}")
+        btn.setMinimumHeight(80)
+        return btn
+
+    def _on_demo(self):
+        self.chosen_path = self._demo_path
+        self.accept()
+
+    def _on_open(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open Inventory File", "", "YAML Files (*.yaml *.yml)"
+        )
+        if path:
+            self.chosen_path = path
+            self.accept()
+
+    def _on_current(self):
+        self.chosen_path = self._current_path
+        self.accept()
+
+    def _on_new(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Create New Inventory File", "ln2_inventory.yaml", "YAML Files (*.yaml *.yml)"
+        )
+        if path:
+            self.chosen_path = path
+            self.create_new = True
+            self.accept()
+
+
+class SettingsDialog(QDialog):
+    """Enhanced Settings dialog with sections and help text."""
+
+    def __init__(self, parent=None, config=None):
+        super().__init__(parent)
+        self.setWindowTitle("Settings")
+        self.setMinimumWidth(500)
+        self._config = config or {}
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(16)
+
+        data_group = QGroupBox("Data")
+        data_layout = QFormLayout(data_group)
+
+        yaml_row = QHBoxLayout()
+        self.yaml_edit = QLineEdit(self._config.get("yaml_path", ""))
+        yaml_browse = QPushButton("Browse")
+        yaml_browse.setFixedWidth(80)
+        yaml_browse.clicked.connect(self._browse_yaml)
+        yaml_row.addWidget(self.yaml_edit, 1)
+        yaml_row.addWidget(yaml_browse)
+        data_layout.addRow("Inventory File:", yaml_row)
+
+        yaml_hint = QLabel("YAML file containing your cell sample inventory data.")
+        yaml_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
+        yaml_hint.setWordWrap(True)
+        data_layout.addRow("", yaml_hint)
+
+        layout.addWidget(data_group)
+
+        ai_group = QGroupBox("AI Assistant")
+        ai_layout = QFormLayout(ai_group)
+
+        self.api_key_edit = QLineEdit(self._config.get("api_key") or "")
+        self.api_key_edit.setEchoMode(QLineEdit.Password)
+        self.api_key_edit.setPlaceholderText("sk-...")
+        ai_layout.addRow("DeepSeek API Key:", self.api_key_edit)
+
+        api_hint = QLabel(
+            "Optional. Get your key at platform.deepseek.com\n"
+            "Leave empty to use DEEPSEEK_API_KEY environment variable."
+        )
+        api_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
+        api_hint.setWordWrap(True)
+        ai_layout.addRow("", api_hint)
+
+        self.mock_check = QCheckBox("Use mock mode (no AI, for testing)")
+        self.mock_check.setChecked(self._config.get("ai", {}).get("mock", True))
+        ai_layout.addRow("", self.mock_check)
+
+        mock_hint = QLabel("When enabled, AI responses are simulated without API calls.")
+        mock_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 20px;")
+        mock_hint.setWordWrap(True)
+        ai_layout.addRow("", mock_hint)
+
+        layout.addWidget(ai_group)
+
+        user_group = QGroupBox("User")
+        user_layout = QFormLayout(user_group)
+
+        self.actor_edit = QLineEdit(self._config.get("actor_id", "gui-user"))
+        user_layout.addRow("Actor ID:", self.actor_edit)
+
+        actor_hint = QLabel("Your identifier for audit logs and operation records.")
+        actor_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
+        actor_hint.setWordWrap(True)
+        user_layout.addRow("", actor_hint)
+
+        layout.addWidget(user_group)
+
+        layout.addStretch()
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _browse_yaml(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Inventory File", "", "YAML Files (*.yaml *.yml)"
+        )
+        if path:
+            self.yaml_edit.setText(path)
+
+    def get_values(self):
+        return {
+            "yaml_path": self.yaml_edit.text().strip(),
+            "actor_id": self.actor_edit.text().strip(),
+            "api_key": self.api_key_edit.text().strip() or None,
+            "ai": {
+                "mock": self.mock_check.isChecked(),
+            },
+        }
+
+
+class HelpPushButton(QPushButton):
+    """A panel header with help button."""
+
+    def __init__(self, title, help_text, parent=None):
+        super().__init__(parent)
+        self._help_text = help_text
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 4, 8, 4)
+
+        title_label = QLabel(title)
+        title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        layout.addWidget(title_label)
+
+        layout.addStretch()
+
+        help_btn = QPushButton("?")
+        help_btn.setFixedSize(20, 20)
+        help_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3b82f6;
+                color: white;
+                border: none;
+                border-radius: 10px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #2563eb;
+            }
+        """)
+        help_btn.clicked.connect(self._show_help)
+        layout.addWidget(help_btn)
+
+    def _show_help(self):
+        QMessageBox.information(self, "Help", self._help_text)
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -161,95 +422,74 @@ class MainWindow(QMainWindow):
             return os.path.join(ROOT, "demo", "ln2_inventory.demo.yaml")
 
     def on_quick_start(self):
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Quick Start")
-        msg.setText("Choose a data source to start:")
-        btn_current = msg.addButton("Use Current", QMessageBox.AcceptRole)
-        btn_demo = msg.addButton("Use Demo", QMessageBox.AcceptRole)
-        btn_custom = msg.addButton("Select File...", QMessageBox.ActionRole)
-        msg.addButton("Cancel", QMessageBox.RejectRole)
-        msg.exec()
-        clicked = msg.clickedButton()
-
-        if clicked is btn_current:
-            chosen = self.current_yaml_path
-        elif clicked is btn_demo:
-            chosen = self._resolve_demo_dataset_path()
-        elif clicked is btn_custom:
-            chosen, _ = QFileDialog.getOpenFileName(
-                self, "Select YAML", os.path.dirname(self.current_yaml_path) or ROOT, "YAML Files (*.yaml *.yml)"
-            )
-            if not chosen: return
-        else:
+        dialog = QuickStartDialog(
+            self,
+            current_path=self.current_yaml_path,
+            demo_path=self._resolve_demo_dataset_path()
+        )
+        if dialog.exec() != QDialog.Accepted:
             return
+
+        chosen = dialog.chosen_path
+        if not chosen:
+            return
+
+        if dialog.create_new:
+            empty_data = {
+                "meta": {"version": "1.0", "box_layout": {"rows": 9, "cols": 9}},
+                "inventory": []
+            }
+            import yaml
+            with open(chosen, "w", encoding="utf-8") as f:
+                yaml.dump(empty_data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
         if not os.path.exists(chosen):
             QMessageBox.warning(
                 self,
                 "Error",
-                (
-                    f"YAML file not found: {chosen}\n\n"
-                    "If this is a packaged EXE, build with `pyinstaller ln2_inventory.spec` "
-                    "to include the demo dataset."
-                ),
+                f"File not found: {chosen}"
             )
             return
 
         self.current_yaml_path = os.path.abspath(chosen)
+        self.gui_config["yaml_path"] = self.current_yaml_path
+        save_gui_config(self.gui_config)
         self._update_dataset_label()
         self.overview_panel.refresh()
-        self.statusBar().showMessage(f"Loaded dataset: {self.current_yaml_path}", 5000)
+        self.statusBar().showMessage(f"Loaded: {self.current_yaml_path}", 5000)
 
     def on_open_settings(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Settings")
-        layout = QVBoxLayout(dialog)
-        form = QFormLayout()
+        dialog = SettingsDialog(
+            self,
+            config={
+                "yaml_path": self.current_yaml_path,
+                "actor_id": self.current_actor_id,
+                "api_key": self.gui_config.get("api_key"),
+                "ai": self.gui_config.get("ai", {}),
+            }
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
 
-        yaml_edit = QLineEdit(self.current_yaml_path)
-        browse_btn = QPushButton("Browse")
+        values = dialog.get_values()
+        self.current_yaml_path = values["yaml_path"]
+        self.current_actor_id = values["actor_id"]
+        api_key = values["api_key"]
+        self.gui_config["api_key"] = api_key
+        if api_key:
+            os.environ["DEEPSEEK_API_KEY"] = api_key
 
-        row = QHBoxLayout()
-        row.addWidget(yaml_edit, 1)
-        row.addWidget(browse_btn)
-        row_widget = QWidget()
-        row_widget.setLayout(row)
-        form.addRow("YAML Path", row_widget)
+        ai_cfg = self.gui_config.get("ai", {})
+        ai_cfg["mock"] = values["ai"]["mock"]
+        self.gui_config["ai"] = ai_cfg
+        self.ai_panel.ai_mock.setChecked(ai_cfg.get("mock", True))
 
-        actor_edit = QLineEdit(self.current_actor_id)
-        form.addRow("Actor ID", actor_edit)
-
-        api_key_edit = QLineEdit(self.gui_config.get("api_key") or "")
-        api_key_edit.setEchoMode(QLineEdit.Password)
-        form.addRow("API Key (DeepSeek)", api_key_edit)
-
-        hint = QLabel("Leave empty to use DEEPSEEK_API_KEY environment variable")
-        hint.setStyleSheet("color: #64748b; font-size: 11px;")
-        form.addRow("", hint)
-
-        layout.addLayout(form)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        layout.addWidget(buttons)
-
-        browse_btn.clicked.connect(lambda: yaml_edit.setText(
-            QFileDialog.getOpenFileName(dialog, "Select YAML", "", "YAML (*.yaml *.yml)")[0] or yaml_edit.text()
-        ))
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-
-        if dialog.exec() == QDialog.Accepted:
-            self.current_yaml_path = yaml_edit.text().strip()
-            self.current_actor_id = actor_edit.text().strip()
-            api_key = api_key_edit.text().strip() or None
-            self.gui_config["api_key"] = api_key
-            if api_key:
-                os.environ["DEEPSEEK_API_KEY"] = api_key
-            self.bridge.set_actor(self.current_actor_id)
-            self._update_dataset_label()
-            self.overview_panel.refresh()
-            self.gui_config["yaml_path"] = self.current_yaml_path
-            self.gui_config["actor_id"] = self.current_actor_id
-            save_gui_config(self.gui_config)
+        self.bridge.set_actor(self.current_actor_id)
+        self._update_dataset_label()
+        self.overview_panel.refresh()
+        self.gui_config["yaml_path"] = self.current_yaml_path
+        self.gui_config["actor_id"] = self.current_actor_id
+        save_gui_config(self.gui_config)
 
     def restore_ui_settings(self):
         geometry = self.settings.value("ui/geometry")

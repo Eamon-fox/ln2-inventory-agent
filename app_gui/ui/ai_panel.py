@@ -5,13 +5,41 @@ from PySide6.QtGui import QTextCursor, QTextDocumentFragment
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QLineEdit, QComboBox, QCheckBox, 
-    QGroupBox, QTextEdit, QFormLayout, QSpinBox
+    QGroupBox, QTextEdit, QFormLayout, QSpinBox, QMessageBox
 )
 from app_gui.ui.workers import AgentRunWorker
 from app_gui.ui.utils import compact_json
 from lib.config import AUDIT_LOG_FILE
 import os
 import json
+
+AI_HELP_TEXT = """AI Assistant Panel - Natural Language Operations
+
+This panel lets you control inventory using natural language commands.
+
+SETUP:
+1. Configure your DeepSeek API key in Settings
+2. Uncheck "Mock LLM" to enable real AI responses
+3. Mock mode is useful for testing without API calls
+
+USAGE:
+Type requests in plain language, for example:
+- "Show me all K562 samples"
+- "Move sample 5 to position 10 in box 2"
+- "How many empty slots in box 1?"
+- "Thaw samples at positions 1, 2, and 3"
+
+HOW IT WORKS:
+1. AI analyzes your request
+2. Generates a plan of operations
+3. Plan items appear in Operations panel
+4. Review and execute from Plan mode
+
+TIPS:
+- Be specific about box numbers and positions
+- Use record IDs when referring to samples
+- Check generated plans before executing
+- Use mock mode to learn without API costs"""
 
 class AIPanel(QWidget):
     operation_completed = Signal(bool)
@@ -44,6 +72,30 @@ class AIPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
+
+        header_row = QHBoxLayout()
+        title_label = QLabel("AI Assistant")
+        title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        header_row.addWidget(title_label)
+        header_row.addStretch()
+        help_btn = QPushButton("?")
+        help_btn.setFixedSize(20, 20)
+        help_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3b82f6;
+                color: white;
+                border: none;
+                border-radius: 10px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #2563eb;
+            }
+        """)
+        help_btn.clicked.connect(lambda: QMessageBox.information(self, "AI Assistant Help", AI_HELP_TEXT))
+        header_row.addWidget(help_btn)
+        layout.addLayout(header_row)
 
         # Toggles
         toggle_row = QHBoxLayout()

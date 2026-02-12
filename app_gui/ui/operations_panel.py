@@ -19,6 +19,35 @@ from app_gui.audit_guide import build_operation_guide_from_audit_events
 from lib.tool_api import parse_batch_entries
 from lib.validators import parse_positions
 
+OPERATIONS_HELP_TEXT = """Operations Panel - Manual Actions
+
+This panel provides forms for common inventory operations.
+
+MODES:
+- Takeout: Remove/thaw samples from storage
+- Move: Relocate samples within or between boxes
+- Add Entry: Register new frozen samples
+- Plan: View and execute queued operations
+- Query: Search and filter inventory data
+- Rollback: Restore from backup files
+- Audit Log: View operation history
+
+WORKFLOW:
+1. Select operation mode from dropdown
+2. Fill in required fields (IDs, positions, etc.)
+3. Click "Add to Plan" to stage the operation
+4. Switch to "Plan" mode to review all staged items
+5. Click "Execute Plan" to apply changes
+
+BATCH OPERATIONS:
+- Enter multiple positions separated by commas (e.g., "1,2,3-5")
+- Use the batch section for bulk moves
+
+TIPS:
+- Hover over fields for hints
+- Check the Plan before executing
+- Use Undo within 10 seconds to reverse mistakes"""
+
 class OperationsPanel(QWidget):
     operation_completed = Signal(bool) # success?
     status_message = Signal(str, int, str) # msg, timeout, level
@@ -47,6 +76,30 @@ class OperationsPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
+
+        header_row = QHBoxLayout()
+        title_label = QLabel("Operations")
+        title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        header_row.addWidget(title_label)
+        header_row.addStretch()
+        help_btn = QPushButton("?")
+        help_btn.setFixedSize(20, 20)
+        help_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3b82f6;
+                color: white;
+                border: none;
+                border-radius: 10px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #2563eb;
+            }
+        """)
+        help_btn.clicked.connect(lambda: QMessageBox.information(self, "Operations Help", OPERATIONS_HELP_TEXT))
+        header_row.addWidget(help_btn)
+        layout.addLayout(header_row)
 
         # Mode Selection
         mode_row = QHBoxLayout()
@@ -490,11 +543,16 @@ class OperationsPanel(QWidget):
         layout = QVBoxLayout(tab)
 
         self.plan_empty_label = QLabel(
-            "No operations staged yet.\n"
-            "Use the forms or Overview to add operations to the plan."
+            "[EMPTY] No operations staged yet.\n\n"
+            "Ways to add operations:\n"
+            "1. Double-click a cell in Overview panel\n"
+            "2. Use the Takeout/Move/Add forms above\n"
+            "3. Ask the AI Assistant to generate a plan"
         )
         self.plan_empty_label.setAlignment(Qt.AlignCenter)
-        self.plan_empty_label.setStyleSheet("color: #64748b; padding: 20px;")
+        self.plan_empty_label.setStyleSheet(
+            "color: #f59e0b; padding: 20px; font-weight: bold; background-color: #1f2937; border-radius: 8px;"
+        )
         layout.addWidget(self.plan_empty_label)
 
         self.plan_table = QTableWidget()

@@ -3,9 +3,33 @@ from PySide6.QtCore import Qt, Signal, QEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QPushButton, QLineEdit, QComboBox, QCheckBox, QScrollArea,
-    QSizePolicy, QGroupBox, QMenu, QApplication
+    QSizePolicy, QGroupBox, QMenu, QApplication, QMessageBox
 )
 from app_gui.ui.utils import cell_color
+
+OVERVIEW_HELP_TEXT = """Overview Panel - LN2 Tank Visualization
+
+This panel shows a visual map of your liquid nitrogen storage tanks.
+
+BASIC OPERATIONS:
+- Double-click a cell to view details or start an operation
+- Empty cells show position numbers (1-81)
+- Occupied cells show record IDs with color-coded status
+
+COLOR CODING:
+- Green: Active samples (ready for use)
+- Yellow: Recently thawed samples
+- Red: Depleted/discarded samples
+- Gray: Empty positions
+
+SELECTION MODE:
+- Click "Select" to enable multi-select
+- Select multiple cells for batch operations
+- Use "Print Selected Guide" for audit workflows
+
+QUICK ACTIONS:
+- Quick Add: Jump to add new sample form
+- Quick Takeout: Jump to takeout/thaw form"""
 
 class CellButton(QPushButton):
     doubleClicked = Signal(int, int) # box, position
@@ -53,6 +77,30 @@ class OverviewPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
+
+        header_row = QHBoxLayout()
+        title_label = QLabel("Overview")
+        title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        header_row.addWidget(title_label)
+        header_row.addStretch()
+        help_btn = QPushButton("?")
+        help_btn.setFixedSize(20, 20)
+        help_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3b82f6;
+                color: white;
+                border: none;
+                border-radius: 10px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #2563eb;
+            }
+        """)
+        help_btn.clicked.connect(lambda: QMessageBox.information(self, "Overview Help", OVERVIEW_HELP_TEXT))
+        header_row.addWidget(help_btn)
+        layout.addLayout(header_row)
 
         # Summary Cards
         summary_row = QHBoxLayout()
@@ -254,6 +302,16 @@ class OverviewPanel(QWidget):
         self.ov_occupied_value.setText(str(overall.get("total_occupied", "-")))
         self.ov_empty_value.setText(str(overall.get("total_empty", "-")))
         self.ov_rate_value.setText(f"{overall.get('occupancy_rate', 0):.1f}%")
+
+        if len(records) == 0:
+            self.ov_hover_hint.setText(
+                "[EMPTY] No samples yet. Double-click a slot to add your first entry, "
+                "or use Quick Start to load demo data."
+            )
+            self.ov_hover_hint.setStyleSheet("color: #f59e0b; font-weight: bold; padding: 8px;")
+        else:
+            self.ov_hover_hint.setText("Hover a slot to preview details.")
+            self.ov_hover_hint.setStyleSheet("color: #94a3b8; font-weight: bold;")
 
         if timeline_response.get("ok"):
             ops7 = timeline_response.get("result", {}).get("summary", {}).get("total_ops", 0)
