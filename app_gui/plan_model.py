@@ -9,12 +9,8 @@ _BOX_RANGE = (1, 5)
 
 
 def _pos_to_coord(pos, cols=9):
-    """Convert position number to row/column coordinate (e.g., 1 -> A1, 10 -> B1)."""
-    if not isinstance(pos, int) or pos < 1:
-        return str(pos)
-    row = (pos - 1) // cols
-    col = (pos - 1) % cols + 1
-    return f"{chr(65 + row)}{col}"
+    """Return position as-is (pure number format)."""
+    return str(pos) if isinstance(pos, int) else str(pos)
 
 
 def validate_plan_item(item: dict) -> Optional[str]:
