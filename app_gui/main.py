@@ -365,7 +365,9 @@ class MainWindow(QMainWindow):
 
         # Overview -> Operations (prefill)
         self.overview_panel.request_prefill.connect(self.operations_panel.set_prefill)
+        self.overview_panel.request_prefill_background.connect(self.operations_panel.set_prefill_background)
         self.overview_panel.request_add_prefill.connect(self.operations_panel.set_add_prefill)
+        self.overview_panel.request_add_prefill_background.connect(self.operations_panel.set_add_prefill_background)
         self.overview_panel.request_move_prefill.connect(self.operations_panel.set_move_prefill)
         self.overview_panel.request_query_prefill.connect(self.operations_panel.set_query_prefill)
         self.overview_panel.request_quick_add.connect(lambda: self.operations_panel.set_mode("add"))

@@ -227,15 +227,23 @@ class OperationsPanel(QWidget):
         self._refresh_thaw_record_context()
         self._refresh_move_record_context()
 
-    def set_prefill(self, source_info):
-        self.t_prefill_source = source_info
-        if "record_id" in source_info:
-            self.t_id.setValue(int(source_info["record_id"]))
-        if "position" in source_info:
-            self.t_position.setValue(int(source_info["position"]))
+    def _apply_thaw_prefill(self, source_info, switch_mode=True):
+        payload = dict(source_info or {})
+        self.t_prefill_source = payload
+        if "record_id" in payload:
+            self.t_id.setValue(int(payload["record_id"]))
+        if "position" in payload:
+            self.t_position.setValue(int(payload["position"]))
         self.t_action.setCurrentText("Takeout")
         self._refresh_thaw_record_context()
-        self.set_mode("thaw")
+        if switch_mode:
+            self.set_mode("thaw")
+
+    def set_prefill(self, source_info):
+        self._apply_thaw_prefill(source_info, switch_mode=True)
+
+    def set_prefill_background(self, source_info):
+        self._apply_thaw_prefill(source_info, switch_mode=False)
 
     def set_move_prefill(self, source_info):
         if "record_id" in source_info:
@@ -253,13 +261,21 @@ class OperationsPanel(QWidget):
         self.set_mode("query")
         self.on_query_records()
 
+    def _apply_add_prefill(self, source_info, switch_mode=True):
+        payload = dict(source_info or {})
+        if "box" in payload:
+            self.a_box.setValue(int(payload["box"]))
+        if "position" in payload:
+            self.a_positions.setText(str(payload["position"]))
+        if switch_mode:
+            self.set_mode("add")
+
     def set_add_prefill(self, source_info):
         """Pre-fill the Add Entry form with box and position from overview."""
-        if "box" in source_info:
-            self.a_box.setValue(int(source_info["box"]))
-        if "position" in source_info:
-            self.a_positions.setText(str(source_info["position"]))
-        self.set_mode("add")
+        self._apply_add_prefill(source_info, switch_mode=True)
+
+    def set_add_prefill_background(self, source_info):
+        self._apply_add_prefill(source_info, switch_mode=False)
 
     def _setup_table(self, table, headers, sortable=True):
         table.setRowCount(0)

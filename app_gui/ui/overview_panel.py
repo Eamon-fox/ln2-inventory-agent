@@ -104,9 +104,11 @@ class CellButton(QPushButton):
 class OverviewPanel(QWidget):
     status_message = Signal(str, int)
     request_prefill = Signal(dict)
+    request_prefill_background = Signal(dict)
     request_quick_add = Signal()
     request_quick_thaw = Signal()
     request_add_prefill = Signal(dict)
+    request_add_prefill_background = Signal(dict)
     request_move_prefill = Signal(dict)
     request_query_prefill = Signal(dict)
     # Use object to preserve non-string dict keys (Qt map coercion can drop int keys).
@@ -652,11 +654,22 @@ class OverviewPanel(QWidget):
         record = self.overview_pos_map.get((box_num, position))
         self._set_selected_cell(box_num, position)
         self.on_cell_hovered(box_num, position, force=True)
+
+        # Keep the current menu-based flow, but also prefill the most-used forms in background.
+        self.request_add_prefill_background.emit({
+            "box": int(box_num),
+            "position": int(position),
+        })
         
         menu = QMenu(self)
         
         if record:
             rec_id = int(record.get("id"))
+            self.request_prefill_background.emit({
+                "box": int(box_num),
+                "position": int(position),
+                "record_id": rec_id,
+            })
             act_thaw = menu.addAction("Thaw / Takeout")
             act_move = menu.addAction("Move")
             act_query = menu.addAction("Query")

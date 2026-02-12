@@ -459,6 +459,40 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual([], emitted_move)
         self.assertEqual([], emitted_query)
 
+    def test_overview_double_click_emits_background_prefills(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
+
+        record = {
+            "id": 5,
+            "parent_cell_line": "K562",
+            "short_name": "K562_test",
+            "box": 1,
+            "positions": [1],
+        }
+        panel.overview_pos_map = {(1, 1): record}
+        button = panel.overview_cells[(1, 1)]
+        panel._paint_cell(button, 1, 1, record)
+
+        emitted_bg_add = []
+        emitted_bg_thaw = []
+        panel.request_add_prefill_background.connect(lambda payload: emitted_bg_add.append(payload))
+        panel.request_prefill_background.connect(lambda payload: emitted_bg_thaw.append(payload))
+
+        from unittest.mock import patch, MagicMock
+        with patch("app_gui.ui.overview_panel.QMenu") as MockMenu:
+            mock_menu = MagicMock()
+            MockMenu.return_value = mock_menu
+            mock_act_thaw = MagicMock()
+            mock_act_move = MagicMock()
+            mock_act_query = MagicMock()
+            mock_menu.addAction.side_effect = [mock_act_thaw, mock_act_move, mock_act_query]
+            mock_menu.exec.return_value = mock_act_query
+            panel.on_cell_double_clicked(1, 1)
+
+        self.assertEqual([{"box": 1, "position": 1}], emitted_bg_add)
+        self.assertEqual([{"box": 1, "position": 1, "record_id": 5}], emitted_bg_thaw)
+
     def test_overview_double_click_menu_emits_move_prefill(self):
         panel = self._new_overview_panel()
         panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
@@ -544,6 +578,20 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual((1, 1), panel.overview_selected_key)
         self.assertEqual([{"box": 1, "position": 1}], emitted)
         self.assertIn("#16a34a", button.styleSheet())
+
+    def test_operations_background_prefill_updates_fields_without_switch_mode(self):
+        panel = self._new_operations_panel()
+        panel.set_mode("move")
+
+        panel.set_add_prefill_background({"box": 2, "position": 9})
+        self.assertEqual(2, panel.a_box.value())
+        self.assertEqual("9", panel.a_positions.text())
+        self.assertEqual("move", panel.current_operation_mode)
+
+        panel.set_prefill_background({"record_id": 11, "position": 5})
+        self.assertEqual(11, panel.t_id.value())
+        self.assertEqual(5, panel.t_position.value())
+        self.assertEqual("move", panel.current_operation_mode)
 
     def test_overview_select_mode_toggle(self):
         panel = self._new_overview_panel()
