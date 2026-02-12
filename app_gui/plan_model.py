@@ -73,7 +73,13 @@ def render_operation_sheet(items):
             action = str(it.get("action", "")).capitalize()
             pos = it.get("position", "")
             to_pos = it.get("to_position")
-            pos_str = f"{pos} &rarr; {to_pos}" if to_pos else str(pos)
+            to_box = it.get("to_box")
+            if to_pos and to_box and to_box != box_num:
+                pos_str = f"{pos} &rarr; Box{to_box}:{to_pos}"
+            elif to_pos:
+                pos_str = f"{pos} &rarr; {to_pos}"
+            else:
+                pos_str = str(pos)
             label = it.get("label", "-")
             rid = it.get("record_id")
             rid_str = f"ID {rid}" if rid else "new"

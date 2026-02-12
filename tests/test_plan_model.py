@@ -261,5 +261,36 @@ class ValidateToBoxTests(unittest.TestCase):
         self.assertIsNone(validate_plan_item(item))
 
 
+# ── cross-box move rendering ────────────────────────────────────────
+
+
+class CrossBoxMoveRenderTests(unittest.TestCase):
+    def test_cross_box_move_shows_target_box(self):
+        """Move from Box1 pos 5 to Box2 pos 10 should show '5 → Box2:10'."""
+        item = _move_item(box=1, position=5, to_position=10, to_box=2)
+        html = render_operation_sheet([item])
+        self.assertIn("Box2:10", html)
+
+    def test_same_box_move_shows_only_position(self):
+        """Move within same box should show '5 → 10' without box prefix."""
+        item = _move_item(box=1, position=5, to_position=10, to_box=1)
+        html = render_operation_sheet([item])
+        self.assertIn("5 &rarr; 10", html)
+        self.assertNotIn("Box1:10", html)
+
+    def test_move_without_to_box_shows_only_position(self):
+        """Move without explicit to_box should show '5 → 10'."""
+        item = _move_item(box=1, position=5, to_position=10)
+        html = render_operation_sheet([item])
+        self.assertIn("5 &rarr; 10", html)
+
+    def test_cross_box_move_from_box2_to_box5(self):
+        """Cross-box move should work for any box combination."""
+        item = _move_item(box=2, position=30, to_position=50, to_box=5, label="cross-test")
+        html = render_operation_sheet([item])
+        self.assertIn("Box5:50", html)
+        self.assertIn("cross-test", html)
+
+
 if __name__ == "__main__":
     unittest.main()

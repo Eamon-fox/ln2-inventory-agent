@@ -30,7 +30,7 @@ class RuntimeConfigTests(unittest.TestCase):
             cfg_path = Path(temp_dir) / "ln2_config.json"
             cfg_payload = {
                 "yaml_path": "./data/inventory.yaml",
-                "python_path": "/usr/bin/python3",
+                "python_path": sys.executable,
                 "scripts_dir": "./scripts",
                 "safety": {
                     "backup_keep_count": 42,
@@ -43,7 +43,7 @@ class RuntimeConfigTests(unittest.TestCase):
             mod = importlib.reload(config_module)
 
             self.assertEqual(os.path.join(temp_dir, "data", "inventory.yaml"), mod.YAML_PATH)
-            self.assertEqual("/usr/bin/python3", mod.PYTHON_PATH)
+            self.assertEqual(sys.executable, mod.PYTHON_PATH)
             self.assertEqual(os.path.join(temp_dir, "scripts"), mod.SCRIPTS_DIR)
             self.assertEqual(42, mod.BACKUP_KEEP_COUNT)
             self.assertEqual(1.5, mod.YAML_SIZE_WARNING_MB)

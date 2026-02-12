@@ -1,7 +1,6 @@
 """Desktop GUI for LN2 inventory operations (Refactored)."""
 
 import os
-import shutil
 import sys
 from PySide6.QtCore import Qt, QSettings
 from PySide6.QtWidgets import (
@@ -20,7 +19,6 @@ else:
 
 from app_gui.tool_bridge import GuiToolBridge
 from app_gui.gui_config import (
-    DEFAULT_CONFIG_DIR,
     DEFAULT_CONFIG_FILE,
     load_gui_config,
     save_gui_config,
@@ -156,28 +154,11 @@ class MainWindow(QMainWindow):
         self.dataset_label.setText(f"Dataset: {self.current_yaml_path} | Actor: {self.current_actor_id}")
 
     def _resolve_demo_dataset_path(self):
-        """Resolve a stable demo dataset path for both source and frozen builds."""
-        embedded_demo = os.path.join(ROOT, "demo", "ln2_inventory.demo.yaml")
-        if not os.path.isfile(embedded_demo):
-            sibling_demo = os.path.join(os.path.dirname(sys.executable), "demo", "ln2_inventory.demo.yaml")
-            if os.path.isfile(sibling_demo):
-                return os.path.abspath(sibling_demo)
-            return os.path.abspath(embedded_demo)
-
-        # In one-file bundles, _MEIPASS is temporary. Copy demo yaml to user config dir
-        # so users can see and edit the file path from the GUI.
         if getattr(sys, "frozen", False):
-            stable_demo_dir = os.path.join(DEFAULT_CONFIG_DIR, "demo")
-            stable_demo = os.path.join(stable_demo_dir, "ln2_inventory.demo.yaml")
-            try:
-                os.makedirs(stable_demo_dir, exist_ok=True)
-                if not os.path.isfile(stable_demo):
-                    shutil.copy2(embedded_demo, stable_demo)
-                return os.path.abspath(stable_demo)
-            except Exception:
-                return os.path.abspath(embedded_demo)
-
-        return os.path.abspath(embedded_demo)
+            exe_dir = os.path.dirname(sys.executable)
+            return os.path.join(exe_dir, "demo", "ln2_inventory.demo.yaml")
+        else:
+            return os.path.join(ROOT, "demo", "ln2_inventory.demo.yaml")
 
     def on_quick_start(self):
         msg = QMessageBox(self)

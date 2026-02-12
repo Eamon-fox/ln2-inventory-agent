@@ -17,14 +17,14 @@ from lib.validators import format_chinese_date
 def display_timeline(timeline, verbose=False):
     """显示时间线"""
     if not timeline:
-        print("❌ 未找到任何操作记录")
+        print("[ERROR] No operation records found")
         return
 
     # 按日期降序排序
     sorted_dates = sorted(timeline.keys(), reverse=True)
 
     print(f"\n{'='*70}")
-    print(f"📅 操作时间线")
+    print(f"[TIMELINE] Operation Timeline")
     print(f"{'='*70}\n")
 
     for date in sorted_dates:
@@ -47,50 +47,50 @@ def display_timeline(timeline, verbose=False):
 
         # 显示冻存操作
         if frozen_count > 0:
-            print(f"  ❄️  冻存: {frozen_count} 管")
+            print(f"  [FREEZE] Frozen: {frozen_count} tubes")
             if verbose:
                 for rec in events["frozen"][:5]:  # 最多显示5条
-                    print(f"      • {rec.get('parent_cell_line')} | {rec.get('short_name')}")
+                    print(f"      - {rec.get('parent_cell_line')} | {rec.get('short_name')}")
                 if frozen_count > 5:
                     print(f"      ... 还有 {frozen_count - 5} 条")
 
         # 显示复苏操作
         if thaw_count > 0:
-            print(f"  🧪 复苏: {thaw_count} 管")
+            print(f"  [THAW] Thawed: {thaw_count} tubes")
             if verbose:
                 for event in events["thaw"][:5]:
                     rec = event["record"]
-                    print(f"      • {rec.get('parent_cell_line')} | {rec.get('short_name')}")
+                    print(f"      - {rec.get('parent_cell_line')} | {rec.get('short_name')}")
                 if thaw_count > 5:
                     print(f"      ... 还有 {thaw_count - 5} 条")
 
         # 显示取出操作
         if takeout_count > 0:
-            print(f"  📤 取出: {takeout_count} 管")
+            print(f"  [TAKEOUT] Taken out: {takeout_count} tubes")
             if verbose:
                 for event in events["takeout"][:5]:
                     rec = event["record"]
-                    print(f"      • {rec.get('parent_cell_line')} | {rec.get('short_name')}")
+                    print(f"      - {rec.get('parent_cell_line')} | {rec.get('short_name')}")
                 if takeout_count > 5:
                     print(f"      ... 还有 {takeout_count - 5} 条")
 
         # 显示扔掉操作
         if discard_count > 0:
-            print(f"  🗑️  扔掉: {discard_count} 管")
+            print(f"  [DISCARD] Discarded: {discard_count} tubes")
             if verbose:
                 for event in events["discard"][:5]:
                     rec = event["record"]
-                    print(f"      • {rec.get('parent_cell_line')} | {rec.get('short_name')}")
+                    print(f"      - {rec.get('parent_cell_line')} | {rec.get('short_name')}")
                 if discard_count > 5:
                     print(f"      ... 还有 {discard_count - 5} 条")
 
         # 显示移动整理操作
         if move_count > 0:
-            print(f"  🔁 移动: {move_count} 管")
+            print(f"  [MOVE] Moved: {move_count} tubes")
             if verbose:
                 for event in events["move"][:5]:
                     rec = event["record"]
-                    print(f"      • {rec.get('parent_cell_line')} | {rec.get('short_name')}")
+                    print(f"      - {rec.get('parent_cell_line')} | {rec.get('short_name')}")
                 if move_count > 5:
                     print(f"      ... 还有 {move_count - 5} 条")
 
@@ -117,15 +117,15 @@ def display_summary(timeline):
                        if len(e["frozen"]) + len(e["thaw"]) + len(e["takeout"]) + len(e["discard"]) + len(e.get("move", [])) > 0])
 
     print(f"{'='*70}")
-    print(f"📊 统计摘要")
+    print(f"[SUMMARY] Statistics Summary")
     print(f"{'='*70}")
-    print(f"  总操作天数: {active_days} 天")
-    print(f"  总操作次数: {total_ops} 次")
-    print(f"    ❄️  冻存: {total_frozen} 管")
-    print(f"    🧪 复苏: {total_thaw} 管")
-    print(f"    📤 取出: {total_takeout} 管")
-    print(f"    🗑️  扔掉: {total_discard} 管")
-    print(f"    🔁 移动: {total_move} 管")
+    print(f"  Total operation days: {active_days}")
+    print(f"  Total operations: {total_ops}")
+    print(f"    [FREEZE] Frozen: {total_frozen} tubes")
+    print(f"    [THAW] Thawed: {total_thaw} tubes")
+    print(f"    [TAKEOUT] Taken out: {total_takeout} tubes")
+    print(f"    [DISCARD] Discarded: {total_discard} tubes")
+    print(f"    [MOVE] Moved: {total_move} tubes")
     print(f"{'='*70}\n")
 
 
@@ -184,7 +184,7 @@ def main():
         all_history=args.all,
     )
     if not response.get("ok"):
-        print(f"❌ 错误: {response.get('message', '时间线查询失败')}")
+        print(f"[ERROR] Error: {response.get('message', 'Timeline query failed')}")
         return 1
 
     timeline = response["result"]["timeline"]

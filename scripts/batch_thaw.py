@@ -38,19 +38,19 @@ def batch_thaw(yaml_path, entries, date_str, action="取出", note=None, dry_run
     if not result.get("ok"):
         if result.get("error_code") == "validation_failed":
             errors = result.get("errors", [])
-            print(f"\n❌ 发现 {len(errors)} 个错误:\n")
+            print(f"\n[ERROR] 发现 {len(errors)} 个错误:\n")
             for i, err in enumerate(errors, 1):
                 print(f"  {i}. {err}")
             print()
         else:
-            print(f"❌ 错误: {result.get('message', '批量更新失败')}")
+            print(f"[ERROR] 错误: {result.get('message', '批量更新失败')}")
         return 1
 
     preview = result.get("preview", {})
     operations = preview.get("operations", [])
 
     print(f"\n{'=' * 70}")
-    print(f"📋 批量操作预览 - 共 {preview.get('count', 0)} 个操作")
+    print(f"[PREVIEW] 批量操作预览 - 共 {preview.get('count', 0)} 个操作")
     print(f"{'=' * 70}")
     print(f"日期: {preview.get('date')}")
     print(f"操作: {preview.get('action_cn')}")
@@ -65,19 +65,19 @@ def batch_thaw(yaml_path, entries, date_str, action="取出", note=None, dry_run
             print(f"   盒子 {op.get('box')}, 移动 {op.get('position')} -> {to_pos}")
         else:
             print(f"   盒子 {op.get('box')}, 取出位置 {op.get('position')}")
-        print(f"   位置: {op.get('old_positions')} → {op.get('new_positions')}")
+        print(f"   位置: {op.get('old_positions')} -> {op.get('new_positions')}")
         print()
 
     print(f"{'=' * 70}\n")
 
     if result.get("dry_run"):
-        print("ℹ️  这是预览模式，未实际修改文件")
+        print("[INFO]  这是预览模式，未实际修改文件")
         print("   移除 --dry-run 参数以执行实际修改\n")
         return 0
 
     count = result.get("result", {}).get("count", 0)
-    print(f"✅ 成功！已更新 {count} 条记录")
-    print("✅ 占用位置信息已自动重建\n")
+    print(f"[OK] 成功！已更新 {count} 条记录")
+    print("[OK] 占用位置信息已自动重建\n")
     return 0
 
 
@@ -141,7 +141,7 @@ def main():
     try:
         entries = parse_entries(args.entries)
     except ValueError as e:
-        print(f"❌ 错误: {e}\n")
+        print(f"[ERROR] 错误: {e}\n")
         parser.print_help()
         return 1
 

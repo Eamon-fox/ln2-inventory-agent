@@ -1542,7 +1542,7 @@ class TimelineScriptTests(unittest.TestCase):
             )
 
             self.assertEqual(0, result.returncode)
-            self.assertIn("操作时间线", result.stdout)
+            self.assertIn("[TIMELINE]", result.stdout)
 
     def test_timeline_days(self):
         """Test timeline.py with days parameter."""
@@ -1565,7 +1565,7 @@ class TimelineScriptTests(unittest.TestCase):
             )
 
             self.assertEqual(0, result.returncode)
-            self.assertIn("操作时间线", result.stdout)
+            self.assertIn("[TIMELINE]", result.stdout)
 
     def test_timeline_all(self):
         """Test timeline.py --all flag."""
@@ -1632,7 +1632,7 @@ class TimelineScriptTests(unittest.TestCase):
             )
 
             self.assertEqual(0, result.returncode)
-            self.assertIn("统计摘要", result.stdout)
+            self.assertIn("[SUMMARY]", result.stdout)
 
     def test_timeline_empty(self):
         """Test timeline.py with empty inventory."""

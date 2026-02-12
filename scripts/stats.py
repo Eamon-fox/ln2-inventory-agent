@@ -146,7 +146,7 @@ def main():
 
     response = tool_generate_stats(args.yaml)
     if not response.get("ok"):
-        print(f"❌ 错误: {response.get('message', '统计失败')}")
+        print(f"[ERROR] 错误: {response.get('message', '统计失败')}")
         return 1
 
     payload = response["result"]

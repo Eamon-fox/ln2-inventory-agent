@@ -45,25 +45,25 @@ def add_entry(
     if not result.get("ok"):
         error_code = result.get("error_code")
         if error_code == "invalid_cell_line":
-            print("❌ 错误: parent_cell_line 必须是以下之一:")
+            print("[ERROR] 错误: parent_cell_line 必须是以下之一:")
             for cl in result.get("allowed_cell_lines", []):
                 print(f"   - {cl}")
             print(f"\n   你输入的是: {parent_cell_line!r}")
             print("   如需新增细胞系，请在配置文件中更新 schema.valid_cell_lines")
         elif error_code == "position_conflict":
-            print("\n❌ 错误: 位置冲突！以下位置已被占用:\n")
+            print("\n[ERROR] 错误: 位置冲突！以下位置已被占用:\n")
             for conf in result.get("conflicts", []):
                 print(f"  - ID {conf['id']} ({conf['short_name']}): 位置 {conf['positions']}")
             print(f"\n请使用其他位置或运行 'python query_inventory.py --empty --box {box}' 查看空位\n")
         else:
-            print(f"❌ 错误: {result.get('message', '添加失败')}")
+            print(f"[ERROR] 错误: {result.get('message', '添加失败')}")
         return 1
 
     preview = result.get("preview", {})
     new_id = preview.get("id")
 
     print(f"\n{'=' * 60}")
-    print("📋 新记录预览")
+    print("[PREVIEW] 新记录预览")
     print(f"{'=' * 60}")
     print(f"ID:          {new_id} (自动分配)")
     print(f"细胞系:      {preview.get('parent_cell_line')}")
@@ -77,12 +77,12 @@ def add_entry(
     print(f"{'=' * 60}\n")
 
     if result.get("dry_run"):
-        print("ℹ️  这是预览模式，未实际修改文件")
+        print("[INFO]  这是预览模式，未实际修改文件")
         print("   移除 --dry-run 参数以执行实际添加\n")
         return 0
 
-    print("✅ 成功！新记录已添加")
-    print("✅ 占用位置信息已自动重建")
+    print("[OK] 成功！新记录已添加")
+    print("[OK] 占用位置信息已自动重建")
     print(f"\n新记录 ID: {new_id}\n")
     return 0
 
@@ -186,7 +186,7 @@ def main():
     try:
         positions = parse_positions(args.positions)
     except ValueError as e:
-        print(f"❌ 错误: {e}\n")
+        print(f"[ERROR] 错误: {e}\n")
         parser.print_help()
         return 1
 

@@ -52,7 +52,7 @@ def main():
         return 0
 
     if not backups and not args.backup:
-        print("❌ 无可用备份，无法回滚。")
+        print("[ERROR] 无可用备份，无法回滚。")
         print("   请先执行一次写入操作以生成备份。")
         return 1
 
@@ -66,11 +66,11 @@ def main():
         source="scripts/rollback.py",
     )
     if not response.get("ok"):
-        print(f"❌ {response.get('message', '回滚失败')}")
+        print(f"[ERROR] {response.get('message', '回滚失败')}")
         return 1
     result = response["result"]
 
-    print("✅ 回滚成功")
+    print("[OK] 回滚成功")
     print(f"   恢复来源: {result['restored_from']}")
     print(f"   回滚前快照: {result['snapshot_before_rollback']}")
     return 0

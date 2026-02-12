@@ -41,11 +41,11 @@ def suggest_alternative_queries(query, matches_count):
     suggestions = []
 
     if matches_count == 0:
-        suggestions.append("💡 尝试使用更短的关键词，如 'reporter' 或 '36'")
-        suggestions.append("💡 检查是否有拼写错误")
-        suggestions.append("💡 使用 --keywords 模式尝试分词搜索")
+        suggestions.append("[TIP] 尝试使用更短的关键词，如 'reporter' 或 '36'")
+        suggestions.append("[TIP] 检查是否有拼写错误")
+        suggestions.append("[TIP] 使用 --keywords 模式尝试分词搜索")
     elif matches_count > 50:
-        suggestions.append("⚠️  结果太多！建议：")
+        suggestions.append("[WARN]  结果太多！建议：")
         suggestions.append("   - 添加更多关键词缩小范围")
         suggestions.append("   - 使用更具体的完整名称")
 
@@ -118,7 +118,7 @@ def main():
         max_results=args.max,
     )
     if not response.get("ok"):
-        print(f"❌ 错误: {response.get('message', '搜索失败')}")
+        print(f"[ERROR] 错误: {response.get('message', '搜索失败')}")
         return 1
 
     payload = response["result"]
@@ -126,18 +126,18 @@ def main():
     total_count = payload["total_count"]
 
     if args.keywords:
-        print(f"🔍 分词搜索模式：{keywords}")
+        print(f"[SEARCH] 分词搜索模式：{keywords}")
     else:
-        print(f"🔍 精确搜索：'{normalized_query}'")
+        print(f"[SEARCH] 精确搜索：'{normalized_query}'")
 
     # 结果
     if total_count == 0:
-        print(f"\n❌ 未找到匹配的记录")
+        print(f"\n[ERROR] 未找到匹配的记录")
         for suggestion in payload.get("suggestions", suggest_alternative_queries(normalized_query, 0)):
             print(suggestion)
         return 1
 
-    print(f"\n✅ 找到 {total_count} 条记录")
+    print(f"\n[OK] 找到 {total_count} 条记录")
 
     # 显示建议
     suggestions = payload.get("suggestions", suggest_alternative_queries(normalized_query, total_count))
@@ -149,7 +149,7 @@ def main():
 
     display_matches = matches
     if total_count > len(display_matches):
-        print(f"\n⚠️  仅显示前 {len(display_matches)} 条（共 {total_count} 条）\n")
+        print(f"\n[WARN]  仅显示前 {len(display_matches)} 条（共 {total_count} 条）\n")
 
     # 显示结果
     for rec in display_matches:
@@ -158,14 +158,14 @@ def main():
     # 原始数据
     if args.raw and len(display_matches) <= 20:
         print("\n" + "="*60)
-        print("📋 原始 YAML 数据:")
+        print("[PREVIEW] 原始 YAML 数据:")
         print("="*60 + "\n")
 
         ids = [rec['id'] for rec in display_matches]
 
         raw_response = tool_get_raw_entries(args.yaml, ids)
         if not raw_response.get("ok"):
-            print(f"❌ {raw_response.get('message', '获取原始数据失败')}")
+            print(f"[ERROR] {raw_response.get('message', '获取原始数据失败')}")
             return 1
 
         for i, entry in enumerate(raw_response["result"]["entries"]):
@@ -185,10 +185,10 @@ def main():
 
         missing = raw_response["result"].get("missing_ids", [])
         if missing:
-            print(f"\n⚠️  未找到的 ID: {', '.join(str(i) for i in missing)}", file=sys.stderr)
+            print(f"\n[WARN]  未找到的 ID: {', '.join(str(i) for i in missing)}", file=sys.stderr)
     elif args.raw and len(display_matches) > 20:
-        print("\n⚠️  结果超过20条，不自动显示原始数据")
-        print(f"💡 手动运行: show_raw.py {' '.join(str(r['id']) for r in display_matches[:10])} ...")
+        print("\n[WARN]  结果超过20条，不自动显示原始数据")
+        print(f"[TIP] 手动运行: show_raw.py {' '.join(str(r['id']) for r in display_matches[:10])} ...")
 
     return 0
 

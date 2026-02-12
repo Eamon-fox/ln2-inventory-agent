@@ -47,14 +47,14 @@ def print_validation_results(errors, warnings):
         for i, error in enumerate(errors, 1):
             print(f"  {i}. {error}")
     else:
-        print("\n✓ 未发现错误")
+        print("\n[OK] No errors found")
 
     if warnings:
         print(f"\n发现 {len(warnings)} 个警告:\n")
         for i, warning in enumerate(warnings, 1):
             print(f"  {i}. {warning}")
     else:
-        print("\n✓ 未发现警告")
+        print("\n[OK] No warnings found")
 
     print("\n" + "=" * 60)
 

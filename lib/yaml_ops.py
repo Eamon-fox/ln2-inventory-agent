@@ -202,7 +202,7 @@ def emit_capacity_warnings(
         box_empty_threshold=box_empty_threshold,
     )
     for msg in warnings:
-        print(f"⚠️  {msg}")
+        print(f"[WARN] {msg}")
     return warnings
 
 

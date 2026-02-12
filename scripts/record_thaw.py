@@ -31,7 +31,7 @@ def record_thaw(yaml_path, record_id, position, date_str, action="取出", note=
 
     if not result.get("ok"):
         message = result.get("message", "更新失败")
-        print(f"❌ 错误: {message}")
+        print(f"[ERROR] 错误: {message}")
         current_positions = result.get("current_positions")
         if current_positions is not None:
             print(f"   当前位置: {current_positions}")
@@ -42,7 +42,7 @@ def record_thaw(yaml_path, record_id, position, date_str, action="取出", note=
     chinese_date = format_chinese_date(preview.get("date"))
 
     print(f"\n{'=' * 60}")
-    print("📋 操作预览")
+    print("[PREVIEW] 操作预览")
     print(f"{'=' * 60}")
     print(f"记录ID:      {preview.get('record_id')}")
     print(f"细胞系:      {preview.get('parent_cell_line')} - {preview.get('short_name')}")
@@ -61,13 +61,13 @@ def record_thaw(yaml_path, record_id, position, date_str, action="取出", note=
     print(f"{'=' * 60}\n")
 
     if result.get("dry_run"):
-        print("ℹ️  这是预览模式，未实际修改文件")
+        print("[INFO]  这是预览模式，未实际修改文件")
         print("   移除 --dry-run 参数以执行实际修改\n")
         return 0
 
     remaining = result.get("result", {}).get("remaining_positions")
-    print("✅ 成功！操作记录已更新")
-    print("✅ 占用位置信息已自动重建")
+    print("[OK] 成功！操作记录已更新")
+    print("[OK] 占用位置信息已自动重建")
     print(f"\n剩余位置: {remaining if remaining else '无（所有管子已取出）'}\n")
     return 0
 
@@ -110,7 +110,7 @@ def main():
 
     action_text = str(args.action or "").strip().lower()
     if action_text in {"move", "移动", "整理"} and args.to_position is None:
-        print("❌ 错误: action=move 时必须提供 --to-position")
+        print("[ERROR] 错误: action=move 时必须提供 --to-position")
         return 1
 
     return record_thaw(

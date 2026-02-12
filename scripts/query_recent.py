@@ -90,23 +90,23 @@ def main():
     if args.frozen:
         response = tool_recent_frozen(args.yaml, days=args.days, count=args.count)
         if not response.get("ok"):
-            print(f"❌ 错误: {response.get('message', '查询失败')}")
+            print(f"[ERROR] 错误: {response.get('message', '查询失败')}")
             return 1
         results = response["result"]["records"]
 
         if not results:
-            print("❌ 未找到符合条件的冻存记录")
+            print("[ERROR] 未找到符合条件的冻存记录")
             return 1
 
         # 显示标题
         if args.days:
-            print(f"📦 最近 {args.days} 天冻存的记录")
+            print(f"[BOX] 最近 {args.days} 天冻存的记录")
         elif args.count:
-            print(f"📦 最近 {args.count} 条冻存记录")
+            print(f"[BOX] 最近 {args.count} 条冻存记录")
         else:
-            print("📦 最近 10 条冻存记录")
+            print("[BOX] 最近 10 条冻存记录")
 
-        print(f"✅ 找到 {len(results)} 条记录\n")
+        print(f"[OK] 找到 {len(results)} 条记录\n")
 
         # 按日期分组显示
         current_date = None
@@ -117,11 +117,11 @@ def main():
             if frozen_at != current_date:
                 current_date = frozen_at
                 print(f"\n{'='*60}")
-                print(f"📅 {frozen_at} ({format_chinese_date(frozen_at)})")
+                print(f"[DATE] {frozen_at} ({format_chinese_date(frozen_at)})")
                 print('='*60)
 
             # 基本信息
-            print(f"\n🧬 ID {rec.get('id'):3d} | {rec.get('parent_cell_line')} | {rec.get('short_name')}")
+            print(f"\n[RECORD] ID {rec.get('id'):3d} | {rec.get('parent_cell_line')} | {rec.get('short_name')}")
             print(f"   盒 {rec.get('box')} | 位置: {format_positions(rec.get('positions'))}")
 
             # 详细信息
@@ -140,20 +140,20 @@ def main():
 
                 thaw_summary = get_thaw_summary(rec)
                 if thaw_summary:
-                    print(f"   📤 {thaw_summary}")
+                    print(f"   [TAKEOUT] {thaw_summary}")
 
         print("\n")
 
         # 显示原始数据
         if args.raw:
             print("="*60)
-            print("📋 原始 YAML 数据:")
+            print("[PREVIEW] 原始 YAML 数据:")
             print("="*60 + "\n")
 
             ids = [rec['id'] for rec in results]
             raw_response = tool_get_raw_entries(args.yaml, ids)
             if not raw_response.get("ok"):
-                print(f"❌ {raw_response.get('message', '获取原始数据失败')}")
+                print(f"[ERROR] {raw_response.get('message', '获取原始数据失败')}")
                 return 1
 
             for i, entry in enumerate(raw_response["result"]["entries"]):

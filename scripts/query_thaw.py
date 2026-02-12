@@ -72,7 +72,7 @@ def main():
         max_records=args.max,
     )
     if not response.get("ok"):
-        print(f"❌ 错误: {response.get('message', '查询失败')}")
+        print(f"[ERROR] 错误: {response.get('message', '查询失败')}")
         return 1
 
     payload = response["result"]
@@ -87,24 +87,24 @@ def main():
 
     # 显示查询条件
     if mode == "all":
-        print("📅 查询所有操作记录")
+        print("[DATE] 查询所有操作记录")
     elif mode == "single":
         date_cn = format_chinese_date(target_dates[0])
-        print(f"📅 日期: {target_dates[0]} ({date_cn})")
+        print(f"[DATE] 日期: {target_dates[0]} ({date_cn})")
     elif mode == "days":
-        print(f"📅 最近 {args.days} 天 ({date_range[0]} 至 {date_range[1]})")
+        print(f"[DATE] 最近 {args.days} 天 ({date_range[0]} 至 {date_range[1]})")
     else:
-        print(f"📅 日期范围: {date_range[0]} 至 {date_range[1]}")
+        print(f"[DATE] 日期范围: {date_range[0]} 至 {date_range[1]}")
 
     if action_filter:
-        print(f"🎯 操作: {ACTION_LABEL.get(action_filter, action_filter)}")
-    print(f"✅ 匹配记录: {record_count} | 匹配事件: {total_events}")
+        print(f"[TARGET] 操作: {ACTION_LABEL.get(action_filter, action_filter)}")
+    print(f"[OK] 匹配记录: {record_count} | 匹配事件: {total_events}")
 
     if not matched:
         return 0
 
     if record_count > display_count:
-        print(f"⚠️  仅显示前 {display_count} 条记录（共 {record_count} 条）")
+        print(f"[WARN]  仅显示前 {display_count} 条记录（共 {record_count} 条）")
 
     for item in matched:
         rec = item["record"]

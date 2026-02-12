@@ -7,6 +7,7 @@ Usage (on Windows with PySide6 + PyYAML installed):
 """
 
 import os
+import shutil
 
 block_cipher = None
 
@@ -14,9 +15,7 @@ a = Analysis(
     ["app_gui/main.py"],
     pathex=[],
     binaries=[],
-    datas=[
-        ("demo/ln2_inventory.demo.yaml", "demo"),
-    ],
+    datas=[],
     hiddenimports=["yaml"],
     hookspath=[],
     hooksconfig={},
@@ -42,7 +41,7 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,  # windowed mode, no console
+    console=False,
     disable_windowed_traceback=False,
     target_arch=None,
     codesign_identity=None,
@@ -59,3 +58,9 @@ coll = COLLECT(
     upx_exclude=[],
     name="LN2InventoryAgent",
 )
+
+# Copy demo folder to output directory
+demo_src = os.path.join(os.path.dirname(SPEC), "demo", "ln2_inventory.demo.yaml")
+demo_dst_dir = os.path.join(coll.name, "demo")
+os.makedirs(demo_dst_dir, exist_ok=True)
+shutil.copy2(demo_src, demo_dst_dir)

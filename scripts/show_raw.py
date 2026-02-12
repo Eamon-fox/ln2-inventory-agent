@@ -49,7 +49,7 @@ def show_raw_entries(yaml_path, ids):
     # 检查是否有缺失的 ID
     missing_ids = set(payload.get("missing_ids", []))
     if missing_ids:
-        print(f"\n⚠️  未找到的 ID: {', '.join(map(str, sorted(missing_ids)))}", file=sys.stderr)
+        print(f"\n[WARN]  未找到的 ID: {', '.join(map(str, sorted(missing_ids)))}", file=sys.stderr)
         return 1
 
     return 0

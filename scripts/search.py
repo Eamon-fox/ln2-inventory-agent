@@ -56,7 +56,7 @@ def main():
         case_sensitive=args.case_sensitive,
     )
     if not response.get("ok"):
-        print(f"❌ 错误: {response.get('message', '搜索失败')}")
+        print(f"[ERROR] 错误: {response.get('message', '搜索失败')}")
         return 1
     matches = response["result"]["records"]
 
@@ -76,7 +76,7 @@ def main():
 
     # Reminder for AI assistants
     print("\n" + "="*70)
-    print("⚠️  重要提示给 AI 助手：")
+    print("[WARN]  重要提示给 AI 助手：")
     print("   请将以上过滤后的记录 **完整展示** 给用户")
     print("   保留所有字段（包括 note、thaw_log 等），不要简化成表格")
     print("   可能遗漏关键背景信息！")
