@@ -7,9 +7,9 @@
 import argparse
 import sys
 import os
-import yaml
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from lib.cli_render import print_raw_entries
 from lib.config import YAML_PATH
 from lib.tool_api import tool_get_raw_entries, tool_recent_frozen
 from lib.validators import format_chinese_date
@@ -156,20 +156,7 @@ def main():
                 print(f"[ERROR] {raw_response.get('message', '获取原始数据失败')}")
                 return 1
 
-            for i, entry in enumerate(raw_response["result"]["entries"]):
-                if i > 0:
-                    print()
-                print(f"# === ID {entry['id']} ===")
-                yaml_str = yaml.dump([entry], allow_unicode=True, default_flow_style=False, sort_keys=False)
-                lines = yaml_str.split('\n')
-                if lines and lines[0].startswith('- '):
-                    lines[0] = lines[0][2:]
-                for line in lines:
-                    if line:
-                        if line.startswith('  '):
-                            print(line[2:])
-                        else:
-                            print(line)
+            print_raw_entries(raw_response["result"]["entries"])
 
     return 0
 

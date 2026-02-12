@@ -5,10 +5,10 @@ from PySide6.QtGui import QTextCursor, QTextDocumentFragment
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QLineEdit, QComboBox, QCheckBox, 
-    QGroupBox, QTextEdit, QFormLayout, QSpinBox, QMessageBox
+    QGroupBox, QTextEdit, QFormLayout, QSpinBox
 )
 from app_gui.ui.workers import AgentRunWorker
-from app_gui.ui.utils import compact_json
+from app_gui.ui.utils import build_panel_header, compact_json
 from app_gui.plan_outcome import collect_blocked_items, summarize_plan_execution
 from lib.config import AUDIT_LOG_FILE
 import os
@@ -75,29 +75,7 @@ class AIPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        header_row = QHBoxLayout()
-        title_label = QLabel("AI Assistant")
-        title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
-        header_row.addWidget(title_label)
-        header_row.addStretch()
-        help_btn = QPushButton("?")
-        help_btn.setFixedSize(20, 20)
-        help_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3b82f6;
-                color: white;
-                border: none;
-                border-radius: 10px;
-                font-weight: bold;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background-color: #2563eb;
-            }
-        """)
-        help_btn.clicked.connect(lambda: QMessageBox.information(self, "AI Assistant Help", AI_HELP_TEXT))
-        header_row.addWidget(help_btn)
-        layout.addLayout(header_row)
+        layout.addLayout(build_panel_header(self, "AI Assistant", "AI Assistant Help", AI_HELP_TEXT))
 
         # Toggles
         toggle_row = QHBoxLayout()

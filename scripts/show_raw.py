@@ -6,11 +6,11 @@
 
 import argparse
 import sys
-import yaml  # Keep for yaml.dump
 
 # Import from lib
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from lib.cli_render import print_raw_entries
 from lib.config import YAML_PATH
 from lib.tool_api import tool_get_raw_entries
 
@@ -27,24 +27,7 @@ def show_raw_entries(yaml_path, ids):
     # 按 ID 排序
     results.sort(key=lambda x: x['id'])
 
-    # 输出原始 YAML
-    for i, entry in enumerate(results):
-        if i > 0:
-            print()  # 条目之间空行
-        print(f"# === ID {entry['id']} ===")
-        # 使用 yaml.dump 保持格式
-        yaml_str = yaml.dump([entry], allow_unicode=True, default_flow_style=False, sort_keys=False)
-        # 移除开头的 "- " 并调整缩进
-        lines = yaml_str.split('\n')
-        if lines[0].startswith('- '):
-            lines[0] = lines[0][2:]  # 移除 "- "
-        for line in lines:
-            if line:
-                # 减少一级缩进
-                if line.startswith('  '):
-                    print(line[2:])
-                else:
-                    print(line)
+    print_raw_entries(results)
 
     # 检查是否有缺失的 ID
     missing_ids = set(payload.get("missing_ids", []))

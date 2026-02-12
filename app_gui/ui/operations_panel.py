@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QFormLayout, QDateEdit, QSpinBox, QTextEdit
 )
-from app_gui.ui.utils import positions_to_text
+from app_gui.ui.utils import build_panel_header, positions_to_text
 from app_gui.plan_model import render_operation_sheet
 from app_gui.plan_gate import validate_plan_batch
 from app_gui.plan_outcome import summarize_plan_execution
@@ -89,29 +89,7 @@ class OperationsPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        header_row = QHBoxLayout()
-        title_label = QLabel("Operations")
-        title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
-        header_row.addWidget(title_label)
-        header_row.addStretch()
-        help_btn = QPushButton("?")
-        help_btn.setFixedSize(20, 20)
-        help_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3b82f6;
-                color: white;
-                border: none;
-                border-radius: 10px;
-                font-weight: bold;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background-color: #2563eb;
-            }
-        """)
-        help_btn.clicked.connect(lambda: QMessageBox.information(self, "Operations Help", OPERATIONS_HELP_TEXT))
-        header_row.addWidget(help_btn)
-        layout.addLayout(header_row)
+        layout.addLayout(build_panel_header(self, "Operations", "Operations Help", OPERATIONS_HELP_TEXT))
 
         # Mode Selection
         mode_row = QHBoxLayout()

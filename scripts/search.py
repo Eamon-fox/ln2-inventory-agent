@@ -9,6 +9,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from lib.config import YAML_PATH
+from lib.cli_render import format_record_verbose
 from lib.tool_api import tool_search_records
 
 
@@ -17,20 +18,7 @@ def format_record(rec, query, verbose=False):
     pos = ",".join(str(p) for p in rec.get("positions") or [])
 
     if verbose:
-        lines = []
-        lines.append(f"{'ID':<15} {rec.get('id')}")
-        lines.append(f"{'细胞系':<15} {rec.get('parent_cell_line')}")
-        lines.append(f"{'简称':<15} {rec.get('short_name')}")
-        lines.append(f"{'质粒':<15} {rec.get('plasmid_name', 'N/A')}")
-        lines.append(f"{'质粒ID':<15} {rec.get('plasmid_id')}")
-        lines.append(f"{'盒子':<15} {rec.get('box')}")
-        lines.append(f"{'位置':<15} [{pos}]")
-        lines.append(f"{'冻存日期':<15} {rec.get('frozen_at')}")
-        if rec.get('thaw_log'):
-            lines.append(f"{'取出记录':<15} {rec.get('thaw_log')}")
-        if rec.get('note'):
-            lines.append(f"{'备注':<15} {rec.get('note')}")
-        return "\n".join(lines)
+        return format_record_verbose(rec)
     else:
         return (
             f"id={rec.get('id')} box={rec.get('box')} pos=[{pos}] "

@@ -3,6 +3,22 @@ Shared utilities for the UI.
 """
 import json
 
+
+HELP_BUTTON_STYLE = """
+    QPushButton {
+        background-color: #3b82f6;
+        color: white;
+        border: none;
+        border-radius: 10px;
+        font-weight: bold;
+        font-size: 12px;
+    }
+    QPushButton:hover {
+        background-color: #2563eb;
+    }
+"""
+
+
 def positions_to_text(positions):
     if not positions:
         return ""
@@ -29,3 +45,21 @@ def compact_json(value, max_chars=200):
     if len(text) <= max_chars:
         return text
     return text[: max_chars - 3] + "..."
+
+
+def build_panel_header(parent, title, help_title, help_text):
+    """Create a standard panel header row with title and help button."""
+    from PySide6.QtWidgets import QHBoxLayout, QLabel, QMessageBox, QPushButton
+
+    header_row = QHBoxLayout()
+    title_label = QLabel(title)
+    title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+    header_row.addWidget(title_label)
+    header_row.addStretch()
+
+    help_btn = QPushButton("?")
+    help_btn.setFixedSize(20, 20)
+    help_btn.setStyleSheet(HELP_BUTTON_STYLE)
+    help_btn.clicked.connect(lambda: QMessageBox.information(parent, help_title, help_text))
+    header_row.addWidget(help_btn)
+    return header_row

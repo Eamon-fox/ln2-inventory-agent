@@ -6,7 +6,7 @@ import copy
 import os
 import tempfile
 from datetime import date
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from lib.yaml_ops import load_yaml, write_yaml
 
@@ -370,17 +370,43 @@ def run_plan(
     }
 
 
-def _preflight_add_entry(bridge: object, yaml_path: str, payload: Dict[str, object]) -> Dict[str, object]:
-    """Validate add_entry without writing (using dry_run semantics)."""
+def _run_dry_tool(
+    bridge: object,
+    yaml_path: str,
+    tool_name: str,
+    **payload: object,
+) -> Dict[str, object]:
+    """Invoke a lib.tool_api tool in dry-run mode with shared metadata."""
     try:
-        from lib.tool_api import tool_add_entry, build_actor_context
+        from lib import tool_api
     except ImportError:
         return {"ok": False, "error_code": "import_error", "message": "Failed to import tool_api"}
 
+    tool_fn = getattr(tool_api, tool_name, None)
+    build_actor_context = getattr(tool_api, "build_actor_context", None)
+    if not callable(tool_fn) or not callable(build_actor_context):
+        return {"ok": False, "error_code": "import_error", "message": f"Failed to resolve {tool_name}"}
+
     actor_context = getattr(bridge, "_ctx", lambda: None)() or build_actor_context(actor_type="human", channel="gui")
 
-    return tool_add_entry(
+    return tool_fn(
         yaml_path=yaml_path,
+        dry_run=True,
+        actor_context=actor_context,
+        source="plan_executor",
+        auto_html=False,
+        auto_server=False,
+        auto_backup=False,
+        **payload,
+    )
+
+
+def _preflight_add_entry(bridge: object, yaml_path: str, payload: Dict[str, object]) -> Dict[str, object]:
+    """Validate add_entry without writing (using dry_run semantics)."""
+    return _run_dry_tool(
+        bridge=bridge,
+        yaml_path=yaml_path,
+        tool_name="tool_add_entry",
         parent_cell_line=payload.get("parent_cell_line"),
         short_name=payload.get("short_name"),
         box=payload.get("box"),
@@ -389,26 +415,15 @@ def _preflight_add_entry(bridge: object, yaml_path: str, payload: Dict[str, obje
         plasmid_name=payload.get("plasmid_name"),
         plasmid_id=payload.get("plasmid_id"),
         note=payload.get("note"),
-        dry_run=True,
-        actor_context=actor_context,
-        source="plan_executor",
-        auto_html=False,
-        auto_server=False,
-        auto_backup=False,
     )
 
 
 def _preflight_record_thaw(bridge: object, yaml_path: str, payload: Dict[str, object]) -> Dict[str, object]:
     """Validate record_thaw without writing (using dry_run semantics)."""
-    try:
-        from lib.tool_api import tool_record_thaw, build_actor_context
-    except ImportError:
-        return {"ok": False, "error_code": "import_error", "message": "Failed to import tool_api"}
-
-    actor_context = getattr(bridge, "_ctx", lambda: None)() or build_actor_context(actor_type="human", channel="gui")
-
-    return tool_record_thaw(
+    return _run_dry_tool(
+        bridge=bridge,
         yaml_path=yaml_path,
+        tool_name="tool_record_thaw",
         record_id=payload.get("record_id"),
         position=payload.get("position"),
         to_position=payload.get("to_position"),
@@ -416,36 +431,18 @@ def _preflight_record_thaw(bridge: object, yaml_path: str, payload: Dict[str, ob
         date_str=payload.get("date_str"),
         action=payload.get("action", "Takeout"),
         note=payload.get("note"),
-        dry_run=True,
-        actor_context=actor_context,
-        source="plan_executor",
-        auto_html=False,
-        auto_server=False,
-        auto_backup=False,
     )
-
 
 def _preflight_batch_thaw(bridge: object, yaml_path: str, payload: Dict[str, object]) -> Dict[str, object]:
     """Validate batch_thaw without writing (using dry_run semantics)."""
-    try:
-        from lib.tool_api import tool_batch_thaw, build_actor_context
-    except ImportError:
-        return {"ok": False, "error_code": "import_error", "message": "Failed to import tool_api"}
-
-    actor_context = getattr(bridge, "_ctx", lambda: None)() or build_actor_context(actor_type="human", channel="gui")
-
-    return tool_batch_thaw(
+    return _run_dry_tool(
+        bridge=bridge,
         yaml_path=yaml_path,
+        tool_name="tool_batch_thaw",
         entries=payload.get("entries", []),
         date_str=payload.get("date_str"),
         action=payload.get("action", "Takeout"),
         note=payload.get("note"),
-        dry_run=True,
-        actor_context=actor_context,
-        source="plan_executor",
-        auto_html=False,
-        auto_server=False,
-        auto_backup=False,
     )
 
 

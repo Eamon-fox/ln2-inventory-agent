@@ -252,44 +252,6 @@ class SettingsDialog(QDialog):
         }
 
 
-class HelpPushButton(QPushButton):
-    """A panel header with help button."""
-
-    def __init__(self, title, help_text, parent=None):
-        super().__init__(parent)
-        self._help_text = help_text
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 4, 8, 4)
-
-        title_label = QLabel(title)
-        title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
-        layout.addWidget(title_label)
-
-        layout.addStretch()
-
-        help_btn = QPushButton("?")
-        help_btn.setFixedSize(20, 20)
-        help_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3b82f6;
-                color: white;
-                border: none;
-                border-radius: 10px;
-                font-weight: bold;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background-color: #2563eb;
-            }
-        """)
-        help_btn.clicked.connect(self._show_help)
-        layout.addWidget(help_btn)
-
-    def _show_help(self):
-        QMessageBox.information(self, "Help", self._help_text)
-
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()

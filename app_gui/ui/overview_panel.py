@@ -4,9 +4,9 @@ from PySide6.QtGui import QDrag, QDropEvent, QDragEnterEvent, QDragMoveEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QPushButton, QLineEdit, QComboBox, QCheckBox, QScrollArea,
-    QSizePolicy, QGroupBox, QMenu, QApplication, QMessageBox
+    QSizePolicy, QGroupBox, QMenu, QApplication
 )
-from app_gui.ui.utils import cell_color
+from app_gui.ui.utils import build_panel_header, cell_color
 
 MIME_TYPE_MOVE = "application/x-ln2-move"
 
@@ -136,29 +136,7 @@ class OverviewPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        header_row = QHBoxLayout()
-        title_label = QLabel("Overview")
-        title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
-        header_row.addWidget(title_label)
-        header_row.addStretch()
-        help_btn = QPushButton("?")
-        help_btn.setFixedSize(20, 20)
-        help_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3b82f6;
-                color: white;
-                border: none;
-                border-radius: 10px;
-                font-weight: bold;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background-color: #2563eb;
-            }
-        """)
-        help_btn.clicked.connect(lambda: QMessageBox.information(self, "Overview Help", OVERVIEW_HELP_TEXT))
-        header_row.addWidget(help_btn)
-        layout.addLayout(header_row)
+        layout.addLayout(build_panel_header(self, "Overview", "Overview Help", OVERVIEW_HELP_TEXT))
 
         # Summary Cards
         summary_row = QHBoxLayout()
