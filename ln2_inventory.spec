@@ -15,7 +15,7 @@ a = Analysis(
     ["app_gui/main.py"],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[("app_gui/i18n/translations", "app_gui/i18n/translations")],
     hiddenimports=["yaml"],
     hookspath=[],
     hooksconfig={},
