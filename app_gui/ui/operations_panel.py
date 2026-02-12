@@ -246,6 +246,22 @@ class OperationsPanel(QWidget):
         self._refresh_thaw_record_context()
         self.set_mode("thaw")
 
+    def set_move_prefill(self, source_info):
+        if "record_id" in source_info:
+            self.m_id.setValue(int(source_info["record_id"]))
+        if "position" in source_info:
+            self.m_from_position.setValue(int(source_info["position"]))
+        self._refresh_move_record_context()
+        self.set_mode("move")
+
+    def set_query_prefill(self, source_info):
+        if "box" in source_info:
+            self.q_box.setValue(int(source_info["box"]))
+        if "position" in source_info:
+            self.q_position.setValue(int(source_info["position"]))
+        self.set_mode("query")
+        self.on_query_records()
+
     def set_add_prefill(self, source_info):
         """Pre-fill the Add Entry form with box and position from overview."""
         if "box" in source_info:
@@ -1435,6 +1451,7 @@ class OperationsPanel(QWidget):
             return
 
         yaml_path = self.yaml_path_getter()
+        original_plan = list(self.plan_items)
         report = run_plan(yaml_path, self.plan_items, self.bridge, mode="execute")
 
         results = []
@@ -1443,8 +1460,11 @@ class OperationsPanel(QWidget):
             results.append((status, r.get("item"), r.get("response") or {}))
 
         remaining = report.get("remaining_items", [])
+        fail_count = sum(1 for r in results if r[0] == "FAIL")
 
-        if remaining:
+        if fail_count:
+            self.plan_items = original_plan
+        elif remaining:
             self.plan_items = remaining
         else:
             self.plan_items.clear()
@@ -1486,16 +1506,13 @@ class OperationsPanel(QWidget):
         fail_count = sum(1 for r in results if r[0] == "FAIL")
 
         if fail_count:
-            self.plan_items = remaining
-            self._refresh_plan_table()
-            self._update_plan_badge()
-
             fail_item = [r for r in results if r[0] == "FAIL"][-1]
             error_msg = fail_item[2].get("message", "Unknown error")
             lines = [
                 "<b style='color: #ef4444;'>Plan execution stopped</b>",
-                f"Completed: {ok_count}, Failed: {fail_count}, Remaining: {len(remaining)}",
+                f"Completed: {ok_count}, Failed: {fail_count}",
                 f"Error: {error_msg}",
+                "<span style='color: #94a3b8;'>Original plan preserved. Use Undo to rollback, then re-execute.</span>",
             ]
             self.result_summary.setText("<br/>".join(lines))
             self.result_card.setStyleSheet("QGroupBox { border: 1px solid #ef4444; }")

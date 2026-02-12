@@ -50,6 +50,8 @@ class OverviewPanel(QWidget):
     request_quick_add = Signal()
     request_quick_thaw = Signal()
     request_add_prefill = Signal(dict)
+    request_move_prefill = Signal(dict)
+    request_query_prefill = Signal(dict)
     # Use object to preserve non-string dict keys (Qt map coercion can drop int keys).
     data_loaded = Signal(object)
     plan_items_requested = Signal(list)
@@ -610,25 +612,55 @@ class OverviewPanel(QWidget):
 
     def on_cell_double_clicked(self, box_num, position):
         record = self.overview_pos_map.get((box_num, position))
+        self._set_selected_cell(box_num, position)
+        self.on_cell_hovered(box_num, position, force=True)
+        
+        menu = QMenu(self)
+        
         if record:
-            self._set_selected_cell(box_num, position)
-            self.on_cell_hovered(box_num, position, force=True)
-            # Prefill thaw
             rec_id = int(record.get("id"))
-            self.request_prefill.emit({
-                "box": int(box_num),
-                "position": int(position),
-                "record_id": rec_id,
-            })
-            self.status_message.emit(f"Double-click: Prefill Thaw for ID {rec_id}", 2000)
+            act_thaw = menu.addAction("Thaw / Takeout")
+            act_move = menu.addAction("Move")
+            act_query = menu.addAction("Query")
+            
+            btn = self.overview_cells.get((box_num, position))
+            global_pos = btn.mapToGlobal(btn.rect().bottomLeft()) if btn else None
+            selected = menu.exec(global_pos) if global_pos else None
+            
+            if selected == act_thaw:
+                self.request_prefill.emit({
+                    "box": int(box_num),
+                    "position": int(position),
+                    "record_id": rec_id,
+                })
+                self.status_message.emit(f"Prefill Thaw for ID {rec_id}", 2000)
+            elif selected == act_move:
+                self.request_move_prefill.emit({
+                    "box": int(box_num),
+                    "position": int(position),
+                    "record_id": rec_id,
+                })
+                self.status_message.emit(f"Prefill Move for ID {rec_id}", 2000)
+            elif selected == act_query:
+                self.request_query_prefill.emit({
+                    "box": int(box_num),
+                    "position": int(position),
+                    "record_id": rec_id,
+                })
+                self.status_message.emit(f"Query ID {rec_id}", 2000)
         else:
-            self._set_selected_cell(box_num, position)
-            self.on_cell_hovered(box_num, position, force=True)
-            self.request_add_prefill.emit({
-                "box": int(box_num),
-                "position": int(position),
-            })
-            self.status_message.emit(f"Double-click: Prefill Add Entry (Box {box_num} Pos {position})", 2000)
+            act_add = menu.addAction("Add Entry")
+            
+            btn = self.overview_cells.get((box_num, position))
+            global_pos = btn.mapToGlobal(btn.rect().bottomLeft()) if btn else None
+            selected = menu.exec(global_pos) if global_pos else None
+            
+            if selected == act_add:
+                self.request_add_prefill.emit({
+                    "box": int(box_num),
+                    "position": int(position),
+                })
+                self.status_message.emit(f"Prefill Add Entry (Box {box_num} Pos {position})", 2000)
 
     def on_cell_hovered(self, box_num, position, force=False):
         hover_key = (box_num, position)

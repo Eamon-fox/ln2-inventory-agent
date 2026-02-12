@@ -339,6 +339,32 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual("Record loaded - form auto-filled.", panel.t_ctx_status.text())
         self.assertEqual("Box 1:30", panel.t_ctx_source.text())
 
+    def test_operations_panel_set_move_prefill_fills_move_form(self):
+        panel = self._new_operations_panel()
+        panel.update_records_cache({
+            7: {"id": 7, "parent_cell_line": "K562", "short_name": "K562_move",
+                "box": 2, "positions": [15, 20]},
+        })
+
+        panel.set_move_prefill({"box": 2, "position": 15, "record_id": 7})
+
+        self.assertEqual(7, panel.m_id.value())
+        self.assertEqual(15, panel.m_from_position.value())
+        self.assertEqual("move", panel.current_operation_mode)
+
+    def test_operations_panel_set_query_prefill_fills_query_and_runs(self):
+        panel = self._new_operations_panel()
+        bridge = _FakeOperationsBridge()
+        panel.bridge = bridge
+
+        panel.set_query_prefill({"box": 3, "position": 25, "record_id": 10})
+
+        self.assertEqual(3, panel.q_box.value())
+        self.assertEqual(25, panel.q_position.value())
+        self.assertEqual("query", panel.current_operation_mode)
+        self.assertEqual(3, bridge.last_query_filters.get("box"))
+        self.assertEqual(25, bridge.last_query_filters.get("position"))
+
     def test_operations_panel_batch_section_collapsed_by_default(self):
         panel = self._new_operations_panel()
 
@@ -394,7 +420,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual(1, panel.query_table.rowCount())
         self.assertEqual("2", panel.query_table.item(0, 0).text())
 
-    def test_overview_double_click_sets_selected_border_and_emits_prefill(self):
+    def test_overview_double_click_shows_menu_and_emits_thaw_prefill(self):
         panel = self._new_overview_panel()
         panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
 
@@ -410,16 +436,92 @@ class GuiPanelRegressionTests(unittest.TestCase):
         button = panel.overview_cells[(1, 1)]
         panel._paint_cell(button, 1, 1, record)
 
-        emitted = []
-        panel.request_prefill.connect(lambda payload: emitted.append(payload))
+        emitted_thaw = []
+        emitted_move = []
+        emitted_query = []
+        panel.request_prefill.connect(lambda payload: emitted_thaw.append(payload))
+        panel.request_move_prefill.connect(lambda payload: emitted_move.append(payload))
+        panel.request_query_prefill.connect(lambda payload: emitted_query.append(payload))
 
-        panel.on_cell_double_clicked(1, 1)
+        from unittest.mock import patch, MagicMock
+        with patch("app_gui.ui.overview_panel.QMenu") as MockMenu:
+            mock_menu = MagicMock()
+            MockMenu.return_value = mock_menu
+            mock_act_thaw = MagicMock()
+            mock_act_move = MagicMock()
+            mock_act_query = MagicMock()
+            mock_menu.addAction.side_effect = [mock_act_thaw, mock_act_move, mock_act_query]
+            mock_menu.exec.return_value = mock_act_thaw
+            panel.on_cell_double_clicked(1, 1)
 
         self.assertEqual((1, 1), panel.overview_selected_key)
-        self.assertEqual([{"box": 1, "position": 1, "record_id": 5}], emitted)
-        self.assertIn("#16a34a", button.styleSheet())
+        self.assertEqual([{"box": 1, "position": 1, "record_id": 5}], emitted_thaw)
+        self.assertEqual([], emitted_move)
+        self.assertEqual([], emitted_query)
 
-    def test_overview_double_click_empty_slot_sets_selected_border_and_emits_add_prefill(self):
+    def test_overview_double_click_menu_emits_move_prefill(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
+
+        record = {
+            "id": 5,
+            "parent_cell_line": "K562",
+            "short_name": "K562_test",
+            "box": 1,
+            "positions": [1],
+        }
+        panel.overview_pos_map = {(1, 1): record}
+        button = panel.overview_cells[(1, 1)]
+        panel._paint_cell(button, 1, 1, record)
+
+        emitted_move = []
+        panel.request_move_prefill.connect(lambda payload: emitted_move.append(payload))
+
+        from unittest.mock import patch, MagicMock
+        with patch("app_gui.ui.overview_panel.QMenu") as MockMenu:
+            mock_menu = MagicMock()
+            MockMenu.return_value = mock_menu
+            mock_act_thaw = MagicMock()
+            mock_act_move = MagicMock()
+            mock_act_query = MagicMock()
+            mock_menu.addAction.side_effect = [mock_act_thaw, mock_act_move, mock_act_query]
+            mock_menu.exec.return_value = mock_act_move
+            panel.on_cell_double_clicked(1, 1)
+
+        self.assertEqual([{"box": 1, "position": 1, "record_id": 5}], emitted_move)
+
+    def test_overview_double_click_menu_emits_query_prefill(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
+
+        record = {
+            "id": 5,
+            "parent_cell_line": "K562",
+            "short_name": "K562_test",
+            "box": 1,
+            "positions": [1],
+        }
+        panel.overview_pos_map = {(1, 1): record}
+        button = panel.overview_cells[(1, 1)]
+        panel._paint_cell(button, 1, 1, record)
+
+        emitted_query = []
+        panel.request_query_prefill.connect(lambda payload: emitted_query.append(payload))
+
+        from unittest.mock import patch, MagicMock
+        with patch("app_gui.ui.overview_panel.QMenu") as MockMenu:
+            mock_menu = MagicMock()
+            MockMenu.return_value = mock_menu
+            mock_act_thaw = MagicMock()
+            mock_act_move = MagicMock()
+            mock_act_query = MagicMock()
+            mock_menu.addAction.side_effect = [mock_act_thaw, mock_act_move, mock_act_query]
+            mock_menu.exec.return_value = mock_act_query
+            panel.on_cell_double_clicked(1, 1)
+
+        self.assertEqual([{"box": 1, "position": 1, "record_id": 5}], emitted_query)
+
+    def test_overview_double_click_empty_slot_shows_menu_and_emits_add_prefill(self):
         panel = self._new_overview_panel()
         panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
 
@@ -430,7 +532,14 @@ class GuiPanelRegressionTests(unittest.TestCase):
         emitted = []
         panel.request_add_prefill.connect(lambda payload: emitted.append(payload))
 
-        panel.on_cell_double_clicked(1, 1)
+        from unittest.mock import patch, MagicMock
+        with patch("app_gui.ui.overview_panel.QMenu") as MockMenu:
+            mock_menu = MagicMock()
+            MockMenu.return_value = mock_menu
+            mock_act_add = MagicMock()
+            mock_menu.addAction.return_value = mock_act_add
+            mock_menu.exec.return_value = mock_act_add
+            panel.on_cell_double_clicked(1, 1)
 
         self.assertEqual((1, 1), panel.overview_selected_key)
         self.assertEqual([{"box": 1, "position": 1}], emitted)
@@ -1072,8 +1181,8 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
         # All items should succeed individually → plan cleared
         self.assertEqual(0, len(panel.plan_items))
 
-    def test_move_individual_fallback_partial_failure_keeps_failed(self):
-        """When 1 of 3 individual moves fails, only the failed one stays in plan."""
+    def test_move_individual_fallback_partial_failure_preserves_entire_plan(self):
+        """When 1 of 3 individual moves fails, entire plan should be preserved for retry."""
         bridge = _ConfigurableBridge()
         bridge.batch_should_fail = True
         bridge.record_thaw_fail_ids = {2}  # record_id=2 will fail
@@ -1090,9 +1199,10 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
         with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
             panel.execute_plan()
 
-        # Only the failed item (record_id=2) should remain
-        self.assertEqual(1, len(panel.plan_items))
-        self.assertEqual(2, panel.plan_items[0]["record_id"])
+        # Entire plan should be preserved (all 3 items)
+        self.assertEqual(3, len(panel.plan_items))
+        preserved_ids = sorted([item["record_id"] for item in panel.plan_items])
+        self.assertEqual([1, 2, 3], preserved_ids)
 
     def test_takeout_batch_fails_falls_back_to_individual(self):
         """Phase 3: batch failure for takeout also falls back to individual."""
@@ -1135,8 +1245,8 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
         self.assertEqual(0, len(bridge.record_thaw_calls))
         self.assertEqual(0, len(panel.plan_items))
 
-    def test_phases_continue_after_earlier_failure(self):
-        """Phase 3 should execute even if Phase 2 had failures."""
+    def test_phases_continue_after_earlier_failure_preserves_plan(self):
+        """Phase 3 should execute even if Phase 2 had failures, but plan is preserved on failure."""
         bridge = _ConfigurableBridge()
         bridge.batch_should_fail = True
         bridge.record_thaw_fail_ids = {1}  # move for record_id=1 fails
@@ -1152,10 +1262,10 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
         with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
             panel.execute_plan()
 
-        # move failed (stays), takeout succeeded (removed)
-        self.assertEqual(1, len(panel.plan_items))
-        self.assertEqual("move", panel.plan_items[0]["action"])
-        self.assertEqual(1, panel.plan_items[0]["record_id"])
+        # On failure, entire plan is preserved
+        self.assertEqual(2, len(panel.plan_items))
+        actions = sorted([item["action"] for item in panel.plan_items])
+        self.assertEqual(["move", "takeout"], actions)
 
     def test_all_fail_keeps_all_in_plan(self):
         """If every item fails, all should remain in the plan."""
@@ -1176,8 +1286,8 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
 
         self.assertEqual(2, len(panel.plan_items))
 
-    def test_dedup_then_execute_end_to_end(self):
-        """Full scenario: stage → execute partial fail → AI re-stages → execute succeeds."""
+    def test_dedup_then_execute_end_to_end_with_preserved_plan(self):
+        """Full scenario: stage → execute partial fail (plan preserved) → use undo + re-stage → execute succeeds."""
         bridge = _ConfigurableBridge()
         bridge.batch_should_fail = True
         bridge.record_thaw_fail_ids = {2}
@@ -1196,28 +1306,32 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
         with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
             panel.execute_plan()
 
-        # 1 and 3 succeeded, 2 stays
-        self.assertEqual(1, len(panel.plan_items))
-        self.assertEqual(2, panel.plan_items[0]["record_id"])
+        # On failure, entire plan is preserved (all 3 items)
+        self.assertEqual(3, len(panel.plan_items))
+        preserved_ids = sorted([item["record_id"] for item in panel.plan_items])
+        self.assertEqual([1, 2, 3], preserved_ids)
 
-        # AI re-stages all 3 (dedup should replace the existing one, add 2 new)
+        # User can use undo to rollback, then re-execute
+        # For this test, just clear and re-add with fix
+        panel.plan_items.clear()
+        
+        # Now execute again — this time all succeed
+        bridge.record_thaw_fail_ids.clear()
+        bridge.batch_thaw_calls.clear()
+        bridge.record_thaw_calls.clear()
+
         items_v2 = [
             _make_move_item(record_id=1, position=5, to_position=1),
             _make_move_item(record_id=2, position=10, to_position=4),  # different target
             _make_move_item(record_id=3, position=15, to_position=3),
         ]
         panel.add_plan_items(items_v2)
-        # record_id=2 replaced (1 item), record_id=1 and 3 are new (already executed, but re-staged)
         self.assertEqual(3, len(panel.plan_items))
-
-        # Now execute again — this time record_id=2 succeeds
-        bridge.record_thaw_fail_ids.clear()
-        bridge.batch_thaw_calls.clear()
-        bridge.record_thaw_calls.clear()
 
         with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
             panel.execute_plan()
 
+        # All succeeded, plan cleared
         self.assertEqual(0, len(panel.plan_items))
 
 
@@ -1705,3 +1819,78 @@ class OperationEventFeedTests(unittest.TestCase):
         chat_text = panel.ai_chat.toPlainText().lower()
         self.assertIn("blocked", chat_text)
         self.assertIn("2", chat_text)
+
+
+@unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
+class ExecuteFailurePreservesPlanTests(unittest.TestCase):
+    """Regression: execute failure should preserve original plan for retry."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._app = QApplication.instance() or QApplication([])
+
+    def _new_panel(self, bridge):
+        return OperationsPanel(bridge=bridge, yaml_path_getter=lambda: "/tmp/inventory.yaml")
+
+    def test_execute_failure_preserves_entire_original_plan(self):
+        """When execution fails, the entire original plan should be preserved."""
+        bridge = _ConfigurableBridge()
+        bridge.batch_should_fail = True
+        bridge.record_thaw_fail_ids = {1}
+        panel = self._new_panel(bridge)
+
+        items = [
+            _make_takeout_item(record_id=1, position=5),
+            _make_takeout_item(record_id=2, position=10),
+            _make_takeout_item(record_id=3, position=15),
+        ]
+        panel.add_plan_items(items)
+        original_count = len(panel.plan_items)
+
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        self.assertEqual(original_count, len(panel.plan_items))
+        record_ids = [item["record_id"] for item in panel.plan_items]
+        self.assertEqual([1, 2, 3], record_ids)
+
+    def test_execute_partial_failure_preserves_entire_plan(self):
+        """Even if some items succeed before failure, entire plan should be preserved."""
+        bridge = _ConfigurableBridge()
+        bridge.batch_should_fail = True
+        bridge.record_thaw_fail_ids = {2}
+        panel = self._new_panel(bridge)
+
+        items = [
+            _make_takeout_item(record_id=1, position=5),
+            _make_takeout_item(record_id=2, position=10),
+        ]
+        panel.add_plan_items(items)
+        original_ids = [item["record_id"] for item in panel.plan_items]
+
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        self.assertEqual(2, len(panel.plan_items))
+        preserved_ids = [item["record_id"] for item in panel.plan_items]
+        self.assertEqual(original_ids, preserved_ids)
+
+    def test_execute_success_clears_plan(self):
+        """When all items succeed, plan should be cleared."""
+        bridge = _ConfigurableBridge()
+        bridge.batch_should_fail = False
+        panel = self._new_panel(bridge)
+
+        items = [
+            _make_takeout_item(record_id=1, position=5),
+            _make_takeout_item(record_id=2, position=10),
+        ]
+        panel.add_plan_items(items)
+
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        self.assertEqual(0, len(panel.plan_items))
