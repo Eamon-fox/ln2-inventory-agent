@@ -163,9 +163,7 @@ def has_depletion_history(rec):
         if normalize_action(ev.get("action")) in {"takeout", "thaw", "discard"}:
             return True
 
-    # Backward compatibility for legacy free-text logs.
-    thaw_log = rec.get("thaw_log")
-    return bool(thaw_log and str(thaw_log).strip())
+    return False
 
 
 def _record_label(rec, idx):
@@ -211,6 +209,10 @@ def validate_record(rec, idx=None):
         if not has_depletion_history(rec):
             errors.append(f"{rec_id}: 'positions' 为空，但没有取出/复苏/扔掉历史")
     else:
+        # Tube-level invariant: one record represents one physical tube.
+        # Keep historical/consumed tubes as ``positions=[]`` with depletion history.
+        if len(positions) > 1:
+            errors.append(f"{rec_id}: 'positions' 最多只能包含 1 个位置（tube 为最小单元）")
         seen_positions = set()
         for pos in positions:
             if not isinstance(pos, int):

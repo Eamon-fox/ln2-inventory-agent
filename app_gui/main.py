@@ -28,7 +28,7 @@ from app_gui.gui_config import (
 from app_gui.i18n import tr, t, set_language
 from app_gui.path_utils import resolve_demo_dataset_path
 from lib.config import YAML_PATH
-from app_gui.ui.theme import apply_dark_theme
+from app_gui.ui.theme import apply_dark_theme, apply_light_theme
 from app_gui.ui.overview_panel import OverviewPanel
 from app_gui.ui.operations_panel import OperationsPanel
 from app_gui.ui.ai_panel import AIPanel
@@ -63,7 +63,6 @@ class QuickStartDialog(QDialog):
         self.btn_demo = self._create_option_button(
             tr("quickStart.demo"),
             tr("quickStart.demoDesc"),
-            "background-color: #1e40af;",
         )
         self.btn_demo.clicked.connect(self._on_demo)
         options_layout.addWidget(self.btn_demo)
@@ -71,7 +70,6 @@ class QuickStartDialog(QDialog):
         self.btn_open = self._create_option_button(
             tr("quickStart.open"),
             tr("quickStart.openDesc"),
-            "background-color: #166534;",
         )
         self.btn_open.clicked.connect(self._on_open)
         options_layout.addWidget(self.btn_open)
@@ -79,18 +77,15 @@ class QuickStartDialog(QDialog):
         self.btn_current = self._create_option_button(
             tr("quickStart.current"),
             t("quickStart.currentDesc", path=current_path),
-            "background-color: #374151;",
         )
         if not current_path or not os.path.exists(current_path):
             self.btn_current.setEnabled(False)
-            self.btn_current.setStyleSheet("background-color: #1f2937; color: #6b7280;")
         self.btn_current.clicked.connect(self._on_current)
         options_layout.addWidget(self.btn_current)
 
         self.btn_new = self._create_option_button(
             tr("quickStart.new"),
             tr("quickStart.newDesc"),
-            "background-color: #7c2d12;",
         )
         self.btn_new.clicked.connect(self._on_new)
         options_layout.addWidget(self.btn_new)
@@ -104,25 +99,27 @@ class QuickStartDialog(QDialog):
         self._demo_path = demo_path
         self._current_path = current_path
 
-    def _create_option_button(self, title, description, style):
+    def _create_option_button(self, title, description):
         btn = QPushButton()
-        btn.setStyleSheet(f"""
-            QPushButton {{
-                {style}
-                color: white;
-                border: none;
-                border-radius: 8px;
+        btn.setStyleSheet("""
+            QPushButton {
+                background-color: var(--background-raised);
+                border: 1px solid var(--border-weak);
+                border-radius: var(--radius-md);
                 padding: 16px;
                 text-align: left;
+                color: var(--text-strong);
                 font-size: 13px;
-            }}
-            QPushButton:hover {{
-                opacity: 0.9;
-            }}
-            QPushButton:disabled {{
-                background-color: #1f2937;
-                color: #6b7280;
-            }}
+            }
+            QPushButton:hover {
+                background-color: #383838;
+                border-color: var(--border-subtle);
+            }
+            QPushButton:disabled {
+                background-color: var(--background-strong);
+                color: var(--text-muted);
+                border-color: transparent;
+            }
         """)
         btn.setText(f"{title}\n\n{description}")
         btn.setMinimumHeight(80)
@@ -233,6 +230,26 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(lang_group)
 
+        theme_group = QGroupBox(tr("settings.theme"))
+        theme_layout = QFormLayout(theme_group)
+
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItem("Auto (System)", "auto")
+        self.theme_combo.addItem("Dark", "dark")
+        self.theme_combo.addItem("Light", "light")
+        current_theme = self._config.get("theme", "dark")
+        idx = self.theme_combo.findData(current_theme)
+        if idx >= 0:
+            self.theme_combo.setCurrentIndex(idx)
+        theme_layout.addRow(tr("settings.theme"), self.theme_combo)
+
+        theme_hint = QLabel(tr("settings.themeHint"))
+        theme_hint.setStyleSheet("color: var(--text-muted); font-size: 11px; margin-left: 100px;")
+        theme_hint.setWordWrap(True)
+        theme_layout.addRow("", theme_hint)
+
+        layout.addWidget(theme_group)
+
         layout.addStretch()
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -253,6 +270,7 @@ class SettingsDialog(QDialog):
             "actor_id": self.actor_edit.text().strip(),
             "api_key": self.api_key_edit.text().strip() or None,
             "language": self.lang_combo.currentData(),
+            "theme": self.theme_combo.currentData(),
         }
 
 
@@ -325,20 +343,23 @@ class MainWindow(QMainWindow):
         # Panels
         splitter = QSplitter(Qt.Horizontal)
         splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(1)
 
         self.overview_panel = OverviewPanel(self.bridge, lambda: self.current_yaml_path)
         self.operations_panel = OperationsPanel(self.bridge, lambda: self.current_yaml_path)
         self.ai_panel = AIPanel(self.bridge, lambda: self.current_yaml_path)
 
-        # Keep middle operations column from becoming overly wide on large screens.
-        self.operations_panel.setMaximumWidth(560)
+        self.overview_panel.setMinimumWidth(320)
+        self.operations_panel.setMinimumWidth(280)
+        self.ai_panel.setMinimumWidth(320)
+        self.operations_panel.setMaximumWidth(480)
 
         splitter.addWidget(self.overview_panel)
         splitter.addWidget(self.operations_panel)
         splitter.addWidget(self.ai_panel)
 
-        splitter.setStretchFactor(0, 6)
-        splitter.setStretchFactor(1, 4)
+        splitter.setStretchFactor(0, 5)
+        splitter.setStretchFactor(1, 3)
         splitter.setStretchFactor(2, 4)
         root.addWidget(splitter, 1)
 
@@ -358,6 +379,10 @@ class MainWindow(QMainWindow):
         self.overview_panel.request_query_prefill.connect(self.operations_panel.set_query_prefill)
         self.overview_panel.request_quick_add.connect(lambda: self.operations_panel.set_mode("add"))
         self.overview_panel.data_loaded.connect(self.operations_panel.update_records_cache)
+
+        # Operations -> Overview (plan preview)
+        self.operations_panel.plan_preview_updated.connect(
+            self.overview_panel.update_plan_preview)
 
         # Operations -> Overview (refresh after execution)
         self.operations_panel.operation_completed.connect(self.on_operation_completed)
@@ -434,6 +459,7 @@ class MainWindow(QMainWindow):
                 "api_key": self.gui_config.get("api_key"),
                 "ai": self.gui_config.get("ai", {}),
                 "language": self.gui_config.get("language", "en"),
+                "theme": self.gui_config.get("theme", "dark"),
             }
         )
         if dialog.exec() != QDialog.Accepted:
@@ -454,6 +480,15 @@ class MainWindow(QMainWindow):
                 self,
                 tr("common.info"),
                 "Language changed. Please restart the application to apply."
+            )
+
+        new_theme = values.get("theme", "dark")
+        if new_theme != self.gui_config.get("theme"):
+            self.gui_config["theme"] = new_theme
+            QMessageBox.information(
+                self,
+                tr("common.info"),
+                "Theme changed. Please restart the application to apply."
             )
 
         self.bridge.set_actor(self.current_actor_id)
@@ -495,7 +530,13 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    apply_dark_theme(app)
+    
+    gui_config = load_gui_config()
+    theme = gui_config.get("theme", "dark")
+    if theme == "light":
+        apply_light_theme(app)
+    else:
+        apply_dark_theme(app)
 
     window = MainWindow()
     window.show()

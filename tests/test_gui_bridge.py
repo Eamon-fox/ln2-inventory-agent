@@ -52,8 +52,6 @@ class GuiBridgeAgentTests(unittest.TestCase):
                     ]
                 ),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
             )
 
             bridge = GuiToolBridge(actor_id="gui-test", session_id="session-gui-test")
@@ -98,8 +96,6 @@ class GuiBridgeAgentTests(unittest.TestCase):
                     ]
                 ),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
             )
 
             bridge = GuiToolBridge(actor_id="gui-test", session_id="session-gui-test")
@@ -170,8 +166,6 @@ class GuiBridgeAgentTests(unittest.TestCase):
                     ]
                 ),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
             )
 
             bridge = GuiToolBridge(actor_id="gui-test", session_id="session-gui-test")

@@ -117,8 +117,6 @@ class PreflightPlanTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, box=1, positions=[5])]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -135,8 +133,6 @@ class PreflightPlanTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, box=1, positions=[1])]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -153,8 +149,6 @@ class PreflightPlanTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, box=1, positions=[1])]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -184,8 +178,6 @@ class RunPlanExecuteTests(unittest.TestCase):
             write_yaml(
                 make_data([]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -206,8 +198,6 @@ class RunPlanExecuteTests(unittest.TestCase):
             write_yaml(
                 make_data([]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -230,8 +220,6 @@ class RunPlanExecuteTests(unittest.TestCase):
                     make_record(2, box=1, positions=[2]),
                 ]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -248,7 +236,7 @@ class RunPlanExecuteTests(unittest.TestCase):
             self.assertEqual(2, result["stats"]["ok"])
             bridge.batch_thaw.assert_called_once()
 
-    def test_run_plan_move_batch_fails_falls_back_to_individual(self):
+    def test_run_plan_move_batch_fails_marks_all_blocked(self):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
@@ -257,14 +245,11 @@ class RunPlanExecuteTests(unittest.TestCase):
                     make_record(2, box=1, positions=[2]),
                 ]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
             bridge = MagicMock()
             bridge.batch_thaw.return_value = {"ok": False, "error_code": "validation_failed", "message": "Batch failed"}
-            bridge.record_thaw.side_effect = lambda yaml_path, **kw: {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
 
             items = [
                 make_move_item(record_id=1, position=1, to_position=10),
@@ -272,10 +257,12 @@ class RunPlanExecuteTests(unittest.TestCase):
             ]
             result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
 
-            self.assertTrue(result["ok"])
-            self.assertEqual(2, result["stats"]["ok"])
+            self.assertFalse(result["ok"])
+            self.assertTrue(result["blocked"])
+            self.assertEqual(2, result["stats"]["blocked"])
             bridge.batch_thaw.assert_called_once()
-            self.assertEqual(2, bridge.record_thaw.call_count)
+            self.assertFalse(bridge.record_thaw.called)
+            self.assertTrue(all(it.get("error_code") == "validation_failed" for it in result["items"]))
 
     def test_run_plan_takeout_batch_success(self):
         with tempfile.TemporaryDirectory() as td:
@@ -286,8 +273,6 @@ class RunPlanExecuteTests(unittest.TestCase):
                     make_record(2, box=1, positions=[2]),
                 ]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -311,8 +296,6 @@ class RunPlanExecuteTests(unittest.TestCase):
                     make_record(1, box=1, positions=[1]),
                 ]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -340,8 +323,6 @@ class PreflightVsExecuteConsistencyTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, box=1, positions=[1])]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -363,8 +344,6 @@ class PreflightVsExecuteConsistencyTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, box=1, positions=[5])]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -389,12 +368,10 @@ class MoveSwapTests(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
                 make_data([
-                    make_record(3, box=1, positions=[9, 10]),
-                    make_record(10, box=1, positions=[7, 17, 18]),
+                    make_record(3, box=1, positions=[9]),
+                    make_record(10, box=1, positions=[18]),
                 ]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -420,8 +397,6 @@ class MoveSwapTests(unittest.TestCase):
                     make_record(2, box=1, positions=[10]),
                 ]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -446,8 +421,6 @@ class MoveSwapTests(unittest.TestCase):
                     make_record(2, box=1, positions=[10]),
                 ]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 

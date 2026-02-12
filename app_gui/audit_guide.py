@@ -254,6 +254,13 @@ def _parse_add_entry(
         return []
 
     record_id = _as_int(details.get("new_id"))
+    record_ids = []
+    raw_new_ids = details.get("new_ids")
+    if isinstance(raw_new_ids, list):
+        for item in raw_new_ids:
+            rid = _as_int(item)
+            if rid is not None:
+                record_ids.append(rid)
     label = (
         str(tool_input.get("short_name") or "").strip()
         or str(tool_input.get("parent_cell_line") or "").strip()
@@ -264,18 +271,33 @@ def _parse_add_entry(
 
     note = _clean_note(tool_input.get("note"))
     steps = []
-    for position in sorted(set(positions)):
-        steps.append(
-            _ParsedStep(
-                record_id=record_id,
-                label=label,
-                action="add",
-                source_loc=None,
-                target_loc=(box, position),
-                timestamp=timestamp,
-                note=note,
+    sorted_positions = sorted(set(positions))
+    if record_ids and len(record_ids) == len(sorted_positions):
+        for rid, position in zip(record_ids, sorted_positions):
+            steps.append(
+                _ParsedStep(
+                    record_id=rid,
+                    label=label,
+                    action="add",
+                    source_loc=None,
+                    target_loc=(box, position),
+                    timestamp=timestamp,
+                    note=note,
+                )
             )
-        )
+    else:
+        for position in sorted_positions:
+            steps.append(
+                _ParsedStep(
+                    record_id=record_id,
+                    label=label,
+                    action="add",
+                    source_loc=None,
+                    target_loc=(box, position),
+                    timestamp=timestamp,
+                    note=note,
+                )
+            )
     return steps
 
 

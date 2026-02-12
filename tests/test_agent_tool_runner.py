@@ -55,8 +55,6 @@ class AgentToolRunnerTests(unittest.TestCase):
                     },
                 ]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -83,8 +81,6 @@ class AgentToolRunnerTests(unittest.TestCase):
                     ]
                 ),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -108,8 +104,6 @@ class AgentToolRunnerTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, box=1, positions=[1])]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -133,7 +127,8 @@ class AgentToolRunnerTests(unittest.TestCase):
             self.assertTrue(response["ok"])
 
             current = load_yaml(str(yaml_path))
-            self.assertEqual(2, len(current["inventory"]))
+            # Tube-level model: positions "2,3" creates 2 new tube records.
+            self.assertEqual(3, len(current["inventory"]))
 
             audit_path = Path(temp_dir) / "ln2_inventory_audit.jsonl"
             rows = [
@@ -154,8 +149,6 @@ class AgentToolRunnerTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, box=1, positions=[1])]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -190,8 +183,6 @@ class AgentToolRunnerTests(unittest.TestCase):
                     }
                 ]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -217,8 +208,6 @@ class AgentToolRunnerTests(unittest.TestCase):
                     }
                 ]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -235,8 +224,6 @@ class AgentToolRunnerTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, box=1, positions=[1])]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -266,8 +253,6 @@ class AgentToolRunnerTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, box=1, positions=[1])]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -289,8 +274,6 @@ class AgentToolRunnerTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, box=1, positions=[1])]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -316,8 +299,6 @@ class AgentToolRunnerTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, box=1, positions=[1])]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 

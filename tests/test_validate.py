@@ -7,10 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.validate import has_depletion_history, validate_record
-
-
-LAYOUT = {"rows": 9, "cols": 9}
+from lib.validators import has_depletion_history, validate_record
 
 
 def make_record(**overrides):
@@ -29,7 +26,7 @@ def make_record(**overrides):
 class ValidatePositionsTests(unittest.TestCase):
     def test_empty_positions_without_history_is_error(self):
         rec = make_record(positions=[])
-        errors, warnings = validate_record(rec, 0, LAYOUT)
+        errors, warnings = validate_record(rec, 0)
 
         self.assertEqual([], warnings)
         self.assertEqual(1, len(errors))
@@ -40,24 +37,25 @@ class ValidatePositionsTests(unittest.TestCase):
             positions=[],
             thaw_events=[{"date": "2025-01-02", "action": "thaw", "positions": [1]}],
         )
-        errors, warnings = validate_record(rec, 0, LAYOUT)
+        errors, warnings = validate_record(rec, 0)
 
         self.assertEqual([], errors)
         self.assertEqual([], warnings)
 
-    def test_empty_positions_with_legacy_thaw_log_is_allowed(self):
+    def test_empty_positions_with_legacy_thaw_log_is_error(self):
         rec = make_record(positions=[], thaw_log="legacy free-text log")
-        errors, warnings = validate_record(rec, 0, LAYOUT)
+        errors, warnings = validate_record(rec, 0)
 
-        self.assertEqual([], errors)
         self.assertEqual([], warnings)
+        self.assertGreaterEqual(len(errors), 1)
+        self.assertTrue(any("positions" in err for err in errors))
 
     def test_empty_positions_with_unknown_action_still_errors(self):
         rec = make_record(
             positions=[],
             thaw_events=[{"date": "2025-01-02", "action": "unknown", "positions": [1]}],
         )
-        errors, warnings = validate_record(rec, 0, LAYOUT)
+        errors, warnings = validate_record(rec, 0)
 
         self.assertEqual([], warnings)
         self.assertGreaterEqual(len(errors), 1)
@@ -66,7 +64,7 @@ class ValidatePositionsTests(unittest.TestCase):
 
     def test_positions_must_be_list(self):
         rec = make_record(positions="1")
-        errors, warnings = validate_record(rec, 0, LAYOUT)
+        errors, warnings = validate_record(rec, 0)
 
         self.assertEqual([], warnings)
         self.assertEqual(1, len(errors))
@@ -86,7 +84,7 @@ class ValidatePositionsTests(unittest.TestCase):
             positions=[1],
             thaw_events=[{"date": "2025-01-02", "action": "move", "positions": [1]}],
         )
-        errors, warnings = validate_record(rec, 0, LAYOUT)
+        errors, warnings = validate_record(rec, 0)
 
         self.assertEqual([], warnings)
         self.assertEqual([], errors)

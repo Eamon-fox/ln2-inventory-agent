@@ -17,6 +17,7 @@ DEFAULT_GUI_CONFIG = {
     "actor_id": "gui-user",
     "api_key": None,
     "language": "en",
+    "theme": "dark",
     "ai": {
         "model": "deepseek-chat",
         "max_steps": 8,
@@ -32,7 +33,7 @@ def load_gui_config(path=DEFAULT_CONFIG_FILE):
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         merged = copy.deepcopy(DEFAULT_GUI_CONFIG)
-        for key in ("yaml_path", "actor_id", "api_key", "language"):
+        for key in ("yaml_path", "actor_id", "api_key", "language", "theme"):
             if key in data:
                 merged[key] = data[key]
         if "ai" in data and isinstance(data["ai"], dict):

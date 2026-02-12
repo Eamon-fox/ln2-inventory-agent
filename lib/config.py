@@ -14,13 +14,6 @@ import sys
 CONFIG_ENV_VAR = "LN2_CONFIG_FILE"
 
 
-def _get_app_dir():
-    """Return project root: _MEIPASS when frozen (PyInstaller), else normal parent dir."""
-    if getattr(sys, "frozen", False):
-        return sys._MEIPASS
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
 def _default_yaml_path():
     if getattr(sys, "frozen", False):
         return os.path.join(os.path.dirname(sys.executable), "ln2_inventory.yaml")
@@ -30,7 +23,6 @@ def _default_yaml_path():
 DEFAULT_CONFIG = {
     "yaml_path": _default_yaml_path(),
     "python_path": sys.executable,
-    "scripts_dir": os.path.join(_get_app_dir(), "scripts"),
     "safety": {
         "backup_dir_name": "ln2_inventory_backups",
         "backup_keep_count": 200,
@@ -89,7 +81,7 @@ def _load_external_config():
 
 def _normalize_paths(config, config_dir=None):
     """Expand user paths and resolve relative paths against config file directory."""
-    for key in ("yaml_path", "python_path", "scripts_dir"):
+    for key in ("yaml_path", "python_path"):
         value = config.get(key)
         if not value:
             continue
@@ -159,7 +151,6 @@ def _as_list(name, value, fallback):
 # Paths
 YAML_PATH = RUNTIME_CONFIG["yaml_path"]
 PYTHON_PATH = RUNTIME_CONFIG["python_path"]
-SCRIPTS_DIR = RUNTIME_CONFIG["scripts_dir"]
 
 # Safety / operations
 BACKUP_DIR_NAME = RUNTIME_CONFIG["safety"]["backup_dir_name"]

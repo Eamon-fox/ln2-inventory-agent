@@ -49,8 +49,6 @@ def _seed(temp_dir, records):
     write_yaml(
         make_data(records),
         path=str(yaml_path),
-        auto_html=False,
-        auto_server=False,
         audit_meta={"action": "seed", "source": "tests"},
     )
     return str(yaml_path)
@@ -97,25 +95,23 @@ class PositionConsistencyTests(unittest.TestCase):
     def test_takeout_removes_position_completely(self):
         """After takeout, the removed position must NOT appear in positions list."""
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[1, 2, 3])])
+            yp = _seed(td, [make_record(1, box=1, positions=[2])])
             tool_record_thaw(
                 yaml_path=yp, record_id=1, position=2,
                 date_str="2026-02-10", action="取出",
-                auto_html=False, auto_server=False,
             )
             data = load_yaml(yp)
             positions = data["inventory"][0]["positions"]
             self.assertNotIn(2, positions)
-            self.assertEqual([1, 3], positions)
+            self.assertEqual([], positions)
 
     def test_takeout_creates_thaw_event(self):
         """Every takeout must record a thaw_event with the removed position."""
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[1, 2])])
+            yp = _seed(td, [make_record(1, box=1, positions=[1])])
             tool_record_thaw(
                 yaml_path=yp, record_id=1, position=1,
                 date_str="2026-02-10", action="取出",
-                auto_html=False, auto_server=False,
             )
             data = load_yaml(yp)
             events = data["inventory"][0].get("thaw_events", [])
@@ -129,7 +125,6 @@ class PositionConsistencyTests(unittest.TestCase):
             result = tool_record_thaw(
                 yaml_path=yp, record_id=1, position=5,
                 date_str="2026-02-10", action="取出",
-                auto_html=False, auto_server=False,
             )
             self.assertTrue(result["ok"])
             data = load_yaml(yp)
@@ -138,23 +133,21 @@ class PositionConsistencyTests(unittest.TestCase):
     def test_move_preserves_position_count(self):
         """Move must not change the total number of positions on the record."""
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[1, 2, 3])])
+            yp = _seed(td, [make_record(1, box=1, positions=[1])])
             tool_record_thaw(
                 yaml_path=yp, record_id=1, position=1, to_position=10,
                 date_str="2026-02-10", action="move",
-                auto_html=False, auto_server=False,
             )
             data = load_yaml(yp)
-            self.assertEqual(3, len(data["inventory"][0]["positions"]))
+            self.assertEqual(1, len(data["inventory"][0]["positions"]))
 
     def test_move_replaces_old_with_new(self):
         """After move, old position is gone and new position is present."""
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[1, 2])])
+            yp = _seed(td, [make_record(1, box=1, positions=[1])])
             tool_record_thaw(
                 yaml_path=yp, record_id=1, position=1, to_position=5,
                 date_str="2026-02-10", action="move",
-                auto_html=False, auto_server=False,
             )
             data = load_yaml(yp)
             positions = data["inventory"][0]["positions"]
@@ -165,20 +158,19 @@ class PositionConsistencyTests(unittest.TestCase):
         """Swap must not change position counts on either record."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [
-                make_record(1, box=1, positions=[1, 2]),
+                make_record(1, box=1, positions=[1]),
                 make_record(2, box=1, positions=[3]),
             ])
             tool_record_thaw(
                 yaml_path=yp, record_id=1, position=1, to_position=3,
                 date_str="2026-02-10", action="move",
-                auto_html=False, auto_server=False,
             )
             data = load_yaml(yp)
-            self.assertEqual(2, len(data["inventory"][0]["positions"]))
+            self.assertEqual(1, len(data["inventory"][0]["positions"]))
             self.assertEqual(1, len(data["inventory"][1]["positions"]))
 
     def test_add_entry_creates_record_with_specified_positions(self):
-        """After add, the new record must have exactly the requested positions."""
+        """After add, the new tube records must cover exactly the requested positions."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [make_record(1, box=1, positions=[1])])
             result = tool_add_entry(
@@ -186,12 +178,14 @@ class PositionConsistencyTests(unittest.TestCase):
                 parent_cell_line="K562", short_name="clone-new",
                 box=2, positions=[10, 11, 12],
                 frozen_at="2026-02-10",
-                auto_html=False, auto_server=False,
             )
             self.assertTrue(result["ok"])
             data = load_yaml(yp)
-            new_rec = data["inventory"][-1]
-            self.assertEqual([10, 11, 12], new_rec["positions"])
+            new_ids = set(result.get("result", {}).get("new_ids") or [])
+            new_recs = [rec for rec in data.get("inventory", []) if rec.get("id") in new_ids]
+            self.assertEqual(3, len(new_recs))
+            self.assertEqual({10, 11, 12}, {int(rec["positions"][0]) for rec in new_recs})
+            self.assertTrue(all(len(rec.get("positions") or []) == 1 for rec in new_recs))
 
     def test_no_double_occupancy_after_add(self):
         """Adding to a position already occupied must be rejected."""
@@ -202,7 +196,6 @@ class PositionConsistencyTests(unittest.TestCase):
                 parent_cell_line="K562", short_name="conflict",
                 box=1, positions=[5],
                 frozen_at="2026-02-10",
-                auto_html=False, auto_server=False,
             )
             self.assertFalse(result["ok"])
 
@@ -214,60 +207,74 @@ class BatchSameRecordTests(unittest.TestCase):
     """All same-record batch scenarios that previously had a bug."""
 
     def test_takeout_all_positions_of_one_record(self):
-        """Removing ALL positions in a single batch should leave positions=[]."""
+        """Batch takeout across multiple tubes should consume each tube independently."""
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[1, 2, 3])])
+            yp = _seed(td, [
+                make_record(1, box=1, positions=[1]),
+                make_record(2, box=1, positions=[2]),
+                make_record(3, box=1, positions=[3]),
+            ])
             result = tool_batch_thaw(
                 yaml_path=yp,
-                entries=[(1, 1), (1, 2), (1, 3)],
+                entries=[(1, 1), (2, 2), (3, 3)],
                 date_str="2026-02-10", action="取出",
-                auto_html=False, auto_server=False,
             )
             self.assertTrue(result["ok"])
             data = load_yaml(yp)
             self.assertEqual([], data["inventory"][0]["positions"])
+            self.assertEqual([], data["inventory"][1]["positions"])
+            self.assertEqual([], data["inventory"][2]["positions"])
 
     def test_takeout_two_of_three_positions(self):
-        """Removing 2 of 3 positions from same record should leave exactly 1."""
+        """Taking out 2 of 3 tubes should leave the untouched tube unchanged."""
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[10, 20, 30])])
+            yp = _seed(td, [
+                make_record(1, box=1, positions=[10]),
+                make_record(2, box=1, positions=[20]),
+                make_record(3, box=1, positions=[30]),
+            ])
             result = tool_batch_thaw(
                 yaml_path=yp,
-                entries=[(1, 10), (1, 30)],
+                entries=[(1, 10), (3, 30)],
                 date_str="2026-02-10", action="取出",
-                auto_html=False, auto_server=False,
             )
             self.assertTrue(result["ok"])
             data = load_yaml(yp)
-            self.assertEqual([20], data["inventory"][0]["positions"])
+            self.assertEqual([], data["inventory"][0]["positions"])
+            self.assertEqual([20], data["inventory"][1]["positions"])
+            self.assertEqual([], data["inventory"][2]["positions"])
 
     def test_mixed_records_batch(self):
         """Batch targeting different records + same record together."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [
-                make_record(1, box=1, positions=[1, 2, 3]),
-                make_record(2, box=1, positions=[4]),
+                make_record(1, box=1, positions=[1]),
+                make_record(2, box=1, positions=[2]),
+                make_record(3, box=1, positions=[3]),
+                make_record(4, box=1, positions=[4]),
             ])
             result = tool_batch_thaw(
                 yaml_path=yp,
-                entries=[(1, 1), (1, 2), (2, 4)],
+                entries=[(1, 1), (2, 2), (4, 4)],
                 date_str="2026-02-10", action="取出",
-                auto_html=False, auto_server=False,
             )
             self.assertTrue(result["ok"])
             data = load_yaml(yp)
-            self.assertEqual([3], data["inventory"][0]["positions"])
-            self.assertEqual([], data["inventory"][1]["positions"])
+            # IDs 1,2,4 are consumed; ID 3 untouched.
+            by_id = {int(rec.get("id")): rec for rec in data.get("inventory", [])}
+            self.assertEqual([], by_id[1]["positions"])
+            self.assertEqual([], by_id[2]["positions"])
+            self.assertEqual([3], by_id[3]["positions"])
+            self.assertEqual([], by_id[4]["positions"])
 
     def test_batch_duplicate_position_same_record_detected(self):
         """Trying to remove the same position twice should fail on the second one."""
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[1, 2])])
+            yp = _seed(td, [make_record(1, box=1, positions=[1])])
             result = tool_batch_thaw(
                 yaml_path=yp,
                 entries=[(1, 1), (1, 1)],
                 date_str="2026-02-10", action="取出",
-                auto_html=False, auto_server=False,
             )
             # The second (1,1) should fail validation because position 1
             # was already removed by the first entry.
@@ -288,7 +295,6 @@ class AuditTrailTests(unittest.TestCase):
                 parent_cell_line="K562", short_name="audit-test",
                 box=1, positions=[1],
                 frozen_at="2026-02-10",
-                auto_html=False, auto_server=False,
             )
             rows = _read_audit(td)
             add_rows = [r for r in rows if r.get("action") == "add_entry"]
@@ -302,7 +308,6 @@ class AuditTrailTests(unittest.TestCase):
             tool_record_thaw(
                 yaml_path=yp, record_id=1, position=1,
                 date_str="2026-02-10", action="取出",
-                auto_html=False, auto_server=False,
             )
             rows = _read_audit(td)
             thaw_rows = [r for r in rows if r.get("action") == "record_thaw"]
@@ -318,7 +323,6 @@ class AuditTrailTests(unittest.TestCase):
                 yaml_path=yp,
                 entries=[(1, 1), (2, 2)],
                 date_str="2026-02-10", action="取出",
-                auto_html=False, auto_server=False,
             )
             rows = _read_audit(td)
             batch_rows = [r for r in rows if r.get("action") == "batch_thaw"]
@@ -332,7 +336,6 @@ class AuditTrailTests(unittest.TestCase):
                 parent_cell_line="K562", short_name="x",
                 box=99, positions=[1],  # invalid box
                 frozen_at="2026-02-10",
-                auto_html=False, auto_server=False,
             )
             rows = _read_audit(td)
             failed = [r for r in rows if r.get("status") == "failed"]
@@ -346,24 +349,26 @@ class BoundaryValueTests(unittest.TestCase):
     def test_position_at_min_max_boundary(self):
         """Operations at position=1 and position=81 should work."""
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[1, 81])])
+            yp = _seed(td, [
+                make_record(1, box=1, positions=[1]),
+                make_record(2, box=1, positions=[81]),
+            ])
 
             r1 = tool_record_thaw(
                 yaml_path=yp, record_id=1, position=1,
                 date_str="2026-02-10", action="取出",
-                auto_html=False, auto_server=False,
             )
             self.assertTrue(r1["ok"])
 
             r2 = tool_record_thaw(
-                yaml_path=yp, record_id=1, position=81,
+                yaml_path=yp, record_id=2, position=81,
                 date_str="2026-02-10", action="取出",
-                auto_html=False, auto_server=False,
             )
             self.assertTrue(r2["ok"])
 
             data = load_yaml(yp)
             self.assertEqual([], data["inventory"][0]["positions"])
+            self.assertEqual([], data["inventory"][1]["positions"])
 
     def test_position_zero_rejected(self):
         with tempfile.TemporaryDirectory() as td:
@@ -371,7 +376,6 @@ class BoundaryValueTests(unittest.TestCase):
             result = tool_record_thaw(
                 yaml_path=yp, record_id=1, position=0,
                 date_str="2026-02-10",
-                auto_html=False, auto_server=False,
             )
             self.assertFalse(result["ok"])
 
@@ -381,7 +385,6 @@ class BoundaryValueTests(unittest.TestCase):
             result = tool_record_thaw(
                 yaml_path=yp, record_id=1, position=82,
                 date_str="2026-02-10",
-                auto_html=False, auto_server=False,
             )
             self.assertFalse(result["ok"])
 
@@ -393,7 +396,6 @@ class BoundaryValueTests(unittest.TestCase):
                 yaml_path=yp,
                 parent_cell_line="K562", short_name="box1",
                 box=1, positions=[1], frozen_at="2026-02-10",
-                auto_html=False, auto_server=False,
             )
             self.assertTrue(r1["ok"])
 
@@ -401,7 +403,6 @@ class BoundaryValueTests(unittest.TestCase):
                 yaml_path=yp,
                 parent_cell_line="K562", short_name="box5",
                 box=5, positions=[1], frozen_at="2026-02-10",
-                auto_html=False, auto_server=False,
             )
             self.assertTrue(r5["ok"])
 
@@ -412,7 +413,6 @@ class BoundaryValueTests(unittest.TestCase):
                 yaml_path=yp,
                 parent_cell_line="K562", short_name="x",
                 box=0, positions=[1], frozen_at="2026-02-10",
-                auto_html=False, auto_server=False,
             )
             self.assertFalse(result["ok"])
 
@@ -423,7 +423,6 @@ class BoundaryValueTests(unittest.TestCase):
                 yaml_path=yp,
                 parent_cell_line="K562", short_name="x",
                 box=6, positions=[1], frozen_at="2026-02-10",
-                auto_html=False, auto_server=False,
             )
             self.assertFalse(result["ok"])
 
@@ -438,7 +437,6 @@ class ErrorPathTests(unittest.TestCase):
             result = tool_record_thaw(
                 yaml_path=yp, record_id=999, position=1,
                 date_str="2026-02-10",
-                auto_html=False, auto_server=False,
             )
             self.assertFalse(result["ok"])
 
@@ -448,7 +446,6 @@ class ErrorPathTests(unittest.TestCase):
             result = tool_record_thaw(
                 yaml_path=yp, record_id=1, position=2,
                 date_str="2026-02-10",
-                auto_html=False, auto_server=False,
             )
             self.assertFalse(result["ok"])
 
@@ -458,7 +455,6 @@ class ErrorPathTests(unittest.TestCase):
             result = tool_record_thaw(
                 yaml_path=yp, record_id=1, position=1, to_position=1,
                 date_str="2026-02-10", action="move",
-                auto_html=False, auto_server=False,
             )
             self.assertFalse(result["ok"])
 
@@ -469,7 +465,6 @@ class ErrorPathTests(unittest.TestCase):
                 yaml_path=yp,
                 entries=[(999, 1)],
                 date_str="2026-02-10", action="取出",
-                auto_html=False, auto_server=False,
             )
             self.assertFalse(result["ok"])
 
@@ -480,7 +475,6 @@ class ErrorPathTests(unittest.TestCase):
                 yaml_path=yp,
                 entries=[(1, 50)],
                 date_str="2026-02-10", action="取出",
-                auto_html=False, auto_server=False,
             )
             self.assertFalse(result["ok"])
 
@@ -489,7 +483,6 @@ class ErrorPathTests(unittest.TestCase):
             yaml_path="/tmp/nonexistent_test_yaml.yaml",
             record_id=1, position=1,
             date_str="2026-02-10",
-            auto_html=False, auto_server=False,
         )
         self.assertFalse(result["ok"])
 
@@ -500,7 +493,6 @@ class ErrorPathTests(unittest.TestCase):
                 yaml_path=yp,
                 parent_cell_line="", short_name="x",
                 box=1, positions=[1], frozen_at="2026-02-10",
-                auto_html=False, auto_server=False,
             )
             self.assertFalse(result["ok"])
 
@@ -511,7 +503,6 @@ class ErrorPathTests(unittest.TestCase):
                 yaml_path=yp,
                 parent_cell_line="K562", short_name="",
                 box=1, positions=[1], frozen_at="2026-02-10",
-                auto_html=False, auto_server=False,
             )
             self.assertFalse(result["ok"])
 
@@ -525,12 +516,11 @@ class CrossBoxMoveTests(unittest.TestCase):
     def test_record_thaw_move_cross_box_updates_box_field(self):
         """Move with to_box should update the record's box field."""
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=2, positions=[5, 6])])
+            yp = _seed(td, [make_record(1, box=2, positions=[5])])
             result = tool_record_thaw(
                 yaml_path=yp, record_id=1, position=5, to_position=4,
                 to_box=1,
                 date_str="2026-02-10", action="move",
-                auto_html=False, auto_server=False,
             )
             self.assertTrue(result["ok"])
             data = load_yaml(yp)
@@ -550,7 +540,6 @@ class CrossBoxMoveTests(unittest.TestCase):
                 yaml_path=yp, record_id=1, position=5, to_position=4,
                 to_box=1,
                 date_str="2026-02-10", action="move",
-                auto_html=False, auto_server=False,
             )
             self.assertFalse(result["ok"])
 
@@ -564,7 +553,6 @@ class CrossBoxMoveTests(unittest.TestCase):
             result = tool_record_thaw(
                 yaml_path=yp, record_id=1, position=1, to_position=2,
                 date_str="2026-02-10", action="move",
-                auto_html=False, auto_server=False,
             )
             self.assertTrue(result["ok"])
             data = load_yaml(yp)
@@ -582,7 +570,6 @@ class CrossBoxMoveTests(unittest.TestCase):
                 yaml_path=yp,
                 entries=[(1, 5, 4, 1), (2, 10, 5, 1)],
                 date_str="2026-02-10", action="move",
-                auto_html=False, auto_server=False,
             )
             self.assertTrue(result["ok"])
             data = load_yaml(yp)
@@ -591,21 +578,28 @@ class CrossBoxMoveTests(unittest.TestCase):
             self.assertEqual(1, data["inventory"][1]["box"])
             self.assertEqual([5], data["inventory"][1]["positions"])
 
-    def test_batch_move_cross_box_same_record_all_positions(self):
-        """Move all positions of a single record to a new box."""
+    def test_batch_move_cross_box_multiple_tubes(self):
+        """Move multiple tubes to a new box in one batch."""
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=2, positions=[5, 6, 7])])
+            yp = _seed(td, [
+                make_record(1, box=2, positions=[5]),
+                make_record(2, box=2, positions=[6]),
+                make_record(3, box=2, positions=[7]),
+            ])
             result = tool_batch_thaw(
                 yaml_path=yp,
-                entries=[(1, 5, 1, 1), (1, 6, 2, 1), (1, 7, 3, 1)],
+                entries=[(1, 5, 1, 1), (2, 6, 2, 1), (3, 7, 3, 1)],
                 date_str="2026-02-10", action="move",
-                auto_html=False, auto_server=False,
             )
             self.assertTrue(result["ok"])
             data = load_yaml(yp)
-            rec = data["inventory"][0]
-            self.assertEqual(1, rec["box"])
-            self.assertEqual(sorted([1, 2, 3]), sorted(rec["positions"]))
+            by_id = {int(rec.get("id")): rec for rec in data.get("inventory", [])}
+            self.assertEqual(1, by_id[1]["box"])
+            self.assertEqual([1], by_id[1]["positions"])
+            self.assertEqual(1, by_id[2]["box"])
+            self.assertEqual([2], by_id[2]["positions"])
+            self.assertEqual(1, by_id[3]["box"])
+            self.assertEqual([3], by_id[3]["positions"])
 
     def test_parse_batch_entries_4part_format(self):
         """parse_batch_entries should support 'id:from->to:box' format."""
@@ -624,7 +618,6 @@ class CrossBoxMoveTests(unittest.TestCase):
                 yaml_path=yp, record_id=1, position=5, to_position=4,
                 to_box=1,
                 date_str="2026-02-10", action="move",
-                auto_html=False, auto_server=False,
             )
             data = load_yaml(yp)
             events = data["inventory"][0].get("thaw_events", [])
@@ -641,7 +634,6 @@ class CrossBoxMoveTests(unittest.TestCase):
                 yaml_path=yp, record_id=1, position=1, to_position=1,
                 to_box=99,
                 date_str="2026-02-10", action="move",
-                auto_html=False, auto_server=False,
             )
             self.assertFalse(result["ok"])
 

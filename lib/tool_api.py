@@ -52,6 +52,7 @@ def parse_batch_entries(entries_str):
     """Parse batch input format.
 
     Supports:
+    - ``id1,id2,...`` (use current active position for each tube id; takeout/thaw/discard only)
     - ``id1:pos1,id2:pos2,...`` (takeout/thaw/discard)
     - ``id1:from1->to1,id2:from2->to2,...`` (move within same box)
     - ``id1:from1->to1:box,id2:from2->to2:box,...`` (cross-box move)
@@ -62,9 +63,17 @@ def parse_batch_entries(entries_str):
             entry = entry.strip()
             if not entry:
                 continue
+            if ":" not in entry:
+                result.append((int(entry),))
+                continue
+
             parts = entry.split(":")
             record_id = int(parts[0])
             pos_text = parts[1].strip() if len(parts) >= 2 else ""
+            if not pos_text:
+                result.append((record_id,))
+                continue
+
             to_box = int(parts[2]) if len(parts) >= 3 else None
             if "->" in pos_text:
                 from_pos_text, to_pos_text = pos_text.split("->", 1)
@@ -83,7 +92,7 @@ def parse_batch_entries(entries_str):
     except Exception as exc:
         raise ValueError(
             "输入格式错误: "
-            f"{exc}. 正确格式示例: '182:23,183:41' 或 '182:23->31,183:41->42' 或 '182:23->31:1' (cross-box)"
+            f"{exc}. 正确格式示例: '182,183' 或 '182:23,183:41' 或 '182:23->31,183:41->42' 或 '182:23->31:1' (cross-box)"
         )
     return result
 
@@ -104,8 +113,12 @@ def _coerce_batch_entry(entry):
             to_pos = entry.get("to_pos", entry.get("target_position", entry.get("target_pos")))
         to_box = entry.get("to_box")
 
-        if record_id is None or from_pos is None:
-            raise ValueError("每个条目必须包含 record_id/id 和 position/from_position")
+        if record_id is None:
+            raise ValueError("每个条目必须包含 record_id/id")
+        if from_pos is None:
+            if to_pos is None:
+                return (int(record_id),)
+            raise ValueError("每个条目必须包含 position/from_position")
         if to_pos is None:
             return (int(record_id), int(from_pos))
         if to_box is not None:
@@ -113,13 +126,17 @@ def _coerce_batch_entry(entry):
         return (int(record_id), int(from_pos), int(to_pos))
 
     if isinstance(entry, (list, tuple)):
+        if len(entry) == 1:
+            return (int(entry[0]),)
         if len(entry) == 2:
             return (int(entry[0]), int(entry[1]))
         if len(entry) == 3:
             return (int(entry[0]), int(entry[1]), int(entry[2]))
         if len(entry) == 4:
             return (int(entry[0]), int(entry[1]), int(entry[2]), int(entry[3]))
-        raise ValueError("每个条目必须是 (record_id, position) 或 (record_id, from_position, to_position[, to_box])")
+        raise ValueError(
+            "每个条目必须是 (record_id) 或 (record_id, position) 或 (record_id, from_position, to_position[, to_box])"
+        )
 
     raise ValueError("每个条目必须是 tuple/list/dict")
 
@@ -295,8 +312,6 @@ def tool_add_entry(
     dry_run=False,
     actor_context=None,
     source="tool_api",
-    auto_html=None,
-    auto_server=None,
     auto_backup=True,
 ):
     """Add a new frozen entry using the shared tool flow."""
@@ -398,30 +413,40 @@ def tool_add_entry(
             extra={"conflicts": conflicts},
         )
 
-    new_id = get_next_id(records)
-    new_record = {
-        "id": new_id,
-        "parent_cell_line": parent_cell_line,
-        "short_name": short_name,
-        "plasmid_name": plasmid_name,
-        "plasmid_id": plasmid_id,
-        "box": box,
-        "positions": positions,
-        "frozen_at": frozen_at,
-        "thaw_log": None,
-        "note": note,
-    }
+    # Tube-level model: one record == one physical tube.
+    # Add multiple tubes by creating multiple records, one per position.
+    next_id = get_next_id(records)
+    new_records = []
+    created = []
+    for offset, pos in enumerate(list(positions)):
+        tube_id = next_id + offset
+        new_records.append(
+            {
+                "id": tube_id,
+                "parent_cell_line": parent_cell_line,
+                "short_name": short_name,
+                "plasmid_name": plasmid_name,
+                "plasmid_id": plasmid_id,
+                "box": box,
+                "positions": [int(pos)],
+                "frozen_at": frozen_at,
+                "note": note,
+            }
+        )
+        created.append({"id": tube_id, "box": box, "position": int(pos)})
 
     preview = {
-        "id": new_id,
+        "new_ids": [item["id"] for item in created],
+        "count": len(created),
         "parent_cell_line": parent_cell_line,
         "short_name": short_name,
         "plasmid_name": plasmid_name,
         "plasmid_id": plasmid_id,
         "box": box,
-        "positions": list(positions),
+        "positions": list(int(p) for p in positions),
         "frozen_at": frozen_at,
         "note": note,
+        "created": created,
     }
 
     if dry_run:
@@ -429,7 +454,13 @@ def tool_add_entry(
             "ok": True,
             "dry_run": True,
             "preview": preview,
-            "result": {"new_id": new_id, "record": new_record},
+            "result": {
+                "new_id": created[0]["id"] if created else None,
+                "new_ids": [item["id"] for item in created],
+                "count": len(created),
+                "created": created,
+                "records": new_records,
+            },
         }
 
     try:
@@ -453,7 +484,7 @@ def tool_add_entry(
                 before_data=data,
                 errors=validation_error.get("errors"),
             )
-        candidate_inventory.append(new_record)
+        candidate_inventory.extend(new_records)
         validation_error = _validate_data_or_error(candidate_data)
         if validation_error:
             validation_error = validation_error or {
@@ -472,14 +503,17 @@ def tool_add_entry(
                 tool_input=tool_input,
                 before_data=data,
                 errors=validation_error.get("errors"),
-                details={"new_id": new_id, "box": box, "positions": list(positions)},
+                details={
+                    "new_ids": [item["id"] for item in created],
+                    "count": len(created),
+                    "box": box,
+                    "positions": list(int(p) for p in positions),
+                },
             )
 
         _backup_path = write_yaml(
             candidate_data,
             yaml_path,
-            auto_html=auto_html,
-            auto_server=auto_server,
             auto_backup=auto_backup,
             audit_meta=_build_audit_meta(
                 action=action,
@@ -487,9 +521,10 @@ def tool_add_entry(
                 tool_name=tool_name,
                 actor_context=actor_context,
                 details={
-                    "new_id": new_id,
+                    "new_ids": [item["id"] for item in created],
+                    "count": len(created),
                     "box": box,
-                    "positions": list(positions),
+                    "positions": list(int(p) for p in positions),
                     "parent_cell_line": parent_cell_line,
                     "short_name": short_name,
                 },
@@ -497,7 +532,7 @@ def tool_add_entry(
                     "parent_cell_line": parent_cell_line,
                     "short_name": short_name,
                     "box": box,
-                    "positions": list(positions),
+                    "positions": list(int(p) for p in positions),
                     "frozen_at": frozen_at,
                 },
             ),
@@ -513,14 +548,24 @@ def tool_add_entry(
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=data,
-            details={"new_id": new_id, "box": box},
+            details={
+                "new_ids": [item["id"] for item in created],
+                "count": len(created),
+                "box": box,
+            },
         )
 
     return {
         "ok": True,
         "dry_run": False,
         "preview": preview,
-        "result": {"new_id": new_id, "record": new_record},
+        "result": {
+            "new_id": created[0]["id"] if created else None,
+            "new_ids": [item["id"] for item in created],
+            "count": len(created),
+            "created": created,
+            "records": new_records,
+        },
         "backup_path": _backup_path,
     }
 
@@ -528,8 +573,8 @@ def tool_add_entry(
 def tool_record_thaw(
     yaml_path,
     record_id,
-    position,
-    date_str,
+    position=None,
+    date_str=None,
     action="取出",
     note=None,
     to_position=None,
@@ -537,8 +582,6 @@ def tool_record_thaw(
     dry_run=False,
     actor_context=None,
     source="tool_api",
-    auto_html=None,
-    auto_server=None,
     auto_backup=True,
 ):
     """Record one thaw/takeout/discard/move operation via shared tool flow."""
@@ -566,19 +609,6 @@ def tool_record_thaw(
             actor_context=actor_context,
             tool_input=tool_input,
             details={"date": date_str},
-        )
-
-    if position < POSITION_RANGE[0] or position > POSITION_RANGE[1]:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_position",
-            message=f"位置编号必须在 {POSITION_RANGE[0]}-{POSITION_RANGE[1]} 之间",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            details={"position": position},
         )
 
     action_en = normalize_action(action)
@@ -636,19 +666,6 @@ def tool_record_thaw(
                 tool_input=tool_input,
                 details={"to_position": move_to_position},
             )
-        if move_to_position == position:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="invalid_move_target",
-                message="移动操作的起始位置与目标位置不能相同",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                details={"position": position, "to_position": move_to_position},
-            )
-
     try:
         data = load_yaml(yaml_path)
     except Exception as exc:
@@ -681,6 +698,68 @@ def tool_record_thaw(
         )
 
     positions = record.get("positions", [])
+    if position in ("", "auto"):
+        position = None
+
+    if position is None:
+        if len(positions) == 1:
+            position = positions[0]
+        elif not positions:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="position_not_found",
+                message=f"记录 #{record_id} 没有可用位置（可能已取出/复苏/扔掉）",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"record_id": record_id},
+                extra={"current_positions": positions},
+            )
+        else:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="ambiguous_position",
+                message=f"记录 #{record_id} 存在多个位置，必须指定 position",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"record_id": record_id},
+                extra={"current_positions": positions},
+            )
+
+    try:
+        position = int(position)
+    except (TypeError, ValueError):
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="invalid_position",
+            message=f"位置必须是整数: {position}",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+            details={"record_id": record_id, "position": position},
+        )
+    if position < POSITION_RANGE[0] or position > POSITION_RANGE[1]:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="invalid_position",
+            message=f"位置编号必须在 {POSITION_RANGE[0]}-{POSITION_RANGE[1]} 之间",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            details={"position": position},
+        )
     if position not in positions:
         return _failure_result(
             yaml_path=yaml_path,
@@ -694,6 +773,19 @@ def tool_record_thaw(
             before_data=data,
             details={"record_id": record_id, "position": position},
             extra={"current_positions": positions},
+        )
+
+    if action_en == "move" and move_to_position == position:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="invalid_move_target",
+            message="移动操作的起始位置与目标位置不能相同",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            details={"position": position, "to_position": move_to_position},
         )
 
     swap_target = None
@@ -969,8 +1061,6 @@ def tool_record_thaw(
         _backup_path = write_yaml(
             candidate_data,
             yaml_path,
-            auto_html=auto_html,
-            auto_server=auto_server,
             auto_backup=auto_backup,
             audit_meta=_build_audit_meta(
                 action=audit_action,
@@ -1042,8 +1132,6 @@ def tool_batch_thaw(
     dry_run=False,
     actor_context=None,
     source="tool_api",
-    auto_html=None,
-    auto_server=None,
     auto_backup=True,
 ):
     """Record batch thaw/takeout/discard/move operations via shared tool flow."""
@@ -1426,8 +1514,6 @@ def tool_batch_thaw(
             _backup_path = write_yaml(
                 candidate_data,
                 yaml_path,
-                auto_html=auto_html,
-                auto_server=auto_server,
                 auto_backup=auto_backup,
                 audit_meta=_build_audit_meta(
                     action=audit_action,
@@ -1480,14 +1566,11 @@ def tool_batch_thaw(
     cumulative_positions: dict[int, list[int]] = {}
 
     for row_idx, entry in enumerate(normalized_entries, 1):
-        if len(entry) != 2:
-            errors.append(f"第{row_idx}条: 非移动操作必须使用 id:position 格式")
+        if len(entry) not in (1, 2):
+            errors.append(f"第{row_idx}条: 非移动操作必须使用 id 或 id:position 格式")
             continue
 
-        record_id, position = entry
-        if position < POSITION_RANGE[0] or position > POSITION_RANGE[1]:
-            errors.append(f"ID {record_id}: 位置编号 {position} 必须在 {POSITION_RANGE[0]}-{POSITION_RANGE[1]} 之间")
-            continue
+        record_id = entry[0]
 
         idx, record = find_record_by_id(records, record_id)
         if record is None:
@@ -1501,9 +1584,24 @@ def tool_batch_thaw(
         else:
             current_positions = list(record.get("positions", []))
 
-        if position not in current_positions:
-            errors.append(f"ID {record_id}: 位置 {position} 不在现有位置 {current_positions} 中")
-            continue
+        if len(entry) == 2:
+            position = entry[1]
+            if position < POSITION_RANGE[0] or position > POSITION_RANGE[1]:
+                errors.append(f"ID {record_id}: 位置编号 {position} 必须在 {POSITION_RANGE[0]}-{POSITION_RANGE[1]} 之间")
+                continue
+            if position not in current_positions:
+                errors.append(f"ID {record_id}: 位置 {position} 不在现有位置 {current_positions} 中")
+                continue
+        else:
+            if len(current_positions) != 1:
+                errors.append(
+                    f"ID {record_id}: 无法从现有位置推断操作位置（当前: {current_positions}），请使用 id:position"
+                )
+                continue
+            position = current_positions[0]
+            if position < POSITION_RANGE[0] or position > POSITION_RANGE[1]:
+                errors.append(f"ID {record_id}: 位置编号 {position} 必须在 {POSITION_RANGE[0]}-{POSITION_RANGE[1]} 之间")
+                continue
 
         new_positions = [p for p in current_positions if p != position]
         cumulative_positions[idx] = new_positions
@@ -1644,8 +1742,6 @@ def tool_batch_thaw(
         _backup_path = write_yaml(
             candidate_data,
             yaml_path,
-            auto_html=auto_html,
-            auto_server=auto_server,
             auto_backup=auto_backup,
             audit_meta=_build_audit_meta(
                 action=audit_action,
@@ -1824,7 +1920,6 @@ def _record_search_blob(rec, case_sensitive=False):
         "plasmid_name",
         "plasmid_id",
         "note",
-        "thaw_log",
         "box",
         "frozen_at",
     ]

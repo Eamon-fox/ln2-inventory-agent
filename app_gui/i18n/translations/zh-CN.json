@@ -30,7 +30,9 @@
     "actorId": "操作者 ID：",
     "actorIdHint": "用于审计日志和操作记录的标识符。",
     "language": "语言：",
-    "languageHint": "应用显示语言。重启后生效。"
+    "languageHint": "应用显示语言。重启后生效。",
+    "theme": "主题：",
+    "themeHint": "应用颜色主题。重启后生效。"
   },
   "main": {
     "quickStart": "快速开始",

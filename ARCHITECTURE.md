@@ -8,7 +8,7 @@
 
 ## 1. 项目概述
 
-LN2 Inventory Agent 是一个液氮罐库存管理系统，支持 CLI、GUI 和 AI Agent 三种交互模式。系统采用分层架构设计，数据存储在 YAML 文件中，所有操作都通过验证脚本完成，无需手动编辑 YAML。
+LN2 Inventory Agent 是一个液氮罐库存管理系统，支持 GUI 和 AI Agent 两种交互模式（也可作为 Python 库调用）。系统采用分层架构设计，数据存储在 YAML 文件中，所有写操作都通过统一 Tool API 校验、备份与审计完成，无需手动编辑 YAML。
 
 ### 1.1 核心特性
 
@@ -19,7 +19,7 @@ LN2 Inventory Agent 是一个液氮罐库存管理系统，支持 CLI、GUI 和 
 - **备份回滚**: 自动时间戳备份，一键恢复
 - **审计日志**: JSONL 格式记录所有修改
 - **可配置性**: 盒数、网格大小、位置范围、细胞系白名单等均通过 JSON 配置
-- **统一工具 API**: CLI、GUI 和 AI Agent 运行时共享
+- **统一工具 API**: GUI 和 AI Agent 运行时共享
 - **GUI 界面**: `app_gui/` 中的桌面应用骨架
 - **ReAct 运行时**: `agent/` 中的 DeepSeek 原生解析器或模拟模式
 
@@ -32,10 +32,11 @@ ln2-inventory-agent/
 ├── lib/              # 共享库（配置、YAML 操作、验证）
 ├── agent/            # ReAct 运行时 + 工具分发器 + LLM 适配器
 ├── app_gui/          # 桌面 GUI 骨架
-├── scripts/          # 15 个 CLI 脚本（查询、修改、工具）
 ├── tests/            # 单元测试（pytest）
 ├── references/       # 示例文件和文档
 ├── demo/             # 演示数据
+├── installer/        # Windows 安装包资源（Inno Setup）
+├── ln2_inventory.spec # PyInstaller 打包入口
 ├── SKILL.md          # Claude Code skill 定义
 └── README.md         # 项目说明
 ```
@@ -49,10 +50,10 @@ ln2-inventory-agent/
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                     Presentation Layer                       │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐  │
-│  │   CLI (13)   │  │   GUI        │  │   AI Agent       │  │
-│  │   scripts/   │  │   app_gui/   │  │   agent/         │  │
-│  └──────────────┘  └──────────────┘  └──────────────────┘  │
+│  ┌──────────────┐  ┌──────────────────┐                    │
+│  │   GUI        │  │   AI Agent       │                    │
+│  │   app_gui/   │  │   agent/         │                    │
+│  └──────────────┘  └──────────────────┘                    │
 └─────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -93,7 +94,6 @@ ln2-inventory-agent/
 
 | 函数 | 功能 |
 |------|------|
-| `_get_app_dir()` | 检测应用目录（PyInstaller 或开发模式） |
 | `_default_yaml_path()` | 确定默认 YAML 库存路径 |
 | `_merge_dict()` | 递归合并配置字典 |
 | `_load_external_config()` | 从环境变量加载用户特定 JSON 配置 |
@@ -102,7 +102,6 @@ ln2-inventory-agent/
 **导出常量**:
 - `YAML_PATH`: 库存文件路径
 - `PYTHON_PATH`: Python 解释器路径
-- `SCRIPTS_DIR`: 脚本目录
 - 安全阈值、范围配置等
 
 #### 4.1.2 yaml_ops.py - YAML 文件操作
@@ -188,7 +187,7 @@ ln2-inventory-agent/
 #### 4.1.6 tool_api.py - 统一工具 API（核心模块）
 
 **职责**:
-- 提供 CLI、GUI 和 AI Agent 共享的统一 API
+- 提供 GUI 和 AI Agent 共享的统一 API（也可作为 Python 库直接调用）
 | 实现所有高级操作，带一致的错误处理
 | 管理所有操作的审计追踪和上下文
 | 提供批操作和复杂场景支持
@@ -460,7 +459,6 @@ GUI 使用 PySide6（Qt6 for Python）构建，采用模块化架构，职责清
 
 **特性**:
 | 计划去重和验证
-| 批操作回退（批 → 单独）
 | 带自动过期备份的撤销功能
 | 导出能力（CSV, HTML 操作表单）
 | 上下文相关记录信息显示
@@ -498,52 +496,6 @@ GUI 使用 PySide6（Qt6 for Python）构建，采用模块化架构，职责清
 3. 计划项通过 `plan_sink` 回调暂存
 4. 完成时返回结果
 5. 线程自动清理
-
-### 4.4 scripts/ CLI 脚本层
-
-#### 4.4.1 脚本分类
-
-**数据修改脚本**:
-| `add_entry.py`: 添加新记录
-| `record_thaw.py`: 记录单次操作
-| `batch_thaw.py`: 记录批操作
-
-**查询脚本**:
-| `query_inventory.py`: 通用库存查询
-| `query_recent.py`: 最近活动查询
-| `query_thaw.py`: 解冻事件查询
-| `search.py`: 全局模糊搜索
-| `smart_search.py`: 智能搜索
-| `timeline.py`: 历史时间线
-
-**工具脚本**:
-| `stats.py`: 统计和可视化
-| `recommend_position.py`: 位置推荐
-| `check_conflicts.py`: 冲突检测
-| `validate.py`: 数据验证
-| `rollback.py`: 备份/恢复
-| `show_raw.py`: 原始数据显示
-
-#### 4.4.2 CLI 模式
-
-所有脚本遵循一致的模式:
-
-**参数解析**:
-| 所有脚本使用 `argparse` 配合 `RawDescriptionHelpFormatter`
-| 必需参数清晰标记
-| 广泛的 epilog 部分包含使用示例
-| 一致的参数命名约定
-
-**错误处理**:
-| 带表情符号指示符的统一错误消息（❌ 表示错误，✅ 表示成功）
-| 带上下文的详细错误消息
-| 返回码（0 表示成功，1 表示错误）
-
-**输出格式**:
-| 使用 `=` 分隔符的重要部分
-| 对齐列的表格数据
-| 带 `--dry-run` 标志的预览模式支持
-| Verbose/compact 输出选项
 
 ### 4.5 tests/ 测试层
 
@@ -585,7 +537,7 @@ tests/
 | 审计追踪一致性
 
 **回归测试**:
-| 计划去重和执行回退
+| 计划去重与执行一致性
 | GUI 行为保持
 | 跨盒移动功能
 
@@ -606,7 +558,7 @@ inventory:
     parent_cell_line: "K562"
     short_name: "reporter-1"
     box: 1
-    positions: [1, 2, 3]
+    positions: [1]
     frozen_at: "2024-01-01"
     thaw_events:
       - date: "2024-01-15"
@@ -673,7 +625,7 @@ PlanItem {
 ### 7.1 查询流程
 
 ```
-用户输入 → 表现层（CLI/GUI/AI） → Tool API → lib/ → 数据库 → 响应 → 表现层更新
+用户输入 → 表现层（GUI/AI/库调用） → Tool API → lib/ → YAML 文件 → 响应 → 表现层更新
 ```
 
 ### 7.2 写入流程
@@ -791,10 +743,10 @@ AI Panel → Operations Panel:
 ### 11.1 开发模式
 
 ```bash
-python scripts/stats.py --visual
+pytest -q
 ```
 
-### 11.2 CLI 模式
+### 11.2 Agent CLI 模式
 
 ```bash
 python agent/run_agent.py "query K562 records" --yaml ln2_inventory.yaml
@@ -840,46 +792,24 @@ pyinstaller ln2_inventory.spec
 ## 13. 依赖关系图
 
 ```
-                    ┌─────────────┐
-                    │  scripts/   │
-                    │  CLI Tools  │
-                    └──────┬──────┘
-                           │
-                    ┌──────▼──────┐
-                    │ tool_api.py │ ◄─────┐
-                    └──────┬──────┘       │
-                           │              │
-        ┌──────────────────┼──────────────┼──────────────────┐
-        │                  │              │                  │
-┌───────▼────────┐ ┌──────▼──────┐ ┌─────▼─────┐ ┌─────────▼────────┐
-│   yaml_ops.py   │ │ validators  │ │ operations│ │   thaw_parser    │
-└───────┬────────┘ └─────────────┘ └───────────┘ └──────────────────┘
+        ┌─────────────┐                 ┌─────────────┐
+        │  app_gui/   │                 │   agent/    │
+        └──────┬──────┘                 └──────┬──────┘
+               │                                │
+        ┌──────▼──────┐                 ┌──────▼──────┐
+        │ tool_bridge │                 │ tool_runner │
+        └──────┬──────┘                 └──────┬──────┘
+               └──────────────┬────────────────┘
+                              │
+                       ┌──────▼──────┐
+                       │ tool_api.py │
+                       └──────┬──────┘
+                              │
+        ┌─────────────────────┼─────────────────────────────────┐
+        │                     │                 │               │
+   yaml_ops.py           validators.py     operations.py   thaw_parser.py
         │
-┌───────▼────────┐
-│   config.py    │
-└────────────────┘
-
-        ┌─────────────┐
-        │  app_gui/   │
-        └──────┬──────┘
-               │
-        ┌──────▼──────┐
-        │tool_bridge  │ ─────┐
-        └─────────────┘      │
-                           ┌─▼─────────────┐
-                           │  tool_api.py   │
-                           └───────────────┘
-
-        ┌─────────────┐
-        │   agent/    │
-        └──────┬──────┘
-               │
-        ┌──────▼──────┐
-        │tool_runner  │ ─────┐
-        └─────────────┘      │
-                           ┌─▼─────────────┐
-                           │  tool_api.py   │
-                           └───────────────┘
+     config.py
 ```
 
 ---
@@ -917,23 +847,6 @@ pyinstaller ln2_inventory.spec
 - `ui/overview_panel.py` - 概览面板
 - `ui/operations_panel.py` - 操作面板
 - `ui/ai_panel.py` - AI 面板
-
-#### scripts/
-- `add_entry.py` - 添加记录
-- `record_thaw.py` - 单次解冻
-- `batch_thaw.py` - 批量解冻
-- `query_inventory.py` - 查询库存
-- `query_recent.py` - 最近查询
-- `query_thaw.py` - 解冻查询
-- `search.py` - 搜索
-- `smart_search.py` - 智能搜索
-- `stats.py` - 统计
-- `recommend_position.py` - 位置推荐
-- `check_conflicts.py` - 冲突检查
-- `validate.py` - 验证
-- `rollback.py` - 回滚
-- `show_raw.py` - 原始数据
-- `timeline.py` - 时间线
 
 #### tests/
 - `test_config.py` - 配置测试

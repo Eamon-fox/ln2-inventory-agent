@@ -1,14 +1,15 @@
 from datetime import datetime
 import time
+import re
 from PySide6.QtCore import Qt, Signal, QThread, QEvent
-from PySide6.QtGui import QTextCursor, QTextDocumentFragment
+from PySide6.QtGui import QTextCursor, QPalette
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QLineEdit,
     QGroupBox, QTextEdit, QFormLayout, QSpinBox
 )
 from app_gui.ui.workers import AgentRunWorker
-from app_gui.ui.utils import build_panel_header, compact_json
+from app_gui.ui.utils import build_panel_header, compact_json, CollapsibleBox
 from app_gui.event_compactor import compact_operation_event_for_context
 from app_gui.i18n import tr
 from app_gui.plan_outcome import collect_blocked_items, summarize_plan_execution
@@ -19,6 +20,119 @@ import json
 def get_ai_help_text():
     from app_gui.i18n import tr
     return tr("ai.helpText")
+
+
+def _is_dark_mode(widget):
+    try:
+        palette = widget.palette()
+        bg_color = palette.color(QPalette.Window)
+        return bg_color.lightness() < 128
+    except Exception:
+        return True
+
+
+def _md_to_html(text, is_dark=True):
+    """Convert markdown text to HTML for QTextEdit.append()."""
+    if not text:
+        return ""
+
+    code_bg = "#1a1a1a" if is_dark else "#f5f5f5"
+    code_border = "rgba(255,255,255,0.08)" if is_dark else "rgba(0,0,0,0.08)"
+    code_color = "#e8e8e8" if is_dark else "#1e1e1e"
+    inline_bg = "rgba(255,255,255,0.1)" if is_dark else "rgba(0,0,0,0.06)"
+
+    # Extract fenced code blocks first, replace with placeholders
+    code_blocks = []
+    def _stash_code(match):
+        content = match.group(1)
+        escaped = content.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        html = (f'<div style="background-color: {code_bg}; border: 1px solid {code_border};'
+                f' border-radius: 6px; padding: 12px; margin: 8px 0;'
+                f" font-family: 'IBM Plex Mono', Consolas, monospace; font-size: 13px;"
+                f' color: {code_color}; white-space: pre-wrap;">{escaped}</div>')
+        code_blocks.append(html)
+        return f'\x00CODE{len(code_blocks) - 1}\x00'
+    text = re.sub(r'```(?:\w*)\s*\n(.*?)\n```', _stash_code, text, flags=re.DOTALL)
+
+    # Process line by line
+    lines = text.split('\n')
+    html_lines = []
+    in_list = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Code block placeholder
+        m = re.match(r'\x00CODE(\d+)\x00', stripped)
+        if m:
+            if in_list:
+                html_lines.append('</ul>')
+                in_list = False
+            html_lines.append(code_blocks[int(m.group(1))])
+            continue
+
+        # Empty line
+        if not stripped:
+            if in_list:
+                html_lines.append('</ul>')
+                in_list = False
+            html_lines.append('<br/>')
+            continue
+
+        # Inline formatting
+        def _inline(s):
+            s = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', s)
+            s = re.sub(r'`([^`]+)`',
+                       lambda m: (f'<code style="background-color: {inline_bg};'
+                                  f' padding: 2px 6px; border-radius: 4px;'
+                                  f" font-family: 'IBM Plex Mono', Consolas, monospace;"
+                                  f' font-size: 13px;">'
+                                  f'{m.group(1).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")}'
+                                  f'</code>'),
+                       s)
+            return s
+
+        # Headings
+        hm = re.match(r'^(#{1,4})\s+(.+)$', stripped)
+        if hm:
+            if in_list:
+                html_lines.append('</ul>')
+                in_list = False
+            level = len(hm.group(1))
+            sizes = {1: '16px', 2: '15px', 3: '14px', 4: '13px'}
+            html_lines.append(
+                f'<div style="font-weight: bold; font-size: {sizes.get(level, "14px")}; margin-top: 6px;">'
+                f'{_inline(hm.group(2))}</div>')
+            continue
+
+        # List items
+        lm = re.match(r'^[-*]\s+(.+)$', stripped)
+        if lm:
+            if not in_list:
+                html_lines.append('<ul style="margin-top: 2px; margin-bottom: 2px;">')
+                in_list = True
+            html_lines.append(f'<li>{_inline(lm.group(1))}</li>')
+            continue
+
+        # Numbered list
+        nm = re.match(r'^\d+[.)]\s+(.+)$', stripped)
+        if nm:
+            if in_list:
+                html_lines.append('</ul>')
+                in_list = False
+            html_lines.append(f'<div style="margin-left: 16px;">{_inline(nm.group(1))}</div>')
+            continue
+
+        # Normal paragraph
+        if in_list:
+            html_lines.append('</ul>')
+            in_list = False
+        html_lines.append(f'<div>{_inline(stripped)}</div>')
+
+    if in_list:
+        html_lines.append('</ul>')
+
+    return ''.join(html_lines)
 
 class AIPanel(QWidget):
     operation_completed = Signal(bool)
@@ -45,6 +159,7 @@ class AIPanel(QWidget):
         # Re-render markdown frequently enough to feel live, but still throttle CPU churn.
         self.ai_stream_render_interval_sec = 0.06
         self.ai_stream_render_min_delta = 8
+        self.ai_last_role = None
 
         self.setup_ui()
 
@@ -132,6 +247,9 @@ class AIPanel(QWidget):
         self.ai_chat.setReadOnly(True)
         self.ai_chat.setAcceptRichText(True)
         self.ai_chat.setPlaceholderText(tr("ai.chatPlaceholder"))
+        self.ai_chat.document().setDefaultStyleSheet(
+            "p { margin-top: 2px; margin-bottom: 2px; }"
+        )
         chat_layout.addWidget(self.ai_chat)
         layout.addWidget(chat_box, 3)
 
@@ -230,8 +348,8 @@ class AIPanel(QWidget):
         self.ai_stream_last_render_len = 0
         self.status_message.emit(tr("ai.memoryCleared"), 2000)
 
-    def _append_chat_header(self, role):
-        self._move_chat_cursor_to_end()
+    def _build_header_html(self, role, compact=False):
+        """Return header HTML string (no insertion)."""
         stamp = datetime.now().strftime("%H:%M:%S")
         color_map = {
             "Agent": "#38bdf8",
@@ -240,13 +358,16 @@ class AIPanel(QWidget):
             "System": "#f97316",
         }
         color = color_map.get(role, "#a3e635")
- 
-        html = f"""
-        <div style="margin-bottom: 8px;">
-            <span style="color: {color}; font-weight: bold;">[{stamp}] {role}</span>
-            <br/>
-        </div>
-        """
+        self.ai_last_role = role
+
+        if compact:
+            return f'<span style="color: {color};">[{role}]</span> '
+        return f'<br/><span style="color: {color}; font-weight: bold;">[{stamp}] {role}</span>'
+
+    def _append_chat_header(self, role, compact=False):
+        """Append a standalone header (used by stream + collapsible paths)."""
+        self._move_chat_cursor_to_end()
+        html = self._build_header_html(role, compact=compact)
         self.ai_chat.append(html)
 
     def _move_chat_cursor_to_end(self):
@@ -256,10 +377,30 @@ class AIPanel(QWidget):
         cursor.movePosition(QTextCursor.End)
         self.ai_chat.setTextCursor(cursor)
 
-    def _append_chat(self, role, text):
-        self._append_chat_header(role)
-        self._insert_chat_markdown(text)
-        self.ai_chat.append("\n") # Spacer
+    def _should_use_compact(self):
+        """Check if tool messages should be compact (attached to previous message)."""
+        return self.ai_last_role in ("You", "Agent", "Tool")
+
+    def _append_tool_message(self, text):
+        """Append tool message, using compact mode if appropriate."""
+        compact = self._should_use_compact()
+        self._append_chat("Tool", text, compact=compact)
+
+    def _append_chat(self, role, text, compact=False):
+        """Append header then content."""
+        header_html = self._build_header_html(role, compact=compact)
+        is_dark = _is_dark_mode(self)
+        self._move_chat_cursor_to_end()
+        if compact:
+            # Compact: single line, inline formatting only (no block elements)
+            body = str(text or "")
+            body = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', body)
+            body = re.sub(r'`([^`]+)`', r'\1', body)
+            self.ai_chat.append(header_html + body)
+        else:
+            body_html = _md_to_html(str(text or ""), is_dark)
+            self.ai_chat.append(header_html)
+            self.ai_chat.append(body_html)
 
     def _begin_stream_chat(self, role="Agent"):
         if self.ai_streaming_active:
@@ -271,6 +412,8 @@ class AIPanel(QWidget):
         self.ai_stream_last_render_ts = time.monotonic()
         self.ai_stream_last_render_len = 0
         self._append_chat_header(role)
+        # Insert an empty block so stream chunks start on a new line
+        self.ai_chat.append("")
         self._move_chat_cursor_to_end()
         if hasattr(self.ai_chat, "textCursor"):
             self.ai_stream_start_pos = self.ai_chat.textCursor().position()
@@ -358,37 +501,26 @@ class AIPanel(QWidget):
             "text": self.ai_stream_buffer,
         }
 
-        self.ai_chat.append("\n")
+        self.ai_chat.append("")
         self.ai_streaming_active = False
         self.ai_stream_start_pos = None
         self.ai_stream_last_render_ts = 0.0
         self.ai_stream_last_render_len = 0
 
-    def _insert_chat_markdown(self, text):
-        markdown_text = str(text or "")
-        self._move_chat_cursor_to_end()
-        cursor = self.ai_chat.textCursor() if hasattr(self.ai_chat, "textCursor") else None
-        self._insert_markdown_with_cursor(cursor, markdown_text)
-
-    def _insert_markdown_with_cursor(self, cursor, markdown_text):
-        markdown_text = str(markdown_text or "")
+    def _insert_markdown_with_cursor(self, cursor, html_text):
+        """Insert pre-rendered HTML at cursor position (used by streaming rerender)."""
+        html_text = str(html_text or "")
         if cursor is not None and hasattr(self.ai_chat, "setTextCursor"):
             self.ai_chat.setTextCursor(cursor)
 
-        if hasattr(self.ai_chat, "insertMarkdown"):
-            self.ai_chat.insertMarkdown(markdown_text)
-            return
-
-        # Qt fallback for runtimes where QTextEdit has no insertMarkdown.
-        if hasattr(QTextDocumentFragment, "fromMarkdown") and hasattr(self.ai_chat, "textCursor"):
+        if hasattr(self.ai_chat, "textCursor"):
             cursor = self.ai_chat.textCursor()
-            fragment = QTextDocumentFragment.fromMarkdown(markdown_text)
-            cursor.insertFragment(fragment)
+            cursor.insertHtml(html_text)
             if hasattr(self.ai_chat, "setTextCursor"):
                 self.ai_chat.setTextCursor(cursor)
             return
 
-        self.ai_chat.insertPlainText(markdown_text)
+        self.ai_chat.insertPlainText(html_text)
 
     def _replace_stream_block_with_markdown(self, block, markdown_text):
         if not isinstance(block, dict):
@@ -405,7 +537,9 @@ class AIPanel(QWidget):
             cursor.setPosition(int(start))
             cursor.setPosition(int(end), QTextCursor.KeepAnchor)
             cursor.removeSelectedText()
-            self._insert_markdown_with_cursor(cursor, markdown_text)
+            is_dark = _is_dark_mode(self)
+            highlighted = _md_to_html(str(markdown_text or ""), is_dark)
+            self._insert_markdown_with_cursor(cursor, highlighted)
             self._move_chat_cursor_to_end()
             return True
         except Exception:
@@ -526,9 +660,9 @@ class AIPanel(QWidget):
             if hint:
                 line += f" | hint: {hint}"
             self.ai_report.append(line)
-            self._append_chat("Tool", f"`{name}` finished: **{status}**")
+            self._append_tool_message(f"`{name}` finished: **{status}**")
             if hint:
-                self._append_chat("Tool", f"Hint: {hint}")
+                self._append_tool_message(f"Hint: {hint}")
             blocked_items = raw_obs.get("blocked_items")
             if isinstance(blocked_items, list) and blocked_items:
                 summary_text = self._blocked_items_summary(name, blocked_items)
@@ -551,7 +685,7 @@ class AIPanel(QWidget):
 
             data = event.get("data") or {}
             name = str(data.get("name") or event.get("action") or "tool")
-            self._append_chat("Tool", f"Running `{name}`...")
+            self._append_tool_message(f"Running `{name}`...")
             return
 
         if event_type == "chunk":
@@ -761,15 +895,31 @@ class AIPanel(QWidget):
             self._append_chat_with_collapsible("System", summary_text, details_json)
 
     def _append_chat_with_collapsible(self, role, summary, details_json):
-        """Append a chat message and store full details in the report panel."""
-        self._append_chat_header(role)
-        self._insert_chat_markdown(summary)
+        is_dark = _is_dark_mode(self)
+        header_html = self._build_header_html(role)
+        body_html = _md_to_html(str(summary or ""), is_dark)
+        self._move_chat_cursor_to_end()
+        self.ai_chat.append(header_html)
+        self.ai_chat.append(body_html)
+
         details_text = str(details_json or "")
-        detail_line = (
-            f"\\n\\n`Raw JSON hidden` ({len(details_text)} chars). "
-            "Use **Show Plan Details** to inspect full payload."
+        escaped_details = details_text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+        collapsible_html = CollapsibleBox.render_html(
+            summary="📋 Details",
+            content=escaped_details,
+            is_dark=is_dark,
+            collapsed=True,
+            max_preview_chars=80
         )
-        self._insert_chat_markdown(detail_line)
+
+        self._move_chat_cursor_to_end()
+        if hasattr(self.ai_chat, "textCursor"):
+            cursor = self.ai_chat.textCursor()
+            cursor.insertHtml(collapsible_html)
+        else:
+            self.ai_chat.append(collapsible_html)
+
         self.ai_chat.append("")
         self.ai_report.setPlainText(details_text)
 

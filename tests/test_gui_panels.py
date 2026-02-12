@@ -742,7 +742,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
         panel._append_chat("You", "hello")
 
         call_names = [name for name, _value in panel.ai_chat.calls]
-        self.assertIn("insertPlainText", call_names)
+        self.assertIn("append", call_names)
 
     def test_ai_panel_defaults_model_to_deepseek_chat(self):
         panel = self._new_ai_panel()
@@ -756,7 +756,11 @@ class GuiPanelRegressionTests(unittest.TestCase):
         panel._append_chat("Agent", "**bold**")
 
         call_names = [name for name, _value in panel.ai_chat.calls]
-        self.assertIn("insertMarkdown", call_names)
+        # _append_chat now combines header+body HTML and uses append()
+        self.assertIn("append", call_names)
+        # Verify bold was converted to <b> in the appended HTML
+        appended_values = [v for n, v in panel.ai_chat.calls if n == "append"]
+        self.assertTrue(any("<b>" in str(v) for v in appended_values))
 
     def test_ai_panel_stream_chunk_updates_chat_incrementally(self):
         panel = self._new_ai_panel()
@@ -819,10 +823,10 @@ class GuiPanelRegressionTests(unittest.TestCase):
             }
         )
 
-        text_calls = [value for name, value in panel.ai_chat.calls if name == "insertPlainText"]
-        merged = "\n".join(text_calls)
-        self.assertIn("Running `query_thaw_events`...", merged)
-        self.assertIn("finished: **OK**", merged)
+        append_calls = [value for name, value in panel.ai_chat.calls if name == "append"]
+        merged = "\n".join(append_calls)
+        self.assertIn("query_thaw_events", merged)
+        self.assertIn("OK", merged)
 
     def test_ai_panel_renders_blocked_items_from_tool_result(self):
         panel = self._new_ai_panel()
@@ -853,8 +857,8 @@ class GuiPanelRegressionTests(unittest.TestCase):
             }
         )
 
-        text_calls = [value for name, value in panel.ai_chat.calls if name == "insertPlainText"]
-        merged = "\n".join(text_calls)
+        append_calls = [value for name, value in panel.ai_chat.calls if name == "append"]
+        merged = "\n".join(append_calls)
         self.assertIn("Tool blocked", merged)
         self.assertIn("ID 999", merged)
         self.assertIn("Record does not exist", merged)
@@ -1633,8 +1637,6 @@ class PlanPreflightGuardTests(unittest.TestCase):
         write_yaml(
             {"meta": {"box_layout": {"rows": 9, "cols": 9}}, "inventory": records},
             path=yaml_path,
-            auto_html=False,
-            auto_server=False,
             audit_meta={"action": "seed", "source": "tests"},
         )
         return yaml_path, tmpdir
@@ -1729,8 +1731,6 @@ class ExecuteInterceptTests(unittest.TestCase):
         write_yaml(
             {"meta": {"box_layout": {"rows": 9, "cols": 9}}, "inventory": records},
             path=yaml_path,
-            auto_html=False,
-            auto_server=False,
             audit_meta={"action": "seed", "source": "tests"},
         )
         return yaml_path, tmpdir
@@ -1811,7 +1811,7 @@ class OperationEventFeedTests(unittest.TestCase):
         self.assertEqual(1, len(panel.ai_operation_events))
         chat_text = panel.ai_chat.toPlainText().lower()
         self.assertIn("succeeded", chat_text)
-        self.assertIn("raw json hidden", chat_text)
+        self.assertIn("details", chat_text)
         self.assertNotIn("<details>", chat_text)
         self.assertIn('"type": "plan_executed"', panel.ai_report.toPlainText())
 

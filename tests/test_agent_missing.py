@@ -130,8 +130,6 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         write_yaml(
             make_data(records),
             path=str(yaml_path),
-            auto_html=False,
-            auto_server=False,
             auto_backup=False,
             audit_meta={"action": "seed", "source": "tests"},
         )

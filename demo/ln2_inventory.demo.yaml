@@ -2,133 +2,136 @@ meta:
   box_layout:
     rows: 9
     cols: 9
-
 inventory:
-  - id: 1
-    parent_cell_line: NCCIT
-    short_name: NCCIT_ctrl_A
-    plasmid_name: pLenti-empty
-    plasmid_id: p0001
-    box: 1
-    positions: [1, 2, 3]
-    frozen_at: "2026-02-01"
-    thaw_log: null
-    note: baseline control clone
-
-  - id: 2
-    parent_cell_line: K562
-    short_name: K562_RTCB_dTAG_clone12
-    plasmid_name: pGEMT-N-RTCB-dTAG
-    plasmid_id: p260101-1
-    box: 1
-    positions: [10, 11]
-    frozen_at: "2026-02-03"
-    thaw_log: null
-    note: validation clone
-    thaw_events:
-      - date: "2026-02-10"
-        action: takeout
-        positions: [12]
-        note: used for WB
-
-  - id: 3
-    parent_cell_line: K562
-    short_name: K562_RTCB_KO_pool
-    plasmid_name: pX330-RTCB
-    plasmid_id: p260102-7
-    box: 2
-    positions: [15, 16]
-    frozen_at: "2026-01-20"
-    thaw_log: null
-    note: CRISPR knockout pool
-    thaw_events:
-      - date: "2026-01-28"
-        action: thaw
-        positions: [17]
-        note: recovery culture
-
-  - id: 4
-    parent_cell_line: HEK293T
-    short_name: HEK293T_reporter36
-    plasmid_name: StitchR-reporter-v2
-    plasmid_id: rep-036
-    box: 2
-    positions: [30]
-    frozen_at: "2026-02-08"
-    thaw_log: null
-    note: reporter stable line
-
-  - id: 5
-    parent_cell_line: HeLa
-    short_name: HeLa_archive_C
-    plasmid_name: null
-    plasmid_id: null
-    box: 3
-    positions: []
-    frozen_at: "2025-12-20"
-    thaw_log: null
-    note: fully consumed archive record
-    thaw_events:
-      - date: "2026-01-05"
-        action: thaw
-        positions: [21]
-        note: revived for assay
-      - date: "2026-01-12"
-        action: discard
-        positions: [22]
-        note: contamination
-
-  - id: 6
-    parent_cell_line: NCCIT
-    short_name: NCCIT_DesMCP_APEX2
-    plasmid_name: pDesMCP-APEX2
-    plasmid_id: p260109-3
-    box: 4
-    positions: [5, 6, 7]
-    frozen_at: "2026-02-02"
-    thaw_log: null
-    note: engineered derivative line
-
-  - id: 7
-    parent_cell_line: K562
-    short_name: K562_NUP107_hit
-    plasmid_name: hit-validation
-    plasmid_id: hit-nup107
-    box: 4
-    positions: [20]
-    frozen_at: "2026-02-06"
-    thaw_log: null
-    note: stitchR hit validation
-
-  - id: 8
-    parent_cell_line: K562
-    short_name: K562_RTCB_hit
-    plasmid_name: hit-validation
-    plasmid_id: hit-rtcb
-    box: 5
-    positions: [40, 41]
-    frozen_at: "2026-02-06"
-    thaw_log: null
-    note: high-priority rescue line
-
-  - id: 9
-    parent_cell_line: HCT116
-    short_name: HCT116_ctrl_pool
-    plasmid_name: pLenti-empty
-    plasmid_id: p0001
-    box: 5
-    positions: [65]
-    frozen_at: "2026-01-29"
-    thaw_log: null
-    note: non-targeting control pool
-
-  - id: 10
-    parent_cell_line: U2OS
-    short_name: U2OS_backup_stock
-    plasmid_name: null
-    plasmid_id: null
-    box: 3
-    positions: [70, 71, 72]
-    frozen_at: "2026-02-04"
-    thaw_log: null
-    note: long-term backup stock
+- id: 1
+  parent_cell_line: NCCIT
+  short_name: NCCIT_ctrl_A
+  plasmid_name: pLenti-empty
+  plasmid_id: p0001
+  box: 1
+  positions:
+  - 1
+  frozen_at: '2026-02-01'
+  note: baseline control tube A
+- id: 2
+  parent_cell_line: NCCIT
+  short_name: NCCIT_ctrl_A
+  plasmid_name: pLenti-empty
+  plasmid_id: p0001
+  box: 1
+  positions:
+  - 2
+  frozen_at: '2026-02-01'
+  note: baseline control tube B
+- id: 3
+  parent_cell_line: K562
+  short_name: K562_RTCB_dTAG_clone12
+  plasmid_name: pGEMT-N-RTCB-dTAG
+  plasmid_id: p260101-1
+  box: 1
+  positions:
+  - 10
+  frozen_at: '2026-02-03'
+  note: validation clone tube A
+- id: 4
+  parent_cell_line: K562
+  short_name: K562_RTCB_dTAG_clone12
+  plasmid_name: pGEMT-N-RTCB-dTAG
+  plasmid_id: p260101-1
+  box: 1
+  positions: []
+  frozen_at: '2026-02-03'
+  note: validation clone tube B (consumed)
+  thaw_events:
+  - date: '2026-02-10'
+    action: takeout
+    positions:
+    - 11
+    note: used for WB
+- id: 5
+  parent_cell_line: K562
+  short_name: K562_RTCB_KO_pool
+  plasmid_name: pX330-RTCB
+  plasmid_id: p260102-7
+  box: 1
+  positions:
+  - 3
+  frozen_at: '2026-01-20'
+  note: CRISPR knockout pool tube A
+  thaw_events:
+  - date: '2026-02-13'
+    action: move
+    positions:
+    - 15
+    from_position: 15
+    to_position: 3
+    from_box: 2
+    to_box: 1
+- id: 6
+  parent_cell_line: K562
+  short_name: K562_RTCB_KO_pool
+  plasmid_name: pX330-RTCB
+  plasmid_id: p260102-7
+  box: 2
+  positions: []
+  frozen_at: '2026-01-20'
+  note: CRISPR knockout pool tube B (discarded)
+  thaw_events:
+  - date: '2026-01-28'
+    action: thaw
+    positions:
+    - 16
+    note: recovery culture
+  - date: '2026-02-02'
+    action: discard
+    positions:
+    - 16
+    note: contamination
+- id: 7
+  parent_cell_line: HEK293T
+  short_name: HEK293T_reporter36
+  plasmid_name: StitchR-reporter-v2
+  plasmid_id: rep-036
+  box: 1
+  positions:
+  - 5
+  frozen_at: '2026-02-08'
+  note: moved into box 3
+  thaw_events:
+  - date: '2026-02-12'
+    action: move
+    positions:
+    - 30
+    from_position: 30
+    to_position: 40
+    from_box: 2
+    to_box: 3
+    note: cross-box relocation for grouping
+  - date: '2026-02-13'
+    action: move
+    positions:
+    - 40
+    from_position: 40
+    to_position: 5
+    from_box: 3
+    to_box: 1
+- id: 8
+  parent_cell_line: HeLa
+  short_name: HeLa_archive_C
+  plasmid_name: null
+  plasmid_id: null
+  box: 3
+  positions: []
+  frozen_at: '2025-12-20'
+  note: fully consumed archive tube
+  thaw_events:
+  - date: '2026-01-05'
+    action: thaw
+    positions:
+    - 21
+    note: revived for assay
+  - date: '2026-01-12'
+    action: discard
+    positions:
+    - 21
+    note: contamination

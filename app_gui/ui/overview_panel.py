@@ -7,6 +7,14 @@ from PySide6.QtWidgets import (
     QSizePolicy, QGroupBox, QMenu
 )
 from app_gui.ui.utils import build_panel_header, cell_color
+from app_gui.ui.theme import (
+    cell_occupied_style, 
+    cell_empty_style,
+    cell_preview_add_style,
+    cell_preview_takeout_style,
+    cell_preview_move_source_style,
+    cell_preview_move_target_style,
+)
 from app_gui.i18n import tr, t
 
 MIME_TYPE_MOVE = "application/x-ln2-move"
@@ -199,7 +207,7 @@ class OverviewPanel(QWidget):
         layout.addWidget(self.ov_status)
 
         self.ov_hover_hint = QLabel(tr("overview.hoverHint"))
-        self.ov_hover_hint.setStyleSheet("color: #94a3b8; font-weight: bold;")
+        self.ov_hover_hint.setStyleSheet("color: var(--text-weak); font-weight: 500;")
         self.ov_hover_hint.setWordWrap(True)
         layout.addWidget(self.ov_hover_hint)
 
@@ -217,11 +225,24 @@ class OverviewPanel(QWidget):
 
     def _build_card(self, layout, title):
         card = QGroupBox(title)
+        card.setStyleSheet("""
+            QGroupBox {
+                background-color: var(--background-inset);
+                border: 1px solid var(--border-weak);
+                border-radius: var(--radius-md);
+                margin-top: 8px;
+                padding-top: 8px;
+            }
+            QGroupBox::title {
+                color: var(--text-weak);
+                font-size: 11px;
+            }
+        """)
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(8, 6, 8, 6)
         value_label = QLabel("-")
         value_label.setAlignment(Qt.AlignCenter)
-        value_label.setStyleSheet("font-size: 16px; font-weight: 700;")
+        value_label.setStyleSheet("font-size: 16px; font-weight: 500; color: var(--text-strong);")
         card_layout.addWidget(value_label)
         layout.addWidget(card)
         return value_label
@@ -294,10 +315,10 @@ class OverviewPanel(QWidget):
                 "[EMPTY] No samples yet. Double-click a slot to add your first entry, "
                 "or use Quick Start to load demo data."
             )
-            self.ov_hover_hint.setStyleSheet("color: #f59e0b; font-weight: bold; padding: 8px;")
+            self.ov_hover_hint.setStyleSheet("color: var(--warning); font-weight: 500; padding: 8px; background-color: rgba(245,158,11,0.1); border-radius: 4px;")
         else:
             self.ov_hover_hint.setText(tr("overview.hoverHint"))
-            self.ov_hover_hint.setStyleSheet("color: #94a3b8; font-weight: bold;")
+            self.ov_hover_hint.setStyleSheet("color: var(--text-weak); font-weight: 500;")
 
         if timeline_response.get("ok"):
             ops7 = timeline_response.get("result", {}).get("summary", {}).get("total_ops", 0)
@@ -395,6 +416,65 @@ class OverviewPanel(QWidget):
 
         self.overview_shape = (rows, cols, tuple(box_numbers))
 
+    def update_plan_preview(self, plan_items):
+        """Update overview cells to show plan preview effects."""
+        if not plan_items:
+            for (box_num, position), button in self.overview_cells.items():
+                key = (box_num, position)
+                record = self.overview_pos_map.get(key)
+                self._paint_cell(button, box_num, position, record)
+            return
+            
+        preview_positions = {
+            "add": set(),
+            "takeout": set(),
+            "move_source": set(),
+            "move_target": set(),
+        }
+        
+        for item in plan_items:
+            action = item.get("action", "").lower()
+            box = item.get("box")
+            position = item.get("position")
+            to_box = item.get("to_box")
+            to_position = item.get("to_position")
+            
+            if action == "add" and box and position:
+                preview_positions["add"].add((int(box), int(position)))
+            
+            elif action in ("takeout", "thaw", "discard") and box and position:
+                preview_positions["takeout"].add((int(box), int(position)))
+            
+            elif action == "move" and box and position:
+                preview_positions["move_source"].add((int(box), int(position)))
+                if to_position:
+                    target_box = int(to_box) if to_box else int(box)
+                    preview_positions["move_target"].add((target_box, int(to_position)))
+        
+        for (box_num, position), button in self.overview_cells.items():
+            key = (box_num, position)
+            record = self.overview_pos_map.get(key)
+            is_selected = self.overview_selected_key == key
+            
+            if key in preview_positions["add"]:
+                button.setText("ADD")
+                button.setStyleSheet(cell_preview_add_style())
+            elif key in preview_positions["takeout"]:
+                button.setText("OUT")
+                button.setStyleSheet(cell_preview_takeout_style())
+            elif key in preview_positions["move_source"]:
+                orig_record = self.overview_pos_map.get(key)
+                label = ""
+                if orig_record:
+                    label = str(orig_record.get("short_name") or "")[:4]
+                button.setText(f"{label}→" if label else "→")
+                button.setStyleSheet(cell_preview_move_source_style())
+            elif key in preview_positions["move_target"]:
+                button.setText("←")
+                button.setStyleSheet(cell_preview_move_target_style())
+            else:
+                self._paint_cell(button, box_num, position, record)
+
     def _paint_cell(self, button, box_num, position, record):
         is_selected = self.overview_selected_key == (box_num, position)
         if record:
@@ -416,18 +496,7 @@ class OverviewPanel(QWidget):
             if record.get('note'): tt.append(f"Note: {record.get('note')}")
             
             button.setToolTip("\n".join(tt))
-            button.setStyleSheet(
-                "QPushButton {"
-                f"background-color: {color};"
-                "color: white;"
-                f"border: {'2px' if is_selected else '1px'} solid {'#16a34a' if is_selected else '#1f2937'};"
-                "border-radius: 4px;"
-                "font-size: 10px;"
-                "font-weight: 700;"
-                "padding: 1px;"
-                "}"
-                f"QPushButton:hover {{ border: 2px solid {'#16a34a' if is_selected else '#f8fafc'}; }}"
-            )
+            button.setStyleSheet(cell_occupied_style(color, is_selected))
             searchable = " ".join(
                 [
                     str(record.get("id", "")),
@@ -448,17 +517,7 @@ class OverviewPanel(QWidget):
         else:
             button.setText(str(position))
             button.setToolTip(f"Box {box_num} Position {position}: empty")
-            button.setStyleSheet(
-                "QPushButton {"
-                "background-color: #0f3460;"
-                "color: #94a3b8;"
-                f"border: {'2px' if is_selected else '1px'} solid {'#16a34a' if is_selected else '#1e293b'};"
-                "border-radius: 4px;"
-                "font-size: 9px;"
-                "padding: 1px;"
-                "}"
-                f"QPushButton:hover {{ border: 2px solid {'#16a34a' if is_selected else '#38bdf8'}; background-color: #1e293b; }}"
-            )
+            button.setStyleSheet(cell_empty_style(is_selected))
             button.setProperty("search_text", f"empty box {box_num} position {position}".lower())
             button.setProperty("cell_line", "")
             button.setProperty("is_empty", True)
@@ -588,11 +647,6 @@ class OverviewPanel(QWidget):
         self.on_cell_hovered(box_num, position, force=True)
 
         # Double click should be low-friction: just prefill common forms, no popup menu.
-        self.request_add_prefill_background.emit({
-            "box": int(box_num),
-            "position": int(position),
-        })
-
         if record:
             rec_id = int(record.get("id"))
             self.request_prefill_background.emit({
@@ -600,8 +654,13 @@ class OverviewPanel(QWidget):
                 "position": int(position),
                 "record_id": rec_id,
             })
-            self.status_message.emit(f"Auto-prefilled Add + Takeout for ID {rec_id}.", 2000)
+            self.status_message.emit(f"Auto-prefilled Takeout for ID {rec_id}.", 2000)
         else:
+            self.request_add_prefill_background.emit({
+                "box": int(box_num),
+                "position": int(position),
+            })
+            self.status_message.emit(f"Auto-prefilled Add Entry (Box {box_num} Pos {position}).", 2000)
             self.status_message.emit(f"Auto-prefilled Add Entry (Box {box_num} Pos {position}).", 2000)
 
     def on_cell_hovered(self, box_num, position, force=False):

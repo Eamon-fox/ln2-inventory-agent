@@ -30,7 +30,9 @@
     "actorId": "Actor ID:",
     "actorIdHint": "Your identifier for audit logs and operation records.",
     "language": "Language:",
-    "languageHint": "Application display language. Restart to apply."
+    "languageHint": "Application display language. Restart to apply.",
+    "theme": "Theme:",
+    "themeHint": "Application color theme. Restart to apply."
   },
   "main": {
     "quickStart": "Quick Start",

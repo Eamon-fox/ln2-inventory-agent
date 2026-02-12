@@ -62,7 +62,8 @@ class YamlOpsSafetyTests(unittest.TestCase):
 
             data_v2 = make_data([
                 make_record(1, box=1, positions=[1]),
-                make_record(2, box=2, positions=[3, 4]),
+                make_record(2, box=2, positions=[3]),
+                make_record(3, box=2, positions=[4]),
             ])
             write_yaml(
                 data_v2,

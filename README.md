@@ -2,130 +2,51 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-> This project is first and foremost a **Claude Code agent skill** (see `SKILL.md`), and it can also run as a standalone Python CLI toolkit.
+> This project is first and foremost a **Claude Code agent skill** (see `SKILL.md`). It can also run as a standalone **desktop GUI** and **Python library**.
 
-CLI toolkit for managing liquid nitrogen tank inventory. Tracks frozen cell line samples, thaw/takeout events, and storage positions across multiple boxes.
-
-Data is stored in a single YAML file. All operations go through validated scripts — no manual YAML editing needed.
+Liquid nitrogen (LN2) inventory manager for frozen tubes. Data lives in a single YAML file; all write operations go through validation, automatic backups, and an append-only JSONL audit log.
 
 ## Features
 
-- **Add / query / search** frozen cell line records
-- **Record thaw/takeout** (single or batch) with audit trail
-- **Position management**: conflict detection, empty slot finder, smart position recommendations
-- **Statistics**: per-box occupancy, cell line distribution, ASCII grid visualization
-- **Backup & rollback**: automatic timestamped backups, one-click restore
-- **Audit log**: JSONL log of all modifications
-- **Fully configurable**: box count, grid size, position range, cell line whitelist — all via JSON config
-- **Unified Tool API**: shared by CLI, GUI, and AI agent runtime
-- **GUI starter**: desktop scaffold in `app_gui/` (query/add/thaw panels)
-- **ReAct runtime**: agent loop in `agent/` with DeepSeek-native parser
+- Tube-level records (one `inventory[]` record == one physical tube)
+- Add, query, search
+- Takeout / thaw / discard / move (single and batch)
+- Position conflicts + empty slot listing + occupancy stats
+- Backup & rollback + audit log
+- Unified Tool API shared by GUI and AI Copilot
 
 ## Quick Start
 
 ```bash
-# 1. Install dependency
-pip install pyyaml
-
-# 2. Initialize with sample data (or start empty)
+python -m pip install -r requirements.txt
 cp references/ln2_inventory.sample.yaml ln2_inventory.yaml
 
-# 3. Try it
-python scripts/stats.py --visual
-python scripts/smart_search.py "K562" --keywords
-python scripts/query_inventory.py --empty --box 1
-python scripts/recommend_position.py --count 3
-```
+# GUI (optional)
+pip install PySide6
+python app_gui/main.py
 
-## Usage
-
-### Add a frozen entry
-
-```bash
-python scripts/add_entry.py \
-  --parent-cell-line "K562" \
-  --short-name "RTCB-dTAG-clone12" \
-  --box 1 --positions "30,31" \
-  --frozen-at "2026-01-08" \
-  --plasmid-name "pGEMT-N-RTCB-dTAG" \
-  --note "homozygous clone"
-```
-
-### Record thaw / takeout
-
-```bash
-# Single
-python scripts/record_thaw.py --id 5 --position 30 --date 2026-02-01
-
-# Batch
-python scripts/batch_thaw.py --entries "5:30,6:12" --date 2026-02-01 --action 复苏
-
-# Move/reorg (real relocation; swaps if target is occupied)
-python scripts/record_thaw.py --id 5 --position 30 --to-position 31 --date 2026-02-01 --action move --note "reorg"
-```
-
-### Query
-
-```bash
-python scripts/smart_search.py "dTAG" --keywords --raw
-python scripts/query_recent.py --frozen --days 30
-python scripts/query_thaw.py --days 7
-python scripts/timeline.py --days 30 --summary
-```
-
-### Backup & rollback
-
-```bash
-python scripts/rollback.py --list
-python scripts/rollback.py  # restore latest backup
+# Tests
+pytest -q
 ```
 
 ## Configuration
 
-By default, scripts look for `ln2_inventory.yaml` in the current directory. To customize paths or parameters, create a JSON config file and point to it:
+Runtime config is optional. By default the app reads `ln2_inventory.yaml` from the current working directory.
+
+To customize paths or schema ranges:
 
 ```bash
 export LN2_CONFIG_FILE=/path/to/my_config.json
 ```
 
-See [`references/ln2_config.sample.json`](references/ln2_config.sample.json) for all available options:
+See `references/ln2_config.sample.json` for available options (`yaml_path`, `schema.box_range`, `schema.position_range`, `safety.*`, ...).
 
-- `yaml_path` — inventory file location
-- `schema.box_range` — number of boxes (default `[1, 5]`)
-- `schema.position_range` — positions per box (default `[1, 81]` for 9x9 grid)
-- `schema.valid_cell_lines` — optional whitelist (empty = accept any)
-- `schema.valid_actions` — operation types (`取出`, `复苏`, `扔掉`, `移动`)
-- `safety.*` — backup rotation, warning thresholds
-
-## Use as a Claude Code Skill
-
-This project can also be installed as a [Claude Code](https://claude.ai/code) skill. See [`SKILL.md`](SKILL.md) for AI agent integration instructions.
-
-## GUI (M2 starter)
+## AI Copilot (DeepSeek)
 
 ```bash
-pip install PySide6
-python app_gui/main.py
-```
-
-GUI defaults and config:
-
-- Default model id is **`deepseek-chat`**
-- GUI settings file: **`~/.ln2agent/config.yaml`**
-- In packaged/frozen mode, demo dataset is copied to **`~/.ln2agent/demo/ln2_inventory.demo.yaml`** for easy editing
-
-If `DEEPSEEK_API_KEY` is missing, GUI will show setup hints directly in chat, including:
-
-- Environment variable: `DEEPSEEK_API_KEY`
-- Auth file (opencode): `~/.local/share/opencode/auth.json` (or path from `OPENCODE_AUTH_FILE`)
-
-## ReAct Agent Runtime
-
-```bash
-# DeepSeek model mode (DeepSeek-native)
 export DEEPSEEK_API_KEY="<your-key>"
-export DEEPSEEK_MODEL="deepseek-chat"
-python agent/run_agent.py "mark ID 10 position 23 as takeout today"
+export DEEPSEEK_MODEL="deepseek-chat"   # optional
+python agent/run_agent.py "mark ID 10 as takeout today"
 ```
 
 ## Packaging (Windows EXE)
@@ -135,43 +56,33 @@ pip install pyinstaller
 pyinstaller ln2_inventory.spec
 ```
 
-`ln2_inventory.spec` now builds **one-dir** output: `dist/LN2InventoryAgent/`.
-
-- You should see `LN2InventoryAgent.exe` and bundled files (including `demo/ln2_inventory.demo.yaml`) in that folder.
-- If you instead build with one-file mode (`pyinstaller -F ...`), resources are unpacked to a temp runtime directory (`_MEIPASS`), so demo files are not obvious next to the exe.
-- A **setup installer** (`Setup.exe`) is a separate layer. PyInstaller does not generate an installer UI by itself; this repo now includes an Inno Setup script for that layer.
-
-### Build Setup.exe (Inno Setup)
-
-Script: `installer/windows/LN2InventoryAgent.iss`
+Inno Setup script: `installer/windows/LN2InventoryAgent.iss`
 
 ```bat
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\windows\LN2InventoryAgent.iss
+"C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe" installer\\windows\\LN2InventoryAgent.iss
 ```
 
-- Input: `dist/LN2InventoryAgent/` (build this first with PyInstaller)
-- Output: `dist/installer/LN2InventoryAgent-Setup-<version>.exe`
-- Optional version override: set env `LN2_AGENT_VERSION` before running `ISCC`
-- Optional helper script: `scripts/windows/build_installer.bat`
+Optional helper: `installer/windows/build_installer.bat`
 
 ## Project Structure
 
 ```
-scripts/          # 15 CLI scripts (query, modify, utility)
-lib/              # Shared library (config, YAML ops, validation)
-agent/            # ReAct runtime + tool dispatcher + LLM adapters
-app_gui/          # Desktop GUI scaffold
+lib/              # Shared library (Tool API, YAML ops, validation)
+app_gui/          # Desktop GUI (PySide6)
+agent/            # ReAct runtime + tool dispatcher
 tests/            # Unit tests (pytest)
 references/       # Sample files and documentation
+demo/             # Demo dataset for packaged app
+installer/        # Windows installer assets (Inno Setup)
 SKILL.md          # Claude Code skill definition
 ```
 
 ## Requirements
 
 - Python 3.8+
-- PyYAML
+- PyYAML (`requirements.txt`)
 - Optional: PySide6 (GUI)
-- Optional: DEEPSEEK_API_KEY (real-model agent mode)
+- Optional: `DEEPSEEK_API_KEY` (real-model AI Copilot)
 
 ## License
 

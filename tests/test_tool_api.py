@@ -72,8 +72,6 @@ class ToolApiTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, box=1, positions=[1])]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -94,15 +92,15 @@ class ToolApiTests(unittest.TestCase):
                 note="from test",
                 actor_context=actor,
                 source="tests/test_tool_api.py",
-                auto_html=False,
-                auto_server=False,
             )
 
             self.assertTrue(result["ok"])
             self.assertEqual(2, result["result"]["new_id"])
+            self.assertEqual([2, 3], result["result"]["new_ids"])
 
             current = load_yaml(str(yaml_path))
-            self.assertEqual(2, len(current["inventory"]))
+            # Tube-level model: positions [2,3] creates 2 new tube records.
+            self.assertEqual(3, len(current["inventory"]))
 
             audit_path = Path(temp_dir) / "ln2_inventory_audit.jsonl"
             lines = [
@@ -123,10 +121,8 @@ class ToolApiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_thaw_dry_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1, 2])]),
+                make_data([make_record(1, box=1, positions=[1])]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -143,7 +139,7 @@ class ToolApiTests(unittest.TestCase):
             self.assertTrue(result["dry_run"])
 
             current = load_yaml(str(yaml_path))
-            self.assertEqual([1, 2], current["inventory"][0]["positions"])
+            self.assertEqual([1], current["inventory"][0]["positions"])
 
             audit_path = Path(temp_dir) / "ln2_inventory_audit.jsonl"
             lines = [line for line in audit_path.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -160,8 +156,6 @@ class ToolApiTests(unittest.TestCase):
                     ]
                 ),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -171,8 +165,6 @@ class ToolApiTests(unittest.TestCase):
                 date_str="2026-02-10",
                 action="取出",
                 source="tests/test_tool_api.py",
-                auto_html=False,
-                auto_server=False,
             )
 
             self.assertTrue(result["ok"])
@@ -182,44 +174,35 @@ class ToolApiTests(unittest.TestCase):
             self.assertEqual([], current["inventory"][0]["positions"])
             self.assertEqual([], current["inventory"][1]["positions"])
 
-    def test_tool_batch_thaw_same_record_multiple_positions(self):
-        """Batch takeout of two positions from the same record should remove both."""
+    def test_tool_batch_thaw_same_record_duplicate_entry_rejected(self):
+        """Tube-level model: batching the same tube twice should be rejected."""
         with tempfile.TemporaryDirectory(prefix="ln2_tool_batch_same_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
                 make_data(
-                    [make_record(1, box=5, positions=[33, 34, 35])]
+                    [make_record(1, box=5, positions=[33])]
                 ),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
             result = tool_batch_thaw(
                 yaml_path=str(yaml_path),
-                entries=[(1, 33), (1, 34)],
+                entries=[(1, 33), (1, 33)],
                 date_str="2026-02-10",
                 action="取出",
                 source="tests/test_tool_api.py",
-                auto_html=False,
-                auto_server=False,
             )
 
-            self.assertTrue(result["ok"])
-            self.assertEqual(2, result["result"]["count"])
-
-            current = load_yaml(str(yaml_path))
-            self.assertEqual([35], current["inventory"][0]["positions"])
+            self.assertFalse(result["ok"])
+            self.assertEqual("validation_failed", result.get("error_code"))
 
     def test_tool_record_thaw_move_updates_positions_and_appends_event(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_move_single_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1, 2])]),
+                make_data([make_record(1, box=1, positions=[1])]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
             )
 
             result = tool_record_thaw(
@@ -230,18 +213,16 @@ class ToolApiTests(unittest.TestCase):
                 date_str="2026-02-10",
                 action="move",
                 note="reorg",
-                auto_html=False,
-                auto_server=False,
             )
 
             self.assertTrue(result["ok"])
             self.assertEqual("move", result["preview"]["action_en"])
             self.assertEqual(3, result["preview"]["to_position"])
-            self.assertEqual([1, 2], result["preview"]["positions_before"])
-            self.assertEqual([3, 2], result["preview"]["positions_after"])
+            self.assertEqual([1], result["preview"]["positions_before"])
+            self.assertEqual([3], result["preview"]["positions_after"])
 
             current = load_yaml(str(yaml_path))
-            self.assertEqual([3, 2], current["inventory"][0]["positions"])
+            self.assertEqual([3], current["inventory"][0]["positions"])
             events = current["inventory"][0].get("thaw_events") or []
             self.assertEqual(1, len(events))
             self.assertEqual("move", events[-1].get("action"))
@@ -260,8 +241,6 @@ class ToolApiTests(unittest.TestCase):
                     ]
                 ),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
             )
 
             result = tool_record_thaw(
@@ -271,8 +250,6 @@ class ToolApiTests(unittest.TestCase):
                 to_position=2,
                 date_str="2026-02-10",
                 action="移动",
-                auto_html=False,
-                auto_server=False,
             )
 
             self.assertTrue(result["ok"])
@@ -295,8 +272,6 @@ class ToolApiTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, box=1, positions=[1])]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
             )
 
             result = tool_record_thaw(
@@ -305,8 +280,6 @@ class ToolApiTests(unittest.TestCase):
                 position=1,
                 date_str="2026-02-10",
                 action="move",
-                auto_html=False,
-                auto_server=False,
             )
 
             self.assertFalse(result["ok"])
@@ -324,8 +297,6 @@ class ToolApiTests(unittest.TestCase):
                     ]
                 ),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
             )
 
             result = tool_batch_thaw(
@@ -333,8 +304,6 @@ class ToolApiTests(unittest.TestCase):
                 entries="1:1->2,3:3->4",
                 date_str="2026-02-10",
                 action="移动",
-                auto_html=False,
-                auto_server=False,
             )
 
             self.assertTrue(result["ok"])
@@ -357,8 +326,6 @@ class ToolApiTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, box=1, positions=[1])]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
             )
 
             result = tool_batch_thaw(
@@ -366,8 +333,6 @@ class ToolApiTests(unittest.TestCase):
                 entries=[(1, 1)],
                 date_str="2026-02-10",
                 action="move",
-                auto_html=False,
-                auto_server=False,
             )
 
             self.assertFalse(result["ok"])
@@ -393,8 +358,6 @@ class ToolApiTests(unittest.TestCase):
                 box=1,
                 positions=[3],
                 frozen_at="2026-02-10",
-                auto_html=False,
-                auto_server=False,
             )
 
             self.assertFalse(result["ok"])
@@ -414,8 +377,6 @@ class ToolApiTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, box=1, positions=[1])]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
             )
 
             result = tool_add_entry(
@@ -425,8 +386,6 @@ class ToolApiTests(unittest.TestCase):
                 box=1,
                 positions=[2],
                 frozen_at="2026/02/10",
-                auto_html=False,
-                auto_server=False,
             )
 
             self.assertFalse(result["ok"])
@@ -451,8 +410,6 @@ class ToolApiTests(unittest.TestCase):
                 record_id=1,
                 position=1,
                 date_str="2026-02-10",
-                auto_html=False,
-                auto_server=False,
             )
 
             self.assertFalse(result["ok"])
@@ -465,8 +422,6 @@ class ToolApiTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, box=1, positions=[1])]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
             )
 
             bad_date = tool_add_entry(
@@ -476,8 +431,6 @@ class ToolApiTests(unittest.TestCase):
                 box=1,
                 positions=[2],
                 frozen_at="2026/02/10",
-                auto_html=False,
-                auto_server=False,
             )
             self.assertFalse(bad_date["ok"])
             self.assertEqual("invalid_date", bad_date["error_code"])
@@ -489,8 +442,6 @@ class ToolApiTests(unittest.TestCase):
                 box=99,
                 positions=[2],
                 frozen_at="2026-02-10",
-                auto_html=False,
-                auto_server=False,
             )
             self.assertFalse(bad_box["ok"])
             self.assertEqual("invalid_box", bad_box["error_code"])
@@ -500,8 +451,6 @@ class ToolApiTests(unittest.TestCase):
                 record_id=1,
                 position=999,
                 date_str="2026-02-10",
-                auto_html=False,
-                auto_server=False,
             )
             self.assertFalse(bad_pos["ok"])
             self.assertEqual("invalid_position", bad_pos["error_code"])
@@ -536,7 +485,7 @@ class ToolApiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_rollback_guard_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             good = make_data([make_record(1, box=1, positions=[1])])
-            write_yaml(good, path=str(yaml_path), auto_html=False, auto_server=False)
+            write_yaml(good, path=str(yaml_path))
 
             bad_backup = Path(temp_dir) / "manual_invalid_backup.yaml"
             bad_payload = make_data([make_record(1, box=99, positions=[1])])
@@ -572,14 +521,12 @@ class ToolApiTests(unittest.TestCase):
                             "plasmid_name": "pX",
                             "plasmid_id": "p2",
                             "box": 2,
-                            "positions": [10, 11],
+                            "positions": [10],
                             "frozen_at": "2026-02-10",
                         },
                     ]
                 ),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -607,8 +554,6 @@ class ToolApiTests(unittest.TestCase):
                     ]
                 ),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -629,8 +574,6 @@ class ToolApiTests(unittest.TestCase):
             write_yaml(
                 make_data([rec]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -665,8 +608,6 @@ class ToolApiTests(unittest.TestCase):
             write_yaml(
                 make_data([rec]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
             )
 
             response = tool_collect_timeline(str(yaml_path), all_history=True)
@@ -679,10 +620,12 @@ class ToolApiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_misc_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1, 2, 3])]),
+                make_data([
+                    make_record(1, box=1, positions=[1]),
+                    make_record(2, box=1, positions=[2]),
+                    make_record(3, box=1, positions=[3]),
+                ]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 

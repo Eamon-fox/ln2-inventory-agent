@@ -2,131 +2,51 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-> 先说明：这个项目本质上是 **Claude Code 的 agent skill**（见 `SKILL.md`），同时也可以独立作为 Python CLI 工具运行。
+> 本项目首先是一个 **Claude Code agent skill**（见 `SKILL.md`），同时也可作为独立的 **桌面 GUI** 和 **Python 库** 使用。
 
-用于管理液氮罐库存的命令行工具。支持记录冻存细胞样本、复苏/取出操作以及多盒位点占用情况。
+液氮（LN2）冻存库存管理工具。数据存放在单一 YAML 文件中；所有写操作都会经过校验、自动备份，并写入追加式 JSONL 审计日志。
 
-数据保存在单个 YAML 文件中，所有操作都通过带校验的脚本完成，不需要手动改 YAML。
+## 特性
 
-## 功能
-
-- **新增 / 查询 / 搜索** 冻存记录
-- **记录复苏/取出**（单条或批量），并写入审计日志
-- **位点管理**：冲突检测、空位查询、智能推荐位点
-- **统计分析**：按盒占用率、细胞系分布、ASCII 网格可视化
-- **备份与回滚**：自动时间戳备份，一键恢复
-- **审计日志**：所有修改写入 JSONL
-- **完全可配置**：盒子数量、网格大小、位置范围、细胞系白名单均可通过 JSON 配置
-- **统一 Tool API**：CLI、GUI、AI agent 共用一套工具接口
-- **GUI 起步版**：`app_gui/` 提供桌面端查询/新增/取出面板
-- **ReAct 运行时**：`agent/` 提供 AI agent 循环与工具调度
+- Tube 级数据模型（一个 `inventory[]` 记录 == 一支物理冻存管）
+- 添加、查询、搜索
+- 取出 / 复苏 / 扔掉 / 移动（单条与批量）
+- 位置冲突检查、空位列表、占用统计
+- 备份与回滚 + 审计日志
+- 统一 Tool API（GUI 与 AI Copilot 共用）
 
 ## 快速开始
 
 ```bash
-# 1. 安装依赖
-pip install pyyaml
-
-# 2. 初始化样例数据（也可以从空文件开始）
+python -m pip install -r requirements.txt
 cp references/ln2_inventory.sample.yaml ln2_inventory.yaml
 
-# 3. 运行几个命令试用
-python scripts/stats.py --visual
-python scripts/smart_search.py "K562" --keywords
-python scripts/query_inventory.py --empty --box 1
-python scripts/recommend_position.py --count 3
-```
+# GUI（可选）
+pip install PySide6
+python app_gui/main.py
 
-## 使用示例
-
-### 新增冻存记录
-
-```bash
-python scripts/add_entry.py \
-  --parent-cell-line "K562" \
-  --short-name "RTCB-dTAG-clone12" \
-  --box 1 --positions "30,31" \
-  --frozen-at "2026-01-08" \
-  --plasmid-name "pGEMT-N-RTCB-dTAG" \
-  --note "homozygous clone"
-```
-
-### 记录复苏 / 取出
-
-```bash
-# 单条
-python scripts/record_thaw.py --id 5 --position 30 --date 2026-02-01
-
-# 批量
-python scripts/batch_thaw.py --entries "5:30,6:12" --date 2026-02-01 --action 复苏
-
-# 移动整理（真实换位/搬移；目标被占用时自动换位）
-python scripts/record_thaw.py --id 5 --position 30 --to-position 31 --date 2026-02-01 --action move --note "整理换位"
-```
-
-### 查询
-
-```bash
-python scripts/smart_search.py "dTAG" --keywords --raw
-python scripts/query_recent.py --frozen --days 30
-python scripts/query_thaw.py --days 7
-python scripts/timeline.py --days 30 --summary
-```
-
-### 备份与回滚
-
-```bash
-python scripts/rollback.py --list
-python scripts/rollback.py  # 回滚到最新备份
+# 测试
+pytest -q
 ```
 
 ## 配置
 
-默认情况下，脚本会在当前目录查找 `ln2_inventory.yaml`。
-如需自定义路径或参数，创建 JSON 配置文件并通过环境变量指定：
+运行时配置是可选的。默认从当前工作目录读取 `ln2_inventory.yaml`。
+
+如需自定义路径或 schema 范围：
 
 ```bash
 export LN2_CONFIG_FILE=/path/to/my_config.json
 ```
 
-完整配置项见：[`references/ln2_config.sample.json`](references/ln2_config.sample.json)
+可用配置项见 `references/ln2_config.sample.json`（`yaml_path`、`schema.box_range`、`schema.position_range`、`safety.*` 等）。
 
-- `yaml_path`：库存文件路径
-- `schema.box_range`：盒子范围（默认 `[1, 5]`）
-- `schema.position_range`：每盒位置范围（默认 `[1, 81]`，即 9x9）
-- `schema.valid_cell_lines`：可选白名单（空列表表示允许任意细胞系）
-- `schema.valid_actions`：操作类型（`取出`、`复苏`、`扔掉`、`移动`）
-- `safety.*`：备份保留数、告警阈值等
-
-## 作为 Claude Code Skill 使用
-
-该项目也可以作为 [Claude Code](https://claude.ai/code) skill 使用。AI agent 集成说明见 [`SKILL.md`](SKILL.md)。
-
-## GUI（M2 起步）
+## AI Copilot（DeepSeek）
 
 ```bash
-pip install PySide6
-python app_gui/main.py
-```
-
-GUI 默认行为与配置位置：
-
-- 默认模型是 **`deepseek-chat`**
-- GUI 配置文件：**`~/.ln2agent/config.yaml`**
-- 打包/冻结运行时，示例数据会复制到 **`~/.ln2agent/demo/ln2_inventory.demo.yaml`**，方便直接看到和编辑
-
-如果没有配置 `DEEPSEEK_API_KEY`，GUI 会在聊天区直接提示配置位置，包括：
-
-- 环境变量：`DEEPSEEK_API_KEY`
-- 认证文件（opencode）：`~/.local/share/opencode/auth.json`（或 `OPENCODE_AUTH_FILE` 指定路径）
-
-## ReAct Agent 运行时
-
-```bash
-# 真实模型模式（DeepSeek 原生解析）
 export DEEPSEEK_API_KEY="<your-key>"
-export DEEPSEEK_MODEL="deepseek-chat"
-python agent/run_agent.py "把 ID 10 的位置 23 标记为取出，日期今天"
+export DEEPSEEK_MODEL="deepseek-chat"   # 可选
+python agent/run_agent.py "把 ID 10 标记为今天取出"
 ```
 
 ## 打包（Windows EXE）
@@ -136,44 +56,34 @@ pip install pyinstaller
 pyinstaller ln2_inventory.spec
 ```
 
-`ln2_inventory.spec` 现在默认产出 **one-dir** 结构：`dist/LN2InventoryAgent/`。
-
-- 目录里会包含 `LN2InventoryAgent.exe` 和配套资源（含 `demo/ln2_inventory.demo.yaml`）。
-- 如果使用 one-file（`pyinstaller -F ...`），资源会在运行时解压到临时目录（`_MEIPASS`），所以你会看到“孤零零一个 exe”，demo 文件路径也不直观。
-- 别人双击后先出现“安装向导”通常是额外打了安装包。这个仓库现在已提供 Inno Setup 脚本来生成安装程序。
-
-### 生成 Setup.exe（Inno Setup）
-
-脚本路径：`installer/windows/LN2InventoryAgent.iss`
+Inno Setup 脚本：`installer/windows/LN2InventoryAgent.iss`
 
 ```bat
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\windows\LN2InventoryAgent.iss
+"C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe" installer\\windows\\LN2InventoryAgent.iss
 ```
 
-- 输入目录：`dist/LN2InventoryAgent/`（先用 PyInstaller 生成）
-- 输出文件：`dist/installer/LN2InventoryAgent-Setup-<version>.exe`
-- 可选版本覆盖：运行 `ISCC` 前设置环境变量 `LN2_AGENT_VERSION`
-- 可选辅助脚本：`scripts/windows/build_installer.bat`
+可选辅助脚本：`installer/windows/build_installer.bat`
 
 ## 项目结构
 
-```text
-scripts/          # 15 个 CLI 脚本（查询、修改、工具）
-lib/              # 公共库（配置、YAML 操作、校验）
-agent/            # ReAct runtime、工具调度、LLM 适配
-app_gui/          # 桌面 GUI 脚手架
+```
+lib/              # 共享库（Tool API、YAML I/O、校验）
+app_gui/          # 桌面 GUI（PySide6）
+agent/            # ReAct 运行时与工具调度
 tests/            # 单元测试（pytest）
-references/       # 示例文件和文档
+references/       # 示例文件与文档
+demo/             # 打包用 demo 数据集
+installer/        # Windows 安装包资源（Inno Setup）
 SKILL.md          # Claude Code skill 定义
 ```
 
-## 环境要求
+## 依赖
 
 - Python 3.8+
-- PyYAML
+- PyYAML（`requirements.txt`）
 - 可选：PySide6（GUI）
-- 可选：DEEPSEEK_API_KEY（真实模型 agent 模式）
+- 可选：`DEEPSEEK_API_KEY`（真实模型 AI Copilot）
 
-## 许可证
+## License
 
 MIT

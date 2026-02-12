@@ -371,8 +371,6 @@ def append_audit_event(
 def write_yaml(
     data,
     path=YAML_PATH,
-    auto_html=None,
-    auto_server=None,
     auto_backup=True,
     audit_meta=None,
 ):
@@ -381,16 +379,11 @@ def write_yaml(
     Args:
         data: Inventory data dict
         path: YAML output path
-        auto_html: Deprecated/ignored (kept for compatibility)
-        auto_server: Deprecated/ignored (kept for compatibility)
         auto_backup: Whether to create backup before overwrite
         audit_meta: Optional dict for audit fields.
             Common keys: action/source/details, plus actor_type, actor_id,
             channel, session_id, trace_id, tool_name, tool_input, status, error.
     """
-    _ = auto_html
-    _ = auto_server
-
     yaml_abs = _abs_path(path)
 
     _ensure_inventory_integrity(data, prefix="写入被阻止：库存完整性校验失败")

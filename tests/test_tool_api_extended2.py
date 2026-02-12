@@ -66,8 +66,6 @@ class RecentFrozenTests(unittest.TestCase):
                     make_record(3, frozen_at="2026-01-30", positions=[3]),
                 ]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -86,8 +84,6 @@ class RecentFrozenTests(unittest.TestCase):
                     make_record(3, positions=[3]),
                 ]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -102,8 +98,6 @@ class RecentFrozenTests(unittest.TestCase):
             write_yaml(
                 make_data([]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -118,8 +112,6 @@ class RecentFrozenTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, frozen_at="2024-01-01")]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -141,12 +133,11 @@ class RecommendPositionsTests(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
                 make_data([
-                    make_record(1, box=1, positions=[50, 51]),
-                    make_record(2, box=2, positions=[1]),
+                    make_record(1, box=1, positions=[50]),
+                    make_record(2, box=1, positions=[51]),
+                    make_record(3, box=2, positions=[1]),
                 ]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -160,10 +151,12 @@ class RecommendPositionsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1, 3, 5])]),
+                make_data([
+                    make_record(1, box=1, positions=[1]),
+                    make_record(2, box=1, positions=[3]),
+                    make_record(3, box=1, positions=[5]),
+                ]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -176,10 +169,11 @@ class RecommendPositionsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1, 9])]),
+                make_data([
+                    make_record(1, box=1, positions=[1]),
+                    make_record(2, box=1, positions=[9]),
+                ]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -193,8 +187,6 @@ class RecommendPositionsTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, box=1, positions=[1])]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -208,10 +200,8 @@ class RecommendPositionsTests(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             # Fill box 1
             write_yaml(
-                make_data([make_record(1, box=1, positions=list(range(1, 82)))]),
+                make_data([make_record(i, box=1, positions=[i]) for i in range(1, 82)]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -236,8 +226,6 @@ class QueryInventoryExtendedTests(unittest.TestCase):
                     make_record(2, box=2, parent_cell_line="K562"),
                 ]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -253,8 +241,6 @@ class QueryInventoryExtendedTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, parent_cell_line="k562")]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -272,12 +258,11 @@ class QueryInventoryExtendedTests(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
                 make_data([
-                    make_record(1, box=1, positions=[5, 10]),
-                    make_record(2, box=1, positions=[15]),
+                    make_record(1, box=1, positions=[5]),
+                    make_record(2, box=1, positions=[10]),
+                    make_record(3, box=1, positions=[15]),
                 ]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -295,8 +280,6 @@ class QueryInventoryExtendedTests(unittest.TestCase):
                     make_record(2, box=1, positions=[2], plasmid_name="pY"),
                 ]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -311,8 +294,6 @@ class QueryInventoryExtendedTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, parent_cell_line="NCCIT")]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -340,8 +321,6 @@ class QueryThawEventsExtendedTests(unittest.TestCase):
             write_yaml(
                 make_data([rec]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -363,8 +342,6 @@ class QueryThawEventsExtendedTests(unittest.TestCase):
             write_yaml(
                 make_data([rec]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -378,15 +355,13 @@ class QueryThawEventsExtendedTests(unittest.TestCase):
         """Test max_records parameter."""
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
-            rec = make_record(1, box=1, positions=list(range(1, 11)))
+            rec = make_record(1, box=1, positions=[1])
             rec["thaw_events"] = [
                 {"date": f"2026-01-{i:02d}", "action": "takeout", "positions": [i]} for i in range(1, 11)
             ]
             write_yaml(
                 make_data([rec]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -398,7 +373,7 @@ class QueryThawEventsExtendedTests(unittest.TestCase):
         """Test querying for all action types."""
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
-            rec = make_record(1, box=1, positions=[1, 2, 3, 5])
+            rec = make_record(1, box=1, positions=[5])
             rec["thaw_events"] = [
                 {"date": "2026-01-10", "action": "takeout", "positions": [1]},
                 {"date": "2026-01-15", "action": "thaw", "positions": [2]},
@@ -408,8 +383,6 @@ class QueryThawEventsExtendedTests(unittest.TestCase):
             write_yaml(
                 make_data([rec]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -437,8 +410,6 @@ class CollectTimelineExtendedTests(unittest.TestCase):
             write_yaml(
                 make_data([rec]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -458,8 +429,6 @@ class CollectTimelineExtendedTests(unittest.TestCase):
             write_yaml(
                 make_data([rec]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -474,8 +443,6 @@ class CollectTimelineExtendedTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1)]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -495,10 +462,11 @@ class GenerateStatsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1, 2])]),
+                make_data([
+                    make_record(1, box=1, positions=[1]),
+                    make_record(2, box=1, positions=[2]),
+                ]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -519,8 +487,6 @@ class GenerateStatsTests(unittest.TestCase):
             write_yaml(
                 make_data([]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -536,12 +502,11 @@ class GenerateStatsTests(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
                 make_data([
-                    make_record(1, box=1, positions=[1, 2]),
-                    make_record(2, box=2, positions=[3]),
+                    make_record(1, box=1, positions=[1]),
+                    make_record(2, box=1, positions=[2]),
+                    make_record(3, box=2, positions=[3]),
                 ]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
@@ -560,8 +525,6 @@ class GenerateStatsTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, box=1, positions=[1])]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 

@@ -16,9 +16,10 @@ Rules:
 5) Keep responses concise and operationally accurate.
 6) For greetings/chitchat/clarification-only turns, answer directly without calling tools.
 7) For move operations: to change a tube's box, use `to_box` parameter in record_thaw or batch_thaw.
-   When moving cross-box, move ALL positions of the record together.
+   Inventory is tube-level (one record == one physical tube; positions length <= 1).
    batch_thaw entries format for cross-box: '4:5->4:1' (id:from->to:target_box).
 8) Before asking user for missing details, first call inventory tools (e.g., query/search/list-empty) to understand current warehouse state and infer likely targets.
+9) IMPORTANT: After staging operations (e.g., via record_thaw, batch_thaw, add_entry), do NOT try to execute them. Only stage the operations and tell the user "已暂存，请人工确认执行" (staged, please confirm manually). Only the human user can execute staged operations.
 """
 
 

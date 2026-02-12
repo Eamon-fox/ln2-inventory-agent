@@ -18,7 +18,7 @@ from lib.tool_api import (
     tool_search_records,
 )
 from app_gui.plan_gate import validate_plan_batch
-from lib.plan_item_factory import build_add_plan_item, build_record_plan_item, iter_batch_entries
+from lib.plan_item_factory import build_add_plan_item, build_record_plan_item
 from lib.validators import parse_positions
 
 _WRITE_TOOLS = {"add_entry", "record_thaw", "batch_thaw"}
@@ -252,8 +252,8 @@ class AgentToolRunner:
                 "notes": "positions accepts list[int] or comma string like '1,2,3'.",
             },
             "record_thaw": {
-                "required": ["record_id", "position", "date"],
-                "optional": ["action", "to_position", "to_box", "note", "dry_run"],
+                "required": ["record_id", "date"],
+                "optional": ["position", "action", "to_position", "to_box", "note", "dry_run"],
                 "aliases": {
                     "record_id": ["id"],
                     "position": ["pos", "slot"],
@@ -261,6 +261,7 @@ class AgentToolRunner:
                     "to_box": ["target_box", "new_box", "dest_box"],
                     "note": ["notes", "memo"],
                 },
+                "notes": "If position is omitted, the tool will infer the tube's current active position by record_id (tube-level model).",
                 "params": {
                     "action": {
                         "type": "string",
@@ -279,7 +280,7 @@ class AgentToolRunner:
             "batch_thaw": {
                 "required": ["entries"],
                 "optional": ["date", "action", "to_box", "note", "dry_run"],
-                "notes": "entries can be list[[record_id, position], ...] or '182:23,183:41'; for move use '182:23->31,183:41->42'; for cross-box move use '4:5->4:1' (id:from->to:target_box) or set to_box for all entries.",
+                "notes": "entries can be list[[record_id, position], ...] or '182,183' or '182:23,183:41'; for move use '182:23->31,183:41->42'; for cross-box move use '4:5->4:1' (id:from->to:target_box) or set to_box for all entries.",
                 "params": {
                     "action": {
                         "type": "string",
@@ -435,7 +436,7 @@ class AgentToolRunner:
     # --- Plan staging (human-in-the-loop) ---
 
     def _lookup_record_info(self, record_id):
-        """Quick lookup to get (box, label) for a record ID."""
+        """Quick lookup to get (box, label, positions) for a record ID."""
         try:
             result = tool_get_raw_entries(yaml_path=self._yaml_path, ids=[record_id])
             if result.get("ok"):
@@ -444,10 +445,11 @@ class AgentToolRunner:
                     rec = entries[0]
                     box = int(rec.get("box", 0))
                     label = rec.get("short_name") or rec.get("parent_cell_line") or "-"
-                    return box, label
+                    positions = list(rec.get("positions") or [])
+                    return box, label, positions
         except Exception:
             pass
-        return 0, "-"
+        return 0, "-", []
 
     @staticmethod
     def _item_desc(item):
@@ -502,14 +504,43 @@ class AgentToolRunner:
             )
 
         elif tool_name == "record_thaw":
+            rid_raw = self._first_value(payload, "record_id", "id")
+            if rid_raw in (None, ""):
+                return self._with_hint(
+                    tool_name,
+                    {
+                        "ok": False,
+                        "error_code": "invalid_tool_input",
+                        "message": "record_id is required",
+                    },
+                )
+
             try:
-                rid = int(self._first_value(payload, "record_id", "id"))
-                pos = int(self._first_value(payload, "position", "pos", "slot"))
+                rid = int(rid_raw)
             except (ValueError, TypeError) as exc:
-                return self._with_hint(tool_name, {
-                    "ok": False, "error_code": "invalid_tool_input",
-                    "message": f"record_id and position are required integers: {exc}",
-                })
+                return self._with_hint(
+                    tool_name,
+                    {
+                        "ok": False,
+                        "error_code": "invalid_tool_input",
+                        "message": f"record_id must be an integer: {exc}",
+                    },
+                )
+
+            pos_raw = self._first_value(payload, "position", "pos", "slot")
+            pos = None
+            if pos_raw not in (None, ""):
+                try:
+                    pos = int(pos_raw)
+                except (ValueError, TypeError) as exc:
+                    return self._with_hint(
+                        tool_name,
+                        {
+                            "ok": False,
+                            "error_code": "invalid_tool_input",
+                            "message": f"position must be an integer when provided: {exc}",
+                        },
+                    )
 
             action_raw = payload.get("action", "Takeout")
             to_pos_raw = self._first_value(payload, "to_position", "to_pos", "target_position")
@@ -520,7 +551,22 @@ class AgentToolRunner:
             to_box_raw = self._first_value(payload, "to_box", "target_box", "new_box", "dest_box")
             to_box = int(to_box_raw) if to_box_raw not in (None, "") else None
 
-            box, label = self._lookup_record_info(rid)
+            box, label, positions = self._lookup_record_info(rid)
+            if pos is None:
+                if len(positions) == 1:
+                    pos = int(positions[0])
+                else:
+                    return self._with_hint(
+                        tool_name,
+                        {
+                            "ok": False,
+                            "error_code": "invalid_tool_input",
+                            "message": (
+                                f"position is missing and cannot be inferred for record_id={rid}. "
+                                f"current positions: {positions}"
+                            ),
+                        },
+                    )
 
             items.append(
                 build_record_plan_item(
@@ -561,12 +607,63 @@ class AgentToolRunner:
             batch_to_box_raw = self._first_value(payload, "to_box", "target_box", "new_box", "dest_box")
             batch_to_box = int(batch_to_box_raw) if batch_to_box_raw not in (None, "") else None
 
-            for normalized in iter_batch_entries(entries, default_to_box=batch_to_box):
-                rid = int(normalized.get("record_id", 0) or 0)
-                pos = int(normalized.get("position", 0) or 0)
-                to_pos = normalized.get("to_position")
-                to_box = normalized.get("to_box")
-                box, label = self._lookup_record_info(rid)
+            for entry in entries:
+                rid = None
+                pos = None
+                to_pos = None
+                to_box = batch_to_box
+
+                if isinstance(entry, (list, tuple)):
+                    if len(entry) >= 4:
+                        rid = int(entry[0])
+                        pos = int(entry[1])
+                        to_pos = int(entry[2])
+                        to_box = int(entry[3])
+                    elif len(entry) == 3:
+                        rid = int(entry[0])
+                        pos = int(entry[1])
+                        to_pos = int(entry[2])
+                    elif len(entry) == 2:
+                        rid = int(entry[0])
+                        pos = int(entry[1])
+                    elif len(entry) == 1:
+                        rid = int(entry[0])
+                    else:
+                        continue
+                elif isinstance(entry, dict):
+                    rid = int(entry.get("record_id", entry.get("id", 0)) or 0)
+                    raw_pos = entry.get("position")
+                    if raw_pos is None:
+                        raw_pos = entry.get("from_position")
+                    if raw_pos not in (None, ""):
+                        pos = int(raw_pos)
+                    raw_to_pos = entry.get("to_position")
+                    if raw_to_pos not in (None, ""):
+                        to_pos = int(raw_to_pos)
+                    raw_to_box = entry.get("to_box")
+                    if raw_to_box not in (None, ""):
+                        to_box = int(raw_to_box)
+                else:
+                    continue
+
+                if not rid:
+                    return self._with_hint(
+                        tool_name,
+                        {
+                            "ok": False,
+                            "error_code": "invalid_tool_input",
+                            "message": f"Invalid batch entry (missing record_id): {entry}",
+                        },
+                    )
+
+                box, label, positions = self._lookup_record_info(rid)
+                if pos is None:
+                    if len(positions) == 1:
+                        pos = int(positions[0])
+                    else:
+                        # Keep staging atomic: let plan validation reject schema-invalid rows.
+                        pos = 0
+
                 items.append(
                     build_record_plan_item(
                         action=action_raw,
@@ -801,7 +898,7 @@ class AgentToolRunner:
                 return tool_record_thaw(
                     yaml_path=self._yaml_path,
                     record_id=self._required_int(normalized, "record_id"),
-                    position=self._required_int(normalized, "position"),
+                    position=self._optional_int(normalized, "position"),
                     date_str=normalized.get("date"),
                     action=payload.get("action", "取出"),
                     to_position=(

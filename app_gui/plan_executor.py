@@ -208,7 +208,7 @@ def preflight_plan(
 
     with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False, mode="w", encoding="utf-8") as tmp:
         tmp_path = tmp.name
-        write_yaml(data, tmp_path, auto_html=False, auto_server=False, auto_backup=False, audit_meta={"action": "preflight", "source": "plan_executor"})
+        write_yaml(data, tmp_path, auto_backup=False, audit_meta={"action": "preflight", "source": "plan_executor"})
 
     try:
         result = run_plan(
@@ -287,7 +287,7 @@ def run_plan(
         else:
             reports.append(_make_error_item(item, response.get("error_code", "add_failed"), response.get("message", "Add failed")))
 
-    # Phase 2: move operations (holistic validation, batch first, fallback to individual)
+    # Phase 2: move operations (holistic validation, then execute as a single batch)
     moves = [it for it in remaining if it.get("action") == "move"]
     if moves:
         try:
@@ -311,7 +311,7 @@ def run_plan(
         valid_moves = [it for it in moves if id(it) not in error_by_item]
 
         if valid_moves:
-            batch_ok, batch_reports = _execute_moves_batch_then_fallback(
+            batch_ok, batch_reports = _execute_moves_batch(
                 yaml_path=yaml_path,
                 items=valid_moves,
                 bridge=bridge,
@@ -326,13 +326,13 @@ def run_plan(
                     if r.get("response", {}).get("backup_path"):
                         last_backup = r["response"]["backup_path"]
 
-    # Phase 3: takeout/thaw/discard operations (batch first, fallback to individual)
+    # Phase 3: takeout/thaw/discard operations (execute as a single batch per action)
     for action_name in ("Takeout", "Thaw", "Discard"):
         action_items = [it for it in remaining if it.get("action") == action_name.lower()]
         if not action_items:
             continue
 
-        batch_ok, batch_reports = _execute_thaw_batch_then_fallback(
+        batch_ok, batch_reports = _execute_thaw_batch(
             yaml_path=yaml_path,
             items=action_items,
             action_name=action_name,
@@ -394,8 +394,6 @@ def _run_dry_tool(
         dry_run=True,
         actor_context=actor_context,
         source="plan_executor",
-        auto_html=False,
-        auto_server=False,
         auto_backup=False,
         **payload,
     )
@@ -418,21 +416,6 @@ def _preflight_add_entry(bridge: object, yaml_path: str, payload: Dict[str, obje
     )
 
 
-def _preflight_record_thaw(bridge: object, yaml_path: str, payload: Dict[str, object]) -> Dict[str, object]:
-    """Validate record_thaw without writing (using dry_run semantics)."""
-    return _run_dry_tool(
-        bridge=bridge,
-        yaml_path=yaml_path,
-        tool_name="tool_record_thaw",
-        record_id=payload.get("record_id"),
-        position=payload.get("position"),
-        to_position=payload.get("to_position"),
-        to_box=payload.get("to_box"),
-        date_str=payload.get("date_str"),
-        action=payload.get("action", "Takeout"),
-        note=payload.get("note"),
-    )
-
 def _preflight_batch_thaw(bridge: object, yaml_path: str, payload: Dict[str, object]) -> Dict[str, object]:
     """Validate batch_thaw without writing (using dry_run semantics)."""
     return _run_dry_tool(
@@ -446,7 +429,7 @@ def _preflight_batch_thaw(bridge: object, yaml_path: str, payload: Dict[str, obj
     )
 
 
-def _execute_moves_batch_then_fallback(
+def _execute_moves_batch(
     yaml_path: str,
     items: List[Dict[str, object]],
     bridge: object,
@@ -454,7 +437,7 @@ def _execute_moves_batch_then_fallback(
     mode: str,
     skip_target_check: bool = False,
 ) -> Tuple[bool, List[Dict[str, object]]]:
-    """Execute move operations: batch first, fallback to individual on failure."""
+    """Execute move operations using a single batch strategy."""
     reports: List[Dict[str, object]] = []
 
     entries = []
@@ -487,35 +470,19 @@ def _execute_moves_batch_then_fallback(
             reports.append(_make_ok_item(item, response))
         return True, reports
 
-    # Batch failed - try each individually
-    all_ok = True
+    # Batch failed - mark all as blocked (no fallback).
     for item in items:
-        p = item.get("payload") or {}
-        single_payload = {
-            "record_id": p.get("record_id"),
-            "position": p.get("position"),
-            "to_position": p.get("to_position"),
-            "to_box": p.get("to_box"),
-            "date_str": p.get("date_str", date_str),
-            "action": "Move",
-            "note": p.get("note"),
-        }
-
-        if mode == "preflight":
-            single = _preflight_record_thaw(bridge, yaml_path, single_payload)
-        else:
-            single = bridge.record_thaw(yaml_path=yaml_path, **single_payload)
-
-        if single.get("ok"):
-            reports.append(_make_ok_item(item, single))
-        else:
-            reports.append(_make_error_item(item, single.get("error_code", "move_failed"), single.get("message", "Move failed")))
-            all_ok = False
-
-    return all_ok, reports
+        reports.append(
+            _make_error_item(
+                item,
+                response.get("error_code", "move_batch_failed"),
+                response.get("message", "Move batch failed"),
+            )
+        )
+    return False, reports
 
 
-def _execute_thaw_batch_then_fallback(
+def _execute_thaw_batch(
     yaml_path: str,
     items: List[Dict[str, object]],
     action_name: str,
@@ -523,8 +490,42 @@ def _execute_thaw_batch_then_fallback(
     date_str: str,
     mode: str,
 ) -> Tuple[bool, List[Dict[str, object]]]:
-    """Execute takeout/thaw/discard operations: batch first, fallback to individual on failure."""
+    """Execute takeout/thaw/discard operations.
+
+    - Preflight: validate each item individually for precise error reporting.
+    - Execute: run as a single batch (no fallback).
+    """
     reports: List[Dict[str, object]] = []
+
+    if mode == "preflight":
+        all_ok = True
+        for item in items:
+            p = item.get("payload") or {}
+            single_payload = {
+                "record_id": p.get("record_id"),
+                "position": p.get("position"),
+                "date_str": p.get("date_str", date_str),
+                "action": action_name,
+                "note": p.get("note"),
+            }
+            response = _run_dry_tool(
+                bridge=bridge,
+                yaml_path=yaml_path,
+                tool_name="tool_record_thaw",
+                **single_payload,
+            )
+            if response.get("ok"):
+                reports.append(_make_ok_item(item, response))
+            else:
+                reports.append(
+                    _make_error_item(
+                        item,
+                        response.get("error_code", "thaw_failed"),
+                        response.get("message", "Operation failed"),
+                    )
+                )
+                all_ok = False
+        return all_ok, reports
 
     entries = []
     for item in items:
@@ -540,37 +541,20 @@ def _execute_thaw_batch_then_fallback(
         "note": first_payload.get("note"),
     }
 
-    if mode == "preflight":
-        response = _preflight_batch_thaw(bridge, yaml_path, batch_payload)
-    else:
-        response = bridge.batch_thaw(yaml_path=yaml_path, **batch_payload)
+    response = bridge.batch_thaw(yaml_path=yaml_path, **batch_payload)
 
     if response.get("ok"):
         for item in items:
             reports.append(_make_ok_item(item, response))
         return True, reports
 
-    # Batch failed - try each individually
-    all_ok = True
+    # Batch failed - mark all as blocked (no fallback).
     for item in items:
-        p = item.get("payload") or {}
-        single_payload = {
-            "record_id": p.get("record_id"),
-            "position": p.get("position"),
-            "date_str": p.get("date_str", date_str),
-            "action": action_name,
-            "note": p.get("note"),
-        }
-
-        if mode == "preflight":
-            single = _preflight_record_thaw(bridge, yaml_path, single_payload)
-        else:
-            single = bridge.record_thaw(yaml_path=yaml_path, **single_payload)
-
-        if single.get("ok"):
-            reports.append(_make_ok_item(item, single))
-        else:
-            reports.append(_make_error_item(item, single.get("error_code", "thaw_failed"), single.get("message", "Operation failed")))
-            all_ok = False
-
-    return all_ok, reports
+        reports.append(
+            _make_error_item(
+                item,
+                response.get("error_code", "thaw_batch_failed"),
+                response.get("message", "Batch operation failed"),
+            )
+        )
+    return False, reports

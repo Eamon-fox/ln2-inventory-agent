@@ -84,8 +84,6 @@ class ReactAgentTests(unittest.TestCase):
                     }
                 ]),
                 path=str(yaml_path),
-                auto_html=False,
-                auto_server=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
