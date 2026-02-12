@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from app_gui.ui.utils import positions_to_text
 from app_gui.plan_model import render_operation_sheet
 from app_gui.plan_gate import validate_plan_batch
+from app_gui.plan_outcome import summarize_plan_execution
 from app_gui.audit_guide import build_operation_guide_from_audit_events
 from app_gui.plan_executor import preflight_plan, run_plan
 from lib.tool_api import parse_batch_entries
@@ -1362,8 +1363,8 @@ class OperationsPanel(QWidget):
             self.status_message.emit("No items in plan to execute.", 3000, "error")
             return
 
-        if not self._plan_preflight_report:
-            self._run_plan_preflight(trigger="execute")
+        # Always re-run preflight right before execution to avoid stale validation.
+        self._run_plan_preflight(trigger="execute")
 
         if self._plan_preflight_report and self._plan_preflight_report.get("blocked"):
             blocked_count = self._plan_preflight_report.get("stats", {}).get("blocked", 0)
@@ -1410,12 +1411,20 @@ class OperationsPanel(QWidget):
         results = []
         for r in report.get("items", []):
             status = "OK" if r.get("ok") else "FAIL"
-            results.append((status, r.get("item"), r.get("response") or {}))
+            info = r.get("response") or {}
+            if status == "FAIL":
+                info = {
+                    "message": r.get("message"),
+                    "error_code": r.get("error_code"),
+                }
+            results.append((status, r.get("item"), info))
 
         remaining = report.get("remaining_items", [])
         fail_count = sum(1 for r in results if r[0] == "FAIL")
+        rollback_info = None
 
         if fail_count:
+            rollback_info = self._attempt_atomic_rollback(yaml_path, results)
             self.plan_items = original_plan
         elif remaining:
             self.plan_items = remaining
@@ -1426,14 +1435,24 @@ class OperationsPanel(QWidget):
         self._refresh_plan_table()
         self._update_plan_badge()
         self._update_execute_button_state()
-        self._show_plan_result(results, remaining)
+        execution_stats = summarize_plan_execution(report, rollback_info)
+        self._show_plan_result(
+            results,
+            remaining,
+            report=report,
+            rollback_info=rollback_info,
+        )
 
         executed_items = [r[1] for r in results if r[0] == "OK"]
+        if execution_stats.get("rollback_ok"):
+            executed_items = []
         if executed_items:
             self._last_printable_plan = list(executed_items)
 
-        if any(r[0] == "OK" for r in results):
+        if report.get("ok") and any(r[0] == "OK" for r in results):
             self.operation_completed.emit(True)
+        elif fail_count:
+            self.operation_completed.emit(False)
 
         last_backup = report.get("backup_path")
         if last_backup and executed_items:
@@ -1445,34 +1464,135 @@ class OperationsPanel(QWidget):
             "type": "plan_executed",
             "source": "operations_panel",
             "ok": report.get("ok"),
-            "stats": report.get("stats"),
-            "summary": report.get("summary"),
+            "stats": {
+                **(report.get("stats") or {}),
+                "applied": execution_stats.get("applied_count", 0),
+                "failed": execution_stats.get("fail_count", 0),
+                "rolled_back": bool(execution_stats.get("rollback_ok")),
+            },
+            "summary": self._build_execution_summary_text(execution_stats),
+            "report": report,
+            "rollback": rollback_info,
         })
+
+    def _attempt_atomic_rollback(self, yaml_path, results):
+        """Best-effort rollback to the first backup of this execute run."""
+        first_backup = None
+        for status, _item, info in results:
+            if status != "OK" or not isinstance(info, dict):
+                continue
+            backup_path = info.get("backup_path")
+            if backup_path:
+                first_backup = backup_path
+                break
+
+        if not first_backup:
+            return {
+                "attempted": False,
+                "ok": False,
+                "message": "No rollback backup found for this execution.",
+            }
+
+        rollback_fn = getattr(self.bridge, "rollback", None)
+        if not callable(rollback_fn):
+            return {
+                "attempted": False,
+                "ok": False,
+                "message": "Bridge does not support rollback.",
+                "backup_path": first_backup,
+            }
+
+        try:
+            response = rollback_fn(yaml_path=yaml_path, backup_path=first_backup)
+        except Exception as exc:
+            return {
+                "attempted": True,
+                "ok": False,
+                "message": f"Rollback exception: {exc}",
+                "backup_path": first_backup,
+            }
+
+        payload = response if isinstance(response, dict) else {}
+        if payload.get("ok"):
+            self.status_message.emit("Execution failed; rolled back all changes.", 5000, "warning")
+            return {
+                "attempted": True,
+                "ok": True,
+                "message": "Execution failed; rolled back all changes.",
+                "backup_path": first_backup,
+            }
+
+        return {
+            "attempted": True,
+            "ok": False,
+            "message": payload.get("message", "Rollback failed."),
+            "error_code": payload.get("error_code"),
+            "backup_path": first_backup,
+        }
 
     def _emit_operation_event(self, event):
         """Emit an operation event for AI panel to consume."""
         event["timestamp"] = datetime.now().isoformat()
         self.operation_event.emit(event)
 
-    def _show_plan_result(self, results, remaining):
-        ok_count = sum(1 for r in results if r[0] == "OK")
-        fail_count = sum(1 for r in results if r[0] == "FAIL")
+    def _build_execution_summary_text(self, execution_stats):
+        """Build a user-facing summary for execution event payloads."""
+        if execution_stats.get("fail_count", 0) <= 0:
+            applied = execution_stats.get("applied_count", 0)
+            total = execution_stats.get("total_count", 0)
+            return f"Applied: {applied}/{total} operation(s)."
+
+        total = execution_stats.get("total_count", 0)
+        fail = execution_stats.get("fail_count", 0)
+        applied = execution_stats.get("applied_count", 0)
+        if execution_stats.get("rollback_ok"):
+            return f"Rejected atomically: {fail}/{total} failed; rollback restored state (0 applied)."
+
+        rollback_message = execution_stats.get("rollback_message", "")
+        if execution_stats.get("rollback_attempted"):
+            suffix = f" Rollback failed: {rollback_message}" if rollback_message else ""
+        elif rollback_message:
+            suffix = f" Rollback unavailable: {rollback_message}"
+        else:
+            suffix = ""
+        return f"Execution failed: {fail}/{total} failed, {applied} applied.{suffix}"
+
+    def _show_plan_result(self, results, remaining, report=None, rollback_info=None):
+        execution_stats = summarize_plan_execution(report, rollback_info)
+        ok_count = execution_stats.get("ok_count", sum(1 for r in results if r[0] == "OK"))
+        fail_count = execution_stats.get("fail_count", sum(1 for r in results if r[0] == "FAIL"))
+        applied_count = execution_stats.get("applied_count", ok_count)
 
         if fail_count:
             fail_item = [r for r in results if r[0] == "FAIL"][-1]
             error_msg = fail_item[2].get("message", "Unknown error")
+            title_html = "<b style='color: #ef4444;'>Plan execution stopped</b>"
+            if execution_stats.get("rollback_ok"):
+                title_html = "<b style='color: #f59e0b;'>Plan execution failed and was rolled back</b>"
             lines = [
-                "<b style='color: #ef4444;'>Plan execution stopped</b>",
-                f"Completed: {ok_count}, Failed: {fail_count}",
+                title_html,
+                f"Attempted OK: {ok_count}, Failed: {fail_count}, Applied: {applied_count}",
                 f"Error: {error_msg}",
-                "<span style='color: #94a3b8;'>Original plan preserved. Use Undo to rollback, then re-execute.</span>",
+                "<span style='color: #94a3b8;'>Original plan preserved for retry.</span>",
             ]
+            if isinstance(rollback_info, dict) and rollback_info:
+                if execution_stats.get("rollback_ok"):
+                    lines.append("<span style='color: #22c55e;'>Rollback applied: partial changes reverted.</span>")
+                elif execution_stats.get("rollback_attempted"):
+                    lines.append(
+                        f"<span style='color: #ef4444;'>Rollback failed: {rollback_info.get('message', 'unknown error')}</span>"
+                    )
+                elif execution_stats.get("rollback_message"):
+                    lines.append(
+                        f"<span style='color: #f59e0b;'>Rollback unavailable: {execution_stats.get('rollback_message')}</span>"
+                    )
             self.result_summary.setText("<br/>".join(lines))
-            self.result_card.setStyleSheet("QGroupBox { border: 1px solid #ef4444; }")
+            border_color = "#f59e0b" if execution_stats.get("rollback_ok") else "#ef4444"
+            self.result_card.setStyleSheet(f"QGroupBox {{ border: 1px solid {border_color}; }}")
         else:
             lines = [
                 "<b style='color: #22c55e;'>Plan executed successfully</b>",
-                f"Completed: {ok_count} operation(s)",
+                f"Applied: {applied_count} operation(s)",
             ]
             self.result_summary.setText("<br/>".join(lines))
             self.result_card.setStyleSheet("QGroupBox { border: 1px solid #22c55e; }")

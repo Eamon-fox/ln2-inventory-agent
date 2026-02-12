@@ -1124,6 +1124,28 @@ class _ConfigurableBridge(_FakeOperationsBridge):
         return super().record_thaw(yaml_path, **payload)
 
 
+class _RollbackAwareBridge(_ConfigurableBridge):
+    """Configurable bridge with rollback tracking and per-record backups."""
+
+    def __init__(self):
+        super().__init__()
+        self.rollback_called = False
+        self.rollback_backup_path = None
+
+    def record_thaw(self, yaml_path, **payload):
+        response = super().record_thaw(yaml_path, **payload)
+        if response.get("ok"):
+            rid = payload.get("record_id")
+            response = dict(response)
+            response["backup_path"] = f"/tmp/bak_{rid}.yaml"
+        return response
+
+    def rollback(self, yaml_path, backup_path=None):
+        self.rollback_called = True
+        self.rollback_backup_path = backup_path
+        return {"ok": True, "message": "Rolled back", "backup_path": backup_path}
+
+
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
 class PlanDedupRegressionTests(unittest.TestCase):
     """Regression: add_plan_items should deduplicate by (action, record_id, position)."""
@@ -1855,6 +1877,33 @@ class OperationEventFeedTests(unittest.TestCase):
         self.assertIn("blocked", chat_text)
         self.assertIn("2", chat_text)
 
+    def test_ai_panel_shows_plan_executed_failure_details(self):
+        """Failed plan_executed event should surface blocked details and rollback."""
+        panel = self._new_ai_panel()
+
+        panel.on_operation_event({
+            "type": "plan_executed",
+            "timestamp": "2026-02-12T10:00:00",
+            "ok": False,
+            "stats": {"total": 3, "ok": 2, "blocked": 1},
+            "summary": "Blocked: 1/3 items cannot execute.",
+            "report": {
+                "items": [
+                    {
+                        "blocked": True,
+                        "message": "Record 2 failed",
+                        "item": {"record_id": 2},
+                    }
+                ]
+            },
+            "rollback": {"attempted": True, "ok": True},
+        })
+
+        chat_text = panel.ai_chat.toPlainText().lower()
+        self.assertIn("rejected atomically", chat_text)
+        self.assertIn("record 2 failed", chat_text)
+        self.assertIn("rollback", chat_text)
+
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
 class ExecuteFailurePreservesPlanTests(unittest.TestCase):
@@ -1911,6 +1960,26 @@ class ExecuteFailurePreservesPlanTests(unittest.TestCase):
         self.assertEqual(2, len(panel.plan_items))
         preserved_ids = [item["record_id"] for item in panel.plan_items]
         self.assertEqual(original_ids, preserved_ids)
+
+    def test_execute_partial_failure_attempts_atomic_rollback(self):
+        """Partial execute failure should rollback to first successful backup."""
+        bridge = _RollbackAwareBridge()
+        bridge.batch_should_fail = True
+        bridge.record_thaw_fail_ids = {2}
+        panel = self._new_panel(bridge)
+
+        items = [
+            _make_takeout_item(record_id=1, position=5),
+            _make_takeout_item(record_id=2, position=10),
+        ]
+        panel.add_plan_items(items)
+
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        self.assertTrue(bridge.rollback_called)
+        self.assertEqual("/tmp/bak_1.yaml", bridge.rollback_backup_path)
 
     def test_execute_success_clears_plan(self):
         """When all items succeed, plan should be cleared."""

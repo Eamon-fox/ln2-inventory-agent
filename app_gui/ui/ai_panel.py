@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 )
 from app_gui.ui.workers import AgentRunWorker
 from app_gui.ui.utils import compact_json
+from app_gui.plan_outcome import collect_blocked_items, summarize_plan_execution
 from lib.config import AUDIT_LOG_FILE
 import os
 import json
@@ -758,9 +759,9 @@ class AIPanel(QWidget):
         details_json = json.dumps(event, ensure_ascii=False, indent=2)
 
         if event_type == "plan_execute_blocked":
-            blocked_count = event.get("blocked_count", 0)
             report = event.get("report", {})
-            blocked_items = [r for r in report.get("items", []) if r.get("blocked")]
+            blocked_items = collect_blocked_items(report)
+            blocked_count = event.get("blocked_count", len(blocked_items))
             summary_lines = [f"**Plan blocked**: {blocked_count} item(s) have validation errors"]
             for item in blocked_items[:3]:
                 rec = item.get("item", {})
@@ -772,12 +773,46 @@ class AIPanel(QWidget):
             self._append_chat_with_collapsible("System", summary_text, details_json)
 
         elif event_type == "plan_executed":
-            stats = event.get("stats", {})
-            ok = event.get("ok", False)
-            status = "succeeded" if ok else "had issues"
-            ok_count = stats.get("ok", 0)
-            total_count = stats.get("total", 0)
-            summary_text = f"**Plan executed {status}**: {ok_count}/{total_count} operations completed"
+            event_stats = event.get("stats") if isinstance(event.get("stats"), dict) else {}
+            report = event.get("report")
+            if not isinstance(report, dict):
+                report = {"stats": event_stats, "items": []}
+            elif not isinstance(report.get("stats"), dict):
+                report = dict(report)
+                report["stats"] = event_stats
+            rollback = event.get("rollback")
+            execution_stats = summarize_plan_execution(report, rollback)
+            total_count = execution_stats.get("total_count", 0)
+            applied_count = execution_stats.get("applied_count", event_stats.get("applied", 0))
+
+            if execution_stats.get("fail_count", 0) <= 0 and event.get("ok", False):
+                summary_text = f"**Plan executed succeeded**: {applied_count}/{total_count} operations applied"
+            else:
+                blocked_count = execution_stats.get("blocked_count", event_stats.get("blocked", 0))
+                if execution_stats.get("rollback_ok"):
+                    summary_lines = [f"**Plan rejected atomically**: 0/{total_count} operations applied"]
+                else:
+                    summary_lines = [f"**Plan executed had issues**: {applied_count}/{total_count} operations applied"]
+                if blocked_count:
+                    summary_lines.append(f"- Blocked: {blocked_count} item(s)")
+                blocked_items = collect_blocked_items(report)
+                for item in blocked_items[:3]:
+                    rec = item.get("item", {})
+                    err = item.get("message", "Unknown error")
+                    summary_lines.append(f"- ID {rec.get('record_id', '?')}: {err}")
+                if len(blocked_items) > 3:
+                    summary_lines.append(f"- ... and {len(blocked_items) - 3} more")
+                if execution_stats.get("rollback_ok"):
+                    summary_lines.append("- Rollback applied: partial changes reverted")
+                elif execution_stats.get("rollback_attempted"):
+                    summary_lines.append(
+                        f"- Rollback failed: {execution_stats.get('rollback_message') or 'unknown error'}"
+                    )
+                elif execution_stats.get("rollback_message"):
+                    summary_lines.append(
+                        f"- Rollback unavailable: {execution_stats.get('rollback_message')}"
+                    )
+                summary_text = "\n".join(summary_lines)
             self._append_chat_with_collapsible("System", summary_text, details_json)
 
     def _append_chat_with_collapsible(self, role, summary, details_json):
