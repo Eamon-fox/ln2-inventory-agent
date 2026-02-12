@@ -1846,7 +1846,11 @@ class OperationEventFeedTests(unittest.TestCase):
         })
 
         self.assertEqual(1, len(panel.ai_operation_events))
-        self.assertIn("succeeded", panel.ai_chat.toPlainText().lower())
+        chat_text = panel.ai_chat.toPlainText().lower()
+        self.assertIn("succeeded", chat_text)
+        self.assertIn("raw json hidden", chat_text)
+        self.assertNotIn("<details>", chat_text)
+        self.assertIn('"type": "plan_executed"', panel.ai_report.toPlainText())
 
     def test_ai_panel_limits_operation_events(self):
         """AI panel should limit stored operation events to prevent memory growth."""

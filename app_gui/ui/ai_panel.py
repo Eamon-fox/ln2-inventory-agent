@@ -794,16 +794,17 @@ class AIPanel(QWidget):
             self._append_chat_with_collapsible("System", summary_text, details_json)
 
     def _append_chat_with_collapsible(self, role, summary, details_json):
-        """Append a chat message with collapsible details."""
+        """Append a chat message and store full details in the report panel."""
         self._append_chat_header(role)
         self._insert_chat_markdown(summary)
+        details_text = str(details_json or "")
+        detail_line = (
+            f"\\n\\n`Raw JSON hidden` ({len(details_text)} chars). "
+            "Use **Show Plan Details** to inspect full payload."
+        )
+        self._insert_chat_markdown(detail_line)
         self.ai_chat.append("")
-        details_html = f"""<details>
-<summary style="cursor: pointer; color: #6b7280; font-size: 11px;">Raw JSON</summary>
-<pre style="background: #1f2937; color: #e5e7eb; padding: 8px; border-radius: 4px; font-size: 10px; overflow-x: auto; white-space: pre-wrap;">{details_json}</pre>
-</details>"""
-        self.ai_chat.append(details_html)
-        self.ai_chat.append("")
+        self.ai_report.setPlainText(details_text)
 
     def _load_audit(self, trace_id, run_result):
         self.ai_report.setPlainText(json.dumps(run_result, indent=2))
