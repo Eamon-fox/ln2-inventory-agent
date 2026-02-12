@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 )
 from app_gui.ui.workers import AgentRunWorker
 from app_gui.ui.utils import build_panel_header, compact_json
+from app_gui.event_compactor import compact_operation_event_for_context
 from app_gui.plan_outcome import collect_blocked_items, summarize_plan_execution
 from lib.config import AUDIT_LOG_FILE
 import os
@@ -476,7 +477,8 @@ class AIPanel(QWidget):
 
         if self.ai_operation_events:
             recent_events = self.ai_operation_events[-5:]
-            context_msg = json.dumps(recent_events, ensure_ascii=False, indent=2)
+            context_events = [compact_operation_event_for_context(event) for event in recent_events]
+            context_msg = json.dumps(context_events, ensure_ascii=False, separators=(",", ":"))
             history.append({"role": "user", "content": f"[Operation Results]\n{context_msg}"})
 
         self.ai_run_worker = AgentRunWorker(
