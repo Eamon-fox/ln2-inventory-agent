@@ -35,7 +35,6 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    [],
     name="LN2InventoryAgent",
     debug=False,
     bootloader_ignore_signals=False,

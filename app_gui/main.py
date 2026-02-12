@@ -37,8 +37,11 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("LN2 Inventory Agent")
         self.resize(1300, 900)
 
-        self.settings = QSettings("EamonFox", "LN2InventoryAgent")  # kept for geometry only
+        self.settings = QSettings("EamonFox", "LN2InventoryAgent")
         self.gui_config = load_gui_config()
+
+        if self.gui_config.get("api_key") and not os.environ.get("DEEPSEEK_API_KEY"):
+            os.environ["DEEPSEEK_API_KEY"] = self.gui_config["api_key"]
 
         # One-time migration from QSettings if unified config file does not exist yet
         if not os.path.isfile(DEFAULT_CONFIG_FILE):
@@ -68,8 +71,11 @@ class MainWindow(QMainWindow):
         self.restore_ui_settings()
 
         self.statusBar().showMessage("Ready", 2000)
-        # Initial load
-        self.overview_panel.refresh()
+
+        if os.path.isfile(self.current_yaml_path):
+            self.overview_panel.refresh()
+        else:
+            self.on_quick_start()
 
     def setup_ui(self):
         container = QWidget()
@@ -232,6 +238,14 @@ class MainWindow(QMainWindow):
         actor_edit = QLineEdit(self.current_actor_id)
         form.addRow("Actor ID", actor_edit)
 
+        api_key_edit = QLineEdit(self.gui_config.get("api_key") or "")
+        api_key_edit.setEchoMode(QLineEdit.Password)
+        form.addRow("API Key (DeepSeek)", api_key_edit)
+
+        hint = QLabel("Leave empty to use DEEPSEEK_API_KEY environment variable")
+        hint.setStyleSheet("color: #64748b; font-size: 11px;")
+        form.addRow("", hint)
+
         layout.addLayout(form)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         layout.addWidget(buttons)
@@ -245,10 +259,13 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.Accepted:
             self.current_yaml_path = yaml_edit.text().strip()
             self.current_actor_id = actor_edit.text().strip()
+            api_key = api_key_edit.text().strip() or None
+            self.gui_config["api_key"] = api_key
+            if api_key:
+                os.environ["DEEPSEEK_API_KEY"] = api_key
             self.bridge.set_actor(self.current_actor_id)
             self._update_dataset_label()
             self.overview_panel.refresh()
-            # Persist immediately
             self.gui_config["yaml_path"] = self.current_yaml_path
             self.gui_config["actor_id"] = self.current_actor_id
             save_gui_config(self.gui_config)
