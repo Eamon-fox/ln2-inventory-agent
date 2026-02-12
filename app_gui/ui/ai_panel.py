@@ -583,6 +583,20 @@ class AIPanel(QWidget):
             self._append_chat("Tool", f"`{name}` finished: **{status}**")
             if hint:
                 self._append_chat("Tool", f"Hint: {hint}")
+            blocked_items = raw_obs.get("blocked_items")
+            if isinstance(blocked_items, list) and blocked_items:
+                summary_text = self._blocked_items_summary(name, blocked_items)
+                details_json = json.dumps(
+                    {
+                        "tool": name,
+                        "error_code": raw_obs.get("error_code"),
+                        "message": raw_obs.get("message"),
+                        "blocked_items": blocked_items,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                self._append_chat_with_collapsible("System", summary_text, details_json)
             return
 
         if event_type == "tool_start":
@@ -690,6 +704,42 @@ class AIPanel(QWidget):
     def on_thread_finished(self):
         self.ai_run_thread = None
         self.ai_run_worker = None
+
+    @staticmethod
+    def _format_blocked_item(item):
+        action = str(item.get("action") or "?")
+        rid = item.get("record_id")
+        box = item.get("box")
+        pos = item.get("position")
+        to_pos = item.get("to_position")
+        to_box = item.get("to_box")
+
+        id_text = f"ID {rid}" if rid not in (None, "") else "NEW"
+        location = "unknown"
+        if box not in (None, "") and pos not in (None, ""):
+            location = f"Box {box}:{pos}"
+        elif pos not in (None, ""):
+            location = f"Pos {pos}"
+
+        if action == "move" and to_pos not in (None, ""):
+            if to_box not in (None, ""):
+                location = f"{location} -> Box {to_box}:{to_pos}"
+            else:
+                location = f"{location} -> {to_pos}"
+
+        return f"{action} ({id_text}, {location})"
+
+    def _blocked_items_summary(self, tool_name, blocked_items):
+        count = len(blocked_items)
+        lines = [f"**Tool blocked** `{tool_name}`: {count} item(s) failed validation"]
+        for item in blocked_items[:3]:
+            payload = item if isinstance(item, dict) else {}
+            desc = self._format_blocked_item(payload)
+            message = payload.get("message") or payload.get("error_code") or "Validation failed"
+            lines.append(f"- {desc}: {message}")
+        if count > 3:
+            lines.append(f"- ... and {count - 3} more")
+        return "\n".join(lines)
 
     def _append_history(self, role, text):
         self.ai_history.append({"role": role, "content": text})

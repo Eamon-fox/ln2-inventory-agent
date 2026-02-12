@@ -194,6 +194,30 @@ class AuditGuideBuilderTests(unittest.TestCase):
         self.assertEqual(1, item["position"])
         self.assertEqual(7, item["to_position"])
 
+    def test_action_alias_take_out_is_normalized(self):
+        events = [
+            {
+                "timestamp": "2026-02-12T09:00:00",
+                "action": "record_thaw",
+                "status": "success",
+                "details": {
+                    "action": "take out",
+                    "record_id": 11,
+                    "box": 1,
+                    "position": 9,
+                },
+                "tool_input": {
+                    "record_id": 11,
+                    "position": 9,
+                    "action": "take out",
+                },
+            },
+        ]
+
+        guide = build_operation_guide_from_audit_events(events)
+        self.assertEqual(1, len(guide["items"]))
+        self.assertEqual("takeout", guide["items"][0]["action"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -861,6 +861,41 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertIn("Running `query_thaw_events`...", merged)
         self.assertIn("finished: **OK**", merged)
 
+    def test_ai_panel_renders_blocked_items_from_tool_result(self):
+        panel = self._new_ai_panel()
+        panel.ai_chat = _FakeChatNoMarkdown()
+
+        panel.on_progress({"event": "run_start", "trace_id": "trace-blocked"})
+        panel.on_progress(
+            {
+                "event": "tool_end",
+                "trace_id": "trace-blocked",
+                "step": 1,
+                "data": {"name": "record_thaw"},
+                "observation": {
+                    "ok": False,
+                    "error_code": "plan_preflight_failed",
+                    "message": "Validation blocked",
+                    "blocked_items": [
+                        {
+                            "action": "takeout",
+                            "record_id": 999,
+                            "box": 1,
+                            "position": 5,
+                            "error_code": "record_not_found",
+                            "message": "Record does not exist",
+                        }
+                    ],
+                },
+            }
+        )
+
+        text_calls = [value for name, value in panel.ai_chat.calls if name == "insertPlainText"]
+        merged = "\n".join(text_calls)
+        self.assertIn("Tool blocked", merged)
+        self.assertIn("ID 999", merged)
+        self.assertIn("Record does not exist", merged)
+
     def test_ai_panel_rewrites_streamed_markdown_on_finish(self):
         panel = self._new_ai_panel()
 

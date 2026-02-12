@@ -14,10 +14,17 @@ from PySide6.QtWidgets import (
     QFormLayout, QDateEdit, QSpinBox, QTextEdit
 )
 from app_gui.ui.utils import positions_to_text
-from app_gui.plan_model import validate_plan_item, render_operation_sheet
+from app_gui.plan_model import render_operation_sheet
+from app_gui.plan_gate import validate_plan_batch
 from app_gui.audit_guide import build_operation_guide_from_audit_events
 from app_gui.plan_executor import preflight_plan, run_plan
 from lib.tool_api import parse_batch_entries
+from lib.plan_item_factory import (
+    build_add_plan_item,
+    build_record_plan_item,
+    iter_batch_entries,
+    resolve_record_context,
+)
 from lib.validators import parse_positions
 
 OPERATIONS_HELP_TEXT = """Operations Panel - Manual Actions
@@ -847,24 +854,17 @@ class OperationsPanel(QWidget):
             self.status_message.emit(str(exc), 5000, "error")
             return
 
-        item = {
-            "action": "add",
-            "box": self.a_box.value(),
-            "position": positions[0],
-            "record_id": None,
-            "label": self.a_short.text() or self.a_parent.text() or "-",
-            "source": "human",
-            "payload": {
-                "parent_cell_line": self.a_parent.text(),
-                "short_name": self.a_short.text(),
-                "box": self.a_box.value(),
-                "positions": positions,
-                "frozen_at": self.a_date.date().toString("yyyy-MM-dd"),
-                "plasmid_name": self.a_plasmid.text() or None,
-                "plasmid_id": self.a_plasmid_id.text() or None,
-                "note": self.a_note.text() or None,
-            },
-        }
+        item = build_add_plan_item(
+            parent_cell_line=self.a_parent.text(),
+            short_name=self.a_short.text(),
+            box=self.a_box.value(),
+            positions=positions,
+            frozen_at=self.a_date.date().toString("yyyy-MM-dd"),
+            plasmid_name=self.a_plasmid.text() or None,
+            plasmid_id=self.a_plasmid_id.text() or None,
+            note=self.a_note.text() or None,
+            source="human",
+        )
         self.add_plan_items([item])
 
     def on_record_thaw(self):
@@ -872,29 +872,19 @@ class OperationsPanel(QWidget):
         action_text = self.t_action.currentText()
 
         record = self._lookup_record(self.t_id.value())
-        label = "-"
-        box = 0
-        if record:
-            label = record.get("short_name") or record.get("parent_cell_line") or "-"
-            box = int(record.get("box", 0))
-        elif self.t_prefill_source:
-            box = int(self.t_prefill_source.get("box", 0))
-
-        item = {
-            "action": action_text.lower(),
-            "box": box,
-            "position": self.t_position.value(),
-            "record_id": self.t_id.value(),
-            "label": label,
-            "source": "human",
-            "payload": {
-                "record_id": self.t_id.value(),
-                "position": self.t_position.value(),
-                "date_str": self.t_date.date().toString("yyyy-MM-dd"),
-                "action": action_text,
-                "note": self.t_note.text().strip() or None,
-            },
-        }
+        fallback_box = int((self.t_prefill_source or {}).get("box", 0) or 0)
+        box, label = resolve_record_context(record, fallback_box=fallback_box)
+        item = build_record_plan_item(
+            action=action_text,
+            record_id=self.t_id.value(),
+            position=self.t_position.value(),
+            box=box,
+            label=label,
+            date_str=self.t_date.date().toString("yyyy-MM-dd"),
+            note=self.t_note.text().strip() or None,
+            source="human",
+            payload_action=action_text,
+        )
         self.add_plan_items([item])
 
     def on_record_move(self):
@@ -908,32 +898,20 @@ class OperationsPanel(QWidget):
             return
 
         record = self._lookup_record(self.m_id.value())
-        label = "-"
-        box = 0
-        if record:
-            label = record.get("short_name") or record.get("parent_cell_line") or "-"
-            box = int(record.get("box", 0))
-
-        item = {
-            "action": "move",
-            "box": box,
-            "position": from_pos,
-            "to_position": to_pos,
-            "record_id": self.m_id.value(),
-            "label": label,
-            "source": "human",
-            "payload": {
-                "record_id": self.m_id.value(),
-                "position": from_pos,
-                "to_position": to_pos,
-                "date_str": self.m_date.date().toString("yyyy-MM-dd"),
-                "action": "Move",
-                "note": self.m_note.text().strip() or None,
-            },
-        }
-        if to_box is not None:
-            item["to_box"] = to_box
-            item["payload"]["to_box"] = to_box
+        box, label = resolve_record_context(record, fallback_box=0)
+        item = build_record_plan_item(
+            action="move",
+            record_id=self.m_id.value(),
+            position=from_pos,
+            box=box,
+            label=label,
+            date_str=self.m_date.date().toString("yyyy-MM-dd"),
+            note=self.m_note.text().strip() or None,
+            to_position=to_pos,
+            to_box=to_box,
+            source="human",
+            payload_action="Move",
+        )
         self.add_plan_items([item])
 
     def _move_batch_add_row(self):
@@ -998,54 +976,31 @@ class OperationsPanel(QWidget):
         note = self.bm_note.text().strip() or None
 
         items = []
-        for entry in entries:
-            to_box = None
-            if isinstance(entry, (list, tuple)):
-                if len(entry) >= 4:
-                    rid, from_pos, to_pos = int(entry[0]), int(entry[1]), int(entry[2])
-                    to_box = int(entry[3])
-                elif len(entry) == 3:
-                    rid, from_pos, to_pos = int(entry[0]), int(entry[1]), int(entry[2])
-                else:
-                    continue
-            elif isinstance(entry, dict):
-                rid = int(entry.get("record_id", entry.get("id", 0)))
-                from_pos = int(entry.get("position", entry.get("from_position", 0)))
-                to_pos = int(entry.get("to_position", 0))
-                tb = entry.get("to_box")
-                if tb is not None:
-                    to_box = int(tb)
-            else:
+        for normalized in iter_batch_entries(entries):
+            rid = int(normalized.get("record_id", 0) or 0)
+            from_pos = int(normalized.get("position", 0) or 0)
+            to_pos = normalized.get("to_position")
+            to_box = normalized.get("to_box")
+            if to_pos is None:
                 continue
 
             record = self._lookup_record(rid)
-            label = "-"
-            box = 0
-            if record:
-                label = record.get("short_name") or record.get("parent_cell_line") or "-"
-                box = int(record.get("box", 0))
-
-            item = {
-                "action": "move",
-                "box": box,
-                "position": from_pos,
-                "to_position": to_pos,
-                "record_id": rid,
-                "label": label,
-                "source": "human",
-                "payload": {
-                    "record_id": rid,
-                    "position": from_pos,
-                    "to_position": to_pos,
-                    "date_str": date_str,
-                    "action": "Move",
-                    "note": note,
-                },
-            }
-            if to_box is not None:
-                item["to_box"] = to_box
-                item["payload"]["to_box"] = to_box
-            items.append(item)
+            box, label = resolve_record_context(record, fallback_box=0)
+            items.append(
+                build_record_plan_item(
+                    action="move",
+                    record_id=rid,
+                    position=from_pos,
+                    box=box,
+                    label=label,
+                    date_str=date_str,
+                    note=note,
+                    to_position=to_pos,
+                    to_box=to_box,
+                    source="human",
+                    payload_action="Move",
+                )
+            )
 
         self.add_plan_items(items)
 
@@ -1167,37 +1122,24 @@ class OperationsPanel(QWidget):
         note = self.b_note.text().strip() or None
 
         items = []
-        for entry in entries:
-            if isinstance(entry, dict):
-                rid = int(entry.get("record_id", entry.get("id", 0)))
-                pos = int(entry.get("position", entry.get("from_position", 0)))
-            elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
-                rid, pos = int(entry[0]), int(entry[1])
-            else:
-                continue
-
+        for normalized in iter_batch_entries(entries):
+            rid = int(normalized.get("record_id", 0) or 0)
+            pos = int(normalized.get("position", 0) or 0)
             record = self._lookup_record(rid)
-            label = "-"
-            box = 0
-            if record:
-                label = record.get("short_name") or record.get("parent_cell_line") or "-"
-                box = int(record.get("box", 0))
-
-            items.append({
-                "action": action_text.lower(),
-                "box": box,
-                "position": pos,
-                "record_id": rid,
-                "label": label,
-                "source": "human",
-                "payload": {
-                    "record_id": rid,
-                    "position": pos,
-                    "date_str": date_str,
-                    "action": action_text,
-                    "note": note,
-                },
-            })
+            box, label = resolve_record_context(record, fallback_box=0)
+            items.append(
+                build_record_plan_item(
+                    action=action_text,
+                    record_id=rid,
+                    position=pos,
+                    box=box,
+                    label=label,
+                    date_str=date_str,
+                    note=note,
+                    source="human",
+                    payload_action=action_text,
+                )
+            )
 
         self.add_plan_items(items)
 
@@ -1288,12 +1230,23 @@ class OperationsPanel(QWidget):
 
     def add_plan_items(self, items):
         """Validate and add items to the plan staging area (with dedup)."""
+        incoming = list(items or [])
+        gate = validate_plan_batch(
+            items=incoming,
+            yaml_path=self.yaml_path_getter(),
+            bridge=self.bridge,
+            run_preflight=False,
+        )
+        for blocked in gate.get("blocked_items", []):
+            err = blocked.get("message") or blocked.get("error_code") or "invalid plan item"
+            self.status_message.emit(f"Plan rejected: {err}", 4000, "error")
+
+        accepted = list(gate.get("accepted_items") or [])
+        if not accepted:
+            return
+
         added = 0
-        for item in items:
-            err = validate_plan_item(item)
-            if err:
-                self.status_message.emit(f"Plan rejected: {err}", 4000, "error")
-                continue
+        for item in accepted:
             key = self._plan_item_key(item)
             replaced = False
             for i, existing in enumerate(self.plan_items):

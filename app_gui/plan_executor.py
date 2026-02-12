@@ -6,25 +6,12 @@ import copy
 import os
 import tempfile
 from datetime import date
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from lib.yaml_ops import load_yaml, write_yaml
 
 
-def _normalize_action(action: Any) -> str:
-    """Normalize action to lowercase standard form."""
-    text = str(action or "").strip().lower()
-    mapping = {
-        "取出": "takeout", "takeout": "takeout",
-        "解冻": "thaw", "thaw": "thaw",
-        "丢弃": "discard", "discard": "discard",
-        "移动": "move", "move": "move",
-        "add": "add",
-    }
-    return mapping.get(text, text)
-
-
-def _analyze_move_plan(items: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _analyze_move_plan(items: List[Dict[str, object]]) -> Dict[str, object]:
     """Analyze move operations for swap/cycle detection."""
     move_graph: Dict[Tuple[int, int], Tuple[int, int, int]] = {}
     reverse_graph: Dict[Tuple[int, int], List[Tuple[int, int, int]]] = {}
@@ -97,14 +84,14 @@ def _analyze_move_plan(items: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def _validate_moves_holistically(items: List[Dict[str, Any]], records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _validate_moves_holistically(items: List[Dict[str, object]], records: List[Dict[str, object]]) -> List[Dict[str, object]]:
     """Validate move operations as a whole, supporting swap semantics."""
     errors = []
     analysis = _analyze_move_plan(items)
     move_graph = analysis["move_graph"]
     reverse_graph = analysis["reverse_graph"]
 
-    pos_map: Dict[Tuple[int, int], Dict[str, Any]] = {}
+    pos_map: Dict[Tuple[int, int], Dict[str, object]] = {}
     for rec in records:
         box = rec.get("box")
         if box is None:
@@ -158,7 +145,7 @@ def _validate_moves_holistically(items: List[Dict[str, Any]], records: List[Dict
     return errors
 
 
-def _make_error_item(item: Dict[str, Any], error_code: str, message: str) -> Dict[str, Any]:
+def _make_error_item(item: Dict[str, object], error_code: str, message: str) -> Dict[str, object]:
     """Create an error report for a plan item."""
     return {
         "item": item,
@@ -169,7 +156,7 @@ def _make_error_item(item: Dict[str, Any], error_code: str, message: str) -> Dic
     }
 
 
-def _make_ok_item(item: Dict[str, Any], response: Dict[str, Any]) -> Dict[str, Any]:
+def _make_ok_item(item: Dict[str, object], response: Dict[str, object]) -> Dict[str, object]:
     """Create a success report for a plan item."""
     return {
         "item": item,
@@ -181,10 +168,10 @@ def _make_ok_item(item: Dict[str, Any], response: Dict[str, Any]) -> Dict[str, A
 
 def preflight_plan(
     yaml_path: str,
-    items: List[Dict[str, Any]],
-    bridge: Any,
+    items: List[Dict[str, object]],
+    bridge: object,
     date_str: Optional[str] = None,
-) -> Dict[str, Any]:
+) -> Dict[str, object]:
     """Run plan validation without modifying real data.
 
     Creates a temporary copy of the YAML and executes the plan against it.
@@ -241,11 +228,11 @@ def preflight_plan(
 
 def run_plan(
     yaml_path: str,
-    items: List[Dict[str, Any]],
-    bridge: Any,
+    items: List[Dict[str, object]],
+    bridge: object,
     date_str: Optional[str] = None,
     mode: str = "execute",
-) -> Dict[str, Any]:
+) -> Dict[str, object]:
     """Execute or validate a plan against a YAML file.
 
     Args:
@@ -278,7 +265,7 @@ def run_plan(
         mode = "execute"
 
     effective_date = date_str or date.today().isoformat()
-    reports: List[Dict[str, Any]] = []
+    reports: List[Dict[str, object]] = []
     last_backup: Optional[str] = None
 
     remaining = list(items)
@@ -383,7 +370,7 @@ def run_plan(
     }
 
 
-def _preflight_add_entry(bridge: Any, yaml_path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+def _preflight_add_entry(bridge: object, yaml_path: str, payload: Dict[str, object]) -> Dict[str, object]:
     """Validate add_entry without writing (using dry_run semantics)."""
     try:
         from lib.tool_api import tool_add_entry, build_actor_context
@@ -411,7 +398,7 @@ def _preflight_add_entry(bridge: Any, yaml_path: str, payload: Dict[str, Any]) -
     )
 
 
-def _preflight_record_thaw(bridge: Any, yaml_path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+def _preflight_record_thaw(bridge: object, yaml_path: str, payload: Dict[str, object]) -> Dict[str, object]:
     """Validate record_thaw without writing (using dry_run semantics)."""
     try:
         from lib.tool_api import tool_record_thaw, build_actor_context
@@ -438,7 +425,7 @@ def _preflight_record_thaw(bridge: Any, yaml_path: str, payload: Dict[str, Any])
     )
 
 
-def _preflight_batch_thaw(bridge: Any, yaml_path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+def _preflight_batch_thaw(bridge: object, yaml_path: str, payload: Dict[str, object]) -> Dict[str, object]:
     """Validate batch_thaw without writing (using dry_run semantics)."""
     try:
         from lib.tool_api import tool_batch_thaw, build_actor_context
@@ -464,14 +451,14 @@ def _preflight_batch_thaw(bridge: Any, yaml_path: str, payload: Dict[str, Any]) 
 
 def _execute_moves_batch_then_fallback(
     yaml_path: str,
-    items: List[Dict[str, Any]],
-    bridge: Any,
+    items: List[Dict[str, object]],
+    bridge: object,
     date_str: str,
     mode: str,
     skip_target_check: bool = False,
-) -> Tuple[bool, List[Dict[str, Any]]]:
+) -> Tuple[bool, List[Dict[str, object]]]:
     """Execute move operations: batch first, fallback to individual on failure."""
-    reports: List[Dict[str, Any]] = []
+    reports: List[Dict[str, object]] = []
 
     entries = []
     for item in items:
@@ -533,14 +520,14 @@ def _execute_moves_batch_then_fallback(
 
 def _execute_thaw_batch_then_fallback(
     yaml_path: str,
-    items: List[Dict[str, Any]],
+    items: List[Dict[str, object]],
     action_name: str,
-    bridge: Any,
+    bridge: object,
     date_str: str,
     mode: str,
-) -> Tuple[bool, List[Dict[str, Any]]]:
+) -> Tuple[bool, List[Dict[str, object]]]:
     """Execute takeout/thaw/discard operations: batch first, fallback to individual on failure."""
-    reports: List[Dict[str, Any]] = []
+    reports: List[Dict[str, object]] = []
 
     entries = []
     for item in items:

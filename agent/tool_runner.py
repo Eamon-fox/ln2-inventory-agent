@@ -17,6 +17,8 @@ from lib.tool_api import (
     tool_rollback,
     tool_search_records,
 )
+from app_gui.plan_gate import validate_plan_batch
+from lib.plan_item_factory import build_add_plan_item, build_record_plan_item, iter_batch_entries
 from lib.validators import parse_positions
 
 _WRITE_TOOLS = {"add_entry", "record_thaw", "batch_thaw"}
@@ -393,6 +395,12 @@ class AgentToolRunner:
         if error_code in {"validation_failed", "integrity_validation_failed", "rollback_backup_invalid"}:
             return "Fix validation errors from response details and retry."
 
+        if error_code == "plan_preflight_failed":
+            return (
+                "One or more write operations are invalid against current inventory state. "
+                "Review blocked details, then retry only corrected operations."
+            )
+
         if spec:
             return f"Adjust `{tool_name}` inputs according to `tool_specs`, then retry."
         return "Retry with corrected tool input."
@@ -426,13 +434,6 @@ class AgentToolRunner:
 
     # --- Plan staging (human-in-the-loop) ---
 
-    _ACTION_MAP = {
-        "取出": "takeout", "takeout": "takeout",
-        "解冻": "thaw", "thaw": "thaw",
-        "丢弃": "discard", "discard": "discard",
-        "移动": "move", "move": "move",
-    }
-
     def _lookup_record_info(self, record_id):
         """Quick lookup to get (box, label) for a record ID."""
         try:
@@ -448,9 +449,25 @@ class AgentToolRunner:
             pass
         return 0, "-"
 
+    @staticmethod
+    def _item_desc(item):
+        action = str(item.get("action") or "?")
+        label = str(item.get("label") or item.get("record_id") or "-")
+        box = item.get("box", "?")
+        pos = item.get("position", "?")
+        target = ""
+        if action == "move":
+            to_box = item.get("to_box")
+            to_pos = item.get("to_position")
+            if to_pos is not None:
+                if to_box is not None:
+                    target = f" -> Box {to_box}:{to_pos}"
+                else:
+                    target = f" -> {to_pos}"
+        return f"{action} {label} @ Box {box}:{pos}{target}"
+
     def _stage_to_plan(self, tool_name, payload, trace_id=None):
         """Intercept write ops and stage as PlanItems for human approval."""
-        from app_gui.plan_model import validate_plan_item
 
         items = []
 
@@ -470,24 +487,19 @@ class AgentToolRunner:
                     "message": str(exc),
                 })
 
-            items.append({
-                "action": "add",
-                "box": box,
-                "position": positions[0] if positions else 1,
-                "record_id": None,
-                "label": short_name or parent_cell_line or "-",
-                "source": "ai",
-                "payload": {
-                    "parent_cell_line": parent_cell_line,
-                    "short_name": short_name,
-                    "box": box,
-                    "positions": positions,
-                    "frozen_at": self._first_value(payload, "frozen_at", "date"),
-                    "plasmid_name": self._first_value(payload, "plasmid_name", "plasmid"),
-                    "plasmid_id": payload.get("plasmid_id"),
-                    "note": self._first_value(payload, "note", "notes", "memo"),
-                },
-            })
+            items.append(
+                build_add_plan_item(
+                    parent_cell_line=parent_cell_line,
+                    short_name=short_name,
+                    box=box,
+                    positions=positions,
+                    frozen_at=self._first_value(payload, "frozen_at", "date"),
+                    plasmid_name=self._first_value(payload, "plasmid_name", "plasmid"),
+                    plasmid_id=payload.get("plasmid_id"),
+                    note=self._first_value(payload, "note", "notes", "memo"),
+                    source="ai",
+                )
+            )
 
         elif tool_name == "record_thaw":
             try:
@@ -500,41 +512,31 @@ class AgentToolRunner:
                 })
 
             action_raw = payload.get("action", "Takeout")
-            action_lower = self._ACTION_MAP.get(str(action_raw).strip().lower(), "takeout")
-
             to_pos_raw = self._first_value(payload, "to_position", "to_pos", "target_position")
             to_pos = None
             if to_pos_raw not in (None, ""):
                 to_pos = int(to_pos_raw)
-                action_lower = "move"
 
             to_box_raw = self._first_value(payload, "to_box", "target_box", "new_box", "dest_box")
             to_box = int(to_box_raw) if to_box_raw not in (None, "") else None
 
             box, label = self._lookup_record_info(rid)
 
-            item = {
-                "action": action_lower,
-                "box": box,
-                "position": pos,
-                "record_id": rid,
-                "label": label,
-                "source": "ai",
-                "payload": {
-                    "record_id": rid,
-                    "position": pos,
-                    "date_str": self._first_value(payload, "date", "thaw_date"),
-                    "action": str(action_raw).strip(),
-                    "note": self._first_value(payload, "note", "notes", "memo"),
-                },
-            }
-            if to_pos is not None:
-                item["to_position"] = to_pos
-                item["payload"]["to_position"] = to_pos
-            if to_box is not None:
-                item["to_box"] = to_box
-                item["payload"]["to_box"] = to_box
-            items.append(item)
+            items.append(
+                build_record_plan_item(
+                    action=action_raw,
+                    record_id=rid,
+                    position=pos,
+                    box=box,
+                    label=label,
+                    date_str=self._first_value(payload, "date", "thaw_date"),
+                    note=self._first_value(payload, "note", "notes", "memo"),
+                    to_position=to_pos,
+                    to_box=to_box,
+                    source="ai",
+                    payload_action=str(action_raw).strip(),
+                )
+            )
 
         elif tool_name == "batch_thaw":
             entries = payload.get("entries")
@@ -554,85 +556,72 @@ class AgentToolRunner:
                 })
 
             action_raw = payload.get("action", "Takeout")
-            action_lower = self._ACTION_MAP.get(str(action_raw).strip().lower(), "takeout")
 
             # batch-level to_box (applies to all entries unless overridden)
             batch_to_box_raw = self._first_value(payload, "to_box", "target_box", "new_box", "dest_box")
             batch_to_box = int(batch_to_box_raw) if batch_to_box_raw not in (None, "") else None
 
-            for entry in entries:
-                to_pos = None
-                entry_to_box = batch_to_box
-                if isinstance(entry, (list, tuple)):
-                    if len(entry) >= 4:
-                        rid, pos, to_pos = int(entry[0]), int(entry[1]), int(entry[2])
-                        entry_to_box = int(entry[3])
-                    elif len(entry) >= 3:
-                        rid, pos, to_pos = int(entry[0]), int(entry[1]), int(entry[2])
-                    elif len(entry) == 2:
-                        rid, pos = int(entry[0]), int(entry[1])
-                    else:
-                        continue
-                elif isinstance(entry, dict):
-                    rid = int(entry.get("record_id", entry.get("id", 0)))
-                    pos = int(entry.get("position", entry.get("from_position", 0)))
-                    tp = entry.get("to_position")
-                    if tp is not None:
-                        to_pos = int(tp)
-                    tb = entry.get("to_box")
-                    if tb is not None:
-                        entry_to_box = int(tb)
-                else:
-                    continue
-
+            for normalized in iter_batch_entries(entries, default_to_box=batch_to_box):
+                rid = int(normalized.get("record_id", 0) or 0)
+                pos = int(normalized.get("position", 0) or 0)
+                to_pos = normalized.get("to_position")
+                to_box = normalized.get("to_box")
                 box, label = self._lookup_record_info(rid)
-                item_action = "move" if to_pos is not None else action_lower
+                items.append(
+                    build_record_plan_item(
+                        action=action_raw,
+                        record_id=rid,
+                        position=pos,
+                        box=box,
+                        label=label,
+                        date_str=payload.get("date"),
+                        note=payload.get("note"),
+                        to_position=to_pos,
+                        to_box=to_box,
+                        source="ai",
+                        payload_action=str(action_raw).strip(),
+                    )
+                )
 
-                item = {
-                    "action": item_action,
-                    "box": box,
-                    "position": pos,
-                    "record_id": rid,
-                    "label": label,
-                    "source": "ai",
-                    "payload": {
-                        "record_id": rid,
-                        "position": pos,
-                        "date_str": payload.get("date"),
-                        "action": str(action_raw).strip(),
-                        "note": payload.get("note"),
-                    },
-                }
-                if to_pos is not None:
-                    item["to_position"] = to_pos
-                    item["payload"]["to_position"] = to_pos
-                if entry_to_box is not None:
-                    item["to_box"] = entry_to_box
-                    item["payload"]["to_box"] = entry_to_box
-                items.append(item)
+        gate_result = validate_plan_batch(
+            items=items,
+            yaml_path=self._yaml_path,
+            bridge=None,
+            run_preflight=True,
+        )
+        validated_items = list(gate_result.get("accepted_items") or [])
+        errors = list(gate_result.get("errors") or [])
+        blocked_payload = list(gate_result.get("blocked_items") or [])
+        blocked_count = len(blocked_payload)
+        has_preflight_errors = any(err.get("kind") == "preflight" for err in errors)
 
-        # Validate and sink
+        if blocked_count:
+            detail_lines = []
+            for blocked in blocked_payload[:3]:
+                desc = self._item_desc(blocked)
+                detail_lines.append(f"{desc}: {blocked.get('message')}")
+            detail = "; ".join(detail_lines)
+            if blocked_count > 3:
+                detail += f"; ... and {blocked_count - 3} more"
+
+            return self._with_hint(
+                tool_name,
+                {
+                    "ok": False,
+                    "error_code": "plan_preflight_failed" if has_preflight_errors else "plan_validation_failed",
+                    "message": f"All operations rejected by validation: {detail}",
+                    "staged": False,
+                    "result": {"staged_count": 0, "blocked_count": blocked_count},
+                    "blocked_items": blocked_payload,
+                },
+            )
+
         staged = []
-        errors = []
-        for item in items:
-            err = validate_plan_item(item)
-            if err:
-                errors.append(err)
-            else:
-                self._plan_sink(item)
-                staged.append(item)
+        for item in validated_items:
+            self._plan_sink(item)
+            staged.append(item)
 
-        if errors and not staged:
-            return self._with_hint(tool_name, {
-                "ok": False,
-                "error_code": "plan_validation_failed",
-                "message": f"All items rejected: {'; '.join(errors)}",
-            })
-
-        summary = [
-            f"{s['action']} {s['label']} @ Box {s['box']}:{s['position']}"
-            for s in staged
-        ]
+        summary = [self._item_desc(s) for s in staged]
         return {
             "ok": True,
             "staged": True,

@@ -8,23 +8,10 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import os
 
 import yaml
+from lib.plan_item_factory import normalize_plan_action
 
 
 _OUT_ACTIONS = {"takeout", "thaw", "discard"}
-_ACTION_ALIASES = {
-    "takeout": "takeout",
-    "take out": "takeout",
-    "取出": "takeout",
-    "thaw": "thaw",
-    "解冻": "thaw",
-    "discard": "discard",
-    "丢弃": "discard",
-    "move": "move",
-    "移动": "move",
-    "add": "add",
-    "add_entry": "add",
-    "新增": "add",
-}
 
 
 @dataclass
@@ -527,8 +514,7 @@ def _add_cycle_warnings(items: List[Dict[str, Any]], warnings: List[str]) -> Non
 
 
 def _normalize_action(value: Any) -> str:
-    text = str(value or "").strip().lower()
-    return _ACTION_ALIASES.get(text, text)
+    return normalize_plan_action(value)
 
 
 def _load_snapshot_lookup(
