@@ -497,18 +497,8 @@ class AIPanel(QWidget):
 
         if self.ai_operation_events:
             recent_events = self.ai_operation_events[-5:]
-            context_parts = ["Recent operations by user:"]
-            for ev in recent_events:
-                ev_type = ev.get("type", "unknown")
-                stats = ev.get("stats", {})
-                summary = ev.get("summary", "")
-                if stats:
-                    context_parts.append(f"- {ev_type}: {stats}")
-                elif summary:
-                    context_parts.append(f"- {ev_type}: {summary}")
-            context_msg = "\n".join(context_parts)
-            history.append({"role": "user", "content": f"[Context] {context_msg}"})
-            history.append({"role": "assistant", "content": "Noted. I can see the recent operations."})
+            context_msg = json.dumps(recent_events, ensure_ascii=False, indent=2)
+            history.append({"role": "user", "content": f"[Operation Results]\n{context_msg}"})
 
         self.ai_run_worker = AgentRunWorker(
             bridge=self.bridge,
@@ -715,18 +705,42 @@ class AIPanel(QWidget):
         if len(self.ai_operation_events) > 20:
             self.ai_operation_events = self.ai_operation_events[-20:]
 
+        details_json = json.dumps(event, ensure_ascii=False, indent=2)
+
         if event_type == "plan_execute_blocked":
             blocked_count = event.get("blocked_count", 0)
-            self._append_chat("System", f"Plan execution blocked: {blocked_count} item(s) have validation errors.")
-            self.ai_report.append(f"[{timestamp}] Plan blocked: {blocked_count} item(s)")
+            report = event.get("report", {})
+            blocked_items = [r for r in report.get("items", []) if r.get("blocked")]
+            summary_lines = [f"**Plan blocked**: {blocked_count} item(s) have validation errors"]
+            for item in blocked_items[:3]:
+                rec = item.get("item", {})
+                err = item.get("message", "Unknown error")
+                summary_lines.append(f"- ID {rec.get('record_id', '?')}: {err}")
+            if len(blocked_items) > 3:
+                summary_lines.append(f"- ... and {len(blocked_items) - 3} more")
+            summary_text = "\n".join(summary_lines)
+            self._append_chat_with_collapsible("System", summary_text, details_json)
 
         elif event_type == "plan_executed":
             stats = event.get("stats", {})
-            summary = event.get("summary", "")
             ok = event.get("ok", False)
             status = "succeeded" if ok else "had issues"
-            self._append_chat("System", f"Plan execution {status}: {summary}")
-            self.ai_report.append(f"[{timestamp}] Plan executed: {stats}")
+            ok_count = stats.get("ok", 0)
+            total_count = stats.get("total", 0)
+            summary_text = f"**Plan executed {status}**: {ok_count}/{total_count} operations completed"
+            self._append_chat_with_collapsible("System", summary_text, details_json)
+
+    def _append_chat_with_collapsible(self, role, summary, details_json):
+        """Append a chat message with collapsible details."""
+        self._append_chat_header(role)
+        self._insert_chat_markdown(summary)
+        self.ai_chat.append("")
+        details_html = f"""<details>
+<summary style="cursor: pointer; color: #6b7280; font-size: 11px;">Raw JSON</summary>
+<pre style="background: #1f2937; color: #e5e7eb; padding: 8px; border-radius: 4px; font-size: 10px; overflow-x: auto; white-space: pre-wrap;">{details_json}</pre>
+</details>"""
+        self.ai_chat.append(details_html)
+        self.ai_chat.append("")
 
     def _load_audit(self, trace_id, run_result):
         self.ai_report.setPlainText(json.dumps(run_result, indent=2))
