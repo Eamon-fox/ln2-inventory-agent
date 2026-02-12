@@ -18,7 +18,7 @@ class GuiConfigTests(unittest.TestCase):
             cfg = load_gui_config(path=str(config_path))
 
         self.assertEqual("deepseek-chat", cfg["ai"]["model"])
-        self.assertTrue(cfg["ai"]["mock"])
+        self.assertEqual(8, cfg["ai"]["max_steps"])
 
     def test_load_gui_config_backfills_blank_model(self):
         with tempfile.TemporaryDirectory(prefix="ln2_gui_cfg_blank_") as temp_dir:
@@ -27,14 +27,13 @@ class GuiConfigTests(unittest.TestCase):
                 """yaml_path: /tmp/demo.yaml
 ai:
   model: ""
-  mock: false
 """,
                 encoding="utf-8",
             )
             cfg = load_gui_config(path=str(config_path))
 
         self.assertEqual("deepseek-chat", cfg["ai"]["model"])
-        self.assertFalse(cfg["ai"]["mock"])
+        self.assertEqual(8, cfg["ai"]["max_steps"])
 
     def test_save_and_load_gui_config_keeps_explicit_model(self):
         with tempfile.TemporaryDirectory(prefix="ln2_gui_cfg_save_") as temp_dir:
@@ -44,7 +43,6 @@ ai:
                 "actor_id": "gui-test",
                 "ai": {
                     "model": "deepseek-chat",
-                    "mock": False,
                     "max_steps": 12,
                 },
             }
@@ -52,8 +50,24 @@ ai:
             cfg = load_gui_config(path=str(config_path))
 
         self.assertEqual("deepseek-chat", cfg["ai"]["model"])
-        self.assertFalse(cfg["ai"]["mock"])
         self.assertEqual(12, cfg["ai"]["max_steps"])
+
+    def test_load_gui_config_ignores_legacy_mock_field(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_gui_cfg_legacy_") as temp_dir:
+            config_path = Path(temp_dir) / "config.yaml"
+            config_path.write_text(
+                """ai:
+  model: deepseek-chat
+  mock: true
+  max_steps: 5
+""",
+                encoding="utf-8",
+            )
+            cfg = load_gui_config(path=str(config_path))
+
+        self.assertEqual("deepseek-chat", cfg["ai"]["model"])
+        self.assertEqual(5, cfg["ai"]["max_steps"])
+        self.assertNotIn("mock", cfg["ai"])
 
 
 class ApiKeyConfigTests(unittest.TestCase):
@@ -75,7 +89,6 @@ class ApiKeyConfigTests(unittest.TestCase):
                 "api_key": "sk-test-12345",
                 "ai": {
                     "model": "deepseek-chat",
-                    "mock": True,
                     "max_steps": 8,
                 },
             }

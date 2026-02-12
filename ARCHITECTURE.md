@@ -229,7 +229,6 @@ ln2-inventory-agent/
 **职责**:
 - 提供 LLM 交互的抽象接口
 - 处理 DeepSeek API 集成，支持流式传输
-- 实现用于测试的回退/模拟客户端
 | 管理身份验证和 API 密钥加载
 | 规范化不同 LLM 提供商的响应
 
@@ -239,7 +238,6 @@ ln2-inventory-agent/
 |------|------|
 | `LLMClient` (ABC) | 定义标准接口的抽象基类 |
 | `DeepSeekLLMClient` | DeepSeek API 主实现 |
-| `MockLLMClient` | 测试用的回退实现 |
 
 **关键方法**:
 - `chat()`: 同步聊天补全
@@ -317,7 +315,6 @@ ln2-inventory-agent/
 - `--model`: DeepSeek 模型 ID
 - `--max-steps`: 最大 ReAct 步数
 - `--actor-id`: 审计日志标识符
-- `--mock`: 禁用真实 LLM 调用
 
 ### 4.3 app_gui/ GUI 层
 

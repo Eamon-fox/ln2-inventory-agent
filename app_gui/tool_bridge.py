@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 
-from agent.llm_client import DeepSeekLLMClient, MockLLMClient
+from agent.llm_client import DeepSeekLLMClient
 from agent.react_agent import ReactAgent
 from agent.tool_runner import AgentToolRunner
 from app_gui.gui_config import DEFAULT_CONFIG_FILE
@@ -27,7 +27,7 @@ def _api_key_setup_hint():
         Path.home() / ".local" / "share" / "opencode" / "auth.json"
     )
     return (
-        "DeepSeek API key is missing. Configure one of the following before running real model mode:\n"
+        "DeepSeek API key is missing. Configure one of the following before running AI Copilot:\n"
         "1) Environment variable: DEEPSEEK_API_KEY\n"
         f"2) Auth file: {auth_file} (provider key: deepseek)\n"
         "Tip: GUI advanced options are under 'Show Advanced'.\n"
@@ -127,7 +127,7 @@ class GuiToolBridge:
             source="app_gui",
         )
 
-    def run_agent_query(self, yaml_path, query, model=None, max_steps=8, mock=True, history=None, on_event=None, plan_sink=None):
+    def run_agent_query(self, yaml_path, query, model=None, max_steps=8, history=None, on_event=None, plan_sink=None):
         prompt = str(query or "").strip()
         if not prompt:
             return {
@@ -157,7 +157,7 @@ class GuiToolBridge:
         chosen_model = (model or "").strip() or os.environ.get("DEEPSEEK_MODEL") or "deepseek-chat"
 
         try:
-            llm = MockLLMClient() if mock else DeepSeekLLMClient(model=chosen_model)
+            llm = DeepSeekLLMClient(model=chosen_model)
             runner = AgentToolRunner(
                 yaml_path=yaml_path,
                 actor_id=f"{self._actor_id}-agent",
@@ -168,7 +168,7 @@ class GuiToolBridge:
             result = agent.run(prompt, conversation_history=history, on_event=on_event)
         except RuntimeError as exc:
             message = str(exc)
-            if not mock and "DEEPSEEK_API_KEY is required" in message:
+            if "DEEPSEEK_API_KEY is required" in message:
                 return {
                     "ok": False,
                     "error_code": "api_key_required",
@@ -208,6 +208,6 @@ class GuiToolBridge:
         return {
             "ok": bool(result.get("ok")),
             "result": result,
-            "mode": "mock" if mock else "deepseek",
-            "model": None if mock else chosen_model,
+            "mode": "deepseek",
+            "model": chosen_model,
         }

@@ -19,7 +19,7 @@ Data is stored in a single YAML file. All operations go through validated script
 - **Fully configurable**: box count, grid size, position range, cell line whitelist — all via JSON config
 - **Unified Tool API**: shared by CLI, GUI, and AI agent runtime
 - **GUI starter**: desktop scaffold in `app_gui/` (query/add/thaw panels)
-- **ReAct runtime**: agent loop in `agent/` with DeepSeek-native parser or mock mode
+- **ReAct runtime**: agent loop in `agent/` with DeepSeek-native parser
 
 ## Quick Start
 
@@ -110,12 +110,11 @@ python app_gui/main.py
 
 GUI defaults and config:
 
-- AI Copilot default mode is **Mock** (no external API call)
 - Default model id is **`deepseek-chat`**
 - GUI settings file: **`~/.ln2agent/config.yaml`**
 - In packaged/frozen mode, demo dataset is copied to **`~/.ln2agent/demo/ln2_inventory.demo.yaml`** for easy editing
 
-If you disable mock mode and `DEEPSEEK_API_KEY` is missing, GUI will show setup hints directly in chat, including:
+If `DEEPSEEK_API_KEY` is missing, GUI will show setup hints directly in chat, including:
 
 - Environment variable: `DEEPSEEK_API_KEY`
 - Auth file (opencode): `~/.local/share/opencode/auth.json` (or path from `OPENCODE_AUTH_FILE`)
@@ -123,10 +122,7 @@ If you disable mock mode and `DEEPSEEK_API_KEY` is missing, GUI will show setup 
 ## ReAct Agent Runtime
 
 ```bash
-# mock mode (no external model call)
-python agent/run_agent.py "query K562 records" --mock
-
-# real model mode (DeepSeek-native)
+# DeepSeek model mode (DeepSeek-native)
 export DEEPSEEK_API_KEY="<your-key>"
 export DEEPSEEK_MODEL="deepseek-chat"
 python agent/run_agent.py "mark ID 10 position 23 as takeout today"

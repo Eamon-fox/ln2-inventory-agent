@@ -9,16 +9,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from agent.llm_client import DeepSeekLLMClient, MockLLMClient
+from agent.llm_client import DeepSeekLLMClient
 from agent.react_agent import ReactAgent
 from agent.tool_runner import AgentToolRunner
 from lib.config import YAML_PATH
 
 
-def build_llm_client(model=None, mock=False):
-    if mock:
-        return MockLLMClient()
-
+def build_llm_client(model=None):
     chosen_model = model or os.environ.get("DEEPSEEK_MODEL") or "deepseek-chat"
     return DeepSeekLLMClient(model=chosen_model)
 
@@ -30,11 +27,10 @@ def main():
     parser.add_argument("--model", help="DeepSeek model id, e.g. deepseek-chat")
     parser.add_argument("--max-steps", type=int, default=8, help="Max ReAct steps")
     parser.add_argument("--actor-id", default="react-agent", help="Actor ID recorded in audit logs")
-    parser.add_argument("--mock", action="store_true", help="Use mock LLM instead of real model call")
     args = parser.parse_args()
 
     try:
-        llm = build_llm_client(model=args.model, mock=args.mock)
+        llm = build_llm_client(model=args.model)
     except Exception as exc:
         print(f"❌ Failed to initialize LLM client: {exc}")
         return 1

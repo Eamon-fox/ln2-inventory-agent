@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QPushButton, QLabel, QSplitter,
     QMessageBox, QDialog, QFormLayout, QLineEdit,
-    QDialogButtonBox, QFileDialog, QGroupBox, QCheckBox,
+    QDialogButtonBox, QFileDialog, QGroupBox,
     QFrame, QSpacerItem, QSizePolicy, QComboBox
 )
 from PySide6.QtGui import QFont
@@ -198,15 +198,6 @@ class SettingsDialog(QDialog):
         api_hint.setWordWrap(True)
         ai_layout.addRow("", api_hint)
 
-        self.mock_check = QCheckBox(tr("settings.mockMode"))
-        self.mock_check.setChecked(self._config.get("ai", {}).get("mock", True))
-        ai_layout.addRow("", self.mock_check)
-
-        mock_hint = QLabel("When enabled, AI responses are simulated without API calls.")
-        mock_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 20px;")
-        mock_hint.setWordWrap(True)
-        ai_layout.addRow("", mock_hint)
-
         layout.addWidget(ai_group)
 
         user_group = QGroupBox("User")
@@ -262,9 +253,6 @@ class SettingsDialog(QDialog):
             "actor_id": self.actor_edit.text().strip(),
             "api_key": self.api_key_edit.text().strip() or None,
             "language": self.lang_combo.currentData(),
-            "ai": {
-                "mock": self.mock_check.isChecked(),
-            },
         }
 
 
@@ -286,7 +274,6 @@ class MainWindow(QMainWindow):
             migrated_yaml = self.settings.value("ui/current_yaml_path", "", type=str)
             migrated_actor = self.settings.value("ui/current_actor_id", "", type=str)
             migrated_model = self.settings.value("ai/model", "", type=str)
-            migrated_mock = self.settings.value("ai/mock", True, type=bool)
             migrated_steps = self.settings.value("ai/max_steps", 8, type=int)
             if migrated_yaml:
                 self.gui_config["yaml_path"] = migrated_yaml
@@ -294,7 +281,6 @@ class MainWindow(QMainWindow):
                 self.gui_config["actor_id"] = migrated_actor
             self.gui_config["ai"] = {
                 "model": migrated_model or "deepseek-chat",
-                "mock": migrated_mock,
                 "max_steps": migrated_steps,
             }
             save_gui_config(self.gui_config)
@@ -462,11 +448,6 @@ class MainWindow(QMainWindow):
         if api_key:
             os.environ["DEEPSEEK_API_KEY"] = api_key
 
-        ai_cfg = self.gui_config.get("ai", {})
-        ai_cfg["mock"] = values["ai"]["mock"]
-        self.gui_config["ai"] = ai_cfg
-        self.ai_panel.ai_mock.setChecked(ai_cfg.get("mock", True))
-
         new_lang = values.get("language", "en")
         if new_lang != self.gui_config.get("language"):
             self.gui_config["language"] = new_lang
@@ -491,9 +472,7 @@ class MainWindow(QMainWindow):
         # AI settings from unified config
         ai_cfg = self.gui_config.get("ai", {})
         self.ai_panel.ai_model.setText(ai_cfg.get("model") or "deepseek-chat")
-        self.ai_panel.ai_mock.setChecked(ai_cfg.get("mock", True))
         self.ai_panel.ai_steps.setValue(ai_cfg.get("max_steps", 8))
-        self.ai_panel.on_mode_changed()
 
     def closeEvent(self, event):
         if self.ai_panel.ai_run_inflight:
@@ -509,7 +488,6 @@ class MainWindow(QMainWindow):
         self.gui_config["actor_id"] = self.current_actor_id
         self.gui_config["ai"] = {
             "model": self.ai_panel.ai_model.text().strip() or "deepseek-chat",
-            "mock": self.ai_panel.ai_mock.isChecked(),
             "max_steps": self.ai_panel.ai_steps.value(),
         }
         save_gui_config(self.gui_config)

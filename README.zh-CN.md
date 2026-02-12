@@ -111,12 +111,11 @@ python app_gui/main.py
 
 GUI 默认行为与配置位置：
 
-- AI Copilot 默认是 **Mock 模式**（不调用外部 API）
 - 默认模型是 **`deepseek-chat`**
 - GUI 配置文件：**`~/.ln2agent/config.yaml`**
 - 打包/冻结运行时，示例数据会复制到 **`~/.ln2agent/demo/ln2_inventory.demo.yaml`**，方便直接看到和编辑
 
-如果关闭 Mock 模式但没有配置 `DEEPSEEK_API_KEY`，GUI 会在聊天区直接提示配置位置，包括：
+如果没有配置 `DEEPSEEK_API_KEY`，GUI 会在聊天区直接提示配置位置，包括：
 
 - 环境变量：`DEEPSEEK_API_KEY`
 - 认证文件（opencode）：`~/.local/share/opencode/auth.json`（或 `OPENCODE_AUTH_FILE` 指定路径）
@@ -124,9 +123,6 @@ GUI 默认行为与配置位置：
 ## ReAct Agent 运行时
 
 ```bash
-# mock 模式（不调用外部模型）
-python agent/run_agent.py "查询 K562 记录" --mock
-
 # 真实模型模式（DeepSeek 原生解析）
 export DEEPSEEK_API_KEY="<your-key>"
 export DEEPSEEK_MODEL="deepseek-chat"

@@ -426,17 +426,3 @@ class DeepSeekLLMClient(LLMClient):
             "content": "".join(content_parts).strip(),
             "tool_calls": tool_calls,
         }
-
-
-class MockLLMClient(LLMClient):
-    """Fallback mock client for dry runs and local wiring tests."""
-
-    def chat(self, messages, tools=None, temperature=0.0):
-        _ = messages
-        _ = tools
-        _ = temperature
-        return {
-            "role": "assistant",
-            "content": "Mock client enabled. No real LLM call was made.",
-            "tool_calls": [],
-        }

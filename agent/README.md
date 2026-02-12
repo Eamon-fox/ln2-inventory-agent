@@ -2,13 +2,7 @@
 
 This directory provides a minimal ReAct agent runtime on top of the unified Tool API.
 
-## Run (mock mode)
-
-```bash
-python agent/run_agent.py "查询K562最近冻存记录" --mock
-```
-
-## Run (real model via DeepSeek)
+## Run (DeepSeek model)
 
 ```bash
 export DEEPSEEK_API_KEY="<your-key>"

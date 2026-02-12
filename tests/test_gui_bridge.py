@@ -22,8 +22,20 @@ def make_data(records):
     }
 
 
+class _FakeDeepSeekClient:
+    def __init__(self, *args, **kwargs):
+        _ = args
+        _ = kwargs
+
+    def stream_chat(self, messages, tools=None, temperature=0.0):
+        _ = messages
+        _ = tools
+        _ = temperature
+        yield {"type": "answer", "text": "Fake DeepSeek response"}
+
+
 class GuiBridgeAgentTests(unittest.TestCase):
-    def test_run_agent_query_mock_mode(self):
+    def test_run_agent_query_deepseek_mode(self):
         with tempfile.TemporaryDirectory(prefix="ln2_gui_agent_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -45,26 +57,25 @@ class GuiBridgeAgentTests(unittest.TestCase):
             )
 
             bridge = GuiToolBridge(actor_id="gui-test", session_id="session-gui-test")
-            response = bridge.run_agent_query(
-                yaml_path=str(yaml_path),
-                query="Find K562 records",
-                mock=True,
-                max_steps=6,
-            )
+            with patch("app_gui.tool_bridge.DeepSeekLLMClient", return_value=_FakeDeepSeekClient()):
+                response = bridge.run_agent_query(
+                    yaml_path=str(yaml_path),
+                    query="Find K562 records",
+                    max_steps=6,
+                )
 
             self.assertTrue(response["ok"])
-            self.assertEqual("mock", response["mode"])
-            self.assertIsNone(response["model"])
+            self.assertEqual("deepseek", response["mode"])
+            self.assertEqual("deepseek-chat", response["model"])
             self.assertTrue(response["result"]["ok"])
             self.assertTrue(response["result"].get("trace_id"))
-            self.assertIn("Mock client enabled", response["result"].get("final", ""))
+            self.assertIn("Fake DeepSeek response", response["result"].get("final", ""))
 
     def test_run_agent_query_requires_prompt(self):
         bridge = GuiToolBridge()
         response = bridge.run_agent_query(
             yaml_path="/tmp/does_not_matter.yaml",
             query="   ",
-            mock=True,
         )
 
         self.assertFalse(response["ok"])
@@ -92,26 +103,25 @@ class GuiBridgeAgentTests(unittest.TestCase):
             )
 
             bridge = GuiToolBridge(actor_id="gui-test", session_id="session-gui-test")
-            response = bridge.run_agent_query(
-                yaml_path=str(yaml_path),
-                query="repeat",
-                mock=True,
-                history=[
-                    {"role": "user", "content": "hi"},
-                    {"role": "assistant", "content": "hello"},
-                ],
-            )
+            with patch("app_gui.tool_bridge.DeepSeekLLMClient", return_value=_FakeDeepSeekClient()):
+                response = bridge.run_agent_query(
+                    yaml_path=str(yaml_path),
+                    query="repeat",
+                    history=[
+                        {"role": "user", "content": "hi"},
+                        {"role": "assistant", "content": "hello"},
+                    ],
+                )
 
             self.assertTrue(response["ok"])
             self.assertEqual(2, response["result"].get("conversation_history_used"))
 
-    def test_run_agent_query_requires_api_key_when_not_mock(self):
+    def test_run_agent_query_requires_api_key(self):
         bridge = GuiToolBridge()
         with patch("app_gui.tool_bridge.DeepSeekLLMClient", side_effect=RuntimeError("DEEPSEEK_API_KEY is required")):
             response = bridge.run_agent_query(
                 yaml_path="/tmp/does_not_matter.yaml",
                 query="show stats",
-                mock=False,
                 model=None,
             )
 
@@ -125,7 +135,6 @@ class GuiBridgeAgentTests(unittest.TestCase):
         response = bridge.run_agent_query(
             yaml_path="/tmp/does_not_matter.yaml",
             query="show stats",
-            mock=True,
             max_steps=0,
         )
 
@@ -134,12 +143,12 @@ class GuiBridgeAgentTests(unittest.TestCase):
 
     def test_run_agent_query_rejects_invalid_agent_result(self):
         bridge = GuiToolBridge()
-        with patch("app_gui.tool_bridge.ReactAgent.run", return_value="bad-payload"):
-            response = bridge.run_agent_query(
-                yaml_path="/tmp/does_not_matter.yaml",
-                query="show stats",
-                mock=True,
-            )
+        with patch("app_gui.tool_bridge.DeepSeekLLMClient", return_value=_FakeDeepSeekClient()):
+            with patch("app_gui.tool_bridge.ReactAgent.run", return_value="bad-payload"):
+                response = bridge.run_agent_query(
+                    yaml_path="/tmp/does_not_matter.yaml",
+                    query="show stats",
+                )
 
         self.assertFalse(response["ok"])
         self.assertEqual("invalid_agent_result", response["error_code"])
@@ -167,12 +176,12 @@ class GuiBridgeAgentTests(unittest.TestCase):
 
             bridge = GuiToolBridge(actor_id="gui-test", session_id="session-gui-test")
             events = []
-            response = bridge.run_agent_query(
-                yaml_path=str(yaml_path),
-                query="Find K562 records",
-                mock=True,
-                on_event=lambda e: events.append(dict(e)),
-            )
+            with patch("app_gui.tool_bridge.DeepSeekLLMClient", return_value=_FakeDeepSeekClient()):
+                response = bridge.run_agent_query(
+                    yaml_path=str(yaml_path),
+                    query="Find K562 records",
+                    on_event=lambda e: events.append(dict(e)),
+                )
 
             self.assertTrue(response["ok"])
             event_names = [e.get("event") for e in events]

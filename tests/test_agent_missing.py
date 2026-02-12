@@ -3,7 +3,7 @@
 Tests for:
 - tool_runner.py: plan staging, normalization, hints
 - react_agent.py: history, parsing, step limits
-- llm_client.py: auth loading, mock client
+- llm_client.py: auth loading
 """
 
 import json
@@ -18,7 +18,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agent.tool_runner import AgentToolRunner
-from agent.llm_client import MockLLMClient, DeepSeekLLMClient, load_opencode_auth_env
+from agent.llm_client import DeepSeekLLMClient, load_opencode_auth_env
 from lib.yaml_ops import load_yaml, write_yaml
 
 
@@ -452,38 +452,6 @@ class LLMClientAuthTests(unittest.TestCase):
                 result = load_opencode_auth_env(auth_file=str(auth_file))
             self.assertIsNotNone(result)
             self.assertTrue(result.get("ok"))
-
-
-class MockLLMClientTests(unittest.TestCase):
-    """Test MockLLMClient functionality."""
-
-    def test_mock_llm_chat_returns_dict(self):
-        """Test MockLLMClient.chat returns dict."""
-        client = MockLLMClient()
-        result = client.chat([])
-        self.assertIsInstance(result, dict)
-
-    def test_mock_llm_stream_chat_returns_iterator(self):
-        """Test MockLLMClient.stream_chat returns iterator."""
-        client = MockLLMClient()
-        result = client.stream_chat([])
-        # Should be iterable
-        items = list(result)
-        self.assertGreater(len(items), 0)
-
-    def test_mock_llm_complete_returns_string(self):
-        """Test MockLLMClient.complete returns string."""
-        client = MockLLMClient()
-        result = client.complete([])
-        self.assertIsInstance(result, str)
-
-    def test_mock_llm_stream_chat_yields_dicts(self):
-        """Test MockLLMClient.stream_chat yields dicts with type."""
-        client = MockLLMClient()
-        events = list(client.stream_chat([]))
-        for event in events:
-            self.assertIsInstance(event, dict)
-            self.assertIn("type", event)
 
 
 class DeepSeekLLMClientMockTests(unittest.TestCase):

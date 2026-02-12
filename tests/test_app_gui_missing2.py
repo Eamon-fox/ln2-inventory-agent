@@ -211,7 +211,6 @@ class WorkerTests(unittest.TestCase):
             query="test query",
             model="deepseek-chat",
             max_steps=8,
-            mock=True,
             history=None,
         )
 

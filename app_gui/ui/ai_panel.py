@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt, Signal, QThread, QEvent
 from PySide6.QtGui import QTextCursor, QTextDocumentFragment
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-    QPushButton, QLineEdit, QComboBox, QCheckBox, 
+    QPushButton, QLineEdit,
     QGroupBox, QTextEdit, QFormLayout, QSpinBox
 )
 from app_gui.ui.workers import AgentRunWorker
@@ -22,8 +22,7 @@ This panel lets you control inventory using natural language commands.
 
 SETUP:
 1. Configure your DeepSeek API key in Settings
-2. Uncheck "Mock LLM" to enable real AI responses
-3. Mock mode is useful for testing without API calls
+2. Select model and max steps in "Show Advanced"
 
 USAGE:
 Type requests in plain language, for example:
@@ -41,8 +40,7 @@ HOW IT WORKS:
 TIPS:
 - Be specific about box numbers and positions
 - Use record IDs when referring to samples
-- Check generated plans before executing
-- Use mock mode to learn without API costs"""
+- Check generated plans before executing"""
 
 class AIPanel(QWidget):
     operation_completed = Signal(bool)
@@ -104,13 +102,8 @@ class AIPanel(QWidget):
         self.ai_steps.setRange(1, 20)
         self.ai_steps.setValue(8)
 
-        self.ai_mock = QCheckBox(tr("ai.mockMode"))
-        self.ai_mock.setChecked(True)
-        self.ai_mock.stateChanged.connect(self.on_mode_changed)
-
         controls_form.addRow(tr("ai.deepseekModel"), self.ai_model)
         controls_form.addRow(tr("ai.maxSteps"), self.ai_steps)
-        controls_form.addRow("", self.ai_mock)
         layout.addWidget(self.ai_controls_box)
 
         # Prompt Box
@@ -215,7 +208,6 @@ class AIPanel(QWidget):
         
         self.ai_controls_box.setVisible(False)
         self.ai_report_box.setVisible(False)
-        self.on_mode_changed()
 
         # Add remaining widgets
         layout.addWidget(prompt_box)
@@ -242,11 +234,6 @@ class AIPanel(QWidget):
     def on_toggle_report(self, checked):
         self.ai_report_box.setVisible(bool(checked))
         self.ai_toggle_report_btn.setText(tr("ai.hidePlanDetails") if checked else tr("ai.showPlanDetails"))
-
-    def on_mode_changed(self):
-        use_mock = self.ai_mock.isChecked()
-        self.ai_model.setEnabled(not use_mock)
-        self.ai_model.setPlaceholderText(tr("ai.mockEnabled") if use_mock else "deepseek-chat")
 
     def set_prompt(self, text):
         self.ai_prompt.setPlainText(str(text or "").strip())
@@ -488,7 +475,6 @@ class AIPanel(QWidget):
             query=prompt,
             model=model,
             max_steps=self.ai_steps.value(),
-            mock=self.ai_mock.isChecked(),
             history=history,
         )
         self.ai_run_thread = QThread(self)

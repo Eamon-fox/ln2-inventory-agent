@@ -5,14 +5,13 @@ class AgentRunWorker(QObject):
     progress = Signal(dict)
     plan_staged = Signal(list)
 
-    def __init__(self, bridge, yaml_path, query, model, max_steps, mock, history):
+    def __init__(self, bridge, yaml_path, query, model, max_steps, history):
         super().__init__()
         self._bridge = bridge
         self._yaml_path = yaml_path
         self._query = query
         self._model = model
         self._max_steps = max_steps
-        self._mock = mock
         self._history = history
 
     def _plan_sink(self, item):
@@ -26,7 +25,6 @@ class AgentRunWorker(QObject):
                 query=self._query,
                 model=self._model,
                 max_steps=self._max_steps,
-                mock=self._mock,
                 history=self._history,
                 on_event=self._emit_progress,
                 plan_sink=self._plan_sink,
