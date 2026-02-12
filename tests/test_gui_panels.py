@@ -420,46 +420,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual(1, panel.query_table.rowCount())
         self.assertEqual("2", panel.query_table.item(0, 0).text())
 
-    def test_overview_double_click_shows_menu_and_emits_thaw_prefill(self):
-        panel = self._new_overview_panel()
-        panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
-
-        record = {
-            "id": 5,
-            "parent_cell_line": "K562",
-            "short_name": "K562_RTCB_dTAG_clone12",
-            "box": 1,
-            "positions": [1],
-            "frozen_at": "2026-02-10",
-        }
-        panel.overview_pos_map = {(1, 1): record}
-        button = panel.overview_cells[(1, 1)]
-        panel._paint_cell(button, 1, 1, record)
-
-        emitted_thaw = []
-        emitted_move = []
-        emitted_query = []
-        panel.request_prefill.connect(lambda payload: emitted_thaw.append(payload))
-        panel.request_move_prefill.connect(lambda payload: emitted_move.append(payload))
-        panel.request_query_prefill.connect(lambda payload: emitted_query.append(payload))
-
-        from unittest.mock import patch, MagicMock
-        with patch("app_gui.ui.overview_panel.QMenu") as MockMenu:
-            mock_menu = MagicMock()
-            MockMenu.return_value = mock_menu
-            mock_act_thaw = MagicMock()
-            mock_act_move = MagicMock()
-            mock_act_query = MagicMock()
-            mock_menu.addAction.side_effect = [mock_act_thaw, mock_act_move, mock_act_query]
-            mock_menu.exec.return_value = mock_act_thaw
-            panel.on_cell_double_clicked(1, 1)
-
-        self.assertEqual((1, 1), panel.overview_selected_key)
-        self.assertEqual([{"box": 1, "position": 1, "record_id": 5}], emitted_thaw)
-        self.assertEqual([], emitted_move)
-        self.assertEqual([], emitted_query)
-
-    def test_overview_double_click_emits_background_prefills(self):
+    def test_overview_double_click_prefills_background_only(self):
         panel = self._new_overview_panel()
         panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
 
@@ -474,10 +435,70 @@ class GuiPanelRegressionTests(unittest.TestCase):
         button = panel.overview_cells[(1, 1)]
         panel._paint_cell(button, 1, 1, record)
 
+        emitted_thaw = []
+        emitted_move = []
+        emitted_query = []
+        emitted_add = []
+        panel.request_prefill.connect(lambda payload: emitted_thaw.append(payload))
+        panel.request_move_prefill.connect(lambda payload: emitted_move.append(payload))
+        panel.request_query_prefill.connect(lambda payload: emitted_query.append(payload))
+        panel.request_add_prefill.connect(lambda payload: emitted_add.append(payload))
+
         emitted_bg_add = []
         emitted_bg_thaw = []
         panel.request_add_prefill_background.connect(lambda payload: emitted_bg_add.append(payload))
         panel.request_prefill_background.connect(lambda payload: emitted_bg_thaw.append(payload))
+
+        panel.on_cell_double_clicked(1, 1)
+
+        self.assertEqual((1, 1), panel.overview_selected_key)
+        self.assertEqual([{"box": 1, "position": 1}], emitted_bg_add)
+        self.assertEqual([{"box": 1, "position": 1, "record_id": 5}], emitted_bg_thaw)
+        self.assertEqual([], emitted_thaw)
+        self.assertEqual([], emitted_move)
+        self.assertEqual([], emitted_query)
+        self.assertEqual([], emitted_add)
+
+    def test_overview_double_click_empty_slot_prefills_add_background_only(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
+
+        panel.overview_pos_map = {}
+        button = panel.overview_cells[(1, 1)]
+        panel._paint_cell(button, 1, 1, record=None)
+
+        emitted_add = []
+        emitted_bg_add = []
+        emitted_bg_thaw = []
+        panel.request_add_prefill.connect(lambda payload: emitted_add.append(payload))
+        panel.request_add_prefill_background.connect(lambda payload: emitted_bg_add.append(payload))
+        panel.request_prefill_background.connect(lambda payload: emitted_bg_thaw.append(payload))
+
+        panel.on_cell_double_clicked(1, 1)
+
+        self.assertEqual((1, 1), panel.overview_selected_key)
+        self.assertEqual([{"box": 1, "position": 1}], emitted_bg_add)
+        self.assertEqual([], emitted_bg_thaw)
+        self.assertEqual([], emitted_add)
+        self.assertIn("#16a34a", button.styleSheet())
+
+    def test_overview_context_menu_record_emits_thaw_prefill(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
+
+        record = {
+            "id": 5,
+            "parent_cell_line": "K562",
+            "short_name": "K562_test",
+            "box": 1,
+            "positions": [1],
+        }
+        panel.overview_pos_map = {(1, 1): record}
+        button = panel.overview_cells[(1, 1)]
+        panel._paint_cell(button, 1, 1, record)
+
+        emitted_thaw = []
+        panel.request_prefill.connect(lambda payload: emitted_thaw.append(payload))
 
         from unittest.mock import patch, MagicMock
         with patch("app_gui.ui.overview_panel.QMenu") as MockMenu:
@@ -487,13 +508,13 @@ class GuiPanelRegressionTests(unittest.TestCase):
             mock_act_move = MagicMock()
             mock_act_query = MagicMock()
             mock_menu.addAction.side_effect = [mock_act_thaw, mock_act_move, mock_act_query]
-            mock_menu.exec.return_value = mock_act_query
-            panel.on_cell_double_clicked(1, 1)
+            mock_menu.exec.return_value = mock_act_thaw
+            panel.on_cell_context_menu(1, 1, button.mapToGlobal(button.rect().center()))
 
-        self.assertEqual([{"box": 1, "position": 1}], emitted_bg_add)
-        self.assertEqual([{"box": 1, "position": 1, "record_id": 5}], emitted_bg_thaw)
+        self.assertEqual((1, 1), panel.overview_selected_key)
+        self.assertEqual([{"box": 1, "position": 1, "record_id": 5}], emitted_thaw)
 
-    def test_overview_double_click_menu_emits_move_prefill(self):
+    def test_overview_context_menu_record_emits_move_prefill(self):
         panel = self._new_overview_panel()
         panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
 
@@ -520,11 +541,12 @@ class GuiPanelRegressionTests(unittest.TestCase):
             mock_act_query = MagicMock()
             mock_menu.addAction.side_effect = [mock_act_thaw, mock_act_move, mock_act_query]
             mock_menu.exec.return_value = mock_act_move
-            panel.on_cell_double_clicked(1, 1)
+            panel.on_cell_context_menu(1, 1, button.mapToGlobal(button.rect().center()))
 
+        self.assertEqual((1, 1), panel.overview_selected_key)
         self.assertEqual([{"box": 1, "position": 1, "record_id": 5}], emitted_move)
 
-    def test_overview_double_click_menu_emits_query_prefill(self):
+    def test_overview_context_menu_record_emits_query_prefill(self):
         panel = self._new_overview_panel()
         panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
 
@@ -551,11 +573,12 @@ class GuiPanelRegressionTests(unittest.TestCase):
             mock_act_query = MagicMock()
             mock_menu.addAction.side_effect = [mock_act_thaw, mock_act_move, mock_act_query]
             mock_menu.exec.return_value = mock_act_query
-            panel.on_cell_double_clicked(1, 1)
+            panel.on_cell_context_menu(1, 1, button.mapToGlobal(button.rect().center()))
 
+        self.assertEqual((1, 1), panel.overview_selected_key)
         self.assertEqual([{"box": 1, "position": 1, "record_id": 5}], emitted_query)
 
-    def test_overview_double_click_empty_slot_shows_menu_and_emits_add_prefill(self):
+    def test_overview_context_menu_empty_slot_emits_add_prefill(self):
         panel = self._new_overview_panel()
         panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
 
@@ -563,8 +586,8 @@ class GuiPanelRegressionTests(unittest.TestCase):
         button = panel.overview_cells[(1, 1)]
         panel._paint_cell(button, 1, 1, record=None)
 
-        emitted = []
-        panel.request_add_prefill.connect(lambda payload: emitted.append(payload))
+        emitted_add = []
+        panel.request_add_prefill.connect(lambda payload: emitted_add.append(payload))
 
         from unittest.mock import patch, MagicMock
         with patch("app_gui.ui.overview_panel.QMenu") as MockMenu:
@@ -573,11 +596,10 @@ class GuiPanelRegressionTests(unittest.TestCase):
             mock_act_add = MagicMock()
             mock_menu.addAction.return_value = mock_act_add
             mock_menu.exec.return_value = mock_act_add
-            panel.on_cell_double_clicked(1, 1)
+            panel.on_cell_context_menu(1, 1, button.mapToGlobal(button.rect().center()))
 
         self.assertEqual((1, 1), panel.overview_selected_key)
-        self.assertEqual([{"box": 1, "position": 1}], emitted)
-        self.assertIn("#16a34a", button.styleSheet())
+        self.assertEqual([{"box": 1, "position": 1}], emitted_add)
 
     def test_operations_background_prefill_updates_fields_without_switch_mode(self):
         panel = self._new_operations_panel()
@@ -592,113 +614,6 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual(11, panel.t_id.value())
         self.assertEqual(5, panel.t_position.value())
         self.assertEqual("move", panel.current_operation_mode)
-
-    def test_overview_select_mode_toggle(self):
-        panel = self._new_overview_panel()
-        self.assertFalse(panel.select_mode)
-        panel.ov_select_btn.setChecked(True)
-        self.assertTrue(panel.select_mode)
-        self.assertEqual(panel.ov_select_btn.text(), "Exit Select")
-        panel.ov_select_btn.setChecked(False)
-        self.assertFalse(panel.select_mode)
-        self.assertEqual(panel.ov_select_btn.text(), "Select")
-
-    def test_overview_multi_select_toggle_cell(self):
-        panel = self._new_overview_panel()
-        panel._rebuild_boxes(rows=1, cols=2, box_numbers=[1])
-        rec1 = {"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "positions": [1]}
-        rec2 = {"id": 2, "parent_cell_line": "K562", "short_name": "B", "box": 1, "positions": [2]}
-        panel.overview_pos_map = {(1, 1): rec1, (1, 2): rec2}
-        for key, rec in panel.overview_pos_map.items():
-            panel._paint_cell(panel.overview_cells[key], key[0], key[1], rec)
-
-        panel.ov_select_btn.setChecked(True)
-
-        # Select cell (1,1)
-        panel.on_cell_clicked(1, 1)
-        self.assertIn((1, 1), panel.overview_selected_keys)
-        self.assertIn("#16a34a", panel.overview_cells[(1, 1)].styleSheet())
-
-        # Select cell (1,2)
-        panel.on_cell_clicked(1, 2)
-        self.assertIn((1, 2), panel.overview_selected_keys)
-        self.assertEqual(len(panel.overview_selected_keys), 2)
-
-        # Toggle off cell (1,1)
-        panel.on_cell_clicked(1, 1)
-        self.assertNotIn((1, 1), panel.overview_selected_keys)
-        self.assertEqual(len(panel.overview_selected_keys), 1)
-
-        # Empty cell should not be selectable
-        panel.overview_pos_map.pop((1, 2))
-        panel.on_cell_clicked(1, 2)
-        # (1,2) was toggled off since no record
-        # It was already in the set; _toggle_cell_selection checks for record
-        # After pop, clicking (1,2) should be ignored since no record
-
-    def test_overview_selection_bar_visibility(self):
-        panel = self._new_overview_panel()
-        panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
-        rec = {"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "positions": [1]}
-        panel.overview_pos_map = {(1, 1): rec}
-        panel._paint_cell(panel.overview_cells[(1, 1)], 1, 1, rec)
-
-        self.assertTrue(panel.ov_selection_bar.isHidden())
-
-        panel.ov_select_btn.setChecked(True)
-        panel.on_cell_clicked(1, 1)
-        self.assertFalse(panel.ov_selection_bar.isHidden())
-        self.assertIn("1 selected", panel.ov_sel_count.text())
-
-        panel._clear_all_selections()
-        self.assertTrue(panel.ov_selection_bar.isHidden())
-        self.assertIn("0 selected", panel.ov_sel_count.text())
-
-    def test_overview_quick_action_emits_plan_items(self):
-        bridge = _FakeOperationsBridge()
-        panel = OverviewPanel(bridge=bridge, yaml_path_getter=lambda: "/tmp/inventory.yaml")
-        panel._rebuild_boxes(rows=1, cols=2, box_numbers=[1])
-        rec1 = {"id": 10, "parent_cell_line": "K562", "short_name": "A", "box": 1, "positions": [1]}
-        rec2 = {"id": 11, "parent_cell_line": "K562", "short_name": "B", "box": 1, "positions": [2]}
-        panel.overview_pos_map = {(1, 1): rec1, (1, 2): rec2}
-
-        panel.ov_select_btn.setChecked(True)
-        panel.on_cell_clicked(1, 1)
-        panel.on_cell_clicked(1, 2)
-        self.assertEqual(len(panel.overview_selected_keys), 2)
-
-        emitted = []
-        panel.plan_items_requested.connect(lambda items: emitted.append(items))
-        panel._on_quick_action("Takeout")
-
-        self.assertEqual(1, len(emitted))
-        items = emitted[0]
-        self.assertEqual(2, len(items))
-        ids = sorted([it["record_id"] for it in items])
-        self.assertEqual([10, 11], ids)
-        for it in items:
-            self.assertEqual("takeout", it["action"])
-            self.assertEqual("human", it["source"])
-        self.assertEqual(len(panel.overview_selected_keys), 0)
-
-    def test_overview_clear_selections(self):
-        panel = self._new_overview_panel()
-        panel._rebuild_boxes(rows=1, cols=2, box_numbers=[1])
-        rec1 = {"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "positions": [1]}
-        rec2 = {"id": 2, "parent_cell_line": "K562", "short_name": "B", "box": 1, "positions": [2]}
-        panel.overview_pos_map = {(1, 1): rec1, (1, 2): rec2}
-        for key, rec in panel.overview_pos_map.items():
-            panel._paint_cell(panel.overview_cells[key], key[0], key[1], rec)
-
-        panel.ov_select_btn.setChecked(True)
-        panel.on_cell_clicked(1, 1)
-        panel.on_cell_clicked(1, 2)
-        self.assertEqual(len(panel.overview_selected_keys), 2)
-
-        panel._clear_all_selections()
-        self.assertEqual(len(panel.overview_selected_keys), 0)
-        self.assertNotIn("#16a34a", panel.overview_cells[(1, 1)].styleSheet())
-        self.assertNotIn("#16a34a", panel.overview_cells[(1, 2)].styleSheet())
 
     # --- Plan tab tests ---
 

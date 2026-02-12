@@ -99,7 +99,7 @@
     "ctxHistory": "History",
     "ctxNote": "Note",
     "ctxMove": "Move",
-    "helpText": "Overview Panel - LN2 Tank Visualization\n\nThis panel shows a visual map of your liquid nitrogen storage tanks.\n\nBASIC OPERATIONS:\n- Double-click a cell to view details or start an operation\n- Empty cells show position numbers (1-81)\n- Occupied cells show record IDs with color-coded status\n\nCOLOR CODING:\n- Green: Active samples (ready for use)\n- Yellow: Recently thawed samples\n- Red: Depleted/discarded samples\n- Gray: Empty positions\n\nSELECTION MODE:\n- Click \"Select\" to enable multi-select\n- Select multiple cells for batch operations\n- Use \"Print Selected Guide\" for audit workflows\n\nQUICK ACTIONS:\n- Quick Add: Jump to add new sample form\n- Quick Takeout: Jump to takeout/thaw form"
+    "helpText": "Overview Panel - LN2 Tank Visualization\n\nThis panel shows a visual map of your liquid nitrogen storage tanks.\n\nBASIC OPERATIONS:\n- Single-click a slot to preview details below\n- Double-click a slot to auto-prefill Add Entry; if occupied, also prefill Takeout\n- Right-click a slot for detailed actions (takeout/move/query/add)\n- Drag an occupied slot onto another slot to stage a Move in Plan\n- Empty slots show position numbers (1-81)\n- Occupied slots show record IDs with color-coded status\n\nCOLOR CODING:\n- Green: Active samples (ready for use)\n- Yellow: Recently thawed samples\n- Red: Depleted/discarded samples\n- Gray: Empty positions\n\nQUICK ACTIONS:\n- Quick Add: Jump to add new sample form"
   },
   "operations": {
     "title": "Operations",

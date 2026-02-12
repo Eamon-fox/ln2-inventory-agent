@@ -357,7 +357,6 @@ class MainWindow(QMainWindow):
         self.overview_panel.request_move_prefill.connect(self.operations_panel.set_move_prefill)
         self.overview_panel.request_query_prefill.connect(self.operations_panel.set_query_prefill)
         self.overview_panel.request_quick_add.connect(lambda: self.operations_panel.set_mode("add"))
-        self.overview_panel.request_quick_thaw.connect(lambda: self.operations_panel.set_mode("thaw"))
         self.overview_panel.data_loaded.connect(self.operations_panel.update_records_cache)
 
         # Operations -> Overview (refresh after execution)

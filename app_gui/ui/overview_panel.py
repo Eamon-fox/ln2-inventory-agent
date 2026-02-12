@@ -4,7 +4,7 @@ from PySide6.QtGui import QDrag, QDropEvent, QDragEnterEvent, QDragMoveEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QPushButton, QLineEdit, QComboBox, QCheckBox, QScrollArea,
-    QSizePolicy, QGroupBox, QMenu, QApplication
+    QSizePolicy, QGroupBox, QMenu
 )
 from app_gui.ui.utils import build_panel_header, cell_color
 from app_gui.i18n import tr, t
@@ -12,7 +12,7 @@ from app_gui.i18n import tr, t
 MIME_TYPE_MOVE = "application/x-ln2-move"
 
 def get_overview_help_text():
-    from app_gui.i18n import tr
+    # i18n-backed so it tracks language selection.
     return tr("overview.helpText")
 
 class CellButton(QPushButton):
@@ -86,7 +86,6 @@ class OverviewPanel(QWidget):
     request_prefill = Signal(dict)
     request_prefill_background = Signal(dict)
     request_quick_add = Signal()
-    request_quick_thaw = Signal()
     request_add_prefill = Signal(dict)
     request_add_prefill_background = Signal(dict)
     request_move_prefill = Signal(dict)
@@ -109,8 +108,6 @@ class OverviewPanel(QWidget):
         self.overview_selected_key = None
         self.overview_hover_key = None
         self.overview_records_by_id = {}
-        self.overview_selected_keys = set()
-        self.select_mode = False
 
         self.setup_ui()
 
@@ -149,15 +146,6 @@ class OverviewPanel(QWidget):
         goto_add_btn = QPushButton(tr("overview.quickAdd"))
         goto_add_btn.clicked.connect(self.request_quick_add.emit)
         action_row.addWidget(goto_add_btn)
-
-        goto_thaw_btn = QPushButton(tr("overview.quickTakeout"))
-        goto_thaw_btn.clicked.connect(self.request_quick_thaw.emit)
-        action_row.addWidget(goto_thaw_btn)
-
-        self.ov_select_btn = QPushButton(tr("overview.select"))
-        self.ov_select_btn.setCheckable(True)
-        self.ov_select_btn.toggled.connect(self._on_select_mode_toggled)
-        action_row.addWidget(self.ov_select_btn)
 
         action_row.addStretch()
         layout.addLayout(action_row)
@@ -215,25 +203,6 @@ class OverviewPanel(QWidget):
         self.ov_hover_hint.setWordWrap(True)
         layout.addWidget(self.ov_hover_hint)
 
-        # Selection Action Bar (hidden by default)
-        sel_bar_layout = QHBoxLayout()
-        sel_bar_layout.setSpacing(6)
-        self.ov_sel_count = QLabel(t("overview.selected", count=0))
-        self.ov_sel_count.setStyleSheet("font-weight: bold;")
-        sel_bar_layout.addWidget(self.ov_sel_count)
-        for action_name in (tr("overview.takeout"), tr("overview.thaw"), tr("overview.discard")):
-            btn = QPushButton(action_name)
-            btn.clicked.connect(lambda _checked=False, a=action_name: self._on_quick_action(a))
-            sel_bar_layout.addWidget(btn)
-        sel_clear_btn = QPushButton(tr("overview.clear"))
-        sel_clear_btn.clicked.connect(self._clear_all_selections)
-        sel_bar_layout.addWidget(sel_clear_btn)
-        sel_bar_layout.addStretch()
-        self.ov_selection_bar = QWidget()
-        self.ov_selection_bar.setLayout(sel_bar_layout)
-        self.ov_selection_bar.setVisible(False)
-        layout.addWidget(self.ov_selection_bar)
-
         # Grid Area
         self.ov_scroll = QScrollArea()
         self.ov_scroll.setWidgetResizable(True)
@@ -274,8 +243,6 @@ class OverviewPanel(QWidget):
             self.ov_status.setText(t("overview.loadFailed", error=stats_response.get('message', 'unknown error')))
             self.overview_records_by_id = {}
             self.overview_selected_key = None
-            self.overview_selected_keys.clear()
-            self._update_selection_bar()
             self._reset_detail()
             return
 
@@ -374,8 +341,6 @@ class OverviewPanel(QWidget):
         self.overview_box_live_labels = {}
         self.overview_box_groups = {}
         self.overview_selected_key = None
-        self.overview_selected_keys.clear()
-        self._update_selection_bar()
         self._reset_detail()
 
         total_slots = rows * cols
@@ -431,8 +396,7 @@ class OverviewPanel(QWidget):
         self.overview_shape = (rows, cols, tuple(box_numbers))
 
     def _paint_cell(self, button, box_num, position, record):
-        is_selected = (self.overview_selected_key == (box_num, position)
-                       or (box_num, position) in self.overview_selected_keys)
+        is_selected = self.overview_selected_key == (box_num, position)
         if record:
             short = str(record.get("short_name") or "")
             label = short[:6] if short else str(position)
@@ -524,8 +488,6 @@ class OverviewPanel(QWidget):
             if button is not None:
                 rec = self.overview_pos_map.get(key)
                 self._paint_cell(button, key[0], key[1], rec)
-        if self.overview_selected_keys:
-            self._clear_all_selections()
 
     def _refresh_filter_options(self, records, box_numbers):
         prev_box = self.ov_filter_box.currentData()
@@ -600,13 +562,6 @@ class OverviewPanel(QWidget):
                 self._clear_selected_cell()
                 self._reset_detail()
 
-        # Remove hidden cells from multi-select
-        hidden_keys = {k for k in self.overview_selected_keys
-                       if not self.overview_cells.get(k, QPushButton()).isVisible()}
-        if hidden_keys:
-            self.overview_selected_keys -= hidden_keys
-            self._update_selection_bar()
-
         self.ov_status.setText(
             f"Filter matched {visible_slots} slots across {visible_boxes} boxes | {datetime.now().strftime('%H:%M:%S')}"
         )
@@ -625,24 +580,19 @@ class OverviewPanel(QWidget):
         self._apply_filters()
 
     def on_cell_clicked(self, box_num, position):
-        if self.select_mode:
-            self._toggle_cell_selection(box_num, position)
-        else:
-            self.on_cell_hovered(box_num, position, force=True)
+        self.on_cell_hovered(box_num, position, force=True)
 
     def on_cell_double_clicked(self, box_num, position):
         record = self.overview_pos_map.get((box_num, position))
         self._set_selected_cell(box_num, position)
         self.on_cell_hovered(box_num, position, force=True)
 
-        # Keep the current menu-based flow, but also prefill the most-used forms in background.
+        # Double click should be low-friction: just prefill common forms, no popup menu.
         self.request_add_prefill_background.emit({
             "box": int(box_num),
             "position": int(position),
         })
-        
-        menu = QMenu(self)
-        
+
         if record:
             rec_id = int(record.get("id"))
             self.request_prefill_background.emit({
@@ -650,48 +600,9 @@ class OverviewPanel(QWidget):
                 "position": int(position),
                 "record_id": rec_id,
             })
-            act_thaw = menu.addAction("Thaw / Takeout")
-            act_move = menu.addAction("Move")
-            act_query = menu.addAction("Query")
-            
-            btn = self.overview_cells.get((box_num, position))
-            global_pos = btn.mapToGlobal(btn.rect().bottomLeft()) if btn else None
-            selected = menu.exec(global_pos) if global_pos else None
-            
-            if selected == act_thaw:
-                self.request_prefill.emit({
-                    "box": int(box_num),
-                    "position": int(position),
-                    "record_id": rec_id,
-                })
-                self.status_message.emit(f"Prefill Thaw for ID {rec_id}", 2000)
-            elif selected == act_move:
-                self.request_move_prefill.emit({
-                    "box": int(box_num),
-                    "position": int(position),
-                    "record_id": rec_id,
-                })
-                self.status_message.emit(f"Prefill Move for ID {rec_id}", 2000)
-            elif selected == act_query:
-                self.request_query_prefill.emit({
-                    "box": int(box_num),
-                    "position": int(position),
-                    "record_id": rec_id,
-                })
-                self.status_message.emit(f"Query ID {rec_id}", 2000)
+            self.status_message.emit(f"Auto-prefilled Add + Takeout for ID {rec_id}.", 2000)
         else:
-            act_add = menu.addAction("Add Entry")
-            
-            btn = self.overview_cells.get((box_num, position))
-            global_pos = btn.mapToGlobal(btn.rect().bottomLeft()) if btn else None
-            selected = menu.exec(global_pos) if global_pos else None
-            
-            if selected == act_add:
-                self.request_add_prefill.emit({
-                    "box": int(box_num),
-                    "position": int(position),
-                })
-                self.status_message.emit(f"Prefill Add Entry (Box {box_num} Pos {position})", 2000)
+            self.status_message.emit(f"Auto-prefilled Add Entry (Box {box_num} Pos {position}).", 2000)
 
     def on_cell_hovered(self, box_num, position, force=False):
         hover_key = (box_num, position)
@@ -724,111 +635,61 @@ class OverviewPanel(QWidget):
 
     def on_cell_context_menu(self, box_num, position, global_pos):
         record = self.overview_pos_map.get((box_num, position))
+        self._set_selected_cell(box_num, position)
         self.on_cell_hovered(box_num, position, force=True)
 
         menu = QMenu(self)
-        act_copy_loc = menu.addAction(f"Copy Location {box_num}:{position}")
-        act_copy_id = None
-        act_prefill = None
+        act_add = None
+        act_thaw = None
+        act_move = None
+        act_query = None
+
         if record:
-            act_copy_id = menu.addAction(f"Copy ID {record.get('id')}")
-            act_prefill = menu.addAction("Prefill to Thaw")
+            act_thaw = menu.addAction("Thaw / Takeout")
+            act_move = menu.addAction("Move")
+            act_query = menu.addAction("Query")
         else:
-            # If empty, maybe add quick add shortcut?
-            pass
+            act_add = menu.addAction("Add Entry")
 
         selected = menu.exec(global_pos)
         if selected is None:
             return
-        if selected == act_copy_loc:
-            QApplication.clipboard().setText(f"{box_num}:{position}")
-            self.status_message.emit(f"Copied location {box_num}:{position}", 2000)
+
+        if selected == act_add:
+            self.request_add_prefill.emit({
+                "box": int(box_num),
+                "position": int(position),
+            })
+            self.status_message.emit(f"Prefill Add Entry (Box {box_num} Pos {position})", 2000)
             return
-        if act_copy_id is not None and selected == act_copy_id:
-            rid = str(record.get("id", "")).strip()
-            QApplication.clipboard().setText(rid)
-            self.status_message.emit(f"Copied ID {rid}", 2000)
+
+        if not record:
             return
-        if act_prefill is not None and selected == act_prefill:
-            self._set_selected_cell(box_num, position)
-            rec_id = int(record.get("id"))
+
+        rec_id = int(record.get("id"))
+        if selected == act_thaw:
             self.request_prefill.emit({
                 "box": int(box_num),
                 "position": int(position),
                 "record_id": rec_id,
             })
-
-    # --- Multi-select ---
-
-    def _on_select_mode_toggled(self, checked):
-        self.select_mode = checked
-        self.ov_select_btn.setText(tr("overview.exitSelect") if checked else tr("overview.select"))
-        if checked:
-            self._clear_selected_cell()
-        else:
-            self._clear_all_selections()
-
-    def _toggle_cell_selection(self, box_num, position):
-        key = (box_num, position)
-        record = self.overview_pos_map.get(key)
-        if not record:
+            self.status_message.emit(f"Prefill Thaw for ID {rec_id}", 2000)
             return
-        if key in self.overview_selected_keys:
-            self.overview_selected_keys.discard(key)
-        else:
-            self.overview_selected_keys.add(key)
-        button = self.overview_cells.get(key)
-        if button is not None:
-            self._paint_cell(button, box_num, position, record)
-        self._update_selection_bar()
-
-    def _clear_all_selections(self):
-        old_keys = list(self.overview_selected_keys)
-        self.overview_selected_keys.clear()
-        for key in old_keys:
-            button = self.overview_cells.get(key)
-            if button is not None:
-                rec = self.overview_pos_map.get(key)
-                self._paint_cell(button, key[0], key[1], rec)
-        self._update_selection_bar()
-
-    def _update_selection_bar(self):
-        n = len(self.overview_selected_keys)
-        self.ov_sel_count.setText(t("overview.selected", count=n))
-        self.ov_selection_bar.setVisible(n > 0)
-
-    def _on_quick_action(self, action_name):
-        items = []
-        for key in sorted(self.overview_selected_keys):
-            box_num, position = key
-            record = self.overview_pos_map.get(key)
-            if not record:
-                continue
-            rec_id = int(record.get("id"))
-            label = record.get("short_name") or record.get("parent_cell_line") or "-"
-            items.append({
-                "action": action_name.lower(),
-                "box": box_num,
-                "position": position,
+        if selected == act_move:
+            self.request_move_prefill.emit({
+                "box": int(box_num),
+                "position": int(position),
                 "record_id": rec_id,
-                "label": label,
-                "source": "human",
-                "payload": {
-                    "record_id": rec_id,
-                    "position": position,
-                    "date_str": date.today().isoformat(),
-                    "action": action_name,
-                    "note": f"Quick {action_name.lower()} from Overview",
-                },
             })
-
-        if not items:
-            self.status_message.emit("No valid records selected.", 2000)
+            self.status_message.emit(f"Prefill Move for ID {rec_id}", 2000)
             return
-
-        self._clear_all_selections()
-        self.plan_items_requested.emit(items)
-        self.status_message.emit(f"Added {len(items)} item(s) to Plan.", 2000)
+        if selected == act_query:
+            self.request_query_prefill.emit({
+                "box": int(box_num),
+                "position": int(position),
+                "record_id": rec_id,
+            })
+            self.status_message.emit(f"Query ID {rec_id}", 2000)
 
     def _on_cell_drop(self, from_box, from_pos, to_box, to_pos, record_id):
         if from_box == to_box and from_pos == to_pos:
