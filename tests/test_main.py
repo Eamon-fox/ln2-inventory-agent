@@ -10,15 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-
-def _resolve_demo_dataset_path():
-    """Standalone copy of MainWindow._resolve_demo_dataset_path for testing."""
-    if getattr(sys, "frozen", False):
-        exe_dir = os.path.dirname(sys.executable)
-        return os.path.join(exe_dir, "demo", "ln2_inventory.demo.yaml")
-    else:
-        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        return os.path.join(root, "demo", "ln2_inventory.demo.yaml")
+from app_gui.path_utils import resolve_demo_dataset_path as _resolve_demo_dataset_path
 
 
 class DemoPathResolutionTests(unittest.TestCase):

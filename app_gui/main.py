@@ -25,6 +25,7 @@ from app_gui.gui_config import (
     load_gui_config,
     save_gui_config,
 )
+from app_gui.path_utils import resolve_demo_dataset_path
 from lib.config import YAML_PATH
 from app_gui.ui.theme import apply_dark_theme
 from app_gui.ui.overview_panel import OverviewPanel
@@ -382,11 +383,7 @@ class MainWindow(QMainWindow):
         self.dataset_label.setText(f"Dataset: {self.current_yaml_path} | Actor: {self.current_actor_id}")
 
     def _resolve_demo_dataset_path(self):
-        if getattr(sys, "frozen", False):
-            exe_dir = os.path.dirname(sys.executable)
-            return os.path.join(exe_dir, "demo", "ln2_inventory.demo.yaml")
-        else:
-            return os.path.join(ROOT, "demo", "ln2_inventory.demo.yaml")
+        return resolve_demo_dataset_path(root=ROOT)
 
     def on_quick_start(self):
         dialog = QuickStartDialog(
