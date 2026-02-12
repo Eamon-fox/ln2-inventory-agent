@@ -200,13 +200,13 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(ai_group)
 
-        user_group = QGroupBox("User")
+        user_group = QGroupBox(tr("settings.user"))
         user_layout = QFormLayout(user_group)
 
         self.actor_edit = QLineEdit(self._config.get("actor_id", "gui-user"))
-        user_layout.addRow("Actor ID:", self.actor_edit)
+        user_layout.addRow(tr("settings.actorId"), self.actor_edit)
 
-        actor_hint = QLabel("Your identifier for audit logs and operation records.")
+        actor_hint = QLabel(tr("settings.actorIdHint"))
         actor_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
         actor_hint.setWordWrap(True)
         user_layout.addRow("", actor_hint)

@@ -98,11 +98,13 @@
     "ctxPlasmid": "Plasmid",
     "ctxHistory": "History",
     "ctxNote": "Note",
-    "ctxMove": "Move"
+    "ctxMove": "Move",
+    "helpText": "Overview Panel - LN2 Tank Visualization\n\nThis panel shows a visual map of your liquid nitrogen storage tanks.\n\nBASIC OPERATIONS:\n- Double-click a cell to view details or start an operation\n- Empty cells show position numbers (1-81)\n- Occupied cells show record IDs with color-coded status\n\nCOLOR CODING:\n- Green: Active samples (ready for use)\n- Yellow: Recently thawed samples\n- Red: Depleted/discarded samples\n- Gray: Empty positions\n\nSELECTION MODE:\n- Click \"Select\" to enable multi-select\n- Select multiple cells for batch operations\n- Use \"Print Selected Guide\" for audit workflows\n\nQUICK ACTIONS:\n- Quick Add: Jump to add new sample form\n- Quick Takeout: Jump to takeout/thaw form"
   },
   "operations": {
     "title": "Operations",
     "helpTitle": "Operations Help",
+    "helpText": "Operations Panel - Manual Actions\n\nThis panel provides forms for common inventory operations.\n\nMODES:\n- Takeout: Remove/thaw samples from storage\n- Move: Relocate samples within or between boxes\n- Add Entry: Register new frozen samples\n- Plan: Focus mode (queue is always visible below)\n- Query: Search and filter inventory data\n- Rollback: Restore from backup files\n- Audit Log: View operation history\n\nWORKFLOW:\n1. Select operation mode from dropdown\n2. Fill in required fields (IDs, positions, etc.)\n3. Click \"Add to Plan\" to stage the operation\n4. Review staged items in the always-visible Plan Queue\n5. Click \"Execute All\" to apply changes\n\nBATCH OPERATIONS:\n- Enter multiple positions separated by commas (e.g., \"1,2,3-5\")\n- Batch APIs stay available via AI/automation (batch controls are hidden in manual UI)\n\nTIPS:\n- Hover over fields for hints\n- Check the Plan before executing\n- Use Undo within 10 seconds to reverse mistakes",
     "mode": "Mode",
     "manualAction": "Manual Action",
     "plan": "Plan",
@@ -242,7 +244,8 @@
     "agentThinking": "Agent thinking...",
     "aiRunStopped": "AI run stopped.",
     "runStopped": "**Run stopped by user.**",
-    "memoryCleared": "AI memory cleared"
+    "memoryCleared": "AI memory cleared",
+    "helpText": "AI Assistant Panel - Natural Language Operations\n\nThis panel lets you control inventory using natural language commands.\n\nSETUP:\n1. Configure your DeepSeek API key in Settings\n2. Select model and max steps in \"Show Advanced\"\n\nUSAGE:\nType requests in plain language, for example:\n- \"Show me all K562 samples\"\n- \"Move sample 5 to position 10 in box 2\"\n- \"How many empty slots in box 1?\"\n- \"Thaw samples at positions 1, 2, and 3\"\n\nHOW IT WORKS:\n1. AI analyzes your request\n2. Generates a plan of operations\n3. Plan items appear in Operations panel\n4. Review and execute from Plan mode\n\nTIPS:\n- Be specific about box numbers and positions\n- Use record IDs when referring to samples\n- Check generated plans before executing"
   },
   "common": {
     "ok": "OK",

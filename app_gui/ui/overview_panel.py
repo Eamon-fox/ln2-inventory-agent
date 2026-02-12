@@ -11,29 +11,9 @@ from app_gui.i18n import tr, t
 
 MIME_TYPE_MOVE = "application/x-ln2-move"
 
-OVERVIEW_HELP_TEXT = """Overview Panel - LN2 Tank Visualization
-
-This panel shows a visual map of your liquid nitrogen storage tanks.
-
-BASIC OPERATIONS:
-- Double-click a cell to view details or start an operation
-- Empty cells show position numbers (1-81)
-- Occupied cells show record IDs with color-coded status
-
-COLOR CODING:
-- Green: Active samples (ready for use)
-- Yellow: Recently thawed samples
-- Red: Depleted/discarded samples
-- Gray: Empty positions
-
-SELECTION MODE:
-- Click "Select" to enable multi-select
-- Select multiple cells for batch operations
-- Use "Print Selected Guide" for audit workflows
-
-QUICK ACTIONS:
-- Quick Add: Jump to add new sample form
-- Quick Takeout: Jump to takeout/thaw form"""
+def get_overview_help_text():
+    from app_gui.i18n import tr
+    return tr("overview.helpText")
 
 class CellButton(QPushButton):
     doubleClicked = Signal(int, int)
@@ -139,7 +119,7 @@ class OverviewPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        layout.addLayout(build_panel_header(self, tr("overview.title"), tr("overview.helpTitle"), OVERVIEW_HELP_TEXT))
+        layout.addLayout(build_panel_header(self, tr("overview.title"), tr("overview.helpTitle"), get_overview_help_text()))
 
         # Summary Cards
         summary_row = QHBoxLayout()

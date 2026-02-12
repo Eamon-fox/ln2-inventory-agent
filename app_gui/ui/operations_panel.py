@@ -29,34 +29,9 @@ from lib.plan_item_factory import (
 )
 from lib.validators import parse_positions
 
-OPERATIONS_HELP_TEXT = """Operations Panel - Manual Actions
-
-This panel provides forms for common inventory operations.
-
-MODES:
-- Takeout: Remove/thaw samples from storage
-- Move: Relocate samples within or between boxes
-- Add Entry: Register new frozen samples
-- Plan: Focus mode (queue is always visible below)
-- Query: Search and filter inventory data
-- Rollback: Restore from backup files
-- Audit Log: View operation history
-
-WORKFLOW:
-1. Select operation mode from dropdown
-2. Fill in required fields (IDs, positions, etc.)
-3. Click "Add to Plan" to stage the operation
-4. Review staged items in the always-visible Plan Queue
-5. Click "Execute All" to apply changes
-
-BATCH OPERATIONS:
-- Enter multiple positions separated by commas (e.g., "1,2,3-5")
-- Batch APIs stay available via AI/automation (batch controls are hidden in manual UI)
-
-TIPS:
-- Hover over fields for hints
-- Check the Plan before executing
-- Use Undo within 10 seconds to reverse mistakes"""
+def get_operations_help_text():
+    from app_gui.i18n import tr
+    return tr("operations.helpText")
 
 class OperationsPanel(QWidget):
     operation_completed = Signal(bool)
@@ -90,7 +65,7 @@ class OperationsPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        layout.addLayout(build_panel_header(self, tr("operations.title"), tr("operations.helpTitle"), OPERATIONS_HELP_TEXT))
+        layout.addLayout(build_panel_header(self, tr("operations.title"), tr("operations.helpTitle"), get_operations_help_text()))
 
         # Mode Selection
         mode_row = QHBoxLayout()

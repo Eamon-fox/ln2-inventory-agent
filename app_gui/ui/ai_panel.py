@@ -16,31 +16,9 @@ from lib.config import AUDIT_LOG_FILE
 import os
 import json
 
-AI_HELP_TEXT = """AI Assistant Panel - Natural Language Operations
-
-This panel lets you control inventory using natural language commands.
-
-SETUP:
-1. Configure your DeepSeek API key in Settings
-2. Select model and max steps in "Show Advanced"
-
-USAGE:
-Type requests in plain language, for example:
-- "Show me all K562 samples"
-- "Move sample 5 to position 10 in box 2"
-- "How many empty slots in box 1?"
-- "Thaw samples at positions 1, 2, and 3"
-
-HOW IT WORKS:
-1. AI analyzes your request
-2. Generates a plan of operations
-3. Plan items appear in Operations panel
-4. Review and execute from Plan mode
-
-TIPS:
-- Be specific about box numbers and positions
-- Use record IDs when referring to samples
-- Check generated plans before executing"""
+def get_ai_help_text():
+    from app_gui.i18n import tr
+    return tr("ai.helpText")
 
 class AIPanel(QWidget):
     operation_completed = Signal(bool)
@@ -75,7 +53,7 @@ class AIPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        layout.addLayout(build_panel_header(self, tr("ai.title"), tr("ai.helpTitle"), AI_HELP_TEXT))
+        layout.addLayout(build_panel_header(self, tr("ai.title"), tr("ai.helpTitle"), get_ai_help_text()))
 
         # Toggles
         toggle_row = QHBoxLayout()
