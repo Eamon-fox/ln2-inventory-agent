@@ -1,11 +1,14 @@
 from datetime import date, datetime
-from PySide6.QtCore import Qt, Signal, QEvent
+from PySide6.QtCore import Qt, Signal, QEvent, QMimeData, QPoint
+from PySide6.QtGui import QDrag, QDropEvent, QDragEnterEvent, QDragMoveEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QPushButton, QLineEdit, QComboBox, QCheckBox, QScrollArea,
     QSizePolicy, QGroupBox, QMenu, QApplication, QMessageBox
 )
 from app_gui.ui.utils import cell_color
+
+MIME_TYPE_MOVE = "application/x-ln2-move"
 
 OVERVIEW_HELP_TEXT = """Overview Panel - LN2 Tank Visualization
 
@@ -32,17 +35,70 @@ QUICK ACTIONS:
 - Quick Takeout: Jump to takeout/thaw form"""
 
 class CellButton(QPushButton):
-    doubleClicked = Signal(int, int) # box, position
+    doubleClicked = Signal(int, int)
+    dropReceived = Signal(int, int, int, int, int)
 
     def __init__(self, text, box, pos, parent=None):
         super().__init__(text, parent)
         self.box = box
         self.pos = pos
+        self.record_id = None
+        self.setAcceptDrops(True)
+        self._drag_start_pos = None
+
+    def set_record_id(self, record_id):
+        self.record_id = record_id
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.doubleClicked.emit(self.box, self.pos)
         super().mouseDoubleClickEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_start_pos = event.pos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_start_pos is None or self.record_id is None:
+            super().mouseMoveEvent(event)
+            return
+
+        if (event.pos() - self._drag_start_pos).manhattanLength() < 10:
+            super().mouseMoveEvent(event)
+            return
+
+        drag = QDrag(self)
+        mime = QMimeData()
+        mime.setData(MIME_TYPE_MOVE, f"{self.box}:{self.pos}:{self.record_id}".encode())
+        drag.setMimeData(mime)
+        drag.exec(Qt.MoveAction)
+        self._drag_start_pos = None
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat(MIME_TYPE_MOVE):
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasFormat(MIME_TYPE_MOVE):
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        if event.mimeData().hasFormat(MIME_TYPE_MOVE):
+            data = bytes(event.mimeData().data(MIME_TYPE_MOVE)).decode()
+            parts = data.split(":")
+            if len(parts) == 3:
+                from_box = int(parts[0])
+                from_pos = int(parts[1])
+                record_id = int(parts[2])
+                self.dropReceived.emit(from_box, from_pos, self.box, self.pos, record_id)
+            event.acceptProposedAction()
+        else:
+            super().dropEvent(event)
 
 class OverviewPanel(QWidget):
     status_message = Signal(str, int)
@@ -403,6 +459,7 @@ class OverviewPanel(QWidget):
                         b, p, btn.mapToGlobal(point)
                     )
                 )
+                button.dropReceived.connect(self._on_cell_drop)
                 self.overview_cells[(box_num, position)] = button
                 grid.addWidget(button, r, c)
 
@@ -462,6 +519,7 @@ class OverviewPanel(QWidget):
             button.setProperty("search_text", searchable)
             button.setProperty("cell_line", str(record.get("parent_cell_line") or ""))
             button.setProperty("is_empty", False)
+            button.set_record_id(int(record.get("id", 0)))
         else:
             button.setText(str(position))
             button.setToolTip(f"Box {box_num} Position {position}: empty")
@@ -479,6 +537,7 @@ class OverviewPanel(QWidget):
             button.setProperty("search_text", f"empty box {box_num} position {position}".lower())
             button.setProperty("cell_line", "")
             button.setProperty("is_empty", True)
+            button.set_record_id(None)
 
     def _set_selected_cell(self, box_num, position):
         new_key = (box_num, position)
@@ -798,3 +857,36 @@ class OverviewPanel(QWidget):
         self._clear_all_selections()
         self.plan_items_requested.emit(items)
         self.status_message.emit(f"Added {len(items)} item(s) to Plan.", 2000)
+
+    def _on_cell_drop(self, from_box, from_pos, to_box, to_pos, record_id):
+        if from_box == to_box and from_pos == to_pos:
+            return
+
+        record = self.overview_records_by_id.get(record_id)
+        label = "-"
+        if record:
+            label = record.get("short_name") or record.get("parent_cell_line") or "-"
+
+        item = {
+            "action": "move",
+            "box": from_box,
+            "position": from_pos,
+            "to_position": to_pos,
+            "to_box": to_box if to_box != from_box else None,
+            "record_id": record_id,
+            "label": label,
+            "source": "human",
+            "payload": {
+                "record_id": record_id,
+                "position": from_pos,
+                "to_position": to_pos,
+                "to_box": to_box if to_box != from_box else None,
+                "date_str": date.today().isoformat(),
+                "action": "Move",
+                "note": "Drag from Overview",
+            },
+        }
+
+        self.plan_items_requested.emit([item])
+        target_desc = f"Box {to_box}:{to_pos}" if to_box != from_box else f"Pos {to_pos}"
+        self.status_message.emit(f"Move ID {record_id} to {target_desc} added to Plan.", 2000)

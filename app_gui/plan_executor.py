@@ -24,6 +24,140 @@ def _normalize_action(action: Any) -> str:
     return mapping.get(text, text)
 
 
+def _analyze_move_plan(items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Analyze move operations for swap/cycle detection."""
+    move_graph: Dict[Tuple[int, int], Tuple[int, int, int]] = {}
+    reverse_graph: Dict[Tuple[int, int], List[Tuple[int, int, int]]] = {}
+
+    for item in items:
+        if item.get("action") != "move":
+            continue
+        from_box = int(item.get("box", 0) or 0)
+        from_pos = int(item.get("position", 0) or 0)
+        to_box = int(item.get("to_box", from_box) or from_box)
+        to_pos = int(item.get("to_position", 0) or 0)
+        record_id = int(item.get("record_id", 0) or 0)
+
+        src = (from_box, from_pos)
+        dst = (to_box, to_pos)
+        move_graph[src] = (to_box, to_pos, record_id)
+
+        if dst not in reverse_graph:
+            reverse_graph[dst] = []
+        reverse_graph[dst].append((from_box, from_pos, record_id))
+
+    visited = set()
+    cycles = []
+
+    def find_cycle(start: Tuple[int, int], path: List[Tuple[int, int]]) -> Optional[List[Tuple[int, int]]]:
+        current = path[-1] if path else start
+        if current in visited:
+            if current == start and len(path) > 1:
+                return path
+            return None
+
+        visited.add(current)
+        nxt = move_graph.get(current)
+        if nxt is None:
+            return None
+        nxt_loc = (nxt[0], nxt[1])
+        if nxt_loc in path:
+            idx = path.index(nxt_loc)
+            return path[idx:] + [nxt_loc]
+        return find_cycle(start, path + [nxt_loc])
+
+    for src in list(move_graph.keys()):
+        if src in visited:
+            continue
+        visited.clear()
+        cycle = find_cycle(src, [src])
+        if cycle:
+            cycles.append(cycle)
+
+    simple_swaps = []
+    for cycle in cycles:
+        if len(cycle) == 3:
+            a, b = cycle[0], cycle[1]
+            if move_graph.get(a) and move_graph.get(b):
+                if (move_graph[a][0], move_graph[a][1]) == b and (move_graph[b][0], move_graph[b][1]) == a:
+                    simple_swaps.append((a, b))
+
+    has_cycle = len(cycles) > 0
+    is_swap = all(len(c) == 3 for c in cycles) if cycles else True
+    can_execute_directly = not has_cycle or is_swap
+
+    return {
+        "is_swap": is_swap,
+        "has_cycle": has_cycle,
+        "move_graph": move_graph,
+        "reverse_graph": reverse_graph,
+        "can_execute_directly": can_execute_directly,
+        "cycles": cycles,
+        "simple_swaps": simple_swaps,
+    }
+
+
+def _validate_moves_holistically(items: List[Dict[str, Any]], records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Validate move operations as a whole, supporting swap semantics."""
+    errors = []
+    analysis = _analyze_move_plan(items)
+    move_graph = analysis["move_graph"]
+    reverse_graph = analysis["reverse_graph"]
+
+    pos_map: Dict[Tuple[int, int], Dict[str, Any]] = {}
+    for rec in records:
+        box = rec.get("box")
+        if box is None:
+            continue
+        for pos in rec.get("positions") or []:
+            pos_map[(int(box), int(pos))] = rec
+
+    for item in items:
+        if item.get("action") != "move":
+            continue
+        from_box = int(item.get("box", 0) or 0)
+        from_pos = int(item.get("position", 0) or 0)
+        record_id = int(item.get("record_id", 0) or 0)
+
+        src = (from_box, from_pos)
+        rec_at_src = pos_map.get(src)
+
+        if rec_at_src is None:
+            errors.append({
+                "item": item,
+                "error_code": "source_empty",
+                "message": f"No record at source position Box {from_box}:{from_pos}",
+            })
+        elif int(rec_at_src.get("id", 0)) != record_id:
+            errors.append({
+                "item": item,
+                "error_code": "source_mismatch",
+                "message": f"Record ID mismatch at Box {from_box}:{from_pos}: expected {record_id}, found {rec_at_src.get('id')}",
+            })
+
+    for item in items:
+        if item.get("action") != "move":
+            continue
+        to_box = int(item.get("to_box", item.get("box", 0)) or 0)
+        to_pos = int(item.get("to_position", 0) or 0)
+        dst = (to_box, to_pos)
+
+        if dst in pos_map:
+            existing = pos_map[dst]
+            existing_id = int(existing.get("id", 0))
+
+            is_being_moved_away = dst in move_graph
+
+            if not is_being_moved_away:
+                errors.append({
+                    "item": item,
+                    "error_code": "target_occupied",
+                    "message": f"Target position Box {to_box}:{to_pos} is occupied by ID {existing.get('id')} and not part of swap",
+                })
+
+    return errors
+
+
 def _make_error_item(item: Dict[str, Any], error_code: str, message: str) -> Dict[str, Any]:
     """Create an error report for a plan item."""
     return {
@@ -166,22 +300,44 @@ def run_plan(
         else:
             reports.append(_make_error_item(item, response.get("error_code", "add_failed"), response.get("message", "Add failed")))
 
-    # Phase 2: move operations (batch first, fallback to individual)
+    # Phase 2: move operations (holistic validation, batch first, fallback to individual)
     moves = [it for it in remaining if it.get("action") == "move"]
     if moves:
-        batch_ok, batch_reports = _execute_moves_batch_then_fallback(
-            yaml_path=yaml_path,
-            items=moves,
-            bridge=bridge,
-            date_str=effective_date,
-            mode=mode,
-        )
-        reports.extend(batch_reports)
-        for r in batch_reports:
-            if r.get("ok") and r.get("item") in remaining:
-                remaining.remove(r["item"])
-                if r.get("response", {}).get("backup_path"):
-                    last_backup = r["response"]["backup_path"]
+        try:
+            if os.path.isfile(yaml_path):
+                data = load_yaml(yaml_path)
+                records = data.get("inventory", []) if isinstance(data, dict) else []
+            else:
+                records = []
+        except Exception:
+            records = []
+
+        move_errors = _validate_moves_holistically(moves, records) if records else []
+        error_by_item = {id(e["item"]): e for e in move_errors}
+
+        for item in moves:
+            err = error_by_item.get(id(item))
+            if err:
+                reports.append(_make_error_item(item, err["error_code"], err["message"]))
+                continue
+
+        valid_moves = [it for it in moves if id(it) not in error_by_item]
+
+        if valid_moves:
+            batch_ok, batch_reports = _execute_moves_batch_then_fallback(
+                yaml_path=yaml_path,
+                items=valid_moves,
+                bridge=bridge,
+                date_str=effective_date,
+                mode=mode,
+                skip_target_check=bool(records),
+            )
+            reports.extend(batch_reports)
+            for r in batch_reports:
+                if r.get("ok") and r.get("item") in remaining:
+                    remaining.remove(r["item"])
+                    if r.get("response", {}).get("backup_path"):
+                        last_backup = r["response"]["backup_path"]
 
     # Phase 3: takeout/thaw/discard operations (batch first, fallback to individual)
     for action_name in ("Takeout", "Thaw", "Discard"):
@@ -312,6 +468,7 @@ def _execute_moves_batch_then_fallback(
     bridge: Any,
     date_str: str,
     mode: str,
+    skip_target_check: bool = False,
 ) -> Tuple[bool, List[Dict[str, Any]]]:
     """Execute move operations: batch first, fallback to individual on failure."""
     reports: List[Dict[str, Any]] = []
@@ -334,7 +491,10 @@ def _execute_moves_batch_then_fallback(
     }
 
     if mode == "preflight":
-        response = _preflight_batch_thaw(bridge, yaml_path, batch_payload)
+        if skip_target_check:
+            response = {"ok": True, "message": "Preflight passed (holistic validation)"}
+        else:
+            response = _preflight_batch_thaw(bridge, yaml_path, batch_payload)
     else:
         response = bridge.batch_thaw(yaml_path=yaml_path, **batch_payload)
 

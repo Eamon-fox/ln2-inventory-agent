@@ -380,5 +380,87 @@ class PreflightVsExecuteConsistencyTests(unittest.TestCase):
             self.assertEqual(preflight_result["blocked"], execute_result["blocked"])
 
 
+class MoveSwapTests(unittest.TestCase):
+    """Tests for swap detection and holistic move validation."""
+
+    def test_simple_swap_passes_validation(self):
+        """A simple swap (A@9->18, B@18->9) should pass holistic validation."""
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([
+                    make_record(3, box=1, positions=[9, 10]),
+                    make_record(10, box=1, positions=[7, 17, 18]),
+                ]),
+                path=str(yaml_path),
+                auto_html=False,
+                auto_server=False,
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            bridge.batch_thaw.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
+
+            items = [
+                make_move_item(record_id=3, position=9, to_position=18, box=1),
+                make_move_item(record_id=10, position=18, to_position=9, box=1),
+            ]
+            result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(2, result["stats"]["ok"])
+
+    def test_preflight_swap_passes(self):
+        """Preflight should pass for swap operations."""
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([
+                    make_record(1, box=1, positions=[5]),
+                    make_record(2, box=1, positions=[10]),
+                ]),
+                path=str(yaml_path),
+                auto_html=False,
+                auto_server=False,
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+
+            items = [
+                make_move_item(record_id=1, position=5, to_position=10, box=1),
+                make_move_item(record_id=2, position=10, to_position=5, box=1),
+            ]
+            result = preflight_plan(str(yaml_path), items, bridge=bridge)
+
+            self.assertTrue(result["ok"])
+            self.assertFalse(result["blocked"])
+
+    def test_move_to_occupied_non_swap_blocked(self):
+        """Move to occupied position (not part of swap) should be blocked."""
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([
+                    make_record(1, box=1, positions=[5]),
+                    make_record(2, box=1, positions=[10]),
+                ]),
+                path=str(yaml_path),
+                auto_html=False,
+                auto_server=False,
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+
+            items = [
+                make_move_item(record_id=1, position=5, to_position=10, box=1),
+            ]
+            result = preflight_plan(str(yaml_path), items, bridge=bridge)
+
+            self.assertFalse(result["ok"])
+            self.assertTrue(result["blocked"])
+
+
 if __name__ == "__main__":
     unittest.main()
