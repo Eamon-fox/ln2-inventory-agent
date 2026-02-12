@@ -18,6 +18,7 @@ Rules:
 7) For move operations: to change a tube's box, use `to_box` parameter in record_thaw or batch_thaw.
    When moving cross-box, move ALL positions of the record together.
    batch_thaw entries format for cross-box: '4:5->4:1' (id:from->to:target_box).
+8) Before asking user for missing details, first call inventory tools (e.g., query/search/list-empty) to understand current warehouse state and infer likely targets.
 """
 
 

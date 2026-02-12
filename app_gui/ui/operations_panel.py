@@ -36,7 +36,7 @@ MODES:
 - Takeout: Remove/thaw samples from storage
 - Move: Relocate samples within or between boxes
 - Add Entry: Register new frozen samples
-- Plan: View and execute queued operations
+- Plan: Focus mode (queue is always visible below)
 - Query: Search and filter inventory data
 - Rollback: Restore from backup files
 - Audit Log: View operation history
@@ -45,12 +45,12 @@ WORKFLOW:
 1. Select operation mode from dropdown
 2. Fill in required fields (IDs, positions, etc.)
 3. Click "Add to Plan" to stage the operation
-4. Switch to "Plan" mode to review all staged items
-5. Click "Execute Plan" to apply changes
+4. Review staged items in the always-visible Plan Queue
+5. Click "Execute All" to apply changes
 
 BATCH OPERATIONS:
 - Enter multiple positions separated by commas (e.g., "1,2,3-5")
-- Use the batch section for bulk moves
+- Batch APIs stay available via AI/automation (batch controls are hidden in manual UI)
 
 TIPS:
 - Hover over fields for hints
@@ -118,12 +118,16 @@ class OperationsPanel(QWidget):
             "add": self.op_stack.addWidget(self._build_add_tab()),
             "thaw": self.op_stack.addWidget(self._build_thaw_tab()),
             "move": self.op_stack.addWidget(self._build_move_tab()),
-            "plan": self.op_stack.addWidget(self._build_plan_tab()),
+            "plan": self.op_stack.addWidget(self._build_plan_mode_hint_tab()),
             "query": self.op_stack.addWidget(self._build_query_tab()),
             "rollback": self.op_stack.addWidget(self._build_rollback_tab()),
             "audit": self.op_stack.addWidget(self._build_audit_tab()),
         }
-        layout.addWidget(self.op_stack, 3)
+        layout.addWidget(self.op_stack, 2)
+
+        # Plan Queue is always visible to reduce context switching.
+        self.plan_panel = self._build_plan_tab()
+        layout.addWidget(self.plan_panel, 3)
 
         # Result Summary Card
         self.result_card = QGroupBox("Last Result")
@@ -370,56 +374,8 @@ class OperationsPanel(QWidget):
         context_form.addRow("Note", self.t_ctx_note)
         layout.addWidget(context_box)
 
-        self.t_batch_toggle_btn = QPushButton("Show Batch Operation")
-        self.t_batch_toggle_btn.setCheckable(True)
-        self.t_batch_toggle_btn.toggled.connect(self.on_toggle_batch_section)
-        layout.addWidget(self.t_batch_toggle_btn)
-
-        self.t_batch_group = QGroupBox("Batch Operation (Takeout/Thaw/Discard)")
-        batch_form = QFormLayout(self.t_batch_group)
-        self.b_entries = QLineEdit()
-        self.b_entries.setPlaceholderText("e.g. 182:23,183:41")
-        self.b_date = QDateEdit()
-        self.b_date.setCalendarPopup(True)
-        self.b_date.setDisplayFormat("yyyy-MM-dd")
-        self.b_date.setDate(QDate.currentDate())
-        self.b_action = QComboBox()
-        self.b_action.addItems(["Takeout", "Thaw", "Discard"])
-        self.b_note = QLineEdit()
-
-        batch_form.addRow("Entries (text)", self.b_entries)
-
-        # Mini-table for visual batch entry
-        self.b_table = QTableWidget()
-        self.b_table.setColumnCount(2)
-        self.b_table.setHorizontalHeaderLabels(["Record ID", "Position"])
-        self.b_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.b_table.setRowCount(1)
-        self.b_table.setMaximumHeight(120)
-        batch_form.addRow("Or use table", self.b_table)
-
-        table_btn_widget = QWidget()
-        table_btn_row = QHBoxLayout(table_btn_widget)
-        table_btn_row.setContentsMargins(0, 0, 0, 0)
-        b_add_row_btn = QPushButton("+ Row")
-        b_add_row_btn.clicked.connect(self._batch_add_row)
-        b_remove_row_btn = QPushButton("- Row")
-        b_remove_row_btn.clicked.connect(self._batch_remove_row)
-        table_btn_row.addWidget(b_add_row_btn)
-        table_btn_row.addWidget(b_remove_row_btn)
-        table_btn_row.addStretch()
-        batch_form.addRow("", table_btn_widget)
-
-        batch_form.addRow("Date", self.b_date)
-        batch_form.addRow("Action", self.b_action)
-        batch_form.addRow("Note", self.b_note)
-
-        self.b_apply_btn = QPushButton("Add to Plan")
-        self._style_stage_button(self.b_apply_btn)
-        self.b_apply_btn.clicked.connect(self.on_batch_thaw)
-        batch_form.addRow("", self.b_apply_btn)
-        layout.addWidget(self.t_batch_group)
-        self.on_toggle_batch_section(False)
+        # Keep batch controls instantiated for programmatic/API paths, but hide from manual UI.
+        self._init_hidden_batch_thaw_controls(tab)
         layout.addStretch(1)
         return tab
 
@@ -493,57 +449,90 @@ class OperationsPanel(QWidget):
         context_form.addRow("Note", self.m_ctx_note)
         layout.addWidget(context_box)
 
-        # --- Batch Move (collapsible) ---
-        self.m_batch_toggle_btn = QPushButton("Show Batch Move")
+        # Keep batch controls instantiated for programmatic/API paths, but hide from manual UI.
+        self._init_hidden_batch_move_controls(tab)
+        layout.addStretch(1)
+        return tab
+
+    def _init_hidden_batch_thaw_controls(self, parent):
+        self.t_batch_toggle_btn = QPushButton("Show Batch Operation", parent)
+        self.t_batch_toggle_btn.setCheckable(True)
+        self.t_batch_toggle_btn.toggled.connect(self.on_toggle_batch_section)
+        self.t_batch_toggle_btn.setVisible(False)
+
+        self.t_batch_group = QGroupBox("Batch Operation (Takeout/Thaw/Discard)", parent)
+        self.t_batch_group.setVisible(False)
+        batch_form = QFormLayout(self.t_batch_group)
+        self.b_entries = QLineEdit(self.t_batch_group)
+        self.b_entries.setPlaceholderText("e.g. 182:23,183:41")
+        self.b_date = QDateEdit(self.t_batch_group)
+        self.b_date.setCalendarPopup(True)
+        self.b_date.setDisplayFormat("yyyy-MM-dd")
+        self.b_date.setDate(QDate.currentDate())
+        self.b_action = QComboBox(self.t_batch_group)
+        self.b_action.addItems(["Takeout", "Thaw", "Discard"])
+        self.b_note = QLineEdit(self.t_batch_group)
+        self.b_table = QTableWidget(self.t_batch_group)
+        self.b_table.setColumnCount(2)
+        self.b_table.setHorizontalHeaderLabels(["Record ID", "Position"])
+        self.b_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.b_table.setRowCount(1)
+        self.b_apply_btn = QPushButton("Add to Plan", self.t_batch_group)
+        self.b_apply_btn.clicked.connect(self.on_batch_thaw)
+
+        batch_form.addRow("Entries (text)", self.b_entries)
+        batch_form.addRow("Or use table", self.b_table)
+        batch_form.addRow("Date", self.b_date)
+        batch_form.addRow("Action", self.b_action)
+        batch_form.addRow("Note", self.b_note)
+        batch_form.addRow("", self.b_apply_btn)
+
+    def _init_hidden_batch_move_controls(self, parent):
+        self.m_batch_toggle_btn = QPushButton("Show Batch Move", parent)
         self.m_batch_toggle_btn.setCheckable(True)
         self.m_batch_toggle_btn.toggled.connect(self._on_toggle_move_batch_section)
-        layout.addWidget(self.m_batch_toggle_btn)
+        self.m_batch_toggle_btn.setVisible(False)
 
-        self.m_batch_group = QGroupBox("Batch Move")
+        self.m_batch_group = QGroupBox("Batch Move", parent)
+        self.m_batch_group.setVisible(False)
         batch_form = QFormLayout(self.m_batch_group)
-        self.bm_entries = QLineEdit()
+        self.bm_entries = QLineEdit(self.m_batch_group)
         self.bm_entries.setPlaceholderText("e.g. 182:23->31,183:41->42")
-        self.bm_date = QDateEdit()
+        self.bm_date = QDateEdit(self.m_batch_group)
         self.bm_date.setCalendarPopup(True)
         self.bm_date.setDisplayFormat("yyyy-MM-dd")
         self.bm_date.setDate(QDate.currentDate())
-        self.bm_note = QLineEdit()
-
-        batch_form.addRow("Entries (text)", self.bm_entries)
-
-        self.bm_table = QTableWidget()
+        self.bm_note = QLineEdit(self.m_batch_group)
+        self.bm_table = QTableWidget(self.m_batch_group)
         self.bm_table.setColumnCount(4)
         self.bm_table.setHorizontalHeaderLabels(["Record ID", "From", "To", "To Box"])
         self.bm_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.bm_table.setRowCount(1)
-        self.bm_table.setMaximumHeight(120)
+        self.bm_apply_btn = QPushButton("Add to Plan", self.m_batch_group)
+        self.bm_apply_btn.clicked.connect(self.on_batch_move)
+
+        batch_form.addRow("Entries (text)", self.bm_entries)
         batch_form.addRow("Or use table", self.bm_table)
-
-        table_btn_widget = QWidget()
-        table_btn_row = QHBoxLayout(table_btn_widget)
-        table_btn_row.setContentsMargins(0, 0, 0, 0)
-        bm_add_row_btn = QPushButton("+ Row")
-        bm_add_row_btn.clicked.connect(self._move_batch_add_row)
-        bm_remove_row_btn = QPushButton("- Row")
-        bm_remove_row_btn.clicked.connect(self._move_batch_remove_row)
-        table_btn_row.addWidget(bm_add_row_btn)
-        table_btn_row.addWidget(bm_remove_row_btn)
-        table_btn_row.addStretch()
-        batch_form.addRow("", table_btn_widget)
-
         batch_form.addRow("Date", self.bm_date)
         batch_form.addRow("Note", self.bm_note)
-
-        self.bm_apply_btn = QPushButton("Add to Plan")
-        self._style_stage_button(self.bm_apply_btn)
-        self.bm_apply_btn.clicked.connect(self.on_batch_move)
         batch_form.addRow("", self.bm_apply_btn)
-        layout.addWidget(self.m_batch_group)
-        self._on_toggle_move_batch_section(False)
+
+    # --- PLAN TAB ---
+    def _build_plan_mode_hint_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        hint = QLabel(
+            "Plan Queue is always visible below.\n"
+            "Use the queue to review and click Execute All."
+        )
+        hint.setAlignment(Qt.AlignCenter)
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #94a3b8; padding: 12px;")
+        layout.addWidget(hint)
         layout.addStretch(1)
         return tab
 
-    # --- PLAN TAB ---
     def _build_plan_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
@@ -586,8 +575,6 @@ class OperationsPanel(QWidget):
 
         btn_row.addStretch()
         layout.addLayout(btn_row)
-
-        layout.addStretch(1)
         return tab
 
     # --- QUERY TAB ---
