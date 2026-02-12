@@ -104,8 +104,8 @@ class OperationsPanel(QWidget):
             ("add", tr("operations.add")),
             ("plan", tr("operations.plan")),
             ("query", tr("operations.query")),
-            ("rollback", "Rollback"),
-            ("audit", "Audit Log"),
+            ("rollback", tr("operations.rollback")),
+            ("audit", tr("operations.auditLog")),
         ]
         for mode_key, mode_label in modes:
             self.op_mode_combo.addItem(mode_label, mode_key)
@@ -131,10 +131,10 @@ class OperationsPanel(QWidget):
         layout.addWidget(self.plan_panel, 3)
 
         # Result Summary Card
-        self.result_card = QGroupBox("Last Result")
+        self.result_card = QGroupBox(tr("operations.lastResult"))
         result_card_layout = QVBoxLayout(self.result_card)
         result_card_layout.setContentsMargins(8, 8, 8, 8)
-        self.result_summary = QLabel("No operations performed yet.")
+        self.result_summary = QLabel(tr("operations.noOperations"))
         self.result_summary.setWordWrap(True)
         self.result_summary.setTextFormat(Qt.RichText)
         result_card_layout.addWidget(self.result_summary)
@@ -142,7 +142,7 @@ class OperationsPanel(QWidget):
         layout.addWidget(self.result_card)
 
         # Undo Button
-        self.undo_btn = QPushButton("Undo Last Operation")
+        self.undo_btn = QPushButton(tr("operations.undoLast"))
         self.undo_btn.setEnabled(False)
         self.undo_btn.setStyleSheet(
             "QPushButton { background-color: #92400e; color: white; font-weight: bold;"
@@ -155,12 +155,12 @@ class OperationsPanel(QWidget):
 
         # Output Panel
         output_header = QHBoxLayout()
-        self.output_toggle_btn = QPushButton("Show Raw JSON")
+        self.output_toggle_btn = QPushButton(tr("operations.showRawJson"))
         self.output_toggle_btn.setCheckable(True)
         self.output_toggle_btn.toggled.connect(self.on_toggle_output)
         output_header.addWidget(self.output_toggle_btn)
         output_header.addStretch()
-        clear_btn = QPushButton("Clear")
+        clear_btn = QPushButton(tr("operations.clear"))
         clear_btn.clicked.connect(lambda: self.output.clear())
         output_header.addWidget(clear_btn)
         layout.addLayout(output_header)
@@ -191,14 +191,14 @@ class OperationsPanel(QWidget):
     def on_toggle_output(self, checked):
         visible = bool(checked)
         self.output.setVisible(visible)
-        self.output_toggle_btn.setText("Hide Raw JSON" if visible else "Show Raw JSON")
+        self.output_toggle_btn.setText(tr("operations.hideRawJson") if visible else tr("operations.showRawJson"))
 
     def on_toggle_batch_section(self, checked):
         visible = bool(checked)
         if hasattr(self, "t_batch_group"):
             self.t_batch_group.setVisible(visible)
         if hasattr(self, "t_batch_toggle_btn"):
-            self.t_batch_toggle_btn.setText("Hide Batch Operation" if visible else "Show Batch Operation")
+            self.t_batch_toggle_btn.setText(tr("operations.hideBatch") if visible else tr("operations.showBatch"))
 
     def update_records_cache(self, records_dict):
         normalized = {}
@@ -284,7 +284,7 @@ class OperationsPanel(QWidget):
         self.a_box = QSpinBox()
         self.a_box.setRange(1, 99)
         self.a_positions = QLineEdit()
-        self.a_positions.setPlaceholderText("e.g. 30,31 or 30-32")
+        self.a_positions.setPlaceholderText(tr("operations.positionsPh"))
         self.a_date = QDateEdit()
         self.a_date.setCalendarPopup(True)
         self.a_date.setDisplayFormat("yyyy-MM-dd")
@@ -293,14 +293,14 @@ class OperationsPanel(QWidget):
         self.a_plasmid_id = QLineEdit()
         self.a_note = QLineEdit()
 
-        form.addRow("Parent Cell Line", self.a_parent)
-        form.addRow("Short Name", self.a_short)
-        form.addRow("Box", self.a_box)
-        form.addRow("Positions", self.a_positions)
-        form.addRow("Frozen Date", self.a_date)
-        form.addRow("Plasmid Name", self.a_plasmid)
-        form.addRow("Plasmid ID", self.a_plasmid_id)
-        form.addRow("Note", self.a_note)
+        form.addRow(tr("operations.parentCellLine"), self.a_parent)
+        form.addRow(tr("operations.shortName"), self.a_short)
+        form.addRow(tr("operations.box"), self.a_box)
+        form.addRow(tr("operations.positions"), self.a_positions)
+        form.addRow(tr("operations.frozenDate"), self.a_date)
+        form.addRow(tr("operations.plasmidName"), self.a_plasmid)
+        form.addRow(tr("operations.plasmidId"), self.a_plasmid_id)
+        form.addRow(tr("operations.note"), self.a_note)
         layout.addLayout(form)
 
         self.a_apply_btn = QPushButton(tr("operations.addPlan"))
@@ -315,7 +315,7 @@ class OperationsPanel(QWidget):
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
-        single = QGroupBox("Single Operation (Takeout/Thaw/Discard)")
+        single = QGroupBox(tr("operations.singleOp"))
         single_form = QFormLayout(single)
         self.t_id = QSpinBox()
         self.t_id.setRange(1, 999999)
@@ -331,21 +331,21 @@ class OperationsPanel(QWidget):
         self.t_action.addItems(["Takeout", "Thaw", "Discard"])
         self.t_note = QLineEdit()
 
-        single_form.addRow("Record ID", self.t_id)
-        single_form.addRow("Position", self.t_position)
-        single_form.addRow("Date", self.t_date)
-        single_form.addRow("Action", self.t_action)
-        single_form.addRow("Note", self.t_note)
+        single_form.addRow(tr("operations.recordId"), self.t_id)
+        single_form.addRow(tr("operations.position"), self.t_position)
+        single_form.addRow(tr("operations.date"), self.t_date)
+        single_form.addRow(tr("operations.action"), self.t_action)
+        single_form.addRow(tr("operations.note"), self.t_note)
 
-        self.t_apply_btn = QPushButton("Add to Plan")
+        self.t_apply_btn = QPushButton(tr("operations.addPlan"))
         self._style_stage_button(self.t_apply_btn)
         self.t_apply_btn.clicked.connect(self.on_record_thaw)
         single_form.addRow("", self.t_apply_btn)
         layout.addWidget(single)
 
-        context_box = QGroupBox("Selected Record Context")
+        context_box = QGroupBox(tr("operations.selectedContext"))
         context_form = QFormLayout(context_box)
-        self.t_ctx_status = QLabel("No prefill yet.")
+        self.t_ctx_status = QLabel(tr("operations.noPrefill"))
         self.t_ctx_status.setWordWrap(True)
         self.t_ctx_source = QLabel("-")
         self.t_ctx_id = QLabel("-")
@@ -386,7 +386,7 @@ class OperationsPanel(QWidget):
         layout = QVBoxLayout(tab)
 
         # --- Single Move ---
-        single = QGroupBox("Single Move (Relocate / Swap)")
+        single = QGroupBox(tr("operations.singleMove"))
         single_form = QFormLayout(single)
         self.m_id = QSpinBox()
         self.m_id.setRange(1, 999999)
@@ -399,30 +399,30 @@ class OperationsPanel(QWidget):
         self.m_to_position.valueChanged.connect(self._refresh_move_record_context)
         self.m_to_box = QSpinBox()
         self.m_to_box.setRange(0, 99)
-        self.m_to_box.setSpecialValueText("Same box")
+        self.m_to_box.setSpecialValueText(tr("operations.sameBox"))
         self.m_date = QDateEdit()
         self.m_date.setCalendarPopup(True)
         self.m_date.setDisplayFormat("yyyy-MM-dd")
         self.m_date.setDate(QDate.currentDate())
         self.m_note = QLineEdit()
 
-        single_form.addRow("Record ID", self.m_id)
-        single_form.addRow("From Position", self.m_from_position)
-        single_form.addRow("To Position", self.m_to_position)
-        single_form.addRow("To Box", self.m_to_box)
-        single_form.addRow("Date", self.m_date)
-        single_form.addRow("Note", self.m_note)
+        single_form.addRow(tr("operations.recordId"), self.m_id)
+        single_form.addRow(tr("operations.fromPosition"), self.m_from_position)
+        single_form.addRow(tr("operations.toPosition"), self.m_to_position)
+        single_form.addRow(tr("operations.toBox"), self.m_to_box)
+        single_form.addRow(tr("operations.date"), self.m_date)
+        single_form.addRow(tr("operations.note"), self.m_note)
 
-        self.m_apply_btn = QPushButton("Add to Plan")
+        self.m_apply_btn = QPushButton(tr("operations.addPlan"))
         self._style_stage_button(self.m_apply_btn)
         self.m_apply_btn.clicked.connect(self.on_record_move)
         single_form.addRow("", self.m_apply_btn)
         layout.addWidget(single)
 
         # --- Context ---
-        context_box = QGroupBox("Selected Record Context")
+        context_box = QGroupBox(tr("operations.selectedContext"))
         context_form = QFormLayout(context_box)
-        self.m_ctx_status = QLabel("No prefill yet.")
+        self.m_ctx_status = QLabel(tr("operations.noPrefill"))
         self.m_ctx_status.setWordWrap(True)
         self.m_ctx_id = QLabel("-")
         self.m_ctx_cell = QLabel("-")
@@ -456,16 +456,16 @@ class OperationsPanel(QWidget):
         return tab
 
     def _init_hidden_batch_thaw_controls(self, parent):
-        self.t_batch_toggle_btn = QPushButton("Show Batch Operation", parent)
+        self.t_batch_toggle_btn = QPushButton(tr("operations.showBatch"), parent)
         self.t_batch_toggle_btn.setCheckable(True)
         self.t_batch_toggle_btn.toggled.connect(self.on_toggle_batch_section)
         self.t_batch_toggle_btn.setVisible(False)
 
-        self.t_batch_group = QGroupBox("Batch Operation (Takeout/Thaw/Discard)", parent)
+        self.t_batch_group = QGroupBox(tr("operations.batchOp"), parent)
         self.t_batch_group.setVisible(False)
         batch_form = QFormLayout(self.t_batch_group)
         self.b_entries = QLineEdit(self.t_batch_group)
-        self.b_entries.setPlaceholderText("e.g. 182:23,183:41")
+        self.b_entries.setPlaceholderText(tr("operations.entriesPh"))
         self.b_date = QDateEdit(self.t_batch_group)
         self.b_date.setCalendarPopup(True)
         self.b_date.setDisplayFormat("yyyy-MM-dd")
@@ -475,30 +475,30 @@ class OperationsPanel(QWidget):
         self.b_note = QLineEdit(self.t_batch_group)
         self.b_table = QTableWidget(self.t_batch_group)
         self.b_table.setColumnCount(2)
-        self.b_table.setHorizontalHeaderLabels(["Record ID", "Position"])
+        self.b_table.setHorizontalHeaderLabels([tr("operations.recordId"), tr("operations.position")])
         self.b_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.b_table.setRowCount(1)
-        self.b_apply_btn = QPushButton("Add to Plan", self.t_batch_group)
+        self.b_apply_btn = QPushButton(tr("operations.addPlan"), self.t_batch_group)
         self.b_apply_btn.clicked.connect(self.on_batch_thaw)
 
-        batch_form.addRow("Entries (text)", self.b_entries)
-        batch_form.addRow("Or use table", self.b_table)
-        batch_form.addRow("Date", self.b_date)
-        batch_form.addRow("Action", self.b_action)
-        batch_form.addRow("Note", self.b_note)
+        batch_form.addRow(tr("operations.entriesText"), self.b_entries)
+        batch_form.addRow(tr("operations.orUseTable"), self.b_table)
+        batch_form.addRow(tr("operations.date"), self.b_date)
+        batch_form.addRow(tr("operations.action"), self.b_action)
+        batch_form.addRow(tr("operations.note"), self.b_note)
         batch_form.addRow("", self.b_apply_btn)
 
     def _init_hidden_batch_move_controls(self, parent):
-        self.m_batch_toggle_btn = QPushButton("Show Batch Move", parent)
+        self.m_batch_toggle_btn = QPushButton(tr("operations.showBatchMove"), parent)
         self.m_batch_toggle_btn.setCheckable(True)
         self.m_batch_toggle_btn.toggled.connect(self._on_toggle_move_batch_section)
         self.m_batch_toggle_btn.setVisible(False)
 
-        self.m_batch_group = QGroupBox("Batch Move", parent)
+        self.m_batch_group = QGroupBox(tr("operations.batchMove"), parent)
         self.m_batch_group.setVisible(False)
         batch_form = QFormLayout(self.m_batch_group)
         self.bm_entries = QLineEdit(self.m_batch_group)
-        self.bm_entries.setPlaceholderText("e.g. 182:23->31,183:41->42")
+        self.bm_entries.setPlaceholderText(tr("operations.entriesMovePh"))
         self.bm_date = QDateEdit(self.m_batch_group)
         self.bm_date.setCalendarPopup(True)
         self.bm_date.setDisplayFormat("yyyy-MM-dd")
@@ -506,16 +506,16 @@ class OperationsPanel(QWidget):
         self.bm_note = QLineEdit(self.m_batch_group)
         self.bm_table = QTableWidget(self.m_batch_group)
         self.bm_table.setColumnCount(4)
-        self.bm_table.setHorizontalHeaderLabels(["Record ID", "From", "To", "To Box"])
+        self.bm_table.setHorizontalHeaderLabels([tr("operations.recordId"), tr("operations.from"), tr("operations.to"), tr("operations.toBox")])
         self.bm_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.bm_table.setRowCount(1)
-        self.bm_apply_btn = QPushButton("Add to Plan", self.m_batch_group)
+        self.bm_apply_btn = QPushButton(tr("operations.addPlan"), self.m_batch_group)
         self.bm_apply_btn.clicked.connect(self.on_batch_move)
 
-        batch_form.addRow("Entries (text)", self.bm_entries)
-        batch_form.addRow("Or use table", self.bm_table)
-        batch_form.addRow("Date", self.bm_date)
-        batch_form.addRow("Note", self.bm_note)
+        batch_form.addRow(tr("operations.entriesText"), self.bm_entries)
+        batch_form.addRow(tr("operations.orUseTable"), self.bm_table)
+        batch_form.addRow(tr("operations.date"), self.bm_date)
+        batch_form.addRow(tr("operations.note"), self.bm_note)
         batch_form.addRow("", self.bm_apply_btn)
 
     # --- PLAN TAB ---
@@ -538,13 +538,7 @@ class OperationsPanel(QWidget):
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
-        self.plan_empty_label = QLabel(
-            "[EMPTY] No operations staged yet.\n\n"
-            "Ways to add operations:\n"
-            "1. Double-click a cell in Overview panel\n"
-            "2. Use the Takeout/Move/Add forms above\n"
-            "3. Ask the AI Assistant to generate a plan"
-        )
+        self.plan_empty_label = QLabel(tr("operations.emptyPlan"))
         self.plan_empty_label.setAlignment(Qt.AlignCenter)
         self.plan_empty_label.setStyleSheet(
             "color: #f59e0b; padding: 20px; font-weight: bold; background-color: #1f2937; border-radius: 8px;"
@@ -561,16 +555,16 @@ class OperationsPanel(QWidget):
         layout.addWidget(self.plan_table, 1)
 
         btn_row = QHBoxLayout()
-        self.plan_exec_btn = QPushButton("Execute All")
+        self.plan_exec_btn = QPushButton(tr("operations.executeAll"))
         self._style_execute_button(self.plan_exec_btn)
         self.plan_exec_btn.clicked.connect(self.execute_plan)
         btn_row.addWidget(self.plan_exec_btn)
 
-        self.plan_print_btn = QPushButton("Print")
+        self.plan_print_btn = QPushButton(tr("operations.print"))
         self.plan_print_btn.clicked.connect(self.print_plan)
         btn_row.addWidget(self.plan_print_btn)
 
-        self.plan_clear_btn = QPushButton("Clear")
+        self.plan_clear_btn = QPushButton(tr("operations.clear"))
         self.plan_clear_btn.clicked.connect(self.clear_plan)
         btn_row.addWidget(self.plan_clear_btn)
 
@@ -595,29 +589,29 @@ class OperationsPanel(QWidget):
         self.q_position.setRange(0, 999)
         self.q_position.setSpecialValueText("Any")
 
-        form.addRow("Cell", self.q_cell)
-        form.addRow("Short Name", self.q_short)
-        form.addRow("Plasmid", self.q_plasmid)
-        form.addRow("Plasmid ID", self.q_plasmid_id)
-        form.addRow("Box", self.q_box)
-        form.addRow("Position", self.q_position)
+        form.addRow(tr("operations.cell"), self.q_cell)
+        form.addRow(tr("operations.shortName"), self.q_short)
+        form.addRow(tr("operations.plasmid"), self.q_plasmid)
+        form.addRow(tr("operations.plasmidId"), self.q_plasmid_id)
+        form.addRow(tr("operations.box"), self.q_box)
+        form.addRow(tr("operations.position"), self.q_position)
         layout.addLayout(form)
 
         btn_row = QHBoxLayout()
-        query_btn = QPushButton("Query Records")
+        query_btn = QPushButton(tr("operations.queryRecords"))
         query_btn.clicked.connect(self.on_query_records)
         btn_row.addWidget(query_btn)
 
-        empty_btn = QPushButton("List Empty Positions")
+        empty_btn = QPushButton(tr("operations.listEmpty"))
         empty_btn.clicked.connect(self.on_list_empty)
         btn_row.addWidget(empty_btn)
 
-        export_btn = QPushButton("Export CSV")
+        export_btn = QPushButton(tr("operations.exportCsv"))
         export_btn.clicked.connect(self.on_export_query_csv)
         btn_row.addWidget(export_btn)
         layout.addLayout(btn_row)
 
-        self.query_info = QLabel("Run a query to show records in table format.")
+        self.query_info = QLabel(tr("operations.queryInfo"))
         layout.addWidget(self.query_info)
 
         self.query_table = QTableWidget()
@@ -636,30 +630,30 @@ class OperationsPanel(QWidget):
 
         form = QFormLayout()
         self.rb_backup_path = QLineEdit()
-        self.rb_backup_path.setPlaceholderText("Leave empty to rollback latest backup")
+        self.rb_backup_path.setPlaceholderText(tr("operations.backupPh"))
 
-        form.addRow("Backup Path", self.rb_backup_path)
+        form.addRow(tr("operations.backupPath"), self.rb_backup_path)
         layout.addLayout(form)
 
         btn_row = QHBoxLayout()
-        refresh_btn = QPushButton("Refresh Backups")
+        refresh_btn = QPushButton(tr("operations.refreshBackups"))
         refresh_btn.clicked.connect(self.on_refresh_backups)
         btn_row.addWidget(refresh_btn)
 
-        select_btn = QPushButton("Use Selected Backup")
+        select_btn = QPushButton(tr("operations.useSelected"))
         select_btn.clicked.connect(self.on_use_selected_backup)
         btn_row.addWidget(select_btn)
 
-        rollback_latest_btn = QPushButton("Rollback Latest")
+        rollback_latest_btn = QPushButton(tr("operations.rollbackLatest"))
         rollback_latest_btn.clicked.connect(self.on_rollback_latest)
         btn_row.addWidget(rollback_latest_btn)
 
-        rollback_selected_btn = QPushButton("Rollback Selected/Path")
+        rollback_selected_btn = QPushButton(tr("operations.rollbackSelected"))
         rollback_selected_btn.clicked.connect(self.on_rollback_selected)
         btn_row.addWidget(rollback_selected_btn)
         layout.addLayout(btn_row)
 
-        self.backup_info = QLabel("Backups will be listed here.")
+        self.backup_info = QLabel(tr("operations.backupsInfo"))
         layout.addWidget(self.backup_info)
 
         self.backup_table = QTableWidget()
@@ -704,7 +698,7 @@ class OperationsPanel(QWidget):
         if hasattr(self, "m_batch_group"):
             self.m_batch_group.setVisible(visible)
         if hasattr(self, "m_batch_toggle_btn"):
-            self.m_batch_toggle_btn.setText("Hide Batch Move" if visible else "Show Batch Move")
+            self.m_batch_toggle_btn.setText(tr("operations.hideBatchMove") if visible else tr("operations.showBatchMove"))
 
     def _ensure_today_defaults(self):
         today = QDate.currentDate()
@@ -743,7 +737,7 @@ class OperationsPanel(QWidget):
         self.t_ctx_id.setText(str(record_id) if record_id else "-")
 
         if not record:
-            self.t_ctx_status.setText("Record not found in cache.")
+            self.t_ctx_status.setText(tr("operations.recordNotFound"))
             self.t_ctx_status.setStyleSheet("color: #b45309;")
             for lbl in [
                 self.t_ctx_cell,
@@ -760,9 +754,9 @@ class OperationsPanel(QWidget):
             return
 
         if self.t_prefill_source:
-            self.t_ctx_status.setText("Record loaded - form auto-filled.")
+            self.t_ctx_status.setText(tr("operations.recordLoaded"))
         else:
-            self.t_ctx_status.setText("Record context loaded.")
+            self.t_ctx_status.setText(tr("operations.recordContextLoaded"))
         self.t_ctx_status.setStyleSheet("color: #15803d;")
 
         self.t_ctx_cell.setText(str(record.get("parent_cell_line") or "-"))
@@ -785,7 +779,7 @@ class OperationsPanel(QWidget):
             last_pos = positions_to_text(last.get("positions") or [])
             self.t_ctx_events.setText(f"{len(events)} events; last: {last_date} {last_action} [{last_pos}]")
         else:
-            self.t_ctx_events.setText("No thaw history")
+            self.t_ctx_events.setText(tr("operations.noHistory"))
 
         # Check
         pos_ok = False
@@ -795,17 +789,17 @@ class OperationsPanel(QWidget):
             pos_ok = False
 
         if not pos_ok:
-            self.t_ctx_check.setText("WARNING - position NOT in record")
+            self.t_ctx_check.setText(tr("operations.posWarning"))
             self.t_ctx_check.setStyleSheet("color: #b91c1c;")
         else:
-            self.t_ctx_check.setText("OK - position in record")
+            self.t_ctx_check.setText(tr("operations.posOk"))
             self.t_ctx_check.setStyleSheet("color: #15803d;")
 
     def _confirm_execute(self, title, details):
         msg = QMessageBox(self)
         msg.setIcon(QMessageBox.Warning)
         msg.setWindowTitle(title)
-        msg.setText("This operation will modify inventory YAML.")
+        msg.setText(tr("operations.confirmModify"))
         msg.setInformativeText(details)
         msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         msg.setDefaultButton(QMessageBox.No)
@@ -861,7 +855,7 @@ class OperationsPanel(QWidget):
         to_pos = self.m_to_position.value()
         to_box = self.m_to_box.value() if self.m_to_box.value() > 0 else None
         if from_pos == to_pos and to_box is None:
-            self.status_message.emit("Move: From and To positions must be different.", 4000, "error")
+            self.status_message.emit(tr("operations.moveMustDiffer"), 4000, "error")
             return
 
         record = self._lookup_record(self.m_id.value())
@@ -984,7 +978,7 @@ class OperationsPanel(QWidget):
         self.m_ctx_id.setText(str(record_id) if record_id else "-")
 
         if not record:
-            self.m_ctx_status.setText("Record not found in cache.")
+            self.m_ctx_status.setText(tr("operations.recordNotFound"))
             self.m_ctx_status.setStyleSheet("color: #b45309;")
             for lbl in [
                 self.m_ctx_cell, self.m_ctx_short, self.m_ctx_box,
@@ -994,7 +988,7 @@ class OperationsPanel(QWidget):
                 lbl.setText("-")
             return
 
-        self.m_ctx_status.setText("Record context loaded.")
+        self.m_ctx_status.setText(tr("operations.recordContextLoaded"))
         self.m_ctx_status.setStyleSheet("color: #15803d;")
         self.m_ctx_cell.setText(str(record.get("parent_cell_line") or "-"))
         self.m_ctx_short.setText(str(record.get("short_name") or "-"))
@@ -1015,7 +1009,7 @@ class OperationsPanel(QWidget):
             last_pos = positions_to_text(last.get("positions") or [])
             self.m_ctx_events.setText(f"{len(events)} events; last: {last_date} {last_action} [{last_pos}]")
         else:
-            self.m_ctx_events.setText("No history")
+            self.m_ctx_events.setText(tr("operations.noHistory"))
 
         pos_ok = False
         try:
@@ -1024,13 +1018,13 @@ class OperationsPanel(QWidget):
             pos_ok = False
 
         if not pos_ok:
-            self.m_ctx_check.setText("WARNING - from position NOT in record")
+            self.m_ctx_check.setText(tr("operations.fromPosWarning"))
             self.m_ctx_check.setStyleSheet("color: #b91c1c;")
         elif from_pos == to_pos:
-            self.m_ctx_check.setText("WARNING - from and to are the same")
+            self.m_ctx_check.setText(tr("operations.posSameWarning"))
             self.m_ctx_check.setStyleSheet("color: #b91c1c;")
         else:
-            self.m_ctx_check.setText("OK - position in record")
+            self.m_ctx_check.setText(tr("operations.posOk"))
             self.m_ctx_check.setStyleSheet("color: #15803d;")
 
     def _batch_add_row(self):
@@ -1274,7 +1268,7 @@ class OperationsPanel(QWidget):
             blocked_count = sum(1 for v in self._plan_validation_by_key.values() if v.get("blocked"))
             self.plan_exec_btn.setText(f"Execute ({blocked_count} blocked)")
         else:
-            self.plan_exec_btn.setText("Execute All")
+            self.plan_exec_btn.setText(tr("operations.executeAll"))
 
     def _refresh_plan_table(self):
         has_items = bool(self.plan_items)
@@ -2002,7 +1996,7 @@ class OperationsPanel(QWidget):
         """Enable the undo button with an auto-disable countdown."""
         self.undo_btn.setEnabled(True)
         self._undo_remaining = timeout_sec
-        self.undo_btn.setText(f"Undo Last Operation ({self._undo_remaining}s)")
+        self.undo_btn.setText(f"{tr('operations.undoLast')} ({self._undo_remaining}s)")
 
         if self._undo_timer is not None:
             self._undo_timer.stop()
@@ -2016,14 +2010,14 @@ class OperationsPanel(QWidget):
         if self._undo_remaining <= 0:
             self._disable_undo()
         else:
-            self.undo_btn.setText(f"Undo Last Operation ({self._undo_remaining}s)")
+            self.undo_btn.setText(f"{tr('operations.undoLast')} ({self._undo_remaining}s)")
 
     def _disable_undo(self):
         if self._undo_timer is not None:
             self._undo_timer.stop()
             self._undo_timer = None
         self.undo_btn.setEnabled(False)
-        self.undo_btn.setText("Undo Last Operation")
+        self.undo_btn.setText(tr("operations.undoLast"))
         self._last_operation_backup = None
         self._last_executed_plan = []
 

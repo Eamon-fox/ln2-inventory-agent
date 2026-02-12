@@ -225,7 +225,7 @@ class OverviewPanel(QWidget):
         self.ov_filter_advanced_widget.setVisible(False)
         layout.addWidget(self.ov_filter_advanced_widget)
 
-        self.ov_status = QLabel("Overview status")
+        self.ov_status = QLabel(tr("overview.statusReady"))
         layout.addWidget(self.ov_status)
 
         self.ov_hover_hint = QLabel(tr("overview.hoverHint"))
@@ -289,7 +289,7 @@ class OverviewPanel(QWidget):
         timeline_response = self.bridge.collect_timeline(yaml_path, days=7, all_history=False)
 
         if not stats_response.get("ok"):
-            self.ov_status.setText(f"Failed to load overview: {stats_response.get('message', 'unknown error')}")
+            self.ov_status.setText(t("overview.loadFailed", error=stats_response.get('message', 'unknown error')))
             self.overview_records_by_id = {}
             self.overview_selected_key = None
             self.overview_selected_keys.clear()
@@ -347,14 +347,14 @@ class OverviewPanel(QWidget):
             )
             self.ov_hover_hint.setStyleSheet("color: #f59e0b; font-weight: bold; padding: 8px;")
         else:
-            self.ov_hover_hint.setText("Hover a slot to preview details.")
+            self.ov_hover_hint.setText(tr("overview.hoverHint"))
             self.ov_hover_hint.setStyleSheet("color: #94a3b8; font-weight: bold;")
 
         if timeline_response.get("ok"):
             ops7 = timeline_response.get("result", {}).get("summary", {}).get("total_ops", 0)
             self.ov_ops7_value.setText(str(ops7))
         else:
-            self.ov_ops7_value.setText("N/A")
+            self.ov_ops7_value.setText(tr("common.na"))
 
         self.ov_meta_stats.setText(
             f"Capacity: {self.ov_total_capacity_value.text()} | Ops (7d): {self.ov_ops7_value.text()}"
@@ -367,7 +367,7 @@ class OverviewPanel(QWidget):
             total = stats_item.get("total", rows * cols)
             live = self.overview_box_live_labels.get(box_num)
             if live is not None:
-                live.setText(f"Occupied {occupied}/{total} | Empty {empty}")
+                live.setText(t("overview.occupiedCount", occupied=occupied, total=total, empty=empty))
 
         for key, button in self.overview_cells.items():
             box_num, position = key
@@ -399,13 +399,13 @@ class OverviewPanel(QWidget):
         total_slots = rows * cols
         columns = 3
         for idx, box_num in enumerate(box_numbers):
-            group = QGroupBox(f"Box {box_num}")
+            group = QGroupBox(t("overview.boxLabel", box=box_num))
             group.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             group_layout = QVBoxLayout(group)
             group_layout.setContentsMargins(6, 6, 6, 6)
             group_layout.setSpacing(4)
 
-            live_label = QLabel(f"Occupied 0 / {total_slots} | Empty {total_slots}")
+            live_label = QLabel(t("overview.occupiedCount", occupied=0, total=total_slots, empty=total_slots))
             group_layout.addWidget(live_label)
             self.overview_box_live_labels[box_num] = live_label
 
@@ -551,9 +551,9 @@ class OverviewPanel(QWidget):
 
         self.ov_filter_box.blockSignals(True)
         self.ov_filter_box.clear()
-        self.ov_filter_box.addItem("All boxes", None)
+        self.ov_filter_box.addItem(tr("overview.allBoxes"), None)
         for box_num in box_numbers:
-            self.ov_filter_box.addItem(f"Box {box_num}", box_num)
+            self.ov_filter_box.addItem(t("overview.boxLabel", box=box_num), box_num)
         index = self.ov_filter_box.findData(prev_box)
         self.ov_filter_box.setCurrentIndex(index if index >= 0 else 0)
         self.ov_filter_box.blockSignals(False)
@@ -561,7 +561,7 @@ class OverviewPanel(QWidget):
         cell_lines = sorted({str(rec.get("parent_cell_line")) for rec in records if rec.get("parent_cell_line")})
         self.ov_filter_cell.blockSignals(True)
         self.ov_filter_cell.clear()
-        self.ov_filter_cell.addItem("All cells", None)
+        self.ov_filter_cell.addItem(tr("overview.allCells"), None)
         for cell in cell_lines:
             self.ov_filter_cell.addItem(cell, cell)
         index = self.ov_filter_cell.findData(prev_cell)
@@ -610,7 +610,7 @@ class OverviewPanel(QWidget):
 
             live = self.overview_box_live_labels.get(box_num)
             if live:
-                live.setText(f"Filtered: Occupied {stat['occ']} | Empty {stat['emp']}")
+                live.setText(t("overview.filteredCount", occupied=stat['occ'], empty=stat['emp']))
 
         if self.overview_selected_key:
             selected_button = self.overview_cells.get(self.overview_selected_key)
@@ -713,11 +713,11 @@ class OverviewPanel(QWidget):
 
     def _reset_detail(self):
         self.overview_hover_key = None
-        self.ov_hover_hint.setText("Hover a slot to preview details.")
+        self.ov_hover_hint.setText(tr("overview.hoverHint"))
 
     def _show_detail(self, box_num, position, record):
         if not record:
-            self.ov_hover_hint.setText(f"Box {box_num} Pos {position} | Empty slot")
+            self.ov_hover_hint.setText(t("overview.previewEmpty", box=box_num, pos=position))
             return
 
         rec_id = str(record.get("id", "-"))
@@ -726,7 +726,7 @@ class OverviewPanel(QWidget):
         frozen = str(record.get("frozen_at", "-"))
         plasmid = record.get("plasmid_name") or record.get("plasmid_id") or "-"
         self.ov_hover_hint.setText(
-            f"Box {box_num} Pos {position} | ID {rec_id} | {cell} / {short} | Frozen {frozen} | Plasmid {plasmid}"
+            t("overview.previewRecord", box=box_num, pos=position, id=rec_id, cell=cell, short=short)
         )
 
     def on_cell_context_menu(self, box_num, position, global_pos):
@@ -801,7 +801,7 @@ class OverviewPanel(QWidget):
 
     def _update_selection_bar(self):
         n = len(self.overview_selected_keys)
-        self.ov_sel_count.setText(f"{n} selected")
+        self.ov_sel_count.setText(t("overview.selected", count=n))
         self.ov_selection_bar.setVisible(n > 0)
 
     def _on_quick_action(self, action_name):

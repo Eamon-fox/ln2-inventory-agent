@@ -81,12 +81,12 @@ class AIPanel(QWidget):
 
         # Toggles
         toggle_row = QHBoxLayout()
-        self.ai_toggle_controls_btn = QPushButton("Show Advanced")
+        self.ai_toggle_controls_btn = QPushButton(tr("ai.showAdvanced"))
         self.ai_toggle_controls_btn.setCheckable(True)
         self.ai_toggle_controls_btn.toggled.connect(self.on_toggle_controls)
         toggle_row.addWidget(self.ai_toggle_controls_btn)
 
-        self.ai_toggle_report_btn = QPushButton("Show Plan Details")
+        self.ai_toggle_report_btn = QPushButton(tr("ai.showPlanDetails"))
         self.ai_toggle_report_btn.setCheckable(True)
         self.ai_toggle_report_btn.toggled.connect(self.on_toggle_report)
         toggle_row.addWidget(self.ai_toggle_report_btn)
@@ -94,7 +94,7 @@ class AIPanel(QWidget):
         layout.addLayout(toggle_row)
 
         # Controls
-        self.ai_controls_box = QGroupBox("Agent Controls")
+        self.ai_controls_box = QGroupBox(tr("ai.agentControls"))
         controls_form = QFormLayout(self.ai_controls_box)
         self.ai_model = QLineEdit()
         self.ai_model.setPlaceholderText("deepseek-chat")
@@ -108,22 +108,22 @@ class AIPanel(QWidget):
         self.ai_mock.setChecked(True)
         self.ai_mock.stateChanged.connect(self.on_mode_changed)
 
-        controls_form.addRow("DeepSeek Model", self.ai_model)
-        controls_form.addRow("Max Steps", self.ai_steps)
+        controls_form.addRow(tr("ai.deepseekModel"), self.ai_model)
+        controls_form.addRow(tr("ai.maxSteps"), self.ai_steps)
         controls_form.addRow("", self.ai_mock)
         layout.addWidget(self.ai_controls_box)
 
         # Prompt Box
-        prompt_box = QGroupBox("Prompt")
+        prompt_box = QGroupBox(tr("ai.prompt"))
         prompt_layout = QVBoxLayout(prompt_box)
 
         examples = QHBoxLayout()
-        examples.addWidget(QLabel("Quick prompts"))
+        examples.addWidget(QLabel(tr("ai.quickPrompts")))
 
         quick_prompts = [
-            ("Find K562", "Find K562-related records and summarize count with a few representative rows."),
-            ("Takeout Today", "List today's takeout/thaw/discard events and summarize by action."),
-            ("Suggest Slots", "Recommend 2 consecutive empty slots, prefer boxes with more free space, and explain why."),
+            (tr("ai.findK562"), "Find K562-related records and summarize count with a few representative rows."),
+            (tr("ai.takeoutToday"), "List today's takeout/thaw/discard events and summarize by action."),
+            (tr("ai.suggestSlots"), "Recommend 2 consecutive empty slots, prefer boxes with more free space, and explain why."),
         ]
         for label, text in quick_prompts:
             btn = QPushButton(label)
@@ -133,7 +133,7 @@ class AIPanel(QWidget):
         prompt_layout.addLayout(examples)
 
         self.ai_prompt = QTextEdit()
-        self.ai_prompt.setPlaceholderText("Type a natural-language request... (Enter to send, Shift+Enter for newline)")
+        self.ai_prompt.setPlaceholderText(tr("ai.placeholder"))
         self.ai_prompt.setFixedHeight(90)
         self.ai_prompt.installEventFilter(self)
         prompt_layout.addWidget(self.ai_prompt)
@@ -155,21 +155,21 @@ class AIPanel(QWidget):
         prompt_layout.addLayout(run_row)
 
         # Chat Area
-        chat_box = QGroupBox("AI Chat")
+        chat_box = QGroupBox(tr("ai.aiChat"))
         chat_layout = QVBoxLayout(chat_box)
         self.ai_chat = QTextEdit()
         self.ai_chat.setReadOnly(True)
         self.ai_chat.setAcceptRichText(True)
-        self.ai_chat.setPlaceholderText("Conversation timeline will appear here.")
+        self.ai_chat.setPlaceholderText(tr("ai.chatPlaceholder"))
         chat_layout.addWidget(self.ai_chat)
         layout.addWidget(chat_box, 3)
 
         # Report Area
-        self.ai_report_box = QGroupBox("Plan / Preview / Result / Audit")
+        self.ai_report_box = QGroupBox(tr("ai.report"))
         report_layout = QVBoxLayout(self.ai_report_box)
         self.ai_report = QTextEdit()
         self.ai_report.setReadOnly(True)
-        self.ai_report.setPlaceholderText("Structured agent output will appear here.")
+        self.ai_report.setPlaceholderText(tr("ai.reportPlaceholder"))
         report_layout.addWidget(self.ai_report)
         layout.addWidget(self.ai_report_box, 1)
         
@@ -237,16 +237,16 @@ class AIPanel(QWidget):
 
     def on_toggle_controls(self, checked):
         self.ai_controls_box.setVisible(bool(checked))
-        self.ai_toggle_controls_btn.setText("Hide Advanced" if checked else "Show Advanced")
+        self.ai_toggle_controls_btn.setText(tr("ai.hideAdvanced") if checked else tr("ai.showAdvanced"))
 
     def on_toggle_report(self, checked):
         self.ai_report_box.setVisible(bool(checked))
-        self.ai_toggle_report_btn.setText("Hide Plan Details" if checked else "Show Plan Details")
+        self.ai_toggle_report_btn.setText(tr("ai.hidePlanDetails") if checked else tr("ai.showPlanDetails"))
 
     def on_mode_changed(self):
         use_mock = self.ai_mock.isChecked()
         self.ai_model.setEnabled(not use_mock)
-        self.ai_model.setPlaceholderText("Mock mode enabled" if use_mock else "deepseek-chat")
+        self.ai_model.setPlaceholderText(tr("ai.mockEnabled") if use_mock else "deepseek-chat")
 
     def set_prompt(self, text):
         self.ai_prompt.setPlainText(str(text or "").strip())
@@ -263,7 +263,7 @@ class AIPanel(QWidget):
         self.ai_last_stream_block = None
         self.ai_stream_last_render_ts = 0.0
         self.ai_stream_last_render_len = 0
-        self.status_message.emit("AI memory cleared", 2000)
+        self.status_message.emit(tr("ai.memoryCleared"), 2000)
 
     def _append_chat_header(self, role):
         self._move_chat_cursor_to_end()
@@ -452,7 +452,7 @@ class AIPanel(QWidget):
         
         prompt = self.ai_prompt.toPlainText().strip()
         if not prompt:
-            self.status_message.emit("Please enter a prompt.", 2000)
+            self.status_message.emit(tr("ai.enterPrompt"), 2000)
             return
 
         self._append_chat("You", prompt)
@@ -468,7 +468,7 @@ class AIPanel(QWidget):
         self.ai_stream_last_render_ts = 0.0
         self.ai_stream_last_render_len = 0
         self.ai_report.clear()
-        self.status_message.emit("Agent thinking...", 2000)
+        self.status_message.emit(tr("ai.agentThinking"), 2000)
         
         self.start_worker(prompt)
 
@@ -513,13 +513,13 @@ class AIPanel(QWidget):
             # Ideally we have a 'stop' flag in worker, but worker is running a blocking call.
             self.ai_run_thread.terminate()
             self.set_busy(False)
-            self._append_chat("System", "**Run stopped by user.**")
-            self.status_message.emit("AI run stopped.", 3000)
+            self._append_chat("System", tr("ai.runStopped"))
+            self.status_message.emit(tr("ai.aiRunStopped"), 3000)
 
     def set_busy(self, busy):
         self.ai_run_inflight = busy
         self.ai_run_btn.setEnabled(not busy)
-        self.ai_run_btn.setText("Running..." if busy else "Run Agent")
+        self.ai_run_btn.setText(tr("ai.running") if busy else tr("ai.runAgent"))
         self.ai_stop_btn.setEnabled(busy)
 
     def on_progress(self, event):
