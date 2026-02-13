@@ -3,7 +3,7 @@ import os
 import csv
 import tempfile
 from datetime import date, datetime
-from PySide6.QtCore import Qt, Signal, QDate, QTimer, QUrl
+from PySide6.QtCore import Qt, Signal, QDate, QEvent, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -39,6 +39,7 @@ class OperationsPanel(QWidget):
     operation_event = Signal(dict)
     status_message = Signal(str, int, str)
     plan_preview_updated = Signal(list)
+    plan_hover_item_changed = Signal(object)
     
     def __init__(self, bridge, yaml_path_getter):
         super().__init__()
@@ -56,6 +57,7 @@ class OperationsPanel(QWidget):
         self._last_printable_plan = []
         self._plan_preflight_report = None
         self._plan_validation_by_key = {}
+        self._plan_hover_row = None
         self._undo_timer = None
         self._undo_remaining = 0
         self._audit_events = []
@@ -596,11 +598,14 @@ class OperationsPanel(QWidget):
         layout.addWidget(self.plan_empty_label)
 
         self.plan_table = QTableWidget()
+        self.plan_table.setMouseTracking(True)
+        self.plan_table.cellEntered.connect(self._on_plan_cell_entered)
         self._setup_table(
             self.plan_table,
             [tr("operations.colSource"), tr("operations.colAction"), tr("operations.colBox"), tr("operations.colPos"), tr("operations.colToPos"), tr("operations.colToBox"), tr("operations.colLabel"), tr("operations.colNote"), tr("operations.colStatus")],
             sortable=False,
         )
+        self.plan_table.viewport().installEventFilter(self)
         self.plan_table.setVisible(False)
         layout.addWidget(self.plan_table, 1)
 
@@ -1239,6 +1244,34 @@ class OperationsPanel(QWidget):
         self.result_card.setVisible(True)
 
     # --- PLAN OPERATIONS ---
+
+    def eventFilter(self, obj, event):
+        """Handle plan table hover-leave to clear Overview execution preview."""
+        try:
+            if hasattr(self, "plan_table") and obj is self.plan_table.viewport():
+                if event.type() == QEvent.Leave:
+                    self._emit_plan_hover_item(None)
+        except Exception:
+            pass
+        return super().eventFilter(obj, event)
+
+    def _emit_plan_hover_item(self, item):
+        if item is None:
+            if self._plan_hover_row is not None:
+                self._plan_hover_row = None
+                self.plan_hover_item_changed.emit(None)
+            return
+
+        self.plan_hover_item_changed.emit(item)
+
+    def _on_plan_cell_entered(self, row, _col):
+        if row < 0 or row >= len(self.plan_items):
+            return
+        if row == self._plan_hover_row:
+            return
+        self._plan_hover_row = row
+        item = self.plan_items[row]
+        self._emit_plan_hover_item(item)
 
     def _plan_item_key(self, item):
         """Generate a unique key for plan item deduplication."""

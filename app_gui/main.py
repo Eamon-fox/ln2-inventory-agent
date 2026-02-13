@@ -383,6 +383,9 @@ class MainWindow(QMainWindow):
         # Operations -> Overview (plan preview)
         self.operations_panel.plan_preview_updated.connect(
             self.overview_panel.update_plan_preview)
+        self.operations_panel.plan_hover_item_changed.connect(
+            self.overview_panel.on_plan_item_hovered
+        )
 
         # Operations -> Overview (refresh after execution)
         self.operations_panel.operation_completed.connect(self.on_operation_completed)

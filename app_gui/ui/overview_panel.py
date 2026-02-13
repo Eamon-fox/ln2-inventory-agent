@@ -16,6 +16,7 @@ from app_gui.ui.theme import (
     cell_preview_move_target_style,
 )
 from app_gui.i18n import tr, t
+from app_gui.plan_preview import simulate_plan_pos_map
 
 MIME_TYPE_MOVE = "application/x-ln2-move"
 
@@ -116,6 +117,10 @@ class OverviewPanel(QWidget):
         self.overview_selected_key = None
         self.overview_hover_key = None
         self.overview_records_by_id = {}
+        self._plan_items = []
+        self._plan_simulation = None
+        self._hover_exec_preview_active = False
+        self._status_before_hover = None
 
         self.setup_ui()
 
@@ -418,6 +423,24 @@ class OverviewPanel(QWidget):
 
     def update_plan_preview(self, plan_items):
         """Update overview cells to show plan preview effects."""
+        self._plan_items = list(plan_items or [])
+        self._plan_simulation = None
+        if self._plan_items:
+            try:
+                self._plan_simulation = simulate_plan_pos_map(
+                    base_records_by_id=self.overview_records_by_id,
+                    plan_items=self._plan_items,
+                )
+            except Exception:
+                self._plan_simulation = None
+        # Plan changed while hover preview is active: cancel preview and repaint
+        # the normal overlay to avoid showing stale simulated state.
+        if self._hover_exec_preview_active:
+            self._hover_exec_preview_active = False
+            if self._status_before_hover is not None:
+                self.ov_status.setText(self._status_before_hover)
+                self._status_before_hover = None
+
         if not plan_items:
             for (box_num, position), button in self.overview_cells.items():
                 key = (box_num, position)
@@ -474,6 +497,102 @@ class OverviewPanel(QWidget):
                 button.setStyleSheet(cell_preview_move_target_style())
             else:
                 self._paint_cell(button, box_num, position, record)
+
+    def _focus_style(self, base_style: str) -> str:
+        """Overlay a stronger border to highlight a cell in preview mode."""
+        return (
+            (base_style or "")
+            + """
+            QPushButton { border: 3px solid var(--warning); }
+            QPushButton:hover { border: 3px solid var(--warning); }
+            """
+        )
+
+    def on_plan_item_hovered(self, item):
+        """Show a simulated post-execution overview when hovering a plan item."""
+        if not item:
+            self._hover_exec_preview_active = False
+            if self._status_before_hover is not None:
+                self.ov_status.setText(self._status_before_hover)
+                self._status_before_hover = None
+            self.update_plan_preview(self._plan_items)
+            return
+
+        if not self._plan_items:
+            return
+
+        sim = self._plan_simulation
+        if not isinstance(sim, dict):
+            try:
+                sim = simulate_plan_pos_map(
+                    base_records_by_id=self.overview_records_by_id,
+                    plan_items=self._plan_items,
+                )
+            except Exception:
+                sim = None
+        if not isinstance(sim, dict):
+            return
+
+        pos_map = sim.get("pos_map") if isinstance(sim.get("pos_map"), dict) else {}
+        preview_errors = sim.get("errors") if isinstance(sim.get("errors"), list) else []
+
+        if self._status_before_hover is None:
+            self._status_before_hover = self.ov_status.text()
+
+        action = str(item.get("action") or "").lower()
+        label = str(item.get("label") or "")
+        suffix = f" | issues: {len(preview_errors)}" if preview_errors else ""
+        self.ov_status.setText(f"[PREVIEW] After executing plan: focus {action} {label}{suffix}".strip())
+
+        self._hover_exec_preview_active = True
+
+        # Render the simulated final occupancy map.
+        for (box_num, position), button in self.overview_cells.items():
+            key = (box_num, position)
+            record = pos_map.get(key)
+            self._paint_cell(button, box_num, position, record)
+
+        # Highlight the focused operation's affected cells (best-effort).
+        focus_keys = set()
+        payload = item.get("payload") or {}
+
+        if action == "add":
+            box = payload.get("box", item.get("box"))
+            box = int(box) if box not in (None, "") else None
+            positions = payload.get("positions") or []
+            if box is not None:
+                for p in positions:
+                    try:
+                        focus_keys.add((box, int(p)))
+                    except Exception:
+                        pass
+        elif action in ("takeout", "thaw", "discard"):
+            box = item.get("box")
+            pos = item.get("position")
+            try:
+                focus_keys.add((int(box), int(pos)))
+            except Exception:
+                pass
+        elif action == "move":
+            box = item.get("box")
+            pos = item.get("position")
+            to_pos = item.get("to_position")
+            to_box = item.get("to_box")
+            try:
+                focus_keys.add((int(box), int(pos)))
+            except Exception:
+                pass
+            if to_pos not in (None, ""):
+                try:
+                    target_box = int(to_box) if to_box else int(box)
+                    focus_keys.add((target_box, int(to_pos)))
+                except Exception:
+                    pass
+
+        for key in focus_keys:
+            btn = self.overview_cells.get(key)
+            if btn is not None:
+                btn.setStyleSheet(self._focus_style(btn.styleSheet()))
 
     def _paint_cell(self, button, box_num, position, record):
         is_selected = self.overview_selected_key == (box_num, position)
