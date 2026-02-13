@@ -748,6 +748,36 @@ class GuiPanelRegressionTests(unittest.TestCase):
         panel = self._new_ai_panel()
 
         self.assertEqual("deepseek-chat", panel.ai_model.text())
+        self.assertTrue(panel.ai_thinking_enabled.isChecked())
+        self.assertFalse(panel.ai_stream_has_thought)
+
+    def test_ai_panel_thought_chunk_renders_inline_with_answer_stream(self):
+        panel = self._new_ai_panel()
+        panel.ai_stream_render_interval_sec = 0.0
+
+        panel.on_progress({"event": "run_start", "trace_id": "trace-thought"})
+        panel.on_progress(
+            {
+                "event": "chunk",
+                "trace_id": "trace-thought",
+                "data": "model thought",
+                "meta": {"channel": "thought"},
+            }
+        )
+        panel.on_progress(
+            {
+                "event": "chunk",
+                "trace_id": "trace-thought",
+                "data": " final answer",
+                "meta": {"channel": "answer"},
+            }
+        )
+
+        rendered = panel.ai_chat.toPlainText()
+        self.assertIn("model thought", rendered)
+        self.assertIn("final answer", rendered)
+        self.assertIn("\n", rendered)
+        self.assertTrue(panel.ai_stream_has_thought)
 
     def test_ai_panel_append_chat_prefers_insert_markdown_when_available(self):
         panel = self._new_ai_panel()
@@ -800,6 +830,34 @@ class GuiPanelRegressionTests(unittest.TestCase):
             if name == "insertPlainText"
         ]
         self.assertEqual(1, chunk_calls.count("hello"))
+
+    def test_ai_panel_finished_renders_markdown_for_thought_and_answer(self):
+        panel = self._new_ai_panel()
+
+        panel.on_progress({"event": "run_start", "trace_id": "trace-md-thought"})
+        panel.on_progress(
+            {
+                "event": "chunk",
+                "trace_id": "trace-md-thought",
+                "data": "**plan**",
+                "meta": {"channel": "thought"},
+            }
+        )
+        panel.on_progress(
+            {
+                "event": "chunk",
+                "trace_id": "trace-md-thought",
+                "data": "**final**",
+                "meta": {"channel": "answer"},
+            }
+        )
+        panel.on_finished({"ok": True, "result": {"final": "**final**", "trace_id": "trace-md-thought"}})
+
+        rendered_text = panel.ai_chat.toPlainText()
+        self.assertIn("plan", rendered_text)
+        self.assertIn("final", rendered_text)
+        self.assertNotIn("**plan**", rendered_text)
+        self.assertNotIn("**final**", rendered_text)
 
     def test_ai_panel_shows_tool_progress_in_chat(self):
         panel = self._new_ai_panel()

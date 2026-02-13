@@ -10,6 +10,7 @@ Usage:
 import json
 import os
 from functools import lru_cache
+from typing import Optional
 
 _LOCALE_DIR = os.path.join(os.path.dirname(__file__), "translations")
 _CURRENT_LANG = "en"
@@ -48,7 +49,7 @@ def get_language() -> str:
     return _CURRENT_LANG
 
 
-def tr(key: str, default: str = None) -> str:
+def tr(key: str, default: Optional[str] = None, **kwargs) -> str:
     """Translate a key to current language.
 
     Args:
@@ -68,8 +69,16 @@ def tr(key: str, default: str = None) -> str:
             return default
         value = value.get(part)
     if value is None or isinstance(value, dict):
-        return default
-    return str(value)
+        text = default
+    else:
+        text = str(value)
+
+    if kwargs:
+        try:
+            return text.format(**kwargs)
+        except (KeyError, ValueError):
+            return text
+    return text
 
 
 def t(key: str, **kwargs) -> str:

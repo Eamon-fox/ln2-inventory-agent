@@ -112,6 +112,26 @@ class LlmContentNormalizationTests(unittest.TestCase):
 
 
 class DeepSeekClientParseTests(unittest.TestCase):
+    def test_build_request_enables_thinking_by_default(self):
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}, clear=False):
+            client = DeepSeekLLMClient(model="deepseek-chat")
+
+        req = client._build_request(messages=[{"role": "user", "content": "hi"}])
+        raw_body = req.data if isinstance(req.data, (bytes, bytearray)) else b"{}"
+        body = json.loads(raw_body.decode("utf-8"))
+
+        self.assertEqual({"type": "enabled"}, body.get("thinking"))
+
+    def test_build_request_can_disable_thinking(self):
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}, clear=False):
+            client = DeepSeekLLMClient(model="deepseek-chat", thinking_enabled=False)
+
+        req = client._build_request(messages=[{"role": "user", "content": "hi"}])
+        raw_body = req.data if isinstance(req.data, (bytes, bytearray)) else b"{}"
+        body = json.loads(raw_body.decode("utf-8"))
+
+        self.assertNotIn("thinking", body)
+
     def test_stream_chat_yields_incremental_answer_and_tool_call(self):
         with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}, clear=False):
             client = DeepSeekLLMClient(model="deepseek-chat")
@@ -154,6 +174,25 @@ class DeepSeekClientParseTests(unittest.TestCase):
         tool_call = tool_events[0].get("tool_call") or {}
         self.assertEqual("query_inventory", tool_call.get("name"))
         self.assertEqual({"cell": "K562"}, tool_call.get("arguments"))
+
+    def test_stream_chat_yields_thought_chunks(self):
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}, clear=False):
+            client = DeepSeekLLMClient(model="deepseek-chat")
+
+        lines = [
+            f"data: {json.dumps({'choices': [{'delta': {'reasoning_content': 'think '}}]})}",
+            f"data: {json.dumps({'choices': [{'delta': {'reasoning_content': 'step'}}]})}",
+            f"data: {json.dumps({'choices': [{'delta': {'content': 'answer'}}]})}",
+            "data: [DONE]",
+        ]
+
+        with patch("agent.llm_client.urlrequest.urlopen", return_value=_FakeUrlopenResponse(lines)):
+            events = list(client.stream_chat(messages=[{"role": "user", "content": "hi"}], tools=[]))
+
+        thoughts = [evt.get("text") for evt in events if evt.get("type") == "thought"]
+        answers = [evt.get("text") for evt in events if evt.get("type") == "answer"]
+        self.assertEqual(["think ", "step"], thoughts)
+        self.assertEqual(["answer"], answers)
 
     def test_chat_parses_sse_content_and_tool_calls(self):
         with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}, clear=False):

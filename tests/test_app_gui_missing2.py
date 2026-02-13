@@ -219,6 +219,7 @@ class WorkerTests(unittest.TestCase):
         mock_bridge.run_agent_query.assert_called_once()
         call_kwargs = mock_bridge.run_agent_query.call_args[1]
         self.assertEqual("test query", call_kwargs["query"])
+        self.assertTrue(call_kwargs["thinking_enabled"])
 
 
 # ── ui/utils.py Tests ───────────────────────────────────────────

@@ -127,7 +127,17 @@ class GuiToolBridge:
             source="app_gui",
         )
 
-    def run_agent_query(self, yaml_path, query, model=None, max_steps=8, history=None, on_event=None, plan_sink=None):
+    def run_agent_query(
+        self,
+        yaml_path,
+        query,
+        model=None,
+        max_steps=8,
+        history=None,
+        on_event=None,
+        plan_sink=None,
+        thinking_enabled=True,
+    ):
         prompt = str(query or "").strip()
         if not prompt:
             return {
@@ -155,9 +165,10 @@ class GuiToolBridge:
             }
 
         chosen_model = (model or "").strip() or os.environ.get("DEEPSEEK_MODEL") or "deepseek-chat"
+        use_thinking = bool(thinking_enabled)
 
         try:
-            llm = DeepSeekLLMClient(model=chosen_model)
+            llm = DeepSeekLLMClient(model=chosen_model, thinking_enabled=use_thinking)
             runner = AgentToolRunner(
                 yaml_path=yaml_path,
                 actor_id=f"{self._actor_id}-agent",

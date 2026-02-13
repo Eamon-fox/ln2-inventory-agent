@@ -158,7 +158,7 @@ class ReactAgent:
         }
 
     @staticmethod
-    def _assistant_tool_message(content, tool_calls):
+    def _assistant_tool_message(content, tool_calls, reasoning_content=""):
         serialized_calls = []
         for call in tool_calls:
             serialized_calls.append(
@@ -174,6 +174,7 @@ class ReactAgent:
         return {
             "role": "assistant",
             "content": str(content or ""),
+            "reasoning_content": str(reasoning_content or ""),
             "tool_calls": serialized_calls,
             "timestamp": datetime.now().timestamp(),
         }
@@ -243,6 +244,7 @@ class ReactAgent:
             }
 
         answer_parts = []
+        thought_parts = []
         tool_calls = []
         for raw_event in getattr(iterator, "__iter__", lambda: iter(()))():
             if not isinstance(raw_event, dict):
@@ -266,6 +268,23 @@ class ReactAgent:
                     )
                 continue
 
+            if event_type == "thought":
+                chunk = str(raw_event.get("text") or "")
+                if chunk:
+                    thought_parts.append(chunk)
+                    self._emit_event(
+                        on_event,
+                        {
+                            "event": "chunk",
+                            "type": "chunk",
+                            "trace_id": trace_id,
+                            "step": step,
+                            "data": chunk,
+                            "meta": {"channel": "thought"},
+                        },
+                    )
+                continue
+
             if event_type == "tool_call":
                 raw_tool_call = raw_event.get("tool_call")
                 normalized = self._normalize_tool_call(raw_tool_call, len(tool_calls))
@@ -277,12 +296,14 @@ class ReactAgent:
                 return {
                     "error": str(raw_event.get("error") or "LLM stream failed"),
                     "content": "".join(answer_parts).strip(),
+                    "thought": "".join(thought_parts).strip(),
                     "tool_calls": tool_calls,
                 }
 
         return {
             "error": None,
             "content": "".join(answer_parts).strip(),
+            "thought": "".join(thought_parts).strip(),
             "tool_calls": tool_calls,
         }
 
@@ -432,7 +453,14 @@ class ReactAgent:
                 continue
 
             if normalized_tool_calls:
-                messages.append(self._assistant_tool_message(assistant_content, normalized_tool_calls))
+                assistant_reasoning = str(model_response.get("thought") or "")
+                messages.append(
+                    self._assistant_tool_message(
+                        assistant_content,
+                        normalized_tool_calls,
+                        reasoning_content=assistant_reasoning,
+                    )
+                )
 
                 for call in normalized_tool_calls:
                     self._emit_event(

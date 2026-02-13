@@ -69,6 +69,33 @@ class GuiBridgeAgentTests(unittest.TestCase):
             self.assertTrue(response["result"].get("trace_id"))
             self.assertIn("Fake DeepSeek response", response["result"].get("final", ""))
 
+    def test_run_agent_query_enables_thinking_by_default(self):
+        bridge = GuiToolBridge(actor_id="gui-test", session_id="session-gui-test")
+
+        with patch("app_gui.tool_bridge.DeepSeekLLMClient") as mock_client_cls:
+            mock_client_cls.return_value = _FakeDeepSeekClient()
+            bridge.run_agent_query(
+                yaml_path="/tmp/demo.yaml",
+                query="hello",
+            )
+
+        self.assertTrue(mock_client_cls.called)
+        self.assertTrue(mock_client_cls.call_args.kwargs.get("thinking_enabled"))
+
+    def test_run_agent_query_can_disable_thinking(self):
+        bridge = GuiToolBridge(actor_id="gui-test", session_id="session-gui-test")
+
+        with patch("app_gui.tool_bridge.DeepSeekLLMClient") as mock_client_cls:
+            mock_client_cls.return_value = _FakeDeepSeekClient()
+            bridge.run_agent_query(
+                yaml_path="/tmp/demo.yaml",
+                query="hello",
+                thinking_enabled=False,
+            )
+
+        self.assertTrue(mock_client_cls.called)
+        self.assertFalse(mock_client_cls.call_args.kwargs.get("thinking_enabled"))
+
     def test_run_agent_query_requires_prompt(self):
         bridge = GuiToolBridge()
         response = bridge.run_agent_query(

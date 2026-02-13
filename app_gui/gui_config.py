@@ -21,6 +21,7 @@ DEFAULT_GUI_CONFIG = {
     "ai": {
         "model": "deepseek-chat",
         "max_steps": 8,
+        "thinking_enabled": True,
     },
 }
 
@@ -38,11 +39,12 @@ def load_gui_config(path=DEFAULT_CONFIG_FILE):
                 merged[key] = data[key]
         if "ai" in data and isinstance(data["ai"], dict):
             merged["ai"] = copy.deepcopy(DEFAULT_GUI_CONFIG["ai"])
-            for key in ("model", "max_steps"):
+            for key in ("model", "max_steps", "thinking_enabled"):
                 if key in data["ai"]:
                     merged["ai"][key] = data["ai"][key]
         if not str(merged["ai"].get("model") or "").strip():
             merged["ai"]["model"] = DEFAULT_GUI_CONFIG["ai"]["model"]
+        merged["ai"]["thinking_enabled"] = bool(merged["ai"].get("thinking_enabled", True))
         return merged
     except Exception:
         return copy.deepcopy(DEFAULT_GUI_CONFIG)

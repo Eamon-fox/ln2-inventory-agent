@@ -111,10 +111,11 @@ class LLMClient(ABC):
 class DeepSeekLLMClient(LLMClient):
     """DeepSeek-native client with provider-side streaming parser."""
 
-    def __init__(self, model=None, api_key=None, base_url=None, timeout=180):
+    def __init__(self, model=None, api_key=None, base_url=None, timeout=180, thinking_enabled=True):
         self._model = (model or os.environ.get("DEEPSEEK_MODEL") or "deepseek-chat").strip()
         self._base_url = (base_url or os.environ.get("DEEPSEEK_BASE_URL") or "https://api.deepseek.com").rstrip("/")
         self._timeout = int(timeout)
+        self._thinking_enabled = bool(thinking_enabled)
         self._auth_load = load_opencode_auth_env()
         self._api_key = api_key or os.environ.get("DEEPSEEK_API_KEY")
 
@@ -167,6 +168,25 @@ class DeepSeekLLMClient(LLMClient):
         reasoning = cls._normalize_content(message.get("reasoning_content"))
         if reasoning:
             return reasoning
+        return ""
+
+    @classmethod
+    def _extract_reasoning_from_choice(cls, choice, message):
+        reasoning = cls._normalize_content(message.get("reasoning_content"))
+        if reasoning:
+            return reasoning
+
+        if isinstance(choice, dict):
+            delta = choice.get("delta")
+            if isinstance(delta, dict):
+                reasoning = cls._normalize_content(delta.get("reasoning_content"))
+                if reasoning:
+                    return reasoning
+
+            reasoning = cls._normalize_content(choice.get("reasoning_content"))
+            if reasoning:
+                return reasoning
+
         return ""
 
     @staticmethod
@@ -271,6 +291,8 @@ class DeepSeekLLMClient(LLMClient):
             "stream": True,
             "temperature": temperature,
         }
+        if self._thinking_enabled:
+            payload["thinking"] = {"type": "enabled"}
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
@@ -299,6 +321,12 @@ class DeepSeekLLMClient(LLMClient):
         delta = delta if isinstance(delta, dict) else {}
         message = message if isinstance(message, dict) else {}
 
+        reasoning = self._normalize_content(delta.get("reasoning_content"))
+        if not reasoning:
+            reasoning = self._normalize_content(message.get("reasoning_content"))
+        if reasoning:
+            yield {"type": "thought", "text": reasoning}
+
         # Stream mode should prefer incremental delta chunks.
         content = self._normalize_content(delta.get("content"))
         if not content:
@@ -326,7 +354,21 @@ class DeepSeekLLMClient(LLMClient):
         message = choice.get("message") if isinstance(choice, dict) else {}
         message = message if isinstance(message, dict) else {}
 
-        content = self._extract_content_from_choice(choice, message)
+        reasoning = self._extract_reasoning_from_choice(choice, message)
+        if reasoning:
+            yield {"type": "thought", "text": reasoning}
+
+        content = self._normalize_content(message.get("content"))
+        if not content and isinstance(choice, dict):
+            delta = choice.get("delta")
+            if isinstance(delta, dict):
+                content = self._normalize_content(delta.get("content"))
+
+            if not content:
+                for key in ("text", "output_text"):
+                    content = self._normalize_content(choice.get(key))
+                    if content:
+                        break
         if content:
             yield {"type": "answer", "text": content}
 

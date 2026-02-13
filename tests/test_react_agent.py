@@ -68,6 +68,41 @@ class _StreamingLLM:
         yield {"type": "answer", "text": " world"}
 
 
+class _StreamingThoughtLLM:
+    def stream_chat(self, messages, tools=None, temperature=0.0):
+        _ = messages
+        _ = tools
+        _ = temperature
+        yield {"type": "thought", "text": "thinking "}
+        yield {"type": "thought", "text": "about it"}
+        yield {"type": "answer", "text": "Done"}
+
+
+class _StreamingToolThenAnswerLLM:
+    def __init__(self):
+        self.calls = 0
+        self.second_call_messages = None
+
+    def stream_chat(self, messages, tools=None, temperature=0.0):
+        _ = tools
+        _ = temperature
+        self.calls += 1
+        if self.calls == 1:
+            yield {"type": "thought", "text": "tool reasoning"}
+            yield {
+                "type": "tool_call",
+                "tool_call": {
+                    "id": "call_1",
+                    "name": "query_inventory",
+                    "arguments": {"cell": "K562"},
+                },
+            }
+            return
+
+        self.second_call_messages = list(messages or [])
+        yield {"type": "answer", "text": "done"}
+
+
 class ReactAgentTests(unittest.TestCase):
     def test_react_agent_calls_tool_then_finishes(self):
         with tempfile.TemporaryDirectory(prefix="ln2_react_") as temp_dir:
@@ -291,6 +326,50 @@ class ReactAgentTests(unittest.TestCase):
 
         chunks = [e.get("data") for e in events if e.get("event") == "chunk"]
         self.assertEqual(["Hello", " world"], chunks)
+
+    def test_react_agent_emits_thought_chunks_on_thought_channel(self):
+        llm = _StreamingThoughtLLM()
+        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml", actor_id="react-test")
+        agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=2)
+        events = []
+
+        result = agent.run("think", on_event=lambda e: events.append(dict(e)))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("Done", result["final"])
+        thought_chunks = [
+            e.get("data")
+            for e in events
+            if e.get("event") == "chunk" and ((e.get("meta") or {}).get("channel") == "thought")
+        ]
+        self.assertEqual(["thinking ", "about it"], thought_chunks)
+
+    def test_react_agent_keeps_reasoning_content_in_tool_assistant_message(self):
+        llm = _StreamingToolThenAnswerLLM()
+        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml", actor_id="react-test")
+        agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=3)
+
+        result = agent.run("lookup")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("done", result["final"])
+        self.assertIsInstance(llm.second_call_messages, list)
+        second_messages = llm.second_call_messages if isinstance(llm.second_call_messages, list) else []
+
+        assistant_tool_msg = next(
+            (
+                msg
+                for msg in second_messages
+                if isinstance(msg, dict)
+                and msg.get("role") == "assistant"
+                and isinstance(msg.get("tool_calls"), list)
+                and msg.get("tool_calls")
+            ),
+            None,
+        )
+        self.assertIsNotNone(assistant_tool_msg)
+        assistant_tool_msg = assistant_tool_msg if isinstance(assistant_tool_msg, dict) else {}
+        self.assertEqual("tool reasoning", assistant_tool_msg.get("reasoning_content"))
 
     def test_react_agent_final_uses_last_answer_after_tool_steps(self):
         llm = _SequenceLLM(

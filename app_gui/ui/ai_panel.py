@@ -2,11 +2,11 @@ from datetime import datetime
 import time
 import re
 from PySide6.QtCore import Qt, Signal, QThread, QEvent
-from PySide6.QtGui import QTextCursor, QPalette
+from PySide6.QtGui import QTextCursor, QPalette, QMouseEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QLineEdit,
-    QGroupBox, QTextEdit, QFormLayout, QSpinBox
+    QGroupBox, QTextEdit, QFormLayout, QSpinBox, QCheckBox
 )
 from app_gui.ui.workers import AgentRunWorker
 from app_gui.ui.utils import build_panel_header, compact_json, CollapsibleBox
@@ -31,108 +31,14 @@ def _is_dark_mode(widget):
         return True
 
 
+import mistune
+
+
 def _md_to_html(text, is_dark=True):
     """Convert markdown text to HTML for QTextEdit.append()."""
     if not text:
         return ""
-
-    code_bg = "#1a1a1a" if is_dark else "#f5f5f5"
-    code_border = "rgba(255,255,255,0.08)" if is_dark else "rgba(0,0,0,0.08)"
-    code_color = "#e8e8e8" if is_dark else "#1e1e1e"
-    inline_bg = "rgba(255,255,255,0.1)" if is_dark else "rgba(0,0,0,0.06)"
-
-    # Extract fenced code blocks first, replace with placeholders
-    code_blocks = []
-    def _stash_code(match):
-        content = match.group(1)
-        escaped = content.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        html = (f'<div style="background-color: {code_bg}; border: 1px solid {code_border};'
-                f' border-radius: 6px; padding: 12px; margin: 8px 0;'
-                f" font-family: 'IBM Plex Mono', Consolas, monospace; font-size: 13px;"
-                f' color: {code_color}; white-space: pre-wrap;">{escaped}</div>')
-        code_blocks.append(html)
-        return f'\x00CODE{len(code_blocks) - 1}\x00'
-    text = re.sub(r'```(?:\w*)\s*\n(.*?)\n```', _stash_code, text, flags=re.DOTALL)
-
-    # Process line by line
-    lines = text.split('\n')
-    html_lines = []
-    in_list = False
-
-    for line in lines:
-        stripped = line.strip()
-
-        # Code block placeholder
-        m = re.match(r'\x00CODE(\d+)\x00', stripped)
-        if m:
-            if in_list:
-                html_lines.append('</ul>')
-                in_list = False
-            html_lines.append(code_blocks[int(m.group(1))])
-            continue
-
-        # Empty line
-        if not stripped:
-            if in_list:
-                html_lines.append('</ul>')
-                in_list = False
-            html_lines.append('<br/>')
-            continue
-
-        # Inline formatting
-        def _inline(s):
-            s = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', s)
-            s = re.sub(r'`([^`]+)`',
-                       lambda m: (f'<code style="background-color: {inline_bg};'
-                                  f' padding: 2px 6px; border-radius: 4px;'
-                                  f" font-family: 'IBM Plex Mono', Consolas, monospace;"
-                                  f' font-size: 13px;">'
-                                  f'{m.group(1).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")}'
-                                  f'</code>'),
-                       s)
-            return s
-
-        # Headings
-        hm = re.match(r'^(#{1,4})\s+(.+)$', stripped)
-        if hm:
-            if in_list:
-                html_lines.append('</ul>')
-                in_list = False
-            level = len(hm.group(1))
-            sizes = {1: '16px', 2: '15px', 3: '14px', 4: '13px'}
-            html_lines.append(
-                f'<div style="font-weight: bold; font-size: {sizes.get(level, "14px")}; margin-top: 6px;">'
-                f'{_inline(hm.group(2))}</div>')
-            continue
-
-        # List items
-        lm = re.match(r'^[-*]\s+(.+)$', stripped)
-        if lm:
-            if not in_list:
-                html_lines.append('<ul style="margin-top: 2px; margin-bottom: 2px;">')
-                in_list = True
-            html_lines.append(f'<li>{_inline(lm.group(1))}</li>')
-            continue
-
-        # Numbered list
-        nm = re.match(r'^\d+[.)]\s+(.+)$', stripped)
-        if nm:
-            if in_list:
-                html_lines.append('</ul>')
-                in_list = False
-            html_lines.append(f'<div style="margin-left: 16px;">{_inline(nm.group(1))}</div>')
-            continue
-
-        # Normal paragraph
-        if in_list:
-            html_lines.append('</ul>')
-            in_list = False
-        html_lines.append(f'<div>{_inline(stripped)}</div>')
-
-    if in_list:
-        html_lines.append('</ul>')
-
-    return ''.join(html_lines)
+    return mistune.html(text)
 
 class AIPanel(QWidget):
     operation_completed = Signal(bool)
@@ -152,14 +58,19 @@ class AIPanel(QWidget):
         self.ai_active_trace_id = None
         self.ai_streaming_active = False
         self.ai_stream_buffer = ""
+        self.ai_stream_thought_buffer = ""
         self.ai_stream_start_pos = None
         self.ai_last_stream_block = None
         self.ai_stream_last_render_ts = 0.0
         self.ai_stream_last_render_len = 0
-        # Re-render markdown frequently enough to feel live, but still throttle CPU churn.
-        self.ai_stream_render_interval_sec = 0.06
-        self.ai_stream_render_min_delta = 8
+        # Render markdown stream every 50ms, plus one forced final pass.
+        self.ai_stream_render_interval_sec = 0.05
         self.ai_last_role = None
+        self.ai_stream_has_thought = False
+        self.ai_thinking_collapsed = False
+        self.ai_stream_thought_collapsed = False
+        self.ai_stream_thought_id = None
+        self.ai_message_blocks = []
 
         self.setup_ui()
 
@@ -195,8 +106,21 @@ class AIPanel(QWidget):
         self.ai_steps.setRange(1, 20)
         self.ai_steps.setValue(8)
 
+        self.ai_thinking_enabled = QCheckBox()
+        self.ai_thinking_enabled.setChecked(True)
+
+        thinking_row = QHBoxLayout()
+        thinking_row.addWidget(self.ai_thinking_enabled)
+        self.ai_thinking_collapse_btn = QPushButton()
+        self._update_thinking_collapse_btn_text()
+        self.ai_thinking_collapse_btn.setFlat(True)
+        self.ai_thinking_collapse_btn.clicked.connect(self._toggle_thinking_collapse)
+        thinking_row.addWidget(self.ai_thinking_collapse_btn)
+        thinking_row.addStretch()
+
         controls_form.addRow(tr("ai.deepseekModel"), self.ai_model)
         controls_form.addRow(tr("ai.maxSteps"), self.ai_steps)
+        controls_form.addRow(tr("ai.enableThinking"), thinking_row)
         layout.addWidget(self.ai_controls_box)
 
         # Prompt Box
@@ -250,6 +174,7 @@ class AIPanel(QWidget):
         self.ai_chat.document().setDefaultStyleSheet(
             "p { margin-top: 2px; margin-bottom: 2px; }"
         )
+        self.ai_chat.viewport().installEventFilter(self)
         chat_layout.addWidget(self.ai_chat)
         layout.addWidget(chat_box, 3)
 
@@ -284,7 +209,98 @@ class AIPanel(QWidget):
                 return False
             self.on_run_ai_agent()
             return True
+        if (
+            event.type() == QEvent.MouseButtonRelease
+            and obj is self.ai_chat.viewport()
+        ):
+            self._handle_chat_anchor_click(event)
         return super().eventFilter(obj, event)
+
+    def _handle_chat_anchor_click(self, event):
+        if not isinstance(event, QMouseEvent):
+            return
+        pos = event.pos()
+        doc = self.ai_chat.document()
+        cursor = self.ai_chat.cursorForPosition(pos)
+        anchor = cursor.charFormat().anchorHref()
+        if anchor == "toggle_thought":
+            self._toggle_current_thought_collapsed()
+
+    def _toggle_current_thought_collapsed(self):
+        if self.ai_streaming_active:
+            if not self.ai_stream_has_thought or not self.ai_stream_thought_buffer:
+                return
+            self.ai_stream_thought_collapsed = not self.ai_stream_thought_collapsed
+            self._rerender_stream_with_thought_markdown_in_place(force=True)
+        else:
+            if not hasattr(self.ai_chat, "textCursor"):
+                return
+            cursor = self.ai_chat.textCursor()
+            click_pos = cursor.position()
+            for block in reversed(self.ai_message_blocks):
+                start = block.get("start")
+                end = block.get("end")
+                if start is not None and end is not None and start <= click_pos <= end:
+                    block["collapsed"] = not block.get("collapsed", False)
+                    self._rerender_saved_message_block(block)
+                    break
+
+    def _rerender_saved_message_block(self, block):
+        if not isinstance(block, dict):
+            return False
+        start = block.get("start")
+        end = block.get("end")
+        if start is None or end is None:
+            return False
+        if not hasattr(self.ai_chat, "textCursor"):
+            return False
+
+        is_dark = _is_dark_mode(self)
+        thought_buffer = block.get("thought_buffer", "")
+        answer_buffer = block.get("answer_buffer", "")
+        collapsed = block.get("collapsed", False)
+
+        answer_html = _md_to_html(str(answer_buffer or ""), is_dark)
+
+        combined_html = ""
+        if thought_buffer:
+            if collapsed:
+                expand_text = tr("ai.expandThinking")
+                combined_html += f'<div style="color: #9ca3af; font-style: italic;"><a href="toggle_thought" style="color: #9ca3af;">Thinking... ({expand_text})</a></div>'
+            else:
+                thought_html = _md_to_html(str(thought_buffer or ""), is_dark)
+                collapse_text = tr("ai.collapseThinking")
+                combined_html += f'<div style="color: #9ca3af;">{thought_html}<br/><a href="toggle_thought" style="color: #60a5fa;">[{collapse_text}]</a></div>'
+        if answer_html:
+            if combined_html:
+                combined_html += "<br/>"
+            combined_html += answer_html
+
+        if not combined_html:
+            return False
+
+        try:
+            cursor = self.ai_chat.textCursor()
+            cursor.setPosition(int(start))
+            cursor.setPosition(int(end), QTextCursor.KeepAnchor)
+            cursor.removeSelectedText()
+            self._insert_markdown_with_cursor(cursor, combined_html)
+            new_end = cursor.position()
+            block["end"] = new_end
+            delta = new_end - end
+            for other_block in self.ai_message_blocks:
+                if other_block is block:
+                    continue
+                other_start = other_block.get("start")
+                other_end = other_block.get("end")
+                if other_start is not None and other_start > end:
+                    other_block["start"] = other_start + delta
+                if other_end is not None and other_end > end:
+                    other_block["end"] = other_end + delta
+            self._move_chat_cursor_to_end()
+            return True
+        except Exception:
+            return False
 
     def on_toggle_controls(self, checked):
         self.ai_controls_box.setVisible(bool(checked))
@@ -298,10 +314,27 @@ class AIPanel(QWidget):
         self.ai_prompt.setPlainText(str(text or "").strip())
         self.ai_prompt.setFocus()
 
+    def _reset_stream_thought_state(self):
+        self.ai_stream_has_thought = False
+        self.ai_stream_thought_buffer = ""
+        self.ai_stream_thought_collapsed = False
+        self.ai_stream_thought_id = None
+
+    def _update_thinking_collapse_btn_text(self):
+        if self.ai_thinking_collapsed:
+            self.ai_thinking_collapse_btn.setText(tr("ai.expandThinking"))
+        else:
+            self.ai_thinking_collapse_btn.setText(tr("ai.collapseThinking"))
+
+    def _toggle_thinking_collapse(self):
+        self.ai_thinking_collapsed = not self.ai_thinking_collapsed
+        self._update_thinking_collapse_btn_text()
+
     def on_clear(self):
         self.ai_chat.clear()
         self.ai_report.clear()
         self.ai_history = []
+        self.ai_message_blocks = []
         self.ai_active_trace_id = None
         self.ai_streaming_active = False
         self.ai_stream_buffer = ""
@@ -309,6 +342,7 @@ class AIPanel(QWidget):
         self.ai_last_stream_block = None
         self.ai_stream_last_render_ts = 0.0
         self.ai_stream_last_render_len = 0
+        self._reset_stream_thought_state()
         self.status_message.emit(tr("ai.memoryCleared"), 2000)
 
     def _build_header_html(self, role, compact=False):
@@ -370,88 +404,58 @@ class AIPanel(QWidget):
             return
         self.ai_streaming_active = True
         self.ai_stream_buffer = ""
+        self.ai_stream_thought_buffer = ""
+        self.ai_stream_has_thought = False
+        self.ai_stream_thought_collapsed = self.ai_thinking_collapsed
+        self.ai_stream_thought_id = f"thought_{id(self)}_{time.monotonic_ns()}"
         self.ai_stream_start_pos = None
         self.ai_last_stream_block = None
-        self.ai_stream_last_render_ts = time.monotonic()
+        self.ai_stream_last_render_ts = 0.0
         self.ai_stream_last_render_len = 0
         self._append_chat_header(role)
-        # Insert an empty block so stream chunks start on a new line
         self.ai_chat.append("")
         self._move_chat_cursor_to_end()
         if hasattr(self.ai_chat, "textCursor"):
             self.ai_stream_start_pos = self.ai_chat.textCursor().position()
 
-    def _append_stream_chunk(self, text):
+    def _append_stream_chunk(self, text, channel="answer"):
         chunk = str(text or "")
         if not chunk:
             return
+
+        stream_channel = str(channel or "answer").strip().lower()
+        if stream_channel not in {"answer", "thought"}:
+            stream_channel = "answer"
+
+        is_first_answer_after_thought = (
+            stream_channel == "answer"
+            and self.ai_stream_has_thought
+            and not self.ai_stream_buffer
+        )
+
         if not self.ai_streaming_active:
             self._begin_stream_chat("Agent")
-        self.ai_stream_buffer += chunk
-        self._move_chat_cursor_to_end()
-        self.ai_chat.insertPlainText(chunk)
-        if hasattr(self.ai_chat, "ensureCursorVisible"):
-            self.ai_chat.ensureCursorVisible()
 
-        if self._should_rerender_stream_markdown():
-            self._rerender_stream_markdown_in_place()
+        if stream_channel == "thought":
+            self.ai_stream_has_thought = True
+            self.ai_stream_thought_buffer += chunk
+        else:
+            self.ai_stream_buffer += chunk
 
-    def _should_rerender_stream_markdown(self):
-        if not self.ai_streaming_active:
-            return False
-
-        current_len = len(self.ai_stream_buffer)
-        if current_len <= self.ai_stream_last_render_len:
-            return False
-
-        delta = current_len - self.ai_stream_last_render_len
-        if delta >= max(1, int(self.ai_stream_render_min_delta or 0)):
-            return True
-
-        elapsed = time.monotonic() - float(self.ai_stream_last_render_ts or 0.0)
-        return elapsed >= float(self.ai_stream_render_interval_sec or 0.0)
-
-    def _rerender_stream_markdown_in_place(self, force=False):
-        if not self.ai_streaming_active:
-            return False
-
-        if not force and not self._should_rerender_stream_markdown():
-            return False
-
-        if self.ai_stream_start_pos is None:
-            return False
+        # Fallback for minimal chat stubs without cursor APIs (unit tests).
         if not hasattr(self.ai_chat, "textCursor"):
-            return False
+            if is_first_answer_after_thought:
+                self.ai_chat.insertPlainText("\n")
+            self.ai_chat.insertPlainText(chunk)
+            return
 
-        self._move_chat_cursor_to_end()
-        end_pos = self.ai_chat.textCursor().position()
-        block = {
-            "start": self.ai_stream_start_pos,
-            "end": end_pos,
-            "text": self.ai_stream_buffer,
-        }
-        ok = self._replace_stream_block_with_markdown(block, self.ai_stream_buffer)
-        if not ok:
-            return False
-
-        self.ai_stream_last_render_ts = time.monotonic()
-        self.ai_stream_last_render_len = len(self.ai_stream_buffer)
-
-        self._move_chat_cursor_to_end()
-        new_end = self.ai_chat.textCursor().position()
-        self.ai_last_stream_block = {
-            "start": self.ai_stream_start_pos,
-            "end": new_end,
-            "text": self.ai_stream_buffer,
-        }
-        return True
+        self._rerender_stream_with_thought_markdown_in_place(force=False)
 
     def _end_stream_chat(self):
         if not self.ai_streaming_active:
             return
 
-        # Force a final in-place markdown pass for current streamed block.
-        self._rerender_stream_markdown_in_place(force=True)
+        self._rerender_stream_with_thought_markdown_in_place(force=True)
 
         self._move_chat_cursor_to_end()
         start_pos = self.ai_stream_start_pos
@@ -464,11 +468,99 @@ class AIPanel(QWidget):
             "text": self.ai_stream_buffer,
         }
 
+        if self.ai_stream_has_thought and self.ai_stream_thought_buffer:
+            self.ai_message_blocks.append({
+                "start": start_pos,
+                "end": end_pos,
+                "thought_buffer": self.ai_stream_thought_buffer,
+                "answer_buffer": self.ai_stream_buffer,
+                "collapsed": self.ai_stream_thought_collapsed,
+            })
+
         self.ai_chat.append("")
         self.ai_streaming_active = False
         self.ai_stream_start_pos = None
         self.ai_stream_last_render_ts = 0.0
         self.ai_stream_last_render_len = 0
+        self._reset_stream_thought_state()
+
+    def _replace_stream_block_with_html(self, block, html_text):
+        if not isinstance(block, dict):
+            return False
+        start = block.get("start")
+        end = block.get("end")
+        if start is None or end is None:
+            return False
+        if not hasattr(self.ai_chat, "textCursor"):
+            return False
+
+        try:
+            cursor = self.ai_chat.textCursor()
+            cursor.setPosition(int(start))
+            cursor.setPosition(int(end), QTextCursor.KeepAnchor)
+            cursor.removeSelectedText()
+            self._insert_markdown_with_cursor(cursor, str(html_text or ""))
+            self._move_chat_cursor_to_end()
+            return True
+        except Exception:
+            return False
+
+    def _rerender_stream_with_thought_markdown_in_place(self, force=False):
+        if not self.ai_streaming_active:
+            return False
+        if self.ai_stream_start_pos is None:
+            return False
+        if not hasattr(self.ai_chat, "textCursor"):
+            return False
+
+        interval = max(0.0, float(self.ai_stream_render_interval_sec or 0.0))
+        now = time.monotonic()
+        if not force and interval > 0.0 and (now - float(self.ai_stream_last_render_ts or 0.0)) < interval:
+            return False
+
+        self._move_chat_cursor_to_end()
+        end_pos = self.ai_chat.textCursor().position()
+        block = {
+            "start": self.ai_stream_start_pos,
+            "end": end_pos,
+            "text": self.ai_stream_buffer,
+        }
+
+        is_dark = _is_dark_mode(self)
+        answer_html = _md_to_html(str(self.ai_stream_buffer or ""), is_dark)
+
+        combined_html = ""
+        if self.ai_stream_has_thought and self.ai_stream_thought_buffer:
+            if self.ai_stream_thought_collapsed:
+                expand_text = tr("ai.expandThinking")
+                combined_html += f'<div style="color: #9ca3af; font-style: italic;"><a href="toggle_thought" style="color: #9ca3af;">Thinking... ({expand_text})</a></div>'
+            else:
+                thought_html = _md_to_html(str(self.ai_stream_thought_buffer or ""), is_dark)
+                collapse_text = tr("ai.collapseThinking")
+                combined_html += f'<div style="color: #9ca3af;">{thought_html}<br/><a href="toggle_thought" style="color: #60a5fa;">[{collapse_text}]</a></div>'
+        if answer_html:
+            if combined_html:
+                combined_html += "<br/>"
+            combined_html += answer_html
+
+        if not combined_html:
+            return False
+
+        ok = self._replace_stream_block_with_html(block, combined_html)
+        if not ok:
+            return False
+
+        self.ai_stream_last_render_ts = now
+        self.ai_stream_last_render_len = len(self.ai_stream_buffer) + len(self.ai_stream_thought_buffer)
+
+        self._move_chat_cursor_to_end()
+        new_end = self.ai_chat.textCursor().position()
+        self.ai_last_stream_block = {
+            "start": self.ai_stream_start_pos,
+            "end": new_end,
+            "text": self.ai_stream_buffer,
+        }
+        return True
 
     def _insert_markdown_with_cursor(self, cursor, html_text):
         """Insert pre-rendered HTML at cursor position (used by streaming rerender)."""
@@ -529,6 +621,7 @@ class AIPanel(QWidget):
         self.ai_last_stream_block = None
         self.ai_stream_last_render_ts = 0.0
         self.ai_stream_last_render_len = 0
+        self._reset_stream_thought_state()
         self.ai_report.clear()
         self.status_message.emit(tr("ai.agentThinking"), 2000)
         
@@ -551,6 +644,7 @@ class AIPanel(QWidget):
             model=model,
             max_steps=self.ai_steps.value(),
             history=history,
+            thinking_enabled=self.ai_thinking_enabled.isChecked(),
         )
         self.ai_run_thread = QThread(self)
         self.ai_run_worker.moveToThread(self.ai_run_thread)
@@ -653,8 +747,9 @@ class AIPanel(QWidget):
 
         if event_type == "chunk":
             chunk = event.get("data")
+            channel = str(((event.get("meta") or {}).get("channel") or "answer")).strip().lower()
             if isinstance(chunk, str) and chunk:
-                self._append_stream_chunk(chunk)
+                self._append_stream_chunk(chunk, channel=channel)
             return
 
         if event_type == "error":
@@ -707,13 +802,14 @@ class AIPanel(QWidget):
             final_text = "Agent finished without a final message."
             self.ai_report.append("Protocol warning: result.final is empty.")
 
+        had_thought_stream = bool(self.ai_stream_has_thought)
         streamed_text = self.ai_stream_buffer.strip()
         if self.ai_streaming_active:
             self._end_stream_chat()
             streamed_text = str((self.ai_last_stream_block or {}).get("text") or "").strip()
 
         used_stream_markdown_rewrite = False
-        if streamed_text and final_text.strip() == streamed_text:
+        if streamed_text and final_text.strip() == streamed_text and not had_thought_stream:
             used_stream_markdown_rewrite = self._replace_stream_block_with_markdown(
                 self.ai_last_stream_block,
                 final_text,
@@ -733,6 +829,7 @@ class AIPanel(QWidget):
         self.ai_last_stream_block = None
         self.ai_stream_last_render_ts = 0.0
         self.ai_stream_last_render_len = 0
+        self._reset_stream_thought_state()
         self._append_history("assistant", final_text)
 
         if response.get("error_code") == "api_key_required":

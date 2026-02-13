@@ -197,6 +197,7 @@ class MainWindow(QMainWindow):
             self.gui_config["ai"] = {
                 "model": migrated_model or "deepseek-chat",
                 "max_steps": migrated_steps,
+                "thinking_enabled": True,
             }
             save_gui_config(self.gui_config)
 
@@ -425,6 +426,7 @@ class MainWindow(QMainWindow):
         ai_cfg = self.gui_config.get("ai", {})
         self.ai_panel.ai_model.setText(ai_cfg.get("model") or "deepseek-chat")
         self.ai_panel.ai_steps.setValue(ai_cfg.get("max_steps", 8))
+        self.ai_panel.ai_thinking_enabled.setChecked(bool(ai_cfg.get("thinking_enabled", True)))
 
     def closeEvent(self, event):
         if self.ai_panel.ai_run_inflight:
@@ -445,6 +447,7 @@ class MainWindow(QMainWindow):
         self.gui_config["ai"] = {
             "model": self.ai_panel.ai_model.text().strip() or "deepseek-chat",
             "max_steps": self.ai_panel.ai_steps.value(),
+            "thinking_enabled": self.ai_panel.ai_thinking_enabled.isChecked(),
         }
         save_gui_config(self.gui_config)
 
