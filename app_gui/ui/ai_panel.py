@@ -894,6 +894,19 @@ class AIPanel(QWidget):
                 summary_text = "\n".join(summary_lines)
             self._append_chat_with_collapsible("System", summary_text, details_json)
 
+        elif event_type == "plan_cleared":
+            cleared_count = event.get("cleared_count", 0)
+            action_counts = event.get("action_counts") if isinstance(event.get("action_counts"), dict) else {}
+            parts = []
+            for k, v in sorted(action_counts.items(), key=lambda kv: str(kv[0])):
+                try:
+                    parts.append(f"{k}={int(v)}")
+                except Exception:
+                    parts.append(f"{k}={v}")
+            breakdown = f" ({', '.join(parts)})" if parts else ""
+            summary_text = f"**Plan cleared**: {cleared_count} item(s) removed{breakdown}"
+            self._append_chat_with_collapsible("System", summary_text, details_json)
+
     def _append_chat_with_collapsible(self, role, summary, details_json):
         is_dark = _is_dark_mode(self)
         header_html = self._build_header_html(role)

@@ -1743,6 +1743,7 @@ class OperationsPanel(QWidget):
         self.status_message.emit(opened_message, 2000, "info")
 
     def clear_plan(self):
+        cleared_items = list(self.plan_items)
         self.plan_items.clear()
         self._plan_validation_by_key = {}
         self._plan_preflight_report = None
@@ -1751,6 +1752,39 @@ class OperationsPanel(QWidget):
         self._update_execute_button_state()
         self.plan_preview_updated.emit(list(self.plan_items))
         self.status_message.emit("Plan cleared.", 2000, "info")
+
+        if cleared_items:
+            action_counts = {}
+            sample = []
+            for item in cleared_items:
+                action = str(item.get("action") or "?")
+                action_counts[action] = action_counts.get(action, 0) + 1
+
+                if len(sample) < 8:
+                    label = item.get("label") or item.get("record_id") or "-"
+                    box = item.get("box")
+                    pos = item.get("position")
+                    desc = f"{action} {label}"
+                    if box not in (None, "") and pos not in (None, ""):
+                        desc += f" @ Box {box}:{pos}"
+                    to_pos = item.get("to_position")
+                    to_box = item.get("to_box")
+                    if to_pos not in (None, ""):
+                        if to_box not in (None, ""):
+                            desc += f" -> Box {to_box}:{to_pos}"
+                        else:
+                            desc += f" -> {to_pos}"
+                    sample.append(desc)
+
+            self._emit_operation_event(
+                {
+                    "type": "plan_cleared",
+                    "source": "operations_panel",
+                    "cleared_count": len(cleared_items),
+                    "action_counts": action_counts,
+                    "sample": sample,
+                }
+            )
 
     # --- Query & Rollback Stubs (simplified) ---
     def on_query_records(self):
