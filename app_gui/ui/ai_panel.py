@@ -262,50 +262,13 @@ class AIPanel(QWidget):
         report_layout.addWidget(self.ai_report)
         layout.addWidget(self.ai_report_box, 1)
         
-        # Keep input at bottom? No, prompt_box is better at top or mid for access.
-        # But wait, in previous version prompt was bottom. Let's move prompt_box to bottom.
-        # Removing prompt_box from current position and adding to end.
-        layout.removeWidget(prompt_box) # Wait, can't remove easily if added via addLayout.
-        # Re-ordering: 
-        # 1. Toggles
-        # 2. Controls (hidden)
-        # 3. Chat (expand)
-        # 4. Report (hidden)
-        # 5. Prompt (fixed height)
-        
-        # Redo layout logic:
-        # Clear existing layout calls above for order.
-        # Actually, `layout` adds sequentially.
-        # Current: Toggles -> Controls -> Prompt -> Chat -> Report.
-        # Desired: Toggles -> Controls -> Chat -> Report -> Prompt.
-        
-        # I'll just clear prompt_box from layout and add it at the end.
-        # Since I haven't added `prompt_box` to `layout` yet in this script execution order...
-        # Oh, I did: `prompt_layout.addLayout(examples)` etc... `prompt_box` is the container.
-        # But I haven't called `layout.addWidget(prompt_box)` yet in the code above?
-        # Ah, I see `prompt_layout` populated, but not added to main `layout`?
-        # Wait, I see `layout.addWidget(chat_box, 3)`.
-        # I missed adding `prompt_box` in previous lines? 
-        # Ah, I see `prompt_layout` logic.
-        
-        # Let's fix the order.
-        
-        # Remove widgets from layout if already added? No, just careful construction.
-        # I will reconstruct the layout order properly now.
-        
-        # Order: 
-        # Toggles (added)
-        # Controls (added)
-        # Chat
-        # Report
-        # Prompt
-        
-        # So I won't add prompt_box yet.
+        # Final AI panel layout:
+        # Toggles -> Advanced controls -> Chat -> Report -> Prompt.
         
         self.ai_controls_box.setVisible(False)
         self.ai_report_box.setVisible(False)
 
-        # Add remaining widgets
+        # Prompt area is intentionally placed at the bottom.
         layout.addWidget(prompt_box)
 
     def eventFilter(self, obj, event):

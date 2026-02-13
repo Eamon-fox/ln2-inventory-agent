@@ -7,7 +7,7 @@ Current status:
 - GUI now uses a single-screen dashboard layout (left: overview, middle: manual operations, right: AI copilot)
 - The 3 columns are resizable so users can prioritize overview/manual/AI focus
 - Manual operations use a compact mode selector instead of multiple large action tabs/buttons
-- Raw JSON output is hidden by default and can be expanded on demand
+- Execution flow is shown in Plan/AI reporting panels (Plan details, execution result, and audit log)
 - `Overview` panel provides per-box grid visualization (9x9 style)
 - `AI Copilot` panel supports natural-language requests via ReAct runtime
 - AI Copilot provides quick prompts and structured output (`计划 -> 预览 -> 执行结果 -> 审计记录`)
