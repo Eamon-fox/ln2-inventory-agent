@@ -309,8 +309,8 @@ def _build_audit_event(
     meta = dict(audit_meta or {})
     details = meta.get("details")
 
-    actor_type = meta.get("actor_type") or "system"
-    actor_id = meta.get("actor_id") or getpass.getuser()
+    actor_type = meta.get("actor_type") or "human"
+    actor_id = meta.get("actor_id") or actor_type
     channel = meta.get("channel") or "unknown"
     session_id = meta.get("session_id") or f"session-{datetime.now().strftime('%Y%m%d%H%M%S')}"
     trace_id = meta.get("trace_id") or f"trace-{uuid.uuid4().hex}"

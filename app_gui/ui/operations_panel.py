@@ -32,6 +32,22 @@ from lib.plan_item_factory import (
 )
 from lib.validators import parse_positions
 
+_ACTION_I18N_KEY = {
+    "takeout": "overview.takeout",
+    "thaw": "overview.thaw",
+    "discard": "overview.discard",
+    "move": "operations.move",
+    "add": "operations.add",
+    "rollback": "operations.rollback",
+}
+
+
+def _localized_action(action: str) -> str:
+    """Return localized display text for a canonical action name."""
+    key = _ACTION_I18N_KEY.get(action.lower())
+    return tr(key) if key else action.capitalize()
+
+
 class OperationsPanel(QWidget):
     operation_completed = Signal(bool)
     operation_event = Signal(dict)
@@ -211,7 +227,7 @@ class OperationsPanel(QWidget):
             self.t_id.setValue(int(payload["record_id"]))
         if "position" in payload:
             self.t_position.setValue(int(payload["position"]))
-        self.t_action.setCurrentText("Takeout")
+        self.t_action.setCurrentIndex(0)
         self._refresh_thaw_record_context()
         if switch_mode:
             self.set_mode("thaw")
@@ -711,26 +727,10 @@ class OperationsPanel(QWidget):
     # --- LOGIC ---
 
     def _style_execute_button(self, btn):
-        btn.setStyleSheet("""
-            QPushButton {
-                background-color: var(--btn-danger);
-                color: white;
-                font-weight: bold;
-                border: 1px solid var(--btn-danger-border);
-            }
-            QPushButton:hover { background-color: var(--btn-danger-hover); }
-        """)
+        btn.setProperty("variant", "danger")
 
     def _style_stage_button(self, btn):
-        btn.setStyleSheet("""
-            QPushButton {
-                background-color: var(--btn-primary);
-                color: white;
-                font-weight: bold;
-                border: 1px solid var(--btn-primary-border);
-            }
-            QPushButton:hover { background-color: var(--btn-primary-hover); }
-        """)
+        btn.setProperty("variant", "primary")
 
     def _ensure_today_defaults(self):
         today = QDate.currentDate()
@@ -1490,7 +1490,7 @@ class OperationsPanel(QWidget):
             is_rollback = action_norm == "rollback"
 
             self.plan_table.setItem(row, 0, QTableWidgetItem(item.get("source", "")))
-            self.plan_table.setItem(row, 1, QTableWidgetItem(action_text.capitalize()))
+            self.plan_table.setItem(row, 1, QTableWidgetItem(_localized_action(action_text)))
 
             if is_rollback:
                 box_text = ""
@@ -1823,8 +1823,7 @@ class OperationsPanel(QWidget):
     def _print_operation_sheet(self, items, opened_message=None):
         if opened_message is None:
             opened_message = tr("operations.operationSheetOpened")
-        actor_id = getattr(self.bridge, "_actor_id", "")
-        html = render_operation_sheet(items, actor_id=actor_id)
+        html = render_operation_sheet(items)
         tmp = tempfile.NamedTemporaryFile(
             suffix=".html", delete=False, mode="w", encoding="utf-8"
         )
@@ -2192,7 +2191,7 @@ class OperationsPanel(QWidget):
             ts_item.setData(Qt.UserRole, row)
             self.audit_table.setItem(row, 0, ts_item)
             self.audit_table.setItem(row, 1, QTableWidgetItem(ev.get("action", "")))
-            self.audit_table.setItem(row, 2, QTableWidgetItem(ev.get("actor_id", "")))
+            self.audit_table.setItem(row, 2, QTableWidgetItem(ev.get("actor_type", "")))
             self.audit_table.setItem(row, 3, QTableWidgetItem(ev.get("status", "")))
             self.audit_table.setItem(row, 4, QTableWidgetItem(ev.get("channel", "")))
 

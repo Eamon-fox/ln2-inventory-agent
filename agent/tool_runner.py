@@ -31,9 +31,8 @@ _WRITE_TOOLS = {"add_entry", "record_thaw", "batch_thaw", "rollback"}
 class AgentToolRunner:
     """Executes named tools with normalized input payloads."""
 
-    def __init__(self, yaml_path, actor_id="react-agent", session_id=None, plan_sink=None):
+    def __init__(self, yaml_path, session_id=None, plan_sink=None):
         self._yaml_path = yaml_path
-        self._actor_id = actor_id
         self._session_id = session_id
         self._plan_sink = plan_sink
         # Question tool synchronization
@@ -57,7 +56,6 @@ class AgentToolRunner:
         return build_actor_context(
             actor_type="agent",
             channel="agent",
-            actor_id=self._actor_id,
             session_id=self._session_id,
             trace_id=trace_id,
         )

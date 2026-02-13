@@ -38,21 +38,13 @@ def _api_key_setup_hint():
 class GuiToolBridge:
     """Thin adapter that stamps GUI actor metadata on tool calls."""
 
-    def __init__(self, actor_id="gui-user", session_id=None):
-        self._actor_id = actor_id
+    def __init__(self, session_id=None):
         self._session_id = session_id
-
-    def set_actor(self, actor_id=None, session_id=None):
-        if actor_id:
-            self._actor_id = actor_id
-        if session_id:
-            self._session_id = session_id
 
     def _ctx(self):
         return build_actor_context(
             actor_type="human",
             channel="gui",
-            actor_id=self._actor_id,
             session_id=self._session_id,
         )
 
@@ -172,7 +164,6 @@ class GuiToolBridge:
             llm = DeepSeekLLMClient(model=chosen_model, thinking_enabled=use_thinking)
             runner = AgentToolRunner(
                 yaml_path=yaml_path,
-                actor_id=f"{self._actor_id}-agent",
                 session_id=self._session_id,
                 plan_sink=plan_sink,
             )

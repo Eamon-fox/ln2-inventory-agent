@@ -318,7 +318,7 @@
     "moveDown": "Move Down",
     "clearBlocked": "Clear Blocked",
     "print": "Print",
-    "placeholder": "Type a natural-language request... (Enter to send, Shift+Enter for newline)",
+    "placeholder": "Type a request...",
     "running": "Running...",
     "runAgent": "Send",
     "agentControls": "Agent Controls",

@@ -318,7 +318,7 @@
     "moveDown": "下移",
     "clearBlocked": "清除阻塞项",
     "print": "打印",
-    "placeholder": "输入自然语言请求...（回车发送，Shift+回车换行）",
+    "placeholder": "输入您的指令...",
     "running": "运行中...",
     "runAgent": "发送",
     "agentControls": "代理控制",

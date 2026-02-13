@@ -35,14 +35,14 @@ _DEFAULT_SESSION_ID = f"session-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.
 def build_actor_context(
     actor_type="human",
     channel="cli",
-    actor_id=None,
     session_id=None,
     trace_id=None,
 ):
     """Build normalized actor context for unified audit records."""
+    at = actor_type or "human"
     return {
-        "actor_type": actor_type or "human",
-        "actor_id": actor_id or getpass.getuser(),
+        "actor_type": at,
+        "actor_id": at,
         "channel": channel or "cli",
         "session_id": session_id or _DEFAULT_SESSION_ID,
         "trace_id": trace_id,
@@ -183,15 +183,13 @@ def _build_audit_meta(action, source, tool_name, actor_context=None, details=Non
         actor["trace_id"] = f"trace-{uuid.uuid4().hex}"
     if not actor.get("session_id"):
         actor["session_id"] = _DEFAULT_SESSION_ID
-    if not actor.get("actor_id"):
-        actor["actor_id"] = getpass.getuser()
 
     return {
         "action": action,
         "source": source,
         "tool_name": tool_name,
         "actor_type": actor.get("actor_type", "human"),
-        "actor_id": actor.get("actor_id"),
+        "actor_id": actor.get("actor_type", "human"),
         "channel": actor.get("channel", "cli"),
         "session_id": actor.get("session_id"),
         "trace_id": actor.get("trace_id"),

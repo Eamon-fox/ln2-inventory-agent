@@ -143,7 +143,7 @@ class ReactAgentTests(unittest.TestCase):
                 ]
             )
 
-            runner = AgentToolRunner(yaml_path=str(yaml_path), actor_id="react-test")
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
             agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=4)
             events = []
             result = agent.run("Find K562 entries", on_event=lambda e: events.append(dict(e)))
@@ -197,7 +197,7 @@ class ReactAgentTests(unittest.TestCase):
                 },
             ]
         )
-        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml", actor_id="react-test")
+        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
         agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=3)
         events = []
 
@@ -215,7 +215,7 @@ class ReactAgentTests(unittest.TestCase):
 
     def test_react_agent_includes_conversation_history_in_prompt(self):
         llm = _CapturePromptLLM()
-        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml", actor_id="react-test")
+        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
         agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=2)
 
         history = [
@@ -291,7 +291,7 @@ class ReactAgentTests(unittest.TestCase):
                 },
             ]
         )
-        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml", actor_id="react-test")
+        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
         agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=4)
 
         result = agent.run("say something")
@@ -302,7 +302,7 @@ class ReactAgentTests(unittest.TestCase):
 
     def test_react_agent_uses_direct_answer_when_tool_mode_returns_empty(self):
         llm = _ToolsSensitiveLLM()
-        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml", actor_id="react-test")
+        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
         agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=2)
 
         result = agent.run("say hello")
@@ -315,7 +315,7 @@ class ReactAgentTests(unittest.TestCase):
 
     def test_react_agent_emits_incremental_chunk_events_from_stream_chat(self):
         llm = _StreamingLLM()
-        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml", actor_id="react-test")
+        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
         agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=2)
         events = []
 
@@ -329,7 +329,7 @@ class ReactAgentTests(unittest.TestCase):
 
     def test_react_agent_emits_thought_chunks_on_thought_channel(self):
         llm = _StreamingThoughtLLM()
-        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml", actor_id="react-test")
+        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
         agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=2)
         events = []
 
@@ -346,7 +346,7 @@ class ReactAgentTests(unittest.TestCase):
 
     def test_react_agent_keeps_reasoning_content_in_tool_assistant_message(self):
         llm = _StreamingToolThenAnswerLLM()
-        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml", actor_id="react-test")
+        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
         agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=3)
 
         result = agent.run("lookup")
@@ -392,7 +392,7 @@ class ReactAgentTests(unittest.TestCase):
                 },
             ]
         )
-        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml", actor_id="react-test")
+        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
         agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=3)
 
         result = agent.run("overview")

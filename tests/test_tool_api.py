@@ -78,7 +78,6 @@ class ToolApiTests(unittest.TestCase):
             actor = build_actor_context(
                 actor_type="agent",
                 channel="agent",
-                actor_id="react-bot",
                 session_id="sess-test",
                 trace_id="trace-test",
             )
@@ -113,7 +112,7 @@ class ToolApiTests(unittest.TestCase):
             self.assertEqual("tool_add_entry", last["tool_name"])
             self.assertEqual("agent", last["actor_type"])
             self.assertEqual("agent", last["channel"])
-            self.assertEqual("react-bot", last["actor_id"])
+            self.assertEqual("agent", last["actor_id"])
             self.assertEqual("sess-test", last["session_id"])
             self.assertEqual("trace-test", last["trace_id"])
 

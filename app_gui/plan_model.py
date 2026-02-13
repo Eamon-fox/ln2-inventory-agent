@@ -82,7 +82,7 @@ def _extract_sample_info(item):
     }
 
 
-def render_operation_sheet(items, actor_id=""):
+def render_operation_sheet(items):
     """Generate a user-friendly printable HTML operation sheet."""
     if not items:
         return """<!DOCTYPE html>
@@ -408,7 +408,6 @@ def render_operation_sheet(items, actor_id=""):
         <h1>LN2 Tank Operation Sheet</h1>
         <div class="header-meta">
             <span>Date: <strong>{today}</strong></span>
-            <span>Operator: <strong>{actor_id or '________________'}</strong></span>
             <span>Total: <strong>{len(items)} operations</strong></span>
         </div>
     </div>

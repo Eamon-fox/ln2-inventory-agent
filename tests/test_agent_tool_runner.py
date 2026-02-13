@@ -109,7 +109,6 @@ class AgentToolRunnerTests(unittest.TestCase):
 
             runner = AgentToolRunner(
                 yaml_path=str(yaml_path),
-                actor_id="react-agent-test",
                 session_id="session-agent-test",
             )
             response = runner.run(
@@ -139,7 +138,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             last = rows[-1]
             self.assertEqual("agent", last["actor_type"])
             self.assertEqual("agent", last["channel"])
-            self.assertEqual("react-agent-test", last["actor_id"])
+            self.assertEqual("agent", last["actor_id"])
             self.assertEqual("session-agent-test", last["session_id"])
             self.assertEqual("trace-agent-test", last["trace_id"])
 

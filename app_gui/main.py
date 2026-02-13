@@ -102,19 +102,6 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(ai_group)
 
-        user_group = QGroupBox(tr("settings.user"))
-        user_layout = QFormLayout(user_group)
-
-        self.actor_edit = QLineEdit(self._config.get("actor_id", "gui-user"))
-        user_layout.addRow(tr("settings.actorId"), self.actor_edit)
-
-        actor_hint = QLabel(tr("settings.actorIdHint"))
-        actor_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
-        actor_hint.setWordWrap(True)
-        user_layout.addRow("", actor_hint)
-
-        layout.addWidget(user_group)
-
         from app_gui.i18n import SUPPORTED_LANGUAGES
         lang_group = QGroupBox(tr("settings.language").rstrip("："))
         lang_layout = QFormLayout(lang_group)
@@ -182,7 +169,6 @@ class SettingsDialog(QDialog):
     def get_values(self):
         return {
             "yaml_path": self.yaml_edit.text().strip(),
-            "actor_id": self.actor_edit.text().strip(),
             "api_key": self.api_key_edit.text().strip() or None,
             "language": self.lang_combo.currentData(),
             "theme": self.theme_combo.currentData(),
@@ -209,13 +195,10 @@ class MainWindow(QMainWindow):
         # One-time migration from QSettings if unified config file does not exist yet
         if not os.path.isfile(DEFAULT_CONFIG_FILE):
             migrated_yaml = self.settings.value("ui/current_yaml_path", "", type=str)
-            migrated_actor = self.settings.value("ui/current_actor_id", "", type=str)
             migrated_model = self.settings.value("ai/model", "", type=str)
             migrated_steps = self.settings.value("ai/max_steps", 8, type=int)
             if migrated_yaml:
                 self.gui_config["yaml_path"] = migrated_yaml
-            if migrated_actor:
-                self.gui_config["actor_id"] = migrated_actor
             self.gui_config["ai"] = {
                 "model": migrated_model or "deepseek-chat",
                 "max_steps": migrated_steps,
@@ -224,9 +207,8 @@ class MainWindow(QMainWindow):
             save_gui_config(self.gui_config)
 
         self.current_yaml_path = self.gui_config.get("yaml_path") or YAML_PATH
-        self.current_actor_id = self.gui_config.get("actor_id") or "gui-user"
 
-        self.bridge = GuiToolBridge(actor_id=self.current_actor_id)
+        self.bridge = GuiToolBridge()
 
         self.setup_ui()
         self.connect_signals()
@@ -333,16 +315,13 @@ class MainWindow(QMainWindow):
             self.overview_panel.refresh()
 
     def _update_dataset_label(self):
-        self.dataset_label.setText(
-            t("main.datasetLabel", dataset=self.current_yaml_path, actor=self.current_actor_id)
-        )
+        self.dataset_label.setText(self.current_yaml_path)
 
     def on_open_settings(self):
         dialog = SettingsDialog(
             self,
             config={
                 "yaml_path": self.current_yaml_path,
-                "actor_id": self.current_actor_id,
                 "api_key": self.gui_config.get("api_key"),
                 "ai": self.gui_config.get("ai", {}),
                 "language": self.gui_config.get("language", "en"),
@@ -355,7 +334,6 @@ class MainWindow(QMainWindow):
 
         values = dialog.get_values()
         self.current_yaml_path = values["yaml_path"]
-        self.current_actor_id = values["actor_id"]
         api_key = values["api_key"]
         self.gui_config["api_key"] = api_key
         if api_key:
@@ -390,7 +368,6 @@ class MainWindow(QMainWindow):
         self.ai_panel.ai_thinking_enabled.setChecked(self.gui_config["ai"]["thinking_enabled"])
         self.ai_panel.ai_thinking_collapsed = not self.gui_config["ai"]["thinking_expanded"]
 
-        self.bridge.set_actor(self.current_actor_id)
         self._update_dataset_label()
         self.overview_panel.refresh()
         if not os.path.isfile(self.current_yaml_path):
@@ -399,7 +376,6 @@ class MainWindow(QMainWindow):
                 6000,
             )
         self.gui_config["yaml_path"] = self.current_yaml_path
-        self.gui_config["actor_id"] = self.current_actor_id
         save_gui_config(self.gui_config)
 
     def on_create_new_dataset(self, update_window=True):
@@ -477,7 +453,6 @@ class MainWindow(QMainWindow):
 
         # Everything else to unified config
         self.gui_config["yaml_path"] = self.current_yaml_path
-        self.gui_config["actor_id"] = self.current_actor_id
         self.gui_config["ai"] = {
             "model": self.ai_panel.ai_model.text().strip() or "deepseek-chat",
             "max_steps": self.ai_panel.ai_steps.value(),

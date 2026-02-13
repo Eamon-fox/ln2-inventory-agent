@@ -16,7 +16,7 @@ try:
 
     from app_gui.ui.ai_panel import AIPanel
     from app_gui.ui.overview_panel import OverviewPanel
-    from app_gui.ui.operations_panel import OperationsPanel
+    from app_gui.ui.operations_panel import OperationsPanel, _localized_action
 
     PYSIDE_AVAILABLE = True
 except Exception:
@@ -648,7 +648,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual(1, len(panel.plan_items))
         self.assertEqual(1, panel.plan_table.rowCount())
         self.assertEqual("human", panel.plan_table.item(0, 0).text())
-        self.assertEqual("Takeout", panel.plan_table.item(0, 1).text())
+        self.assertEqual(_localized_action("takeout"), panel.plan_table.item(0, 1).text())
         self.assertEqual("plan", panel.current_operation_mode)
 
         # Badge should show count

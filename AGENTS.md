@@ -12,6 +12,10 @@
 ## Build, Test, and Development Commands
 
 ```bash
+# Conda environment setup
+source /analysis4/software/miniconda3/etc/profile.d/conda.sh
+conda activate /analysis4/fanym/conda/envs/bio-py
+
 python -m pip install -r requirements.txt
 pytest -q
 

@@ -165,6 +165,15 @@ def _apply_theme(app, mode):
             QSplitter::handle { background-color: var(--border-weak); }
             QSplitter::handle:horizontal { width: 1px; }
             QSplitter::handle:vertical { height: 1px; }
+            /* Variant buttons */
+            QPushButton[variant="primary"] { background-color: var(--btn-primary); color: #ffffff; font-weight: bold; border: 1px solid var(--btn-primary-border); }
+            QPushButton[variant="primary"]:hover { background-color: var(--btn-primary-hover); }
+            QPushButton[variant="primary"]:pressed { background-color: var(--btn-primary-border); }
+            QPushButton[variant="danger"] { background-color: var(--btn-danger); color: #ffffff; font-weight: bold; border: 1px solid var(--btn-danger-border); }
+            QPushButton[variant="danger"]:hover { background-color: var(--btn-danger-hover); }
+            QPushButton[variant="danger"]:pressed { background-color: var(--btn-danger-border); }
+            QPushButton[variant="ghost"] { background-color: transparent; color: var(--text-weak); border: none; }
+            QPushButton[variant="ghost"]:hover { background-color: var(--background-raised); }
             /* AI Panel - opencode-style floating dock */
             QTextEdit#aiChatArea { border: none; background-color: transparent; padding: 2px 4px; color: var(--text-strong); }
             QWidget#aiPromptDock { background-color: transparent; }
@@ -282,6 +291,15 @@ def _apply_theme(app, mode):
             QSplitter::handle { background-color: var(--border-weak); }
             QSplitter::handle:horizontal { width: 1px; }
             QSplitter::handle:vertical { height: 1px; }
+            /* Variant buttons */
+            QPushButton[variant="primary"] { background-color: var(--btn-primary); color: #ffffff; font-weight: bold; border: 1px solid var(--btn-primary-border); }
+            QPushButton[variant="primary"]:hover { background-color: var(--btn-primary-hover); }
+            QPushButton[variant="primary"]:pressed { background-color: var(--btn-primary-border); }
+            QPushButton[variant="danger"] { background-color: var(--btn-danger); color: #ffffff; font-weight: bold; border: 1px solid var(--btn-danger-border); }
+            QPushButton[variant="danger"]:hover { background-color: var(--btn-danger-hover); }
+            QPushButton[variant="danger"]:pressed { background-color: var(--btn-danger-border); }
+            QPushButton[variant="ghost"] { background-color: transparent; color: var(--text-weak); border: none; }
+            QPushButton[variant="ghost"]:hover { background-color: var(--background-raised); }
             /* AI Panel - opencode-style floating dock */
             QTextEdit#aiChatArea { border: none; background-color: transparent; padding: 2px 4px; color: var(--text-strong); }
             QWidget#aiPromptDock { background-color: transparent; }

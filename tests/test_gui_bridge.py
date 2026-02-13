@@ -54,7 +54,7 @@ class GuiBridgeAgentTests(unittest.TestCase):
                 path=str(yaml_path),
             )
 
-            bridge = GuiToolBridge(actor_id="gui-test", session_id="session-gui-test")
+            bridge = GuiToolBridge(session_id="session-gui-test")
             with patch("app_gui.tool_bridge.DeepSeekLLMClient", return_value=_FakeDeepSeekClient()):
                 response = bridge.run_agent_query(
                     yaml_path=str(yaml_path),
@@ -70,7 +70,7 @@ class GuiBridgeAgentTests(unittest.TestCase):
             self.assertIn("Fake DeepSeek response", response["result"].get("final", ""))
 
     def test_run_agent_query_enables_thinking_by_default(self):
-        bridge = GuiToolBridge(actor_id="gui-test", session_id="session-gui-test")
+        bridge = GuiToolBridge(session_id="session-gui-test")
 
         with patch("app_gui.tool_bridge.DeepSeekLLMClient") as mock_client_cls:
             mock_client_cls.return_value = _FakeDeepSeekClient()
@@ -83,7 +83,7 @@ class GuiBridgeAgentTests(unittest.TestCase):
         self.assertTrue(mock_client_cls.call_args.kwargs.get("thinking_enabled"))
 
     def test_run_agent_query_can_disable_thinking(self):
-        bridge = GuiToolBridge(actor_id="gui-test", session_id="session-gui-test")
+        bridge = GuiToolBridge(session_id="session-gui-test")
 
         with patch("app_gui.tool_bridge.DeepSeekLLMClient") as mock_client_cls:
             mock_client_cls.return_value = _FakeDeepSeekClient()
@@ -125,7 +125,7 @@ class GuiBridgeAgentTests(unittest.TestCase):
                 path=str(yaml_path),
             )
 
-            bridge = GuiToolBridge(actor_id="gui-test", session_id="session-gui-test")
+            bridge = GuiToolBridge(session_id="session-gui-test")
             with patch("app_gui.tool_bridge.DeepSeekLLMClient", return_value=_FakeDeepSeekClient()):
                 response = bridge.run_agent_query(
                     yaml_path=str(yaml_path),
@@ -195,7 +195,7 @@ class GuiBridgeAgentTests(unittest.TestCase):
                 path=str(yaml_path),
             )
 
-            bridge = GuiToolBridge(actor_id="gui-test", session_id="session-gui-test")
+            bridge = GuiToolBridge(session_id="session-gui-test")
             events = []
             with patch("app_gui.tool_bridge.DeepSeekLLMClient", return_value=_FakeDeepSeekClient()):
                 response = bridge.run_agent_query(

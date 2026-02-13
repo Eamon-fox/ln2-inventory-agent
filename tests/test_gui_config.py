@@ -42,7 +42,6 @@ ai:
             config_path = Path(temp_dir) / "config.yaml"
             source = {
                 "yaml_path": "/tmp/ln2_inventory.yaml",
-                "actor_id": "gui-test",
                 "ai": {
                     "model": "deepseek-chat",
                     "max_steps": 12,
@@ -134,13 +133,11 @@ api_key: ""
             config_path.write_text(
                 """yaml_path: /tmp/demo.yaml
 api_key: existing-key-xyz
-actor_id: test-user
 """,
                 encoding="utf-8",
             )
             cfg = load_gui_config(path=str(config_path))
         self.assertEqual("existing-key-xyz", cfg.get("api_key"))
-        self.assertEqual("test-user", cfg.get("actor_id"))
 
 
 if __name__ == "__main__":
