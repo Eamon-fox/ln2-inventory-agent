@@ -21,7 +21,7 @@ pip install PySide6
 python app_gui/main.py
 
 # AI Agent (requires DEEPSEEK_API_KEY)
-python agent/run_agent.py "query K562 records"
+python app_gui/main.py
 
 # Windows packaging
 pyinstaller ln2_inventory.spec

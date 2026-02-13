@@ -21,7 +21,7 @@ python app_gui/main.py
 
 # AI Copilot (optional)
 export DEEPSEEK_API_KEY=...
-python agent/run_agent.py "query K562 tubes"
+python app_gui/main.py
 ```
 
 Config:

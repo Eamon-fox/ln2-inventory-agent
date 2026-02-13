@@ -301,7 +301,7 @@ ln2-inventory-agent/
 | 向用户返回摘要消息
 | 实际执行推迟到 GUI 批准
 
-#### 4.2.4 run_agent.py - CLI 入口点
+#### 4.2.4 agent/ 运行时（GUI 内嵌）
 
 **职责**:
 - Agent 的命令行接口
@@ -746,10 +746,11 @@ AI Panel → Operations Panel:
 pytest -q
 ```
 
-### 11.2 Agent CLI 模式
+### 11.2 Agent（GUI 内嵌）
 
 ```bash
-python agent/run_agent.py "query K562 records" --yaml ln2_inventory.yaml
+pip install PySide6
+python app_gui/main.py
 ```
 
 ### 11.3 GUI 模式
@@ -829,7 +830,6 @@ pyinstaller ln2_inventory.spec
 
 #### agent/
 - `__init__.py`
-- `run_agent.py` - CLI 入口
 - `llm_client.py` - LLM 客户端
 - `react_agent.py` - ReAct 循环
 - `tool_runner.py` - 工具分发器

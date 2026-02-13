@@ -46,7 +46,9 @@ See `references/ln2_config.sample.json` for available options (`yaml_path`, `sch
 ```bash
 export DEEPSEEK_API_KEY="<your-key>"
 export DEEPSEEK_MODEL="deepseek-chat"   # optional
-python agent/run_agent.py "mark ID 10 as takeout today"
+# Use the GUI "AI Copilot" tab to chat and stage write operations into the Plan queue.
+pip install PySide6
+python app_gui/main.py
 ```
 
 ## Packaging (Windows EXE)

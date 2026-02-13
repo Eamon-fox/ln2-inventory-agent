@@ -46,7 +46,9 @@ export LN2_CONFIG_FILE=/path/to/my_config.json
 ```bash
 export DEEPSEEK_API_KEY="<your-key>"
 export DEEPSEEK_MODEL="deepseek-chat"   # 可选
-python agent/run_agent.py "把 ID 10 标记为今天取出"
+# 使用 GUI 的 “AI Copilot” 选项卡对话；写操作会先进入 Plan queue，确认后再执行。
+pip install PySide6
+python app_gui/main.py
 ```
 
 ## 打包（Windows EXE）
