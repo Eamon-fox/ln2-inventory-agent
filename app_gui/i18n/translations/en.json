@@ -346,7 +346,9 @@
     "memoryCleared": "AI memory cleared",
     "questionTitle": "Agent Question",
     "questionAsking": "Agent is asking you a question...",
-    "questionTimeout": "Question timed out, agent will continue"
+    "questionTimeout": "Question timed out, agent will continue",
+    "maxStepsTitle": "Continue Agent?",
+    "maxStepsMessage": "Agent has reached {steps} steps without a final answer. Continue running?"
   },
   "common": {
     "info": "Info",

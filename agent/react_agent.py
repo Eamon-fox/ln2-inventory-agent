@@ -1,6 +1,7 @@
 """ReAct loop implementation for LN2 inventory agent."""
 
 import json
+import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -272,6 +273,34 @@ class ReactAgent:
             "output_text": self._serialize_tool_output(observation),
         }
 
+    def _ask_user_continue(self, on_event, trace_id):
+        """Emit max_steps_ask event and block until user responds.
+
+        Returns True if user wants to continue, False otherwise.
+        Reuses the threading.Event on AgentToolRunner for synchronization.
+        Falls back to False (stop) if the tool runner lacks the event mechanism.
+        """
+        runner = self._tools
+        if not isinstance(getattr(runner, "_answer_event", None), threading.Event):
+            return False
+
+        runner._answer_event.clear()
+        runner._pending_answer = None
+        runner._answer_cancelled = False
+
+        self._emit_event(
+            on_event,
+            {
+                "event": "max_steps_ask",
+                "type": "max_steps_ask",
+                "trace_id": trace_id,
+                "steps": self._max_steps,
+            },
+        )
+
+        answered = runner._answer_event.wait(timeout=300)
+        return answered and not runner._answer_cancelled
+
     def _collect_model_response(self, messages, tool_schemas, trace_id, step, on_event):
         stream_fn = getattr(self._llm, "stream_chat", None)
         if callable(stream_fn):
@@ -421,7 +450,9 @@ class ReactAgent:
         current_answer_buf = []
         forced_final_retry = False
 
-        for step in range(1, self._max_steps + 1):
+        original_max_steps = self._max_steps
+        step = 1
+        while True:
             current_answer_buf = []
             self._emit_event(
                 on_event,
@@ -506,6 +537,12 @@ class ReactAgent:
                         "timestamp": datetime.now().timestamp(),
                     }
                 )
+                step += 1
+                if step > self._max_steps:
+                    if self._ask_user_continue(on_event, trace_id):
+                        self._max_steps += original_max_steps
+                    else:
+                        break
                 continue
 
             if normalized_tool_calls:
@@ -567,6 +604,12 @@ class ReactAgent:
                                 },
                             )
                             messages.append(self._tool_message(result["tool_call_id"], result["observation"]))
+                    step += 1
+                    if step > self._max_steps:
+                        if self._ask_user_continue(on_event, trace_id):
+                            self._max_steps += original_max_steps
+                        else:
+                            break
                     continue
 
                 max_workers = max(1, len(normalized_tool_calls))
@@ -605,6 +648,12 @@ class ReactAgent:
                         },
                     )
                     messages.append(self._tool_message(tool_call_id, observation))
+                step += 1
+                if step > self._max_steps:
+                    if self._ask_user_continue(on_event, trace_id):
+                        self._max_steps += original_max_steps
+                    else:
+                        break
                 continue
 
             if not assistant_content and not forced_final_retry and step < self._max_steps:
@@ -616,6 +665,12 @@ class ReactAgent:
                         "timestamp": datetime.now().timestamp(),
                     }
                 )
+                step += 1
+                if step > self._max_steps:
+                    if self._ask_user_continue(on_event, trace_id):
+                        self._max_steps += original_max_steps
+                    else:
+                        break
                 continue
 
             if not assistant_content:

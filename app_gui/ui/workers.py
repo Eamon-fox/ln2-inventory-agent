@@ -62,7 +62,7 @@ class AgentRunWorker(QObject):
     def _emit_progress(self, event):
         if not isinstance(event, dict):
             return
-        if event.get("type") == "question":
+        if event.get("type") in ("question", "max_steps_ask"):
             self.question_asked.emit(event)
         else:
             self.progress.emit(event)

@@ -346,7 +346,9 @@
     "memoryCleared": "AI 内存已清空",
     "questionTitle": "Agent 提问",
     "questionAsking": "Agent 正在向您提问...",
-    "questionTimeout": "提问超时，Agent 将继续执行"
+    "questionTimeout": "提问超时，Agent 将继续执行",
+    "maxStepsTitle": "继续运行？",
+    "maxStepsMessage": "Agent 已执行 {steps} 步但未完成。是否继续运行？"
   },
   "common": {
     "info": "信息",

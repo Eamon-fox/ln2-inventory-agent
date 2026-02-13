@@ -597,6 +597,9 @@ class AIPanel(QWidget):
 
     def _handle_question_event(self, event_data):
         """Handle question event from agent — show dialog, unblock worker."""
+        if event_data.get("type") == "max_steps_ask":
+            return self._handle_max_steps_ask(event_data)
+
         questions = event_data.get("questions", [])
         if not questions:
             if self.ai_run_worker:
@@ -615,6 +618,28 @@ class AIPanel(QWidget):
         else:
             if self.ai_run_worker:
                 self.ai_run_worker.cancel_answer()
+
+    def _handle_max_steps_ask(self, event_data):
+        """System-level prompt when max_steps is reached — ask user to continue or stop."""
+        from PySide6.QtWidgets import QMessageBox
+
+        steps = event_data.get("steps", 0)
+
+        if self.ai_streaming_active:
+            self._end_stream_chat()
+
+        reply = QMessageBox.question(
+            self,
+            tr("ai.maxStepsTitle"),
+            tr("ai.maxStepsMessage").format(steps=steps),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+
+        if reply == QMessageBox.Yes and self.ai_run_worker:
+            self.ai_run_worker.set_answer(["continue"])
+        elif self.ai_run_worker:
+            self.ai_run_worker.cancel_answer()
 
     def _show_question_dialog(self, questions):
         """Modal dialog for user to answer agent questions.
