@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QSpinBox, QCheckBox
 )
 from app_gui.ui.workers import AgentRunWorker
-from app_gui.ui.utils import compact_json, CollapsibleBox
+from app_gui.ui.utils import compact_json
 from app_gui.event_compactor import compact_operation_event_for_context
 from app_gui.i18n import tr
 from app_gui.plan_outcome import collect_blocked_items, summarize_plan_execution
@@ -120,6 +120,7 @@ class AIPanel(QWidget):
         self.ai_stream_thought_collapsed = False
         self.ai_stream_thought_id = None
         self.ai_message_blocks = []
+        self.ai_collapsible_blocks = []
 
         self.setup_ui()
         self.refresh_placeholder()
@@ -134,6 +135,7 @@ class AIPanel(QWidget):
         self.ai_steps = QSpinBox()
         self.ai_steps.setRange(1, 20)
         self.ai_thinking_enabled = QCheckBox()
+        self.ai_custom_prompt = ""
 
         # ── Chat area (takes most space) ──
         self.ai_chat = QTextEdit()
@@ -232,6 +234,8 @@ class AIPanel(QWidget):
         anchor = cursor.charFormat().anchorHref()
         if anchor == "toggle_thought":
             self._toggle_current_thought_collapsed()
+        elif anchor and anchor.startswith("toggle_details_"):
+            self._toggle_collapsible_block(anchor)
 
     def _toggle_current_thought_collapsed(self):
         if self.ai_streaming_active:
@@ -344,6 +348,7 @@ class AIPanel(QWidget):
         self.ai_chat.clear()
         self.ai_history = []
         self.ai_message_blocks = []
+        self.ai_collapsible_blocks = []
         self.ai_active_trace_id = None
         self.ai_streaming_active = False
         self.ai_stream_buffer = ""
@@ -650,6 +655,7 @@ class AIPanel(QWidget):
             max_steps=self.ai_steps.value(),
             history=history,
             thinking_enabled=self.ai_thinking_enabled.isChecked(),
+            custom_prompt=self.ai_custom_prompt,
         )
         self.ai_run_thread = QThread(self)
         self.ai_run_worker.moveToThread(self.ai_run_thread)
@@ -1125,24 +1131,118 @@ class AIPanel(QWidget):
         self.ai_chat.append(body_html)
 
         details_text = str(details_json or "")
-        escaped_details = details_text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-
-        collapsible_html = CollapsibleBox.render_html(
-            summary="Details",
-            content=escaped_details,
-            is_dark=is_dark,
-            collapsed=True,
-            max_preview_chars=80
-        )
+        block_id = f"toggle_details_{len(self.ai_collapsible_blocks)}"
+        collapsed_html = self._render_collapsible_details(block_id, details_text, collapsed=True, is_dark=is_dark)
 
         self._move_chat_cursor_to_end()
-        if hasattr(self.ai_chat, "textCursor"):
-            cursor = self.ai_chat.textCursor()
-            cursor.insertHtml(collapsible_html)
-        else:
-            self.ai_chat.append(collapsible_html)
+        if not hasattr(self.ai_chat, "textCursor"):
+            self.ai_chat.append(collapsed_html)
+            self.ai_chat.append("")
+            return
+        cursor = self.ai_chat.textCursor()
+        start = cursor.position()
+        cursor.insertHtml(collapsed_html)
+        end = cursor.position()
 
+        self.ai_collapsible_blocks.append({
+            "block_id": block_id,
+            "start": start,
+            "end": end,
+            "content": details_text,
+            "collapsed": True,
+        })
         self.ai_chat.append("")
+
+    def _render_collapsible_details(self, block_id, content, collapsed=True, is_dark=True):
+        """Render details as a collapsible code block — 3 lines collapsed, scrollable expanded."""
+        if is_dark:
+            bg = "#1f1f1f"
+            border = "rgba(255,255,255,0.08)"
+            text_color = "#c8c8c8"
+            link_color = "#38bdf8"
+        else:
+            bg = "#f5f5f5"
+            border = "rgba(0,0,0,0.08)"
+            text_color = "#3a3a3a"
+            link_color = "#2563eb"
+
+        escaped = content.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+        if collapsed:
+            lines = content.split('\n')
+            preview_lines = lines[:3]
+            preview = '\n'.join(preview_lines)
+            preview_escaped = preview.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            has_more = len(lines) > 3
+            html = (
+                f'<div style="margin: 4px 0; border: 1px solid {border}; border-radius: 4px; '
+                f'background: {bg}; padding: 6px 8px; font-family: monospace; font-size: 12px; '
+                f'color: {text_color}; white-space: pre-wrap; overflow: hidden;">'
+                f'{preview_escaped}'
+            )
+            if has_more:
+                html += (
+                    f'<br/><a href="{block_id}" style="color: {link_color}; font-size: 11px; '
+                    f'text-decoration: none;">&#9660; Expand ({len(lines)} lines)</a>'
+                )
+            html += '</div>'
+        else:
+            html = (
+                f'<div style="margin: 4px 0; border: 1px solid {border}; border-radius: 4px; '
+                f'background: {bg}; padding: 6px 8px; font-family: monospace; font-size: 12px; '
+                f'color: {text_color}; white-space: pre-wrap; max-height: 300px; overflow-y: auto;">'
+                f'{escaped}'
+                f'<br/><a href="{block_id}" style="color: {link_color}; font-size: 11px; '
+                f'text-decoration: none;">&#9650; Collapse</a>'
+                f'</div>'
+            )
+        return html
+
+    def _toggle_collapsible_block(self, block_id):
+        """Toggle a collapsible details block between collapsed and expanded."""
+        block = None
+        for b in self.ai_collapsible_blocks:
+            if b["block_id"] == block_id:
+                block = b
+                break
+        if block is None:
+            return
+
+        block["collapsed"] = not block["collapsed"]
+        is_dark = _is_dark_mode(self)
+        new_html = self._render_collapsible_details(
+            block_id, block["content"], collapsed=block["collapsed"], is_dark=is_dark
+        )
+
+        start = block["start"]
+        end = block["end"]
+        try:
+            cursor = self.ai_chat.textCursor()
+            cursor.setPosition(int(start))
+            cursor.setPosition(int(end), QTextCursor.KeepAnchor)
+            cursor.removeSelectedText()
+            cursor.insertHtml(new_html)
+            new_end = cursor.position()
+            delta = new_end - end
+            block["end"] = new_end
+            # Shift subsequent blocks
+            for other in self.ai_collapsible_blocks:
+                if other is block:
+                    continue
+                if other["start"] > end:
+                    other["start"] += delta
+                if other["end"] > end:
+                    other["end"] += delta
+            # Also shift message blocks
+            for other in self.ai_message_blocks:
+                o_start = other.get("start")
+                o_end = other.get("end")
+                if o_start is not None and o_start > end:
+                    other["start"] = o_start + delta
+                if o_end is not None and o_end > end:
+                    other["end"] = o_end + delta
+        except Exception:
+            pass
 
     def _load_audit(self, trace_id, run_result):
         pass

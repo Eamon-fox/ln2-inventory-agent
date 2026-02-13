@@ -1,0 +1,59 @@
+meta:
+  version: '1.0'
+  box_layout:
+    rows: 10
+    cols: 10
+    box_count: 5
+    indexing: alphanumeric
+  custom_fields: []
+inventory:
+- id: 1
+  parent_cell_line: HEK293T
+  short_name: HEK293T-GFP
+  plasmid_name: pEGFP-N1
+  plasmid_id: GFP-001
+  box: 2
+  positions:
+  - 1
+  frozen_at: '2026-02-08'
+  note: 稳定表达GFP的HEK293T细胞
+- id: 2
+  parent_cell_line: HeLa
+  short_name: HeLa-Luc
+  plasmid_name: pGL4.51
+  plasmid_id: Luc-002
+  box: 2
+  positions:
+  - 2
+  frozen_at: '2026-02-09'
+  note: 表达萤光素酶的HeLa细胞
+- id: 3
+  parent_cell_line: A549
+  short_name: A549-Cas9
+  plasmid_name: lentiCas9-Blast
+  plasmid_id: Cas9-003
+  box: 2
+  positions:
+  - 3
+  frozen_at: '2026-02-07'
+  note: 稳定表达Cas9的A549细胞
+- id: 4
+  parent_cell_line: U2OS
+  short_name: U2OS-1
+  plasmid_name: null
+  plasmid_id: null
+  box: 1
+  positions:
+  - 4
+  frozen_at: '2026-02-13'
+  note: 人骨肉瘤细胞系，DNA修复研究
+- id: 5
+  parent_cell_line: MCF-7
+  short_name: MCF7-1
+  plasmid_name: null
+  plasmid_id: null
+  box: 1
+  positions:
+  - 5
+  frozen_at: '2026-02-14'
+  note: 人乳腺癌细胞系，激素敏感

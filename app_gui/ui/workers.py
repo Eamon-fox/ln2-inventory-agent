@@ -6,7 +6,7 @@ class AgentRunWorker(QObject):
     plan_staged = Signal(list)
     question_asked = Signal(dict)
 
-    def __init__(self, bridge, yaml_path, query, model, max_steps, history, thinking_enabled=True):
+    def __init__(self, bridge, yaml_path, query, model, max_steps, history, thinking_enabled=True, custom_prompt=""):
         super().__init__()
         self._bridge = bridge
         self._yaml_path = yaml_path
@@ -15,6 +15,7 @@ class AgentRunWorker(QObject):
         self._max_steps = max_steps
         self._history = history
         self._thinking_enabled = bool(thinking_enabled)
+        self._custom_prompt = str(custom_prompt or "")
         self._tool_runner = None
 
     def _plan_sink(self, item):
@@ -46,6 +47,7 @@ class AgentRunWorker(QObject):
                 on_event=self._emit_progress,
                 plan_sink=self._plan_sink,
                 thinking_enabled=self._thinking_enabled,
+                custom_prompt=self._custom_prompt,
                 _expose_runner=self._receive_runner,
             )
             if not isinstance(payload, dict):

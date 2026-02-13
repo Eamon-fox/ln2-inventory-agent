@@ -354,5 +354,124 @@ class AgentToolRunnerTests(unittest.TestCase):
         self.assertEqual(["fuzzy", "exact", "keywords"], mode_schema.get("enum"))
 
 
+class EditEntryToolRunnerTests(unittest.TestCase):
+    """Integration tests for edit_entry through AgentToolRunner."""
+
+    def test_edit_entry_stages_plan_item(self):
+        """edit_entry should produce a plan item with real position from record."""
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_edit_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=2, positions=[15])]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            staged = []
+            runner = AgentToolRunner(
+                yaml_path=str(yaml_path),
+                plan_sink=lambda item: staged.append(item),
+            )
+
+            response = runner.run(
+                "edit_entry",
+                {"record_id": 1, "fields": {"note": "updated note"}},
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(1, len(staged))
+            item = staged[0]
+            self.assertEqual("edit", item["action"])
+            self.assertEqual(1, item["record_id"])
+            self.assertEqual(2, item["box"])
+            self.assertEqual(15, item["position"])
+            self.assertEqual("ai", item["source"])
+            self.assertEqual({"note": "updated note"}, item["payload"]["fields"])
+
+    def test_edit_entry_missing_record_id(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_edit_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run("edit_entry", {"fields": {"note": "x"}})
+
+            self.assertFalse(response["ok"])
+            self.assertEqual("invalid_tool_input", response["error_code"])
+
+    def test_edit_entry_missing_fields(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_edit_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run("edit_entry", {"record_id": 1})
+
+            self.assertFalse(response["ok"])
+            self.assertEqual("invalid_tool_input", response["error_code"])
+
+    def test_edit_entry_empty_fields(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_edit_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run("edit_entry", {"record_id": 1, "fields": {}})
+
+            self.assertFalse(response["ok"])
+            self.assertEqual("invalid_tool_input", response["error_code"])
+
+    def test_edit_entry_nonexistent_record_uses_defaults(self):
+        """When record doesn't exist, lookup returns defaults (box=0, pos=1)."""
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_edit_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            staged = []
+            runner = AgentToolRunner(
+                yaml_path=str(yaml_path),
+                plan_sink=lambda item: staged.append(item),
+            )
+
+            response = runner.run(
+                "edit_entry",
+                {"record_id": 999, "fields": {"note": "x"}},
+            )
+
+            # Should still stage (validation happens at plan execution time)
+            self.assertTrue(response["ok"])
+            self.assertEqual(1, len(staged))
+            item = staged[0]
+            self.assertEqual(999, item["record_id"])
+            # Defaults from _lookup_record_info when record not found
+            self.assertEqual(0, item["box"])
+            self.assertEqual(1, item["position"])
+
+    def test_edit_entry_listed_in_tools(self):
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        self.assertIn("edit_entry", set(runner.list_tools()))
+
+    def test_edit_entry_in_tool_specs(self):
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        specs = runner.tool_specs()
+        self.assertIn("edit_entry", specs)
+
+
 if __name__ == "__main__":
     unittest.main()

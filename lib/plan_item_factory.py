@@ -137,6 +137,7 @@ def build_edit_plan_item(
     record_id: int,
     fields: Dict[str, Any],
     box: int = 0,
+    position: int = 1,
     label: str = "-",
     source: str = "human",
 ) -> Dict[str, Any]:
@@ -144,7 +145,7 @@ def build_edit_plan_item(
     return {
         "action": "edit",
         "box": int(box),
-        "position": 0,
+        "position": int(position) if position else 1,
         "record_id": int(record_id),
         "label": str(label or "-"),
         "source": source,

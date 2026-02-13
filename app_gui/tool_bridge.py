@@ -6,7 +6,7 @@ from pathlib import Path
 from agent.llm_client import DeepSeekLLMClient
 from agent.react_agent import ReactAgent
 from agent.tool_runner import AgentToolRunner
-from app_gui.gui_config import DEFAULT_CONFIG_FILE
+from app_gui.gui_config import DEFAULT_CONFIG_FILE, DEFAULT_MAX_STEPS
 from lib.tool_api import (
     build_actor_context,
     parse_batch_entries,
@@ -134,11 +134,12 @@ class GuiToolBridge:
         yaml_path,
         query,
         model=None,
-        max_steps=12,
+        max_steps=DEFAULT_MAX_STEPS,
         history=None,
         on_event=None,
         plan_sink=None,
         thinking_enabled=True,
+        custom_prompt="",
         _expose_runner=None,
     ):
         prompt = str(query or "").strip()
@@ -179,7 +180,7 @@ class GuiToolBridge:
             )
             if callable(_expose_runner):
                 _expose_runner(runner)
-            agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=steps)
+            agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=steps, custom_prompt=str(custom_prompt or ""))
             result = agent.run(prompt, conversation_history=history, on_event=on_event)
         except RuntimeError as exc:
             message = str(exc)

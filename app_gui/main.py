@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QPushButton, QLabel, QSplitter,
     QMessageBox, QDialog, QFormLayout, QLineEdit,
     QDialogButtonBox, QFileDialog, QGroupBox,
-    QComboBox, QSpinBox, QCheckBox
+    QComboBox, QSpinBox, QCheckBox, QScrollArea, QTextEdit,
 )
 
 if getattr(sys, "frozen", False):
@@ -33,18 +33,53 @@ from app_gui.ui.operations_panel import OperationsPanel
 from app_gui.ui.ai_panel import AIPanel
 
 
+class _NoWheelComboBox(QComboBox):
+    """Let parent scroll area handle mouse wheel."""
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class _NoWheelSpinBox(QSpinBox):
+    """Let parent scroll area handle mouse wheel."""
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class _NoWheelTextEdit(QTextEdit):
+    """Scroll parent unless this editor is actively focused."""
+
+    def wheelEvent(self, event):
+        if self.hasFocus():
+            super().wheelEvent(event)
+            return
+        event.ignore()
+
+
 class SettingsDialog(QDialog):
     """Enhanced Settings dialog with sections and help text."""
 
     def __init__(self, parent=None, config=None, on_create_new_dataset=None):
         super().__init__(parent)
         self.setWindowTitle(tr("settings.title"))
-        self.setMinimumWidth(500)
+        self.setMinimumWidth(750)
+        self.setMinimumHeight(750)
         self._config = config or {}
         self._on_create_new_dataset = on_create_new_dataset
 
         layout = QVBoxLayout(self)
-        layout.setSpacing(16)
+        layout.setSpacing(8)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll_content = QWidget()
+        content_layout = QVBoxLayout(scroll_content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(16)
+        scroll.setWidget(scroll_content)
+        layout.addWidget(scroll, 1)
 
         data_group = QGroupBox(tr("settings.data"))
         data_layout = QFormLayout(data_group)
@@ -67,7 +102,11 @@ class SettingsDialog(QDialog):
         yaml_hint.setWordWrap(True)
         data_layout.addRow("", yaml_hint)
 
-        layout.addWidget(data_group)
+        cf_btn = QPushButton(tr("main.manageCustomFields"))
+        cf_btn.clicked.connect(self._open_custom_fields_editor)
+        data_layout.addRow("", cf_btn)
+
+        content_layout.addWidget(data_group)
 
         ai_group = QGroupBox(tr("settings.ai"))
         ai_layout = QFormLayout(ai_group)
@@ -85,9 +124,11 @@ class SettingsDialog(QDialog):
         ai_advanced = self._config.get("ai", {})
         self.ai_model_edit = QLineEdit(ai_advanced.get("model", "deepseek-chat"))
         self.ai_model_edit.setPlaceholderText("deepseek-chat")
+        self.ai_model_edit.setEnabled(False)
+        self.ai_model_edit.setStyleSheet("color: var(--text-muted);")
         ai_layout.addRow(tr("settings.aiModel"), self.ai_model_edit)
 
-        self.ai_max_steps = QSpinBox()
+        self.ai_max_steps = _NoWheelSpinBox()
         self.ai_max_steps.setRange(1, 20)
         self.ai_max_steps.setValue(ai_advanced.get("max_steps", 8))
         ai_layout.addRow(tr("settings.aiMaxSteps"), self.ai_max_steps)
@@ -100,13 +141,24 @@ class SettingsDialog(QDialog):
         self.ai_thinking_expanded.setChecked(ai_advanced.get("thinking_expanded", True))
         ai_layout.addRow(tr("settings.aiThinkingExpanded"), self.ai_thinking_expanded)
 
-        layout.addWidget(ai_group)
+        self.ai_custom_prompt = _NoWheelTextEdit()
+        self.ai_custom_prompt.setPlaceholderText(tr("settings.customPromptPlaceholder"))
+        self.ai_custom_prompt.setPlainText(ai_advanced.get("custom_prompt", ""))
+        self.ai_custom_prompt.setMaximumHeight(100)
+        ai_layout.addRow(tr("settings.customPrompt"), self.ai_custom_prompt)
+
+        custom_prompt_hint = QLabel(tr("settings.customPromptHint"))
+        custom_prompt_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
+        custom_prompt_hint.setWordWrap(True)
+        ai_layout.addRow("", custom_prompt_hint)
+
+        content_layout.addWidget(ai_group)
 
         from app_gui.i18n import SUPPORTED_LANGUAGES
         lang_group = QGroupBox(tr("settings.language").rstrip("："))
         lang_layout = QFormLayout(lang_group)
 
-        self.lang_combo = QComboBox()
+        self.lang_combo = _NoWheelComboBox()
         for code, name in SUPPORTED_LANGUAGES.items():
             self.lang_combo.addItem(name, code)
         current_lang = self._config.get("language", "en")
@@ -120,12 +172,12 @@ class SettingsDialog(QDialog):
         lang_hint.setWordWrap(True)
         lang_layout.addRow("", lang_hint)
 
-        layout.addWidget(lang_group)
+        content_layout.addWidget(lang_group)
 
         theme_group = QGroupBox(tr("settings.theme"))
         theme_layout = QFormLayout(theme_group)
 
-        self.theme_combo = QComboBox()
+        self.theme_combo = _NoWheelComboBox()
         self.theme_combo.addItem(tr("settings.themeAuto"), "auto")
         self.theme_combo.addItem(tr("settings.themeDark"), "dark")
         self.theme_combo.addItem(tr("settings.themeLight"), "light")
@@ -140,7 +192,7 @@ class SettingsDialog(QDialog):
         theme_hint.setWordWrap(True)
         theme_layout.addRow("", theme_hint)
 
-        layout.addWidget(theme_group)
+        content_layout.addWidget(theme_group)
 
         about_group = QGroupBox(tr("settings.about"))
         about_layout = QVBoxLayout(about_group)
@@ -154,9 +206,28 @@ class SettingsDialog(QDialog):
         about_label.setWordWrap(True)
         about_label.setStyleSheet("color: var(--text-muted); font-size: 12px; padding: 4px;")
         about_layout.addWidget(about_label)
-        layout.addWidget(about_group)
 
-        layout.addStretch()
+        donate_path = os.path.join(ROOT, "app_gui", "assets", "donate.png")
+        if os.path.isfile(donate_path):
+            from PySide6.QtGui import QPixmap
+            donate_vbox = QVBoxLayout()
+            donate_vbox.setAlignment(Qt.AlignCenter)
+            donate_pixmap = QPixmap(donate_path)
+            donate_img = QLabel()
+            donate_scaled = donate_pixmap.scaledToWidth(380, Qt.SmoothTransformation)
+            donate_img.setPixmap(donate_scaled)
+            donate_img.setFixedSize(donate_scaled.size())
+            donate_img.setAlignment(Qt.AlignCenter)
+            donate_text = QLabel("Thanks for supporting ~")
+            donate_text.setStyleSheet("color: var(--text-muted); font-size: 12px; margin-top: 8px;")
+            donate_text.setAlignment(Qt.AlignCenter)
+            donate_vbox.addWidget(donate_img, alignment=Qt.AlignCenter)
+            donate_vbox.addWidget(donate_text, alignment=Qt.AlignCenter)
+            about_layout.addLayout(donate_vbox)
+
+        content_layout.addWidget(about_group)
+
+        content_layout.addStretch()
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
@@ -180,6 +251,110 @@ class SettingsDialog(QDialog):
         if new_path:
             self.yaml_edit.setText(new_path)
 
+    def _open_custom_fields_editor(self):
+        yaml_path = self.yaml_edit.text().strip()
+        if not yaml_path or not os.path.isfile(yaml_path):
+            QMessageBox.warning(self, tr("common.info"),
+                                t("main.fileNotFound", path=yaml_path))
+            return
+
+        try:
+            with open(yaml_path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+        except Exception:
+            data = {}
+
+        meta = data.get("meta", {})
+        existing = meta.get("custom_fields", [])
+
+        dlg = CustomFieldsDialog(self, custom_fields=existing)
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        new_fields = dlg.get_custom_fields()
+        inventory = data.get("inventory") or []
+
+        # --- Step 1: handle renames (old_key -> new_key) ---
+        renames = {}  # old_key -> new_key
+        for f in new_fields:
+            orig = f.pop("_original_key", None)
+            if orig:
+                renames[orig] = f["key"]
+
+        if renames and inventory:
+            # Check which renames actually have data to migrate
+            renames_with_data = {
+                old: new for old, new in renames.items()
+                if any(isinstance(r, dict) and r.get(old) is not None for r in inventory)
+            }
+            if renames_with_data:
+                lines = [f"  {old} → {new}" for old, new in renames_with_data.items()]
+                msg = QMessageBox(self)
+                msg.setWindowTitle(tr("main.customFieldsTitle"))
+                msg.setText(t("main.cfRenamePrompt", details="\n".join(lines)))
+                btn_migrate = msg.addButton(tr("main.cfRenameMigrate"), QMessageBox.AcceptRole)
+                btn_discard = msg.addButton(tr("main.cfRenameDiscard"), QMessageBox.DestructiveRole)
+                msg.addButton(QMessageBox.Cancel)
+                msg.setDefaultButton(btn_migrate)
+                msg.exec()
+                clicked = msg.clickedButton()
+                if clicked == btn_migrate:
+                    for rec in inventory:
+                        if not isinstance(rec, dict):
+                            continue
+                        for old, new in renames_with_data.items():
+                            if old in rec:
+                                rec[new] = rec.pop(old)
+                elif clicked == btn_discard:
+                    for rec in inventory:
+                        if not isinstance(rec, dict):
+                            continue
+                        for old in renames_with_data:
+                            rec.pop(old, None)
+                else:
+                    return  # cancelled
+
+        # --- Step 2: handle pure deletes ---
+        new_keys = {f["key"] for f in new_fields}
+        old_keys = {f["key"] for f in existing if isinstance(f, dict) and f.get("key")}
+        # Keys that were renamed are not "deleted" — exclude them
+        renamed_old_keys = set(renames.keys())
+        removed_keys = old_keys - new_keys - renamed_old_keys
+
+        if removed_keys and inventory:
+            has_data = any(
+                rec.get(k) is not None
+                for rec in inventory
+                for k in removed_keys
+                if isinstance(rec, dict)
+            )
+            if has_data:
+                names = ", ".join(sorted(removed_keys))
+                msg = QMessageBox(self)
+                msg.setWindowTitle(tr("main.customFieldsTitle"))
+                msg.setText(t("main.cfRemoveDataPrompt", fields=names))
+                btn_clean = msg.addButton(tr("main.cfRemoveDataClean"), QMessageBox.DestructiveRole)
+                btn_keep = msg.addButton(tr("main.cfRemoveDataKeep"), QMessageBox.AcceptRole)
+                msg.addButton(QMessageBox.Cancel)
+                msg.setDefaultButton(btn_keep)
+                msg.exec()
+                clicked = msg.clickedButton()
+                if clicked == btn_clean:
+                    for rec in inventory:
+                        if isinstance(rec, dict):
+                            for k in removed_keys:
+                                rec.pop(k, None)
+                elif clicked == btn_keep:
+                    pass
+                else:
+                    return  # cancelled
+
+        # --- Step 3: save ---
+        meta["custom_fields"] = new_fields
+        data["meta"] = meta
+        with open(yaml_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+
     def get_values(self):
         return {
             "yaml_path": self.yaml_edit.text().strip(),
@@ -190,6 +365,7 @@ class SettingsDialog(QDialog):
             "ai_max_steps": self.ai_max_steps.value(),
             "ai_thinking_enabled": self.ai_thinking_enabled.isChecked(),
             "ai_thinking_expanded": self.ai_thinking_expanded.isChecked(),
+            "ai_custom_prompt": self.ai_custom_prompt.toPlainText().strip(),
         }
 
 
@@ -266,6 +442,165 @@ class NewDatasetDialog(QDialog):
         indexing = self.indexing_combo.currentData()
         if indexing and indexing != "numeric":
             result["indexing"] = indexing
+        return result
+
+
+_FIELD_TYPES = ["str", "int", "float", "date"]
+
+
+class CustomFieldsDialog(QDialog):
+    """Visual editor for meta.custom_fields."""
+
+    def __init__(self, parent=None, custom_fields=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("main.customFieldsTitle"))
+        self.setMinimumWidth(560)
+        self.setMinimumHeight(400)
+
+        root = QVBoxLayout(self)
+
+        desc = QLabel(tr("main.customFieldsDesc"))
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color: #64748b; font-size: 12px; margin-bottom: 4px;")
+        root.addWidget(desc)
+
+        # Scrollable area for everything
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setSpacing(8)
+        scroll.setWidget(scroll_content)
+        root.addWidget(scroll, 1)
+
+        # --- Core fields (read-only) ---
+        core_group = QGroupBox(tr("main.cfCoreFields"))
+        core_layout = QVBoxLayout(core_group)
+        core_layout.setContentsMargins(8, 4, 8, 4)
+        core_layout.setSpacing(2)
+        from lib.custom_fields import CORE_FIELD_KEYS
+        core_label = QLabel("  ".join(sorted(CORE_FIELD_KEYS)))
+        core_label.setWordWrap(True)
+        core_label.setStyleSheet("color: #64748b; font-size: 11px;")
+        core_layout.addWidget(core_label)
+        scroll_layout.addWidget(core_group)
+
+        # --- Custom fields (editable) ---
+        custom_group = QGroupBox(tr("main.cfCustomFields"))
+        self._rows_layout = QVBoxLayout(custom_group)
+        self._rows_layout.setContentsMargins(8, 4, 8, 4)
+        self._rows_layout.setSpacing(6)
+        scroll_layout.addWidget(custom_group)
+
+        scroll_layout.addStretch()
+
+        self._field_rows = []
+
+        # Populate existing fields
+        for f in (custom_fields or []):
+            k = f.get("key", "")
+            self._add_row(k, f.get("label", ""),
+                          f.get("type", "str"), f.get("default"),
+                          original_key=k)
+
+        # Add button
+        add_btn = QPushButton(tr("main.cfAdd"))
+        add_btn.clicked.connect(lambda: self._add_row())
+        root.addWidget(add_btn)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+    def _add_row(self, key="", label="", ftype="str", default=None, *, original_key=None):
+        from lib.custom_fields import CORE_FIELD_KEYS
+
+        row_widget = QWidget()
+        row_layout = QHBoxLayout(row_widget)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(4)
+
+        key_edit = QLineEdit(key)
+        key_edit.setPlaceholderText(tr("main.cfKeyPh"))
+        key_edit.setFixedWidth(140)
+        row_layout.addWidget(key_edit)
+
+        label_edit = QLineEdit(label)
+        label_edit.setPlaceholderText(tr("main.cfLabelPh"))
+        label_edit.setFixedWidth(120)
+        row_layout.addWidget(label_edit)
+
+        type_combo = QComboBox()
+        for t in _FIELD_TYPES:
+            type_combo.addItem(t, t)
+        idx = type_combo.findData(ftype)
+        if idx >= 0:
+            type_combo.setCurrentIndex(idx)
+        type_combo.setFixedWidth(70)
+        row_layout.addWidget(type_combo)
+
+        default_edit = QLineEdit(str(default) if default is not None else "")
+        default_edit.setPlaceholderText(tr("main.cfDefaultPh"))
+        default_edit.setFixedWidth(100)
+        row_layout.addWidget(default_edit)
+
+        remove_btn = QPushButton(tr("main.cfRemove"))
+        remove_btn.setFixedWidth(60)
+        row_layout.addWidget(remove_btn)
+
+        entry = {
+            "widget": row_widget,
+            "key": key_edit,
+            "label": label_edit,
+            "type": type_combo,
+            "default": default_edit,
+            "original_key": original_key,
+        }
+        self._field_rows.append(entry)
+        self._rows_layout.addWidget(row_widget)
+
+        remove_btn.clicked.connect(lambda: self._remove_row(entry))
+
+    def _remove_row(self, entry):
+        if entry in self._field_rows:
+            self._field_rows.remove(entry)
+            entry["widget"].setParent(None)
+            entry["widget"].deleteLater()
+
+    def get_custom_fields(self):
+        """Return validated list of custom field dicts.
+
+        Each dict has key/label/type/default plus an optional
+        ``_original_key`` when the key was renamed from an existing field.
+        """
+        from lib.custom_fields import CORE_FIELD_KEYS
+
+        result = []
+        seen = set()
+        for entry in self._field_rows:
+            key = entry["key"].text().strip()
+            if not key or not key.isidentifier():
+                continue
+            if key in CORE_FIELD_KEYS or key in seen:
+                continue
+            seen.add(key)
+            label = entry["label"].text().strip() or key
+            ftype = entry["type"].currentData() or "str"
+            default_text = entry["default"].text().strip()
+            default = default_text if default_text else None
+            item = {
+                "key": key,
+                "label": label,
+                "type": ftype,
+                "default": default,
+            }
+            orig = entry.get("original_key")
+            if orig and orig != key:
+                item["_original_key"] = orig
+            result.append(item)
         return result
 
 
@@ -454,11 +789,13 @@ class MainWindow(QMainWindow):
             "max_steps": values.get("ai_max_steps", 8),
             "thinking_enabled": values.get("ai_thinking_enabled", True),
             "thinking_expanded": values.get("ai_thinking_expanded", True),
+            "custom_prompt": values.get("ai_custom_prompt", ""),
         }
         self.ai_panel.ai_model.setText(self.gui_config["ai"]["model"])
         self.ai_panel.ai_steps.setValue(self.gui_config["ai"]["max_steps"])
         self.ai_panel.ai_thinking_enabled.setChecked(self.gui_config["ai"]["thinking_enabled"])
         self.ai_panel.ai_thinking_collapsed = not self.gui_config["ai"]["thinking_expanded"]
+        self.ai_panel.ai_custom_prompt = self.gui_config["ai"].get("custom_prompt", "")
 
         self._update_dataset_label()
         self.overview_panel.refresh()
@@ -499,11 +836,17 @@ class MainWindow(QMainWindow):
         if target_dir and not os.path.isdir(target_dir):
             os.makedirs(target_dir, exist_ok=True)
 
+        # Step 2: custom fields dialog
+        cf_dlg = CustomFieldsDialog(self)
+        if cf_dlg.exec() != QDialog.Accepted:
+            return
+        custom_fields = cf_dlg.get_custom_fields()
+
         new_payload = {
             "meta": {
                 "version": "1.0",
                 "box_layout": box_layout,
-                "custom_fields": [],
+                "custom_fields": custom_fields,
             },
             "inventory": [],
         }
@@ -535,6 +878,7 @@ class MainWindow(QMainWindow):
         self.ai_panel.ai_steps.setValue(ai_cfg.get("max_steps", 8))
         self.ai_panel.ai_thinking_enabled.setChecked(bool(ai_cfg.get("thinking_enabled", True)))
         self.ai_panel.ai_thinking_collapsed = not bool(ai_cfg.get("thinking_expanded", True))
+        self.ai_panel.ai_custom_prompt = ai_cfg.get("custom_prompt", "")
 
     def closeEvent(self, event):
         if self.ai_panel.ai_run_inflight:
@@ -556,6 +900,7 @@ class MainWindow(QMainWindow):
             "max_steps": self.ai_panel.ai_steps.value(),
             "thinking_enabled": self.ai_panel.ai_thinking_enabled.isChecked(),
             "thinking_expanded": not self.ai_panel.ai_thinking_collapsed,
+            "custom_prompt": self.ai_panel.ai_custom_prompt,
         }
         save_gui_config(self.gui_config)
 

@@ -820,12 +820,14 @@ class AgentToolRunner:
                     "ok": False, "error_code": "invalid_tool_input",
                     "message": "fields must be a non-empty object",
                 })
-            box, label, _positions = self._lookup_record_info(rid)
+            box, label, positions = self._lookup_record_info(rid)
+            pos = int(positions[0]) if positions else 1
             items.append(
                 build_edit_plan_item(
                     record_id=rid,
                     fields=fields,
                     box=box,
+                    position=pos,
                     label=label,
                     source="ai",
                 )

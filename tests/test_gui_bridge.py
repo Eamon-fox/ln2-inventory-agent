@@ -212,5 +212,40 @@ class GuiBridgeAgentTests(unittest.TestCase):
             self.assertIn("stream_end", event_names)
 
 
+    def test_run_agent_query_passes_custom_prompt_to_agent(self):
+        bridge = GuiToolBridge(session_id="session-gui-test")
+
+        with patch("app_gui.tool_bridge.DeepSeekLLMClient") as mock_client_cls, \
+             patch("app_gui.tool_bridge.ReactAgent") as mock_agent_cls:
+            mock_client_cls.return_value = _FakeDeepSeekClient()
+            mock_agent_cls.return_value.run.return_value = {
+                "ok": True, "final": "ok", "trace_id": "t1",
+            }
+            bridge.run_agent_query(
+                yaml_path="/tmp/demo.yaml",
+                query="hello",
+                custom_prompt="请用中文回答",
+            )
+
+        self.assertTrue(mock_agent_cls.called)
+        self.assertEqual("请用中文回答", mock_agent_cls.call_args.kwargs.get("custom_prompt"))
+
+    def test_run_agent_query_default_custom_prompt_is_empty(self):
+        bridge = GuiToolBridge(session_id="session-gui-test")
+
+        with patch("app_gui.tool_bridge.DeepSeekLLMClient") as mock_client_cls, \
+             patch("app_gui.tool_bridge.ReactAgent") as mock_agent_cls:
+            mock_client_cls.return_value = _FakeDeepSeekClient()
+            mock_agent_cls.return_value.run.return_value = {
+                "ok": True, "final": "ok", "trace_id": "t1",
+            }
+            bridge.run_agent_query(
+                yaml_path="/tmp/demo.yaml",
+                query="hello",
+            )
+
+        self.assertEqual("", mock_agent_cls.call_args.kwargs.get("custom_prompt"))
+
+
 if __name__ == "__main__":
     unittest.main()

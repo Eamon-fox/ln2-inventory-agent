@@ -19,6 +19,10 @@ def validate_plan_item(item: dict) -> Optional[str]:
     if action not in _VALID_ACTIONS:
         return f"Unknown action: {item.get('action')}"
 
+    if action == "rollback":
+        # rollback restores the whole YAML from backup; no box/position/record needed.
+        return None
+
     box = item.get("box")
     if not isinstance(box, int):
         return "box must be an integer"
@@ -48,9 +52,10 @@ def validate_plan_item(item: dict) -> Optional[str]:
             return "parent_cell_line is required for add"
         if not (item.get("short_name") or payload.get("short_name")):
             return "short_name is required for add"
-    elif action == "rollback":
-        # rollback does not target a specific record; it restores the whole YAML from backup.
-        pass
+    elif action == "edit":
+        rid = item.get("record_id")
+        if not isinstance(rid, int) or rid < 1:
+            return "record_id must be a positive integer"
     else:
         rid = item.get("record_id")
         if not isinstance(rid, int) or rid < 1:
@@ -67,6 +72,8 @@ def _get_action_display(action):
         "discard": ("DISCARD", "#ef4444", "Discard sample"),
         "move": ("MOVE", "#3b82f6", "Relocate sample"),
         "add": ("ADD", "#8b5cf6", "Add new sample"),
+        "edit": ("EDIT", "#06b6d4", "Edit record fields"),
+        "rollback": ("ROLLBACK", "#6b7280", "Restore from backup"),
     }
     return action_map.get(str(action).lower(), (str(action).upper(), "#6b7280", ""))
 
@@ -96,7 +103,7 @@ def render_operation_sheet(items):
     for item in items:
         by_action[item.get("action", "unknown")].append(item)
     
-    action_order = ["takeout", "thaw", "move", "discard", "add"]
+    action_order = ["takeout", "thaw", "move", "discard", "add", "edit", "rollback"]
     
     sections = []
     op_counter = 1
@@ -180,6 +187,8 @@ def render_operation_sheet(items):
     move_count = len(by_action.get("move", []))
     add_count = len(by_action.get("add", []))
     discard_count = len(by_action.get("discard", []))
+    edit_count = len(by_action.get("edit", []))
+    rollback_count = len(by_action.get("rollback", []))
     
     return f"""<!DOCTYPE html>
 <html>
@@ -417,6 +426,8 @@ def render_operation_sheet(items):
         <div class="summary-item" style="background: #dbeafe;">Move: {move_count}</div>
         <div class="summary-item" style="background: #ede9fe;">Add: {add_count}</div>
         <div class="summary-item" style="background: #fee2e2;">Discard: {discard_count}</div>
+        <div class="summary-item" style="background: #cffafe;">Edit: {edit_count}</div>
+        <div class="summary-item" style="background: #f3f4f6;">Rollback: {rollback_count}</div>
     </div>
     
     {sections_html}

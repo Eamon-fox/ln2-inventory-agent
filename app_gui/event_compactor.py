@@ -93,4 +93,19 @@ def compact_operation_event_for_context(event: Mapping[str, Any]) -> Dict[str, A
     report = payload.get("report")
     if event_type in ("plan_executed", "plan_execute_blocked") and isinstance(report, Mapping):
         payload["report"] = compact_plan_report(report)
+
+    # Add human-readable hints so the LLM doesn't confuse plan lifecycle events
+    # with actual inventory modifications.
+    _EVENT_HINTS: Dict[str, str] = {
+        "plan_staged": "User added operations to the plan queue. Nothing has been executed yet — the inventory is unchanged.",
+        "plan_cleared": "User manually cleared the plan queue. No operations were executed — the inventory is unchanged.",
+        "plan_removed": "User removed selected items from the plan queue. No operations were executed — the inventory is unchanged.",
+        "plan_restored": "User undid the last execution and restored the previous plan. The inventory was rolled back.",
+        "plan_executed": "Plan operations were executed against the inventory. Check stats for success/failure details.",
+        "plan_execute_blocked": "Plan execution was blocked due to validation errors. The inventory is unchanged.",
+    }
+    hint = _EVENT_HINTS.get(event_type)
+    if hint:
+        payload["_hint"] = hint
+
     return payload

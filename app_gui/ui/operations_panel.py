@@ -192,6 +192,29 @@ class OperationsPanel(QWidget):
 
         self.set_mode("thaw")
 
+    def _is_dark_theme(self):
+        return load_gui_config().get("theme", "dark") != "light"
+
+    def _status_color_hex(self, name):
+        return get_theme_color(name, self._is_dark_theme()).name()
+
+    def _set_result_summary_html(self, lines):
+        if isinstance(lines, (list, tuple)):
+            html = "<br/>".join(str(line) for line in lines)
+        else:
+            html = str(lines)
+
+        replacements = {
+            "var(--status-success)": self._status_color_hex("success"),
+            "var(--status-warning)": self._status_color_hex("warning"),
+            "var(--status-error)": self._status_color_hex("error"),
+            "var(--status-muted)": self._status_color_hex("muted"),
+        }
+        for token, color_hex in replacements.items():
+            html = html.replace(token, color_hex)
+
+        self.result_summary.setText(html)
+
     def set_mode(self, mode):
         self._ensure_today_defaults()
         target = mode if mode in self.op_mode_indexes else "thaw"
@@ -1504,7 +1527,7 @@ class OperationsPanel(QWidget):
                     tr("operations.restoredFrom", path=os.path.basename(str(restored)))
                 )
 
-            self.result_summary.setText("<br/>".join(lines))
+            self._set_result_summary_html(lines)
             self.result_card.setStyleSheet(self._result_card_base_style.replace("var(--border-weak)", "var(--success)"))
         else:
             msg = payload.get("message", tr("operations.unknownError"))
@@ -1513,7 +1536,7 @@ class OperationsPanel(QWidget):
             lines.append(str(msg))
             if error_code:
                 lines.append(f"<span style='color: var(--status-muted);'>{tr('operations.codeLabel', code=error_code)}</span>")
-            self.result_summary.setText("<br/>".join(lines))
+            self._set_result_summary_html(lines)
             self.result_card.setStyleSheet(self._result_card_base_style.replace("var(--border-weak)", "var(--error)"))
 
         self.result_card.setVisible(True)
@@ -2121,7 +2144,7 @@ class OperationsPanel(QWidget):
                     lines.append(
                         f"<span style='color: var(--status-warning);'>{tr('operations.planExecutionRollbackUnavailable', reason=execution_stats.get('rollback_message'))}</span>"
                     )
-            self.result_summary.setText("<br/>".join(lines))
+            self._set_result_summary_html(lines)
             border_color = "var(--warning)" if execution_stats.get("rollback_ok") else "var(--error)"
             self.result_card.setStyleSheet(self._result_card_base_style.replace("var(--border-weak)", border_color))
         else:
@@ -2129,7 +2152,7 @@ class OperationsPanel(QWidget):
                 f"<b style='color: var(--status-success);'>{tr('operations.planExecutionSuccess')}</b>",
                 tr("operations.planExecutionSuccessSummary", applied=applied_count, total=applied_count),
             ]
-            self.result_summary.setText("<br/>".join(lines))
+            self._set_result_summary_html(lines)
             self.result_card.setStyleSheet(self._result_card_base_style.replace("var(--border-weak)", "var(--success)"))
 
         self.result_card.setVisible(True)
@@ -2580,7 +2603,7 @@ class OperationsPanel(QWidget):
                 preview = str(details)
             lines.append(f"<span style='color: var(--status-muted);'>{tr('operations.detailsLabel')}</span> {preview}")
 
-        self.result_summary.setText("<br/>".join(lines))
+        self._set_result_summary_html(lines)
         border = "var(--success)" if status == "success" else "var(--error)"
         self.result_card.setStyleSheet(self._result_card_base_style.replace("var(--border-weak)", border))
         self.result_card.setVisible(True)
@@ -2627,7 +2650,7 @@ class OperationsPanel(QWidget):
                 lines.append(
                     f"{tr('operations.warningsLabel')} {len(warnings)}<br/>{preview}{more}"
                 )
-            self.result_summary.setText("<br/>".join(lines))
+            self._set_result_summary_html(lines)
             self.result_card.setStyleSheet(self._result_card_base_style.replace("var(--border-weak)", "var(--error)"))
             self.result_card.setVisible(True)
             self.status_message.emit(tr("operations.noPrintableAuditGuide"), 3500, "error")
@@ -2649,7 +2672,7 @@ class OperationsPanel(QWidget):
             lines.append(
                 f"{tr('operations.warningsLabel')} {len(warnings)}<br/>{preview}{more}"
             )
-        self.result_summary.setText("<br/>".join(lines))
+        self._set_result_summary_html(lines)
         self.result_card.setStyleSheet(self._result_card_base_style.replace("var(--border-weak)", "var(--success)"))
         self.result_card.setVisible(True)
         self.status_message.emit(

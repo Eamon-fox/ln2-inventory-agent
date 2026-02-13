@@ -400,6 +400,43 @@ class ReactAgentTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual("Final answer only.", result["final"])
 
+    def test_custom_prompt_appended_to_system_message(self):
+        llm = _CapturePromptLLM()
+        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
+        agent = ReactAgent(
+            llm_client=llm, tool_runner=runner,
+            custom_prompt="请用中文回答所有问题",
+        )
+
+        agent.run("hello")
+
+        system_msg = llm.last_messages[0]
+        self.assertEqual("system", system_msg["role"])
+        self.assertIn("Additional user instructions:", system_msg["content"])
+        self.assertIn("请用中文回答所有问题", system_msg["content"])
+        # Core rules must still be present
+        self.assertIn("LN2 inventory assistant", system_msg["content"])
+
+    def test_empty_custom_prompt_not_appended(self):
+        llm = _CapturePromptLLM()
+        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
+        agent = ReactAgent(llm_client=llm, tool_runner=runner, custom_prompt="")
+
+        agent.run("hello")
+
+        system_msg = llm.last_messages[0]
+        self.assertNotIn("Additional user instructions:", system_msg["content"])
+
+    def test_no_custom_prompt_by_default(self):
+        llm = _CapturePromptLLM()
+        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
+        agent = ReactAgent(llm_client=llm, tool_runner=runner)
+
+        agent.run("hello")
+
+        system_msg = llm.last_messages[0]
+        self.assertNotIn("Additional user instructions:", system_msg["content"])
+
 
 if __name__ == "__main__":
     unittest.main()

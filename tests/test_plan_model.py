@@ -315,5 +315,136 @@ class CrossBoxMoveRenderTests(unittest.TestCase):
         self.assertIn("cross-test", html)
 
 
+# ── edit action validation ─────────────────────────────────────────
+
+
+def _edit_item(**overrides):
+    """Construct a minimal valid PlanItem for edit."""
+    base = {
+        "action": "edit",
+        "box": 1,
+        "position": 5,
+        "record_id": 1,
+        "label": "test",
+        "source": "human",
+        "payload": {
+            "record_id": 1,
+            "fields": {"note": "updated"},
+        },
+    }
+    base.update(overrides)
+    return base
+
+
+class ValidateEditTests(unittest.TestCase):
+    def test_valid_edit(self):
+        self.assertIsNone(validate_plan_item(_edit_item()))
+
+    def test_edit_requires_record_id(self):
+        item = _edit_item(record_id=None)
+        self.assertIn("record_id", validate_plan_item(item))
+
+    def test_edit_zero_record_id(self):
+        self.assertIn("record_id", validate_plan_item(_edit_item(record_id=0)))
+
+    def test_edit_requires_valid_position(self):
+        self.assertIn("position", validate_plan_item(_edit_item(position=0)))
+
+    def test_edit_requires_valid_box(self):
+        self.assertIn("box", validate_plan_item(_edit_item(box=-1)))
+
+    def test_edit_in_all_valid_actions(self):
+        item = _edit_item()
+        self.assertIsNone(validate_plan_item(item))
+
+
+class ValidateRollbackSkipsBoxPositionTests(unittest.TestCase):
+    def test_rollback_box_zero_ok(self):
+        self.assertIsNone(validate_plan_item(_rollback_item(box=0)))
+
+    def test_rollback_position_any_ok(self):
+        """Rollback skips position validation entirely."""
+        self.assertIsNone(validate_plan_item(_rollback_item(position=0)))
+
+    def test_rollback_no_record_id_ok(self):
+        self.assertIsNone(validate_plan_item(_rollback_item(record_id=None)))
+
+
+# ── edit/rollback rendering ────────────────────────────────────────
+
+
+class RenderEditRollbackTests(unittest.TestCase):
+    def test_edit_appears_in_operation_sheet(self):
+        html = render_operation_sheet([_edit_item()])
+        self.assertIn("EDIT", html)
+        self.assertIn("ID: 1", html)
+
+    def test_rollback_appears_in_operation_sheet(self):
+        html = render_operation_sheet([_rollback_item()])
+        self.assertIn("ROLLBACK", html)
+
+    def test_summary_includes_edit_count(self):
+        items = [_edit_item(), _edit_item(record_id=2)]
+        html = render_operation_sheet(items)
+        self.assertIn("Edit: 2", html)
+
+    def test_summary_includes_rollback_count(self):
+        html = render_operation_sheet([_rollback_item()])
+        self.assertIn("Rollback: 1", html)
+
+    def test_mixed_actions_all_rendered(self):
+        items = [
+            _base_item(),
+            _add_item(),
+            _move_item(),
+            _edit_item(),
+            _rollback_item(),
+        ]
+        html = render_operation_sheet(items)
+        for action_name in ("TAKEOUT", "ADD", "MOVE", "EDIT", "ROLLBACK"):
+            self.assertIn(action_name, html)
+
+
+# ── factory → validate round-trip ──────────────────────────────────
+
+
+class FactoryValidateRoundTripTests(unittest.TestCase):
+    """Verify that plan_item_factory outputs pass validate_plan_item."""
+
+    def test_build_edit_plan_item_passes_validation(self):
+        from lib.plan_item_factory import build_edit_plan_item
+        item = build_edit_plan_item(
+            record_id=3, fields={"note": "x"}, box=2, position=10, label="test",
+        )
+        self.assertIsNone(validate_plan_item(item))
+
+    def test_build_edit_plan_item_default_position_passes(self):
+        from lib.plan_item_factory import build_edit_plan_item
+        item = build_edit_plan_item(record_id=1, fields={"note": "x"})
+        self.assertIsNone(validate_plan_item(item))
+
+    def test_build_rollback_plan_item_passes_validation(self):
+        from lib.plan_item_factory import build_rollback_plan_item
+        item = build_rollback_plan_item(backup_path="/tmp/backup.bak")
+        self.assertIsNone(validate_plan_item(item))
+
+    def test_build_record_plan_item_passes_validation(self):
+        from lib.plan_item_factory import build_record_plan_item
+        for action in ("Takeout", "Thaw", "Discard"):
+            item = build_record_plan_item(
+                action=action, record_id=1, position=5, box=1,
+                label="test", date_str="2026-01-01",
+            )
+            self.assertIsNone(validate_plan_item(item), f"{action} should pass")
+
+    def test_build_add_plan_item_passes_validation(self):
+        from lib.plan_item_factory import build_add_plan_item
+        item = build_add_plan_item(
+            parent_cell_line="K562", short_name="clone-1",
+            box=1, positions=[5], frozen_at="2026-01-01",
+        )
+        self.assertIsNone(validate_plan_item(item))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -111,6 +111,23 @@ def make_rollback_item(backup_path, **extra):
     return base
 
 
+def make_edit_item(record_id=1, box=1, position=1, fields=None, **extra):
+    base = {
+        "action": "edit",
+        "box": box,
+        "position": position,
+        "record_id": record_id,
+        "label": f"rec-{record_id}",
+        "source": "human",
+        "payload": {
+            "record_id": record_id,
+            "fields": fields or {"note": "updated"},
+        },
+    }
+    base.update(extra)
+    return base
+
+
 class PreflightPlanTests(unittest.TestCase):
     """Tests for preflight_plan function."""
 
@@ -521,6 +538,164 @@ class MoveSwapTests(unittest.TestCase):
 
             self.assertFalse(result["ok"])
             self.assertTrue(result["blocked"])
+
+
+class EditPlanTests(unittest.TestCase):
+    """Tests for edit action in preflight and execute."""
+
+    def test_preflight_edit_passes(self):
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[5])]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            result = preflight_plan(
+                str(yaml_path),
+                [make_edit_item(record_id=1, box=1, position=5)],
+                bridge=bridge,
+            )
+
+            self.assertTrue(result["ok"])
+            self.assertFalse(result["blocked"])
+            self.assertEqual(1, result["stats"]["ok"])
+            # Preflight should NOT call bridge.edit_entry
+            self.assertFalse(bridge.edit_entry.called)
+
+    def test_execute_edit_calls_bridge(self):
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[5])]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            bridge.edit_entry.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
+
+            result = run_plan(
+                str(yaml_path),
+                [make_edit_item(record_id=1, box=1, position=5, fields={"note": "new note"})],
+                bridge=bridge,
+                mode="execute",
+            )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(1, result["stats"]["ok"])
+            bridge.edit_entry.assert_called_once()
+            call_kwargs = bridge.edit_entry.call_args
+            self.assertEqual(1, call_kwargs.kwargs.get("record_id") or call_kwargs[1].get("record_id"))
+
+    def test_execute_edit_failure_marks_blocked(self):
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[5])]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            bridge.edit_entry.return_value = {
+                "ok": False,
+                "error_code": "record_not_found",
+                "message": "No such record",
+            }
+
+            result = run_plan(
+                str(yaml_path),
+                [make_edit_item(record_id=999, box=1, position=5)],
+                bridge=bridge,
+                mode="execute",
+            )
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(1, result["stats"]["blocked"])
+
+    def test_mixed_edit_and_takeout(self):
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([
+                    make_record(1, box=1, positions=[5]),
+                    make_record(2, box=1, positions=[10]),
+                ]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            bridge.edit_entry.return_value = {"ok": True}
+            bridge.batch_thaw.return_value = {"ok": True}
+
+            items = [
+                make_edit_item(record_id=1, box=1, position=5, fields={"note": "edited"}),
+                make_takeout_item(record_id=2, position=10),
+            ]
+            result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(2, result["stats"]["ok"])
+            bridge.edit_entry.assert_called_once()
+            bridge.batch_thaw.assert_called_once()
+
+    def test_multiple_edits_execute_independently(self):
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([
+                    make_record(1, box=1, positions=[5]),
+                    make_record(2, box=1, positions=[10]),
+                ]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            # First edit succeeds, second fails
+            bridge.edit_entry.side_effect = [
+                {"ok": True},
+                {"ok": False, "error_code": "invalid_field", "message": "Bad field"},
+            ]
+
+            items = [
+                make_edit_item(record_id=1, box=1, position=5),
+                make_edit_item(record_id=2, box=1, position=10, fields={"bad_field": "x"}),
+            ]
+            result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(1, result["stats"]["ok"])
+            self.assertEqual(1, result["stats"]["blocked"])
+            self.assertEqual(2, bridge.edit_entry.call_count)
+
+
+class EditPreflightExecuteConsistencyTests(unittest.TestCase):
+    """Verify preflight and execute agree for edit operations."""
+
+    def test_preflight_and_execute_agree_on_valid_edit(self):
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[5])]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            bridge.edit_entry.return_value = {"ok": True}
+
+            items = [make_edit_item(record_id=1, box=1, position=5)]
+
+            preflight_result = preflight_plan(str(yaml_path), items, bridge=bridge)
+            execute_result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
+
+            self.assertEqual(preflight_result["ok"], execute_result["ok"])
+            self.assertEqual(preflight_result["blocked"], execute_result["blocked"])
 
 
 if __name__ == "__main__":

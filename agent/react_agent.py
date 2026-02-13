@@ -7,6 +7,9 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 
+from app_gui.gui_config import DEFAULT_MAX_STEPS
+
+
 SYSTEM_PROMPT = """You are an LN2 inventory assistant.
 
 Rules:
@@ -28,10 +31,11 @@ Rules:
 class ReactAgent:
     """Native tool-calling ReAct runtime."""
 
-    def __init__(self, llm_client, tool_runner, max_steps=12):
+    def __init__(self, llm_client, tool_runner, max_steps=DEFAULT_MAX_STEPS, custom_prompt=""):
         self._llm = llm_client
         self._tools = tool_runner
         self._max_steps = max_steps
+        self._custom_prompt = str(custom_prompt or "")
 
     @staticmethod
     def _normalize_history(conversation_history, max_turns=12):
@@ -418,10 +422,14 @@ class ReactAgent:
         tool_schemas = self._tools.tool_schemas() if hasattr(self._tools, "tool_schemas") else []
         memory = self._normalize_history(conversation_history)
 
+        system_content = SYSTEM_PROMPT + f"\nCurrent time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        if self._custom_prompt:
+            system_content += f"\n\nAdditional user instructions:\n{self._custom_prompt}"
+
         messages = [
             {
                 "role": "system",
-                "content": SYSTEM_PROMPT + f"\nCurrent time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                "content": system_content,
                 "timestamp": datetime.now().timestamp(),
             },
             self._build_runtime_context_message(tool_specs),
