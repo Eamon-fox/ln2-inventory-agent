@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QStackedWidget, QTableWidget, QTableWidgetItem,
     QHeaderView, QFileDialog, QMessageBox, QGroupBox,
     QAbstractItemView,
-    QFormLayout, QDateEdit, QSpinBox, QTextEdit
+    QFormLayout, QDateEdit, QSpinBox
 )
 from app_gui.ui.utils import build_panel_header, positions_to_text
 from app_gui.i18n import tr
@@ -156,24 +156,6 @@ class OperationsPanel(QWidget):
         self.undo_btn.clicked.connect(self.on_undo_last)
         layout.addWidget(self.undo_btn)
 
-        # Output Panel
-        output_header = QHBoxLayout()
-        self.output_toggle_btn = QPushButton(tr("operations.showRawJson"))
-        self.output_toggle_btn.setCheckable(True)
-        self.output_toggle_btn.toggled.connect(self.on_toggle_output)
-        output_header.addWidget(self.output_toggle_btn)
-        output_header.addStretch()
-        clear_btn = QPushButton(tr("operations.clear"))
-        clear_btn.clicked.connect(lambda: self.output.clear())
-        output_header.addWidget(clear_btn)
-        layout.addLayout(output_header)
-
-        self.output = QTextEdit()
-        self.output.setReadOnly(True)
-        self.output.setMinimumHeight(180)
-        self.output.setVisible(False)
-        layout.addWidget(self.output, 2)
-
         self.set_mode("thaw")
 
     def set_mode(self, mode):
@@ -190,11 +172,6 @@ class OperationsPanel(QWidget):
 
     def on_mode_changed(self, _index=None):
         self.set_mode(self.op_mode_combo.currentData())
-
-    def on_toggle_output(self, checked):
-        visible = bool(checked)
-        self.output.setVisible(visible)
-        self.output_toggle_btn.setText(tr("operations.hideRawJson") if visible else tr("operations.showRawJson"))
 
     def on_toggle_batch_section(self, checked):
         visible = bool(checked)
@@ -1161,7 +1138,6 @@ class OperationsPanel(QWidget):
 
     def _handle_response(self, response, context):
         payload = response if isinstance(response, dict) else {}
-        self.output.setPlainText(json.dumps(payload, ensure_ascii=False, indent=2))
         self._display_result_summary(response, context)
 
         ok = payload.get("ok", False)
@@ -1704,22 +1680,6 @@ class OperationsPanel(QWidget):
 
         self.result_card.setVisible(True)
 
-        output_data = []
-        for r in results:
-            entry = {
-                "status": r[0],
-                "action": r[1].get("action"),
-                "label": r[1].get("label"),
-                "record_id": r[1].get("record_id"),
-                "box": r[1].get("box"),
-                "position": r[1].get("position"),
-            }
-            if r[0] == "FAIL":
-                entry["error"] = r[2].get("message", "Unknown error")
-                entry["error_code"] = r[2].get("error_code", "")
-            output_data.append(entry)
-        self.output.setPlainText(json.dumps(output_data, ensure_ascii=False, indent=2))
-
     def print_plan(self):
         items_to_print = self.plan_items or self._last_printable_plan
         if not items_to_print:
@@ -1815,7 +1775,6 @@ class OperationsPanel(QWidget):
 
         self._render_query_results(records)
         self.query_last_mode = "records"
-        self.output.setPlainText(json.dumps(payload, ensure_ascii=False, indent=2))
 
         if not payload.get("ok", False):
             self.status_message.emit(
@@ -1841,7 +1800,6 @@ class OperationsPanel(QWidget):
 
         self._render_empty_results(boxes)
         self.query_last_mode = "empty"
-        self.output.setPlainText(json.dumps(payload, ensure_ascii=False, indent=2))
 
         if not payload.get("ok", False):
             self.status_message.emit(
@@ -2075,13 +2033,47 @@ class OperationsPanel(QWidget):
         self.audit_info.setText(f"Showing {len(events)} audit events ({start} to {end})")
 
     def _on_audit_row_clicked(self, row, _col):
-        """Show full JSON of selected audit event in output panel."""
+        """Show summary of selected audit event."""
         if row >= len(self._audit_events):
             return
         ev = self._audit_events[row]
-        self.output.setPlainText(json.dumps(ev, ensure_ascii=False, indent=2))
-        self.output.setVisible(True)
-        self.output_toggle_btn.setChecked(True)
+        action = str(ev.get("action") or "")
+        status = str(ev.get("status") or "")
+        actor = str(ev.get("actor_id") or "")
+        channel = str(ev.get("channel") or "")
+        ts = str(ev.get("timestamp") or "")
+
+        details = ev.get("details") or {}
+        error = ev.get("error") or {}
+        backup_path = ev.get("backup_path") or ""
+
+        title_color = "#22c55e" if status == "success" else "#ef4444"
+        lines = [f"<b style='color: {title_color};'>Audit: {action} ({status})</b>"]
+        if ts:
+            lines.append(f"<span style='color: #94a3b8;'>Time:</span> {ts}")
+        if actor:
+            lines.append(f"<span style='color: #94a3b8;'>Actor:</span> {actor} ({channel})")
+        if backup_path:
+            lines.append(f"<span style='color: #94a3b8;'>Backup:</span> {os.path.basename(str(backup_path))}")
+
+        if status == "failed" and isinstance(error, dict) and error:
+            if error.get("error_code"):
+                lines.append(f"<span style='color: #94a3b8;'>Error:</span> {error.get('error_code')}")
+            if error.get("message"):
+                lines.append(str(error.get("message")))
+        elif isinstance(details, dict) and details:
+            try:
+                preview = json.dumps(details, ensure_ascii=False)
+            except Exception:
+                preview = str(details)
+            if len(preview) > 240:
+                preview = preview[:240] + "..."
+            lines.append(f"<span style='color: #94a3b8;'>Details:</span> {preview}")
+
+        self.result_summary.setText("<br/>".join(lines))
+        border = "var(--success)" if status == "success" else "var(--error)"
+        self.result_card.setStyleSheet(f"QGroupBox {{ border: 1px solid {border}; }}")
+        self.result_card.setVisible(True)
 
     def _get_selected_audit_events(self):
         model = self.audit_table.selectionModel()
@@ -2110,29 +2102,15 @@ class OperationsPanel(QWidget):
         warnings = list(guide.get("warnings") or [])
         stats = dict(guide.get("stats") or {})
 
-        self.output.setPlainText(
-            json.dumps(
-                {
-                    "source": "audit_selection",
-                    "selected_events": selected_count,
-                    "stats": stats,
-                    "warnings": warnings,
-                    "items": items,
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
-        self.output.setVisible(True)
-        self.output_toggle_btn.setChecked(True)
-
         if not items:
             lines = [
                 "<b style='color: #ef4444;'>Selected audit rows produced no printable operations</b>",
                 f"Selected events: {selected_count}",
             ]
             if warnings:
-                lines.append(f"Warnings: {len(warnings)} (see Raw JSON)")
+                preview = "<br/>".join(str(w) for w in warnings[:3])
+                more = f"<br/><span style='color: #94a3b8;'>... and {len(warnings) - 3} more</span>" if len(warnings) > 3 else ""
+                lines.append(f"Warnings: {len(warnings)}<br/>{preview}{more}")
             self.result_summary.setText("<br/>".join(lines))
             self.result_card.setStyleSheet("QGroupBox { border: 1px solid var(--error); }")
             self.result_card.setVisible(True)
@@ -2146,7 +2124,9 @@ class OperationsPanel(QWidget):
             f"Final operations: {len(items)}",
         ]
         if warnings:
-            lines.append(f"Warnings: {len(warnings)} (see Raw JSON)")
+            preview = "<br/>".join(str(w) for w in warnings[:3])
+            more = f"<br/><span style='color: #94a3b8;'>... and {len(warnings) - 3} more</span>" if len(warnings) > 3 else ""
+            lines.append(f"Warnings: {len(warnings)}<br/>{preview}{more}")
         self.result_summary.setText("<br/>".join(lines))
         self.result_card.setStyleSheet("QGroupBox { border: 1px solid #22c55e; }")
         self.result_card.setVisible(True)

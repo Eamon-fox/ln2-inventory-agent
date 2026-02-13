@@ -124,8 +124,6 @@
     "lastResult": "Last Result",
     "noOperations": "No operations performed yet.",
     "undoLast": "Undo Last Operation",
-    "showRawJson": "Show Raw JSON",
-    "hideRawJson": "Hide Raw JSON",
     "parentCellLine": "Parent Cell Line",
     "shortName": "Short Name",
     "box": "Box",

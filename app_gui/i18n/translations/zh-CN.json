@@ -124,8 +124,6 @@
     "lastResult": "上次结果",
     "noOperations": "暂无操作记录。",
     "undoLast": "撤销上次操作",
-    "showRawJson": "显示原始 JSON",
-    "hideRawJson": "隐藏原始 JSON",
     "parentCellLine": "父细胞系",
     "shortName": "简称",
     "box": "盒子",
