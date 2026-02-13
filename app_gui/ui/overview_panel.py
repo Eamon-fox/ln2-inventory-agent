@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QPushButton, QLineEdit, QComboBox, QCheckBox, QScrollArea,
     QSizePolicy, QGroupBox, QMenu
 )
-from app_gui.ui.utils import build_panel_header, cell_color
+from app_gui.ui.utils import cell_color
 from app_gui.ui.theme import (
     cell_occupied_style, 
     cell_empty_style,
@@ -20,10 +20,6 @@ from app_gui.i18n import tr, t
 from app_gui.plan_preview import simulate_plan_pos_map
 
 MIME_TYPE_MOVE = "application/x-ln2-move"
-
-def get_overview_help_text():
-    # i18n-backed so it tracks language selection.
-    return tr("overview.helpText")
 
 class CellButton(QPushButton):
     doubleClicked = Signal(int, int)
@@ -129,8 +125,6 @@ class OverviewPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
-
-        layout.addLayout(build_panel_header(self, tr("overview.title"), tr("overview.helpTitle"), get_overview_help_text()))
 
         # Summary Cards
         summary_row = QHBoxLayout()

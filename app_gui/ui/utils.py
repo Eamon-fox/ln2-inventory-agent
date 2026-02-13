@@ -54,39 +54,6 @@ def compact_json(value, max_chars=200):
     return text[: max_chars - 3] + "..."
 
 
-def build_panel_header(parent, title, help_title, help_text):
-    """Create a standard panel header row with title and help button."""
-    from PySide6.QtWidgets import QHBoxLayout, QLabel, QMessageBox, QPushButton
-    from PySide6.QtCore import Qt as _Qt
-
-    header_row = QHBoxLayout()
-    header_row.setSpacing(8)
-    title_label = QLabel(title)
-    title_label.setStyleSheet("font-weight: 500; font-size: 14px; color: var(--text-strong);")
-    header_row.addWidget(title_label)
-
-    help_btn = QPushButton("?")
-    help_btn.setFixedSize(18, 18)
-    help_btn.setStyleSheet("""
-        QPushButton {
-            background-color: transparent;
-            color: var(--text-weak);
-            border: none;
-            font-weight: 500;
-            font-size: 12px;
-            padding: 0;
-        }
-        QPushButton:hover {
-            color: var(--accent);
-        }
-    """)
-    help_btn.setCursor(_Qt.PointingHandCursor)
-    help_btn.clicked.connect(lambda: QMessageBox.information(parent, help_title, help_text))
-    header_row.addWidget(help_btn)
-    header_row.addStretch()
-    return header_row
-
-
 class CollapsibleBox:
     _id_counter = 0
 

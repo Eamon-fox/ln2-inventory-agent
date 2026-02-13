@@ -9,17 +9,13 @@ from PySide6.QtWidgets import (
     QGroupBox, QTextEdit, QFormLayout, QSpinBox, QCheckBox
 )
 from app_gui.ui.workers import AgentRunWorker
-from app_gui.ui.utils import build_panel_header, compact_json, CollapsibleBox
+from app_gui.ui.utils import compact_json, CollapsibleBox
 from app_gui.event_compactor import compact_operation_event_for_context
 from app_gui.i18n import tr
 from app_gui.plan_outcome import collect_blocked_items, summarize_plan_execution
 from lib.config import AUDIT_LOG_FILE
 import os
 import json
-
-def get_ai_help_text():
-    from app_gui.i18n import tr
-    return tr("ai.helpText")
 
 
 def _is_dark_mode(widget):
@@ -78,8 +74,6 @@ class AIPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
-
-        layout.addLayout(build_panel_header(self, tr("ai.title"), tr("ai.helpTitle"), get_ai_help_text()))
 
         # Controls (hidden, values managed via Settings)
         self.ai_model = QLineEdit()

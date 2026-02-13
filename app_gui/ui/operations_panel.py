@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QFormLayout, QDateEdit, QSpinBox
 )
-from app_gui.ui.utils import build_panel_header, positions_to_text
+from app_gui.ui.utils import positions_to_text
 from app_gui.i18n import tr
 from app_gui.plan_model import render_operation_sheet
 from app_gui.plan_gate import validate_plan_batch
@@ -29,10 +29,6 @@ from lib.plan_item_factory import (
     resolve_record_context,
 )
 from lib.validators import parse_positions
-
-def get_operations_help_text():
-    from app_gui.i18n import tr
-    return tr("operations.helpText")
 
 class OperationsPanel(QWidget):
     operation_completed = Signal(bool)
@@ -68,8 +64,6 @@ class OperationsPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
-
-        layout.addLayout(build_panel_header(self, tr("operations.title"), tr("operations.helpTitle"), get_operations_help_text()))
 
         # Mode Selection
         mode_row = QHBoxLayout()
