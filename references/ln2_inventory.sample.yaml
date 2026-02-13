@@ -2,6 +2,7 @@ meta:
   box_layout:
     rows: 9
     cols: 9
+  custom_fields: []
 
 # Tube-level model: one record == one physical tube.
 inventory:

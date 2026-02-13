@@ -65,7 +65,7 @@ class CollapsibleBox:
     @classmethod
     def render_html(cls, summary, content, is_dark=True, collapsed=True, max_preview_chars=100):
         box_id = cls._next_id()
-        arrow = "▶" if collapsed else "▼"
+        arrow = "&#9654;" if collapsed else "&#9660;"
         display = "none" if collapsed else "block"
         
         preview_text = content[:max_preview_chars] + "..." if len(content) > max_preview_chars else content

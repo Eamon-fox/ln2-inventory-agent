@@ -338,6 +338,27 @@ def run_plan(
         else:
             reports.append(_make_error_item(item, response.get("error_code", "add_failed"), response.get("message", "Add failed")))
 
+    # Phase 1.5: edit operations (each edit is independent)
+    edits = [it for it in remaining if it.get("action") == "edit"]
+    for item in edits:
+        payload = dict(item.get("payload") or {})
+        if mode == "preflight":
+            response = {"ok": True, "message": "Preflight passed (edit)"}
+        else:
+            response = bridge.edit_entry(
+                yaml_path=yaml_path,
+                record_id=payload.get("record_id"),
+                fields=payload.get("fields", {}),
+            )
+
+        if response.get("ok"):
+            reports.append(_make_ok_item(item, response))
+            remaining.remove(item)
+            if response.get("backup_path"):
+                last_backup = response["backup_path"]
+        else:
+            reports.append(_make_error_item(item, response.get("error_code", "edit_failed"), response.get("message", "Edit failed")))
+
     # Phase 2: move operations (holistic validation, then execute as a single batch)
     moves = [it for it in remaining if it.get("action") == "move"]
     if moves:

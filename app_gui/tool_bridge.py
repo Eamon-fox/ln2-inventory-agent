@@ -13,6 +13,7 @@ from lib.tool_api import (
     tool_add_entry,
     tool_batch_thaw,
     tool_collect_timeline,
+    tool_edit_entry,
     tool_generate_stats,
     tool_list_empty_positions,
     tool_list_backups,
@@ -91,6 +92,15 @@ class GuiToolBridge:
             **payload,
         )
 
+    def edit_entry(self, yaml_path, record_id, fields):
+        return tool_edit_entry(
+            yaml_path=yaml_path,
+            record_id=record_id,
+            fields=fields,
+            actor_context=self._ctx(),
+            source="app_gui",
+        )
+
     def record_thaw(self, yaml_path, **payload):
         return tool_record_thaw(
             yaml_path=yaml_path,
@@ -124,7 +134,7 @@ class GuiToolBridge:
         yaml_path,
         query,
         model=None,
-        max_steps=8,
+        max_steps=12,
         history=None,
         on_event=None,
         plan_sink=None,

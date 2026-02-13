@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QStackedWidget, QTableWidget, QTableWidgetItem,
     QHeaderView, QFileDialog, QMessageBox, QGroupBox,
     QAbstractItemView,
-    QFormLayout, QDateEdit, QSpinBox
+    QFormLayout, QDateEdit, QSpinBox, QDoubleSpinBox, QScrollArea, QTextBrowser
 )
 from app_gui.ui.utils import positions_to_text
 from app_gui.ui.theme import get_theme_color
@@ -38,6 +38,7 @@ _ACTION_I18N_KEY = {
     "discard": "overview.discard",
     "move": "operations.move",
     "add": "operations.add",
+    "edit": "operations.edit",
     "rollback": "operations.rollback",
 }
 
@@ -75,20 +76,18 @@ class OperationsPanel(QWidget):
         self._undo_timer = None
         self._undo_remaining = 0
         self._audit_events = []
+        self._current_custom_fields = []
 
         self.setup_ui()
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(0, 0, 0, 4)
         layout.setSpacing(6)
 
         # Mode Selection
-        mode_row = QHBoxLayout()
-        mode_row.addWidget(QLabel(tr("operations.mode")))
-        mode_row.addStretch()
-
         self.op_mode_combo = QComboBox()
+        self.op_mode_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         modes = [
             ("thaw", tr("operations.thaw")),
             ("move", tr("operations.move")),
@@ -100,6 +99,14 @@ class OperationsPanel(QWidget):
         for mode_key, mode_label in modes:
             self.op_mode_combo.addItem(mode_label, mode_key)
         self.op_mode_combo.currentIndexChanged.connect(self.on_mode_changed)
+        mode_row = QHBoxLayout()
+        mode_row.setContentsMargins(9, 0, 9, 0)
+
+        self.quick_add_btn = QPushButton(tr("overview.quickAdd"))
+        self.quick_add_btn.clicked.connect(lambda: self.set_mode("add"))
+        mode_row.addWidget(self.quick_add_btn)
+
+        mode_row.addStretch()
         mode_row.addWidget(self.op_mode_combo)
         layout.addLayout(mode_row)
 
@@ -120,27 +127,41 @@ class OperationsPanel(QWidget):
         layout.addWidget(self.plan_panel, 3)
 
         # Result Summary Card
-        self.result_card = QGroupBox(tr("operations.lastResult"))
-        self.result_card.setStyleSheet("""
-            QGroupBox {
-                background-color: var(--background-inset);
-                border: 1px solid var(--border-weak);
-                border-radius: var(--radius-md);
-                margin-top: 8px;
-                padding-top: 8px;
-            }
-            QGroupBox::title {
-                color: var(--text-weak);
-                font-size: 11px;
-            }
-        """)
+        self.result_card = QWidget()
+        self.result_card.setObjectName("resultCard")
+        self._result_card_base_style = (
+            "QWidget#resultCard {"
+            " background-color: var(--background-inset);"
+            " border: 1px solid var(--border-weak);"
+            " border-radius: var(--radius-md);"
+            "}"
+        )
+        self.result_card.setStyleSheet(self._result_card_base_style)
         result_card_layout = QVBoxLayout(self.result_card)
-        result_card_layout.setContentsMargins(8, 8, 8, 8)
-        self.result_summary = QLabel(tr("operations.noOperations"))
-        self.result_summary.setWordWrap(True)
-        self.result_summary.setTextFormat(Qt.RichText)
-        self.result_summary.setStyleSheet("color: var(--text-strong);")
+        result_card_layout.setContentsMargins(8, 6, 8, 8)
+        result_card_layout.setSpacing(4)
+
+        result_header = QHBoxLayout()
+        result_title = QLabel(tr("operations.lastResult"))
+        result_title.setStyleSheet("color: var(--text-weak); font-size: 13px; font-weight: bold; border: none;")
+        result_header.addWidget(result_title)
+        result_header.addStretch()
+        self._result_hide_btn = QPushButton(tr("operations.hideResult"))
+        self._result_hide_btn.setFixedHeight(20)
+        self._result_hide_btn.clicked.connect(lambda: self.result_card.setVisible(False))
+        result_header.addWidget(self._result_hide_btn)
+        result_card_layout.addLayout(result_header)
+
+        self.result_summary = QTextBrowser()
+        self.result_summary.setOpenExternalLinks(False)
+        self.result_summary.setMaximumHeight(180)
+        self.result_summary.setStyleSheet(
+            "QTextBrowser { color: var(--text-strong); border: none;"
+            " background: transparent; }"
+        )
+        self.result_summary.setHtml(tr("operations.noOperations"))
         result_card_layout.addWidget(self.result_summary)
+
         self.result_card.setVisible(False)
         layout.addWidget(self.result_card)
 
@@ -219,14 +240,55 @@ class OperationsPanel(QWidget):
         self.records_cache = normalized
         self._refresh_thaw_record_context()
         self._refresh_move_record_context()
+        self._refresh_custom_fields()
+
+    def _refresh_custom_fields(self):
+        """Reload custom field definitions from YAML meta and rebuild add form."""
+        from lib.custom_fields import parse_custom_fields
+        from lib.yaml_ops import load_yaml
+        try:
+            yaml_path = self.yaml_path_getter()
+            data = load_yaml(yaml_path)
+            meta = data.get("meta", {})
+            custom_fields = parse_custom_fields(meta)
+        except Exception:
+            custom_fields = []
+        self._current_custom_fields = custom_fields
+        self._rebuild_custom_add_fields(custom_fields)
+
+    def _collect_custom_add_values(self):
+        """Collect values from custom field widgets in the add form."""
+        from lib.custom_fields import coerce_value
+        custom_fields = getattr(self, "_current_custom_fields", [])
+        if not custom_fields:
+            return None
+        result = {}
+        for field_def in custom_fields:
+            key = field_def["key"]
+            widget = self._add_custom_widgets.get(key)
+            if widget is None:
+                continue
+            if isinstance(widget, QSpinBox):
+                raw = widget.value()
+            elif isinstance(widget, QDoubleSpinBox):
+                raw = widget.value()
+            elif isinstance(widget, QDateEdit):
+                raw = widget.date().toString("yyyy-MM-dd")
+            else:
+                raw = widget.text().strip()
+            try:
+                val = coerce_value(raw, field_def.get("type", "str"))
+            except (ValueError, TypeError):
+                val = raw if raw else None
+            if val is not None:
+                result[key] = val
+        return result if result else None
 
     def _apply_thaw_prefill(self, source_info, switch_mode=True):
         payload = dict(source_info or {})
         self.t_prefill_source = payload
         if "record_id" in payload:
             self.t_id.setValue(int(payload["record_id"]))
-        if "position" in payload:
-            self.t_position.setValue(int(payload["position"]))
         self.t_action.setCurrentIndex(0)
         self._refresh_thaw_record_context()
         if switch_mode:
@@ -239,10 +301,9 @@ class OperationsPanel(QWidget):
         self._apply_thaw_prefill(source_info, switch_mode=True)
 
     def set_move_prefill(self, source_info):
+        self._m_prefill_position = source_info.get("position")
         if "record_id" in source_info:
             self.m_id.setValue(int(source_info["record_id"]))
-        if "position" in source_info:
-            self.m_from_position.setValue(int(source_info["position"]))
         self._refresh_move_record_context()
         self.set_mode("move")
 
@@ -283,6 +344,143 @@ class OperationsPanel(QWidget):
             header.setSectionResizeMode(idx, mode)
         table.setSortingEnabled(bool(sortable))
 
+    def _make_readonly_field(self):
+        field = QLineEdit()
+        field.setReadOnly(True)
+        field.setStyleSheet(
+            "QLineEdit[readOnly=\"true\"] {"
+            " background: var(--background-inset);"
+            " border: none;"
+            " color: var(--text-strong);"
+            " padding: 2px 4px;"
+            "}"
+        )
+        return field
+
+    _READONLY_STYLE = (
+        "QLineEdit[readOnly=\"true\"] {"
+        " background: var(--background-inset);"
+        " border: none;"
+        " color: var(--text-strong);"
+        " padding: 2px 4px;"
+        "}"
+    )
+    _EDITING_STYLE = (
+        "QLineEdit {"
+        " background: var(--background-default);"
+        " border: 1px solid var(--accent);"
+        " color: var(--text-strong);"
+        " padding: 2px 4px;"
+        "}"
+    )
+
+    def _make_editable_field(self, field_name, record_id_getter, refresh_callback=None):
+        """Create a read-only field with lock/unlock/confirm inline edit controls.
+
+        Args:
+            field_name: YAML record key (e.g. 'parent_cell_line', 'short_name').
+            record_id_getter: callable returning current record ID (int).
+            refresh_callback: callable to restore original value on cancel.
+        Returns:
+            (container_widget, field_widget) — add container to form, use field for setText.
+        """
+        container = QWidget()
+        row = QHBoxLayout(container)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(2)
+
+        field = QLineEdit()
+        field.setReadOnly(True)
+        field.setStyleSheet(self._READONLY_STYLE)
+        row.addWidget(field, 1)
+
+        lock_btn = QPushButton("\U0001F512")  # 🔒
+        lock_btn.setFixedSize(22, 22)
+        lock_btn.setToolTip(tr("operations.edit"))
+        lock_btn.setStyleSheet("QPushButton { border: none; padding: 0; font-size: 12px; }")
+        row.addWidget(lock_btn)
+
+        confirm_btn = QPushButton("\u2713")  # ✓
+        confirm_btn.setFixedSize(22, 22)
+        confirm_btn.setVisible(False)
+        confirm_btn.setStyleSheet(
+            "QPushButton { border: none; padding: 0; font-size: 14px; font-weight: bold; color: var(--status-success); }"
+        )
+        row.addWidget(confirm_btn)
+
+        def on_lock_toggle():
+            if field.isReadOnly():
+                # Unlock
+                field.setReadOnly(False)
+                field.setStyleSheet(self._EDITING_STYLE)
+                lock_btn.setText("\U0001F513")  # 🔓
+                confirm_btn.setVisible(True)
+                field.setFocus()
+                field.selectAll()
+            else:
+                # Re-lock without saving
+                field.setReadOnly(True)
+                field.setStyleSheet(self._READONLY_STYLE)
+                lock_btn.setText("\U0001F512")  # 🔒
+                confirm_btn.setVisible(False)
+                # Restore original value
+                if refresh_callback:
+                    refresh_callback()
+
+        def on_confirm():
+            rid = record_id_getter()
+            new_value = field.text().strip() or None
+            record = self._lookup_record(rid)
+            if not record:
+                self.status_message.emit(tr("operations.recordNotFound"), 3000, "error")
+                return
+            old_value = record.get(field_name) or None
+            old_str = str(old_value) if old_value is not None else ""
+            new_str = str(new_value) if new_value is not None else ""
+            if old_str == new_str:
+                self.status_message.emit(tr("operations.editNoChange"), 2000, "info")
+                # Re-lock
+                field.setReadOnly(True)
+                field.setStyleSheet(self._READONLY_STYLE)
+                lock_btn.setText("\U0001F512")
+                confirm_btn.setVisible(False)
+                return
+            yaml_path = self.yaml_path_getter()
+            if not yaml_path:
+                return
+            result = self.bridge.edit_entry(
+                yaml_path=yaml_path,
+                record_id=rid,
+                fields={field_name: new_value},
+            )
+            if result.get("ok"):
+                field.setReadOnly(True)
+                field.setStyleSheet(self._READONLY_STYLE)
+                lock_btn.setText("\U0001F512")
+                confirm_btn.setVisible(False)
+                self.status_message.emit(
+                    tr("operations.editFieldSaved", field=field_name, before=old_str, after=new_str),
+                    4000, "success",
+                )
+                self.operation_completed.emit(True)
+                self.operation_event.emit({
+                    "action": "edit_entry",
+                    "record_id": rid,
+                    "field": field_name,
+                    "before": old_str,
+                    "after": new_str,
+                })
+            else:
+                self.status_message.emit(
+                    tr("operations.editFieldFailed", error=result.get("message", "?")),
+                    5000, "error",
+                )
+
+        lock_btn.clicked.connect(on_lock_toggle)
+        confirm_btn.clicked.connect(on_confirm)
+
+        return container, field
+
     # --- ADD TAB ---
     def _build_add_tab(self):
         tab = QWidget()
@@ -311,96 +509,154 @@ class OperationsPanel(QWidget):
         form.addRow(tr("operations.plasmidName"), self.a_plasmid)
         form.addRow(tr("operations.plasmidId"), self.a_plasmid_id)
         form.addRow(tr("operations.note"), self.a_note)
-        layout.addLayout(form)
 
-        self.a_apply_btn = QPushButton(tr("operations.addPlan"))
+        # Custom fields placeholder — populated by _rebuild_custom_add_fields()
+        self._add_custom_form = form
+        self._add_custom_widgets = {}
+
+        self.a_apply_btn = QPushButton(tr("operations.add"))
         self._style_stage_button(self.a_apply_btn)
         self.a_apply_btn.clicked.connect(self.on_add_entry)
-        layout.addWidget(self.a_apply_btn)
+        a_btn_row = QHBoxLayout()
+        a_btn_row.addWidget(self.a_apply_btn)
+        form.addRow("", a_btn_row)
+        layout.addLayout(form)
         layout.addStretch(1)
         return tab
+
+    def _rebuild_custom_add_fields(self, custom_fields):
+        """Rebuild custom field rows in the add form based on meta.custom_fields."""
+        form = self._add_custom_form
+        # Remove old custom widgets
+        for key, widget in self._add_custom_widgets.items():
+            form.removeRow(widget)
+        self._add_custom_widgets = {}
+
+        if not custom_fields:
+            return
+
+        # Insert before the button row (last row)
+        for field_def in custom_fields:
+            key = field_def["key"]
+            label = field_def.get("label", key)
+            ftype = field_def.get("type", "str")
+            default = field_def.get("default")
+
+            if ftype == "int":
+                widget = QSpinBox()
+                widget.setRange(-999999, 999999)
+                if default is not None:
+                    try:
+                        widget.setValue(int(default))
+                    except (ValueError, TypeError):
+                        pass
+            elif ftype == "float":
+                widget = QDoubleSpinBox()
+                widget.setRange(-999999.0, 999999.0)
+                widget.setDecimals(3)
+                if default is not None:
+                    try:
+                        widget.setValue(float(default))
+                    except (ValueError, TypeError):
+                        pass
+            elif ftype == "date":
+                widget = QDateEdit()
+                widget.setCalendarPopup(True)
+                widget.setDisplayFormat("yyyy-MM-dd")
+                widget.setDate(QDate.currentDate())
+            else:
+                widget = QLineEdit()
+                if default is not None:
+                    widget.setText(str(default))
+
+            # Insert before the last row (button row)
+            btn_row_idx = form.rowCount() - 1
+            form.insertRow(btn_row_idx, label, widget)
+            self._add_custom_widgets[key] = widget
 
     # --- THAW TAB ---
     def _build_thaw_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
-        single = QGroupBox(tr("operations.singleOp"))
-        single_form = QFormLayout(single)
+        form = QFormLayout()
+
+        # Editable: record ID
         self.t_id = QSpinBox()
         self.t_id.setRange(1, 999999)
         self.t_id.valueChanged.connect(self._refresh_thaw_record_context)
-        self.t_position = QSpinBox()
-        self.t_position.setRange(1, 999)
-        self.t_position.valueChanged.connect(self._refresh_thaw_record_context)
+        form.addRow(tr("operations.recordId"), self.t_id)
+
+        _t_rid = lambda: self.t_id.value()
+        _t_refresh = lambda: self._refresh_thaw_record_context()
+
+        # Editable context fields (lock/unlock/confirm)
+        t_cell_w, self.t_ctx_cell = self._make_editable_field("parent_cell_line", _t_rid, _t_refresh)
+        t_short_w, self.t_ctx_short = self._make_editable_field("short_name", _t_rid, _t_refresh)
+        t_frozen_w, self.t_ctx_frozen = self._make_editable_field("frozen_at", _t_rid, _t_refresh)
+        t_plasmid_w, self.t_ctx_plasmid = self._make_editable_field("plasmid_name", _t_rid, _t_refresh)
+        t_note_ctx_w, self.t_ctx_note = self._make_editable_field("note", _t_rid, _t_refresh)
+
+        # Read-only context fields (not editable via inline edit)
+        self.t_ctx_box = self._make_readonly_field()
+        self.t_ctx_positions = self._make_readonly_field()
+        self.t_ctx_events = self._make_readonly_field()
+        self.t_ctx_source = self._make_readonly_field()
+
+        form.addRow(tr("overview.ctxCell"), t_cell_w)
+        form.addRow(tr("overview.ctxShort"), t_short_w)
+        form.addRow(tr("overview.ctxBox"), self.t_ctx_box)
+        form.addRow(tr("overview.ctxAllPos"), self.t_ctx_positions)
+        form.addRow(tr("overview.ctxFrozen"), t_frozen_w)
+        form.addRow(tr("overview.ctxPlasmid"), t_plasmid_w)
+        form.addRow(tr("overview.ctxHistory"), self.t_ctx_events)
+        form.addRow(tr("overview.ctxNote"), t_note_ctx_w)
+        form.addRow(tr("overview.ctxSource"), self.t_ctx_source)
+
+        # Editable: target position (populated from record positions)
+        self.t_position = QComboBox()
+        form.addRow(tr("operations.position"), self.t_position)
+
+        # Editable fields
         self.t_date = QDateEdit()
         self.t_date.setCalendarPopup(True)
         self.t_date.setDisplayFormat("yyyy-MM-dd")
         self.t_date.setDate(QDate.currentDate())
-        self.t_action = QComboBox()
-        self.t_action.addItems([tr("overview.takeout"), tr("overview.thaw"), tr("overview.discard")])
         self.t_note = QLineEdit()
 
-        single_form.addRow(tr("operations.recordId"), self.t_id)
-        single_form.addRow(tr("operations.position"), self.t_position)
-        single_form.addRow(tr("operations.date"), self.t_date)
-        single_form.addRow(tr("operations.action"), self.t_action)
-        single_form.addRow(tr("operations.note"), self.t_note)
+        form.addRow(tr("operations.date"), self.t_date)
+        form.addRow(tr("operations.note"), self.t_note)
 
-        self.t_apply_btn = QPushButton(tr("operations.addPlan"))
-        self._style_stage_button(self.t_apply_btn)
-        self.t_apply_btn.clicked.connect(self.on_record_thaw)
-        single_form.addRow("", self.t_apply_btn)
-
-        # Selected record context (read-only terms) is rendered inline with the operation form.
-        context_header = QLabel(tr("operations.selectedContext"))
-        context_header.setProperty("secondary", True)
-        context_header.setStyleSheet("font-weight: 600; margin-top: 6px;")
-        single_form.addRow(context_header)
-
+        # Status
         self.t_ctx_status = QLabel(tr("operations.noPrefill"))
         self.t_ctx_status.setWordWrap(True)
-        self.t_ctx_source = QLabel("-")
-        self.t_ctx_source.setProperty("secondary", True)
-        self.t_ctx_id = QLabel("-")
-        self.t_ctx_id.setProperty("secondary", True)
-        self.t_ctx_cell = QLabel("-")
-        self.t_ctx_cell.setProperty("secondary", True)
-        self.t_ctx_short = QLabel("-")
-        self.t_ctx_short.setProperty("secondary", True)
-        self.t_ctx_box = QLabel("-")
-        self.t_ctx_box.setProperty("secondary", True)
-        self.t_ctx_positions = QLabel("-")
-        self.t_ctx_positions.setProperty("secondary", True)
-        self.t_ctx_target = QLabel("-")
-        self.t_ctx_target.setProperty("secondary", True)
-        self.t_ctx_check = QLabel("-")
-        self.t_ctx_frozen = QLabel("-")
-        self.t_ctx_frozen.setProperty("secondary", True)
-        self.t_ctx_plasmid = QLabel("-")
-        self.t_ctx_plasmid.setProperty("secondary", True)
-        self.t_ctx_events = QLabel("-")
-        self.t_ctx_events.setProperty("secondary", True)
-        self.t_ctx_events.setWordWrap(True)
-        self.t_ctx_note = QLabel("-")
-        self.t_ctx_note.setProperty("secondary", True)
-        self.t_ctx_note.setWordWrap(True)
+        form.addRow(tr("overview.ctxStatus"), self.t_ctx_status)
 
-        single_form.addRow(tr("overview.ctxStatus"), self.t_ctx_status)
-        single_form.addRow(tr("overview.ctxSource"), self.t_ctx_source)
-        single_form.addRow(tr("overview.ctxId"), self.t_ctx_id)
-        single_form.addRow(tr("overview.ctxCell"), self.t_ctx_cell)
-        single_form.addRow(tr("overview.ctxShort"), self.t_ctx_short)
-        single_form.addRow(tr("overview.ctxBox"), self.t_ctx_box)
-        single_form.addRow(tr("overview.ctxAllPos"), self.t_ctx_positions)
-        single_form.addRow(tr("overview.ctxTarget"), self.t_ctx_target)
-        single_form.addRow(tr("overview.ctxCheck"), self.t_ctx_check)
-        single_form.addRow(tr("overview.ctxFrozen"), self.t_ctx_frozen)
-        single_form.addRow(tr("overview.ctxPlasmid"), self.t_ctx_plasmid)
-        single_form.addRow(tr("overview.ctxHistory"), self.t_ctx_events)
-        single_form.addRow(tr("overview.ctxNote"), self.t_ctx_note)
+        # Kept for compatibility
+        self.t_ctx_id = self.t_id
+        self.t_ctx_target = self.t_position
+        self.t_ctx_check = QLabel()
+        self.t_action = QComboBox()  # hidden, kept for compat
+        self.t_action.addItem(tr("overview.takeout"), "Takeout")
+        self.t_action.addItem(tr("overview.thaw"), "Thaw")
+        self.t_action.addItem(tr("overview.discard"), "Discard")
 
-        layout.addWidget(single)
+        # Action buttons at bottom
+        btn_row = QHBoxLayout()
+        self.t_takeout_btn = QPushButton(tr("overview.takeout"))
+        self.t_thaw_btn = QPushButton(tr("overview.thaw"))
+        self.t_discard_btn = QPushButton(tr("overview.discard"))
+        for btn in (self.t_takeout_btn, self.t_thaw_btn, self.t_discard_btn):
+            self._style_stage_button(btn)
+            btn_row.addWidget(btn)
+        self.t_takeout_btn.clicked.connect(lambda: self._record_thaw_with_action("Takeout"))
+        self.t_thaw_btn.clicked.connect(lambda: self._record_thaw_with_action("Thaw"))
+        self.t_discard_btn.clicked.connect(lambda: self._record_thaw_with_action("Discard"))
+        # Keep t_apply_btn as alias for the first button (compat)
+        self.t_apply_btn = self.t_takeout_btn
+        form.addRow("", btn_row)
+
+        layout.addLayout(form)
 
         # Keep batch controls instantiated for programmatic/API paths, but hide from manual UI.
         self._init_hidden_batch_thaw_controls(tab)
@@ -412,85 +668,83 @@ class OperationsPanel(QWidget):
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
-        # --- Single Move ---
-        single = QGroupBox(tr("operations.singleMove"))
-        single_form = QFormLayout(single)
+        form = QFormLayout()
+
+        # Editable: record ID
         self.m_id = QSpinBox()
         self.m_id.setRange(1, 999999)
         self.m_id.valueChanged.connect(self._refresh_move_record_context)
-        self.m_from_position = QSpinBox()
-        self.m_from_position.setRange(1, 999)
-        self.m_from_position.valueChanged.connect(self._refresh_move_record_context)
+        form.addRow(tr("operations.recordId"), self.m_id)
+
+        _m_rid = lambda: self.m_id.value()
+        _m_refresh = lambda: self._refresh_move_record_context()
+
+        # Editable context fields (lock/unlock/confirm)
+        m_cell_w, self.m_ctx_cell = self._make_editable_field("parent_cell_line", _m_rid, _m_refresh)
+        m_short_w, self.m_ctx_short = self._make_editable_field("short_name", _m_rid, _m_refresh)
+        m_frozen_w, self.m_ctx_frozen = self._make_editable_field("frozen_at", _m_rid, _m_refresh)
+        m_plasmid_w, self.m_ctx_plasmid = self._make_editable_field("plasmid_name", _m_rid, _m_refresh)
+        m_note_ctx_w, self.m_ctx_note = self._make_editable_field("note", _m_rid, _m_refresh)
+
+        # Read-only context fields (not editable via inline edit)
+        self.m_ctx_box = self._make_readonly_field()
+        self.m_ctx_positions = self._make_readonly_field()
+        self.m_ctx_events = self._make_readonly_field()
+
+        form.addRow(tr("overview.ctxCell"), m_cell_w)
+        form.addRow(tr("overview.ctxShort"), m_short_w)
+        form.addRow(tr("overview.ctxBox"), self.m_ctx_box)
+        form.addRow(tr("overview.ctxAllPos"), self.m_ctx_positions)
+        form.addRow(tr("overview.ctxFrozen"), m_frozen_w)
+        form.addRow(tr("overview.ctxPlasmid"), m_plasmid_w)
+        form.addRow(tr("overview.ctxHistory"), self.m_ctx_events)
+        form.addRow(tr("overview.ctxNote"), m_note_ctx_w)
+
+        # Editable: move fields
+        self.m_from_position = QComboBox()
         self.m_to_position = QSpinBox()
         self.m_to_position.setRange(1, 999)
         self.m_to_position.valueChanged.connect(self._refresh_move_record_context)
         self.m_to_box = QSpinBox()
         self.m_to_box.setRange(0, 99)
         self.m_to_box.setSpecialValueText(tr("operations.sameBox"))
+
+        form.addRow(tr("operations.fromPosition"), self.m_from_position)
+        form.addRow(tr("operations.toPosition"), self.m_to_position)
+        form.addRow(tr("operations.toBox"), self.m_to_box)
+
+        # Read-only: move direction
+        self.m_ctx_target = self._make_readonly_field()
+        form.addRow(tr("overview.ctxMove"), self.m_ctx_target)
+
+        # Editable fields
         self.m_date = QDateEdit()
         self.m_date.setCalendarPopup(True)
         self.m_date.setDisplayFormat("yyyy-MM-dd")
         self.m_date.setDate(QDate.currentDate())
         self.m_note = QLineEdit()
 
-        single_form.addRow(tr("operations.recordId"), self.m_id)
-        single_form.addRow(tr("operations.fromPosition"), self.m_from_position)
-        single_form.addRow(tr("operations.toPosition"), self.m_to_position)
-        single_form.addRow(tr("operations.toBox"), self.m_to_box)
-        single_form.addRow(tr("operations.date"), self.m_date)
-        single_form.addRow(tr("operations.note"), self.m_note)
+        form.addRow(tr("operations.date"), self.m_date)
+        form.addRow(tr("operations.note"), self.m_note)
 
-        self.m_apply_btn = QPushButton(tr("operations.addPlan"))
-        self._style_stage_button(self.m_apply_btn)
-        self.m_apply_btn.clicked.connect(self.on_record_move)
-        single_form.addRow("", self.m_apply_btn)
-
-        # Selected record context (read-only terms) is rendered inline with the operation form.
-        context_header = QLabel(tr("operations.selectedContext"))
-        context_header.setProperty("secondary", True)
-        context_header.setStyleSheet("font-weight: 600; margin-top: 6px;")
-        single_form.addRow(context_header)
-
+        # Status
         self.m_ctx_status = QLabel(tr("operations.noPrefill"))
         self.m_ctx_status.setWordWrap(True)
-        self.m_ctx_id = QLabel("-")
-        self.m_ctx_id.setProperty("secondary", True)
-        self.m_ctx_cell = QLabel("-")
-        self.m_ctx_cell.setProperty("secondary", True)
-        self.m_ctx_short = QLabel("-")
-        self.m_ctx_short.setProperty("secondary", True)
-        self.m_ctx_box = QLabel("-")
-        self.m_ctx_box.setProperty("secondary", True)
-        self.m_ctx_positions = QLabel("-")
-        self.m_ctx_positions.setProperty("secondary", True)
-        self.m_ctx_target = QLabel("-")
-        self.m_ctx_target.setProperty("secondary", True)
-        self.m_ctx_check = QLabel("-")
-        self.m_ctx_frozen = QLabel("-")
-        self.m_ctx_frozen.setProperty("secondary", True)
-        self.m_ctx_plasmid = QLabel("-")
-        self.m_ctx_plasmid.setProperty("secondary", True)
-        self.m_ctx_events = QLabel("-")
-        self.m_ctx_events.setProperty("secondary", True)
-        self.m_ctx_events.setWordWrap(True)
-        self.m_ctx_note = QLabel("-")
-        self.m_ctx_note.setProperty("secondary", True)
-        self.m_ctx_note.setWordWrap(True)
+        form.addRow(tr("overview.ctxStatus"), self.m_ctx_status)
 
-        single_form.addRow(tr("overview.ctxStatus"), self.m_ctx_status)
-        single_form.addRow(tr("overview.ctxId"), self.m_ctx_id)
-        single_form.addRow(tr("overview.ctxCell"), self.m_ctx_cell)
-        single_form.addRow(tr("overview.ctxShort"), self.m_ctx_short)
-        single_form.addRow(tr("overview.ctxBox"), self.m_ctx_box)
-        single_form.addRow(tr("overview.ctxAllPos"), self.m_ctx_positions)
-        single_form.addRow(tr("overview.ctxMove"), self.m_ctx_target)
-        single_form.addRow(tr("overview.ctxCheck"), self.m_ctx_check)
-        single_form.addRow(tr("overview.ctxFrozen"), self.m_ctx_frozen)
-        single_form.addRow(tr("overview.ctxPlasmid"), self.m_ctx_plasmid)
-        single_form.addRow(tr("overview.ctxHistory"), self.m_ctx_events)
-        single_form.addRow(tr("overview.ctxNote"), self.m_ctx_note)
+        # Kept for compatibility
+        self.m_ctx_id = self.m_id
+        self.m_ctx_check = QLabel()  # hidden, kept for refresh method compat
 
-        layout.addWidget(single)
+        # Button at bottom
+        m_btn_row = QHBoxLayout()
+        self.m_apply_btn = QPushButton(tr("operations.move"))
+        self._style_stage_button(self.m_apply_btn)
+        self.m_apply_btn.clicked.connect(self.on_record_move)
+        m_btn_row.addWidget(self.m_apply_btn)
+        form.addRow("", m_btn_row)
+
+        layout.addLayout(form)
 
         # Keep batch controls instantiated for programmatic/API paths, but hide from manual UI.
         self._init_hidden_batch_move_controls(tab)
@@ -564,6 +818,7 @@ class OperationsPanel(QWidget):
     def _build_plan_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
+        layout.setContentsMargins(9, 0, 9, 0)
 
         self.plan_empty_label = QLabel(tr("operations.emptyPlan"))
         self.plan_empty_label.setAlignment(Qt.AlignCenter)
@@ -594,8 +849,6 @@ class OperationsPanel(QWidget):
         self.plan_remove_selected_btn.clicked.connect(self.remove_selected_plan_items)
         toolbar.addWidget(self.plan_remove_selected_btn)
 
-        toolbar.addStretch(1)
-
         self.plan_exec_btn = QPushButton(tr("operations.executeAll"))
         self._style_execute_button(self.plan_exec_btn)
         self.plan_exec_btn.clicked.connect(self.execute_plan)
@@ -610,6 +863,8 @@ class OperationsPanel(QWidget):
         self.plan_clear_btn.setEnabled(False)
         self.plan_clear_btn.clicked.connect(self.clear_plan)
         toolbar.addWidget(self.plan_clear_btn)
+
+        toolbar.addStretch(1)
         layout.addLayout(toolbar)
         return tab
 
@@ -753,7 +1008,6 @@ class OperationsPanel(QWidget):
 
     def _refresh_thaw_record_context(self):
         record_id = self.t_id.value()
-        source_position = self.t_position.value()
         record = self._lookup_record(record_id)
 
         source_text = "-"
@@ -764,19 +1018,15 @@ class OperationsPanel(QWidget):
                 source_text = tr("operations.boxSourceText", box=source_box, position=source_prefill)
         self.t_ctx_source.setText(source_text)
 
-        target_text = str(source_position) if source_position else "-"
-        self.t_ctx_target.setText(target_text)
-        self.t_ctx_id.setText(str(record_id) if record_id else "-")
-
         if not record:
             self.t_ctx_status.setText(tr("operations.recordNotFound"))
             self.t_ctx_status.setStyleSheet("color: var(--status-warning);")
+            self.t_position.clear()
             for lbl in [
                 self.t_ctx_cell,
                 self.t_ctx_short,
                 self.t_ctx_box,
                 self.t_ctx_positions,
-                self.t_ctx_check,
                 self.t_ctx_frozen,
                 self.t_ctx_plasmid,
                 self.t_ctx_events,
@@ -802,6 +1052,24 @@ class OperationsPanel(QWidget):
         self.t_ctx_plasmid.setText(str(plasmid))
         self.t_ctx_note.setText(str(record.get("note") or "-"))
 
+        # Populate position combo
+        prev = self.t_position.currentData()
+        self.t_position.blockSignals(True)
+        self.t_position.clear()
+        for p in sorted(int(x) for x in positions):
+            self.t_position.addItem(str(p), p)
+        # Restore previous selection or prefill
+        restore = None
+        if self.t_prefill_source:
+            restore = self.t_prefill_source.get("position")
+        if restore is None:
+            restore = prev
+        if restore is not None:
+            idx = self.t_position.findData(int(restore))
+            if idx >= 0:
+                self.t_position.setCurrentIndex(idx)
+        self.t_position.blockSignals(False)
+
         # History
         events = record.get("thaw_events") or []
         if events:
@@ -820,20 +1088,6 @@ class OperationsPanel(QWidget):
             )
         else:
             self.t_ctx_events.setText(tr("operations.noHistory"))
-
-        # Check
-        pos_ok = False
-        try:
-            pos_ok = int(source_position) in {int(p) for p in positions}
-        except Exception:
-            pos_ok = False
-
-        if not pos_ok:
-            self.t_ctx_check.setText(tr("operations.posWarning"))
-            self.t_ctx_check.setStyleSheet("color: var(--status-error);")
-        else:
-            self.t_ctx_check.setText(tr("operations.posOk"))
-            self.t_ctx_check.setStyleSheet("color: var(--status-success);")
 
     def _confirm_execute(self, title, details):
         msg = QMessageBox(self)
@@ -855,6 +1109,9 @@ class OperationsPanel(QWidget):
             self.status_message.emit(str(exc), 5000, "error")
             return
 
+        # Collect custom field values
+        custom_data = self._collect_custom_add_values()
+
         item = build_add_plan_item(
             parent_cell_line=self.a_parent.text(),
             short_name=self.a_short.text(),
@@ -864,13 +1121,22 @@ class OperationsPanel(QWidget):
             plasmid_name=self.a_plasmid.text() or None,
             plasmid_id=self.a_plasmid_id.text() or None,
             note=self.a_note.text() or None,
+            custom_data=custom_data or None,
             source="human",
         )
         self.add_plan_items([item])
 
+    def _record_thaw_with_action(self, action_text):
+        idx = self.t_action.findData(action_text)
+        if idx >= 0:
+            self.t_action.setCurrentIndex(idx)
+        else:
+            self.t_action.setCurrentText(action_text)
+        self.on_record_thaw()
+
     def on_record_thaw(self):
         self._ensure_today_defaults()
-        action_text = self.t_action.currentText()
+        action_text = self.t_action.currentData() or self.t_action.currentText()
 
         record = self._lookup_record(self.t_id.value())
         fallback_box = int((self.t_prefill_source or {}).get("box", 0) or 0)
@@ -878,7 +1144,7 @@ class OperationsPanel(QWidget):
         item = build_record_plan_item(
             action=action_text,
             record_id=self.t_id.value(),
-            position=self.t_position.value(),
+            position=self.t_position.currentData(),
             box=box,
             label=label,
             date_str=self.t_date.date().toString("yyyy-MM-dd"),
@@ -891,7 +1157,7 @@ class OperationsPanel(QWidget):
     def on_record_move(self):
         self._ensure_today_defaults()
 
-        from_pos = self.m_from_position.value()
+        from_pos = self.m_from_position.currentData()
         to_pos = self.m_to_position.value()
         to_box = self.m_to_box.value() if self.m_to_box.value() > 0 else None
         if from_pos == to_pos and to_box is None:
@@ -1002,19 +1268,17 @@ class OperationsPanel(QWidget):
             return
 
         record_id = self.m_id.value()
-        from_pos = self.m_from_position.value()
         to_pos = self.m_to_position.value()
         record = self._lookup_record(record_id)
-
-        self.m_ctx_target.setText(f"{from_pos} -> {to_pos}")
-        self.m_ctx_id.setText(str(record_id) if record_id else "-")
 
         if not record:
             self.m_ctx_status.setText(tr("operations.recordNotFound"))
             self.m_ctx_status.setStyleSheet("color: var(--status-warning);")
+            self.m_from_position.clear()
+            self.m_ctx_target.setText("-")
             for lbl in [
                 self.m_ctx_cell, self.m_ctx_short, self.m_ctx_box,
-                self.m_ctx_positions, self.m_ctx_check, self.m_ctx_frozen,
+                self.m_ctx_positions, self.m_ctx_frozen,
                 self.m_ctx_plasmid, self.m_ctx_events, self.m_ctx_note,
             ]:
                 lbl.setText("-")
@@ -1033,6 +1297,25 @@ class OperationsPanel(QWidget):
         self.m_ctx_plasmid.setText(str(plasmid))
         self.m_ctx_note.setText(str(record.get("note") or "-"))
 
+        # Populate from-position combo
+        prev = self.m_from_position.currentData()
+        self.m_from_position.blockSignals(True)
+        self.m_from_position.clear()
+        for p in sorted(int(x) for x in positions):
+            self.m_from_position.addItem(str(p), p)
+        restore = getattr(self, "_m_prefill_position", None)
+        if restore is None:
+            restore = prev
+        if restore is not None:
+            idx = self.m_from_position.findData(int(restore))
+            if idx >= 0:
+                self.m_from_position.setCurrentIndex(idx)
+        self._m_prefill_position = None
+        self.m_from_position.blockSignals(False)
+
+        from_pos = self.m_from_position.currentData()
+        self.m_ctx_target.setText(f"{from_pos} -> {to_pos}")
+
         events = record.get("thaw_events") or []
         if events:
             last = events[-1]
@@ -1050,22 +1333,6 @@ class OperationsPanel(QWidget):
             )
         else:
             self.m_ctx_events.setText(tr("operations.noHistory"))
-
-        pos_ok = False
-        try:
-            pos_ok = int(from_pos) in {int(p) for p in positions}
-        except Exception:
-            pos_ok = False
-
-        if not pos_ok:
-            self.m_ctx_check.setText(tr("operations.fromPosWarning"))
-            self.m_ctx_check.setStyleSheet("color: var(--status-error);")
-        elif from_pos == to_pos:
-            self.m_ctx_check.setText(tr("operations.posSameWarning"))
-            self.m_ctx_check.setStyleSheet("color: var(--status-error);")
-        else:
-            self.m_ctx_check.setText(tr("operations.posOk"))
-            self.m_ctx_check.setStyleSheet("color: var(--status-success);")
 
     def _collect_batch_from_table(self):
         """Collect entries from the mini-table. Returns list of tuples or None if empty."""
@@ -1238,7 +1505,7 @@ class OperationsPanel(QWidget):
                 )
 
             self.result_summary.setText("<br/>".join(lines))
-            self.result_card.setStyleSheet("QGroupBox { border: 1px solid var(--success); }")
+            self.result_card.setStyleSheet(self._result_card_base_style.replace("var(--border-weak)", "var(--success)"))
         else:
             msg = payload.get("message", tr("operations.unknownError"))
             error_code = payload.get("error_code", "")
@@ -1247,7 +1514,7 @@ class OperationsPanel(QWidget):
             if error_code:
                 lines.append(f"<span style='color: var(--status-muted);'>{tr('operations.codeLabel', code=error_code)}</span>")
             self.result_summary.setText("<br/>".join(lines))
-            self.result_card.setStyleSheet("QGroupBox { border: 1px solid var(--error); }")
+            self.result_card.setStyleSheet(self._result_card_base_style.replace("var(--border-weak)", "var(--error)"))
 
         self.result_card.setVisible(True)
 
@@ -1278,12 +1545,12 @@ class OperationsPanel(QWidget):
         model = self.plan_table.selectionModel()
         if model is None:
             return []
-        rows = []
-        for model_index in model.selectedRows():
+        rows = set()
+        for model_index in model.selectedIndexes():
             row = model_index.row()
             if 0 <= row < len(self.plan_items):
-                rows.append(row)
-        return sorted(set(rows))
+                rows.add(row)
+        return sorted(rows)
 
     def _refresh_plan_toolbar_state(self):
         if not hasattr(self, "plan_table"):
@@ -1336,12 +1603,38 @@ class OperationsPanel(QWidget):
             self.status_message.emit(tr("operations.planNoSelection"), 2000, "warning")
             return
 
+        removed_items = [self.plan_items[r] for r in rows if 0 <= r < len(self.plan_items)]
         removed_count = self._remove_plan_rows(rows)
         if removed_count == 0:
             self.status_message.emit(tr("operations.planNoRemoved"), 2000, "warning")
             return
         self.status_message.emit(
             tr("operations.planRemovedCount", count=removed_count), 2000, "info"
+        )
+
+        action_counts = {}
+        sample = []
+        for item in removed_items:
+            action = str(item.get("action") or "?")
+            action_counts[action] = action_counts.get(action, 0) + 1
+            if len(sample) < 8:
+                label = item.get("label") or item.get("record_id") or "-"
+                box = item.get("box")
+                pos = item.get("position")
+                desc = f"{action} {label}"
+                if box not in (None, "") and pos not in (None, ""):
+                    desc += f" @ Box {box}:{pos}"
+                sample.append(desc)
+
+        self._emit_operation_event(
+            {
+                "type": "plan_removed",
+                "source": "operations_panel",
+                "removed_count": removed_count,
+                "total_count": len(self.plan_items),
+                "action_counts": action_counts,
+                "sample": sample,
+            }
         )
 
     def _remove_plan_rows(self, rows):
@@ -1425,6 +1718,38 @@ class OperationsPanel(QWidget):
             self._update_execute_button_state()
             self.plan_preview_updated.emit(list(self.plan_items))
             self.status_message.emit(tr("operations.planAddedCount", count=added), 2000, "info")
+
+            action_counts = {}
+            sample = []
+            for item in accepted:
+                action = str(item.get("action") or "?")
+                action_counts[action] = action_counts.get(action, 0) + 1
+                if len(sample) < 8:
+                    label = item.get("label") or item.get("record_id") or "-"
+                    box = item.get("box")
+                    pos = item.get("position")
+                    desc = f"{action} {label}"
+                    if box not in (None, "") and pos not in (None, ""):
+                        desc += f" @ Box {box}:{pos}"
+                    to_pos = item.get("to_position")
+                    to_box = item.get("to_box")
+                    if to_pos not in (None, ""):
+                        if to_box not in (None, ""):
+                            desc += f" -> Box {to_box}:{to_pos}"
+                        else:
+                            desc += f" -> {to_pos}"
+                    sample.append(desc)
+
+            self._emit_operation_event(
+                {
+                    "type": "plan_staged",
+                    "source": "operations_panel",
+                    "added_count": added,
+                    "total_count": len(self.plan_items),
+                    "action_counts": action_counts,
+                    "sample": sample,
+                }
+            )
 
     def _run_plan_preflight(self, trigger="manual"):
         """Run preflight validation on current plan items."""
@@ -1798,14 +2123,14 @@ class OperationsPanel(QWidget):
                     )
             self.result_summary.setText("<br/>".join(lines))
             border_color = "var(--warning)" if execution_stats.get("rollback_ok") else "var(--error)"
-            self.result_card.setStyleSheet(f"QGroupBox {{ border: 1px solid {border_color}; }}")
+            self.result_card.setStyleSheet(self._result_card_base_style.replace("var(--border-weak)", border_color))
         else:
             lines = [
                 f"<b style='color: var(--status-success);'>{tr('operations.planExecutionSuccess')}</b>",
                 tr("operations.planExecutionSuccessSummary", applied=applied_count, total=applied_count),
             ]
             self.result_summary.setText("<br/>".join(lines))
-            self.result_card.setStyleSheet("QGroupBox { border: 1px solid var(--success); }")
+            self.result_card.setStyleSheet(self._result_card_base_style.replace("var(--border-weak)", "var(--success)"))
 
         self.result_card.setVisible(True)
 
@@ -1944,19 +2269,22 @@ class OperationsPanel(QWidget):
             )
 
     def _render_query_results(self, records):
-        self._setup_table(
-            self.query_table,
-            [
-                tr("operations.colId"),
-                tr("operations.colCell"),
-                tr("operations.colShort"),
-                tr("operations.colBox"),
-                tr("operations.colPositions"),
-                tr("operations.colFrozenAt"),
-                tr("operations.colPlasmidId"),
-                tr("operations.colNote"),
-            ],
-        )
+        custom_fields = getattr(self, "_current_custom_fields", [])
+        headers = [
+            tr("operations.colId"),
+            tr("operations.colCell"),
+            tr("operations.colShort"),
+            tr("operations.colBox"),
+            tr("operations.colPositions"),
+            tr("operations.colFrozenAt"),
+            tr("operations.colPlasmidName"),
+            tr("operations.colPlasmidId"),
+            tr("operations.colNote"),
+        ]
+        for cf in custom_fields:
+            headers.append(cf.get("label", cf["key"]))
+
+        self._setup_table(self.query_table, headers)
         rows = [rec for rec in records if isinstance(rec, dict)]
         for row, rec in enumerate(rows):
             self.query_table.insertRow(row)
@@ -1966,8 +2294,11 @@ class OperationsPanel(QWidget):
             self.query_table.setItem(row, 3, QTableWidgetItem(str(rec.get("box"))))
             self.query_table.setItem(row, 4, QTableWidgetItem(positions_to_text(rec.get("positions"))))
             self.query_table.setItem(row, 5, QTableWidgetItem(str(rec.get("frozen_at"))))
-            self.query_table.setItem(row, 6, QTableWidgetItem(str(rec.get("plasmid_id", ""))))
-            self.query_table.setItem(row, 7, QTableWidgetItem(str(rec.get("note", ""))))
+            self.query_table.setItem(row, 6, QTableWidgetItem(str(rec.get("plasmid_name", ""))))
+            self.query_table.setItem(row, 7, QTableWidgetItem(str(rec.get("plasmid_id", ""))))
+            self.query_table.setItem(row, 8, QTableWidgetItem(str(rec.get("note", ""))))
+            for ci, cf in enumerate(custom_fields):
+                self.query_table.setItem(row, 9 + ci, QTableWidgetItem(str(rec.get(cf["key"], ""))))
         self.query_info.setText(tr("operations.foundRecords", count=len(rows)))
 
     def _render_empty_results(self, boxes):
@@ -2247,13 +2578,11 @@ class OperationsPanel(QWidget):
                 preview = json.dumps(details, ensure_ascii=False)
             except Exception:
                 preview = str(details)
-            if len(preview) > 240:
-                preview = preview[:240] + "..."
             lines.append(f"<span style='color: var(--status-muted);'>{tr('operations.detailsLabel')}</span> {preview}")
 
         self.result_summary.setText("<br/>".join(lines))
         border = "var(--success)" if status == "success" else "var(--error)"
-        self.result_card.setStyleSheet(f"QGroupBox {{ border: 1px solid {border}; }}")
+        self.result_card.setStyleSheet(self._result_card_base_style.replace("var(--border-weak)", border))
         self.result_card.setVisible(True)
 
     def _get_selected_audit_events(self):
@@ -2299,7 +2628,7 @@ class OperationsPanel(QWidget):
                     f"{tr('operations.warningsLabel')} {len(warnings)}<br/>{preview}{more}"
                 )
             self.result_summary.setText("<br/>".join(lines))
-            self.result_card.setStyleSheet("QGroupBox { border: 1px solid var(--error); }")
+            self.result_card.setStyleSheet(self._result_card_base_style.replace("var(--border-weak)", "var(--error)"))
             self.result_card.setVisible(True)
             self.status_message.emit(tr("operations.noPrintableAuditGuide"), 3500, "error")
             return
@@ -2321,7 +2650,7 @@ class OperationsPanel(QWidget):
                 f"{tr('operations.warningsLabel')} {len(warnings)}<br/>{preview}{more}"
             )
         self.result_summary.setText("<br/>".join(lines))
-        self.result_card.setStyleSheet("QGroupBox { border: 1px solid var(--success); }")
+        self.result_card.setStyleSheet(self._result_card_base_style.replace("var(--border-weak)", "var(--success)"))
         self.result_card.setVisible(True)
         self.status_message.emit(
             tr("operations.generatedFinalOperations", count=len(items)),
@@ -2417,3 +2746,16 @@ class OperationsPanel(QWidget):
         if response.get("ok") and executed_plan_backup:
             self.plan_items = executed_plan_backup
             self._refresh_plan_table()
+
+            action_counts = {}
+            for item in executed_plan_backup:
+                action = str(item.get("action") or "?")
+                action_counts[action] = action_counts.get(action, 0) + 1
+            self._emit_operation_event(
+                {
+                    "type": "plan_restored",
+                    "source": "operations_panel",
+                    "restored_count": len(executed_plan_backup),
+                    "action_counts": action_counts,
+                }
+            )

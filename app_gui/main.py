@@ -142,6 +142,20 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(theme_group)
 
+        about_group = QGroupBox(tr("settings.about"))
+        about_layout = QVBoxLayout(about_group)
+        about_label = QLabel(
+            f'{tr("app.title")}  v1.0<br>'
+            f'{tr("settings.aboutDesc")}<br><br>'
+            f'GitHub: <a href="https://github.com/Eamon-fox/ln2-inventory-agent">'
+            f'Eamon-fox/ln2-inventory-agent</a>'
+        )
+        about_label.setOpenExternalLinks(True)
+        about_label.setWordWrap(True)
+        about_label.setStyleSheet("color: var(--text-muted); font-size: 12px; padding: 4px;")
+        about_layout.addWidget(about_label)
+        layout.addWidget(about_group)
+
         layout.addStretch()
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -177,6 +191,82 @@ class SettingsDialog(QDialog):
             "ai_thinking_enabled": self.ai_thinking_enabled.isChecked(),
             "ai_thinking_expanded": self.ai_thinking_expanded.isChecked(),
         }
+
+
+_BOX_PRESETS = [
+    ("9 x 9  (81)", 9, 9),
+    ("10 x 10  (100)", 10, 10),
+    ("8 x 12  (96)", 8, 12),
+    ("5 x 5  (25)", 5, 5),
+]
+
+
+class NewDatasetDialog(QDialog):
+    """Dialog for choosing box layout when creating a new dataset."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("main.newDatasetLayout"))
+        self.setMinimumWidth(360)
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+
+        self.preset_combo = QComboBox()
+        for label, _r, _c in _BOX_PRESETS:
+            self.preset_combo.addItem(label)
+        self.preset_combo.addItem(tr("main.custom"))
+        self.preset_combo.currentIndexChanged.connect(self._on_preset_changed)
+        form.addRow(tr("main.boxSize"), self.preset_combo)
+
+        self.rows_spin = QSpinBox()
+        self.rows_spin.setRange(1, 26)
+        self.rows_spin.setValue(9)
+        self.rows_spin.setEnabled(False)
+        form.addRow(tr("main.rows"), self.rows_spin)
+
+        self.cols_spin = QSpinBox()
+        self.cols_spin.setRange(1, 26)
+        self.cols_spin.setValue(9)
+        self.cols_spin.setEnabled(False)
+        form.addRow(tr("main.cols"), self.cols_spin)
+
+        self.box_count_spin = QSpinBox()
+        self.box_count_spin.setRange(1, 50)
+        self.box_count_spin.setValue(5)
+        form.addRow(tr("main.boxCount"), self.box_count_spin)
+
+        self.indexing_combo = QComboBox()
+        self.indexing_combo.addItem(tr("main.indexNumeric"), "numeric")
+        self.indexing_combo.addItem(tr("main.indexAlpha"), "alphanumeric")
+        form.addRow(tr("main.indexing"), self.indexing_combo)
+
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _on_preset_changed(self, index):
+        is_custom = index >= len(_BOX_PRESETS)
+        self.rows_spin.setEnabled(is_custom)
+        self.cols_spin.setEnabled(is_custom)
+        if not is_custom:
+            _, r, c = _BOX_PRESETS[index]
+            self.rows_spin.setValue(r)
+            self.cols_spin.setValue(c)
+
+    def get_layout(self):
+        result = {
+            "rows": self.rows_spin.value(),
+            "cols": self.cols_spin.value(),
+            "box_count": self.box_count_spin.value(),
+        }
+        indexing = self.indexing_combo.currentData()
+        if indexing and indexing != "numeric":
+            result["indexing"] = indexing
+        return result
 
 
 class MainWindow(QMainWindow):
@@ -247,16 +337,19 @@ class MainWindow(QMainWindow):
         # Panels
         splitter = QSplitter(Qt.Horizontal)
         splitter.setChildrenCollapsible(False)
-        splitter.setHandleWidth(1)
+        splitter.setHandleWidth(6)
 
         self.overview_panel = OverviewPanel(self.bridge, lambda: self.current_yaml_path)
         self.operations_panel = OperationsPanel(self.bridge, lambda: self.current_yaml_path)
         self.ai_panel = AIPanel(self.bridge, lambda: self.current_yaml_path)
 
-        self.overview_panel.setMinimumWidth(320)
-        self.operations_panel.setMinimumWidth(280)
-        self.ai_panel.setMinimumWidth(320)
-        self.operations_panel.setMaximumWidth(480)
+        screen = QApplication.primaryScreen()
+        sw = screen.availableGeometry().width() if screen else 1920
+
+        self.overview_panel.setMinimumWidth(int(sw * 0.15))
+        self.operations_panel.setMinimumWidth(int(sw * 0.10))
+        self.ai_panel.setMinimumWidth(int(sw * 0.12))
+        self.ai_panel.setMaximumWidth(int(sw * 0.22))
 
         splitter.addWidget(self.overview_panel)
         splitter.addWidget(self.operations_panel)
@@ -264,7 +357,7 @@ class MainWindow(QMainWindow):
 
         splitter.setStretchFactor(0, 5)
         splitter.setStretchFactor(1, 3)
-        splitter.setStretchFactor(2, 4)
+        splitter.setStretchFactor(2, 2)
         root.addWidget(splitter, 1)
 
         self.setCentralWidget(container)
@@ -281,7 +374,6 @@ class MainWindow(QMainWindow):
         self.overview_panel.request_add_prefill_background.connect(self.operations_panel.set_add_prefill_background)
         self.overview_panel.request_move_prefill.connect(self.operations_panel.set_move_prefill)
         self.overview_panel.request_query_prefill.connect(self.operations_panel.set_query_prefill)
-        self.overview_panel.request_quick_add.connect(lambda: self.operations_panel.set_mode("add"))
         self.overview_panel.data_loaded.connect(self.operations_panel.update_records_cache)
 
         # Operations -> Overview (plan preview)
@@ -379,6 +471,11 @@ class MainWindow(QMainWindow):
         save_gui_config(self.gui_config)
 
     def on_create_new_dataset(self, update_window=True):
+        layout_dlg = NewDatasetDialog(self)
+        if layout_dlg.exec() != QDialog.Accepted:
+            return
+        box_layout = layout_dlg.get_layout()
+
         default_path = self.current_yaml_path
         if not default_path or os.path.isdir(default_path):
             default_path = os.path.join(os.getcwd(), "ln2_inventory.yaml")
@@ -405,7 +502,8 @@ class MainWindow(QMainWindow):
         new_payload = {
             "meta": {
                 "version": "1.0",
-                "box_layout": {"rows": 9, "cols": 9},
+                "box_layout": box_layout,
+                "custom_fields": [],
             },
             "inventory": [],
         }

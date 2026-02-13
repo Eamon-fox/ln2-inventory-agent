@@ -26,7 +26,9 @@
     "themeAuto": "Auto (System)",
     "themeDark": "Dark",
     "themeLight": "Light",
-    "selectInventoryFile": "Select Inventory File"
+    "selectInventoryFile": "Select Inventory File",
+    "about": "About",
+    "aboutDesc": "Liquid nitrogen tank inventory management with built-in AI assistant (BYO API key)."
   },
   "main": {
     "settings": "Settings",
@@ -37,7 +39,16 @@
     "languageChangedRestart": "Language changed. Please restart the application to apply.",
     "themeChangedRestart": "Theme changed. Please restart the application to apply.",
     "aiBusyTitle": "Busy",
-    "aiBusyMessage": "AI run is still in progress. Please stop it or wait."
+    "aiBusyMessage": "AI run is still in progress. Please stop it or wait.",
+    "newDatasetLayout": "New Dataset - Box Layout",
+    "boxSize": "Box Size:",
+    "rows": "Rows:",
+    "cols": "Columns:",
+    "boxCount": "Number of Boxes:",
+    "indexing": "Position Indexing:",
+    "indexNumeric": "Numeric (1, 2, 3...)",
+    "indexAlpha": "Alphanumeric (A1, A2...)",
+    "custom": "Custom"
   },
   "overview": {
     "title": "Overview",
@@ -100,12 +111,14 @@
     "print": "Print",
     "clear": "Clear",
     "add": "Add Entry",
+    "edit": "Edit",
     "thaw": "Thaw / Takeout",
     "query": "Query",
     "move": "Move",
     "rollback": "Rollback",
     "auditLog": "Audit Log",
     "lastResult": "Last Result",
+    "hideResult": "Hide Result",
     "noOperations": "No operations performed yet.",
     "undoLast": "Undo Last Operation",
     "undoLastWithCountdown": "{operation} ({seconds}s)",
@@ -175,6 +188,7 @@
     "colShort": "Short",
     "colPositions": "Positions",
     "colFrozenAt": "Frozen At",
+    "colPlasmidName": "Plasmid Name",
     "colPlasmidId": "Plasmid ID",
     "colEmptyTotal": "Empty/Total",
     "historySummary": "{count} events; last: {date} {action} [{positions}]",
@@ -305,7 +319,10 @@
     "selectAuditRowsFirst": "Select one or more audit rows first.",
     "noOperationToUndo": "No operation to undo.",
     "undo": "Undo",
-    "restoreFromBackupMessage": "Restore from backup:\n{backup}?"
+    "restoreFromBackupMessage": "Restore from backup:\n{backup}?",
+    "editFieldSaved": "Field '{field}' updated: {before} → {after}",
+    "editFieldFailed": "Edit failed: {error}",
+    "editNoChange": "No change detected."
   },
   "ai": {
     "title": "AI Copilot",

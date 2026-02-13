@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import date
 from typing import Dict, List, Optional
 
-_VALID_ACTIONS = {"takeout", "thaw", "discard", "move", "add", "rollback"}
+_VALID_ACTIONS = {"takeout", "thaw", "discard", "move", "add", "rollback", "edit"}
 _BOX_RANGE = (1, 5)
 
 

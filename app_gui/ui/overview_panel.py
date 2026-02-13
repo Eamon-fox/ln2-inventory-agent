@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QSizePolicy, QGroupBox, QMenu
 )
 from app_gui.ui.utils import cell_color
+from lib.position_fmt import pos_to_display, box_to_display, get_box_count
 from app_gui.ui.theme import (
     cell_occupied_style, 
     cell_empty_style,
@@ -51,7 +52,7 @@ class CellButton(QPushButton):
             super().mouseMoveEvent(event)
             return
 
-        if (event.pos() - self._drag_start_pos).manhattanLength() < 10:
+        if (event.pos() - self._drag_start_pos).manhattanLength() < 20:
             super().mouseMoveEvent(event)
             return
 
@@ -123,7 +124,7 @@ class OverviewPanel(QWidget):
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(0, 0, 0, 4)
         layout.setSpacing(6)
 
         # Summary Cards
@@ -150,10 +151,6 @@ class OverviewPanel(QWidget):
         refresh_btn = QPushButton(tr("overview.refresh"))
         refresh_btn.clicked.connect(self.refresh)
         action_row.addWidget(refresh_btn)
-
-        goto_add_btn = QPushButton(tr("overview.quickAdd"))
-        goto_add_btn.clicked.connect(self.request_quick_add.emit)
-        action_row.addWidget(goto_add_btn)
 
         action_row.addStretch()
         layout.addLayout(action_row)
@@ -294,9 +291,11 @@ class OverviewPanel(QWidget):
 
         rows = int(layout.get("rows", 9))
         cols = int(layout.get("cols", 9))
+        self._current_layout = layout
         box_numbers = sorted([int(k) for k in box_stats.keys()], key=int)
         if not box_numbers:
-            box_numbers = [1, 2, 3, 4, 5]
+            box_count = get_box_count(layout)
+            box_numbers = list(range(1, box_count + 1))
 
         shape = (rows, cols, tuple(box_numbers))
         if self.overview_shape != shape:
@@ -368,10 +367,13 @@ class OverviewPanel(QWidget):
         self.overview_selected_key = None
         self._reset_detail()
 
+        layout = getattr(self, "_current_layout", {})
         total_slots = rows * cols
+        cell_size = max(24, min(36, 320 // max(rows, cols)))
         columns = 3
         for idx, box_num in enumerate(box_numbers):
-            group = QGroupBox(t("overview.boxLabel", box=box_num))
+            box_label = box_to_display(box_num, layout)
+            group = QGroupBox(t("overview.boxLabel", box=box_label))
             group.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             group_layout = QVBoxLayout(group)
             group_layout.setContentsMargins(6, 6, 6, 6)
@@ -388,8 +390,9 @@ class OverviewPanel(QWidget):
             for position in range(1, total_slots + 1):
                 r = (position - 1) // cols
                 c = (position - 1) % cols
-                button = CellButton(str(position), box_num, position)
-                button.setFixedSize(32, 32)
+                display_text = pos_to_display(position, layout)
+                button = CellButton(display_text, box_num, position)
+                button.setFixedSize(cell_size, cell_size)
                 button.setMouseTracking(True)
                 button.setAttribute(Qt.WA_Hover, True)
                 button.setProperty("overview_box", box_num)
@@ -595,9 +598,11 @@ class OverviewPanel(QWidget):
 
     def _paint_cell(self, button, box_num, position, record):
         is_selected = self.overview_selected_key == (box_num, position)
+        layout = getattr(self, "_current_layout", {})
+        display_pos = pos_to_display(position, layout)
         if record:
             short = str(record.get("short_name") or "")
-            label = short[:6] if short else str(position)
+            label = short[:6] if short else display_pos
             parent = record.get("parent_cell_line")
             color = cell_color(parent)
             button.setText(label)
@@ -633,7 +638,7 @@ class OverviewPanel(QWidget):
             button.setProperty("is_empty", False)
             button.set_record_id(int(record.get("id", 0)))
         else:
-            button.setText(str(position))
+            button.setText(display_pos)
             button.setToolTip(t("overview.emptyCellTooltip", box=box_num, position=position))
             button.setStyleSheet(cell_empty_style(is_selected))
             button.setProperty("search_text", f"empty box {box_num} position {position}".lower())

@@ -7,7 +7,8 @@ from copy import deepcopy
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-from .config import BOX_RANGE, POSITION_RANGE, VALID_CELL_LINES
+from .config import VALID_CELL_LINES
+from .position_fmt import get_box_count, get_position_range, get_total_slots
 from .operations import check_position_conflicts, find_record_by_id, get_next_id
 from .thaw_parser import ACTION_LABEL, extract_events, normalize_action
 from .validators import (
@@ -30,6 +31,11 @@ from .yaml_ops import (
 
 
 _DEFAULT_SESSION_ID = f"session-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
+
+
+def _get_layout(data):
+    """Extract box_layout dict from loaded YAML data."""
+    return (data or {}).get("meta", {}).get("box_layout", {})
 
 
 def build_actor_context(
@@ -308,6 +314,7 @@ def tool_add_entry(
     plasmid_name=None,
     plasmid_id=None,
     note=None,
+    custom_data=None,
     dry_run=False,
     actor_context=None,
     source="tool_api",
@@ -355,19 +362,6 @@ def tool_add_entry(
             details={"frozen_at": frozen_at},
         )
 
-    if box < BOX_RANGE[0] or box > BOX_RANGE[1]:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_box",
-            message=f"盒子编号必须在 {BOX_RANGE[0]}-{BOX_RANGE[1]} 之间",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            details={"box": box},
-        )
-
     if not positions:
         return _failure_result(
             yaml_path=yaml_path,
@@ -395,6 +389,23 @@ def tool_add_entry(
             details={"load_error": str(exc)},
         )
 
+    layout = _get_layout(data)
+    _box_count = get_box_count(layout)
+    _pos_lo, _pos_hi = get_position_range(layout)
+
+    if box < 1 or box > _box_count:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=action,
+            source=source,
+            tool_name=tool_name,
+            error_code="invalid_box",
+            message=f"盒子编号必须在 1-{_box_count} 之间",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            details={"box": box},
+        )
+
     records = data.get("inventory", [])
     conflicts = check_position_conflicts(records, box, positions)
     if conflicts:
@@ -419,19 +430,22 @@ def tool_add_entry(
     created = []
     for offset, pos in enumerate(list(positions)):
         tube_id = next_id + offset
-        new_records.append(
-            {
-                "id": tube_id,
-                "parent_cell_line": parent_cell_line,
-                "short_name": short_name,
-                "plasmid_name": plasmid_name,
-                "plasmid_id": plasmid_id,
-                "box": box,
-                "positions": [int(pos)],
-                "frozen_at": frozen_at,
-                "note": note,
-            }
-        )
+        rec = {
+            "id": tube_id,
+            "parent_cell_line": parent_cell_line,
+            "short_name": short_name,
+            "plasmid_name": plasmid_name,
+            "plasmid_id": plasmid_id,
+            "box": box,
+            "positions": [int(pos)],
+            "frozen_at": frozen_at,
+            "note": note,
+        }
+        if custom_data and isinstance(custom_data, dict):
+            for k, v in custom_data.items():
+                if k not in rec:
+                    rec[k] = v
+        new_records.append(rec)
         created.append({"id": tube_id, "box": box, "position": int(pos)})
 
     preview = {
@@ -569,6 +583,139 @@ def tool_add_entry(
     }
 
 
+_EDITABLE_FIELDS = {
+    "parent_cell_line", "short_name", "frozen_at",
+    "plasmid_name", "plasmid_id", "note",
+}
+
+
+def _get_editable_fields(yaml_path):
+    """Return editable field set, extended with custom fields from meta."""
+    from lib.custom_fields import parse_custom_fields
+    try:
+        data = load_yaml(yaml_path)
+        meta = data.get("meta", {})
+        custom = parse_custom_fields(meta)
+        if custom:
+            return _EDITABLE_FIELDS | {f["key"] for f in custom}
+    except Exception:
+        pass
+    return _EDITABLE_FIELDS
+
+
+def tool_edit_entry(
+    yaml_path,
+    record_id,
+    fields,
+    actor_context=None,
+    source="tool_api",
+    auto_backup=True,
+):
+    """Edit metadata fields of an existing record.
+
+    Only fields in _EDITABLE_FIELDS may be changed.
+    Structural fields (id, box, positions, thaw_events) are rejected.
+    """
+    action = "edit_entry"
+    tool_name = "tool_edit_entry"
+    tool_input = {"record_id": record_id, "fields": dict(fields or {})}
+
+    if not fields:
+        return _failure_result(
+            yaml_path=yaml_path, action=action, source=source,
+            tool_name=tool_name, error_code="no_fields",
+            message="至少需要修改一个字段",
+            actor_context=actor_context, tool_input=tool_input,
+        )
+
+    allowed = _get_editable_fields(yaml_path)
+    bad_keys = set(fields.keys()) - allowed
+    if bad_keys:
+        return _failure_result(
+            yaml_path=yaml_path, action=action, source=source,
+            tool_name=tool_name, error_code="forbidden_fields",
+            message=f"以下字段不可编辑: {', '.join(sorted(bad_keys))}",
+            actor_context=actor_context, tool_input=tool_input,
+            details={"forbidden": sorted(bad_keys), "allowed": sorted(allowed)},
+        )
+
+    # Validate frozen_at if provided
+    if "frozen_at" in fields and not validate_date(fields["frozen_at"]):
+        return _failure_result(
+            yaml_path=yaml_path, action=action, source=source,
+            tool_name=tool_name, error_code="invalid_date",
+            message=f"日期格式无效: {fields['frozen_at']}",
+            actor_context=actor_context, tool_input=tool_input,
+            details={"frozen_at": fields["frozen_at"]},
+        )
+
+    try:
+        data = load_yaml(yaml_path)
+    except Exception as exc:
+        return _failure_result(
+            yaml_path=yaml_path, action=action, source=source,
+            tool_name=tool_name, error_code="load_failed",
+            message=f"无法读取YAML文件: {exc}",
+            actor_context=actor_context, tool_input=tool_input,
+        )
+
+    _idx, record = find_record_by_id(data.get("inventory", []), record_id)
+    if record is None:
+        return _failure_result(
+            yaml_path=yaml_path, action=action, source=source,
+            tool_name=tool_name, error_code="record_not_found",
+            message=f"未找到记录 ID={record_id}",
+            actor_context=actor_context, tool_input=tool_input,
+            before_data=data,
+        )
+
+    before = {k: record.get(k) for k in fields}
+    candidate_data = deepcopy(data)
+    _cidx, candidate_record = find_record_by_id(candidate_data.get("inventory", []), record_id)
+    for key, value in fields.items():
+        candidate_record[key] = value
+
+    validation_error = _validate_data_or_error(candidate_data)
+    if validation_error:
+        return _failure_result(
+            yaml_path=yaml_path, action=action, source=source,
+            tool_name=tool_name,
+            error_code=validation_error.get("error_code", "integrity_validation_failed"),
+            message=validation_error.get("message", "写入被阻止：完整性校验失败"),
+            actor_context=actor_context, tool_input=tool_input,
+            before_data=data, errors=validation_error.get("errors"),
+        )
+
+    try:
+        _backup_path = write_yaml(
+            candidate_data, yaml_path, auto_backup=auto_backup,
+            audit_meta=_build_audit_meta(
+                action=action, source=source, tool_name=tool_name,
+                actor_context=actor_context,
+                details={"record_id": record_id, "before": before, "after": dict(fields)},
+                tool_input=tool_input,
+            ),
+        )
+    except Exception as exc:
+        return _failure_result(
+            yaml_path=yaml_path, action=action, source=source,
+            tool_name=tool_name, error_code="write_failed",
+            message=f"编辑失败: {exc}",
+            actor_context=actor_context, tool_input=tool_input,
+            before_data=data,
+        )
+
+    return {
+        "ok": True,
+        "result": {
+            "record_id": record_id,
+            "before": before,
+            "after": dict(fields),
+        },
+        "backup_path": _backup_path,
+    }
+
+
 def tool_record_thaw(
     yaml_path,
     record_id,
@@ -653,14 +800,14 @@ def tool_record_thaw(
                 tool_input=tool_input,
                 details={"to_position": to_position},
             )
-        if move_to_position < POSITION_RANGE[0] or move_to_position > POSITION_RANGE[1]:
+        if move_to_position < 1:
             return _failure_result(
                 yaml_path=yaml_path,
                 action=audit_action,
                 source=source,
                 tool_name=tool_name,
                 error_code="invalid_position",
-                message=f"目标位置编号必须在 {POSITION_RANGE[0]}-{POSITION_RANGE[1]} 之间",
+                message="目标位置编号必须 >= 1",
                 actor_context=actor_context,
                 tool_input=tool_input,
                 details={"to_position": move_to_position},
@@ -681,6 +828,24 @@ def tool_record_thaw(
         )
 
     records = data.get("inventory", [])
+    layout = _get_layout(data)
+    _pos_lo, _pos_hi = get_position_range(layout)
+    _box_count = get_box_count(layout)
+
+    if move_to_position is not None and move_to_position > _pos_hi:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="invalid_position",
+            message=f"目标位置编号必须在 {_pos_lo}-{_pos_hi} 之间",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+            details={"to_position": move_to_position},
+        )
+
     idx, record = find_record_by_id(records, record_id)
     if record is None:
         return _failure_result(
@@ -747,14 +912,14 @@ def tool_record_thaw(
             before_data=data,
             details={"record_id": record_id, "position": position},
         )
-    if position < POSITION_RANGE[0] or position > POSITION_RANGE[1]:
+    if position < _pos_lo or position > _pos_hi:
         return _failure_result(
             yaml_path=yaml_path,
             action=audit_action,
             source=source,
             tool_name=tool_name,
             error_code="invalid_position",
-            message=f"位置编号必须在 {POSITION_RANGE[0]}-{POSITION_RANGE[1]} 之间",
+            message=f"位置编号必须在 {_pos_lo}-{_pos_hi} 之间",
             actor_context=actor_context,
             tool_input=tool_input,
             details={"position": position},
@@ -819,7 +984,7 @@ def tool_record_thaw(
                     source=source,
                     tool_name=tool_name,
                     error_code="invalid_box",
-                    message=f"目标盒子编号 {to_box} 超出范围 ({BOX_RANGE[0]}-{BOX_RANGE[1]})",
+                    message=f"目标盒子编号 {to_box} 超出范围 (1-{_box_count})",
                     actor_context=actor_context,
                     tool_input=tool_input,
                     before_data=data,
@@ -1236,6 +1401,9 @@ def tool_batch_thaw(
         )
 
     records = data.get("inventory", [])
+    layout = _get_layout(data)
+    _pos_lo, _pos_hi = get_position_range(layout)
+    _box_count = get_box_count(layout)
     operations = []
     errors = []
 
@@ -1266,19 +1434,19 @@ def tool_batch_thaw(
             record_id, from_pos, to_pos = entry[0], entry[1], entry[2]
             entry_to_box = entry[3] if len(entry) >= 4 else None
 
-            if from_pos < POSITION_RANGE[0] or from_pos > POSITION_RANGE[1]:
+            if from_pos < _pos_lo or from_pos > _pos_hi:
                 errors.append(
-                    f"第{row_idx}条 ID {record_id}: 起始位置 {from_pos} 必须在 {POSITION_RANGE[0]}-{POSITION_RANGE[1]} 之间"
+                    f"第{row_idx}条 ID {record_id}: 起始位置 {from_pos} 必须在 {_pos_lo}-{_pos_hi} 之间"
                 )
                 continue
-            if to_pos < POSITION_RANGE[0] or to_pos > POSITION_RANGE[1]:
+            if to_pos < _pos_lo or to_pos > _pos_hi:
                 errors.append(
-                    f"第{row_idx}条 ID {record_id}: 目标位置 {to_pos} 必须在 {POSITION_RANGE[0]}-{POSITION_RANGE[1]} 之间"
+                    f"第{row_idx}条 ID {record_id}: 目标位置 {to_pos} 必须在 {_pos_lo}-{_pos_hi} 之间"
                 )
                 continue
-            if entry_to_box is not None and not validate_box(entry_to_box):
+            if entry_to_box is not None and not validate_box(entry_to_box, layout):
                 errors.append(
-                    f"第{row_idx}条 ID {record_id}: 目标盒子 {entry_to_box} 超出范围 ({BOX_RANGE[0]}-{BOX_RANGE[1]})"
+                    f"第{row_idx}条 ID {record_id}: 目标盒子 {entry_to_box} 超出范围 (1-{_box_count})"
                 )
                 continue
 
@@ -1585,8 +1753,8 @@ def tool_batch_thaw(
 
         if len(entry) == 2:
             position = entry[1]
-            if position < POSITION_RANGE[0] or position > POSITION_RANGE[1]:
-                errors.append(f"ID {record_id}: 位置编号 {position} 必须在 {POSITION_RANGE[0]}-{POSITION_RANGE[1]} 之间")
+            if position < _pos_lo or position > _pos_hi:
+                errors.append(f"ID {record_id}: 位置编号 {position} 必须在 {_pos_lo}-{_pos_hi} 之间")
                 continue
             if position not in current_positions:
                 errors.append(f"ID {record_id}: 位置 {position} 不在现有位置 {current_positions} 中")
@@ -1598,8 +1766,8 @@ def tool_batch_thaw(
                 )
                 continue
             position = current_positions[0]
-            if position < POSITION_RANGE[0] or position > POSITION_RANGE[1]:
-                errors.append(f"ID {record_id}: 位置编号 {position} 必须在 {POSITION_RANGE[0]}-{POSITION_RANGE[1]} 之间")
+            if position < _pos_lo or position > _pos_hi:
+                errors.append(f"ID {record_id}: 位置编号 {position} 必须在 {_pos_lo}-{_pos_hi} 之间")
                 continue
 
         new_positions = [p for p in current_positions if p != position]
@@ -1956,6 +2124,7 @@ def _str_contains(value, query, case_sensitive=False):
 
 
 def _record_search_blob(rec, case_sensitive=False):
+    from lib.custom_fields import CORE_FIELD_KEYS
     fields = [
         "id",
         "parent_cell_line",
@@ -1974,6 +2143,10 @@ def _record_search_blob(rec, case_sensitive=False):
     positions = rec.get("positions") or []
     if positions:
         parts.append(",".join(str(p) for p in positions))
+    # Include custom field values in search blob
+    for key, value in rec.items():
+        if key not in CORE_FIELD_KEYS and value is not None and value != "":
+            parts.append(str(value))
     blob = " ".join(parts)
     return blob if case_sensitive else blob.lower()
 
@@ -2037,21 +2210,22 @@ def tool_list_empty_positions(yaml_path, box=None):
         }
 
     records = data.get("inventory", [])
-    layout = data.get("meta", {}).get("box_layout", {})
-    total_slots = int(layout.get("rows", 9)) * int(layout.get("cols", 9))
+    layout = _get_layout(data)
+    total_slots = get_total_slots(layout)
+    _box_count = get_box_count(layout)
     all_positions = set(range(1, total_slots + 1))
     occupancy = compute_occupancy(records)
 
     if box is not None:
-        if box < BOX_RANGE[0] or box > BOX_RANGE[1]:
+        if box < 1 or box > _box_count:
             return {
                 "ok": False,
                 "error_code": "invalid_box",
-                "message": f"盒子编号必须在 {BOX_RANGE[0]}-{BOX_RANGE[1]} 之间",
+                "message": f"盒子编号必须在 1-{_box_count} 之间",
             }
         boxes = [str(box)]
     else:
-        boxes = [str(i) for i in range(BOX_RANGE[0], BOX_RANGE[1] + 1)]
+        boxes = [str(i) for i in range(1, _box_count + 1)]
 
     items = []
     for box_key in boxes:
@@ -2467,8 +2641,9 @@ def tool_recommend_positions(yaml_path, count, box_preference=None, strategy="co
             "message": f"无法读取YAML文件: {exc}",
         }
 
-    layout = data.get("meta", {}).get("box_layout", {})
-    total_slots = _get_box_total_slots(layout)
+    layout = _get_layout(data)
+    total_slots = get_total_slots(layout)
+    _box_count = get_box_count(layout)
     all_positions = set(range(1, total_slots + 1))
     occupancy = compute_occupancy(data.get("inventory", []))
 
@@ -2476,7 +2651,7 @@ def tool_recommend_positions(yaml_path, count, box_preference=None, strategy="co
         boxes_to_check = [str(box_preference)]
     else:
         boxes_to_check = []
-        for box_num in range(BOX_RANGE[0], BOX_RANGE[1] + 1):
+        for box_num in range(1, _box_count + 1):
             key = str(box_num)
             boxes_to_check.append((key, len(occupancy.get(key, []))))
         boxes_to_check = [b for b, _ in sorted(boxes_to_check, key=lambda x: x[1])]
@@ -2526,17 +2701,17 @@ def tool_generate_stats(yaml_path):
         }
 
     records = data.get("inventory", [])
-    layout = data.get("meta", {}).get("box_layout", {})
-    total_slots = _get_box_total_slots(layout)
+    layout = _get_layout(data)
+    total_slots = get_total_slots(layout)
     occupancy = compute_occupancy(records)
-    total_boxes = BOX_RANGE[1] - BOX_RANGE[0] + 1
+    total_boxes = get_box_count(layout)
 
     total_occupied = sum(len(positions) for positions in occupancy.values())
     total_capacity = total_boxes * total_slots
     overall_rate = (total_occupied / total_capacity * 100) if total_capacity > 0 else 0
 
     box_stats = {}
-    for box_num in range(BOX_RANGE[0], BOX_RANGE[1] + 1):
+    for box_num in range(1, total_boxes + 1):
         key = str(box_num)
         occupied_count = len(occupancy.get(key, []))
         rate = (occupied_count / total_slots * 100) if total_slots > 0 else 0

@@ -19,7 +19,7 @@ DEFAULT_GUI_CONFIG = {
     "theme": "dark",
     "ai": {
         "model": "deepseek-chat",
-        "max_steps": 8,
+        "max_steps": 12,
         "thinking_enabled": True,
     },
 }

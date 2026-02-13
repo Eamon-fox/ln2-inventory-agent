@@ -28,7 +28,7 @@ Rules:
 class ReactAgent:
     """Native tool-calling ReAct runtime."""
 
-    def __init__(self, llm_client, tool_runner, max_steps=8):
+    def __init__(self, llm_client, tool_runner, max_steps=12):
         self._llm = llm_client
         self._tools = tool_runner
         self._max_steps = max_steps

@@ -16,6 +16,7 @@ from lib.tool_api import (
     tool_add_entry,
     tool_batch_thaw,
     tool_collect_timeline,
+    tool_edit_entry,
     tool_record_thaw,
     tool_rollback,
 )
@@ -25,6 +26,8 @@ from lib.tool_api import (
     tool_query_thaw_events,
     tool_recommend_positions,
     tool_search_records,
+    tool_generate_stats,
+    tool_list_empty_positions,
 )
 from lib.yaml_ops import load_yaml, write_yaml
 
@@ -635,6 +638,299 @@ class ToolApiTests(unittest.TestCase):
             raw_response = tool_get_raw_entries(str(yaml_path), [1, 99])
             self.assertTrue(raw_response["ok"])
             self.assertEqual([99], raw_response["result"]["missing_ids"])
+
+
+class TestToolEditEntry(unittest.TestCase):
+    def test_edit_entry_updates_allowed_fields(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_edit_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            result = tool_edit_entry(
+                yaml_path=str(yaml_path),
+                record_id=1,
+                fields={"short_name": "new-name", "note": "updated note"},
+            )
+            self.assertTrue(result["ok"])
+            self.assertEqual("rec-1", result["result"]["before"]["short_name"])
+            self.assertEqual("new-name", result["result"]["after"]["short_name"])
+
+            data = load_yaml(str(yaml_path))
+            rec = data["inventory"][0]
+            self.assertEqual("new-name", rec["short_name"])
+            self.assertEqual("updated note", rec["note"])
+
+    def test_edit_entry_rejects_forbidden_fields(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_edit_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            result = tool_edit_entry(
+                yaml_path=str(yaml_path),
+                record_id=1,
+                fields={"box": 2, "short_name": "x"},
+            )
+            self.assertFalse(result["ok"])
+            self.assertEqual("forbidden_fields", result["error_code"])
+
+    def test_edit_entry_rejects_nonexistent_record(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_edit_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            result = tool_edit_entry(
+                yaml_path=str(yaml_path),
+                record_id=999,
+                fields={"short_name": "x"},
+            )
+            self.assertFalse(result["ok"])
+            self.assertEqual("record_not_found", result["error_code"])
+
+    def test_edit_entry_validates_date(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_edit_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            result = tool_edit_entry(
+                yaml_path=str(yaml_path),
+                record_id=1,
+                fields={"frozen_at": "not-a-date"},
+            )
+            self.assertFalse(result["ok"])
+            self.assertEqual("invalid_date", result["error_code"])
+
+    def test_edit_entry_writes_audit(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_edit_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            tool_edit_entry(
+                yaml_path=str(yaml_path),
+                record_id=1,
+                fields={"short_name": "edited"},
+                actor_context=build_actor_context(actor_type="human", channel="gui"),
+            )
+
+            rows = read_audit_rows(temp_dir)
+            edit_rows = [r for r in rows if r.get("action") == "edit_entry"]
+            self.assertTrue(len(edit_rows) >= 1)
+            self.assertEqual("success", edit_rows[-1].get("status"))
+
+    def test_edit_entry_rejects_empty_fields(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_edit_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            result = tool_edit_entry(
+                yaml_path=str(yaml_path),
+                record_id=1,
+                fields={},
+            )
+            self.assertFalse(result["ok"])
+            self.assertEqual("no_fields", result["error_code"])
+
+
+# ---------------------------------------------------------------------------
+# Integration tests: non-default box layouts (10x10, 8x12, custom box_count)
+# ---------------------------------------------------------------------------
+
+def make_data_custom(records, rows=9, cols=9, box_count=None, indexing=None):
+    """Build YAML data dict with custom box_layout."""
+    layout = {"rows": rows, "cols": cols}
+    if box_count is not None:
+        layout["box_count"] = box_count
+    if indexing is not None:
+        layout["indexing"] = indexing
+    return {"meta": {"box_layout": layout}, "inventory": records}
+
+
+class TestCustomLayout10x10(unittest.TestCase):
+    """Integration: 10x10 grid with 8 boxes."""
+
+    def _seed(self, records, rows=10, cols=10, box_count=8):
+        d = tempfile.mkdtemp()
+        p = str(Path(d) / "inv.yaml")
+        write_raw_yaml(p, make_data_custom(records, rows, cols, box_count))
+        return p, d
+
+    def test_add_entry_position_100(self):
+        """Position 100 should be valid in a 10x10 grid."""
+        p, _ = self._seed([])
+        result = tool_add_entry(
+            p, "K562", "test", box=1, positions=[100],
+            frozen_at="2025-06-01", auto_backup=False,
+        )
+        self.assertTrue(result["ok"], result.get("message"))
+
+    def test_add_entry_position_101_rejected(self):
+        """Position 101 should be rejected in a 10x10 grid."""
+        p, _ = self._seed([])
+        result = tool_add_entry(
+            p, "K562", "test", box=1, positions=[101],
+            frozen_at="2025-06-01", auto_backup=False,
+        )
+        self.assertFalse(result["ok"])
+
+    def test_add_entry_box_8_valid(self):
+        """Box 8 should be valid with box_count=8."""
+        p, _ = self._seed([])
+        result = tool_add_entry(
+            p, "K562", "test", box=8, positions=[1],
+            frozen_at="2025-06-01", auto_backup=False,
+        )
+        self.assertTrue(result["ok"], result.get("message"))
+
+    def test_add_entry_box_9_rejected(self):
+        """Box 9 should be rejected with box_count=8."""
+        p, _ = self._seed([])
+        result = tool_add_entry(
+            p, "K562", "test", box=9, positions=[1],
+            frozen_at="2025-06-01", auto_backup=False,
+        )
+        self.assertFalse(result["ok"])
+
+    def test_stats_reports_correct_capacity(self):
+        """Stats should report 10x10x8 = 800 total capacity."""
+        p, _ = self._seed([make_record(1, box=1, positions=[1])])
+        result = tool_generate_stats(p)
+        self.assertTrue(result["ok"])
+        self.assertEqual(800, result["result"]["total_capacity"])
+
+    def test_list_empty_box_8(self):
+        """list_empty_positions should work for box 8."""
+        p, _ = self._seed([])
+        result = tool_list_empty_positions(p, box=8)
+        self.assertTrue(result["ok"])
+        self.assertEqual(100, result["result"]["boxes"][0]["empty_count"])
+
+    def test_list_empty_box_9_rejected(self):
+        """list_empty_positions should reject box 9."""
+        p, _ = self._seed([])
+        result = tool_list_empty_positions(p, box=9)
+        self.assertFalse(result["ok"])
+
+    def test_recommend_positions_10x10(self):
+        """recommend_positions should work with 10x10 grid."""
+        p, _ = self._seed([])
+        result = tool_recommend_positions(p, count=3)
+        self.assertTrue(result["ok"])
+        for rec in result["result"]["recommendations"]:
+            for pos in rec["positions"]:
+                self.assertLessEqual(pos, 100)
+
+    def test_thaw_then_move_high_position(self):
+        """Record at position 95 can be moved to position 100."""
+        rec = make_record(1, box=1, positions=[95])
+        p, _ = self._seed([rec])
+        result = tool_record_thaw(
+            p, record_id=1, position=95, action="移动",
+            to_position=100, date_str="2025-06-01", auto_backup=False,
+        )
+        self.assertTrue(result["ok"], result.get("message"))
+        data = load_yaml(p)
+        self.assertEqual([100], data["inventory"][0]["positions"])
+
+
+class TestCustomLayout8x12(unittest.TestCase):
+    """Integration: 8x12 grid (96 slots, like microplates)."""
+
+    def _seed(self, records):
+        d = tempfile.mkdtemp()
+        p = str(Path(d) / "inv.yaml")
+        write_raw_yaml(p, make_data_custom(records, rows=8, cols=12, box_count=3))
+        return p, d
+
+    def test_add_entry_position_96(self):
+        p, _ = self._seed([])
+        result = tool_add_entry(
+            p, "HeLa", "test", box=1, positions=[96],
+            frozen_at="2025-06-01", auto_backup=False,
+        )
+        self.assertTrue(result["ok"], result.get("message"))
+
+    def test_add_entry_position_97_rejected(self):
+        p, _ = self._seed([])
+        result = tool_add_entry(
+            p, "HeLa", "test", box=1, positions=[97],
+            frozen_at="2025-06-01", auto_backup=False,
+        )
+        self.assertFalse(result["ok"])
+
+    def test_stats_capacity_288(self):
+        """8x12x3 = 288 total capacity."""
+        p, _ = self._seed([])
+        result = tool_generate_stats(p)
+        self.assertTrue(result["ok"])
+        self.assertEqual(288, result["result"]["total_capacity"])
+
+    def test_batch_thaw_high_positions(self):
+        """Batch thaw records at positions > 81 (old default limit)."""
+        recs = [
+            make_record(1, box=1, positions=[85]),
+            make_record(2, box=1, positions=[90]),
+        ]
+        p, _ = self._seed(recs)
+        result = tool_batch_thaw(
+            p, entries=[{"record_id": 1, "position": 85}, {"record_id": 2, "position": 90}],
+            action="取出", date_str="2025-06-01", auto_backup=False,
+        )
+        self.assertTrue(result["ok"], result.get("message"))
+        self.assertEqual(2, result["result"]["count"])
+
+
+class TestValidatorsWithLayout(unittest.TestCase):
+    """Integration: validators respect per-dataset layout."""
+
+    def test_validate_inventory_10x10(self):
+        from lib.validators import validate_inventory
+        rec = make_record(1, box=1, positions=[100])
+        data = make_data_custom([rec], rows=10, cols=10, box_count=5)
+        errors, warnings = validate_inventory(data)
+        self.assertEqual([], errors)
+
+    def test_validate_inventory_rejects_101_in_10x10(self):
+        from lib.validators import validate_inventory
+        rec = make_record(1, box=1, positions=[101])
+        data = make_data_custom([rec], rows=10, cols=10, box_count=5)
+        errors, _ = validate_inventory(data)
+        self.assertTrue(any("101" in e for e in errors))
+
+    def test_validate_inventory_rejects_box_6_with_box_count_5(self):
+        from lib.validators import validate_inventory
+        rec = make_record(1, box=6, positions=[1])
+        data = make_data_custom([rec], rows=9, cols=9, box_count=5)
+        errors, _ = validate_inventory(data)
+        self.assertTrue(any("box" in e.lower() or "盒" in e for e in errors))
+
+    def test_parse_positions_alphanumeric(self):
+        from lib.validators import parse_positions
+        layout = {"rows": 9, "cols": 9, "indexing": "alphanumeric"}
+        result = parse_positions("A1,B3", layout)
+        self.assertEqual([1, 12], result)
 
 
 if __name__ == "__main__":

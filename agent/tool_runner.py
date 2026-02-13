@@ -9,6 +9,7 @@ from lib.tool_api import (
     tool_add_entry,
     tool_batch_thaw,
     tool_collect_timeline,
+    tool_edit_entry,
     tool_generate_stats,
     tool_get_raw_entries,
     tool_list_empty_positions,
@@ -22,10 +23,10 @@ from lib.tool_api import (
     tool_search_records,
 )
 from app_gui.plan_gate import validate_plan_batch
-from lib.plan_item_factory import build_add_plan_item, build_record_plan_item, build_rollback_plan_item
+from lib.plan_item_factory import build_add_plan_item, build_edit_plan_item, build_record_plan_item, build_rollback_plan_item
 from lib.validators import parse_positions
 
-_WRITE_TOOLS = {"add_entry", "record_thaw", "batch_thaw", "rollback"}
+_WRITE_TOOLS = {"add_entry", "record_thaw", "batch_thaw", "rollback", "edit_entry"}
 
 
 class AgentToolRunner:
@@ -179,6 +180,7 @@ class AgentToolRunner:
             "generate_stats",
             "get_raw_entries",
             "add_entry",
+            "edit_entry",
             "record_thaw",
             "batch_thaw",
             "rollback",
@@ -257,6 +259,24 @@ class AgentToolRunner:
             "get_raw_entries": {
                 "required": ["ids"],
                 "optional": [],
+            },
+            "edit_entry": {
+                "required": ["record_id", "fields"],
+                "optional": [],
+                "description": "Edit metadata fields of an existing record. "
+                               "Allowed fields: parent_cell_line, short_name, frozen_at, plasmid_name, plasmid_id, note. "
+                               "Structural fields (id, box, positions) cannot be changed.",
+                "params": {
+                    "record_id": {
+                        "type": "integer",
+                        "description": "ID of the record to edit.",
+                    },
+                    "fields": {
+                        "type": "object",
+                        "description": "Key-value pairs of fields to update. "
+                                       "Keys must be from: parent_cell_line, short_name, frozen_at, plasmid_name, plasmid_id, note.",
+                    },
+                },
             },
             "add_entry": {
                 "required": ["parent_cell_line", "short_name", "box", "positions", "frozen_at"],
@@ -780,6 +800,37 @@ class AgentToolRunner:
                     )
                 )
 
+        elif tool_name == "edit_entry":
+            rid_raw = self._first_value(payload, "record_id", "id")
+            if rid_raw in (None, ""):
+                return self._with_hint(tool_name, {
+                    "ok": False, "error_code": "invalid_tool_input",
+                    "message": "record_id is required",
+                })
+            try:
+                rid = int(rid_raw)
+            except (ValueError, TypeError) as exc:
+                return self._with_hint(tool_name, {
+                    "ok": False, "error_code": "invalid_tool_input",
+                    "message": f"record_id must be an integer: {exc}",
+                })
+            fields = payload.get("fields")
+            if not fields or not isinstance(fields, dict):
+                return self._with_hint(tool_name, {
+                    "ok": False, "error_code": "invalid_tool_input",
+                    "message": "fields must be a non-empty object",
+                })
+            box, label, _positions = self._lookup_record_info(rid)
+            items.append(
+                build_edit_plan_item(
+                    record_id=rid,
+                    fields=fields,
+                    box=box,
+                    label=label,
+                    source="ai",
+                )
+            )
+
         elif tool_name == "rollback":
             backup_path = payload.get("backup_path")
             if backup_path in (None, ""):
@@ -972,6 +1023,26 @@ class AgentToolRunner:
             return self._safe_call(
                 tool_name,
                 _call_get_raw_entries,
+                include_expected=True,
+            )
+
+        if tool_name == "edit_entry":
+            def _call_edit_entry():
+                rid = self._required_int(payload, "record_id")
+                fields = payload.get("fields")
+                if not fields or not isinstance(fields, dict):
+                    raise ValueError("fields must be a non-empty object")
+                return tool_edit_entry(
+                    yaml_path=self._yaml_path,
+                    record_id=rid,
+                    fields=fields,
+                    actor_context=self._actor_context(trace_id=trace_id),
+                    source="agent.react",
+                )
+
+            return self._safe_call(
+                tool_name,
+                _call_edit_entry,
                 include_expected=True,
             )
 

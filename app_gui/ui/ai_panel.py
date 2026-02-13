@@ -126,7 +126,7 @@ class AIPanel(QWidget):
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(0, 0, 0, 4)
         layout.setSpacing(0)
 
         # Controls (hidden, values managed via Settings)
@@ -158,7 +158,7 @@ class AIPanel(QWidget):
         input_container = QWidget()
         input_container.setObjectName("aiInputContainer")
         ic_layout = QVBoxLayout(input_container)
-        ic_layout.setContentsMargins(0, 4, 0, 4)
+        ic_layout.setContentsMargins(0, 4, 0, 0)
         ic_layout.setSpacing(2)
 
         self.ai_prompt = QTextEdit()
@@ -169,7 +169,7 @@ class AIPanel(QWidget):
 
         # Action bar inside input container
         action_bar = QHBoxLayout()
-        action_bar.setContentsMargins(8, 0, 8, 0)
+        action_bar.setContentsMargins(0, 0, 8, 0)
         action_bar.setSpacing(4)
 
         self.ai_run_btn = QPushButton(tr("ai.runAgent"))
@@ -1075,6 +1075,47 @@ class AIPanel(QWidget):
             summary_text = f"**Plan cleared**: {cleared_count} item(s) removed{breakdown}"
             self._append_chat_with_collapsible("System", summary_text, details_json)
 
+        elif event_type == "plan_staged":
+            added_count = event.get("added_count", 0)
+            total_count = event.get("total_count", 0)
+            action_counts = event.get("action_counts") if isinstance(event.get("action_counts"), dict) else {}
+            parts = []
+            for k, v in sorted(action_counts.items(), key=lambda kv: str(kv[0])):
+                try:
+                    parts.append(f"{k}={int(v)}")
+                except Exception:
+                    parts.append(f"{k}={v}")
+            breakdown = f" ({', '.join(parts)})" if parts else ""
+            summary_text = f"**Plan staged**: {added_count} item(s) added{breakdown}, {total_count} total in plan"
+            self._append_chat_with_collapsible("System", summary_text, details_json)
+
+        elif event_type == "plan_removed":
+            removed_count = event.get("removed_count", 0)
+            total_count = event.get("total_count", 0)
+            action_counts = event.get("action_counts") if isinstance(event.get("action_counts"), dict) else {}
+            parts = []
+            for k, v in sorted(action_counts.items(), key=lambda kv: str(kv[0])):
+                try:
+                    parts.append(f"{k}={int(v)}")
+                except Exception:
+                    parts.append(f"{k}={v}")
+            breakdown = f" ({', '.join(parts)})" if parts else ""
+            summary_text = f"**Plan updated**: {removed_count} item(s) removed{breakdown}, {total_count} remaining"
+            self._append_chat_with_collapsible("System", summary_text, details_json)
+
+        elif event_type == "plan_restored":
+            restored_count = event.get("restored_count", 0)
+            action_counts = event.get("action_counts") if isinstance(event.get("action_counts"), dict) else {}
+            parts = []
+            for k, v in sorted(action_counts.items(), key=lambda kv: str(kv[0])):
+                try:
+                    parts.append(f"{k}={int(v)}")
+                except Exception:
+                    parts.append(f"{k}={v}")
+            breakdown = f" ({', '.join(parts)})" if parts else ""
+            summary_text = f"**Plan restored**: {restored_count} item(s) restored via undo{breakdown}"
+            self._append_chat_with_collapsible("System", summary_text, details_json)
+
     def _append_chat_with_collapsible(self, role, summary, details_json):
         is_dark = _is_dark_mode(self)
         header_html = self._build_header_html(role, is_dark=is_dark)
@@ -1087,7 +1128,7 @@ class AIPanel(QWidget):
         escaped_details = details_text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
         collapsible_html = CollapsibleBox.render_html(
-            summary="📋 Details",
+            summary="Details",
             content=escaped_details,
             is_dark=is_dark,
             collapsed=True,

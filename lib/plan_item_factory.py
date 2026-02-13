@@ -12,6 +12,8 @@ _EXTRA_ACTION_ALIAS = {
     "take out": "takeout",
     "add_entry": "add",
     "新增": "add",
+    "edit_entry": "edit",
+    "编辑": "edit",
 }
 
 
@@ -54,10 +56,23 @@ def build_add_plan_item(
     plasmid_name: Optional[str] = None,
     plasmid_id: Optional[str] = None,
     note: Optional[str] = None,
+    custom_data: Optional[Dict[str, Any]] = None,
     source: str = "human",
 ) -> Dict[str, Any]:
     """Build a normalized add PlanItem payload."""
     normalized_positions = [int(p) for p in list(positions or [])]
+    payload = {
+        "parent_cell_line": parent_cell_line,
+        "short_name": short_name,
+        "box": int(box),
+        "positions": normalized_positions,
+        "frozen_at": frozen_at,
+        "plasmid_name": plasmid_name,
+        "plasmid_id": plasmid_id,
+        "note": note,
+    }
+    if custom_data and isinstance(custom_data, dict):
+        payload["custom_data"] = custom_data
     return {
         "action": "add",
         "box": int(box),
@@ -65,16 +80,7 @@ def build_add_plan_item(
         "record_id": None,
         "label": (short_name or parent_cell_line or "-"),
         "source": source,
-        "payload": {
-            "parent_cell_line": parent_cell_line,
-            "short_name": short_name,
-            "box": int(box),
-            "positions": normalized_positions,
-            "frozen_at": frozen_at,
-            "plasmid_name": plasmid_name,
-            "plasmid_id": plasmid_id,
-            "note": note,
-        },
+        "payload": payload,
     }
 
 
@@ -124,6 +130,29 @@ def build_record_plan_item(
         payload["to_box"] = tb
 
     return item
+
+
+def build_edit_plan_item(
+    *,
+    record_id: int,
+    fields: Dict[str, Any],
+    box: int = 0,
+    label: str = "-",
+    source: str = "human",
+) -> Dict[str, Any]:
+    """Build a normalized edit PlanItem payload."""
+    return {
+        "action": "edit",
+        "box": int(box),
+        "position": 0,
+        "record_id": int(record_id),
+        "label": str(label or "-"),
+        "source": source,
+        "payload": {
+            "record_id": int(record_id),
+            "fields": dict(fields),
+        },
+    }
 
 
 def build_rollback_plan_item(

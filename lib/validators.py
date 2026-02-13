@@ -5,6 +5,7 @@ from collections import defaultdict
 from datetime import datetime
 from .config import BOX_RANGE, POSITION_RANGE, VALID_ACTIONS
 from .thaw_parser import normalize_action
+from .position_fmt import get_box_count, get_total_slots, get_position_range, display_to_pos, _indexing
 
 
 def validate_date(date_str):
@@ -59,29 +60,36 @@ def normalize_date_arg(date_str):
         return None
 
 
-def validate_box(box):
+def validate_box(box, layout=None):
     """
-    Validate box number is in valid range
+    Validate box number is in valid range.
 
     Args:
         box: Box number to validate
+        layout: Optional box_layout dict; when provided, derives range from it.
 
     Returns:
         bool: True if valid, False otherwise
     """
+    if layout is not None:
+        return 1 <= box <= get_box_count(layout)
     return BOX_RANGE[0] <= box <= BOX_RANGE[1]
 
 
-def validate_position(pos):
+def validate_position(pos, layout=None):
     """
-    Validate position number is in valid range
+    Validate position number is in valid range.
 
     Args:
         pos: Position number to validate
+        layout: Optional box_layout dict; when provided, derives range from it.
 
     Returns:
         bool: True if valid, False otherwise
     """
+    if layout is not None:
+        lo, hi = get_position_range(layout)
+        return lo <= pos <= hi
     return POSITION_RANGE[0] <= pos <= POSITION_RANGE[1]
 
 
@@ -98,25 +106,32 @@ def validate_action(action):
     return action in VALID_ACTIONS
 
 
-def parse_positions(positions_str):
+def parse_positions(positions_str, layout=None):
     """
-    Parse position list: "1,2,3" or "1-3"
+    Parse position list: "1,2,3" or "1-3" (numeric), or "A1,A2" (alphanumeric).
 
     Args:
         positions_str: Position string to parse
+        layout: Optional box_layout dict for alphanumeric support.
 
     Returns:
-        list: Sorted list of unique positions
+        list: Sorted list of unique internal integer positions
 
     Raises:
         ValueError: If format is invalid or positions out of range
     """
     positions = []
+    is_alpha = _indexing(layout) == "alphanumeric" if layout else False
+    lo, hi = get_position_range(layout) if layout else (POSITION_RANGE[0], POSITION_RANGE[1])
+
     try:
         for part in positions_str.split(","):
             part = part.strip()
-            if "-" in part:
-                # Handle range "1-3"
+            if not part:
+                continue
+            if is_alpha and part[0].isalpha():
+                positions.append(display_to_pos(part, layout))
+            elif "-" in part:
                 start, end = part.split("-")
                 positions.extend(range(int(start), int(end) + 1))
             else:
@@ -124,12 +139,11 @@ def parse_positions(positions_str):
     except Exception as e:
         raise ValueError(f"位置格式错误: {e}. 正确格式示例: '1,2,3' 或 '1-3'")
 
-    # Validate position range
     for pos in positions:
-        if not validate_position(pos):
-            raise ValueError(f"位置 {pos} 超出范围（{POSITION_RANGE[0]}-{POSITION_RANGE[1]}）")
+        if not (lo <= pos <= hi):
+            raise ValueError(f"位置 {pos} 超出范围（{lo}-{hi}）")
 
-    return sorted(set(positions))  # Remove duplicates and sort
+    return sorted(set(positions))
 
 
 def format_chinese_date(date_str, weekday=False):
@@ -172,8 +186,13 @@ def _record_label(rec, idx):
     return f"记录 #{idx + 1} (id={rec.get('id', 'N/A')})"
 
 
-def validate_record(rec, idx=None):
+def validate_record(rec, idx=None, layout=None):
     """Validate one inventory record.
+
+    Args:
+        rec: Record dict
+        idx: Optional index for error messages
+        layout: Optional box_layout dict
 
     Returns:
         tuple[list[str], list[str]]: (errors, warnings)
@@ -181,6 +200,9 @@ def validate_record(rec, idx=None):
     errors = []
     warnings = []
     rec_id = _record_label(rec, idx)
+
+    box_count = get_box_count(layout) if layout else BOX_RANGE[1]
+    pos_lo, pos_hi = get_position_range(layout) if layout else (POSITION_RANGE[0], POSITION_RANGE[1])
 
     required_fields = ["id", "parent_cell_line", "short_name", "box", "positions", "frozen_at"]
     for field in required_fields:
@@ -194,8 +216,8 @@ def validate_record(rec, idx=None):
     box = rec.get("box")
     if not isinstance(box, int):
         errors.append(f"{rec_id}: 'box' 必须是整数")
-    elif not validate_box(box):
-        errors.append(f"{rec_id}: 'box' 超出范围 ({BOX_RANGE[0]}-{BOX_RANGE[1]})")
+    elif not validate_box(box, layout):
+        errors.append(f"{rec_id}: 'box' 超出范围 (1-{box_count})")
 
     for field in ["parent_cell_line", "short_name"]:
         value = rec.get(field)
@@ -209,8 +231,6 @@ def validate_record(rec, idx=None):
         if not has_depletion_history(rec):
             errors.append(f"{rec_id}: 'positions' 为空，但没有取出/复苏/扔掉历史")
     else:
-        # Tube-level invariant: one record represents one physical tube.
-        # Keep historical/consumed tubes as ``positions=[]`` with depletion history.
         if len(positions) > 1:
             errors.append(f"{rec_id}: 'positions' 最多只能包含 1 个位置（tube 为最小单元）")
         seen_positions = set()
@@ -218,8 +238,8 @@ def validate_record(rec, idx=None):
             if not isinstance(pos, int):
                 errors.append(f"{rec_id}: 位置 {pos} 必须是整数")
                 continue
-            if not validate_position(pos):
-                errors.append(f"{rec_id}: 位置 {pos} 超出范围 ({POSITION_RANGE[0]}-{POSITION_RANGE[1]})")
+            if not validate_position(pos, layout):
+                errors.append(f"{rec_id}: 位置 {pos} 超出范围 ({pos_lo}-{pos_hi})")
                 continue
             if pos in seen_positions:
                 errors.append(f"{rec_id}: 'positions' 中存在重复值 {pos}")
@@ -263,9 +283,9 @@ def validate_record(rec, idx=None):
                     if not isinstance(ev_pos, int):
                         errors.append(f"{rec_id}: thaw_events[{event_idx}] 位置 {ev_pos} 必须是整数")
                         continue
-                    if not validate_position(ev_pos):
+                    if not validate_position(ev_pos, layout):
                         errors.append(
-                            f"{rec_id}: thaw_events[{event_idx}] 位置 {ev_pos} 超出范围 ({POSITION_RANGE[0]}-{POSITION_RANGE[1]})"
+                            f"{rec_id}: thaw_events[{event_idx}] 位置 {ev_pos} 超出范围 ({pos_lo}-{pos_hi})"
                         )
                         continue
                     if ev_pos in seen_ev_pos:
@@ -331,11 +351,13 @@ def validate_inventory(data):
     if not isinstance(inventory, list):
         return ["'inventory' 必须是列表"], []
 
+    layout = data.get("meta", {}).get("box_layout", {})
+
     for idx, rec in enumerate(inventory):
         if not isinstance(rec, dict):
             errors.append(f"记录 #{idx + 1}: 必须是对象")
             continue
-        rec_errors, rec_warnings = validate_record(rec, idx=idx)
+        rec_errors, rec_warnings = validate_record(rec, idx=idx, layout=layout)
         errors.extend(rec_errors)
         warnings.extend(rec_warnings)
 

@@ -16,11 +16,11 @@ from .config import (
     BACKUP_DIR_NAME,
     BACKUP_KEEP_COUNT,
     BOX_EMPTY_WARNING_THRESHOLD,
-    BOX_RANGE,
     TOTAL_EMPTY_WARNING_THRESHOLD,
     YAML_PATH,
     YAML_SIZE_WARNING_MB,
 )
+from .position_fmt import get_box_count, get_total_slots
 from .validators import format_validation_errors, validate_inventory
 
 
@@ -139,15 +139,16 @@ def compute_occupancy(records):
 def collect_inventory_stats(data):
     """Collect compact occupancy stats for warnings/audit."""
     records = (data or {}).get("inventory", []) if isinstance(data, dict) else []
-    per_box_total = _inventory_box_total(data)
-    box_count = BOX_RANGE[1] - BOX_RANGE[0] + 1
+    layout = (data or {}).get("meta", {}).get("box_layout", {})
+    per_box_total = get_total_slots(layout)
+    box_count = get_box_count(layout)
     total_slots = per_box_total * box_count
 
     occupancy = compute_occupancy(records)
     boxes = {}
     total_occupied = 0
 
-    for box_num in range(BOX_RANGE[0], BOX_RANGE[1] + 1):
+    for box_num in range(1, box_count + 1):
         key = str(box_num)
         occupied = len(occupancy.get(key, []))
         empty = max(per_box_total - occupied, 0)
