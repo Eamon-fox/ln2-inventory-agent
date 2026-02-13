@@ -15,7 +15,7 @@ Liquid nitrogen (LN2) inventory manager for frozen tubes. Data lives in a single
 - Backup & rollback + audit log
 - Unified Tool API shared by GUI and AI Copilot
 
-## Quick Start
+## Running the App
 
 ```bash
 python -m pip install -r requirements.txt

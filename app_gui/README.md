@@ -25,7 +25,6 @@ Current status:
 - Removed redundant "Ask AI" quick button from Overview (AI panel is always visible on the right)
 - Quick actions (copy ID, prefill thaw form) are available from each slot's right-click menu
 - Overview cells support right-click context menu (copy location/ID, prefill thaw)
-- Quick Start flow lets users choose current/demo/custom YAML on launch
 - Settings dialog manages YAML path and actor ID (advanced options moved off main screen)
 - Query panel wired to `tool_query_inventory` / `tool_list_empty_positions`
 - Query results render in an interactive table (records and empty-slot views)

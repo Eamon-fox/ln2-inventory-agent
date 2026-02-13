@@ -2,15 +2,15 @@
 
 import os
 import sys
+import yaml
 from PySide6.QtCore import Qt, QSettings
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QPushButton, QLabel, QSplitter,
     QMessageBox, QDialog, QFormLayout, QLineEdit,
     QDialogButtonBox, QFileDialog, QGroupBox,
-    QFrame, QSpacerItem, QSizePolicy, QComboBox
+    QComboBox
 )
-from PySide6.QtGui import QFont
 
 if getattr(sys, "frozen", False):
     ROOT = sys._MEIPASS
@@ -25,8 +25,7 @@ from app_gui.gui_config import (
     load_gui_config,
     save_gui_config,
 )
-from app_gui.i18n import tr, t, set_language
-from app_gui.path_utils import resolve_demo_dataset_path
+from app_gui.i18n import t, tr, set_language
 from lib.config import YAML_PATH
 from app_gui.ui.theme import apply_dark_theme, apply_light_theme
 from app_gui.ui.overview_panel import OverviewPanel
@@ -34,131 +33,15 @@ from app_gui.ui.operations_panel import OperationsPanel
 from app_gui.ui.ai_panel import AIPanel
 
 
-class QuickStartDialog(QDialog):
-    """Enhanced Quick Start dialog with explanations."""
-
-    def __init__(self, parent=None, current_path="", demo_path=""):
-        super().__init__(parent)
-        self.setWindowTitle(tr("quickStart.title"))
-        self.setMinimumWidth(500)
-        self.chosen_path = None
-        self.create_new = False
-
-        layout = QVBoxLayout(self)
-        layout.setSpacing(16)
-
-        title = QLabel(tr("quickStart.title"))
-        title.setFont(QFont("", 16, QFont.Bold))
-        title.setAlignment(Qt.AlignCenter)
-        layout.addWidget(title)
-
-        intro = QLabel(tr("quickStart.intro"))
-        intro.setAlignment(Qt.AlignCenter)
-        intro.setStyleSheet("color: #94a3b8;")
-        layout.addWidget(intro)
-
-        options_layout = QVBoxLayout()
-        options_layout.setSpacing(12)
-
-        self.btn_demo = self._create_option_button(
-            tr("quickStart.demo"),
-            tr("quickStart.demoDesc"),
-        )
-        self.btn_demo.clicked.connect(self._on_demo)
-        options_layout.addWidget(self.btn_demo)
-
-        self.btn_open = self._create_option_button(
-            tr("quickStart.open"),
-            tr("quickStart.openDesc"),
-        )
-        self.btn_open.clicked.connect(self._on_open)
-        options_layout.addWidget(self.btn_open)
-
-        self.btn_current = self._create_option_button(
-            tr("quickStart.current"),
-            t("quickStart.currentDesc", path=current_path),
-        )
-        if not current_path or not os.path.exists(current_path):
-            self.btn_current.setEnabled(False)
-        self.btn_current.clicked.connect(self._on_current)
-        options_layout.addWidget(self.btn_current)
-
-        self.btn_new = self._create_option_button(
-            tr("quickStart.new"),
-            tr("quickStart.newDesc"),
-        )
-        self.btn_new.clicked.connect(self._on_new)
-        options_layout.addWidget(self.btn_new)
-
-        layout.addLayout(options_layout)
-
-        btn_cancel = QPushButton(tr("quickStart.cancel"))
-        btn_cancel.clicked.connect(self.reject)
-        layout.addWidget(btn_cancel, alignment=Qt.AlignCenter)
-
-        self._demo_path = demo_path
-        self._current_path = current_path
-
-    def _create_option_button(self, title, description):
-        btn = QPushButton()
-        btn.setStyleSheet("""
-            QPushButton {
-                background-color: var(--background-raised);
-                border: 1px solid var(--border-weak);
-                border-radius: var(--radius-md);
-                padding: 16px;
-                text-align: left;
-                color: var(--text-strong);
-                font-size: 13px;
-            }
-            QPushButton:hover {
-                background-color: #383838;
-                border-color: var(--border-subtle);
-            }
-            QPushButton:disabled {
-                background-color: var(--background-strong);
-                color: var(--text-muted);
-                border-color: transparent;
-            }
-        """)
-        btn.setText(f"{title}\n\n{description}")
-        btn.setMinimumHeight(80)
-        return btn
-
-    def _on_demo(self):
-        self.chosen_path = self._demo_path
-        self.accept()
-
-    def _on_open(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open Inventory File", "", "YAML Files (*.yaml *.yml)"
-        )
-        if path:
-            self.chosen_path = path
-            self.accept()
-
-    def _on_current(self):
-        self.chosen_path = self._current_path
-        self.accept()
-
-    def _on_new(self):
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Create New Inventory File", "ln2_inventory.yaml", "YAML Files (*.yaml *.yml)"
-        )
-        if path:
-            self.chosen_path = path
-            self.create_new = True
-            self.accept()
-
-
 class SettingsDialog(QDialog):
     """Enhanced Settings dialog with sections and help text."""
 
-    def __init__(self, parent=None, config=None):
+    def __init__(self, parent=None, config=None, on_create_new_dataset=None):
         super().__init__(parent)
         self.setWindowTitle(tr("settings.title"))
         self.setMinimumWidth(500)
         self._config = config or {}
+        self._on_create_new_dataset = on_create_new_dataset
 
         layout = QVBoxLayout(self)
         layout.setSpacing(16)
@@ -168,10 +51,14 @@ class SettingsDialog(QDialog):
 
         yaml_row = QHBoxLayout()
         self.yaml_edit = QLineEdit(self._config.get("yaml_path", ""))
+        self.yaml_new_btn = QPushButton(tr("main.new"))
+        self.yaml_new_btn.setFixedWidth(80)
+        self.yaml_new_btn.clicked.connect(self._emit_create_new_dataset_request)
         yaml_browse = QPushButton(tr("settings.browse"))
         yaml_browse.setFixedWidth(80)
         yaml_browse.clicked.connect(self._browse_yaml)
         yaml_row.addWidget(self.yaml_edit, 1)
+        yaml_row.addWidget(self.yaml_new_btn)
         yaml_row.addWidget(yaml_browse)
         data_layout.addRow(tr("settings.inventoryFile"), yaml_row)
 
@@ -234,9 +121,9 @@ class SettingsDialog(QDialog):
         theme_layout = QFormLayout(theme_group)
 
         self.theme_combo = QComboBox()
-        self.theme_combo.addItem("Auto (System)", "auto")
-        self.theme_combo.addItem("Dark", "dark")
-        self.theme_combo.addItem("Light", "light")
+        self.theme_combo.addItem(tr("settings.themeAuto"), "auto")
+        self.theme_combo.addItem(tr("settings.themeDark"), "dark")
+        self.theme_combo.addItem(tr("settings.themeLight"), "light")
         current_theme = self._config.get("theme", "dark")
         idx = self.theme_combo.findData(current_theme)
         if idx >= 0:
@@ -259,10 +146,20 @@ class SettingsDialog(QDialog):
 
     def _browse_yaml(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select Inventory File", "", "YAML Files (*.yaml *.yml)"
+            self,
+            tr("settings.selectInventoryFile"),
+            "",
+            "YAML Files (*.yaml *.yml)",
         )
         if path:
             self.yaml_edit.setText(path)
+
+    def _emit_create_new_dataset_request(self):
+        if not callable(self._on_create_new_dataset):
+            return
+        new_path = self._on_create_new_dataset(update_window=False)
+        if new_path:
+            self.yaml_edit.setText(new_path)
 
     def get_values(self):
         return {
@@ -313,11 +210,12 @@ class MainWindow(QMainWindow):
         self.restore_ui_settings()
 
         self.statusBar().showMessage(tr("app.ready"), 2000)
-
-        if os.path.isfile(self.current_yaml_path):
-            self.overview_panel.refresh()
-        else:
-            self.on_quick_start()
+        self.overview_panel.refresh()
+        if not os.path.isfile(self.current_yaml_path):
+            self.statusBar().showMessage(
+                t("main.fileNotFound", path=self.current_yaml_path),
+                6000,
+            )
 
     def setup_ui(self):
         container = QWidget()
@@ -331,13 +229,14 @@ class MainWindow(QMainWindow):
         self._update_dataset_label()
         top.addWidget(self.dataset_label, 1)
 
-        quick_start_btn = QPushButton(tr("main.quickStart"))
-        quick_start_btn.clicked.connect(self.on_quick_start)
-        top.addWidget(quick_start_btn)
+        new_dataset_btn = QPushButton(tr("main.new"))
+        new_dataset_btn.clicked.connect(self.on_create_new_dataset)
+        top.addWidget(new_dataset_btn)
 
         settings_btn = QPushButton(tr("main.settings"))
         settings_btn.clicked.connect(self.on_open_settings)
         top.addWidget(settings_btn)
+
         root.addLayout(top)
 
         # Panels
@@ -411,47 +310,9 @@ class MainWindow(QMainWindow):
             self.overview_panel.refresh()
 
     def _update_dataset_label(self):
-        self.dataset_label.setText(f"Dataset: {self.current_yaml_path} | Actor: {self.current_actor_id}")
-
-    def _resolve_demo_dataset_path(self):
-        return resolve_demo_dataset_path(root=ROOT)
-
-    def on_quick_start(self):
-        dialog = QuickStartDialog(
-            self,
-            current_path=self.current_yaml_path,
-            demo_path=self._resolve_demo_dataset_path()
+        self.dataset_label.setText(
+            t("main.datasetLabel", dataset=self.current_yaml_path, actor=self.current_actor_id)
         )
-        if dialog.exec() != QDialog.Accepted:
-            return
-
-        chosen = dialog.chosen_path
-        if not chosen:
-            return
-
-        if dialog.create_new:
-            empty_data = {
-                "meta": {"version": "1.0", "box_layout": {"rows": 9, "cols": 9}},
-                "inventory": []
-            }
-            import yaml
-            with open(chosen, "w", encoding="utf-8") as f:
-                yaml.dump(empty_data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
-
-        if not os.path.exists(chosen):
-            QMessageBox.warning(
-                self,
-                "Error",
-                f"File not found: {chosen}"
-            )
-            return
-
-        self.current_yaml_path = os.path.abspath(chosen)
-        self.gui_config["yaml_path"] = self.current_yaml_path
-        save_gui_config(self.gui_config)
-        self._update_dataset_label()
-        self.overview_panel.refresh()
-        self.statusBar().showMessage(f"Loaded: {self.current_yaml_path}", 5000)
 
     def on_open_settings(self):
         dialog = SettingsDialog(
@@ -463,7 +324,8 @@ class MainWindow(QMainWindow):
                 "ai": self.gui_config.get("ai", {}),
                 "language": self.gui_config.get("language", "en"),
                 "theme": self.gui_config.get("theme", "dark"),
-            }
+            },
+            on_create_new_dataset=self.on_create_new_dataset,
         )
         if dialog.exec() != QDialog.Accepted:
             return
@@ -482,7 +344,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 tr("common.info"),
-                "Language changed. Please restart the application to apply."
+                tr("main.languageChangedRestart")
             )
 
         new_theme = values.get("theme", "dark")
@@ -491,15 +353,68 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 tr("common.info"),
-                "Theme changed. Please restart the application to apply."
+                tr("main.themeChangedRestart")
             )
 
         self.bridge.set_actor(self.current_actor_id)
         self._update_dataset_label()
         self.overview_panel.refresh()
+        if not os.path.isfile(self.current_yaml_path):
+            self.statusBar().showMessage(
+                t("main.fileNotFound", path=self.current_yaml_path),
+                6000,
+            )
         self.gui_config["yaml_path"] = self.current_yaml_path
         self.gui_config["actor_id"] = self.current_actor_id
         save_gui_config(self.gui_config)
+
+    def on_create_new_dataset(self, update_window=True):
+        default_path = self.current_yaml_path
+        if not default_path or os.path.isdir(default_path):
+            default_path = os.path.join(os.getcwd(), "ln2_inventory.yaml")
+        target_path, _ = QFileDialog.getSaveFileName(
+            self,
+            tr("main.new"),
+            default_path,
+            "YAML Files (*.yaml *.yml)",
+        )
+        if not target_path:
+            return
+
+        target_path = os.path.abspath(target_path)
+        if os.path.isdir(target_path):
+            target_path = os.path.join(target_path, "ln2_inventory.yaml")
+
+        if not target_path.lower().endswith((".yaml", ".yml")):
+            target_path += ".yaml"
+
+        target_dir = os.path.dirname(target_path)
+        if target_dir and not os.path.isdir(target_dir):
+            os.makedirs(target_dir, exist_ok=True)
+
+        new_payload = {
+            "meta": {
+                "version": "1.0",
+                "box_layout": {"rows": 9, "cols": 9},
+            },
+            "inventory": [],
+        }
+        with open(target_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(new_payload, f, allow_unicode=True, sort_keys=False)
+
+        if not update_window:
+            return target_path
+
+        self.current_yaml_path = target_path
+        self._update_dataset_label()
+        self.gui_config["yaml_path"] = self.current_yaml_path
+        save_gui_config(self.gui_config)
+        self.overview_panel.refresh()
+        self.statusBar().showMessage(
+            t("main.fileCreated", path=self.current_yaml_path),
+            4000,
+        )
+        return target_path
 
     def restore_ui_settings(self):
         geometry = self.settings.value("ui/geometry")
@@ -513,7 +428,11 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         if self.ai_panel.ai_run_inflight:
-            QMessageBox.warning(self, "Busy", "AI run is still in progress. Please stop it or wait.")
+            QMessageBox.warning(
+                self,
+                tr("main.aiBusyTitle"),
+                tr("main.aiBusyMessage"),
+            )
             event.ignore()
             return
 

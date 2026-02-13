@@ -15,7 +15,7 @@
 - 备份与回滚 + 审计日志
 - 统一 Tool API（GUI 与 AI Copilot 共用）
 
-## 快速开始
+## 运行项目
 
 ```bash
 python -m pip install -r requirements.txt

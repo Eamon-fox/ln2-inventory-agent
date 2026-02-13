@@ -1,4 +1,5 @@
 from datetime import date, datetime
+import os
 from PySide6.QtCore import Qt, Signal, QEvent, QMimeData, QPoint
 from PySide6.QtGui import QDrag, QDropEvent, QDragEnterEvent, QDragMoveEvent
 from PySide6.QtWidgets import (
@@ -184,12 +185,12 @@ class OverviewPanel(QWidget):
         advanced_filter_row.setSpacing(6)
 
         self.ov_filter_box = QComboBox()
-        self.ov_filter_box.addItem("All boxes", None)
+        self.ov_filter_box.addItem(tr("overview.allBoxes"), None)
         self.ov_filter_box.currentIndexChanged.connect(self._apply_filters)
         advanced_filter_row.addWidget(self.ov_filter_box)
 
         self.ov_filter_cell = QComboBox()
-        self.ov_filter_cell.addItem("All cells", None)
+        self.ov_filter_cell.addItem(tr("overview.allCells"), None)
         self.ov_filter_cell.currentIndexChanged.connect(self._apply_filters)
         advanced_filter_row.addWidget(self.ov_filter_cell, 1)
 
@@ -262,6 +263,13 @@ class OverviewPanel(QWidget):
 
     def refresh(self):
         yaml_path = self.yaml_path_getter()
+        if not yaml_path or not os.path.isfile(yaml_path):
+            self.ov_status.setText(t("main.fileNotFound", path=yaml_path or ""))
+            self.overview_records_by_id = {}
+            self.overview_selected_key = None
+            self._reset_detail()
+            return
+
         stats_response = self.bridge.generate_stats(yaml_path)
         timeline_response = self.bridge.collect_timeline(yaml_path, days=7, all_history=False)
 
@@ -316,10 +324,7 @@ class OverviewPanel(QWidget):
         self.ov_rate_value.setText(f"{overall.get('occupancy_rate', 0):.1f}%")
 
         if len(records) == 0:
-            self.ov_hover_hint.setText(
-                "[EMPTY] No samples yet. Double-click a slot to add your first entry, "
-                "or use Quick Start to load demo data."
-            )
+            self.ov_hover_hint.setText(tr("overview.emptyHint"))
             self.ov_hover_hint.setStyleSheet("color: var(--warning); font-weight: 500; padding: 8px; background-color: rgba(245,158,11,0.1); border-radius: 4px;")
         else:
             self.ov_hover_hint.setText(tr("overview.hoverHint"))
@@ -480,10 +485,10 @@ class OverviewPanel(QWidget):
             is_selected = self.overview_selected_key == key
             
             if key in preview_positions["add"]:
-                button.setText("ADD")
+                button.setText(tr("overview.previewAdd"))
                 button.setStyleSheet(cell_preview_add_style())
             elif key in preview_positions["takeout"]:
-                button.setText("OUT")
+                button.setText(tr("overview.previewOut"))
                 button.setStyleSheet(cell_preview_takeout_style())
             elif key in preview_positions["move_source"]:
                 orig_record = self.overview_pos_map.get(key)
@@ -635,7 +640,7 @@ class OverviewPanel(QWidget):
             button.set_record_id(int(record.get("id", 0)))
         else:
             button.setText(str(position))
-            button.setToolTip(f"Box {box_num} Position {position}: empty")
+            button.setToolTip(t("overview.emptyCellTooltip", box=box_num, position=position))
             button.setStyleSheet(cell_empty_style(is_selected))
             button.setProperty("search_text", f"empty box {box_num} position {position}".lower())
             button.setProperty("cell_line", "")
@@ -741,7 +746,12 @@ class OverviewPanel(QWidget):
                 self._reset_detail()
 
         self.ov_status.setText(
-            f"Filter matched {visible_slots} slots across {visible_boxes} boxes | {datetime.now().strftime('%H:%M:%S')}"
+            t(
+                "overview.filterStatus",
+                slots=visible_slots,
+                boxes=visible_boxes,
+                time=datetime.now().strftime("%H:%M:%S"),
+            )
         )
 
     def on_toggle_filters(self, checked):
