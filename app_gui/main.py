@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QPushButton, QLabel, QSplitter,
     QMessageBox, QDialog, QFormLayout, QLineEdit,
     QDialogButtonBox, QFileDialog, QGroupBox,
-    QComboBox
+    QComboBox, QSpinBox, QCheckBox
 )
 
 if getattr(sys, "frozen", False):
@@ -81,6 +81,24 @@ class SettingsDialog(QDialog):
         api_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
         api_hint.setWordWrap(True)
         ai_layout.addRow("", api_hint)
+
+        ai_advanced = self._config.get("ai", {})
+        self.ai_model_edit = QLineEdit(ai_advanced.get("model", "deepseek-chat"))
+        self.ai_model_edit.setPlaceholderText("deepseek-chat")
+        ai_layout.addRow(tr("settings.aiModel"), self.ai_model_edit)
+
+        self.ai_max_steps = QSpinBox()
+        self.ai_max_steps.setRange(1, 20)
+        self.ai_max_steps.setValue(ai_advanced.get("max_steps", 8))
+        ai_layout.addRow(tr("settings.aiMaxSteps"), self.ai_max_steps)
+
+        self.ai_thinking_enabled = QCheckBox()
+        self.ai_thinking_enabled.setChecked(ai_advanced.get("thinking_enabled", True))
+        ai_layout.addRow(tr("settings.aiThinking"), self.ai_thinking_enabled)
+
+        self.ai_thinking_expanded = QCheckBox()
+        self.ai_thinking_expanded.setChecked(ai_advanced.get("thinking_expanded", True))
+        ai_layout.addRow(tr("settings.aiThinkingExpanded"), self.ai_thinking_expanded)
 
         layout.addWidget(ai_group)
 
@@ -168,6 +186,10 @@ class SettingsDialog(QDialog):
             "api_key": self.api_key_edit.text().strip() or None,
             "language": self.lang_combo.currentData(),
             "theme": self.theme_combo.currentData(),
+            "ai_model": self.ai_model_edit.text().strip() or "deepseek-chat",
+            "ai_max_steps": self.ai_max_steps.value(),
+            "ai_thinking_enabled": self.ai_thinking_enabled.isChecked(),
+            "ai_thinking_expanded": self.ai_thinking_expanded.isChecked(),
         }
 
 
@@ -357,6 +379,17 @@ class MainWindow(QMainWindow):
                 tr("main.themeChangedRestart")
             )
 
+        self.gui_config["ai"] = {
+            "model": values.get("ai_model", "deepseek-chat"),
+            "max_steps": values.get("ai_max_steps", 8),
+            "thinking_enabled": values.get("ai_thinking_enabled", True),
+            "thinking_expanded": values.get("ai_thinking_expanded", True),
+        }
+        self.ai_panel.ai_model.setText(self.gui_config["ai"]["model"])
+        self.ai_panel.ai_steps.setValue(self.gui_config["ai"]["max_steps"])
+        self.ai_panel.ai_thinking_enabled.setChecked(self.gui_config["ai"]["thinking_enabled"])
+        self.ai_panel.ai_thinking_collapsed = not self.gui_config["ai"]["thinking_expanded"]
+
         self.bridge.set_actor(self.current_actor_id)
         self._update_dataset_label()
         self.overview_panel.refresh()
@@ -427,6 +460,7 @@ class MainWindow(QMainWindow):
         self.ai_panel.ai_model.setText(ai_cfg.get("model") or "deepseek-chat")
         self.ai_panel.ai_steps.setValue(ai_cfg.get("max_steps", 8))
         self.ai_panel.ai_thinking_enabled.setChecked(bool(ai_cfg.get("thinking_enabled", True)))
+        self.ai_panel.ai_thinking_collapsed = not bool(ai_cfg.get("thinking_expanded", True))
 
     def closeEvent(self, event):
         if self.ai_panel.ai_run_inflight:
@@ -448,6 +482,7 @@ class MainWindow(QMainWindow):
             "model": self.ai_panel.ai_model.text().strip() or "deepseek-chat",
             "max_steps": self.ai_panel.ai_steps.value(),
             "thinking_enabled": self.ai_panel.ai_thinking_enabled.isChecked(),
+            "thinking_expanded": not self.ai_panel.ai_thinking_collapsed,
         }
         save_gui_config(self.gui_config)
 

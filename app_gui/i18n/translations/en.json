@@ -12,6 +12,10 @@
     "ai": "AI Assistant",
     "apiKey": "DeepSeek API Key:",
     "apiKeyHint": "Optional. Get your key at platform.deepseek.com\nLeave empty to use DEEPSEEK_API_KEY environment variable.",
+    "aiModel": "Model:",
+    "aiMaxSteps": "Max Steps:",
+    "aiThinking": "Enable Thinking:",
+    "aiThinkingExpanded": "Default Expand Thinking:",
     "user": "User",
     "actorId": "Actor ID:",
     "actorIdHint": "Your identifier for audit logs and operation records.",
@@ -345,7 +349,7 @@
     "aiRunStopped": "AI run stopped.",
     "runStopped": "**Run stopped by user.**",
     "memoryCleared": "AI memory cleared",
-    "helpText": "AI Assistant Panel - Natural Language Operations\n\nThis panel lets you control inventory using natural language commands.\n\nSETUP:\n1. Configure your DeepSeek API key in Settings\n2. Select model and max steps in \"Show Advanced\"\n\nUSAGE:\nType requests in plain language, for example:\n- \"Show me all K562 samples\"\n- \"Move sample 5 to position 10 in box 2\"\n- \"How many empty slots in box 1?\"\n- \"Thaw samples at positions 1, 2, and 3\"\n\nHOW IT WORKS:\n1. AI analyzes your request\n2. Generates a plan of operations\n3. Plan items appear in Operations panel\n4. Review and execute from the Plan Queue\n\nTIPS:\n- Be specific about box numbers and positions\n- Use record IDs when referring to samples\n- Check generated plans before executing"
+    "helpText": "AI Assistant Panel - Natural Language Operations\n\nThis panel lets you control inventory using natural language commands.\n\nSETUP:\nConfigure your DeepSeek API key, model, max steps, and thinking mode in Settings.\n\nUSAGE:\nType requests in plain language, for example:\n- \"Show me all K562 samples\"\n- \"Move sample 5 to position 10 in box 2\"\n- \"How many empty slots in box 1?\"\n- \"Thaw samples at positions 1, 2, and 3\"\n\nHOW IT WORKS:\n1. AI analyzes your request\n2. Generates a plan of operations\n3. Plan items appear in Operations panel\n4. Review and execute from the Plan Queue\n\nTIPS:\n- Be specific about box numbers and positions\n- Use record IDs when referring to samples\n- Check generated plans before executing"
   },
   "common": {
     "info": "Info",

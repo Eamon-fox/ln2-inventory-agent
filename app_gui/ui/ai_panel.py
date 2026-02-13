@@ -81,13 +81,8 @@ class AIPanel(QWidget):
 
         layout.addLayout(build_panel_header(self, tr("ai.title"), tr("ai.helpTitle"), get_ai_help_text()))
 
-        # Toggles
+        # Toggle for report details
         toggle_row = QHBoxLayout()
-        self.ai_toggle_controls_btn = QPushButton(tr("ai.showAdvanced"))
-        self.ai_toggle_controls_btn.setCheckable(True)
-        self.ai_toggle_controls_btn.toggled.connect(self.on_toggle_controls)
-        toggle_row.addWidget(self.ai_toggle_controls_btn)
-
         self.ai_toggle_report_btn = QPushButton(tr("ai.showPlanDetails"))
         self.ai_toggle_report_btn.setCheckable(True)
         self.ai_toggle_report_btn.toggled.connect(self.on_toggle_report)
@@ -95,33 +90,11 @@ class AIPanel(QWidget):
         toggle_row.addStretch()
         layout.addLayout(toggle_row)
 
-        # Controls
-        self.ai_controls_box = QGroupBox(tr("ai.agentControls"))
-        controls_form = QFormLayout(self.ai_controls_box)
+        # Controls (hidden, values managed via Settings)
         self.ai_model = QLineEdit()
-        self.ai_model.setPlaceholderText("deepseek-chat")
-        self.ai_model.setText("deepseek-chat")
-
         self.ai_steps = QSpinBox()
         self.ai_steps.setRange(1, 20)
-        self.ai_steps.setValue(8)
-
         self.ai_thinking_enabled = QCheckBox()
-        self.ai_thinking_enabled.setChecked(True)
-
-        thinking_row = QHBoxLayout()
-        thinking_row.addWidget(self.ai_thinking_enabled)
-        self.ai_thinking_collapse_btn = QPushButton()
-        self._update_thinking_collapse_btn_text()
-        self.ai_thinking_collapse_btn.setFlat(True)
-        self.ai_thinking_collapse_btn.clicked.connect(self._toggle_thinking_collapse)
-        thinking_row.addWidget(self.ai_thinking_collapse_btn)
-        thinking_row.addStretch()
-
-        controls_form.addRow(tr("ai.deepseekModel"), self.ai_model)
-        controls_form.addRow(tr("ai.maxSteps"), self.ai_steps)
-        controls_form.addRow(tr("ai.enableThinking"), thinking_row)
-        layout.addWidget(self.ai_controls_box)
 
         # Prompt Box
         prompt_box = QGroupBox(tr("ai.prompt"))
@@ -188,9 +161,8 @@ class AIPanel(QWidget):
         layout.addWidget(self.ai_report_box, 1)
         
         # Final AI panel layout:
-        # Toggles -> Advanced controls -> Chat -> Report -> Prompt.
+        # Toggles -> Chat -> Report -> Prompt.
         
-        self.ai_controls_box.setVisible(False)
         self.ai_report_box.setVisible(False)
 
         # Prompt area is intentionally placed at the bottom.
@@ -301,10 +273,6 @@ class AIPanel(QWidget):
             return True
         except Exception:
             return False
-
-    def on_toggle_controls(self, checked):
-        self.ai_controls_box.setVisible(bool(checked))
-        self.ai_toggle_controls_btn.setText(tr("ai.hideAdvanced") if checked else tr("ai.showAdvanced"))
 
     def on_toggle_report(self, checked):
         self.ai_report_box.setVisible(bool(checked))
