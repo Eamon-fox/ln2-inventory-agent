@@ -264,11 +264,62 @@ def run_plan(
     if mode not in ("execute", "preflight"):
         mode = "execute"
 
+    rollback_items = [it for it in items if it.get("action") == "rollback"]
+    if rollback_items and len(items) != 1:
+        reports = [
+            _make_error_item(
+                it,
+                "rollback_must_be_alone",
+                "Rollback must be executed as the only plan item (no mixing).",
+            )
+            for it in items
+        ]
+        return {
+            "ok": False,
+            "blocked": True,
+            "items": reports,
+            "stats": {"total": len(reports), "ok": 0, "blocked": len(reports), "remaining": len(items)},
+            "summary": "Blocked: rollback cannot be mixed with other operations.",
+            "backup_path": None,
+            "remaining_items": list(items),
+        }
+
     effective_date = date_str or date.today().isoformat()
     reports: List[Dict[str, object]] = []
     last_backup: Optional[str] = None
 
     remaining = list(items)
+
+    # Phase 0: rollback (must be executed alone, enforced above)
+    rollbacks = [it for it in remaining if it.get("action") == "rollback"]
+    for item in rollbacks:
+        payload = dict(item.get("payload") or {})
+        backup_path = payload.get("backup_path")
+
+        if mode == "preflight":
+            response = _run_dry_tool(
+                bridge=bridge,
+                yaml_path=yaml_path,
+                tool_name="tool_rollback",
+                backup_path=backup_path,
+            )
+        else:
+            response = bridge.rollback(yaml_path=yaml_path, backup_path=backup_path)
+
+        if response.get("ok"):
+            reports.append(_make_ok_item(item, response))
+            remaining.remove(item)
+            snapshot = response.get("backup_path") or (response.get("result") or {}).get("snapshot_before_rollback")
+            if snapshot:
+                last_backup = snapshot
+        else:
+            reports.append(
+                _make_error_item(
+                    item,
+                    response.get("error_code", "rollback_failed"),
+                    response.get("message", "Rollback failed"),
+                )
+            )
 
     # Phase 1: add operations (each add is independent)
     adds = [it for it in remaining if it.get("action") == "add"]

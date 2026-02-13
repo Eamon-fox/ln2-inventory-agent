@@ -48,6 +48,21 @@ def validate_plan_batch(
         else:
             valid_items.append(item)
 
+    # Cross-item constraint: rollback must be executed alone (no mixing).
+    has_rollback = any(str(it.get("action") or "").lower() == "rollback" for it in valid_items)
+    if has_rollback and len(valid_items) != 1:
+        message = "Rollback must be the only item in a plan (clear other operations first)."
+        for item in valid_items:
+            schema_errors.append(
+                {
+                    "kind": "schema",
+                    "item": item,
+                    "error_code": "plan_validation_failed",
+                    "message": message,
+                }
+            )
+        valid_items = []
+
     preflight_errors: List[Dict[str, Any]] = []
     preflight_report = None
     if run_preflight and valid_items and yaml_path and os.path.isfile(yaml_path):

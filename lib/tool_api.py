@@ -1,6 +1,7 @@
 """Unified Tool API shared by CLI, GUI, and AI agents."""
 
 import getpass
+import os
 import uuid
 from copy import deepcopy
 from collections import defaultdict
@@ -1796,14 +1797,17 @@ def tool_list_backups(yaml_path):
 def tool_rollback(
     yaml_path,
     backup_path=None,
+    dry_run=False,
     actor_context=None,
     source="tool_api",
+    auto_backup=True,
 ):
     """Rollback inventory YAML using shared tool flow."""
     audit_action = "rollback"
     tool_name = "tool_rollback"
     tool_input = {
         "backup_path": backup_path,
+        "dry_run": bool(dry_run),
     }
     current_data = None
     try:
@@ -1813,34 +1817,54 @@ def tool_rollback(
 
     backups = list_yaml_backups(yaml_path)
     if not backups and not backup_path:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="no_backups",
-            message="无可用备份，无法回滚",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            before_data=current_data,
-        )
+        payload = {
+            "ok": False,
+            "error_code": "no_backups",
+            "message": "无可用备份，无法回滚",
+        }
+        if not dry_run:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code=payload["error_code"],
+                message=payload["message"],
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=current_data,
+            )
+        return payload
 
     target = backup_path or backups[0]
+    if dry_run and not os.path.exists(target):
+        return {
+            "ok": False,
+            "error_code": "backup_not_found",
+            "message": f"备份不存在: {target}",
+        }
     try:
         backup_data = load_yaml(target)
     except Exception as exc:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="backup_load_failed",
-            message=f"无法读取备份文件: {exc}",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            before_data=current_data,
-            details={"requested_backup": target},
-        )
+        payload = {
+            "ok": False,
+            "error_code": "backup_load_failed",
+            "message": f"无法读取备份文件: {exc}",
+        }
+        if not dry_run:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code=payload["error_code"],
+                message=payload["message"],
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=current_data,
+                details={"requested_backup": target},
+            )
+        return payload
 
     validation_error = _validate_data_or_error(
         backup_data,
@@ -1852,20 +1876,38 @@ def tool_rollback(
             "message": "回滚被阻止：目标备份不满足完整性约束",
             "errors": [],
         }
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="rollback_backup_invalid",
-            message=validation_error.get("message", "回滚被阻止：目标备份不满足完整性约束"),
-            actor_context=actor_context,
-            tool_input=tool_input,
-            before_data=current_data,
-            errors=validation_error.get("errors"),
-            details={"requested_backup": target},
-            extra={"backup_path": target},
-        )
+        payload = {
+            "ok": False,
+            "error_code": "rollback_backup_invalid",
+            "message": validation_error.get("message", "回滚被阻止：目标备份不满足完整性约束"),
+            "errors": validation_error.get("errors"),
+            "backup_path": target,
+        }
+        if not dry_run:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code=payload["error_code"],
+                message=payload["message"],
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=current_data,
+                errors=payload.get("errors"),
+                details={"requested_backup": target},
+                extra={"backup_path": target},
+            )
+        return payload
+
+    if dry_run:
+        return {
+            "ok": True,
+            "dry_run": True,
+            "result": {
+                "requested_backup": target,
+            },
+        }
 
     try:
         result = rollback_yaml(
@@ -1896,7 +1938,10 @@ def tool_rollback(
 
     return {
         "ok": True,
+        "dry_run": False,
         "result": result,
+        # Expose pre-rollback snapshot so Plan executor can offer an Undo path.
+        "backup_path": result.get("snapshot_before_rollback"),
     }
 
 

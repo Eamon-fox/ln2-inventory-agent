@@ -9,6 +9,7 @@ from lib.tool_api import (
     tool_generate_stats,
     tool_get_raw_entries,
     tool_list_empty_positions,
+    tool_list_backups,
     tool_query_inventory,
     tool_query_thaw_events,
     tool_recent_frozen,
@@ -18,10 +19,10 @@ from lib.tool_api import (
     tool_search_records,
 )
 from app_gui.plan_gate import validate_plan_batch
-from lib.plan_item_factory import build_add_plan_item, build_record_plan_item
+from lib.plan_item_factory import build_add_plan_item, build_record_plan_item, build_rollback_plan_item
 from lib.validators import parse_positions
 
-_WRITE_TOOLS = {"add_entry", "record_thaw", "batch_thaw"}
+_WRITE_TOOLS = {"add_entry", "record_thaw", "batch_thaw", "rollback"}
 
 
 class AgentToolRunner:
@@ -679,6 +680,28 @@ class AgentToolRunner:
                         payload_action=str(action_raw).strip(),
                     )
                 )
+
+        elif tool_name == "rollback":
+            backup_path = payload.get("backup_path")
+            if backup_path in (None, ""):
+                backups = tool_list_backups(self._yaml_path)
+                if not backups:
+                    return self._with_hint(
+                        tool_name,
+                        {
+                            "ok": False,
+                            "error_code": "no_backups",
+                            "message": "No backups exist yet; provide `backup_path` or create backups before rollback.",
+                        },
+                    )
+                backup_path = backups[0]
+
+            items.append(
+                build_rollback_plan_item(
+                    backup_path=str(backup_path),
+                    source="ai",
+                )
+            )
 
         gate_result = validate_plan_batch(
             items=items,

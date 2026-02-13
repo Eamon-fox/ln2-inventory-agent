@@ -95,6 +95,22 @@ def make_takeout_item(record_id=1, position=1, box=1, **extra):
     return base
 
 
+def make_rollback_item(backup_path, **extra):
+    base = {
+        "action": "rollback",
+        "box": 0,
+        "position": 1,
+        "record_id": None,
+        "label": "Rollback",
+        "source": "human",
+        "payload": {
+            "backup_path": backup_path,
+        },
+    }
+    base.update(extra)
+    return base
+
+
 class PreflightPlanTests(unittest.TestCase):
     """Tests for preflight_plan function."""
 
@@ -162,6 +178,48 @@ class PreflightPlanTests(unittest.TestCase):
 
             # Original file should not be modified by preflight
             self.assertEqual(original_mtime, os.path.getmtime(str(yaml_path)))
+
+    def test_preflight_rollback_valid_succeeds(self):
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                auto_backup=False,
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+            backup_path = Path(td) / "manual_backup.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(backup_path),
+                auto_backup=False,
+                audit_meta={"action": "seed_backup", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            result = preflight_plan(str(yaml_path), [make_rollback_item(str(backup_path))], bridge=bridge)
+
+            self.assertTrue(result["ok"])
+            self.assertFalse(result["blocked"])
+            self.assertEqual(1, result["stats"]["ok"])
+
+    def test_preflight_rollback_missing_backup_blocked(self):
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                auto_backup=False,
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            missing_backup = Path(td) / "missing_backup.bak"
+            bridge = MagicMock()
+            result = preflight_plan(str(yaml_path), [make_rollback_item(str(missing_backup))], bridge=bridge)
+
+            self.assertFalse(result["ok"])
+            self.assertTrue(result["blocked"])
+            self.assertEqual(1, result["stats"]["blocked"])
 
 
 class RunPlanExecuteTests(unittest.TestCase):
@@ -312,6 +370,36 @@ class RunPlanExecuteTests(unittest.TestCase):
 
             self.assertTrue(result["ok"])
             self.assertEqual(3, result["stats"]["ok"])
+
+    def test_run_plan_rollback_success(self):
+        bridge = MagicMock()
+        bridge.rollback.return_value = {
+            "ok": True,
+            "result": {"snapshot_before_rollback": "/tmp/snap.bak"},
+        }
+
+        items = [make_rollback_item("/tmp/backup.bak")]
+        result = run_plan("/tmp/test.yaml", items, bridge=bridge, mode="execute")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(1, result["stats"]["ok"])
+        bridge.rollback.assert_called_once()
+        self.assertEqual("/tmp/snap.bak", result.get("backup_path"))
+
+    def test_run_plan_rollback_must_be_alone_blocks(self):
+        bridge = MagicMock()
+        items = [
+            make_rollback_item("/tmp/backup.bak"),
+            make_add_item(box=1, positions=[1]),
+        ]
+
+        result = run_plan("/tmp/test.yaml", items, bridge=bridge, mode="execute")
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["blocked"])
+        self.assertEqual(2, result["stats"]["blocked"])
+        self.assertFalse(bridge.rollback.called)
+        self.assertFalse(bridge.add_entry.called)
 
 
 class PreflightVsExecuteConsistencyTests(unittest.TestCase):

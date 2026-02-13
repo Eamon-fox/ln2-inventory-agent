@@ -59,18 +59,38 @@ def _move_item(**overrides):
     return base
 
 
+def _rollback_item(**overrides):
+    """Construct a minimal valid PlanItem for rollback."""
+    base = {
+        "action": "rollback",
+        "box": 0,
+        "position": 1,
+        "record_id": None,
+        "label": "Rollback",
+        "source": "human",
+        "payload": {
+            "backup_path": "/tmp/fake_backup.bak",
+        },
+    }
+    base.update(overrides)
+    return base
+
+
 # ── validate_plan_item ──────────────────────────────────────────────
 
 
 class ValidateActionTests(unittest.TestCase):
     def test_all_valid_actions(self):
-        for action in ("takeout", "thaw", "discard", "move", "add"):
-            item = _base_item(action=action)
-            if action == "move":
-                item["to_position"] = 2
-            if action == "add":
-                item.pop("record_id", None)
-                item["payload"] = {"parent_cell_line": "A", "short_name": "B"}
+        for action in ("takeout", "thaw", "discard", "move", "add", "rollback"):
+            if action == "rollback":
+                item = _rollback_item()
+            else:
+                item = _base_item(action=action)
+                if action == "move":
+                    item["to_position"] = 2
+                if action == "add":
+                    item.pop("record_id", None)
+                    item["payload"] = {"parent_cell_line": "A", "short_name": "B"}
             self.assertIsNone(validate_plan_item(item), f"{action} should be valid")
 
     def test_unknown_action(self):
@@ -152,6 +172,10 @@ class ValidateRecordIdTests(unittest.TestCase):
 
     def test_negative_record_id(self):
         self.assertIn("record_id", validate_plan_item(_base_item(record_id=-1)))
+
+    def test_rollback_does_not_require_record_id(self):
+        item = _rollback_item()
+        self.assertIsNone(validate_plan_item(item))
 
 
 class ValidateAddPayloadTests(unittest.TestCase):

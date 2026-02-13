@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import date
 from typing import Dict, List, Optional
 
-_VALID_ACTIONS = {"takeout", "thaw", "discard", "move", "add"}
+_VALID_ACTIONS = {"takeout", "thaw", "discard", "move", "add", "rollback"}
 _BOX_RANGE = (1, 5)
 
 
@@ -42,16 +42,19 @@ def validate_plan_item(item: dict) -> Optional[str]:
             if not isinstance(to_box, int) or to_box < 1:
                 return "to_box must be a positive integer"
 
-    if action != "add":
-        rid = item.get("record_id")
-        if not isinstance(rid, int) or rid < 1:
-            return "record_id must be a positive integer"
-    else:
+    if action == "add":
         payload = item.get("payload") or {}
         if not (item.get("parent_cell_line") or payload.get("parent_cell_line")):
             return "parent_cell_line is required for add"
         if not (item.get("short_name") or payload.get("short_name")):
             return "short_name is required for add"
+    elif action == "rollback":
+        # rollback does not target a specific record; it restores the whole YAML from backup.
+        pass
+    else:
+        rid = item.get("record_id")
+        if not isinstance(rid, int) or rid < 1:
+            return "record_id must be a positive integer"
 
     return None
 

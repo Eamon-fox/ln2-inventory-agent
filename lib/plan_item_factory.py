@@ -126,6 +126,42 @@ def build_record_plan_item(
     return item
 
 
+def build_rollback_plan_item(
+    *,
+    backup_path: Optional[str],
+    source: str = "human",
+    label: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build a normalized rollback PlanItem payload.
+
+    Rollback items are executed via the Plan queue (human-in-the-loop) and must
+    be the only item in the plan batch.
+    """
+    display_label = label
+    if not display_label:
+        display_label = "Rollback"
+        if backup_path:
+            try:
+                import os
+
+                display_label = f"Rollback: {os.path.basename(str(backup_path))}"
+            except Exception:
+                display_label = "Rollback"
+
+    return {
+        "action": "rollback",
+        # Keep box/position integers to satisfy existing PlanItem schema.
+        "box": 0,
+        "position": 1,
+        "record_id": None,
+        "label": display_label,
+        "source": source,
+        "payload": {
+            "backup_path": backup_path,
+        },
+    }
+
+
 def iter_batch_entries(
     entries: Iterable[Any],
     *,

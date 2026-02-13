@@ -24,6 +24,7 @@ from lib.tool_api import parse_batch_entries
 from lib.plan_item_factory import (
     build_add_plan_item,
     build_record_plan_item,
+    build_rollback_plan_item,
     iter_batch_entries,
     resolve_record_context,
 )
@@ -1246,6 +1247,32 @@ class OperationsPanel(QWidget):
     def add_plan_items(self, items):
         """Validate and add items to the plan staging area (with dedup)."""
         incoming = list(items or [])
+
+        incoming_has_rollback = any(
+            str(it.get("action") or "").lower() == "rollback" for it in incoming
+        )
+        existing_has_rollback = any(
+            str(it.get("action") or "").lower() == "rollback" for it in self.plan_items
+        )
+
+        # Rollback is intentionally constrained: it must be executed alone.
+        # Enforce early here (in addition to shared plan gate / executor checks),
+        # so the plan queue stays clean and predictable.
+        if incoming_has_rollback and self.plan_items and not existing_has_rollback:
+            self.status_message.emit(
+                "Plan rejected: Rollback must be executed alone (clear Plan first).",
+                4000,
+                "error",
+            )
+            return
+        if not incoming_has_rollback and existing_has_rollback:
+            self.status_message.emit(
+                "Plan rejected: Plan already contains Rollback (clear Plan first).",
+                4000,
+                "error",
+            )
+            return
+
         gate = validate_plan_batch(
             items=incoming,
             yaml_path=self.yaml_path_getter(),
@@ -1338,17 +1365,40 @@ class OperationsPanel(QWidget):
 
         for row, item in enumerate(self.plan_items):
             self.plan_table.insertRow(row)
+            action_text = str(item.get("action", "") or "")
+            action_norm = action_text.lower()
+            is_rollback = action_norm == "rollback"
+
             self.plan_table.setItem(row, 0, QTableWidgetItem(item.get("source", "")))
-            self.plan_table.setItem(row, 1, QTableWidgetItem(str(item.get("action", "")).capitalize()))
-            self.plan_table.setItem(row, 2, QTableWidgetItem(str(item.get("box", ""))))
-            pos = item.get("position", "")
-            self.plan_table.setItem(row, 3, QTableWidgetItem(str(pos)))
-            to_pos = item.get("to_position")
+            self.plan_table.setItem(row, 1, QTableWidgetItem(action_text.capitalize()))
+
+            if is_rollback:
+                box_text = ""
+                pos_text = ""
+                to_pos = None
+                to_box = None
+            else:
+                box_text = item.get("box", "")
+                pos_val = item.get("position", "")
+                pos_text = "" if pos_val in (None, "") else str(pos_val)
+                to_pos = item.get("to_position")
+                to_box = item.get("to_box")
+
+            self.plan_table.setItem(row, 2, QTableWidgetItem("" if box_text in (None, "") else str(box_text)))
+            self.plan_table.setItem(row, 3, QTableWidgetItem(pos_text))
             self.plan_table.setItem(row, 4, QTableWidgetItem(str(to_pos) if to_pos else ""))
-            to_box = item.get("to_box")
             self.plan_table.setItem(row, 5, QTableWidgetItem(str(to_box) if to_box else ""))
-            self.plan_table.setItem(row, 6, QTableWidgetItem(str(item.get("label", ""))))
-            note = (item.get("payload") or {}).get("note", "") or ""
+
+            label_text = str(item.get("label", "") or "")
+            backup_path = (item.get("payload") or {}).get("backup_path")
+            if is_rollback and backup_path:
+                label_text = f"Rollback: {os.path.basename(str(backup_path))}"
+            label_item = QTableWidgetItem(label_text)
+            if is_rollback and backup_path:
+                label_item.setToolTip(str(backup_path))
+            self.plan_table.setItem(row, 6, label_item)
+
+            note = "" if is_rollback else ((item.get("payload") or {}).get("note", "") or "")
             self.plan_table.setItem(row, 7, QTableWidgetItem(str(note)))
 
             key = self._plan_item_key(item)
@@ -1397,6 +1447,12 @@ class OperationsPanel(QWidget):
             action = item.get("action", "?")
             label = item.get("label", "?")
             pos = item.get("position", "?")
+            if str(action).lower() == "rollback":
+                backup_path = (item.get("payload") or {}).get("backup_path")
+                backup_label = os.path.basename(str(backup_path)) if backup_path else "Latest"
+                summary_lines.append(f"  rollback: restore from {backup_label}")
+                continue
+
             line = f"  {action}: {label} @ Box {item.get('box', '?')}:{pos}"
             to_pos = item.get("to_position")
             to_box = item.get("to_box")
@@ -1798,26 +1854,27 @@ class OperationsPanel(QWidget):
             self.rb_backup_path.setText(path)
 
     def on_rollback_latest(self):
-        self._do_rollback(None)
+        resp = self.bridge.list_backups(self.yaml_path_getter())
+        backups = resp.get("result", {}).get("backups", []) if isinstance(resp, dict) else []
+        if not backups:
+            self.status_message.emit("No backups found. Click 'Refresh Backups' first.", 4000, "error")
+            return
+        self._stage_rollback(backups[0])
 
     def on_rollback_selected(self):
         path = self.rb_backup_path.text().strip()
         if not path:
             self.status_message.emit("Please select a backup path first.", 3000, "error")
             return
-        self._do_rollback(path)
+        self._stage_rollback(path)
 
-    def _do_rollback(self, path):
-        if not self._confirm_execute("Rollback", f"Restore from {path or 'Latest'}?"):
-            return
-
-        resp = self.bridge.rollback(
-            self.yaml_path_getter(),
-            backup_path=path,
+    def _stage_rollback(self, backup_path):
+        """Stage rollback into Plan (human-in-the-loop)."""
+        item = build_rollback_plan_item(
+            backup_path=backup_path,
+            source="human",
         )
-        self._handle_response(resp, "Rollback")
-        if resp.get("ok"):
-            self.on_refresh_backups()
+        self.add_plan_items([item])
 
     # --- AUDIT TAB ---
     def _build_audit_tab(self):

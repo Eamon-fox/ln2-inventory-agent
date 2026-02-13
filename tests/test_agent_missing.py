@@ -7,6 +7,7 @@ Tests for:
 """
 
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -19,7 +20,7 @@ if str(ROOT) not in sys.path:
 
 from agent.tool_runner import AgentToolRunner
 from agent.llm_client import DeepSeekLLMClient, load_opencode_auth_env
-from lib.yaml_ops import load_yaml, write_yaml
+from lib.yaml_ops import create_yaml_backup, load_yaml, write_yaml
 
 
 def make_record(rec_id=1, box=1, positions=None):
@@ -322,6 +323,21 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertEqual(0, len(self.staged_items))
         self.assertEqual(0, result.get("result", {}).get("staged_count"))
         self.assertEqual(1, result.get("result", {}).get("blocked_count"))
+
+    def test_stage_to_plan_rollback_resolves_latest_backup(self):
+        yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, positions=[5])])
+        backup_path = create_yaml_backup(yaml_path)
+        self.assertTrue(os.path.exists(str(backup_path)))
+
+        runner = AgentToolRunner(yaml_path=yaml_path, plan_sink=self.plan_sink)
+        result = runner._stage_to_plan("rollback", {})
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result.get("staged"))
+        self.assertEqual(1, len(self.staged_items))
+        staged = self.staged_items[0]
+        self.assertEqual("rollback", staged.get("action"))
+        self.assertEqual(str(backup_path), (staged.get("payload") or {}).get("backup_path"))
 
 
 class ToolRunnerHintTests(unittest.TestCase):
