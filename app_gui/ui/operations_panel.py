@@ -14,6 +14,8 @@ from PySide6.QtWidgets import (
     QFormLayout, QDateEdit, QSpinBox
 )
 from app_gui.ui.utils import positions_to_text
+from app_gui.ui.theme import get_theme_color
+from app_gui.gui_config import load_gui_config
 from app_gui.i18n import tr
 from app_gui.plan_model import render_operation_sheet
 from app_gui.plan_gate import validate_plan_batch
@@ -129,17 +131,18 @@ class OperationsPanel(QWidget):
         # Undo Button
         self.undo_btn = QPushButton(tr("operations.undoLast"))
         self.undo_btn.setEnabled(False)
+        self.undo_btn.setVisible(False)
         self.undo_btn.setStyleSheet("""
             QPushButton {
-                background-color: #92400e;
+                background-color: var(--btn-warning);
                 color: white;
                 font-weight: 500;
-                border: 1px solid #78350f;
+                border: 1px solid var(--btn-warning-border);
                 border-radius: var(--radius-sm);
                 padding: 8px 16px;
             }
             QPushButton:hover {
-                background-color: #b45309;
+                background-color: var(--btn-warning-hover);
             }
             QPushButton:disabled {
                 background-color: var(--background-strong);
@@ -575,21 +578,6 @@ class OperationsPanel(QWidget):
         self.plan_remove_selected_btn.clicked.connect(self.remove_selected_plan_items)
         toolbar.addWidget(self.plan_remove_selected_btn)
 
-        self.plan_move_up_btn = QPushButton(tr("operations.moveUp"))
-        self.plan_move_up_btn.setEnabled(False)
-        self.plan_move_up_btn.clicked.connect(self.move_selected_plan_items_up)
-        toolbar.addWidget(self.plan_move_up_btn)
-
-        self.plan_move_down_btn = QPushButton(tr("operations.moveDown"))
-        self.plan_move_down_btn.setEnabled(False)
-        self.plan_move_down_btn.clicked.connect(self.move_selected_plan_items_down)
-        toolbar.addWidget(self.plan_move_down_btn)
-
-        self.plan_clear_blocked_btn = QPushButton(tr("operations.clearBlocked"))
-        self.plan_clear_blocked_btn.setEnabled(False)
-        self.plan_clear_blocked_btn.clicked.connect(self.clear_blocked_plan_items)
-        toolbar.addWidget(self.plan_clear_blocked_btn)
-
         toolbar.addStretch(1)
 
         self.plan_exec_btn = QPushButton(tr("operations.executeAll"))
@@ -725,23 +713,23 @@ class OperationsPanel(QWidget):
     def _style_execute_button(self, btn):
         btn.setStyleSheet("""
             QPushButton {
-                background-color: #b91c1c;
+                background-color: var(--btn-danger);
                 color: white;
                 font-weight: bold;
-                border: 1px solid #7f1d1d;
+                border: 1px solid var(--btn-danger-border);
             }
-            QPushButton:hover { background-color: #dc2626; }
+            QPushButton:hover { background-color: var(--btn-danger-hover); }
         """)
 
     def _style_stage_button(self, btn):
         btn.setStyleSheet("""
             QPushButton {
-                background-color: #1d4ed8;
+                background-color: var(--btn-primary);
                 color: white;
                 font-weight: bold;
-                border: 1px solid #1e3a8a;
+                border: 1px solid var(--btn-primary-border);
             }
-            QPushButton:hover { background-color: #2563eb; }
+            QPushButton:hover { background-color: var(--btn-primary-hover); }
         """)
 
     def _ensure_today_defaults(self):
@@ -782,7 +770,7 @@ class OperationsPanel(QWidget):
 
         if not record:
             self.t_ctx_status.setText(tr("operations.recordNotFound"))
-            self.t_ctx_status.setStyleSheet("color: #b45309;")
+            self.t_ctx_status.setStyleSheet("color: var(--status-warning);")
             for lbl in [
                 self.t_ctx_cell,
                 self.t_ctx_short,
@@ -801,7 +789,7 @@ class OperationsPanel(QWidget):
             self.t_ctx_status.setText(tr("operations.recordLoaded"))
         else:
             self.t_ctx_status.setText(tr("operations.recordContextLoaded"))
-        self.t_ctx_status.setStyleSheet("color: #15803d;")
+        self.t_ctx_status.setStyleSheet("color: var(--status-success);")
 
         self.t_ctx_cell.setText(str(record.get("parent_cell_line") or "-"))
         self.t_ctx_short.setText(str(record.get("short_name") or "-"))
@@ -842,10 +830,10 @@ class OperationsPanel(QWidget):
 
         if not pos_ok:
             self.t_ctx_check.setText(tr("operations.posWarning"))
-            self.t_ctx_check.setStyleSheet("color: #b91c1c;")
+            self.t_ctx_check.setStyleSheet("color: var(--status-error);")
         else:
             self.t_ctx_check.setText(tr("operations.posOk"))
-            self.t_ctx_check.setStyleSheet("color: #15803d;")
+            self.t_ctx_check.setStyleSheet("color: var(--status-success);")
 
     def _confirm_execute(self, title, details):
         msg = QMessageBox(self)
@@ -1023,7 +1011,7 @@ class OperationsPanel(QWidget):
 
         if not record:
             self.m_ctx_status.setText(tr("operations.recordNotFound"))
-            self.m_ctx_status.setStyleSheet("color: #b45309;")
+            self.m_ctx_status.setStyleSheet("color: var(--status-warning);")
             for lbl in [
                 self.m_ctx_cell, self.m_ctx_short, self.m_ctx_box,
                 self.m_ctx_positions, self.m_ctx_check, self.m_ctx_frozen,
@@ -1033,7 +1021,7 @@ class OperationsPanel(QWidget):
             return
 
         self.m_ctx_status.setText(tr("operations.recordContextLoaded"))
-        self.m_ctx_status.setStyleSheet("color: #15803d;")
+        self.m_ctx_status.setStyleSheet("color: var(--status-success);")
         self.m_ctx_cell.setText(str(record.get("parent_cell_line") or "-"))
         self.m_ctx_short.setText(str(record.get("short_name") or "-"))
         self.m_ctx_box.setText(str(record.get("box") or "-"))
@@ -1071,13 +1059,13 @@ class OperationsPanel(QWidget):
 
         if not pos_ok:
             self.m_ctx_check.setText(tr("operations.fromPosWarning"))
-            self.m_ctx_check.setStyleSheet("color: #b91c1c;")
+            self.m_ctx_check.setStyleSheet("color: var(--status-error);")
         elif from_pos == to_pos:
             self.m_ctx_check.setText(tr("operations.posSameWarning"))
-            self.m_ctx_check.setStyleSheet("color: #b91c1c;")
+            self.m_ctx_check.setStyleSheet("color: var(--status-error);")
         else:
             self.m_ctx_check.setText(tr("operations.posOk"))
-            self.m_ctx_check.setStyleSheet("color: #15803d;")
+            self.m_ctx_check.setStyleSheet("color: var(--status-success);")
 
     def _collect_batch_from_table(self):
         """Collect entries from the mini-table. Returns list of tuples or None if empty."""
@@ -1175,7 +1163,7 @@ class OperationsPanel(QWidget):
         result = payload.get("result", {}) or {}
 
         if ok:
-            lines = [f"<b style='color: #22c55e;'>{tr('operations.contextResultSuccess', context=context)}</b>"]
+            lines = [f"<b style='color: var(--status-success);'>{tr('operations.contextResultSuccess', context=context)}</b>"]
 
             if context == "Add Entry":
                 new_ids = result.get("new_ids") or []
@@ -1254,10 +1242,10 @@ class OperationsPanel(QWidget):
         else:
             msg = payload.get("message", tr("operations.unknownError"))
             error_code = payload.get("error_code", "")
-            lines = [f"<b style='color: #ef4444;'>{tr('operations.contextResultFailed', context=context)}</b>"]
+            lines = [f"<b style='color: var(--status-error);'>{tr('operations.contextResultFailed', context=context)}</b>"]
             lines.append(str(msg))
             if error_code:
-                lines.append(f"<span style='color: #94a3b8;'>{tr('operations.codeLabel', code=error_code)}</span>")
+                lines.append(f"<span style='color: var(--status-muted);'>{tr('operations.codeLabel', code=error_code)}</span>")
             self.result_summary.setText("<br/>".join(lines))
             self.result_card.setStyleSheet("QGroupBox { border: 1px solid var(--error); }")
 
@@ -1297,13 +1285,6 @@ class OperationsPanel(QWidget):
                 rows.append(row)
         return sorted(set(rows))
 
-    def _is_contiguous_rows(self, rows):
-        if not rows:
-            return False
-        if len(rows) == 1:
-            return True
-        return all(rows[i] + 1 == rows[i + 1] for i in range(len(rows) - 1))
-
     def _refresh_plan_toolbar_state(self):
         if not hasattr(self, "plan_table"):
             return
@@ -1316,18 +1297,9 @@ class OperationsPanel(QWidget):
 
         if not has_selected:
             self.plan_remove_selected_btn.setEnabled(False)
-            self.plan_move_up_btn.setEnabled(False)
-            self.plan_move_down_btn.setEnabled(False)
         else:
             self.plan_remove_selected_btn.setEnabled(True)
-            self.plan_move_up_btn.setEnabled(self._is_contiguous_rows(rows) and first > 0)
-            self.plan_move_down_btn.setEnabled(self._is_contiguous_rows(rows) and last < len(self.plan_items) - 1)
 
-        blocked_count = sum(
-            1 for row in range(len(self.plan_items))
-            if self._plan_validation_by_key.get(self._plan_item_key(self.plan_items[row]), {}).get("blocked")
-        )
-        self.plan_clear_blocked_btn.setEnabled(has_items and blocked_count > 0)
         self.plan_clear_btn.setEnabled(has_items)
 
     def _select_plan_rows(self, rows):
@@ -1370,93 +1342,6 @@ class OperationsPanel(QWidget):
             return
         self.status_message.emit(
             tr("operations.planRemovedCount", count=removed_count), 2000, "info"
-        )
-
-    def move_selected_plan_items_up(self):
-        rows = self._get_selected_plan_rows()
-        if not rows:
-            self.status_message.emit(tr("operations.planNoSelection"), 2000, "warning")
-            return
-
-        if not self._is_contiguous_rows(rows):
-            self.status_message.emit(tr("operations.planNeedContiguous"), 3000, "warning")
-            return
-
-        start = rows[0]
-        if start == 0:
-            self.status_message.emit(tr("operations.planMoveUpBlocked"), 2000, "warning")
-            return
-
-        end = rows[-1]
-        block = self.plan_items[start : end + 1]
-        anchor = self.plan_items[start - 1]
-
-        self.plan_items = (
-            self.plan_items[: start - 1]
-            + block
-            + [anchor]
-            + self.plan_items[end + 1 :]
-        )
-
-        new_rows = [row - 1 for row in rows]
-        self._refresh_after_plan_items_changed(emit_preview=True)
-        self._select_plan_rows(new_rows)
-        self.status_message.emit(tr("operations.planMoveUp"), 2000, "info")
-
-    def move_selected_plan_items_down(self):
-        rows = self._get_selected_plan_rows()
-        if not rows:
-            self.status_message.emit(tr("operations.planNoSelection"), 2000, "warning")
-            return
-
-        if not self._is_contiguous_rows(rows):
-            self.status_message.emit(tr("operations.planNeedContiguous"), 3000, "warning")
-            return
-
-        end = rows[-1]
-        if end >= len(self.plan_items) - 1:
-            self.status_message.emit(tr("operations.planMoveDownBlocked"), 2000, "warning")
-            return
-
-        start = rows[0]
-        block = self.plan_items[start : end + 1]
-        anchor = self.plan_items[end + 1]
-
-        self.plan_items = (
-            self.plan_items[:start]
-            + [anchor]
-            + block
-            + self.plan_items[end + 2 :]
-        )
-
-        new_rows = [row + 1 for row in rows]
-        self._refresh_after_plan_items_changed(emit_preview=True)
-        self._select_plan_rows(new_rows)
-        self.status_message.emit(tr("operations.planMoveDown"), 2000, "info")
-
-    def clear_blocked_plan_items(self):
-        if not self.plan_items:
-            self.status_message.emit(tr("operations.planNoItemsToClear"), 2000, "warning")
-            return
-
-        blocked_rows = [
-            row for row in range(len(self.plan_items))
-            if self._plan_validation_by_key.get(self._plan_item_key(self.plan_items[row]), {}).get("blocked")
-        ]
-        if not blocked_rows:
-            self._run_plan_preflight(trigger="manual")
-            blocked_rows = [
-                row for row in range(len(self.plan_items))
-                if self._plan_validation_by_key.get(self._plan_item_key(self.plan_items[row]), {}).get("blocked")
-            ]
-
-        if not blocked_rows:
-            self.status_message.emit(tr("operations.planNoBlocked"), 2000, "info")
-            return
-
-        self._remove_plan_rows(blocked_rows)
-        self.status_message.emit(
-            tr("operations.planClearedBlocked", count=len(blocked_rows)), 2000, "info"
         )
 
     def _remove_plan_rows(self, rows):
@@ -1639,13 +1524,14 @@ class OperationsPanel(QWidget):
             key = self._plan_item_key(item)
             validation = self._plan_validation_by_key.get(key, {})
             status_item = QTableWidgetItem()
+            is_dark = load_gui_config().get("theme", "dark") == "dark"
             if validation.get("blocked"):
                 status_item.setText(tr("operations.planStatusBlocked"))
-                status_item.setForeground(Qt.red)
+                status_item.setForeground(get_theme_color("error", is_dark))
                 status_item.setToolTip(validation.get("message", ""))
             elif validation.get("ok"):
                 status_item.setText(tr("operations.planStatusReady"))
-                status_item.setForeground(Qt.darkGreen)
+                status_item.setForeground(get_theme_color("success", is_dark))
             else:
                 status_item.setText("-")
             self.plan_table.setItem(row, 8, status_item)
@@ -1883,9 +1769,9 @@ class OperationsPanel(QWidget):
         if fail_count:
             fail_item = [r for r in results if r[0] == "FAIL"][-1]
             error_msg = fail_item[2].get("message", "Unknown error")
-            title_html = f"<b style='color: #ef4444;'>{tr('operations.planExecutionStopped')}</b>"
+            title_html = f"<b style='color: var(--status-error);'>{tr('operations.planExecutionStopped')}</b>"
             if execution_stats.get("rollback_ok"):
-                title_html = f"<b style='color: #f59e0b;'>{tr('operations.planExecutionRolledBack')}</b>"
+                title_html = f"<b style='color: var(--status-warning);'>{tr('operations.planExecutionRolledBack')}</b>"
             lines = [
                 title_html,
                 tr(
@@ -1895,27 +1781,27 @@ class OperationsPanel(QWidget):
                     applied=applied_count,
                 ),
                 tr("operations.planExecutionError", error=error_msg),
-                f"<span style='color: #94a3b8;'>{tr('operations.planExecutionRetry')}</span>",
+                f"<span style='color: var(--status-muted);'>{tr('operations.planExecutionRetry')}</span>",
             ]
             if isinstance(rollback_info, dict) and rollback_info:
                 if execution_stats.get("rollback_ok"):
                     lines.append(
-                        f"<span style='color: #22c55e;'>{tr('operations.planExecutionRollbackApplied')}</span>"
+                        f"<span style='color: var(--status-success);'>{tr('operations.planExecutionRollbackApplied')}</span>"
                     )
                 elif execution_stats.get("rollback_attempted"):
                     lines.append(
-                        f"<span style='color: #ef4444;'>{tr('operations.planExecutionRollbackFailed', reason=rollback_info.get('message', 'unknown error'))}</span>"
+                        f"<span style='color: var(--status-error);'>{tr('operations.planExecutionRollbackFailed', reason=rollback_info.get('message', 'unknown error'))}</span>"
                     )
                 elif execution_stats.get("rollback_message"):
                     lines.append(
-                        f"<span style='color: #f59e0b;'>{tr('operations.planExecutionRollbackUnavailable', reason=execution_stats.get('rollback_message'))}</span>"
+                        f"<span style='color: var(--status-warning);'>{tr('operations.planExecutionRollbackUnavailable', reason=execution_stats.get('rollback_message'))}</span>"
                     )
             self.result_summary.setText("<br/>".join(lines))
             border_color = "var(--warning)" if execution_stats.get("rollback_ok") else "var(--error)"
             self.result_card.setStyleSheet(f"QGroupBox {{ border: 1px solid {border_color}; }}")
         else:
             lines = [
-                f"<b style='color: #22c55e;'>{tr('operations.planExecutionSuccess')}</b>",
+                f"<b style='color: var(--status-success);'>{tr('operations.planExecutionSuccess')}</b>",
                 tr("operations.planExecutionSuccessSummary", applied=applied_count, total=applied_count),
             ]
             self.result_summary.setText("<br/>".join(lines))
@@ -2337,23 +2223,23 @@ class OperationsPanel(QWidget):
         error = ev.get("error") or {}
         backup_path = ev.get("backup_path") or ""
 
-        title_color = "#22c55e" if status == "success" else "#ef4444"
+        title_color = "var(--status-success)" if status == "success" else "var(--status-error)"
         lines = [f"<b style='color: {title_color};'>{tr('operations.audit')}：{action} ({status})</b>"]
         if ts:
-            lines.append(f"<span style='color: #94a3b8;'>{tr('operations.timeLabel')}</span> {ts}")
+            lines.append(f"<span style='color: var(--status-muted);'>{tr('operations.timeLabel')}</span> {ts}")
         if actor:
             lines.append(
-                f"<span style='color: #94a3b8;'>{tr('operations.actorLabel')}</span> {actor} ({channel})"
+                f"<span style='color: var(--status-muted);'>{tr('operations.actorLabel')}</span> {actor} ({channel})"
             )
         if backup_path:
             lines.append(
-                f"<span style='color: #94a3b8;'>{tr('operations.backupLabel')}</span> {os.path.basename(str(backup_path))}"
+                f"<span style='color: var(--status-muted);'>{tr('operations.backupLabel')}</span> {os.path.basename(str(backup_path))}"
             )
 
         if status == "failed" and isinstance(error, dict) and error:
             if error.get("error_code"):
                 lines.append(
-                    f"<span style='color: #94a3b8;'>{tr('operations.errorLabel')}</span> {error.get('error_code')}"
+                    f"<span style='color: var(--status-muted);'>{tr('operations.errorLabel')}</span> {error.get('error_code')}"
                 )
             if error.get("message"):
                 lines.append(str(error.get("message")))
@@ -2364,7 +2250,7 @@ class OperationsPanel(QWidget):
                 preview = str(details)
             if len(preview) > 240:
                 preview = preview[:240] + "..."
-            lines.append(f"<span style='color: #94a3b8;'>{tr('operations.detailsLabel')}</span> {preview}")
+            lines.append(f"<span style='color: var(--status-muted);'>{tr('operations.detailsLabel')}</span> {preview}")
 
         self.result_summary.setText("<br/>".join(lines))
         border = "var(--success)" if status == "success" else "var(--error)"
@@ -2400,13 +2286,13 @@ class OperationsPanel(QWidget):
 
         if not items:
             lines = [
-                f"<b style='color: #ef4444;'>{tr('operations.noPrintableFromSelection')}</b>",
+                f"<b style='color: var(--status-error);'>{tr('operations.noPrintableFromSelection')}</b>",
                 tr("operations.selectedEvents", count=selected_count),
             ]
             if warnings:
                 preview = "<br/>".join(str(w) for w in warnings[:3])
                 more = (
-                    f"<br/><span style='color: #94a3b8;'>{tr('operations.moreWarnings', count=len(warnings) - 3)}</span>"
+                    f"<br/><span style='color: var(--status-muted);'>{tr('operations.moreWarnings', count=len(warnings) - 3)}</span>"
                     if len(warnings) > 3
                     else ""
                 )
@@ -2421,14 +2307,14 @@ class OperationsPanel(QWidget):
 
         self._last_printable_plan = list(items)
         lines = [
-            f"<b style='color: #22c55e;'>{tr('operations.auditGuideGenerated')}</b>",
+            f"<b style='color: var(--status-success);'>{tr('operations.auditGuideGenerated')}</b>",
             tr("operations.selectedEvents", count=selected_count),
             tr("operations.finalOperations", count=len(items)),
         ]
         if warnings:
             preview = "<br/>".join(str(w) for w in warnings[:3])
             more = (
-                f"<br/><span style='color: #94a3b8;'>{tr('operations.moreWarnings', count=len(warnings) - 3)}</span>"
+                f"<br/><span style='color: var(--status-muted);'>{tr('operations.moreWarnings', count=len(warnings) - 3)}</span>"
                 if len(warnings) > 3
                 else ""
             )
@@ -2436,7 +2322,7 @@ class OperationsPanel(QWidget):
                 f"{tr('operations.warningsLabel')} {len(warnings)}<br/>{preview}{more}"
             )
         self.result_summary.setText("<br/>".join(lines))
-        self.result_card.setStyleSheet("QGroupBox { border: 1px solid #22c55e; }")
+        self.result_card.setStyleSheet("QGroupBox { border: 1px solid var(--success); }")
         self.result_card.setVisible(True)
         self.status_message.emit(
             tr("operations.generatedFinalOperations", count=len(items)),
@@ -2467,6 +2353,7 @@ class OperationsPanel(QWidget):
 
     def _enable_undo(self, timeout_sec=30):
         """Enable the undo button with an auto-disable countdown."""
+        self.undo_btn.setVisible(True)
         self.undo_btn.setEnabled(True)
         self._undo_remaining = timeout_sec
         self.undo_btn.setText(
@@ -2502,6 +2389,7 @@ class OperationsPanel(QWidget):
             self._undo_timer.stop()
             self._undo_timer = None
         self.undo_btn.setEnabled(False)
+        self.undo_btn.setVisible(False)
         self.undo_btn.setText(tr("operations.undoLast"))
         self._last_operation_backup = None
         self._last_executed_plan = []

@@ -1,12 +1,13 @@
 from datetime import datetime
 import time
 import re
+import random
 from PySide6.QtCore import Qt, Signal, QThread, QEvent
 from PySide6.QtGui import QTextCursor, QPalette, QMouseEvent
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QLineEdit,
-    QGroupBox, QTextEdit, QFormLayout, QSpinBox, QCheckBox
+    QTextEdit, QSpinBox, QCheckBox
 )
 from app_gui.ui.workers import AgentRunWorker
 from app_gui.ui.utils import compact_json, CollapsibleBox
@@ -16,6 +17,58 @@ from app_gui.plan_outcome import collect_blocked_items, summarize_plan_execution
 from lib.config import AUDIT_LOG_FILE
 import os
 import json
+
+
+_ROLE_COLORS = {
+    "dark": {
+        "Agent": "#38bdf8",
+        "You": "#a3e635",
+        "Tool": "#f59e0b",
+        "System": "#f97316",
+        "muted": "#9ca3af",
+        "link": "#60a5fa",
+    },
+    "light": {
+        "Agent": "#0284c7",
+        "You": "#4d7c0f",
+        "Tool": "#b45309",
+        "System": "#c2410c",
+        "muted": "#64748b",
+        "link": "#2563eb",
+    },
+}
+
+
+def _get_role_color(role, is_dark=True):
+    theme = "dark" if is_dark else "light"
+    return _ROLE_COLORS.get(theme, {}).get(role, "#a3e635")
+
+
+PLACEHOLDER_EXAMPLES_EN = [
+    "Find K562-related records and summarize count",
+    "List today's takeout/thaw events",
+    "Recommend 2 consecutive empty slots",
+    "Show all empty positions in box A1",
+    "Add a new plasmid record",
+    "Move tube from box A1:1 to B2:3",
+    "Help me audit today's risky operations",
+    "Check if any records have conflicting positions",
+    "Summarize inventory distribution by box",
+    "Find records that may need attention",
+]
+
+PLACEHOLDER_EXAMPLES_ZH = [
+    "查找 K562 相关记录并汇总数量",
+    "列出今天的取出/复苏事件",
+    "推荐 2 个连续空位",
+    "显示盒子 A1 的所有空位",
+    "添加一条新的质粒记录",
+    "将管子从盒子 A1:1 移到 B2:3",
+    "帮我审计今天的高风险操作",
+    "检查是否有位置冲突的记录",
+    "按盒子汇总库存分布",
+    "查找可能需要关注的记录",
+]
 
 
 def _is_dark_mode(widget):
@@ -69,11 +122,12 @@ class AIPanel(QWidget):
         self.ai_message_blocks = []
 
         self.setup_ui()
+        self.refresh_placeholder()
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(0)
 
         # Controls (hidden, values managed via Settings)
         self.ai_model = QLineEdit()
@@ -81,51 +135,9 @@ class AIPanel(QWidget):
         self.ai_steps.setRange(1, 20)
         self.ai_thinking_enabled = QCheckBox()
 
-        # Prompt Box
-        prompt_box = QGroupBox(tr("ai.prompt"))
-        prompt_layout = QVBoxLayout(prompt_box)
-
-        examples = QHBoxLayout()
-        examples.addWidget(QLabel(tr("ai.quickPrompts")))
-
-        quick_prompts = [
-            (tr("ai.findK562"), "Find K562-related records and summarize count with a few representative rows."),
-            (tr("ai.takeoutToday"), "List today's takeout/thaw/discard events and summarize by action."),
-            (tr("ai.suggestSlots"), "Recommend 2 consecutive empty slots, prefer boxes with more free space, and explain why."),
-        ]
-        for label, text in quick_prompts:
-            btn = QPushButton(label)
-            btn.clicked.connect(lambda _checked=False, value=text: self.set_prompt(value))
-            examples.addWidget(btn)
-        examples.addStretch()
-        prompt_layout.addLayout(examples)
-
-        self.ai_prompt = QTextEdit()
-        self.ai_prompt.setPlaceholderText(tr("ai.placeholder"))
-        self.ai_prompt.setFixedHeight(90)
-        self.ai_prompt.installEventFilter(self)
-        prompt_layout.addWidget(self.ai_prompt)
-
-        run_row = QHBoxLayout()
-        self.ai_run_btn = QPushButton(tr("ai.run"))
-        self.ai_run_btn.clicked.connect(self.on_run_ai_agent)
-        run_row.addWidget(self.ai_run_btn)
-
-        self.ai_stop_btn = QPushButton(tr("ai.stop"))
-        self.ai_stop_btn.setEnabled(False)
-        self.ai_stop_btn.clicked.connect(self.on_stop_ai_agent)
-        run_row.addWidget(self.ai_stop_btn)
-
-        ai_clear_btn = QPushButton(tr("ai.clear"))
-        ai_clear_btn.clicked.connect(self.on_clear)
-        run_row.addWidget(ai_clear_btn)
-        run_row.addStretch()
-        prompt_layout.addLayout(run_row)
-
-        # Chat Area
-        chat_box = QGroupBox(tr("ai.aiChat"))
-        chat_layout = QVBoxLayout(chat_box)
+        # ── Chat area (takes most space) ──
         self.ai_chat = QTextEdit()
+        self.ai_chat.setObjectName("aiChatArea")
         self.ai_chat.setReadOnly(True)
         self.ai_chat.setAcceptRichText(True)
         self.ai_chat.setPlaceholderText(tr("ai.chatPlaceholder"))
@@ -133,11 +145,63 @@ class AIPanel(QWidget):
             "p { margin-top: 2px; margin-bottom: 2px; }"
         )
         self.ai_chat.viewport().installEventFilter(self)
-        chat_layout.addWidget(self.ai_chat)
-        layout.addWidget(chat_box, 3)
+        layout.addWidget(self.ai_chat, 1)
 
-        # Prompt area is intentionally placed at the bottom.
-        layout.addWidget(prompt_box)
+        # ── Bottom dock: prompt input + controls ──
+        dock = QWidget()
+        dock.setObjectName("aiPromptDock")
+        dock_layout = QVBoxLayout(dock)
+        dock_layout.setContentsMargins(0, 6, 0, 0)
+        dock_layout.setSpacing(4)
+
+        # Input container (rounded, subtle background)
+        input_container = QWidget()
+        input_container.setObjectName("aiInputContainer")
+        ic_layout = QVBoxLayout(input_container)
+        ic_layout.setContentsMargins(0, 4, 0, 4)
+        ic_layout.setSpacing(2)
+
+        self.ai_prompt = QTextEdit()
+        self.ai_prompt.setObjectName("aiPromptInput")
+        self.ai_prompt.setFixedHeight(72)
+        self.ai_prompt.installEventFilter(self)
+        ic_layout.addWidget(self.ai_prompt)
+
+        # Action bar inside input container
+        action_bar = QHBoxLayout()
+        action_bar.setContentsMargins(8, 0, 8, 0)
+        action_bar.setSpacing(4)
+
+        self.ai_run_btn = QPushButton(tr("ai.runAgent"))
+        self.ai_run_btn.setProperty("variant", "primary")
+        self.ai_run_btn.setFixedHeight(24)
+        self.ai_run_btn.clicked.connect(self.on_run_ai_agent)
+        action_bar.addWidget(self.ai_run_btn)
+
+        self.ai_stop_btn = QPushButton(tr("ai.stop"))
+        self.ai_stop_btn.setFixedHeight(24)
+        self.ai_stop_btn.setEnabled(False)
+        self.ai_stop_btn.clicked.connect(self.on_stop_ai_agent)
+        action_bar.addWidget(self.ai_stop_btn)
+
+        ai_clear_btn = QPushButton(tr("ai.clear"))
+        ai_clear_btn.setFixedHeight(24)
+        ai_clear_btn.setProperty("variant", "ghost")
+        ai_clear_btn.clicked.connect(self.on_clear)
+        action_bar.addWidget(ai_clear_btn)
+
+        action_bar.addStretch()
+
+        # Shortcut hint (subtle, right-aligned)
+        hint = QLabel("Enter ↵  Shift+Enter ⏎")
+        hint.setProperty("muted", True)
+        hint.setStyleSheet("font-size: 11px; padding-right: 2px;")
+        action_bar.addWidget(hint)
+
+        ic_layout.addLayout(action_bar)
+        dock_layout.addWidget(input_container)
+
+        layout.addWidget(dock)
 
     def eventFilter(self, obj, event):
         if (
@@ -206,14 +270,16 @@ class AIPanel(QWidget):
         answer_html = _md_to_html(str(answer_buffer or ""), is_dark)
 
         combined_html = ""
+        muted_color = _get_role_color("muted", is_dark)
+        link_color = _get_role_color("link", is_dark)
         if thought_buffer:
             if collapsed:
                 expand_text = tr("ai.expandThinking")
-                combined_html += f'<div style="color: #9ca3af; font-style: italic;"><a href="toggle_thought" style="color: #9ca3af;">Thinking... ({expand_text})</a></div>'
+                combined_html += f'<div style="color: {muted_color}; font-style: italic;"><a href="toggle_thought" style="color: {muted_color};">Thinking... ({expand_text})</a></div>'
             else:
                 thought_html = _md_to_html(str(thought_buffer or ""), is_dark)
                 collapse_text = tr("ai.collapseThinking")
-                combined_html += f'<div style="color: #9ca3af;">{thought_html}<br/><a href="toggle_thought" style="color: #60a5fa;">[{collapse_text}]</a></div>'
+                combined_html += f'<div style="color: {muted_color};">{thought_html}<br/><a href="toggle_thought" style="color: {link_color};">[{collapse_text}]</a></div>'
         if answer_html:
             if combined_html:
                 combined_html += "<br/>"
@@ -249,6 +315,15 @@ class AIPanel(QWidget):
         self.ai_prompt.setPlainText(str(text or "").strip())
         self.ai_prompt.setFocus()
 
+    def refresh_placeholder(self):
+        """Refresh placeholder with a random example (called once on init)."""
+        if self.ai_prompt.toPlainText().strip():
+            return
+        from app_gui.i18n import get_language
+        lang = get_language()
+        pool = PLACEHOLDER_EXAMPLES_ZH if lang.startswith("zh") else PLACEHOLDER_EXAMPLES_EN
+        self.ai_prompt.setPlaceholderText(random.choice(pool))
+
     def _reset_stream_thought_state(self):
         self.ai_stream_has_thought = False
         self.ai_stream_thought_buffer = ""
@@ -279,16 +354,10 @@ class AIPanel(QWidget):
         self._reset_stream_thought_state()
         self.status_message.emit(tr("ai.memoryCleared"), 2000)
 
-    def _build_header_html(self, role, compact=False):
+    def _build_header_html(self, role, compact=False, is_dark=True):
         """Return header HTML string (no insertion)."""
         stamp = datetime.now().strftime("%H:%M:%S")
-        color_map = {
-            "Agent": "#38bdf8",
-            "You": "#a3e635",
-            "Tool": "#f59e0b",
-            "System": "#f97316",
-        }
-        color = color_map.get(role, "#a3e635")
+        color = _get_role_color(role, is_dark)
         self.ai_last_role = role
 
         if compact:
@@ -297,8 +366,9 @@ class AIPanel(QWidget):
 
     def _append_chat_header(self, role, compact=False):
         """Append a standalone header (used by stream + collapsible paths)."""
+        is_dark = _is_dark_mode(self)
         self._move_chat_cursor_to_end()
-        html = self._build_header_html(role, compact=compact)
+        html = self._build_header_html(role, compact=compact, is_dark=is_dark)
         self.ai_chat.append(html)
 
     def _move_chat_cursor_to_end(self):
@@ -319,8 +389,8 @@ class AIPanel(QWidget):
 
     def _append_chat(self, role, text, compact=False):
         """Append header then content."""
-        header_html = self._build_header_html(role, compact=compact)
         is_dark = _is_dark_mode(self)
+        header_html = self._build_header_html(role, compact=compact, is_dark=is_dark)
         self._move_chat_cursor_to_end()
         if compact:
             # Compact: single line, inline formatting only (no block elements)
@@ -464,14 +534,16 @@ class AIPanel(QWidget):
         answer_html = _md_to_html(str(self.ai_stream_buffer or ""), is_dark)
 
         combined_html = ""
+        muted_color = _get_role_color("muted", is_dark)
+        link_color = _get_role_color("link", is_dark)
         if self.ai_stream_has_thought and self.ai_stream_thought_buffer:
             if self.ai_stream_thought_collapsed:
                 expand_text = tr("ai.expandThinking")
-                combined_html += f'<div style="color: #9ca3af; font-style: italic;"><a href="toggle_thought" style="color: #9ca3af;">Thinking... ({expand_text})</a></div>'
+                combined_html += f'<div style="color: {muted_color}; font-style: italic;"><a href="toggle_thought" style="color: {muted_color};">Thinking... ({expand_text})</a></div>'
             else:
                 thought_html = _md_to_html(str(self.ai_stream_thought_buffer or ""), is_dark)
                 collapse_text = tr("ai.collapseThinking")
-                combined_html += f'<div style="color: #9ca3af;">{thought_html}<br/><a href="toggle_thought" style="color: #60a5fa;">[{collapse_text}]</a></div>'
+                combined_html += f'<div style="color: {muted_color};">{thought_html}<br/><a href="toggle_thought" style="color: {link_color};">[{collapse_text}]</a></div>'
         if answer_html:
             if combined_html:
                 combined_html += "<br/>"
@@ -1005,7 +1077,7 @@ class AIPanel(QWidget):
 
     def _append_chat_with_collapsible(self, role, summary, details_json):
         is_dark = _is_dark_mode(self)
-        header_html = self._build_header_html(role)
+        header_html = self._build_header_html(role, is_dark=is_dark)
         body_html = _md_to_html(str(summary or ""), is_dark)
         self._move_chat_cursor_to_end()
         self.ai_chat.append(header_html)

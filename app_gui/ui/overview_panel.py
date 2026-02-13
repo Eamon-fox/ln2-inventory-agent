@@ -141,7 +141,7 @@ class OverviewPanel(QWidget):
         self.ov_total_capacity_value = QLabel("-")
         self.ov_ops7_value = QLabel("-")
         self.ov_meta_stats = QLabel(f"{tr('overview.capacity')}: - | {tr('overview.ops7d')}: -")
-        self.ov_meta_stats.setStyleSheet("color: #64748b;")
+        self.ov_meta_stats.setStyleSheet("color: var(--status-muted);")
         layout.addWidget(self.ov_meta_stats)
 
         # Action Row

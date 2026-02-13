@@ -20,7 +20,7 @@ HELP_BUTTON_STYLE = """
         font-size: 12px;
     }
     QPushButton:hover {
-        background-color: #383838;
+        background-color: var(--background-strong);
         border-color: var(--border-subtle);
     }
 """

@@ -73,6 +73,7 @@ def _apply_theme(app, mode):
         palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
         palette.setColor(QPalette.Disabled, QPalette.Text, QColor(180, 180, 180))
         palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(180, 180, 180))
+        palette.setColor(QPalette.PlaceholderText, QColor(160, 160, 160))
         
         app.setPalette(palette)
 
@@ -97,6 +98,24 @@ def _apply_theme(app, mode):
                 --radius-sm: 4px;
                 --radius-md: 6px;
                 --radius-lg: 8px;
+                --btn-danger: #dc2626;
+                --btn-danger-hover: #b91c1c;
+                --btn-danger-border: #7f1d1d;
+                --btn-warning: #d97706;
+                --btn-warning-hover: #b45309;
+                --btn-warning-border: #92400e;
+                --btn-primary: #2563eb;
+                --btn-primary-hover: #1d4ed8;
+                --btn-primary-border: #1e3a8a;
+                --status-success: #15803d;
+                --status-warning: #b45309;
+                --status-error: #b91c1c;
+                --status-muted: #64748b;
+                --cell-border-default: #d0d0d0;
+                --cell-empty-bg: #f5f5f5;
+                --cell-empty-selected-bg: #e8e8e8;
+                --cell-empty-text: #808080;
+                --cell-empty-selected-text: #606060;
             }
             QToolTip { color: #1e1e1e; background-color: #ffffff; border: 1px solid rgba(0,0,0,0.1); border-radius: 4px; padding: 4px 8px; font-size: 12px; }
             QGroupBox { border: 1px solid var(--border-weak); border-radius: var(--radius-md); margin-top: 12px; font-weight: 500; color: var(--text-weak); padding-top: 8px; }
@@ -146,6 +165,13 @@ def _apply_theme(app, mode):
             QSplitter::handle { background-color: var(--border-weak); }
             QSplitter::handle:horizontal { width: 1px; }
             QSplitter::handle:vertical { height: 1px; }
+            /* AI Panel - opencode-style floating dock */
+            QTextEdit#aiChatArea { border: none; background-color: transparent; padding: 2px 4px; color: var(--text-strong); }
+            QWidget#aiPromptDock { background-color: transparent; }
+            QWidget#aiInputContainer { background-color: rgba(0,0,0,0.04); border: 1px solid rgba(0,0,0,0.06); border-radius: 12px; }
+            QTextEdit#aiPromptInput { border: none; border-radius: 8px; background-color: transparent; padding: 2px 4px; font-size: 13px; color: var(--text-strong); }
+            QPushButton[class="quick-prompt-btn"] { padding: 3px 10px; font-size: 11px; border-radius: 10px; background-color: rgba(0,0,0,0.05); border: none; color: #646464; }
+            QPushButton[class="quick-prompt-btn"]:hover { background-color: rgba(0,0,0,0.09); color: #1e1e1e; }
         """)
     else:
         dark_palette = QPalette()
@@ -164,6 +190,7 @@ def _apply_theme(app, mode):
         dark_palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
         dark_palette.setColor(QPalette.Disabled, QPalette.Text, QColor(85, 85, 85))
         dark_palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(85, 85, 85))
+        dark_palette.setColor(QPalette.PlaceholderText, QColor(100, 100, 100))
         
         app.setPalette(dark_palette)
 
@@ -188,6 +215,24 @@ def _apply_theme(app, mode):
                 --radius-sm: 4px;
                 --radius-md: 6px;
                 --radius-lg: 8px;
+                --btn-danger: #ef4444;
+                --btn-danger-hover: #dc2626;
+                --btn-danger-border: #991b1b;
+                --btn-warning: #f59e0b;
+                --btn-warning-hover: #d97706;
+                --btn-warning-border: #b45309;
+                --btn-primary: #38bdf8;
+                --btn-primary-hover: #60a5fa;
+                --btn-primary-border: #0284c7;
+                --status-success: #22c55e;
+                --status-warning: #f59e0b;
+                --status-error: #ef4444;
+                --status-muted: #94a3b8;
+                --cell-border-default: #505050;
+                --cell-empty-bg: #2d2d2d;
+                --cell-empty-selected-bg: #3a3a3a;
+                --cell-empty-text: #888888;
+                --cell-empty-selected-text: #a0a0a0;
             }
             QToolTip { color: #1a1a1a; background-color: #e8e8e8; border: 1px solid rgba(0,0,0,0.1); border-radius: 4px; padding: 4px 8px; font-size: 12px; }
             QGroupBox { border: 1px solid var(--border-weak); border-radius: var(--radius-md); margin-top: 12px; font-weight: 500; color: var(--text-weak); padding-top: 8px; }
@@ -237,6 +282,13 @@ def _apply_theme(app, mode):
             QSplitter::handle { background-color: var(--border-weak); }
             QSplitter::handle:horizontal { width: 1px; }
             QSplitter::handle:vertical { height: 1px; }
+            /* AI Panel - opencode-style floating dock */
+            QTextEdit#aiChatArea { border: none; background-color: transparent; padding: 2px 4px; color: var(--text-strong); }
+            QWidget#aiPromptDock { background-color: transparent; }
+            QWidget#aiInputContainer { background-color: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; }
+            QTextEdit#aiPromptInput { border: none; border-radius: 8px; background-color: transparent; padding: 2px 4px; font-size: 13px; color: var(--text-strong); }
+            QPushButton[class="quick-prompt-btn"] { padding: 3px 10px; font-size: 11px; border-radius: 10px; background-color: rgba(255,255,255,0.06); border: none; color: #888888; }
+            QPushButton[class="quick-prompt-btn"]:hover { background-color: rgba(255,255,255,0.1); color: #e8e8e8; }
         """)
 
 
@@ -251,18 +303,18 @@ def card_style():
 def button_primary_style():
     return """
         QPushButton {
-            background-color: var(--accent);
-            color: #000000;
-            border: none;
+            background-color: var(--btn-primary);
+            color: #ffffff;
+            border: 1px solid var(--btn-primary-border);
             border-radius: var(--radius-sm);
             padding: 8px 16px;
             font-weight: 500;
         }
         QPushButton:hover {
-            background-color: var(--accent-hover);
+            background-color: var(--btn-primary-hover);
         }
         QPushButton:pressed {
-            background-color: #2090e8;
+            background-color: var(--btn-primary-border);
         }
     """
 
@@ -282,6 +334,44 @@ def button_ghost_style():
     """
 
 
+def button_danger_style():
+    return """
+        QPushButton {
+            background-color: var(--btn-danger);
+            color: #ffffff;
+            border: 1px solid var(--btn-danger-border);
+            border-radius: var(--radius-sm);
+            padding: 8px 16px;
+            font-weight: 500;
+        }
+        QPushButton:hover {
+            background-color: var(--btn-danger-hover);
+        }
+        QPushButton:pressed {
+            background-color: var(--btn-danger-border);
+        }
+    """
+
+
+def button_warning_style():
+    return """
+        QPushButton {
+            background-color: var(--btn-warning);
+            color: #ffffff;
+            border: 1px solid var(--btn-warning-border);
+            border-radius: var(--radius-sm);
+            padding: 8px 16px;
+            font-weight: 500;
+        }
+        QPushButton:hover {
+            background-color: var(--btn-warning-hover);
+        }
+        QPushButton:pressed {
+            background-color: var(--btn-warning-border);
+        }
+    """
+
+
 def input_style():
     return """
         background-color: var(--background-inset);
@@ -294,42 +384,71 @@ def input_style():
 
 
 def cell_occupied_style(color="#22c55e", is_selected=False):
-    border_color = "#38bdf8" if is_selected else "#d0d0d0"
-    return f"""
-        QPushButton {{
-            background-color: {color};
-            color: white;
-            border: {'2px' if is_selected else '1px'} solid {border_color};
-            border-radius: var(--radius-xs);
-            font-size: 9px;
-            font-weight: 500;
-            padding: 1px;
-        }}
-        QPushButton:hover {{
-            border: 2px solid #38bdf8;
-        }}
-    """
+    if is_selected:
+        return f"""
+            QPushButton {{
+                background-color: {color};
+                color: white;
+                border: 2px solid var(--accent);
+                border-radius: var(--radius-xs);
+                font-size: 9px;
+                font-weight: 500;
+                padding: 1px;
+            }}
+            QPushButton:hover {{
+                border: 2px solid var(--accent);
+            }}
+        """
+    else:
+        return f"""
+            QPushButton {{
+                background-color: {color};
+                color: white;
+                border: 1px solid var(--cell-border-default);
+                border-radius: var(--radius-xs);
+                font-size: 9px;
+                font-weight: 500;
+                padding: 1px;
+            }}
+            QPushButton:hover {{
+                border: 2px solid var(--accent);
+            }}
+        """
 
 
 def cell_empty_style(is_selected=False):
-    border_color = "#38bdf8" if is_selected else "#d0d0d0"
-    bg_color = "#e8e8e8" if is_selected else "#f5f5f5"
-    text_color = "#606060" if is_selected else "#808080"
-    return f"""
-        QPushButton {{
-            background-color: {bg_color};
-            color: {text_color};
-            border: {'2px' if is_selected else '1px'} solid {border_color};
-            border-radius: var(--radius-xs);
-            font-size: 8px;
-            padding: 1px;
-        }}
-        QPushButton:hover {{
-            border: 2px solid var(--accent);
-            background-color: var(--background-raised);
-            color: var(--text-weak);
-        }}
-    """
+    if is_selected:
+        return """
+            QPushButton {
+                background-color: var(--cell-empty-selected-bg);
+                color: var(--cell-empty-selected-text);
+                border: 2px solid var(--accent);
+                border-radius: var(--radius-xs);
+                font-size: 8px;
+                padding: 1px;
+            }
+            QPushButton:hover {
+                border: 2px solid var(--accent);
+                background-color: var(--background-raised);
+                color: var(--text-weak);
+            }
+        """
+    else:
+        return """
+            QPushButton {
+                background-color: var(--cell-empty-bg);
+                color: var(--cell-empty-text);
+                border: 1px solid var(--cell-border-default);
+                border-radius: var(--radius-xs);
+                font-size: 8px;
+                padding: 1px;
+            }
+            QPushButton:hover {
+                border: 2px solid var(--accent);
+                background-color: var(--background-raised);
+                color: var(--text-weak);
+            }
+        """
 
 
 def cell_preview_add_style():
@@ -511,3 +630,24 @@ def syntax_colors(is_dark=True):
             "comment": "#6a737d",
             "number": "#b52a1d",
         }
+
+
+_THEME_COLORS = {
+    "light": {
+        "success": QColor(21, 128, 61),
+        "warning": QColor(180, 83, 9),
+        "error": QColor(185, 28, 28),
+        "muted": QColor(100, 116, 139),
+    },
+    "dark": {
+        "success": QColor(34, 197, 94),
+        "warning": QColor(245, 158, 11),
+        "error": QColor(239, 68, 68),
+        "muted": QColor(148, 163, 184),
+    },
+}
+
+
+def get_theme_color(color_name, is_dark=True):
+    theme = "dark" if is_dark else "light"
+    return _THEME_COLORS.get(theme, {}).get(color_name, QColor(128, 128, 128))
