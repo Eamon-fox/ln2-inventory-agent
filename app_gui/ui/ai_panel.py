@@ -585,6 +585,7 @@ class AIPanel(QWidget):
         self.ai_run_thread.started.connect(self.ai_run_worker.run)
         self.ai_run_worker.progress.connect(self.on_progress)
         self.ai_run_worker.plan_staged.connect(self.plan_items_staged.emit)
+        self.ai_run_worker.question_asked.connect(self._handle_question_event)
         self.ai_run_worker.finished.connect(self.on_finished)
         self.ai_run_worker.finished.connect(self.ai_run_thread.quit)
         self.ai_run_worker.finished.connect(self.ai_run_worker.deleteLater)
@@ -593,6 +594,90 @@ class AIPanel(QWidget):
         
         self.set_busy(True)
         self.ai_run_thread.start()
+
+    def _handle_question_event(self, event_data):
+        """Handle question event from agent — show dialog, unblock worker."""
+        questions = event_data.get("questions", [])
+        if not questions:
+            if self.ai_run_worker:
+                self.ai_run_worker.cancel_answer()
+            return
+
+        if self.ai_streaming_active:
+            self._end_stream_chat()
+        self._append_tool_message(tr("ai.questionAsking"))
+
+        answers = self._show_question_dialog(questions)
+
+        if answers is not None:
+            if self.ai_run_worker:
+                self.ai_run_worker.set_answer(answers)
+        else:
+            if self.ai_run_worker:
+                self.ai_run_worker.cancel_answer()
+
+    def _show_question_dialog(self, questions):
+        """Modal dialog for user to answer agent questions.
+
+        Returns list of answers, or None if cancelled.
+        """
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout, QLabel, QComboBox,
+            QLineEdit, QCheckBox, QDialogButtonBox,
+        )
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(tr("ai.questionTitle"))
+        dialog.setMinimumWidth(400)
+        layout = QVBoxLayout(dialog)
+
+        answer_widgets = []
+
+        for q in questions:
+            header = q.get("header", "")
+            question_text = q.get("question", "")
+            options = q.get("options", [])
+            multiple = q.get("multiple", False)
+
+            label = QLabel(f"<b>{header}</b>: {question_text}")
+            label.setWordWrap(True)
+            layout.addWidget(label)
+
+            if options and multiple:
+                checkbox_group = []
+                for opt in options:
+                    cb = QCheckBox(opt)
+                    layout.addWidget(cb)
+                    checkbox_group.append(cb)
+                answer_widgets.append(("checkbox_group", checkbox_group))
+            elif options:
+                combo = QComboBox()
+                combo.addItems(options)
+                layout.addWidget(combo)
+                answer_widgets.append(("combo", combo))
+            else:
+                edit = QLineEdit()
+                layout.addWidget(edit)
+                answer_widgets.append(("text", edit))
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() == QDialog.Accepted:
+            answers = []
+            for widget_type, widget in answer_widgets:
+                if widget_type == "checkbox_group":
+                    answers.append([cb.text() for cb in widget if cb.isChecked()])
+                elif widget_type == "combo":
+                    answers.append(widget.currentText())
+                else:
+                    answers.append(widget.text())
+            return answers
+        return None
 
     def on_stop_ai_agent(self):
         if self.ai_run_thread and self.ai_run_thread.isRunning():

@@ -1,5 +1,8 @@
 """Tool dispatcher for agent runtime, built on unified Tool API."""
 
+import threading
+import uuid
+
 from lib.tool_api import (
     build_actor_context,
     parse_batch_entries,
@@ -33,6 +36,22 @@ class AgentToolRunner:
         self._actor_id = actor_id
         self._session_id = session_id
         self._plan_sink = plan_sink
+        # Question tool synchronization
+        self._answer_event = threading.Event()
+        self._pending_answer = None
+        self._answer_cancelled = False
+
+    def _set_answer(self, answers):
+        """Called from GUI main thread to provide user answers."""
+        self._pending_answer = answers
+        self._answer_cancelled = False
+        self._answer_event.set()
+
+    def _cancel_answer(self):
+        """Called from GUI main thread when user cancels."""
+        self._pending_answer = None
+        self._answer_cancelled = True
+        self._answer_event.set()
 
     def _actor_context(self, trace_id=None):
         return build_actor_context(
@@ -165,6 +184,7 @@ class AgentToolRunner:
             "record_thaw",
             "batch_thaw",
             "rollback",
+            "question",
         ]
 
     def tool_specs(self):
@@ -297,6 +317,44 @@ class AgentToolRunner:
                 "required": [],
                 "optional": ["backup_path"],
             },
+            "question": {
+                "required": ["questions"],
+                "optional": [],
+                "description": "Ask the user clarifying questions before proceeding. "
+                               "Use ONLY when you cannot infer the answer from inventory data. "
+                               "Do NOT use for greetings or when the answer is obvious.",
+                "params": {
+                    "questions": {
+                        "type": "array",
+                        "description": "List of question objects.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "header": {
+                                    "type": "string",
+                                    "description": "Short label (max 30 chars). E.g. 'Cell Line', 'Box Number'.",
+                                },
+                                "question": {
+                                    "type": "string",
+                                    "description": "The question text.",
+                                },
+                                "options": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "If provided, user picks from these choices.",
+                                },
+                                "multiple": {
+                                    "type": "boolean",
+                                    "description": "Allow multiple selections. Default false.",
+                                },
+                            },
+                            "required": ["header", "question"],
+                        },
+                    }
+                },
+                "notes": "question tool is NOT a write tool. It blocks the worker thread until user answers. "
+                         "Do not call question in parallel with other tools.",
+            },
         }
 
     def tool_schemas(self):
@@ -419,6 +477,49 @@ class AgentToolRunner:
             response = dict(response)
             response["_hint"] = self._hint_for_error(tool_name, response)
         return response
+
+    def _run_question_tool(self, payload):
+        """Validate question payload and return a waiting_for_user marker.
+
+        The actual blocking (threading.Event.wait) happens in
+        ReactAgent._run_tool_call, which emits the question event first
+        and then waits for the GUI to call _set_answer / _cancel_answer.
+        """
+        questions = payload.get("questions", [])
+        if not questions:
+            return {
+                "ok": False,
+                "error_code": "no_questions",
+                "message": "At least one question is required.",
+            }
+
+        for i, q in enumerate(questions):
+            if not isinstance(q, dict):
+                return {
+                    "ok": False,
+                    "error_code": "invalid_question_format",
+                    "message": f"Question {i} must be a dict.",
+                }
+            if "header" not in q or "question" not in q:
+                return {
+                    "ok": False,
+                    "error_code": "missing_required_field",
+                    "message": f"Question {i} missing 'header' or 'question'.",
+                }
+
+        question_id = str(uuid.uuid4())
+
+        # Reset synchronization state for this question round
+        self._answer_event.clear()
+        self._pending_answer = None
+        self._answer_cancelled = False
+
+        return {
+            "ok": True,
+            "waiting_for_user": True,
+            "question_id": question_id,
+            "questions": questions,
+        }
 
     def _safe_call(self, tool_name, fn, include_expected=False):
         try:
@@ -754,6 +855,10 @@ class AgentToolRunner:
 
     def run(self, tool_name, tool_input, trace_id=None):
         payload = dict(tool_input or {})
+
+        # Question tool — returns marker for _run_tool_call to handle blocking
+        if tool_name == "question":
+            return self._run_question_tool(payload)
 
         # Intercept write operations when plan_sink is set
         if tool_name in _WRITE_TOOLS and self._plan_sink is not None:

@@ -343,7 +343,10 @@
     "agentThinking": "Agent thinking...",
     "aiRunStopped": "AI run stopped.",
     "runStopped": "**Run stopped by user.**",
-    "memoryCleared": "AI memory cleared"
+    "memoryCleared": "AI memory cleared",
+    "questionTitle": "Agent Question",
+    "questionAsking": "Agent is asking you a question...",
+    "questionTimeout": "Question timed out, agent will continue"
   },
   "common": {
     "info": "Info",

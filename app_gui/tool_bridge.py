@@ -137,6 +137,7 @@ class GuiToolBridge:
         on_event=None,
         plan_sink=None,
         thinking_enabled=True,
+        _expose_runner=None,
     ):
         prompt = str(query or "").strip()
         if not prompt:
@@ -175,6 +176,8 @@ class GuiToolBridge:
                 session_id=self._session_id,
                 plan_sink=plan_sink,
             )
+            if callable(_expose_runner):
+                _expose_runner(runner)
             agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=steps)
             result = agent.run(prompt, conversation_history=history, on_event=on_event)
         except RuntimeError as exc:

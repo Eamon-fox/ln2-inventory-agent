@@ -20,6 +20,7 @@ Rules:
    batch_thaw entries format for cross-box: '4:5->4:1' (id:from->to:target_box).
 8) Before asking user for missing details, first call inventory tools (e.g., query/search/list-empty) to understand current warehouse state and infer likely targets.
 9) IMPORTANT: After staging operations (e.g., via record_thaw, batch_thaw, add_entry), do NOT try to execute them. Only stage the operations and tell the user "已暂存，请人工确认执行" (staged, please confirm manually). Only the human user can execute staged operations.
+10) You have a `question` tool to ask the user clarifying questions. Use it ONLY when you cannot determine the answer from inventory data. Always try query/search tools first before asking the user. Call `question` alone — never in parallel with other tools.
 """
 
 
@@ -209,6 +210,60 @@ class ReactAgent:
         else:
             observation = self._tools.run(action, action_input, trace_id=trace_id)
 
+        # Handle question tool: emit event to GUI, block until user answers
+        if (
+            action == "question"
+            and isinstance(observation, dict)
+            and observation.get("waiting_for_user")
+        ):
+            self._emit_event(
+                getattr(self, "_on_event", None),
+                {
+                    "event": "question",
+                    "type": "question",
+                    "trace_id": trace_id,
+                    "question_id": observation.get("question_id"),
+                    "questions": observation.get("questions"),
+                    "tool_call_id": tool_call_id,
+                },
+            )
+
+            runner = self._tools
+            answered = runner._answer_event.wait(timeout=300)
+
+            if not answered:
+                observation = {
+                    "ok": False,
+                    "error_code": "question_timeout",
+                    "message": "User did not answer within timeout.",
+                }
+            elif runner._answer_cancelled:
+                observation = {
+                    "ok": False,
+                    "error_code": "question_cancelled",
+                    "message": "User cancelled the question.",
+                }
+            else:
+                answers = runner._pending_answer or []
+                questions = observation.get("questions") or []
+                formatted = []
+                for i, ans in enumerate(answers):
+                    q = questions[i] if i < len(questions) else {}
+                    header = q.get("header", f"Q{i+1}")
+                    if isinstance(ans, list):
+                        formatted.append(f"{header}: {', '.join(ans)}")
+                    else:
+                        formatted.append(f"{header}: {ans}")
+
+                observation = {
+                    "ok": True,
+                    "result": {
+                        "answers": formatted,
+                        "raw_answers": answers,
+                    },
+                    "message": "User answered: " + "; ".join(formatted),
+                }
+
         return {
             "action": action,
             "action_input": action_input,
@@ -327,6 +382,7 @@ class ReactAgent:
         return ""
 
     def run(self, user_query, conversation_history=None, on_event=None):
+        self._on_event = on_event  # Store for _run_tool_call to use
         trace_id = f"trace-{uuid.uuid4().hex}"
         tool_names = self._tools.list_tools()
         tool_specs = self._tools.tool_specs() if hasattr(self._tools, "tool_specs") else {}
@@ -482,6 +538,36 @@ class ReactAgent:
                             "tool_call_id": call["id"],
                         },
                     )
+
+                # Reject question tool when called in parallel with other tools
+                has_question = any(c["name"] == "question" for c in normalized_tool_calls)
+                if has_question and len(normalized_tool_calls) > 1:
+                    for call in normalized_tool_calls:
+                        if call["name"] == "question":
+                            messages.append(self._tool_message(call["id"], {
+                                "ok": False,
+                                "error_code": "question_not_alone",
+                                "message": "question tool must be called alone, not with other tools.",
+                                "_hint": "Call question separately, then use other tools after getting the answer.",
+                            }))
+                        else:
+                            result = self._run_tool_call(call, tool_names, trace_id)
+                            self._emit_event(
+                                on_event,
+                                {
+                                    "event": "tool_end",
+                                    "type": "tool_end",
+                                    "trace_id": trace_id,
+                                    "step": step,
+                                    "data": {"name": result["action"], "output": {"tool_call_id": result["tool_call_id"], "content": result["output_text"]}},
+                                    "action": result["action"],
+                                    "action_input": result["action_input"],
+                                    "tool_call_id": result["tool_call_id"],
+                                    "observation": result["observation"],
+                                },
+                            )
+                            messages.append(self._tool_message(result["tool_call_id"], result["observation"]))
+                    continue
 
                 max_workers = max(1, len(normalized_tool_calls))
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:

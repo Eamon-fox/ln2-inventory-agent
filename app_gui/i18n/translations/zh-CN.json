@@ -343,7 +343,10 @@
     "agentThinking": "代理思考中...",
     "aiRunStopped": "AI 运行已停止。",
     "runStopped": "**运行已被用户停止。**",
-    "memoryCleared": "AI 内存已清空"
+    "memoryCleared": "AI 内存已清空",
+    "questionTitle": "Agent 提问",
+    "questionAsking": "Agent 正在向您提问...",
+    "questionTimeout": "提问超时，Agent 将继续执行"
   },
   "common": {
     "info": "信息",

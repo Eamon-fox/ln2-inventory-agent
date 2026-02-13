@@ -4,6 +4,7 @@ class AgentRunWorker(QObject):
     finished = Signal(dict)
     progress = Signal(dict)
     plan_staged = Signal(list)
+    question_asked = Signal(dict)
 
     def __init__(self, bridge, yaml_path, query, model, max_steps, history, thinking_enabled=True):
         super().__init__()
@@ -14,10 +15,25 @@ class AgentRunWorker(QObject):
         self._max_steps = max_steps
         self._history = history
         self._thinking_enabled = bool(thinking_enabled)
+        self._tool_runner = None
 
     def _plan_sink(self, item):
         """Thread-safe callback: emit plan item via Qt signal."""
         self.plan_staged.emit([item])
+
+    def _receive_runner(self, runner):
+        """Callback from bridge to capture tool_runner reference."""
+        self._tool_runner = runner
+
+    def set_answer(self, answers):
+        """Thread-safe: called from GUI main thread to provide user answers."""
+        if self._tool_runner:
+            self._tool_runner._set_answer(answers)
+
+    def cancel_answer(self):
+        """Thread-safe: called from GUI main thread when user cancels."""
+        if self._tool_runner:
+            self._tool_runner._cancel_answer()
 
     def run(self):
         try:
@@ -30,6 +46,7 @@ class AgentRunWorker(QObject):
                 on_event=self._emit_progress,
                 plan_sink=self._plan_sink,
                 thinking_enabled=self._thinking_enabled,
+                _expose_runner=self._receive_runner,
             )
             if not isinstance(payload, dict):
                 payload = {"ok": False, "message": "Unexpected response"}
@@ -45,4 +62,7 @@ class AgentRunWorker(QObject):
     def _emit_progress(self, event):
         if not isinstance(event, dict):
             return
-        self.progress.emit(event)
+        if event.get("type") == "question":
+            self.question_asked.emit(event)
+        else:
+            self.progress.emit(event)
