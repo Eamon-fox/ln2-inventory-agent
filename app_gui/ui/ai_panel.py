@@ -81,15 +81,6 @@ class AIPanel(QWidget):
 
         layout.addLayout(build_panel_header(self, tr("ai.title"), tr("ai.helpTitle"), get_ai_help_text()))
 
-        # Toggle for report details
-        toggle_row = QHBoxLayout()
-        self.ai_toggle_report_btn = QPushButton(tr("ai.showPlanDetails"))
-        self.ai_toggle_report_btn.setCheckable(True)
-        self.ai_toggle_report_btn.toggled.connect(self.on_toggle_report)
-        toggle_row.addWidget(self.ai_toggle_report_btn)
-        toggle_row.addStretch()
-        layout.addLayout(toggle_row)
-
         # Controls (hidden, values managed via Settings)
         self.ai_model = QLineEdit()
         self.ai_steps = QSpinBox()
@@ -150,20 +141,6 @@ class AIPanel(QWidget):
         self.ai_chat.viewport().installEventFilter(self)
         chat_layout.addWidget(self.ai_chat)
         layout.addWidget(chat_box, 3)
-
-        # Report Area
-        self.ai_report_box = QGroupBox(tr("ai.report"))
-        report_layout = QVBoxLayout(self.ai_report_box)
-        self.ai_report = QTextEdit()
-        self.ai_report.setReadOnly(True)
-        self.ai_report.setPlaceholderText(tr("ai.reportPlaceholder"))
-        report_layout.addWidget(self.ai_report)
-        layout.addWidget(self.ai_report_box, 1)
-        
-        # Final AI panel layout:
-        # Toggles -> Chat -> Report -> Prompt.
-        
-        self.ai_report_box.setVisible(False)
 
         # Prompt area is intentionally placed at the bottom.
         layout.addWidget(prompt_box)
@@ -274,10 +251,6 @@ class AIPanel(QWidget):
         except Exception:
             return False
 
-    def on_toggle_report(self, checked):
-        self.ai_report_box.setVisible(bool(checked))
-        self.ai_toggle_report_btn.setText(tr("ai.hidePlanDetails") if checked else tr("ai.showPlanDetails"))
-
     def set_prompt(self, text):
         self.ai_prompt.setPlainText(str(text or "").strip())
         self.ai_prompt.setFocus()
@@ -300,7 +273,6 @@ class AIPanel(QWidget):
 
     def on_clear(self):
         self.ai_chat.clear()
-        self.ai_report.clear()
         self.ai_history = []
         self.ai_message_blocks = []
         self.ai_active_trace_id = None
@@ -590,7 +562,6 @@ class AIPanel(QWidget):
         self.ai_stream_last_render_ts = 0.0
         self.ai_stream_last_render_len = 0
         self._reset_stream_thought_state()
-        self.ai_report.clear()
         self.status_message.emit(tr("ai.agentThinking"), 2000)
         
         self.start_worker(prompt)
@@ -684,7 +655,6 @@ class AIPanel(QWidget):
                 line += f" | {summary}"
             if hint:
                 line += f" | hint: {hint}"
-            self.ai_report.append(line)
             self._append_tool_message(f"`{name}` finished: **{status}**")
             if hint:
                 self._append_tool_message(f"Hint: {hint}")
@@ -722,13 +692,10 @@ class AIPanel(QWidget):
 
         if event_type == "error":
             err = event.get("data") or event.get("message") or "unknown error"
-            self.ai_report.append(f"Agent error: {err}")
             return
 
         if event_type == "stream_end":
             status = (event.get("data") or {}).get("status")
-            if status:
-                self.ai_report.append(f"Stream end: {status}")
             return
 
         if event_type == "step_end":
@@ -746,10 +713,9 @@ class AIPanel(QWidget):
                 line += f" | {summary}"
             if hint:
                 line += f" | hint: {hint}"
-            self.ai_report.append(line)
 
         if event_type == "max_steps":
-            self.ai_report.append("Max steps reached. Returning best-effort summary.")
+            pass
 
     def on_finished(self, response):
         self.set_busy(False)
@@ -763,12 +729,10 @@ class AIPanel(QWidget):
 
         if protocol_error:
             final_text = "Internal protocol error: missing result payload."
-            self.ai_report.append("Protocol error: bridge returned ok=true without result object.")
         else:
             final_text = str(raw_result.get("final") or response.get("message") or "").strip()
         if not final_text:
             final_text = "Agent finished without a final message."
-            self.ai_report.append("Protocol warning: result.final is empty.")
 
         had_thought_stream = bool(self.ai_stream_has_thought)
         streamed_text = self.ai_stream_buffer.strip()
@@ -962,8 +926,6 @@ class AIPanel(QWidget):
             self.ai_chat.append(collapsible_html)
 
         self.ai_chat.append("")
-        self.ai_report.setPlainText(details_text)
 
     def _load_audit(self, trace_id, run_result):
-        self.ai_report.setPlainText(json.dumps(run_result, indent=2))
         pass
