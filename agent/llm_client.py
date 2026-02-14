@@ -14,12 +14,14 @@ PROVIDER_DEFAULTS = {
         "env_key": "DEEPSEEK_API_KEY",
         "display_name": "DeepSeek",
         "base_url": "https://api.deepseek.com",
+        "help_url": "https://platform.deepseek.com",
     },
     "zhipu": {
         "model": "glm-5",
         "env_key": "ZHIPUAI_API_KEY",
         "display_name": "智谱 GLM",
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "help_url": "https://open.bigmodel.cn",
     },
 }
 

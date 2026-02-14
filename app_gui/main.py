@@ -155,6 +155,11 @@ class SettingsDialog(QDialog):
             self._api_key_edits[provider_id] = key_edit
             label = f'{cfg["display_name"]} ({cfg["env_key"]}):'
             ai_layout.addRow(label, key_edit)
+            if cfg.get("help_url"):
+                help_label = QLabel(f'<a href="{cfg["help_url"]}">{cfg["help_url"]}</a>')
+                help_label.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
+                help_label.setOpenExternalLinks(True)
+                ai_layout.addRow("", help_label)
 
         api_hint = QLabel(tr("settings.apiKeyHint"))
         api_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
@@ -1269,20 +1274,12 @@ class MainWindow(QMainWindow):
         new_lang = values.get("language", "en")
         if new_lang != self.gui_config.get("language"):
             self.gui_config["language"] = new_lang
-            QMessageBox.information(
-                self,
-                tr("common.info"),
-                tr("main.languageChangedRestart")
-            )
+            self._ask_restart(tr("main.languageChangedRestart"))
 
         new_theme = values.get("theme", "dark")
         if new_theme != self.gui_config.get("theme"):
             self.gui_config["theme"] = new_theme
-            QMessageBox.information(
-                self,
-                tr("common.info"),
-                tr("main.themeChangedRestart")
-            )
+            self._ask_restart(tr("main.themeChangedRestart"))
 
         self.gui_config["ai"] = {
             "provider": values.get("ai_provider", "deepseek"),
@@ -1309,6 +1306,21 @@ class MainWindow(QMainWindow):
             )
         self.gui_config["yaml_path"] = self.current_yaml_path
         save_gui_config(self.gui_config)
+
+    def _ask_restart(self, message):
+        box = QMessageBox(self)
+        box.setWindowTitle(tr("common.info"))
+        box.setText(message)
+        btn_restart = box.addButton(tr("main.restartNow"), QMessageBox.AcceptRole)
+        btn_later = box.addButton(tr("main.restartLater"), QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() == btn_restart:
+            self._restart_app()
+
+    def _restart_app(self):
+        save_gui_config(self.gui_config)
+        QApplication.quit()
+        os.execv(sys.executable, [sys.executable] + sys.argv)
 
     def on_manage_boxes(self, yaml_path_override=None):
         request = self._prompt_manage_boxes_request(yaml_path_override=yaml_path_override)
