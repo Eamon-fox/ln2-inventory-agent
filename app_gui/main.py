@@ -82,7 +82,7 @@ class _NoWheelTextEdit(QTextEdit):
 class SettingsDialog(QDialog):
     """Enhanced Settings dialog with sections and help text."""
 
-    def __init__(self, parent=None, config=None, on_create_new_dataset=None, on_manage_boxes=None):
+    def __init__(self, parent=None, config=None, on_create_new_dataset=None, on_manage_boxes=None, on_data_changed=None):
         super().__init__(parent)
         self.setWindowTitle(tr("settings.title"))
         self.setMinimumWidth(750)
@@ -90,6 +90,7 @@ class SettingsDialog(QDialog):
         self._config = config or {}
         self._on_create_new_dataset = on_create_new_dataset
         self._on_manage_boxes = on_manage_boxes
+        self._on_data_changed = on_data_changed
 
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
@@ -269,17 +270,17 @@ class SettingsDialog(QDialog):
             from PySide6.QtGui import QPixmap
             donate_vbox = QVBoxLayout()
             donate_vbox.setAlignment(Qt.AlignCenter)
+            donate_text = QLabel(tr("settings.supportHint"))
+            donate_text.setStyleSheet("color: var(--text-muted); font-size: 12px; margin-bottom: 4px;")
+            donate_text.setAlignment(Qt.AlignCenter)
             donate_pixmap = QPixmap(donate_path)
             donate_img = QLabel()
             donate_scaled = donate_pixmap.scaledToWidth(380, Qt.SmoothTransformation)
             donate_img.setPixmap(donate_scaled)
             donate_img.setFixedSize(donate_scaled.size())
             donate_img.setAlignment(Qt.AlignCenter)
-            donate_text = QLabel(tr("settings.supportHint"))
-            donate_text.setStyleSheet("color: var(--text-muted); font-size: 12px; margin-top: 8px;")
-            donate_text.setAlignment(Qt.AlignCenter)
-            donate_vbox.addWidget(donate_img, alignment=Qt.AlignCenter)
             donate_vbox.addWidget(donate_text, alignment=Qt.AlignCenter)
+            donate_vbox.addWidget(donate_img, alignment=Qt.AlignCenter)
             about_layout.addLayout(donate_vbox)
 
         content_layout.addWidget(about_group)
@@ -443,6 +444,8 @@ class SettingsDialog(QDialog):
         data["meta"] = meta
         with open(yaml_path, "w", encoding="utf-8") as f:
             yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+        if callable(self._on_data_changed):
+            self._on_data_changed()
 
     def _open_manage_boxes(self):
         if callable(self._on_manage_boxes):
@@ -536,7 +539,16 @@ def _get_yaml_example():
   box_layout:
     rows: 9
     cols: 9
-  custom_fields: []
+  custom_fields:
+    - key: plasmid_name
+      label: Plasmid Name
+      type: str
+    - key: passage_number
+      label: Passage #
+      type: int
+    - key: short_name
+      label: Short Name
+      type: str
 
 inventory:
   - id: 1
@@ -544,6 +556,7 @@ inventory:
     short_name: K562_ctrl_A
     plasmid_name: pLenti-empty
     plasmid_id: p0001
+    passage_number: 3
     box: 1
     positions: [1]
     frozen_at: "2026-02-01"
@@ -554,6 +567,7 @@ inventory:
     short_name: HeLa_test_B
     plasmid_name: null
     plasmid_id: null
+    passage_number: 5
     box: 1
     positions: [2]
     frozen_at: "2026-01-15"
@@ -1003,12 +1017,12 @@ class CustomFieldsDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(tr("app.title"))
-        self.resize(1300, 900)
-
         self.settings = QSettings("EamonFox", "LN2InventoryAgent")
         self.gui_config = load_gui_config()
-        set_language(self.gui_config.get("language") or "en")
+        set_language(self.gui_config.get("language") or "zh-CN")
+
+        self.setWindowTitle(tr("app.title"))
+        self.resize(1300, 900)
 
         self.bridge = GuiToolBridge()
         self.bridge.set_api_keys(self.gui_config.get("api_keys", {}))
@@ -1263,6 +1277,7 @@ class MainWindow(QMainWindow):
             },
             on_create_new_dataset=self.on_create_new_dataset,
             on_manage_boxes=self.on_manage_boxes,
+            on_data_changed=lambda: self.overview_panel.refresh(),
         )
         if dialog.exec() != QDialog.Accepted:
             return
