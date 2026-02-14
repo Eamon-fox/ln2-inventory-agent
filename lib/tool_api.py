@@ -7,7 +7,7 @@ from copy import deepcopy
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-from .config import VALID_CELL_LINES
+from .custom_fields import STRUCTURAL_FIELD_KEYS, get_effective_fields, get_required_field_keys
 from .position_fmt import get_box_count, get_position_range, get_total_slots
 from .operations import check_position_conflicts, find_record_by_id, get_next_id
 from .thaw_parser import ACTION_LABEL, extract_events, normalize_action
@@ -306,48 +306,30 @@ def _failure_result(
 
 def tool_add_entry(
     yaml_path,
-    parent_cell_line,
-    short_name,
     box,
     positions,
     frozen_at,
-    plasmid_name=None,
-    plasmid_id=None,
-    note=None,
-    custom_data=None,
+    fields=None,
     dry_run=False,
     actor_context=None,
     source="tool_api",
     auto_backup=True,
 ):
-    """Add a new frozen entry using the shared tool flow."""
+    """Add a new frozen entry using the shared tool flow.
+
+    Args:
+        fields: dict of user-configurable field values (e.g. parent_cell_line, short_name, etc.)
+    """
     action = "add_entry"
     tool_name = "tool_add_entry"
+    fields = dict(fields or {})
     tool_input = {
-        "parent_cell_line": parent_cell_line,
-        "short_name": short_name,
         "box": box,
         "positions": list(positions) if isinstance(positions, list) else positions,
         "frozen_at": frozen_at,
-        "plasmid_name": plasmid_name,
-        "plasmid_id": plasmid_id,
-        "note": note,
+        "fields": fields,
         "dry_run": bool(dry_run),
     }
-
-    if VALID_CELL_LINES and parent_cell_line not in VALID_CELL_LINES:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_cell_line",
-            message=f"parent_cell_line 不在允许列表中: {parent_cell_line}",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            details={"parent_cell_line": parent_cell_line},
-            extra={"allowed_cell_lines": list(VALID_CELL_LINES)},
-        )
 
     if not validate_date(frozen_at):
         return _failure_result(
@@ -423,6 +405,24 @@ def tool_add_entry(
             extra={"conflicts": conflicts},
         )
 
+    # Check required user fields from meta
+    meta = data.get("meta", {})
+    required_keys = get_required_field_keys(meta)
+    missing = [k for k in sorted(required_keys) if not fields.get(k)]
+    if missing:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=action,
+            source=source,
+            tool_name=tool_name,
+            error_code="missing_required_fields",
+            message=f"缺少必填字段: {', '.join(missing)}",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+            details={"missing": missing},
+        )
+
     # Tube-level model: one record == one physical tube.
     # Add multiple tubes by creating multiple records, one per position.
     next_id = get_next_id(records)
@@ -432,33 +432,24 @@ def tool_add_entry(
         tube_id = next_id + offset
         rec = {
             "id": tube_id,
-            "parent_cell_line": parent_cell_line,
-            "short_name": short_name,
-            "plasmid_name": plasmid_name,
-            "plasmid_id": plasmid_id,
             "box": box,
             "positions": [int(pos)],
             "frozen_at": frozen_at,
-            "note": note,
         }
-        if custom_data and isinstance(custom_data, dict):
-            for k, v in custom_data.items():
-                if k not in rec:
-                    rec[k] = v
+        # Merge user fields (skip structural keys)
+        for k, v in fields.items():
+            if k not in STRUCTURAL_FIELD_KEYS:
+                rec[k] = v
         new_records.append(rec)
         created.append({"id": tube_id, "box": box, "position": int(pos)})
 
     preview = {
         "new_ids": [item["id"] for item in created],
         "count": len(created),
-        "parent_cell_line": parent_cell_line,
-        "short_name": short_name,
-        "plasmid_name": plasmid_name,
-        "plasmid_id": plasmid_id,
         "box": box,
         "positions": list(int(p) for p in positions),
         "frozen_at": frozen_at,
-        "note": note,
+        "fields": fields,
         "created": created,
     }
 
@@ -538,15 +529,13 @@ def tool_add_entry(
                     "count": len(created),
                     "box": box,
                     "positions": list(int(p) for p in positions),
-                    "parent_cell_line": parent_cell_line,
-                    "short_name": short_name,
+                    "fields": fields,
                 },
                 tool_input={
-                    "parent_cell_line": parent_cell_line,
-                    "short_name": short_name,
                     "box": box,
                     "positions": list(int(p) for p in positions),
                     "frozen_at": frozen_at,
+                    "fields": fields,
                 },
             ),
         )
@@ -583,21 +572,16 @@ def tool_add_entry(
     }
 
 
-_EDITABLE_FIELDS = {
-    "parent_cell_line", "short_name", "frozen_at",
-    "plasmid_name", "plasmid_id", "note",
-}
+_EDITABLE_FIELDS = {"frozen_at"}
 
 
 def _get_editable_fields(yaml_path):
-    """Return editable field set, extended with custom fields from meta."""
-    from lib.custom_fields import parse_custom_fields
+    """Return editable field set: frozen_at + all user-configurable fields from meta."""
     try:
         data = load_yaml(yaml_path)
         meta = data.get("meta", {})
-        custom = parse_custom_fields(meta)
-        if custom:
-            return _EDITABLE_FIELDS | {f["key"] for f in custom}
+        fields = get_effective_fields(meta)
+        return _EDITABLE_FIELDS | {f["key"] for f in fields}
     except Exception:
         pass
     return _EDITABLE_FIELDS
@@ -2124,28 +2108,18 @@ def _str_contains(value, query, case_sensitive=False):
 
 
 def _record_search_blob(rec, case_sensitive=False):
-    from lib.custom_fields import CORE_FIELD_KEYS
-    fields = [
-        "id",
-        "parent_cell_line",
-        "short_name",
-        "plasmid_name",
-        "plasmid_id",
-        "note",
-        "box",
-        "frozen_at",
-    ]
     parts = []
-    for field in fields:
+    # Structural fields for search
+    for field in ("id", "box", "frozen_at"):
         value = rec.get(field)
         if value is not None and value != "":
             parts.append(str(value))
     positions = rec.get("positions") or []
     if positions:
         parts.append(",".join(str(p) for p in positions))
-    # Include custom field values in search blob
+    # All user fields (anything not structural)
     for key, value in rec.items():
-        if key not in CORE_FIELD_KEYS and value is not None and value != "":
+        if key not in STRUCTURAL_FIELD_KEYS and value is not None and value != "":
             parts.append(str(value))
     blob = " ".join(parts)
     return blob if case_sensitive else blob.lower()
@@ -2153,14 +2127,15 @@ def _record_search_blob(rec, case_sensitive=False):
 
 def tool_query_inventory(
     yaml_path,
-    cell=None,
-    short=None,
-    plasmid=None,
-    plasmid_id=None,
     box=None,
     position=None,
+    **field_filters,
 ):
-    """Query inventory records with field filters."""
+    """Query inventory records with field filters.
+
+    Accepts box, position as structural filters, plus any user field key
+    as keyword arguments (e.g. parent_cell_line="K562", short_name="clone-1").
+    """
     try:
         data = load_yaml(yaml_path)
     except Exception as exc:
@@ -2173,20 +2148,20 @@ def tool_query_inventory(
     records = data.get("inventory", [])
     matches = []
     for rec in records:
-        if cell and not _str_contains(rec.get("parent_cell_line"), cell):
-            continue
-        if short and not _str_contains(rec.get("short_name"), short):
-            continue
-        if plasmid and not _str_contains(rec.get("plasmid_name"), plasmid):
-            continue
-        if plasmid_id and not _str_contains(rec.get("plasmid_id"), plasmid_id):
-            continue
         if box is not None and rec.get("box") != box:
             continue
         if position is not None:
             positions = rec.get("positions") or []
             if position not in positions:
                 continue
+        # Dynamic user field filters
+        skip = False
+        for fk, fv in field_filters.items():
+            if fv and not _str_contains(rec.get(fk), fv):
+                skip = True
+                break
+        if skip:
+            continue
         matches.append(rec)
 
     return {

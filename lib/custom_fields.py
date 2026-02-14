@@ -2,18 +2,22 @@
 
 import sys
 
-CORE_FIELD_KEYS = frozenset({
-    "id", "parent_cell_line", "short_name", "box", "positions",
-    "frozen_at", "plasmid_name", "plasmid_id", "note", "thaw_events",
+STRUCTURAL_FIELD_KEYS = frozenset({
+    "id", "box", "positions", "frozen_at", "thaw_events",
 })
 
 _VALID_TYPES = {"str", "int", "float", "date"}
+
+DEFAULT_PRESET_FIELDS = [
+    {"key": "parent_cell_line", "label": "Parent Cell Line", "type": "str", "required": True},
+    {"key": "short_name", "label": "Short Name", "type": "str", "required": True},
+]
 
 
 def parse_custom_fields(meta):
     """Parse ``meta.custom_fields`` and return a validated list.
 
-    Each item is normalised to ``{"key", "label", "type", "default"}``.
+    Each item is normalised to ``{"key", "label", "type", "default", "required"}``.
     Invalid or conflicting entries are silently dropped with a stderr warning.
     """
     raw = (meta or {}).get("custom_fields")
@@ -36,8 +40,8 @@ def parse_custom_fields(meta):
             print(f"warning: meta.custom_fields[{idx}] has invalid key={key!r}, skipping", file=sys.stderr)
             continue
 
-        if key in CORE_FIELD_KEYS:
-            print(f"warning: meta.custom_fields[{idx}] key={key!r} conflicts with core field, skipping", file=sys.stderr)
+        if key in STRUCTURAL_FIELD_KEYS:
+            print(f"warning: meta.custom_fields[{idx}] key={key!r} conflicts with structural field, skipping", file=sys.stderr)
             continue
 
         if key in seen_keys:
@@ -51,6 +55,7 @@ def parse_custom_fields(meta):
             field_type = "str"
 
         default = item.get("default")
+        required = bool(item.get("required", False))
 
         seen_keys.add(key)
         result.append({
@@ -58,9 +63,39 @@ def parse_custom_fields(meta):
             "label": label,
             "type": field_type,
             "default": default,
+            "required": required,
         })
 
     return result
+
+
+def get_effective_fields(meta):
+    """Return the list of user-configurable field definitions from meta.
+
+    Returns parsed custom_fields, or DEFAULT_PRESET_FIELDS if none defined.
+    """
+    fields = parse_custom_fields(meta)
+    if fields:
+        return fields
+    return list(DEFAULT_PRESET_FIELDS)
+
+
+def get_display_key(meta):
+    """Return the field key used for grid cell labels.
+
+    Uses ``meta.display_key`` if set, otherwise the first effective field's key.
+    """
+    dk = (meta or {}).get("display_key")
+    if dk and isinstance(dk, str):
+        return dk
+    fields = get_effective_fields(meta)
+    return fields[0]["key"] if fields else "id"
+
+
+def get_required_field_keys(meta):
+    """Return the set of user-field keys marked as required."""
+    fields = get_effective_fields(meta)
+    return {f["key"] for f in fields if f.get("required")}
 
 
 def coerce_value(value, field_type):

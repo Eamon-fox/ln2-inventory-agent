@@ -323,7 +323,27 @@ def run_plan(
 
     # Phase 1: add operations (each add is independent)
     adds = [it for it in remaining if it.get("action") == "add"]
+
+    # Cross-item conflict detection: flag adds that target positions already
+    # claimed by an earlier add in the same batch.  Pure in-memory check —
+    # no file I/O, no side-effects.
+    _add_claimed: set[tuple[int, int]] = set()  # (box, position)
+    _add_blocked_ids: set[int] = set()
     for item in adds:
+        payload = item.get("payload") or {}
+        box = int(payload.get("box") or item.get("box") or 0)
+        for pos in payload.get("positions") or []:
+            key = (box, int(pos))
+            if key in _add_claimed:
+                _add_blocked_ids.add(id(item))
+                break
+            _add_claimed.add(key)
+
+    for item in adds:
+        if id(item) in _add_blocked_ids:
+            reports.append(_make_error_item(item, "position_conflict", "位置冲突（同批次内重复）"))
+            continue
+
         payload = dict(item.get("payload") or {})
         if mode == "preflight":
             response = _preflight_add_entry(bridge, yaml_path, payload)
@@ -477,14 +497,10 @@ def _preflight_add_entry(bridge: object, yaml_path: str, payload: Dict[str, obje
         bridge=bridge,
         yaml_path=yaml_path,
         tool_name="tool_add_entry",
-        parent_cell_line=payload.get("parent_cell_line"),
-        short_name=payload.get("short_name"),
         box=payload.get("box"),
         positions=payload.get("positions"),
         frozen_at=payload.get("frozen_at"),
-        plasmid_name=payload.get("plasmid_name"),
-        plasmid_id=payload.get("plasmid_id"),
-        note=payload.get("note"),
+        fields=payload.get("fields"),
     )
 
 

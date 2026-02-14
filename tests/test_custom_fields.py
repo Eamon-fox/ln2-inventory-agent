@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from lib.custom_fields import CORE_FIELD_KEYS, coerce_value, parse_custom_fields
+from lib.custom_fields import STRUCTURAL_FIELD_KEYS, coerce_value, parse_custom_fields, get_effective_fields, get_display_key, get_required_field_keys, DEFAULT_PRESET_FIELDS
 from lib.tool_api import (
     tool_add_entry,
     tool_edit_entry,
@@ -93,10 +93,10 @@ class TestParseCustomFields(unittest.TestCase):
         self.assertEqual("10% DMSO", result[0]["default"])
 
     def test_core_field_key_rejected(self):
-        for core_key in ("id", "box", "positions", "frozen_at", "note"):
+        for core_key in ("id", "box", "positions", "frozen_at", "thaw_events"):
             meta = {"custom_fields": [{"key": core_key, "label": "X"}]}
             result = parse_custom_fields(meta)
-            self.assertEqual([], result, f"core key {core_key!r} should be rejected")
+            self.assertEqual([], result, f"structural key {core_key!r} should be rejected")
 
     def test_invalid_key_rejected(self):
         # Not a valid Python identifier
@@ -144,10 +144,9 @@ class TestParseCustomFields(unittest.TestCase):
         self.assertEqual(["passage_number", "virus_titer", "concentration"],
                          [f["key"] for f in result])
 
-    def test_all_core_keys_in_blacklist(self):
-        expected = {"id", "parent_cell_line", "short_name", "box", "positions",
-                    "frozen_at", "plasmid_name", "plasmid_id", "note", "thaw_events"}
-        self.assertEqual(expected, CORE_FIELD_KEYS)
+    def test_all_structural_keys_in_blacklist(self):
+        expected = {"id", "box", "positions", "frozen_at", "thaw_events"}
+        self.assertEqual(expected, STRUCTURAL_FIELD_KEYS)
 
 
 # ===========================================================================
@@ -219,12 +218,11 @@ class TestToolAddEntryCustomData(unittest.TestCase):
 
             result = tool_add_entry(
                 yaml_path=str(yaml_path),
-                parent_cell_line="K562",
-                short_name="K562_test",
                 box=1,
                 positions=[2],
                 frozen_at="2026-02-10",
-                custom_data={"passage_number": 5, "medium": "10% DMSO"},
+                fields={"parent_cell_line": "K562", "short_name": "K562_test",
+                        "passage_number": 5, "medium": "10% DMSO"},
                 source="test_custom_fields",
             )
 
@@ -250,11 +248,10 @@ class TestToolAddEntryCustomData(unittest.TestCase):
 
             result = tool_add_entry(
                 yaml_path=str(yaml_path),
-                parent_cell_line="K562",
-                short_name="K562_plain",
                 box=1,
                 positions=[2],
                 frozen_at="2026-02-10",
+                fields={"parent_cell_line": "K562", "short_name": "K562_plain"},
                 source="test_custom_fields",
             )
 
@@ -264,7 +261,7 @@ class TestToolAddEntryCustomData(unittest.TestCase):
             self.assertNotIn("passage_number", new_rec)
 
     def test_custom_data_cannot_overwrite_core_fields(self):
-        """custom_data keys that collide with core fields should be ignored."""
+        """fields keys that collide with structural fields should be ignored."""
         with tempfile.TemporaryDirectory(prefix="ln2_cf_add_core_") as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
@@ -275,21 +272,20 @@ class TestToolAddEntryCustomData(unittest.TestCase):
 
             result = tool_add_entry(
                 yaml_path=str(yaml_path),
-                parent_cell_line="K562",
-                short_name="K562_core",
                 box=1,
                 positions=[2],
                 frozen_at="2026-02-10",
-                custom_data={"box": 999, "note": "hacked", "virus_titer": "high"},
+                fields={"parent_cell_line": "K562", "short_name": "K562_core",
+                        "box": 999, "note": "hacked", "virus_titer": "high"},
                 source="test_custom_fields",
             )
 
             self.assertTrue(result["ok"])
             data = load_yaml(str(yaml_path))
             new_rec = data["inventory"][-1]
-            # Core fields should NOT be overwritten
+            # Structural fields should NOT be overwritten
             self.assertEqual(1, new_rec["box"])
-            # Non-core custom key should be written
+            # Non-structural field should be written
             self.assertEqual("high", new_rec["virus_titer"])
 
 
@@ -308,6 +304,8 @@ class TestToolEditEntryCustomFields(unittest.TestCase):
                 make_data(
                     [rec],
                     custom_fields=[
+                        {"key": "parent_cell_line", "label": "Cell", "type": "str", "required": True},
+                        {"key": "short_name", "label": "Short", "type": "str", "required": True},
                         {"key": "passage_number", "label": "Passage #", "type": "int"},
                     ],
                 ),
@@ -352,11 +350,14 @@ class TestToolEditEntryCustomFields(unittest.TestCase):
     def test_edit_custom_and_core_field_together(self):
         with tempfile.TemporaryDirectory(prefix="ln2_cf_edit_mix_") as td:
             yaml_path = Path(td) / "inventory.yaml"
-            rec = make_record(1, box=1, positions=[1], passage_number=1)
+            rec = make_record(1, box=1, positions=[1], passage_number=1, note="old")
             write_yaml(
                 make_data(
                     [rec],
                     custom_fields=[
+                        {"key": "parent_cell_line", "label": "Cell", "type": "str", "required": True},
+                        {"key": "short_name", "label": "Short", "type": "str", "required": True},
+                        {"key": "note", "label": "Note", "type": "str"},
                         {"key": "passage_number", "label": "Passage #", "type": "int"},
                     ],
                 ),
@@ -446,10 +447,13 @@ class TestGetEditableFields(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_raw_yaml(str(yaml_path), make_data([make_record()]))
             result = _get_editable_fields(str(yaml_path))
-            self.assertEqual(_EDITABLE_FIELDS, result)
+            # Should include frozen_at + DEFAULT_PRESET_FIELDS keys
+            self.assertIn("frozen_at", result)
+            self.assertIn("parent_cell_line", result)
+            self.assertIn("short_name", result)
 
     def test_custom_fields_extend_editable_set(self):
-        from lib.tool_api import _EDITABLE_FIELDS, _get_editable_fields
+        from lib.tool_api import _get_editable_fields
 
         with tempfile.TemporaryDirectory(prefix="ln2_cf_ef2_") as td:
             yaml_path = Path(td) / "inventory.yaml"
@@ -458,21 +462,25 @@ class TestGetEditableFields(unittest.TestCase):
                 make_data(
                     [make_record()],
                     custom_fields=[
+                        {"key": "parent_cell_line", "label": "Cell", "type": "str", "required": True},
+                        {"key": "short_name", "label": "Short", "type": "str", "required": True},
                         {"key": "passage_number", "label": "P#", "type": "int"},
                         {"key": "medium", "label": "Medium"},
                     ],
                 ),
             )
             result = _get_editable_fields(str(yaml_path))
-            self.assertTrue(result.issuperset(_EDITABLE_FIELDS))
+            self.assertIn("frozen_at", result)
             self.assertIn("passage_number", result)
             self.assertIn("medium", result)
+            self.assertIn("parent_cell_line", result)
 
     def test_missing_yaml_returns_base_set(self):
         from lib.tool_api import _EDITABLE_FIELDS, _get_editable_fields
 
         result = _get_editable_fields("/nonexistent/path.yaml")
         self.assertEqual(_EDITABLE_FIELDS, result)
+        self.assertEqual({"frozen_at"}, result)
 
 
 # ===========================================================================

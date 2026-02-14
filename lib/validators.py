@@ -186,17 +186,20 @@ def _record_label(rec, idx):
     return f"记录 #{idx + 1} (id={rec.get('id', 'N/A')})"
 
 
-def validate_record(rec, idx=None, layout=None):
+def validate_record(rec, idx=None, layout=None, meta=None):
     """Validate one inventory record.
 
     Args:
         rec: Record dict
         idx: Optional index for error messages
         layout: Optional box_layout dict
+        meta: Optional meta dict for dynamic required fields
 
     Returns:
         tuple[list[str], list[str]]: (errors, warnings)
     """
+    from .custom_fields import get_required_field_keys
+
     errors = []
     warnings = []
     rec_id = _record_label(rec, idx)
@@ -204,7 +207,10 @@ def validate_record(rec, idx=None, layout=None):
     box_count = get_box_count(layout) if layout else BOX_RANGE[1]
     pos_lo, pos_hi = get_position_range(layout) if layout else (POSITION_RANGE[0], POSITION_RANGE[1])
 
-    required_fields = ["id", "parent_cell_line", "short_name", "box", "positions", "frozen_at"]
+    # Structural required fields + user-defined required fields
+    structural_required = ["id", "box", "positions", "frozen_at"]
+    user_required = get_required_field_keys(meta)
+    required_fields = structural_required + sorted(user_required)
     for field in required_fields:
         if field not in rec or rec[field] is None:
             errors.append(f"{rec_id}: 缺少必填字段 '{field}'")
@@ -219,9 +225,10 @@ def validate_record(rec, idx=None, layout=None):
     elif not validate_box(box, layout):
         errors.append(f"{rec_id}: 'box' 超出范围 (1-{box_count})")
 
-    for field in ["parent_cell_line", "short_name"]:
+    # Validate required user fields are non-empty strings
+    for field in sorted(user_required):
         value = rec.get(field)
-        if not isinstance(value, str) or not value.strip():
+        if isinstance(value, str) and not value.strip():
             errors.append(f"{rec_id}: '{field}' 必须是非空字符串")
 
     positions = rec.get("positions")
@@ -351,13 +358,14 @@ def validate_inventory(data):
     if not isinstance(inventory, list):
         return ["'inventory' 必须是列表"], []
 
-    layout = data.get("meta", {}).get("box_layout", {})
+    meta = data.get("meta", {})
+    layout = meta.get("box_layout", {})
 
     for idx, rec in enumerate(inventory):
         if not isinstance(rec, dict):
             errors.append(f"记录 #{idx + 1}: 必须是对象")
             continue
-        rec_errors, rec_warnings = validate_record(rec, idx=idx, layout=layout)
+        rec_errors, rec_warnings = validate_record(rec, idx=idx, layout=layout, meta=meta)
         errors.extend(rec_errors)
         warnings.extend(rec_warnings)
 

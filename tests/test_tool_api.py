@@ -86,12 +86,10 @@ class ToolApiTests(unittest.TestCase):
             )
             result = tool_add_entry(
                 yaml_path=str(yaml_path),
-                parent_cell_line="K562",
-                short_name="clone-2",
                 box=1,
                 positions=[2, 3],
                 frozen_at="2026-02-10",
-                note="from test",
+                fields={"parent_cell_line": "K562", "short_name": "clone-2", "note": "from test"},
                 actor_context=actor,
                 source="tests/test_tool_api.py",
             )
@@ -355,11 +353,10 @@ class ToolApiTests(unittest.TestCase):
 
             result = tool_add_entry(
                 yaml_path=str(yaml_path),
-                parent_cell_line="K562",
-                short_name="clone-3",
                 box=1,
                 positions=[3],
                 frozen_at="2026-02-10",
+                fields={"parent_cell_line": "K562", "short_name": "clone-3"},
             )
 
             self.assertFalse(result["ok"])
@@ -383,11 +380,10 @@ class ToolApiTests(unittest.TestCase):
 
             result = tool_add_entry(
                 yaml_path=str(yaml_path),
-                parent_cell_line="K562",
-                short_name="clone-invalid-date",
                 box=1,
                 positions=[2],
                 frozen_at="2026/02/10",
+                fields={"parent_cell_line": "K562", "short_name": "clone-invalid-date"},
             )
 
             self.assertFalse(result["ok"])
@@ -428,22 +424,20 @@ class ToolApiTests(unittest.TestCase):
 
             bad_date = tool_add_entry(
                 yaml_path=str(yaml_path),
-                parent_cell_line="K562",
-                short_name="clone-bad-date",
                 box=1,
                 positions=[2],
                 frozen_at="2026/02/10",
+                fields={"parent_cell_line": "K562", "short_name": "clone-bad-date"},
             )
             self.assertFalse(bad_date["ok"])
             self.assertEqual("invalid_date", bad_date["error_code"])
 
             bad_box = tool_add_entry(
                 yaml_path=str(yaml_path),
-                parent_cell_line="K562",
-                short_name="clone-bad-box",
                 box=99,
                 positions=[2],
                 frozen_at="2026-02-10",
+                fields={"parent_cell_line": "K562", "short_name": "clone-bad-box"},
             )
             self.assertFalse(bad_box["ok"])
             self.assertEqual("invalid_box", bad_box["error_code"])
@@ -472,11 +466,10 @@ class ToolApiTests(unittest.TestCase):
 
             result = tool_add_entry(
                 yaml_path=str(yaml_path),
-                parent_cell_line="K562",
-                short_name="clone-4",
                 box=1,
                 positions=[11],
                 frozen_at="2026-02-10",
+                fields={"parent_cell_line": "K562", "short_name": "clone-4"},
             )
 
             self.assertFalse(result["ok"])
@@ -532,7 +525,7 @@ class ToolApiTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
-            response = tool_query_inventory(str(yaml_path), cell="k562", box=2, position=10)
+            response = tool_query_inventory(str(yaml_path), parent_cell_line="k562", box=2, position=10)
             self.assertTrue(response["ok"])
             records = response["result"]["records"]
             self.assertEqual(1, len(records))
@@ -653,7 +646,7 @@ class TestToolEditEntry(unittest.TestCase):
             result = tool_edit_entry(
                 yaml_path=str(yaml_path),
                 record_id=1,
-                fields={"short_name": "new-name", "note": "updated note"},
+                fields={"short_name": "new-name", "parent_cell_line": "HEK293"},
             )
             self.assertTrue(result["ok"])
             self.assertEqual("rec-1", result["result"]["before"]["short_name"])
@@ -662,7 +655,7 @@ class TestToolEditEntry(unittest.TestCase):
             data = load_yaml(str(yaml_path))
             rec = data["inventory"][0]
             self.assertEqual("new-name", rec["short_name"])
-            self.assertEqual("updated note", rec["note"])
+            self.assertEqual("HEK293", rec["parent_cell_line"])
 
     def test_edit_entry_rejects_forbidden_fields(self):
         with tempfile.TemporaryDirectory(prefix="ln2_edit_") as temp_dir:
@@ -781,8 +774,9 @@ class TestCustomLayout10x10(unittest.TestCase):
         """Position 100 should be valid in a 10x10 grid."""
         p, _ = self._seed([])
         result = tool_add_entry(
-            p, "K562", "test", box=1, positions=[100],
+            p, box=1, positions=[100],
             frozen_at="2025-06-01", auto_backup=False,
+            fields={"parent_cell_line": "K562", "short_name": "test"},
         )
         self.assertTrue(result["ok"], result.get("message"))
 
@@ -790,8 +784,9 @@ class TestCustomLayout10x10(unittest.TestCase):
         """Position 101 should be rejected in a 10x10 grid."""
         p, _ = self._seed([])
         result = tool_add_entry(
-            p, "K562", "test", box=1, positions=[101],
+            p, box=1, positions=[101],
             frozen_at="2025-06-01", auto_backup=False,
+            fields={"parent_cell_line": "K562", "short_name": "test"},
         )
         self.assertFalse(result["ok"])
 
@@ -799,8 +794,9 @@ class TestCustomLayout10x10(unittest.TestCase):
         """Box 8 should be valid with box_count=8."""
         p, _ = self._seed([])
         result = tool_add_entry(
-            p, "K562", "test", box=8, positions=[1],
+            p, box=8, positions=[1],
             frozen_at="2025-06-01", auto_backup=False,
+            fields={"parent_cell_line": "K562", "short_name": "test"},
         )
         self.assertTrue(result["ok"], result.get("message"))
 
@@ -808,8 +804,9 @@ class TestCustomLayout10x10(unittest.TestCase):
         """Box 9 should be rejected with box_count=8."""
         p, _ = self._seed([])
         result = tool_add_entry(
-            p, "K562", "test", box=9, positions=[1],
+            p, box=9, positions=[1],
             frozen_at="2025-06-01", auto_backup=False,
+            fields={"parent_cell_line": "K562", "short_name": "test"},
         )
         self.assertFalse(result["ok"])
 
@@ -867,16 +864,18 @@ class TestCustomLayout8x12(unittest.TestCase):
     def test_add_entry_position_96(self):
         p, _ = self._seed([])
         result = tool_add_entry(
-            p, "HeLa", "test", box=1, positions=[96],
+            p, box=1, positions=[96],
             frozen_at="2025-06-01", auto_backup=False,
+            fields={"parent_cell_line": "HeLa", "short_name": "test"},
         )
         self.assertTrue(result["ok"], result.get("message"))
 
     def test_add_entry_position_97_rejected(self):
         p, _ = self._seed([])
         result = tool_add_entry(
-            p, "HeLa", "test", box=1, positions=[97],
+            p, box=1, positions=[97],
             frozen_at="2025-06-01", auto_backup=False,
+            fields={"parent_cell_line": "HeLa", "short_name": "test"},
         )
         self.assertFalse(result["ok"])
 

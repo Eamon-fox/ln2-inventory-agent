@@ -53,6 +53,7 @@ inventory:
         self.assertEqual(1, response.get("result", {}).get("count"))
 
     def test_query_inventory_ignores_unknown_filter_names(self):
+        """Unknown field filters don't crash, they just filter (no match = 0 results)."""
         tmp, path = self._write_inventory()
         self.addCleanup(tmp.cleanup)
         bridge = GuiToolBridge()
@@ -60,7 +61,8 @@ inventory:
         response = bridge.query_inventory(str(path), cell="K562", unknown="ignored")
 
         self.assertTrue(response.get("ok"))
-        self.assertEqual(1, response.get("result", {}).get("count"))
+        # 'cell' and 'unknown' are not actual record keys, so no records match
+        self.assertEqual(0, response.get("result", {}).get("count"))
 
 
 if __name__ == "__main__":

@@ -239,14 +239,13 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertEqual(10, self.staged_items[0]["to_position"])
 
     def test_stage_to_plan_validation_failure(self):
-        """Test plan validation failure."""
+        """Test plan validation failure with invalid box."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_sink=self.plan_sink)
         result = runner._stage_to_plan(
             "add_entry",
             {
-                "parent_cell_line": "",  # Invalid: empty
-                "short_name": "x",
-                "box": 1,
+                "fields": {"parent_cell_line": "K562", "short_name": "x"},
+                "box": -1,  # Invalid: negative box
                 "positions": [2],
                 "frozen_at": "2026-02-10",
             },

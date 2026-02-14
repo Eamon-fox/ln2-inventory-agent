@@ -175,9 +175,9 @@ class PositionConsistencyTests(unittest.TestCase):
             yp = _seed(td, [make_record(1, box=1, positions=[1])])
             result = tool_add_entry(
                 yaml_path=yp,
-                parent_cell_line="K562", short_name="clone-new",
                 box=2, positions=[10, 11, 12],
                 frozen_at="2026-02-10",
+                fields={"parent_cell_line": "K562", "short_name": "clone-new"},
             )
             self.assertTrue(result["ok"])
             data = load_yaml(yp)
@@ -193,9 +193,9 @@ class PositionConsistencyTests(unittest.TestCase):
             yp = _seed(td, [make_record(1, box=1, positions=[5])])
             result = tool_add_entry(
                 yaml_path=yp,
-                parent_cell_line="K562", short_name="conflict",
                 box=1, positions=[5],
                 frozen_at="2026-02-10",
+                fields={"parent_cell_line": "K562", "short_name": "conflict"},
             )
             self.assertFalse(result["ok"])
 
@@ -292,9 +292,9 @@ class AuditTrailTests(unittest.TestCase):
             yp = _seed(td, [])
             tool_add_entry(
                 yaml_path=yp,
-                parent_cell_line="K562", short_name="audit-test",
                 box=1, positions=[1],
                 frozen_at="2026-02-10",
+                fields={"parent_cell_line": "K562", "short_name": "audit-test"},
             )
             rows = _read_audit(td)
             add_rows = [r for r in rows if r.get("action") == "add_entry"]
@@ -333,9 +333,9 @@ class AuditTrailTests(unittest.TestCase):
             yp = _seed(td, [make_record(1, box=1, positions=[1])])
             tool_add_entry(
                 yaml_path=yp,
-                parent_cell_line="K562", short_name="x",
                 box=99, positions=[1],  # invalid box
                 frozen_at="2026-02-10",
+                fields={"parent_cell_line": "K562", "short_name": "x"},
             )
             rows = _read_audit(td)
             failed = [r for r in rows if r.get("status") == "failed"]
@@ -394,15 +394,15 @@ class BoundaryValueTests(unittest.TestCase):
             yp = _seed(td, [])
             r1 = tool_add_entry(
                 yaml_path=yp,
-                parent_cell_line="K562", short_name="box1",
                 box=1, positions=[1], frozen_at="2026-02-10",
+                fields={"parent_cell_line": "K562", "short_name": "box1"},
             )
             self.assertTrue(r1["ok"])
 
             r5 = tool_add_entry(
                 yaml_path=yp,
-                parent_cell_line="K562", short_name="box5",
                 box=5, positions=[1], frozen_at="2026-02-10",
+                fields={"parent_cell_line": "K562", "short_name": "box5"},
             )
             self.assertTrue(r5["ok"])
 
@@ -411,8 +411,8 @@ class BoundaryValueTests(unittest.TestCase):
             yp = _seed(td, [])
             result = tool_add_entry(
                 yaml_path=yp,
-                parent_cell_line="K562", short_name="x",
                 box=0, positions=[1], frozen_at="2026-02-10",
+                fields={"parent_cell_line": "K562", "short_name": "x"},
             )
             self.assertFalse(result["ok"])
 
@@ -421,8 +421,8 @@ class BoundaryValueTests(unittest.TestCase):
             yp = _seed(td, [])
             result = tool_add_entry(
                 yaml_path=yp,
-                parent_cell_line="K562", short_name="x",
                 box=6, positions=[1], frozen_at="2026-02-10",
+                fields={"parent_cell_line": "K562", "short_name": "x"},
             )
             self.assertFalse(result["ok"])
 
@@ -491,8 +491,8 @@ class ErrorPathTests(unittest.TestCase):
             yp = _seed(td, [])
             result = tool_add_entry(
                 yaml_path=yp,
-                parent_cell_line="", short_name="x",
                 box=1, positions=[1], frozen_at="2026-02-10",
+                fields={"parent_cell_line": "", "short_name": "x"},
             )
             self.assertFalse(result["ok"])
 
@@ -501,8 +501,8 @@ class ErrorPathTests(unittest.TestCase):
             yp = _seed(td, [])
             result = tool_add_entry(
                 yaml_path=yp,
-                parent_cell_line="K562", short_name="",
                 box=1, positions=[1], frozen_at="2026-02-10",
+                fields={"parent_cell_line": "K562", "short_name": ""},
             )
             self.assertFalse(result["ok"])
 

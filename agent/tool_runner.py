@@ -25,6 +25,7 @@ from lib.tool_api import (
 from app_gui.plan_gate import validate_plan_batch
 from lib.plan_item_factory import build_add_plan_item, build_edit_plan_item, build_record_plan_item, build_rollback_plan_item
 from lib.validators import parse_positions
+from lib.yaml_ops import load_yaml
 
 _WRITE_TOOLS = {"add_entry", "record_thaw", "batch_thaw", "rollback", "edit_entry"}
 
@@ -192,11 +193,11 @@ class AgentToolRunner:
         return {
             "query_inventory": {
                 "required": [],
-                "optional": ["cell", "short", "plasmid", "plasmid_id", "box", "position"],
+                "optional": ["box", "position"],
+                "description": "Query inventory records. Pass any user field key as a filter (e.g. parent_cell_line, short_name).",
                 "aliases": {
-                    "cell": ["cell_line", "parent_cell_line"],
-                    "short": ["short_name"],
-                    "plasmid": ["plasmid_name"],
+                    "parent_cell_line": ["cell", "cell_line"],
+                    "short_name": ["short"],
                 },
             },
             "list_empty_positions": {
@@ -264,7 +265,7 @@ class AgentToolRunner:
                 "required": ["record_id", "fields"],
                 "optional": [],
                 "description": "Edit metadata fields of an existing record. "
-                               "Allowed fields: parent_cell_line, short_name, frozen_at, plasmid_name, plasmid_id, note. "
+                               "Allowed fields: frozen_at plus any user-defined fields from meta.custom_fields. "
                                "Structural fields (id, box, positions) cannot be changed.",
                 "params": {
                     "record_id": {
@@ -273,22 +274,19 @@ class AgentToolRunner:
                     },
                     "fields": {
                         "type": "object",
-                        "description": "Key-value pairs of fields to update. "
-                                       "Keys must be from: parent_cell_line, short_name, frozen_at, plasmid_name, plasmid_id, note.",
+                        "description": "Key-value pairs of fields to update.",
                     },
                 },
             },
             "add_entry": {
-                "required": ["parent_cell_line", "short_name", "box", "positions", "frozen_at"],
-                "optional": ["plasmid_name", "plasmid_id", "note", "dry_run"],
+                "required": ["box", "positions", "frozen_at"],
+                "optional": ["fields", "dry_run"],
                 "aliases": {
-                    "parent_cell_line": ["cell", "cell_line"],
-                    "short_name": ["short", "name"],
                     "positions": ["position", "slot"],
                     "frozen_at": ["date"],
-                    "note": ["notes", "memo"],
                 },
-                "notes": "positions accepts list[int] or comma string like '1,2,3'.",
+                "description": "Add a new frozen entry. Pass user fields in the 'fields' dict (e.g. parent_cell_line, short_name).",
+                "notes": "positions accepts list[int] or comma string like '1,2,3'. fields is a dict of user field values.",
             },
             "record_thaw": {
                 "required": ["record_id", "date"],
@@ -557,6 +555,7 @@ class AgentToolRunner:
 
     def _lookup_record_info(self, record_id):
         """Quick lookup to get (box, label, positions) for a record ID."""
+        from lib.custom_fields import get_display_key
         try:
             result = tool_get_raw_entries(yaml_path=self._yaml_path, ids=[record_id])
             if result.get("ok"):
@@ -564,7 +563,13 @@ class AgentToolRunner:
                 if entries:
                     rec = entries[0]
                     box = int(rec.get("box", 0))
-                    label = rec.get("short_name") or rec.get("parent_cell_line") or "-"
+                    # Use display_key from meta for label
+                    try:
+                        data = load_yaml(self._yaml_path)
+                        dk = get_display_key(data.get("meta", {}))
+                    except Exception:
+                        dk = "short_name"
+                    label = rec.get(dk) or rec.get("short_name") or rec.get("parent_cell_line") or "-"
                     positions = list(rec.get("positions") or [])
                     return box, label, positions
         except Exception:
@@ -594,8 +599,6 @@ class AgentToolRunner:
         items = []
 
         if tool_name == "add_entry":
-            parent_cell_line = self._first_value(payload, "parent_cell_line", "cell", "cell_line") or ""
-            short_name = self._first_value(payload, "short_name", "short", "name") or ""
             box_raw = self._first_value(payload, "box", "box_num")
             positions_raw = payload.get("positions")
             if positions_raw in (None, ""):
@@ -609,16 +612,29 @@ class AgentToolRunner:
                     "message": str(exc),
                 })
 
+            # Collect user fields from payload
+            fields = payload.get("fields")
+            if not isinstance(fields, dict):
+                fields = {}
+            # Also pick up common aliases at top level for LLM convenience
+            for alias_key, canonical in [
+                ("parent_cell_line", "parent_cell_line"), ("cell", "parent_cell_line"), ("cell_line", "parent_cell_line"),
+                ("short_name", "short_name"), ("short", "short_name"), ("name", "short_name"),
+                ("note", "note"), ("notes", "note"), ("memo", "note"),
+                ("plasmid_name", "plasmid_name"), ("plasmid", "plasmid_name"),
+                ("plasmid_id", "plasmid_id"),
+            ]:
+                if alias_key in payload and canonical not in fields:
+                    val = payload[alias_key]
+                    if val not in (None, ""):
+                        fields[canonical] = val
+
             items.append(
                 build_add_plan_item(
-                    parent_cell_line=parent_cell_line,
-                    short_name=short_name,
                     box=box,
                     positions=positions,
                     frozen_at=self._first_value(payload, "frozen_at", "date"),
-                    plasmid_name=self._first_value(payload, "plasmid_name", "plasmid"),
-                    plasmid_id=payload.get("plasmid_id"),
-                    note=self._first_value(payload, "note", "notes", "memo"),
+                    fields=fields,
                     source="ai",
                 )
             )
@@ -916,17 +932,36 @@ class AgentToolRunner:
             return self._stage_to_plan(tool_name, payload, trace_id)
 
         if tool_name == "query_inventory":
+            def _call_query():
+                filters = {}
+                # Known structural filters
+                box_val = self._optional_int(payload, "box")
+                if box_val is not None:
+                    filters["box"] = box_val
+                pos_val = self._optional_int(payload, "position")
+                if pos_val is not None:
+                    filters["position"] = pos_val
+                # Map common aliases to canonical field names
+                alias_map = {
+                    "cell": "parent_cell_line", "cell_line": "parent_cell_line", "parent_cell_line": "parent_cell_line",
+                    "short": "short_name", "short_name": "short_name",
+                    "plasmid": "plasmid_name", "plasmid_name": "plasmid_name",
+                    "plasmid_id": "plasmid_id",
+                    "note": "note",
+                }
+                for k, v in payload.items():
+                    if v in (None, "") or k in ("box", "position", "tool_name"):
+                        continue
+                    canonical = alias_map.get(k)
+                    if canonical and canonical not in filters:
+                        filters[canonical] = str(v)
+                return tool_query_inventory(
+                    yaml_path=self._yaml_path,
+                    **filters,
+                )
             return self._safe_call(
                 tool_name,
-                lambda: tool_query_inventory(
-                    yaml_path=self._yaml_path,
-                    cell=self._first_value(payload, "cell", "cell_line", "parent_cell_line"),
-                    short=self._first_value(payload, "short", "short_name"),
-                    plasmid=self._first_value(payload, "plasmid", "plasmid_name"),
-                    plasmid_id=self._first_value(payload, "plasmid_id"),
-                    box=self._optional_int(payload, "box"),
-                    position=self._optional_int(payload, "position"),
-                ),
+                _call_query,
             )
 
         if tool_name == "list_empty_positions":
@@ -1050,30 +1085,37 @@ class AgentToolRunner:
 
         if tool_name == "add_entry":
             def _call_add_entry():
-                normalized = dict(payload)
-                normalized["parent_cell_line"] = self._first_value(
-                    payload, "parent_cell_line", "cell", "cell_line"
-                )
-                normalized["short_name"] = self._first_value(payload, "short_name", "short", "name")
-                normalized["box"] = self._first_value(payload, "box", "box_num")
-                normalized["frozen_at"] = self._first_value(payload, "frozen_at", "date")
-                normalized["note"] = self._first_value(payload, "note", "notes", "memo")
+                box_raw = self._first_value(payload, "box", "box_num")
+                box_val = int(box_raw) if box_raw is not None else 0
+                frozen_at = self._first_value(payload, "frozen_at", "date")
 
                 positions_raw = payload.get("positions")
                 if positions_raw in (None, ""):
                     positions_raw = self._first_value(payload, "position", "slot")
                 positions = self._normalize_positions(positions_raw)
 
+                # Collect user fields
+                fields = payload.get("fields")
+                if not isinstance(fields, dict):
+                    fields = {}
+                for alias_key, canonical in [
+                    ("parent_cell_line", "parent_cell_line"), ("cell", "parent_cell_line"), ("cell_line", "parent_cell_line"),
+                    ("short_name", "short_name"), ("short", "short_name"), ("name", "short_name"),
+                    ("note", "note"), ("notes", "note"), ("memo", "note"),
+                    ("plasmid_name", "plasmid_name"), ("plasmid", "plasmid_name"),
+                    ("plasmid_id", "plasmid_id"),
+                ]:
+                    if alias_key in payload and canonical not in fields:
+                        val = payload[alias_key]
+                        if val not in (None, ""):
+                            fields[canonical] = val
+
                 return tool_add_entry(
                     yaml_path=self._yaml_path,
-                    parent_cell_line=normalized.get("parent_cell_line"),
-                    short_name=normalized.get("short_name"),
-                    box=self._required_int(normalized, "box"),
+                    box=box_val,
                     positions=positions,
-                    frozen_at=normalized.get("frozen_at"),
-                    plasmid_name=self._first_value(payload, "plasmid_name", "plasmid"),
-                    plasmid_id=payload.get("plasmid_id"),
-                    note=normalized.get("note"),
+                    frozen_at=frozen_at,
+                    fields=fields,
                     dry_run=self._as_bool(payload.get("dry_run", False), default=False),
                     actor_context=self._actor_context(trace_id=trace_id),
                     source="agent.react",

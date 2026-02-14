@@ -33,12 +33,16 @@ def normalize_plan_action(action: Any) -> str:
     return text
 
 
-def resolve_record_context(record: Optional[Dict[str, Any]], fallback_box: int = 0) -> tuple[int, str]:
+def resolve_record_context(record: Optional[Dict[str, Any]], fallback_box: int = 0, display_key: Optional[str] = None) -> tuple[int, str]:
     """Resolve (box, label) from cached record."""
     box = int(fallback_box or 0)
     label = "-"
     if isinstance(record, dict):
-        label = record.get("short_name") or record.get("parent_cell_line") or "-"
+        if display_key:
+            label = record.get(display_key) or "-"
+        else:
+            # Fallback: try short_name, then first non-structural string value
+            label = record.get("short_name") or record.get("parent_cell_line") or "-"
         try:
             box = int(record.get("box", box) or box)
         except Exception:
@@ -48,37 +52,38 @@ def resolve_record_context(record: Optional[Dict[str, Any]], fallback_box: int =
 
 def build_add_plan_item(
     *,
-    parent_cell_line: str,
-    short_name: str,
     box: int,
     positions: Iterable[Any],
     frozen_at: Optional[str],
-    plasmid_name: Optional[str] = None,
-    plasmid_id: Optional[str] = None,
-    note: Optional[str] = None,
-    custom_data: Optional[Dict[str, Any]] = None,
+    fields: Optional[Dict[str, Any]] = None,
+    display_key: Optional[str] = None,
     source: str = "human",
 ) -> Dict[str, Any]:
     """Build a normalized add PlanItem payload."""
+    fields = dict(fields or {})
     normalized_positions = [int(p) for p in list(positions or [])]
     payload = {
-        "parent_cell_line": parent_cell_line,
-        "short_name": short_name,
         "box": int(box),
         "positions": normalized_positions,
         "frozen_at": frozen_at,
-        "plasmid_name": plasmid_name,
-        "plasmid_id": plasmid_id,
-        "note": note,
+        "fields": fields,
     }
-    if custom_data and isinstance(custom_data, dict):
-        payload["custom_data"] = custom_data
+    # Determine label from fields using display_key
+    label = "-"
+    if display_key and fields.get(display_key):
+        label = str(fields[display_key])
+    elif fields:
+        # Fallback: first non-empty field value
+        for v in fields.values():
+            if v:
+                label = str(v)
+                break
     return {
         "action": "add",
         "box": int(box),
         "position": normalized_positions[0] if normalized_positions else 1,
         "record_id": None,
-        "label": (short_name or parent_cell_line or "-"),
+        "label": label,
         "source": source,
         "payload": payload,
     }

@@ -229,7 +229,7 @@ class QueryInventoryExtendedTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
-            result = tool_query_inventory(str(yaml_path), cell="K562", box=2)
+            result = tool_query_inventory(str(yaml_path), parent_cell_line="K562", box=2)
             self.assertTrue(result["ok"])
             self.assertEqual(1, result["result"]["count"])
             self.assertEqual(2, result["result"]["records"][0]["id"])
@@ -244,11 +244,11 @@ class QueryInventoryExtendedTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
-            result = tool_query_inventory(str(yaml_path), cell="k562")
+            result = tool_query_inventory(str(yaml_path), parent_cell_line="k562")
             self.assertTrue(result["ok"])
             self.assertEqual(1, result["result"]["count"])
 
-            result_upper = tool_query_inventory(str(yaml_path), cell="K562")
+            result_upper = tool_query_inventory(str(yaml_path), parent_cell_line="K562")
             self.assertTrue(result_upper["ok"])
             self.assertEqual(1, result_upper["result"]["count"])
 
@@ -283,7 +283,7 @@ class QueryInventoryExtendedTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
-            result = tool_query_inventory(str(yaml_path), plasmid="pX")
+            result = tool_query_inventory(str(yaml_path), plasmid_name="pX")
             self.assertTrue(result["ok"])
             self.assertEqual(1, result["result"]["count"])
 
@@ -297,7 +297,7 @@ class QueryInventoryExtendedTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
-            result = tool_query_inventory(str(yaml_path), cell="K562")
+            result = tool_query_inventory(str(yaml_path), parent_cell_line="K562")
             self.assertTrue(result["ok"])
             self.assertEqual(0, result["result"]["count"])
 

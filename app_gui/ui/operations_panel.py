@@ -266,18 +266,68 @@ class OperationsPanel(QWidget):
         self._refresh_custom_fields()
 
     def _refresh_custom_fields(self):
-        """Reload custom field definitions from YAML meta and rebuild add form."""
-        from lib.custom_fields import parse_custom_fields
+        """Reload custom field definitions from YAML meta and rebuild dynamic forms."""
+        from lib.custom_fields import get_effective_fields
         from lib.yaml_ops import load_yaml
         try:
             yaml_path = self.yaml_path_getter()
             data = load_yaml(yaml_path)
             meta = data.get("meta", {})
-            custom_fields = parse_custom_fields(meta)
+            custom_fields = get_effective_fields(meta)
         except Exception:
             custom_fields = []
         self._current_custom_fields = custom_fields
         self._rebuild_custom_add_fields(custom_fields)
+        self._rebuild_ctx_user_fields("thaw", custom_fields)
+        self._rebuild_ctx_user_fields("move", custom_fields)
+        self._rebuild_query_fields(custom_fields)
+
+    def _rebuild_query_fields(self, custom_fields):
+        """Rebuild user field query inputs in the query form."""
+        form = getattr(self, "_query_form", None)
+        if form is None:
+            return
+        # Remove old user field rows
+        for key, widget in self._query_field_widgets.items():
+            form.removeRow(widget)
+        self._query_field_widgets = {}
+        # Insert new user field rows
+        for fdef in (custom_fields or []):
+            key = fdef["key"]
+            flabel = fdef.get("label", key)
+            widget = QLineEdit()
+            form.insertRow(form.rowCount(), flabel, widget)
+            self._query_field_widgets[key] = widget
+
+    def _rebuild_ctx_user_fields(self, prefix, custom_fields):
+        """Rebuild user field context rows in thaw/move form."""
+        if prefix == "thaw":
+            form = getattr(self, "_thaw_ctx_form", None)
+            widgets = getattr(self, "_thaw_ctx_widgets", {})
+            rid_fn = lambda: self.t_id.value()
+            refresh_fn = lambda: self._refresh_thaw_record_context()
+        else:
+            form = getattr(self, "_move_ctx_form", None)
+            widgets = getattr(self, "_move_ctx_widgets", {})
+            rid_fn = lambda: self.m_id.value()
+            refresh_fn = lambda: self._refresh_move_record_context()
+        if form is None:
+            return
+        # Remove old user field rows
+        for key, (container, label) in widgets.items():
+            form.removeRow(container)
+        widgets.clear()
+        # Insert new user field rows
+        for fdef in (custom_fields or []):
+            key = fdef["key"]
+            flabel = fdef.get("label", key)
+            container, lbl_widget = self._make_editable_field(key, rid_fn, refresh_fn)
+            form.insertRow(form.rowCount(), flabel, container)
+            widgets[key] = (container, lbl_widget)
+        if prefix == "thaw":
+            self._thaw_ctx_widgets = widgets
+        else:
+            self._move_ctx_widgets = widgets
 
     def _collect_custom_add_values(self):
         """Collect values from custom field widgets in the add form."""
@@ -510,8 +560,7 @@ class OperationsPanel(QWidget):
         layout = QVBoxLayout(tab)
 
         form = QFormLayout()
-        self.a_parent = QLineEdit()
-        self.a_short = QLineEdit()
+        # Structural fields (always present)
         self.a_box = QSpinBox()
         self.a_box.setRange(1, 99)
         self.a_positions = QLineEdit()
@@ -520,20 +569,12 @@ class OperationsPanel(QWidget):
         self.a_date.setCalendarPopup(True)
         self.a_date.setDisplayFormat("yyyy-MM-dd")
         self.a_date.setDate(QDate.currentDate())
-        self.a_plasmid = QLineEdit()
-        self.a_plasmid_id = QLineEdit()
-        self.a_note = QLineEdit()
 
-        form.addRow(tr("operations.parentCellLine"), self.a_parent)
-        form.addRow(tr("operations.shortName"), self.a_short)
         form.addRow(tr("operations.box"), self.a_box)
         form.addRow(tr("operations.positions"), self.a_positions)
         form.addRow(tr("operations.frozenDate"), self.a_date)
-        form.addRow(tr("operations.plasmidName"), self.a_plasmid)
-        form.addRow(tr("operations.plasmidId"), self.a_plasmid_id)
-        form.addRow(tr("operations.note"), self.a_note)
 
-        # Custom fields placeholder — populated by _rebuild_custom_add_fields()
+        # User fields placeholder — populated by _rebuild_custom_add_fields()
         self._add_custom_form = form
         self._add_custom_widgets = {}
 
@@ -548,9 +589,9 @@ class OperationsPanel(QWidget):
         return tab
 
     def _rebuild_custom_add_fields(self, custom_fields):
-        """Rebuild custom field rows in the add form based on meta.custom_fields."""
+        """Rebuild user field rows in the add form based on effective fields."""
         form = self._add_custom_form
-        # Remove old custom widgets
+        # Remove old user field widgets
         for key, widget in self._add_custom_widgets.items():
             form.removeRow(widget)
         self._add_custom_widgets = {}
@@ -613,12 +654,12 @@ class OperationsPanel(QWidget):
         _t_rid = lambda: self.t_id.value()
         _t_refresh = lambda: self._refresh_thaw_record_context()
 
-        # Editable context fields (lock/unlock/confirm)
-        t_cell_w, self.t_ctx_cell = self._make_editable_field("parent_cell_line", _t_rid, _t_refresh)
-        t_short_w, self.t_ctx_short = self._make_editable_field("short_name", _t_rid, _t_refresh)
+        # Editable context fields — frozen_at is always present
         t_frozen_w, self.t_ctx_frozen = self._make_editable_field("frozen_at", _t_rid, _t_refresh)
-        t_plasmid_w, self.t_ctx_plasmid = self._make_editable_field("plasmid_name", _t_rid, _t_refresh)
-        t_note_ctx_w, self.t_ctx_note = self._make_editable_field("note", _t_rid, _t_refresh)
+
+        # Dynamic user field context widgets (populated by _rebuild_thaw_ctx_fields)
+        self._thaw_ctx_form = form
+        self._thaw_ctx_widgets = {}  # key -> (container_widget, label_widget)
 
         # Read-only context fields (not editable via inline edit)
         self.t_ctx_box = self._make_readonly_field()
@@ -626,14 +667,13 @@ class OperationsPanel(QWidget):
         self.t_ctx_events = self._make_readonly_field()
         self.t_ctx_source = self._make_readonly_field()
 
-        form.addRow(tr("overview.ctxCell"), t_cell_w)
-        form.addRow(tr("overview.ctxShort"), t_short_w)
+        # User fields placeholder — will be rebuilt dynamically
+        self._thaw_ctx_insert_row = form.rowCount()
+
         form.addRow(tr("overview.ctxBox"), self.t_ctx_box)
         form.addRow(tr("overview.ctxAllPos"), self.t_ctx_positions)
         form.addRow(tr("overview.ctxFrozen"), t_frozen_w)
-        form.addRow(tr("overview.ctxPlasmid"), t_plasmid_w)
         form.addRow(tr("overview.ctxHistory"), self.t_ctx_events)
-        form.addRow(tr("overview.ctxNote"), t_note_ctx_w)
         form.addRow(tr("overview.ctxSource"), self.t_ctx_source)
 
         # Editable: target position (populated from record positions)
@@ -702,26 +742,25 @@ class OperationsPanel(QWidget):
         _m_rid = lambda: self.m_id.value()
         _m_refresh = lambda: self._refresh_move_record_context()
 
-        # Editable context fields (lock/unlock/confirm)
-        m_cell_w, self.m_ctx_cell = self._make_editable_field("parent_cell_line", _m_rid, _m_refresh)
-        m_short_w, self.m_ctx_short = self._make_editable_field("short_name", _m_rid, _m_refresh)
+        # Editable context fields — frozen_at is always present
         m_frozen_w, self.m_ctx_frozen = self._make_editable_field("frozen_at", _m_rid, _m_refresh)
-        m_plasmid_w, self.m_ctx_plasmid = self._make_editable_field("plasmid_name", _m_rid, _m_refresh)
-        m_note_ctx_w, self.m_ctx_note = self._make_editable_field("note", _m_rid, _m_refresh)
+
+        # Dynamic user field context widgets (populated by _rebuild_move_ctx_fields)
+        self._move_ctx_form = form
+        self._move_ctx_widgets = {}  # key -> (container_widget, label_widget)
 
         # Read-only context fields (not editable via inline edit)
         self.m_ctx_box = self._make_readonly_field()
         self.m_ctx_positions = self._make_readonly_field()
         self.m_ctx_events = self._make_readonly_field()
 
-        form.addRow(tr("overview.ctxCell"), m_cell_w)
-        form.addRow(tr("overview.ctxShort"), m_short_w)
+        # User fields placeholder — will be rebuilt dynamically
+        self._move_ctx_insert_row = form.rowCount()
+
         form.addRow(tr("overview.ctxBox"), self.m_ctx_box)
         form.addRow(tr("overview.ctxAllPos"), self.m_ctx_positions)
         form.addRow(tr("overview.ctxFrozen"), m_frozen_w)
-        form.addRow(tr("overview.ctxPlasmid"), m_plasmid_w)
         form.addRow(tr("overview.ctxHistory"), self.m_ctx_events)
-        form.addRow(tr("overview.ctxNote"), m_note_ctx_w)
 
         # Editable: move fields
         self.m_from_position = QComboBox()
@@ -906,10 +945,7 @@ class OperationsPanel(QWidget):
         layout = QVBoxLayout(tab)
 
         form = QFormLayout()
-        self.q_cell = QLineEdit()
-        self.q_short = QLineEdit()
-        self.q_plasmid = QLineEdit()
-        self.q_plasmid_id = QLineEdit()
+        # Structural query fields (always present)
         self.q_box = QSpinBox()
         self.q_box.setRange(0, 99)
         self.q_box.setSpecialValueText(tr("operations.any"))
@@ -917,12 +953,13 @@ class OperationsPanel(QWidget):
         self.q_position.setRange(0, 999)
         self.q_position.setSpecialValueText(tr("operations.any"))
 
-        form.addRow(tr("operations.cell"), self.q_cell)
-        form.addRow(tr("operations.shortName"), self.q_short)
-        form.addRow(tr("operations.plasmid"), self.q_plasmid)
-        form.addRow(tr("operations.plasmidId"), self.q_plasmid_id)
         form.addRow(tr("operations.box"), self.q_box)
         form.addRow(tr("operations.position"), self.q_position)
+
+        # Dynamic user field query inputs — populated by _rebuild_query_fields
+        self._query_form = form
+        self._query_field_widgets = {}  # key -> QLineEdit
+
         layout.addLayout(form)
 
         btn_row = QHBoxLayout()
@@ -1045,16 +1082,10 @@ class OperationsPanel(QWidget):
             self.t_ctx_status.setText(tr("operations.recordNotFound"))
             self.t_ctx_status.setStyleSheet("color: var(--status-warning);")
             self.t_position.clear()
-            for lbl in [
-                self.t_ctx_cell,
-                self.t_ctx_short,
-                self.t_ctx_box,
-                self.t_ctx_positions,
-                self.t_ctx_frozen,
-                self.t_ctx_plasmid,
-                self.t_ctx_events,
-                self.t_ctx_note,
-            ]:
+            for lbl in [self.t_ctx_box, self.t_ctx_positions, self.t_ctx_frozen,
+                        self.t_ctx_events]:
+                lbl.setText("-")
+            for key, (container, lbl) in self._thaw_ctx_widgets.items():
                 lbl.setText("-")
             return
 
@@ -1064,16 +1095,14 @@ class OperationsPanel(QWidget):
             self.t_ctx_status.setText(tr("operations.recordContextLoaded"))
         self.t_ctx_status.setStyleSheet("color: var(--status-success);")
 
-        self.t_ctx_cell.setText(str(record.get("parent_cell_line") or "-"))
-        self.t_ctx_short.setText(str(record.get("short_name") or "-"))
         self.t_ctx_box.setText(str(record.get("box") or "-"))
 
         positions = record.get("positions") or []
         self.t_ctx_positions.setText(positions_to_text(positions))
         self.t_ctx_frozen.setText(str(record.get("frozen_at") or "-"))
-        plasmid = record.get("plasmid_name") or record.get("plasmid_id") or "-"
-        self.t_ctx_plasmid.setText(str(plasmid))
-        self.t_ctx_note.setText(str(record.get("note") or "-"))
+        # Populate dynamic user field context
+        for key, (container, lbl) in self._thaw_ctx_widgets.items():
+            lbl.setText(str(record.get(key) or "-"))
 
         # Populate position combo
         prev = self.t_position.currentData()
@@ -1132,19 +1161,14 @@ class OperationsPanel(QWidget):
             self.status_message.emit(str(exc), 5000, "error")
             return
 
-        # Collect custom field values
-        custom_data = self._collect_custom_add_values()
+        # Collect all user field values into a single dict
+        fields = self._collect_custom_add_values() or {}
 
         item = build_add_plan_item(
-            parent_cell_line=self.a_parent.text(),
-            short_name=self.a_short.text(),
             box=self.a_box.value(),
             positions=positions,
             frozen_at=self.a_date.date().toString("yyyy-MM-dd"),
-            plasmid_name=self.a_plasmid.text() or None,
-            plasmid_id=self.a_plasmid_id.text() or None,
-            note=self.a_note.text() or None,
-            custom_data=custom_data or None,
+            fields=fields,
             source="human",
         )
         self.add_plan_items([item])
@@ -1299,26 +1323,23 @@ class OperationsPanel(QWidget):
             self.m_ctx_status.setStyleSheet("color: var(--status-warning);")
             self.m_from_position.clear()
             self.m_ctx_target.setText("-")
-            for lbl in [
-                self.m_ctx_cell, self.m_ctx_short, self.m_ctx_box,
-                self.m_ctx_positions, self.m_ctx_frozen,
-                self.m_ctx_plasmid, self.m_ctx_events, self.m_ctx_note,
-            ]:
+            for lbl in [self.m_ctx_box, self.m_ctx_positions, self.m_ctx_frozen,
+                        self.m_ctx_events]:
+                lbl.setText("-")
+            for key, (container, lbl) in self._move_ctx_widgets.items():
                 lbl.setText("-")
             return
 
         self.m_ctx_status.setText(tr("operations.recordContextLoaded"))
         self.m_ctx_status.setStyleSheet("color: var(--status-success);")
-        self.m_ctx_cell.setText(str(record.get("parent_cell_line") or "-"))
-        self.m_ctx_short.setText(str(record.get("short_name") or "-"))
         self.m_ctx_box.setText(str(record.get("box") or "-"))
 
         positions = record.get("positions") or []
         self.m_ctx_positions.setText(positions_to_text(positions))
         self.m_ctx_frozen.setText(str(record.get("frozen_at") or "-"))
-        plasmid = record.get("plasmid_name") or record.get("plasmid_id") or "-"
-        self.m_ctx_plasmid.setText(str(plasmid))
-        self.m_ctx_note.setText(str(record.get("note") or "-"))
+        # Populate dynamic user field context
+        for key, (container, lbl) in self._move_ctx_widgets.items():
+            lbl.setText(str(record.get(key) or "-"))
 
         # Populate from-position combo
         prev = self.m_from_position.currentData()
@@ -1458,8 +1479,11 @@ class OperationsPanel(QWidget):
             if context == "Add Entry":
                 new_ids = result.get("new_ids") or []
                 new_id = result.get("new_id", "?")
-                cell = preview.get("parent_cell_line", "")
-                short = preview.get("short_name", "")
+                fields = preview.get("fields") or {}
+                from lib.custom_fields import get_display_key
+                dk = get_display_key(None)
+                cell = str(fields.get("parent_cell_line", ""))
+                short = str(fields.get(dk, ""))
                 box = preview.get("box", "")
                 positions = preview.get("positions", [])
                 pos_text = ",".join(str(p) for p in positions)
@@ -2229,15 +2253,19 @@ class OperationsPanel(QWidget):
         box_val = box if box > 0 else None
         pos = self.q_position.value()
         pos_val = pos if pos > 0 else None
-        
+
+        # Collect dynamic user field filters
+        field_filters = {}
+        for key, widget in self._query_field_widgets.items():
+            val = widget.text().strip()
+            if val:
+                field_filters[key] = val
+
         response = self.bridge.query_inventory(
             self.yaml_path_getter(),
-            cell=self.q_cell.text() or None,
-            short=self.q_short.text() or None,
-            plasmid=self.q_plasmid.text() or None,
-            plasmid_id=self.q_plasmid_id.text() or None,
             box=box_val,
-            position=pos_val
+            position=pos_val,
+            **field_filters,
         )
 
         payload = response if isinstance(response, dict) else {}
@@ -2293,16 +2321,12 @@ class OperationsPanel(QWidget):
 
     def _render_query_results(self, records):
         custom_fields = getattr(self, "_current_custom_fields", [])
+        # Structural columns + dynamic user field columns
         headers = [
             tr("operations.colId"),
-            tr("operations.colCell"),
-            tr("operations.colShort"),
             tr("operations.colBox"),
             tr("operations.colPositions"),
             tr("operations.colFrozenAt"),
-            tr("operations.colPlasmidName"),
-            tr("operations.colPlasmidId"),
-            tr("operations.colNote"),
         ]
         for cf in custom_fields:
             headers.append(cf.get("label", cf["key"]))
@@ -2312,16 +2336,11 @@ class OperationsPanel(QWidget):
         for row, rec in enumerate(rows):
             self.query_table.insertRow(row)
             self.query_table.setItem(row, 0, QTableWidgetItem(str(rec.get("id"))))
-            self.query_table.setItem(row, 1, QTableWidgetItem(str(rec.get("parent_cell_line"))))
-            self.query_table.setItem(row, 2, QTableWidgetItem(str(rec.get("short_name"))))
-            self.query_table.setItem(row, 3, QTableWidgetItem(str(rec.get("box"))))
-            self.query_table.setItem(row, 4, QTableWidgetItem(positions_to_text(rec.get("positions"))))
-            self.query_table.setItem(row, 5, QTableWidgetItem(str(rec.get("frozen_at"))))
-            self.query_table.setItem(row, 6, QTableWidgetItem(str(rec.get("plasmid_name", ""))))
-            self.query_table.setItem(row, 7, QTableWidgetItem(str(rec.get("plasmid_id", ""))))
-            self.query_table.setItem(row, 8, QTableWidgetItem(str(rec.get("note", ""))))
+            self.query_table.setItem(row, 1, QTableWidgetItem(str(rec.get("box"))))
+            self.query_table.setItem(row, 2, QTableWidgetItem(positions_to_text(rec.get("positions"))))
+            self.query_table.setItem(row, 3, QTableWidgetItem(str(rec.get("frozen_at"))))
             for ci, cf in enumerate(custom_fields):
-                self.query_table.setItem(row, 9 + ci, QTableWidgetItem(str(rec.get(cf["key"], ""))))
+                self.query_table.setItem(row, 4 + ci, QTableWidgetItem(str(rec.get(cf["key"], ""))))
         self.query_info.setText(tr("operations.foundRecords", count=len(rows)))
 
     def _render_empty_results(self, boxes):

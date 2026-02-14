@@ -266,12 +266,14 @@ class SettingsDialog(QDialog):
 
         meta = data.get("meta", {})
         existing = meta.get("custom_fields", [])
+        current_dk = meta.get("display_key")
 
-        dlg = CustomFieldsDialog(self, custom_fields=existing)
+        dlg = CustomFieldsDialog(self, custom_fields=existing, display_key=current_dk)
         if dlg.exec() != QDialog.Accepted:
             return
 
         new_fields = dlg.get_custom_fields()
+        new_dk = dlg.get_display_key()
         inventory = data.get("inventory") or []
 
         # --- Step 1: handle renames (old_key -> new_key) ---
@@ -351,6 +353,8 @@ class SettingsDialog(QDialog):
 
         # --- Step 3: save ---
         meta["custom_fields"] = new_fields
+        if new_dk:
+            meta["display_key"] = new_dk
         data["meta"] = meta
         with open(yaml_path, "w", encoding="utf-8") as f:
             yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
@@ -451,10 +455,10 @@ _FIELD_TYPES = ["str", "int", "float", "date"]
 class CustomFieldsDialog(QDialog):
     """Visual editor for meta.custom_fields."""
 
-    def __init__(self, parent=None, custom_fields=None):
+    def __init__(self, parent=None, custom_fields=None, display_key=None):
         super().__init__(parent)
         self.setWindowTitle(tr("main.customFieldsTitle"))
-        self.setMinimumWidth(560)
+        self.setMinimumWidth(620)
         self.setMinimumHeight(400)
 
         root = QVBoxLayout(self)
@@ -475,19 +479,14 @@ class CustomFieldsDialog(QDialog):
         scroll.setWidget(scroll_content)
         root.addWidget(scroll, 1)
 
-        # --- Core fields (read-only) ---
-        core_group = QGroupBox(tr("main.cfCoreFields"))
-        core_layout = QVBoxLayout(core_group)
-        core_layout.setContentsMargins(8, 4, 8, 4)
-        core_layout.setSpacing(2)
-        from lib.custom_fields import CORE_FIELD_KEYS
-        core_label = QLabel("  ".join(sorted(CORE_FIELD_KEYS)))
-        core_label.setWordWrap(True)
-        core_label.setStyleSheet("color: #64748b; font-size: 11px;")
-        core_layout.addWidget(core_label)
-        scroll_layout.addWidget(core_group)
+        # --- Structural fields info ---
+        from lib.custom_fields import STRUCTURAL_FIELD_KEYS, DEFAULT_PRESET_FIELDS
+        info_label = QLabel(tr("main.cfStructuralInfo") + "  " + "  ".join(sorted(STRUCTURAL_FIELD_KEYS)))
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("color: #64748b; font-size: 11px; padding: 4px;")
+        scroll_layout.addWidget(info_label)
 
-        # --- Custom fields (editable) ---
+        # --- User fields (all editable) ---
         custom_group = QGroupBox(tr("main.cfCustomFields"))
         self._rows_layout = QVBoxLayout(custom_group)
         self._rows_layout.setContentsMargins(8, 4, 8, 4)
@@ -498,12 +497,22 @@ class CustomFieldsDialog(QDialog):
 
         self._field_rows = []
 
-        # Populate existing fields
-        for f in (custom_fields or []):
+        # Populate: use provided fields, or default preset
+        fields_to_show = custom_fields if custom_fields else list(DEFAULT_PRESET_FIELDS)
+        for f in fields_to_show:
             k = f.get("key", "")
             self._add_row(k, f.get("label", ""),
                           f.get("type", "str"), f.get("default"),
+                          required=f.get("required", False),
                           original_key=k)
+
+        # Display key selector
+        dk_row = QHBoxLayout()
+        dk_row.addWidget(QLabel(tr("main.cfDisplayKey")))
+        self._display_key_combo = QComboBox()
+        self._refresh_display_key_combo(display_key)
+        dk_row.addWidget(self._display_key_combo, 1)
+        root.addLayout(dk_row)
 
         # Add button
         add_btn = QPushButton(tr("main.cfAdd"))
@@ -515,8 +524,23 @@ class CustomFieldsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
 
-    def _add_row(self, key="", label="", ftype="str", default=None, *, original_key=None):
-        from lib.custom_fields import CORE_FIELD_KEYS
+    def _refresh_display_key_combo(self, current_dk=None):
+        combo = self._display_key_combo
+        combo.clear()
+        for entry in self._field_rows:
+            key = entry["key"].text().strip()
+            if key:
+                combo.addItem(key, key)
+        if current_dk:
+            idx = combo.findData(current_dk)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+
+    def get_display_key(self):
+        return self._display_key_combo.currentData() or ""
+
+    def _add_row(self, key="", label="", ftype="str", default=None, *, required=False, original_key=None):
+        from lib.custom_fields import STRUCTURAL_FIELD_KEYS
 
         row_widget = QWidget()
         row_layout = QHBoxLayout(row_widget)
@@ -547,6 +571,11 @@ class CustomFieldsDialog(QDialog):
         default_edit.setFixedWidth(100)
         row_layout.addWidget(default_edit)
 
+        required_cb = QCheckBox("Req")
+        required_cb.setChecked(bool(required))
+        required_cb.setToolTip(tr("main.cfRequiredTip"))
+        row_layout.addWidget(required_cb)
+
         remove_btn = QPushButton(tr("main.cfRemove"))
         remove_btn.setFixedWidth(60)
         row_layout.addWidget(remove_btn)
@@ -557,6 +586,7 @@ class CustomFieldsDialog(QDialog):
             "label": label_edit,
             "type": type_combo,
             "default": default_edit,
+            "required": required_cb,
             "original_key": original_key,
         }
         self._field_rows.append(entry)
@@ -573,10 +603,10 @@ class CustomFieldsDialog(QDialog):
     def get_custom_fields(self):
         """Return validated list of custom field dicts.
 
-        Each dict has key/label/type/default plus an optional
+        Each dict has key/label/type/default/required plus an optional
         ``_original_key`` when the key was renamed from an existing field.
         """
-        from lib.custom_fields import CORE_FIELD_KEYS
+        from lib.custom_fields import STRUCTURAL_FIELD_KEYS
 
         result = []
         seen = set()
@@ -584,19 +614,23 @@ class CustomFieldsDialog(QDialog):
             key = entry["key"].text().strip()
             if not key or not key.isidentifier():
                 continue
-            if key in CORE_FIELD_KEYS or key in seen:
+            if key in STRUCTURAL_FIELD_KEYS or key in seen:
                 continue
             seen.add(key)
             label = entry["label"].text().strip() or key
             ftype = entry["type"].currentData() or "str"
             default_text = entry["default"].text().strip()
             default = default_text if default_text else None
+            req = entry["required"].isChecked()
             item = {
                 "key": key,
                 "label": label,
                 "type": ftype,
-                "default": default,
             }
+            if default is not None:
+                item["default"] = default
+            if req:
+                item["required"] = True
             orig = entry.get("original_key")
             if orig and orig != key:
                 item["_original_key"] = orig
@@ -841,13 +875,18 @@ class MainWindow(QMainWindow):
         if cf_dlg.exec() != QDialog.Accepted:
             return
         custom_fields = cf_dlg.get_custom_fields()
+        display_key = cf_dlg.get_display_key()
+
+        meta = {
+            "version": "1.0",
+            "box_layout": box_layout,
+            "custom_fields": custom_fields,
+        }
+        if display_key:
+            meta["display_key"] = display_key
 
         new_payload = {
-            "meta": {
-                "version": "1.0",
-                "box_layout": box_layout,
-                "custom_fields": custom_fields,
-            },
+            "meta": meta,
             "inventory": [],
         }
         with open(target_path, "w", encoding="utf-8") as f:

@@ -44,11 +44,13 @@ def make_add_item(box=1, positions=None, **extra):
         "label": "test-add",
         "source": "human",
         "payload": {
-            "parent_cell_line": "K562",
-            "short_name": "clone-test",
             "box": box,
             "positions": positions or [1],
             "frozen_at": "2026-02-10",
+            "fields": {
+                "parent_cell_line": "K562",
+                "short_name": "clone-test",
+            },
         },
     }
     base.update(extra)
@@ -696,6 +698,189 @@ class EditPreflightExecuteConsistencyTests(unittest.TestCase):
 
             self.assertEqual(preflight_result["ok"], execute_result["ok"])
             self.assertEqual(preflight_result["blocked"], execute_result["blocked"])
+
+
+class MultiAddPreflightTests(unittest.TestCase):
+    """Regression: preflight must detect cross-item position conflicts for adds."""
+
+    def test_preflight_catches_same_position_conflict_between_two_adds(self):
+        """Two adds to the same position should be blocked by preflight."""
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            items = [
+                make_add_item(box=2, positions=[4]),
+                make_add_item(box=2, positions=[4]),  # same position
+            ]
+
+            result = preflight_plan(str(yaml_path), items, bridge=bridge)
+            self.assertFalse(result["ok"])
+            self.assertTrue(result["blocked"])
+            # First add should pass, second should be blocked
+            ok_count = sum(1 for r in result["items"] if r.get("ok"))
+            blocked_count = sum(1 for r in result["items"] if r.get("blocked"))
+            self.assertEqual(ok_count, 1)
+            self.assertEqual(blocked_count, 1)
+
+    def test_preflight_passes_different_positions_for_two_adds(self):
+        """Two adds to different positions should both pass preflight."""
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            items = [
+                make_add_item(box=2, positions=[4]),
+                make_add_item(box=2, positions=[5]),
+            ]
+
+            result = preflight_plan(str(yaml_path), items, bridge=bridge)
+            self.assertTrue(result["ok"])
+            self.assertFalse(result["blocked"])
+            self.assertEqual(result["stats"]["ok"], 2)
+
+    def test_preflight_and_execute_agree_on_multi_add_conflict(self):
+        """Preflight and execute should produce the same blocked result."""
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            bridge.add_entry.return_value = {"ok": False, "error_code": "position_conflict", "message": "Conflict"}
+
+            items = [
+                make_add_item(box=2, positions=[4]),
+                make_add_item(box=2, positions=[4]),
+            ]
+
+            preflight_result = preflight_plan(str(yaml_path), items, bridge=bridge)
+            self.assertFalse(preflight_result["ok"])
+            self.assertTrue(preflight_result["blocked"])
+
+    def test_preflight_three_adds_two_conflict(self):
+        """Three adds where two share a position: only the duplicate is blocked."""
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            items = [
+                make_add_item(box=1, positions=[1]),
+                make_add_item(box=1, positions=[2]),
+                make_add_item(box=1, positions=[1]),  # conflicts with first
+            ]
+
+            result = preflight_plan(str(yaml_path), items, bridge=bridge)
+            self.assertFalse(result["ok"])
+            ok_count = sum(1 for r in result["items"] if r.get("ok"))
+            blocked_count = sum(1 for r in result["items"] if r.get("blocked"))
+            self.assertEqual(ok_count, 2)
+            self.assertEqual(blocked_count, 1)
+
+    def test_execute_blocks_same_position_without_calling_bridge(self):
+        """In execute mode, cross-item conflict should block before bridge call."""
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            bridge.add_entry.return_value = {"ok": True, "backup_path": "/tmp/bak"}
+
+            items = [
+                make_add_item(box=1, positions=[3]),
+                make_add_item(box=1, positions=[3]),  # duplicate
+            ]
+
+            result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
+            self.assertTrue(result["blocked"])
+            # bridge.add_entry should only be called once (for the first item)
+            self.assertEqual(bridge.add_entry.call_count, 1)
+
+    def test_same_position_different_box_no_conflict(self):
+        """Same position number in different boxes should not conflict."""
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            items = [
+                make_add_item(box=1, positions=[4]),
+                make_add_item(box=2, positions=[4]),  # same pos, different box
+            ]
+
+            result = preflight_plan(str(yaml_path), items, bridge=bridge)
+            self.assertTrue(result["ok"])
+            self.assertFalse(result["blocked"])
+            self.assertEqual(result["stats"]["ok"], 2)
+
+    def test_multi_position_add_conflict_detected(self):
+        """An add with positions=[3,4] should conflict with another add at pos 4."""
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            items = [
+                make_add_item(box=1, positions=[3, 4]),
+                make_add_item(box=1, positions=[4]),  # overlaps with first
+            ]
+
+            result = preflight_plan(str(yaml_path), items, bridge=bridge)
+            self.assertFalse(result["ok"])
+            blocked_count = sum(1 for r in result["items"] if r.get("blocked"))
+            self.assertEqual(blocked_count, 1)
+
+    def test_cross_item_conflict_error_message_contains_hint(self):
+        """Blocked item should have a meaningful error message."""
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            items = [
+                make_add_item(box=1, positions=[5]),
+                make_add_item(box=1, positions=[5]),
+            ]
+
+            result = preflight_plan(str(yaml_path), items, bridge=bridge)
+            blocked_items = [r for r in result["items"] if r.get("blocked")]
+            self.assertEqual(len(blocked_items), 1)
+            self.assertIn("position_conflict", blocked_items[0].get("error_code", ""))
+            self.assertIn("同批次", blocked_items[0].get("message", ""))
 
 
 if __name__ == "__main__":

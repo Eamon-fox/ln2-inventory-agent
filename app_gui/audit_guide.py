@@ -261,15 +261,18 @@ def _parse_add_entry(
             rid = _as_int(item)
             if rid is not None:
                 record_ids.append(rid)
+    # Extract label from fields dict (new format) or top-level keys (legacy)
+    input_fields = tool_input.get("fields") or {}
+    detail_fields = details.get("fields") or {}
     label = (
-        str(tool_input.get("short_name") or "").strip()
-        or str(tool_input.get("parent_cell_line") or "").strip()
-        or str(details.get("short_name") or "").strip()
-        or str(details.get("parent_cell_line") or "").strip()
+        str(input_fields.get("short_name") or tool_input.get("short_name") or "").strip()
+        or str(input_fields.get("parent_cell_line") or tool_input.get("parent_cell_line") or "").strip()
+        or str(detail_fields.get("short_name") or details.get("short_name") or "").strip()
+        or str(detail_fields.get("parent_cell_line") or details.get("parent_cell_line") or "").strip()
         or (f"ID {record_id}" if record_id is not None else "new")
     )
 
-    note = _clean_note(tool_input.get("note"))
+    note = _clean_note(input_fields.get("note") or tool_input.get("note"))
     steps = []
     sorted_positions = sorted(set(positions))
     if record_ids and len(record_ids) == len(sorted_positions):
@@ -584,15 +587,22 @@ def _lookup_box(lookup: Dict[int, Dict[str, Any]], record_id: int) -> Optional[i
 
 
 def _lookup_label(lookup: Dict[int, Dict[str, Any]], record_id: int) -> Optional[str]:
+    from lib.custom_fields import STRUCTURAL_FIELD_KEYS
     record = lookup.get(record_id)
     if not isinstance(record, dict):
         return None
-    short_name = str(record.get("short_name") or "").strip()
-    if short_name:
-        return short_name
-    parent = str(record.get("parent_cell_line") or "").strip()
-    if parent:
-        return parent
+    # Try all non-structural keys; prefer short_name then parent_cell_line for
+    # backwards compat, then fall back to any non-empty user field value.
+    for key in ("short_name", "parent_cell_line"):
+        val = str(record.get(key) or "").strip()
+        if val:
+            return val
+    for key, val in record.items():
+        if key in STRUCTURAL_FIELD_KEYS:
+            continue
+        text = str(val or "").strip()
+        if text:
+            return text
     return None
 
 

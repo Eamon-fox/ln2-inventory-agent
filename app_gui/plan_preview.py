@@ -157,15 +157,12 @@ def simulate_plan_pos_map(
 
             rec = {
                 "id": rid,
-                "parent_cell_line": payload.get("parent_cell_line"),
-                "short_name": payload.get("short_name"),
-                "plasmid_name": payload.get("plasmid_name"),
-                "plasmid_id": payload.get("plasmid_id"),
                 "box": box,
                 "positions": [pos],
                 "frozen_at": payload.get("frozen_at"),
-                "note": payload.get("note"),
             }
+            fields = payload.get("fields") or {}
+            rec.update(fields)
             records_by_id[rid] = rec
             owner[loc] = rid
 

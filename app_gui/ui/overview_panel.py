@@ -274,6 +274,7 @@ class OverviewPanel(QWidget):
         payload = stats_response.get("result", {})
         data = payload.get("data", {})
         records = data.get("inventory", [])
+        self._current_meta = data.get("meta", {})
         
         self.overview_records_by_id = {}
         for rec in records:
@@ -491,7 +492,9 @@ class OverviewPanel(QWidget):
                 orig_record = self.overview_pos_map.get(key)
                 label = ""
                 if orig_record:
-                    label = str(orig_record.get("short_name") or "")[:4]
+                    from lib.custom_fields import get_display_key
+                    _dk = get_display_key(getattr(self, "_current_meta", {}))
+                    label = str(orig_record.get(_dk) or "")[:4]
                 button.setText(f"{label}→" if label else "→")
                 button.setStyleSheet(cell_preview_move_source_style())
             elif key in preview_positions["move_target"]:
@@ -597,44 +600,41 @@ class OverviewPanel(QWidget):
                 btn.setStyleSheet(self._focus_style(btn.styleSheet()))
 
     def _paint_cell(self, button, box_num, position, record):
+        from lib.custom_fields import get_display_key, get_effective_fields, STRUCTURAL_FIELD_KEYS
         is_selected = self.overview_selected_key == (box_num, position)
         layout = getattr(self, "_current_layout", {})
+        meta = getattr(self, "_current_meta", {})
         display_pos = pos_to_display(position, layout)
         if record:
-            short = str(record.get("short_name") or "")
-            label = short[:6] if short else display_pos
-            parent = record.get("parent_cell_line")
-            color = cell_color(parent)
+            dk = get_display_key(meta)
+            dk_val = str(record.get(dk) or "")
+            label = dk_val[:6] if dk_val else display_pos
+            # Color based on first user field value
+            color = cell_color(dk_val or None)
             button.setText(label)
-            
-            # Richer tooltip
+
+            # Dynamic tooltip from effective fields
             tt = [
                 f"ID: {record.get('id', '-')}",
-                f"Cell: {record.get('parent_cell_line', '-')}",
-                f"Short: {record.get('short_name', '-')}",
                 f"Pos: {box_num}:{position}",
-                f"Date: {record.get('frozen_at', '-')}",
             ]
-            if record.get('plasmid_name'): tt.append(f"Plasmid: {record.get('plasmid_name')}")
-            if record.get('note'): tt.append(f"Note: {record.get('note')}")
-            
+            for fdef in get_effective_fields(meta):
+                fk = fdef["key"]
+                fv = record.get(fk)
+                if fv is not None and str(fv):
+                    tt.append(f"{fdef.get('label', fk)}: {fv}")
+            tt.append(f"Date: {record.get('frozen_at', '-')}")
+
             button.setToolTip("\n".join(tt))
             button.setStyleSheet(cell_occupied_style(color, is_selected))
-            searchable = " ".join(
-                [
-                    str(record.get("id", "")),
-                    str(record.get("parent_cell_line", "")),
-                    str(record.get("short_name", "")),
-                    str(record.get("plasmid_name") or ""),
-                    str(record.get("plasmid_id") or ""),
-                    str(record.get("note") or ""),
-                    str(record.get("frozen_at") or ""),
-                    str(box_num),
-                    str(position),
-                ]
-            ).lower()
-            button.setProperty("search_text", searchable)
-            button.setProperty("cell_line", str(record.get("parent_cell_line") or ""))
+            # Dynamic search text from all non-structural keys
+            parts = [str(record.get("id", "")), str(box_num), str(position),
+                     str(record.get("frozen_at") or "")]
+            for k, v in record.items():
+                if k not in STRUCTURAL_FIELD_KEYS and k != "id":
+                    parts.append(str(v or ""))
+            button.setProperty("search_text", " ".join(parts).lower())
+            button.setProperty("display_key_value", dk_val)
             button.setProperty("is_empty", False)
             button.set_record_id(int(record.get("id", 0)))
         else:
@@ -672,6 +672,7 @@ class OverviewPanel(QWidget):
                 self._paint_cell(button, key[0], key[1], rec)
 
     def _refresh_filter_options(self, records, box_numbers):
+        from lib.custom_fields import get_display_key
         prev_box = self.ov_filter_box.currentData()
         prev_cell = self.ov_filter_cell.currentData()
 
@@ -684,12 +685,14 @@ class OverviewPanel(QWidget):
         self.ov_filter_box.setCurrentIndex(index if index >= 0 else 0)
         self.ov_filter_box.blockSignals(False)
 
-        cell_lines = sorted({str(rec.get("parent_cell_line")) for rec in records if rec.get("parent_cell_line")})
+        meta = getattr(self, "_current_meta", {})
+        dk = get_display_key(meta)
+        values = sorted({str(rec.get(dk)) for rec in records if rec.get(dk)})
         self.ov_filter_cell.blockSignals(True)
         self.ov_filter_cell.clear()
         self.ov_filter_cell.addItem(tr("overview.allCells"), None)
-        for cell in cell_lines:
-            self.ov_filter_cell.addItem(cell, cell)
+        for val in values:
+            self.ov_filter_cell.addItem(val, val)
         index = self.ov_filter_cell.findData(prev_cell)
         self.ov_filter_cell.setCurrentIndex(index if index >= 0 else 0)
         self.ov_filter_cell.blockSignals(False)
@@ -708,7 +711,7 @@ class OverviewPanel(QWidget):
             record = self.overview_pos_map.get((box_num, position))
             is_empty = record is None
             match_box = selected_box is None or box_num == selected_box
-            match_cell = selected_cell is None or (record and str(record.get("parent_cell_line")) == selected_cell)
+            match_cell = selected_cell is None or (record and str(button.property("display_key_value") or "") == selected_cell)
             match_empty = show_empty or not is_empty
 
             if keyword:
@@ -811,13 +814,13 @@ class OverviewPanel(QWidget):
             self.ov_hover_hint.setText(t("overview.previewEmpty", box=box_num, pos=position))
             return
 
+        from lib.custom_fields import get_display_key
+        meta = getattr(self, "_current_meta", {})
+        dk = get_display_key(meta)
         rec_id = str(record.get("id", "-"))
-        cell = str(record.get("parent_cell_line", "-"))
-        short = str(record.get("short_name", "-"))
-        frozen = str(record.get("frozen_at", "-"))
-        plasmid = record.get("plasmid_name") or record.get("plasmid_id") or "-"
+        dk_val = str(record.get(dk, "-"))
         self.ov_hover_hint.setText(
-            t("overview.previewRecord", box=box_num, pos=position, id=rec_id, cell=cell, short=short)
+            t("overview.previewRecord", box=box_num, pos=position, id=rec_id, cell=dk_val, short=dk_val)
         )
 
     def on_cell_context_menu(self, box_num, position, global_pos):
@@ -885,7 +888,10 @@ class OverviewPanel(QWidget):
         record = self.overview_records_by_id.get(record_id)
         label = "-"
         if record:
-            label = record.get("short_name") or record.get("parent_cell_line") or "-"
+            from lib.custom_fields import get_display_key
+            meta = getattr(self, "_current_meta", {})
+            dk = get_display_key(meta)
+            label = str(record.get(dk) or "") or "-"
 
         item = {
             "action": "move",

@@ -197,10 +197,15 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual(1, int(record.get("id")))
 
     def test_operations_panel_add_entry_parses_positions_text(self):
+        from lib.custom_fields import DEFAULT_PRESET_FIELDS
         panel = self._new_operations_panel()
 
-        panel.a_parent.setText("K562")
-        panel.a_short.setText("K562_clone12")
+        # Simulate effective fields being loaded
+        panel._current_custom_fields = list(DEFAULT_PRESET_FIELDS)
+        panel._rebuild_custom_add_fields(panel._current_custom_fields)
+
+        panel._add_custom_widgets["parent_cell_line"].setText("K562")
+        panel._add_custom_widgets["short_name"].setText("K562_clone12")
         panel.a_box.setValue(1)
         panel.a_positions.setText("30-32,35")
 
@@ -210,7 +215,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
         item = panel.plan_items[0]
         self.assertEqual("add", item["action"])
         self.assertEqual([30, 31, 32, 35], item["payload"]["positions"])
-        self.assertEqual("K562_clone12", item["label"])
+        self.assertEqual("K562_clone12", item["payload"]["fields"].get("short_name"))
 
     def test_operations_panel_add_entry_rejects_invalid_positions_text(self):
         panel = self._new_operations_panel()
@@ -389,14 +394,17 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual(tr("operations.showBatch"), panel.t_batch_toggle_btn.text())
 
     def test_operations_panel_query_uses_backend_filter_names(self):
+        from lib.custom_fields import DEFAULT_PRESET_FIELDS
         panel = self._new_operations_panel()
         bridge = _FakeOperationsBridge()
         panel.bridge = bridge
 
-        panel.q_cell.setText("K562")
-        panel.q_short.setText("clone12")
-        panel.q_plasmid.setText("EGFP")
-        panel.q_plasmid_id.setText("P-001")
+        # Simulate effective fields being loaded
+        panel._current_custom_fields = list(DEFAULT_PRESET_FIELDS)
+        panel._rebuild_query_fields(panel._current_custom_fields)
+
+        panel._query_field_widgets["parent_cell_line"].setText("K562")
+        panel._query_field_widgets["short_name"].setText("clone12")
         panel.q_box.setValue(2)
         panel.q_position.setValue(10)
 
@@ -405,10 +413,8 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual(
             {
                 "yaml_path": "/tmp/inventory.yaml",
-                "cell": "K562",
-                "short": "clone12",
-                "plasmid": "EGFP",
-                "plasmid_id": "P-001",
+                "parent_cell_line": "K562",
+                "short_name": "clone12",
                 "box": 2,
                 "position": 10,
             },

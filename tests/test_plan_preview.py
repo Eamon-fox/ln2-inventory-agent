@@ -35,12 +35,13 @@ def add_item(box, positions, parent="K562", short="clone", frozen_at="2026-02-13
         "label": short,
         "source": "human",
         "payload": {
-            "parent_cell_line": parent,
-            "short_name": short,
             "box": box,
             "positions": list(positions),
             "frozen_at": frozen_at,
-            "note": None,
+            "fields": {
+                "parent_cell_line": parent,
+                "short_name": short,
+            },
         },
     }
 

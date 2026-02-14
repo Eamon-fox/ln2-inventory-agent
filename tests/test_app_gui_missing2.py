@@ -49,20 +49,17 @@ class PlanModelValidationTests(unittest.TestCase):
         self.assertIsNone(error)
 
     def test_validate_plan_item_add_missing_fields(self):
-        """Test add operation missing required fields."""
-        # Missing parent_cell_line
+        """Test add operation passes plan validation (required checks at execution time)."""
+        # Plan validation no longer checks required user fields — that happens at execution
         item = {
             "action": "add",
             "box": 1,
             "position": 5,
             "record_id": None,
             "label": "test-clone",
-            "short_name": "clone-new",
-            "frozen_at": "2026-02-10",
         }
         error = validate_plan_item(item)
-        self.assertIsNotNone(error)
-        self.assertIn("parent_cell_line", error)
+        self.assertIsNone(error)
 
     def test_validate_plan_item_move_missing_to_position(self):
         """Test move operation missing to_position."""

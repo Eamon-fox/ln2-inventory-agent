@@ -33,7 +33,7 @@ def positions_to_text(positions):
     return ", ".join(str(p) for p in sorted(positions))
 
 
-def cell_color(parent_cell_line):
+def cell_color(display_value):
     palette = {
         "NCCIT": "#4a90d9",
         "K562": "#e67e22",
@@ -41,7 +41,7 @@ def cell_color(parent_cell_line):
         "HEK293T": "#8e44ad",
         "NCCIT Des-MCP-APEX2": "#2c3e50",
     }
-    return palette.get(parent_cell_line, "#7f8c8d")
+    return palette.get(display_value, "#7f8c8d")
 
 def compact_json(value, max_chars=200):
     try:

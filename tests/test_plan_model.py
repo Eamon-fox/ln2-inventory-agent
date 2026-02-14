@@ -35,8 +35,10 @@ def _add_item(**overrides):
         "label": "new-entry",
         "source": "human",
         "payload": {
-            "parent_cell_line": "K562",
-            "short_name": "clone-1",
+            "fields": {
+                "parent_cell_line": "K562",
+                "short_name": "clone-1",
+            },
         },
     }
     base.update(overrides)
@@ -182,21 +184,19 @@ class ValidateAddPayloadTests(unittest.TestCase):
     def test_valid_add(self):
         self.assertIsNone(validate_plan_item(_add_item()))
 
-    def test_missing_parent_cell_line(self):
+    def test_missing_fields_passes_plan_validation(self):
+        """Required field checks happen at execution time, not plan validation."""
         item = _add_item()
-        del item["payload"]["parent_cell_line"]
-        self.assertIn("parent_cell_line", validate_plan_item(item))
+        item["payload"]["fields"] = {}
+        self.assertIsNone(validate_plan_item(item))
 
-    def test_missing_short_name(self):
-        item = _add_item()
-        del item["payload"]["short_name"]
-        self.assertIn("short_name", validate_plan_item(item))
+    def test_null_payload_passes(self):
+        """Null payload is acceptable at plan validation time."""
+        self.assertIsNone(validate_plan_item(_add_item(payload=None)))
 
-    def test_null_payload(self):
-        self.assertIn("parent_cell_line", validate_plan_item(_add_item(payload=None)))
-
-    def test_empty_payload(self):
-        self.assertIn("parent_cell_line", validate_plan_item(_add_item(payload={})))
+    def test_empty_payload_passes(self):
+        """Empty payload is acceptable at plan validation time."""
+        self.assertIsNone(validate_plan_item(_add_item(payload={})))
 
     def test_add_does_not_require_record_id(self):
         item = _add_item()
@@ -440,8 +440,8 @@ class FactoryValidateRoundTripTests(unittest.TestCase):
     def test_build_add_plan_item_passes_validation(self):
         from lib.plan_item_factory import build_add_plan_item
         item = build_add_plan_item(
-            parent_cell_line="K562", short_name="clone-1",
             box=1, positions=[5], frozen_at="2026-01-01",
+            fields={"parent_cell_line": "K562", "short_name": "clone-1"},
         )
         self.assertIsNone(validate_plan_item(item))
 

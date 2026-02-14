@@ -47,11 +47,8 @@ def validate_plan_item(item: dict) -> Optional[str]:
                 return "to_box must be a positive integer"
 
     if action == "add":
-        payload = item.get("payload") or {}
-        if not (item.get("parent_cell_line") or payload.get("parent_cell_line")):
-            return "parent_cell_line is required for add"
-        if not (item.get("short_name") or payload.get("short_name")):
-            return "short_name is required for add"
+        # No hardcoded required fields; required checks happen at execution time via meta
+        pass
     elif action == "edit":
         rid = item.get("record_id")
         if not isinstance(rid, int) or rid < 1:
@@ -79,13 +76,27 @@ def _get_action_display(action):
 
 
 def _extract_sample_info(item):
-    """Extract sample information from item."""
+    """Extract sample information from item for display."""
     payload = item.get("payload") or {}
+    fields = payload.get("fields") or {}
+    # Collect all non-empty user field values for labelling
+    from lib.custom_fields import STRUCTURAL_FIELD_KEYS
+    user_vals = []
+    for k, v in fields.items():
+        if k not in STRUCTURAL_FIELD_KEYS:
+            text = str(v or "").strip()
+            if text:
+                user_vals.append(text)
+    # Fallback to top-level keys on item/payload (legacy compat)
+    if not user_vals:
+        for src in (item, payload):
+            for k in ("parent_cell_line", "short_name"):
+                text = str(src.get(k) or "").strip()
+                if text and text not in user_vals:
+                    user_vals.append(text)
     return {
-        "cell_line": item.get("parent_cell_line") or payload.get("parent_cell_line") or "",
-        "short_name": item.get("short_name") or payload.get("short_name") or "",
-        "frozen_at": item.get("frozen_at") or payload.get("frozen_at") or "",
-        "passage": item.get("passage") or payload.get("passage") or "",
+        "label": " / ".join(user_vals[:2]) if user_vals else "",
+        "frozen_at": fields.get("frozen_at") or item.get("frozen_at") or payload.get("frozen_at") or "",
     }
 
 
@@ -136,9 +147,11 @@ def render_operation_sheet(items):
             sample = _extract_sample_info(item)
             rid = item.get("record_id")
             
-            sample_label = f"{sample['cell_line']} / {sample['short_name']}" if sample['cell_line'] else item.get("label", "-")
+            sample_label = sample['label'] or item.get("label", "-")
             
-            note = (item.get("payload") or {}).get("note", "") or ""
+            _payload = item.get("payload") or {}
+            _fields = _payload.get("fields") or {}
+            note = _fields.get("note", "") or _payload.get("note", "") or ""
             
             action_rows.append(f"""
             <tr class="op-row">
