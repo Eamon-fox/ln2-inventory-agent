@@ -590,3 +590,11 @@ Python 3.8+
 ## 许可证
 
 [MIT](LICENSE) - Copyright (c) 2026 Yiming Fan
+
+---
+
+## 支持一下
+
+如果这个项目对你有帮助，欢迎请我喝杯咖啡 :)
+
+<img src="app_gui/assets/donate.png" width="200" alt="赞赏码" />

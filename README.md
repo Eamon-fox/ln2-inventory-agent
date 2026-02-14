@@ -542,3 +542,11 @@ ln2-inventory-agent/
 ## License
 
 MIT License. Copyright (c) 2026 Yiming Fan.
+
+---
+
+## Support
+
+If you find this project helpful, consider buying me a coffee :)
+
+<img src="app_gui/assets/donate.png" width="200" alt="Donate QR Code" />
