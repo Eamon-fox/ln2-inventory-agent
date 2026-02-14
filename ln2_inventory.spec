@@ -7,17 +7,7 @@ Usage (on Windows with PySide6 + PyYAML installed):
 """
 
 import os
-import re
 import shutil
-
-# Extract APP_VERSION from main.py without triggering full import
-with open("app_gui/main.py", encoding="utf-8") as f:
-    content = f.read()
-    match = re.search(r'APP_VERSION\s*=\s*["\']([^"\']+)["\']', content)
-    if match:
-        APP_VERSION = match.group(1)
-    else:
-        APP_VERSION = "1.0.0"
 
 block_cipher = None
 
@@ -47,7 +37,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name=f"LN2InventoryAgent-{APP_VERSION}",
+    name="LN2InventoryAgent",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

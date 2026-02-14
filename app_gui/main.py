@@ -38,7 +38,7 @@ from app_gui.ui.overview_panel import OverviewPanel
 from app_gui.ui.operations_panel import OperationsPanel
 from app_gui.ui.ai_panel import AIPanel
 
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.0"
 APP_RELEASE_URL = "https://github.com/Eamon-fox/ln2-inventory-agent/releases"
 _GITHUB_API_LATEST = "https://api.github.com/repos/Eamon-fox/ln2-inventory-agent/releases/latest"
 
