@@ -2,7 +2,7 @@
 
 import os
 
-from agent.llm_client import DEFAULT_PROVIDER, DeepSeekLLMClient, PROVIDER_DEFAULTS
+from agent.llm_client import DEFAULT_PROVIDER, DeepSeekLLMClient, ZhipuLLMClient, PROVIDER_DEFAULTS
 from agent.react_agent import ReactAgent
 from agent.tool_runner import AgentToolRunner
 from app_gui.gui_config import DEFAULT_CONFIG_FILE, DEFAULT_MAX_STEPS

@@ -34,6 +34,11 @@
     "about": "About",
     "aboutDesc": "Liquid nitrogen tank inventory management with built-in AI assistant (BYO API key).",
     "supportHint": "Buy me a coffee:",
+    "checkUpdate": "Check for Updates",
+    "checking": "Checking...",
+    "checkUpdateFailed": "Failed to check for updates: {error}",
+    "newVersionAvailable": "New version v{version} is available!\n\n{notes}\n\nVisit the GitHub Releases page to download.",
+    "alreadyLatest": "You are already on the latest version.",
     "apiKeyMissing": "{provider} API key is missing. Configure one of the following:\n1) Settings dialog (saved to ~/.ln2agent/config.yaml)\n2) Environment variable: {env_key}"
   },
   "main": {

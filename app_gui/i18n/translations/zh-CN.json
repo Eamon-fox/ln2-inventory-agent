@@ -34,6 +34,11 @@
     "about": "关于",
     "aboutDesc": "液氮罐库存管理工具，内置 AI 助手（需自备 API Key）。",
     "supportHint": "请作者喝咖啡：",
+    "checkUpdate": "检查更新",
+    "checking": "检查中...",
+    "checkUpdateFailed": "检查更新失败：{error}",
+    "newVersionAvailable": "发现新版本 v{version}！\n\n{notes}\n\n请前往 GitHub Releases 页面下载。",
+    "alreadyLatest": "当前已是最新版本。",
     "apiKeyMissing": "缺少 {provider} API 密钥。请通过以下方式配置：\n1) 设置对话框（自动保存到 ~/.ln2agent/config.yaml）\n2) 环境变量：{env_key}"
   },
   "main": {

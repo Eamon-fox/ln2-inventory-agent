@@ -3,7 +3,7 @@
 import os
 import sys
 import yaml
-from PySide6.QtCore import Qt, QSettings
+from PySide6.QtCore import Qt, QSettings, Slot
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
@@ -40,6 +40,7 @@ from app_gui.ui.ai_panel import AIPanel
 
 APP_VERSION = "1.0.1"
 APP_RELEASE_URL = "https://github.com/Eamon-fox/ln2-inventory-agent/releases"
+_GITHUB_API_LATEST = "https://api.github.com/repos/Eamon-fox/ln2-inventory-agent/releases/latest"
 
 
 def _parse_version(v: str) -> tuple:
@@ -265,6 +266,11 @@ class SettingsDialog(QDialog):
         about_label.setStyleSheet("color: var(--text-muted); font-size: 12px; padding: 4px;")
         about_layout.addWidget(about_label)
 
+        self._check_update_btn = QPushButton(tr("settings.checkUpdate"))
+        self._check_update_btn.setFixedWidth(160)
+        self._check_update_btn.clicked.connect(self._on_check_update)
+        about_layout.addWidget(self._check_update_btn)
+
         donate_path = os.path.join(ROOT, "app_gui", "assets", "donate.png")
         if os.path.isfile(donate_path):
             from PySide6.QtGui import QPixmap
@@ -308,6 +314,61 @@ class SettingsDialog(QDialog):
         new_path = self._on_create_new_dataset(update_window=False)
         if new_path:
             self.yaml_edit.setText(new_path)
+
+    def _on_check_update(self):
+        """Manually check for updates from GitHub."""
+        self._check_update_btn.setEnabled(False)
+        self._check_update_btn.setText(tr("settings.checking"))
+        import threading
+
+        def _fetch():
+            try:
+                import urllib.request
+                import json
+                req = urllib.request.Request(
+                    _GITHUB_API_LATEST,
+                    headers={"Accept": "application/vnd.github.v3+json",
+                             "User-Agent": "LN2InventoryAgent"},
+                )
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    data = json.loads(resp.read())
+                latest_tag = data.get("tag_name", "").lstrip("v")
+                body = (data.get("body") or "")[:200]
+                from PySide6.QtCore import QMetaObject, Qt, Q_ARG
+                QMetaObject.invokeMethod(
+                    self, "_on_check_update_result",
+                    Qt.QueuedConnection,
+                    Q_ARG(str, latest_tag),
+                    Q_ARG(str, body),
+                )
+            except Exception as e:
+                from PySide6.QtCore import QMetaObject, Qt, Q_ARG
+                QMetaObject.invokeMethod(
+                    self, "_on_check_update_result",
+                    Qt.QueuedConnection,
+                    Q_ARG(str, ""),
+                    Q_ARG(str, str(e)),
+                )
+
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    @Slot(str, str)
+    def _on_check_update_result(self, latest_tag, info):
+        """Handle update check result in main thread."""
+        self._check_update_btn.setEnabled(True)
+        self._check_update_btn.setText(tr("settings.checkUpdate"))
+        if not latest_tag:
+            QMessageBox.warning(self, tr("settings.checkUpdate"),
+                                t("settings.checkUpdateFailed", error=info))
+            return
+        if _is_version_newer(latest_tag, APP_VERSION):
+            QMessageBox.information(
+                self, tr("settings.checkUpdate"),
+                t("settings.newVersionAvailable", version=latest_tag, notes=info))
+        else:
+            QMessageBox.information(
+                self, tr("settings.checkUpdate"),
+                tr("settings.alreadyLatest"))
 
     def _open_custom_fields_editor(self):
         yaml_path = self.yaml_edit.text().strip()
@@ -1156,16 +1217,45 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(msg, timeout)
 
     def _check_release_notice_once(self):
-        """Check if there's a new release and notify user once."""
-        try:
-            latest_release = APP_VERSION
-            last_notified = self.gui_config.get("last_notified_release", "0.0.0")
-            if not _is_version_newer(latest_release, last_notified):
-                return
+        """Fetch latest release from GitHub in background and notify if newer."""
+        import threading
 
-            release_notes = self.gui_config.get("release_notes_preview", "") or tr("main.releaseNotesDefault")
+        def _fetch_and_notify():
+            try:
+                import urllib.request
+                import json
+                req = urllib.request.Request(
+                    _GITHUB_API_LATEST,
+                    headers={"Accept": "application/vnd.github.v3+json",
+                             "User-Agent": "LN2InventoryAgent"},
+                )
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    data = json.loads(resp.read())
+                latest_tag = data.get("tag_name", "").lstrip("v").lstrip("1.0.1")
+                if not _is_version_newer(latest_tag, APP_VERSION):
+                    return
+                last_notified = self.gui_config.get("last_notified_release", "0.0.0")
+                if not _is_version_newer(latest_tag, last_notified):
+                    return
+                body = (data.get("body") or "")[:200]
+                from PySide6.QtCore import QMetaObject, Qt, Q_ARG
+                QMetaObject.invokeMethod(
+                    self, "_show_update_dialog",
+                    Qt.QueuedConnection,
+                    Q_ARG(str, latest_tag),
+                    Q_ARG(str, body),
+                )
+            except Exception as e:
+                print(f"[VersionCheck] {e}")
+
+        threading.Thread(target=_fetch_and_notify, daemon=True).start()
+
+    @Slot(str, str)
+    def _show_update_dialog(self, latest_tag, release_notes):
+        """Show update notification dialog (called from main thread)."""
+        try:
             title = tr("main.newReleaseTitle")
-            message = t("main.newReleaseMessage", version=APP_VERSION, notes=release_notes)
+            message = t("main.newReleaseMessage", version=latest_tag, notes=release_notes or tr("main.releaseNotesDefault"))
 
             msg_box = QMessageBox(self)
             msg_box.setWindowTitle(title)
@@ -1193,11 +1283,11 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     print(f"[VersionCheck] Open URL failed: {e}")
 
-            self.gui_config["last_notified_release"] = latest_release
+            self.gui_config["last_notified_release"] = latest_tag
             save_gui_config(self.gui_config)
 
         except Exception as e:
-            print(f"[VersionCheck] Release check failed: {e}")
+            print(f"[VersionCheck] Dialog failed: {e}")
 
     def _check_empty_inventory_prompt(self):
         """Show import prompt if inventory is empty and user hasn't seen the prompt."""
@@ -1693,7 +1783,13 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    
+
+    # Set application icon (taskbar, window title bar, etc.)
+    icon_path = os.path.join(ROOT, "app_gui", "assets", "icon.png")
+    if os.path.isfile(icon_path):
+        from PySide6.QtGui import QIcon
+        app.setWindowIcon(QIcon(icon_path))
+
     gui_config = load_gui_config()
     theme = gui_config.get("theme", "dark")
     if theme == "light":
