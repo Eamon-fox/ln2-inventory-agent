@@ -1,9 +1,8 @@
 import json
 import os
-import csv
 import tempfile
 from datetime import date, datetime
-from PySide6.QtCore import Qt, Signal, QDate, QEvent, QTimer, QUrl
+from PySide6.QtCore import Qt, Signal, Slot, QDate, QEvent, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -31,6 +30,7 @@ from lib.plan_item_factory import (
     resolve_record_context,
 )
 from lib.validators import parse_positions
+from lib.plan_store import PlanStore
 
 _ACTION_I18N_KEY = {
     "takeout": "overview.takeout",
@@ -56,13 +56,13 @@ class OperationsPanel(QWidget):
     plan_preview_updated = Signal(list)
     plan_hover_item_changed = Signal(object)
     
-    def __init__(self, bridge, yaml_path_getter):
+    def __init__(self, bridge, yaml_path_getter, plan_store=None):
         super().__init__()
         self.bridge = bridge
         self.yaml_path_getter = yaml_path_getter
-        
+        self._plan_store = plan_store if plan_store is not None else PlanStore()
+
         self.records_cache = {}
-        self.plan_items = []
         self.current_operation_mode = "thaw"
         self.query_last_mode = "records"
         self.t_prefill_source = None
@@ -80,6 +80,11 @@ class OperationsPanel(QWidget):
 
         self.setup_ui()
 
+    @property
+    def plan_items(self):
+        """Read-only snapshot for backward compatibility (tests, external reads)."""
+        return self._plan_store.list_items()
+
     def setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 4)
@@ -93,7 +98,6 @@ class OperationsPanel(QWidget):
             ("move", tr("operations.move")),
             ("add", tr("operations.add")),
             ("query", tr("operations.query")),
-            ("rollback", tr("operations.rollback")),
             ("audit", tr("operations.auditLog")),
         ]
         for mode_key, mode_label in modes:
@@ -106,6 +110,11 @@ class OperationsPanel(QWidget):
         self.quick_add_btn.clicked.connect(lambda: self.set_mode("add"))
         mode_row.addWidget(self.quick_add_btn)
 
+        self.export_full_csv_btn = QPushButton(tr("operations.exportFullCsv"))
+        self.export_full_csv_btn.setToolTip(tr("operations.exportFullCsvHint"))
+        self.export_full_csv_btn.clicked.connect(self.on_export_inventory_csv)
+        mode_row.addWidget(self.export_full_csv_btn)
+
         mode_row.addStretch()
         mode_row.addWidget(self.op_mode_combo)
         layout.addLayout(mode_row)
@@ -117,7 +126,6 @@ class OperationsPanel(QWidget):
             "thaw": self.op_stack.addWidget(self._build_thaw_tab()),
             "move": self.op_stack.addWidget(self._build_move_tab()),
             "query": self.op_stack.addWidget(self._build_query_tab()),
-            "rollback": self.op_stack.addWidget(self._build_rollback_tab()),
             "audit": self.op_stack.addWidget(self._build_audit_tab()),
         }
         layout.addWidget(self.op_stack, 2)
@@ -138,7 +146,7 @@ class OperationsPanel(QWidget):
         )
         self.result_card.setStyleSheet(self._result_card_base_style)
         result_card_layout = QVBoxLayout(self.result_card)
-        result_card_layout.setContentsMargins(8, 6, 8, 8)
+        result_card_layout.setContentsMargins(9, 6, 9, 8)
         result_card_layout.setSpacing(4)
 
         result_header = QHBoxLayout()
@@ -163,7 +171,10 @@ class OperationsPanel(QWidget):
         result_card_layout.addWidget(self.result_summary)
 
         self.result_card.setVisible(False)
-        layout.addWidget(self.result_card)
+        result_row = QHBoxLayout()
+        result_row.setContentsMargins(9, 0, 9, 0)
+        result_row.addWidget(self.result_card)
+        layout.addLayout(result_row)
 
         # Undo Button
         self.undo_btn = QPushButton(tr("operations.undoLast"))
@@ -267,7 +278,7 @@ class OperationsPanel(QWidget):
 
     def _refresh_custom_fields(self):
         """Reload custom field definitions from YAML meta and rebuild dynamic forms."""
-        from lib.custom_fields import get_effective_fields
+        from lib.custom_fields import get_effective_fields, get_cell_line_options
         from lib.yaml_ops import load_yaml
         try:
             yaml_path = self.yaml_path_getter()
@@ -276,11 +287,34 @@ class OperationsPanel(QWidget):
             custom_fields = get_effective_fields(meta)
         except Exception:
             custom_fields = []
+            meta = {}
         self._current_custom_fields = custom_fields
         self._rebuild_custom_add_fields(custom_fields)
         self._rebuild_ctx_user_fields("thaw", custom_fields)
         self._rebuild_ctx_user_fields("move", custom_fields)
         self._rebuild_query_fields(custom_fields)
+        # Refresh cell_line dropdown options
+        self._refresh_cell_line_options(meta)
+
+    def _refresh_cell_line_options(self, meta):
+        """Populate the cell_line combo box from meta.cell_line_options."""
+        from lib.custom_fields import get_cell_line_options
+        combo = getattr(self, "a_cell_line", None)
+        if combo is None:
+            return
+        prev = combo.currentText()
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("")  # allow empty
+        for opt in get_cell_line_options(meta):
+            combo.addItem(opt)
+        if prev:
+            idx = combo.findText(prev)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+            else:
+                combo.setEditText(prev)
+        combo.blockSignals(False)
 
     def _rebuild_query_fields(self, custom_fields):
         """Rebuild user field query inputs in the query form."""
@@ -570,9 +604,15 @@ class OperationsPanel(QWidget):
         self.a_date.setDisplayFormat("yyyy-MM-dd")
         self.a_date.setDate(QDate.currentDate())
 
+        # Cell line dropdown (structural, optional)
+        self.a_cell_line = QComboBox()
+        self.a_cell_line.setEditable(True)
+        self.a_cell_line.addItem("")  # allow empty
+
         form.addRow(tr("operations.box"), self.a_box)
         form.addRow(tr("operations.positions"), self.a_positions)
         form.addRow(tr("operations.frozenDate"), self.a_date)
+        form.addRow(tr("operations.cellLine"), self.a_cell_line)
 
         # User fields placeholder — populated by _rebuild_custom_add_fields()
         self._add_custom_form = form
@@ -970,10 +1010,6 @@ class OperationsPanel(QWidget):
         empty_btn = QPushButton(tr("operations.listEmpty"))
         empty_btn.clicked.connect(self.on_list_empty)
         btn_row.addWidget(empty_btn)
-
-        export_btn = QPushButton(tr("operations.exportCsv"))
-        export_btn.clicked.connect(self.on_export_query_csv)
-        btn_row.addWidget(export_btn)
         layout.addLayout(btn_row)
 
         self.query_info = QLabel(tr("operations.queryInfo"))
@@ -997,10 +1033,10 @@ class OperationsPanel(QWidget):
         )
         return tab
 
-    # --- ROLLBACK TAB ---
-    def _build_rollback_tab(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
+    # --- AUDIT BACKUP ROLLBACK PANEL ---
+    def _build_audit_backup_panel(self):
+        panel = QGroupBox(tr("operations.auditRollbackAdvanced"))
+        layout = QVBoxLayout(panel)
 
         form = QFormLayout()
         self.rb_backup_path = QLineEdit()
@@ -1037,7 +1073,7 @@ class OperationsPanel(QWidget):
             [tr("operations.backupColIndex"), tr("operations.backupColDate"), tr("operations.backupColSize"), tr("operations.backupColPath")],
             sortable=True,
         )
-        return tab
+        return panel
 
     # --- LOGIC ---
 
@@ -1151,6 +1187,65 @@ class OperationsPanel(QWidget):
         msg.setDefaultButton(QMessageBox.No)
         return msg.exec() == QMessageBox.Yes
 
+    @staticmethod
+    def _format_size_bytes(size_bytes):
+        try:
+            value = float(size_bytes)
+        except (TypeError, ValueError):
+            return "-"
+        units = ["B", "KB", "MB", "GB", "TB"]
+        idx = 0
+        while value >= 1024.0 and idx < len(units) - 1:
+            value /= 1024.0
+            idx += 1
+        if idx == 0:
+            return f"{int(value)} {units[idx]}"
+        return f"{value:.1f} {units[idx]}"
+
+    def _build_rollback_confirmation_lines(
+        self,
+        *,
+        backup_path,
+        yaml_path,
+        source_event=None,
+        include_action_prefix=True,
+    ):
+        yaml_abs = os.path.abspath(str(yaml_path or ""))
+        raw_backup = str(backup_path or "").strip()
+        backup_abs = os.path.abspath(raw_backup) if raw_backup else ""
+        backup_label = os.path.basename(backup_abs) if backup_abs else tr("operations.planRollbackLatest")
+
+        lines = []
+        restore_line = tr("operations.planRollbackRestore", backup=backup_label)
+        if include_action_prefix:
+            restore_line = f"{tr('operations.rollback')}: {restore_line}"
+        lines.append(restore_line)
+        lines.append(tr("operations.planRollbackYamlPath", path=yaml_abs or "-"))
+
+        if backup_abs:
+            lines.append(tr("operations.planRollbackBackupPath", path=backup_abs))
+            try:
+                stat = os.stat(backup_abs)
+                mtime = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+                size = self._format_size_bytes(stat.st_size)
+                lines.append(tr("operations.planRollbackBackupMeta", mtime=mtime, size=size))
+            except Exception:
+                lines.append(tr("operations.planRollbackBackupMissing", path=backup_abs))
+
+        if isinstance(source_event, dict) and source_event:
+            timestamp = str(source_event.get("timestamp") or "-")
+            action = str(source_event.get("action") or "-")
+            trace_id = str(source_event.get("trace_id") or "-")
+            lines.append(
+                tr(
+                    "operations.planRollbackSourceEvent",
+                    timestamp=timestamp,
+                    action=action,
+                    trace_id=trace_id,
+                )
+            )
+        return lines
+
     def on_add_entry(self):
         self._ensure_today_defaults()
         positions_text = self.a_positions.text().strip()
@@ -1163,6 +1258,11 @@ class OperationsPanel(QWidget):
 
         # Collect all user field values into a single dict
         fields = self._collect_custom_add_values() or {}
+
+        # cell_line is structural but passed through fields (tool_api extracts it)
+        cl = self.a_cell_line.currentText().strip()
+        if cl:
+            fields["cell_line"] = cl
 
         item = build_add_plan_item(
             box=self.a_box.value(),
@@ -1482,7 +1582,7 @@ class OperationsPanel(QWidget):
                 fields = preview.get("fields") or {}
                 from lib.custom_fields import get_display_key
                 dk = get_display_key(None)
-                cell = str(fields.get("parent_cell_line", ""))
+                cell = str(fields.get("cell_line", ""))
                 short = str(fields.get(dk, ""))
                 box = preview.get("box", "")
                 positions = preview.get("positions", [])
@@ -1595,7 +1695,7 @@ class OperationsPanel(QWidget):
         rows = set()
         for model_index in model.selectedIndexes():
             row = model_index.row()
-            if 0 <= row < len(self.plan_items):
+            if 0 <= row < self._plan_store.count():
                 rows.add(row)
         return sorted(rows)
 
@@ -1605,7 +1705,7 @@ class OperationsPanel(QWidget):
 
         rows = self._get_selected_plan_rows()
         has_selected = bool(rows)
-        has_items = bool(self.plan_items)
+        has_items = bool(self._plan_store.count())
         first = rows[0] if has_selected else -1
         last = rows[-1] if has_selected else -1
 
@@ -1625,6 +1725,11 @@ class OperationsPanel(QWidget):
             if 0 <= row < self.plan_table.rowCount():
                 self.plan_table.selectRow(row)
 
+    @Slot()
+    def _on_store_changed(self):
+        """Slot invoked (via QueuedConnection) when PlanStore mutates from any thread."""
+        self._refresh_after_plan_items_changed(emit_preview=True)
+
     def _refresh_after_plan_items_changed(self, emit_preview=True):
         self._plan_hover_row = None
         self._emit_plan_hover_item(None)
@@ -1632,17 +1737,18 @@ class OperationsPanel(QWidget):
         self._refresh_plan_table()
         self._update_execute_button_state()
         if emit_preview:
-            self.plan_preview_updated.emit(list(self.plan_items))
+            self.plan_preview_updated.emit(self._plan_store.list_items())
         self._refresh_plan_toolbar_state()
 
     def _on_plan_cell_entered(self, row, _col):
-        if row < 0 or row >= len(self.plan_items):
+        if row < 0 or row >= self._plan_store.count():
             return
         if row == self._plan_hover_row:
             return
         self._plan_hover_row = row
-        item = self.plan_items[row]
-        self._emit_plan_hover_item(item)
+        items = self._plan_store.list_items()
+        if row < len(items):
+            self._emit_plan_hover_item(items[row])
 
     def remove_selected_plan_items(self):
         rows = self._get_selected_plan_rows()
@@ -1650,8 +1756,9 @@ class OperationsPanel(QWidget):
             self.status_message.emit(tr("operations.planNoSelection"), 2000, "warning")
             return
 
-        removed_items = [self.plan_items[r] for r in rows if 0 <= r < len(self.plan_items)]
-        removed_count = self._remove_plan_rows(rows)
+        items = self._plan_store.list_items()
+        removed_items = [items[r] for r in rows if 0 <= r < len(items)]
+        removed_count = self._plan_store.remove_by_indices(rows)
         if removed_count == 0:
             self.status_message.emit(tr("operations.planNoRemoved"), 2000, "warning")
             return
@@ -1678,7 +1785,7 @@ class OperationsPanel(QWidget):
                 "type": "plan_removed",
                 "source": "operations_panel",
                 "removed_count": removed_count,
-                "total_count": len(self.plan_items),
+                "total_count": self._plan_store.count(),
                 "action_counts": action_counts,
                 "sample": sample,
             }
@@ -1687,20 +1794,12 @@ class OperationsPanel(QWidget):
     def _remove_plan_rows(self, rows):
         if not rows:
             return 0
-
-        removed_count = 0
-        for row in sorted(set(rows), reverse=True):
-            if 0 <= row < len(self.plan_items):
-                self.plan_items.pop(row)
-                removed_count += 1
-
-        if removed_count:
-            self._refresh_after_plan_items_changed(emit_preview=True)
+        removed_count = self._plan_store.remove_by_indices(rows)
         return removed_count
 
     def _plan_item_key(self, item):
         """Generate a unique key for plan item deduplication."""
-        return (item.get("action"), item.get("record_id"), item.get("position"))
+        return PlanStore.item_key(item)
 
     def add_plan_items(self, items):
         """Validate and add items to the plan staging area (with dedup)."""
@@ -1709,16 +1808,21 @@ class OperationsPanel(QWidget):
         incoming_has_rollback = any(
             str(it.get("action") or "").lower() == "rollback" for it in incoming
         )
-        existing_has_rollback = any(
-            str(it.get("action") or "").lower() == "rollback" for it in self.plan_items
-        )
+        existing_has_rollback = self._plan_store.has_rollback()
 
         # Rollback is intentionally constrained: it must be executed alone.
         # Enforce early here (in addition to shared plan gate / executor checks),
         # so the plan queue stays clean and predictable.
-        if incoming_has_rollback and self.plan_items and not existing_has_rollback:
+        if incoming_has_rollback and self._plan_store.count() and not existing_has_rollback:
             self.status_message.emit(
                 tr("operations.planRejectedRollbackSolo"),
+                4000,
+                "error",
+            )
+            return
+        if incoming_has_rollback and existing_has_rollback:
+            self.status_message.emit(
+                tr("operations.planRejectedRollbackDuplicate"),
                 4000,
                 "error",
             )
@@ -1745,25 +1849,13 @@ class OperationsPanel(QWidget):
         if not accepted:
             return
 
-        added = 0
-        for item in accepted:
-            key = self._plan_item_key(item)
-            replaced = False
-            for i, existing in enumerate(self.plan_items):
-                ekey = self._plan_item_key(existing)
-                if key == ekey:
-                    self.plan_items[i] = item
-                    replaced = True
-                    break
-            if not replaced:
-                self.plan_items.append(item)
-            added += 1
+        added = self._plan_store.add(accepted)
 
         if added:
             self._run_plan_preflight(trigger="add")
             self._refresh_plan_table()
             self._update_execute_button_state()
-            self.plan_preview_updated.emit(list(self.plan_items))
+            self.plan_preview_updated.emit(self._plan_store.list_items())
             self.status_message.emit(tr("operations.planAddedCount", count=added), 2000, "info")
 
             action_counts = {}
@@ -1792,7 +1884,7 @@ class OperationsPanel(QWidget):
                     "type": "plan_staged",
                     "source": "operations_panel",
                     "added_count": added,
-                    "total_count": len(self.plan_items),
+                    "total_count": self._plan_store.count(),
                     "action_counts": action_counts,
                     "sample": sample,
                 }
@@ -1801,16 +1893,17 @@ class OperationsPanel(QWidget):
     def _run_plan_preflight(self, trigger="manual"):
         """Run preflight validation on current plan items."""
         self._plan_validation_by_key = {}
-        if not self.plan_items:
+        plan_items = self._plan_store.list_items()
+        if not plan_items:
             self._plan_preflight_report = None
             return
 
         yaml_path = self.yaml_path_getter()
         if not os.path.isfile(yaml_path):
-            self._plan_preflight_report = {"ok": True, "blocked": False, "items": [], "stats": {"total": len(self.plan_items), "ok": len(self.plan_items), "blocked": 0}}
+            self._plan_preflight_report = {"ok": True, "blocked": False, "items": [], "stats": {"total": len(plan_items), "ok": len(plan_items), "blocked": 0}}
             return
 
-        report = preflight_plan(yaml_path, self.plan_items, self.bridge)
+        report = preflight_plan(yaml_path, plan_items, self.bridge)
 
         self._plan_preflight_report = report
         for r in report.get("items", []):
@@ -1826,7 +1919,7 @@ class OperationsPanel(QWidget):
 
     def _update_execute_button_state(self):
         """Enable/disable Execute button based on preflight results."""
-        if not self.plan_items:
+        if not self._plan_store.count():
             self.plan_exec_btn.setEnabled(False)
             return
 
@@ -1843,7 +1936,7 @@ class OperationsPanel(QWidget):
             self.plan_exec_btn.setText(tr("operations.executeAll"))
 
     def _refresh_plan_table(self):
-        has_items = bool(self.plan_items)
+        has_items = bool(self._plan_store.count())
         self.plan_empty_label.setVisible(not has_items)
         self.plan_table.setVisible(has_items)
         self._plan_hover_row = None
@@ -1855,7 +1948,9 @@ class OperationsPanel(QWidget):
             sortable=False,
         )
 
-        for row, item in enumerate(self.plan_items):
+        plan_items = self._plan_store.list_items()
+        yaml_path_for_rollback = os.path.abspath(str(self.yaml_path_getter()))
+        for row, item in enumerate(plan_items):
             self.plan_table.insertRow(row)
             action_text = str(item.get("action", "") or "")
             action_norm = action_text.lower()
@@ -1881,17 +1976,55 @@ class OperationsPanel(QWidget):
             self.plan_table.setItem(row, 4, QTableWidgetItem(str(to_pos) if to_pos else ""))
             self.plan_table.setItem(row, 5, QTableWidgetItem(str(to_box) if to_box else ""))
 
+            payload = item.get("payload") or {}
             label_text = str(item.get("label", "") or "")
-            backup_path = (item.get("payload") or {}).get("backup_path")
-            if is_rollback and backup_path:
-                label_text = f"{tr('operations.rollback')}: {os.path.basename(str(backup_path))}"
+            backup_path = payload.get("backup_path")
+            source_event = payload.get("source_event") if isinstance(payload, dict) else None
+            rollback_tooltip = ""
+            if is_rollback:
+                rollback_lines = self._build_rollback_confirmation_lines(
+                    backup_path=backup_path,
+                    yaml_path=yaml_path_for_rollback,
+                    source_event=source_event,
+                    include_action_prefix=False,
+                )
+                rollback_tooltip = "\n".join(rollback_lines)
+                backup_label = (
+                    os.path.basename(str(backup_path))
+                    if backup_path
+                    else tr("operations.planRollbackLatest")
+                )
+                label_text = f"{tr('operations.rollback')}: {backup_label}"
             label_item = QTableWidgetItem(label_text)
-            if is_rollback and backup_path:
-                label_item.setToolTip(str(backup_path))
+            if is_rollback and rollback_tooltip:
+                label_item.setToolTip(rollback_tooltip)
             self.plan_table.setItem(row, 6, label_item)
 
-            note = "" if is_rollback else ((item.get("payload") or {}).get("note", "") or "")
-            self.plan_table.setItem(row, 7, QTableWidgetItem(str(note)))
+            if is_rollback:
+                note = ""
+                if isinstance(source_event, dict) and source_event:
+                    note = tr(
+                        "operations.planRollbackSourceEvent",
+                        timestamp=str(source_event.get("timestamp") or "-"),
+                        action=str(source_event.get("action") or "-"),
+                        trace_id=str(source_event.get("trace_id") or "-"),
+                    )
+                elif backup_path:
+                    backup_abs = os.path.abspath(str(backup_path))
+                    try:
+                        stat = os.stat(backup_abs)
+                        mtime = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+                        size = self._format_size_bytes(stat.st_size)
+                        note = tr("operations.planRollbackBackupMeta", mtime=mtime, size=size)
+                    except Exception:
+                        note = tr("operations.planRollbackBackupMissing", path=backup_abs)
+                note_item = QTableWidgetItem(str(note))
+                if rollback_tooltip:
+                    note_item.setToolTip(rollback_tooltip)
+                self.plan_table.setItem(row, 7, note_item)
+            else:
+                note = (payload.get("note", "") if isinstance(payload, dict) else "") or ""
+                self.plan_table.setItem(row, 7, QTableWidgetItem(str(note)))
 
             key = self._plan_item_key(item)
             validation = self._plan_validation_by_key.get(key, {})
@@ -1912,7 +2045,7 @@ class OperationsPanel(QWidget):
 
     def execute_plan(self):
         """Execute all staged plan items after user confirmation."""
-        if not self.plan_items:
+        if not self._plan_store.count():
             self.status_message.emit(tr("operations.planNoItemsToExecute"), 3000, "error")
             return
 
@@ -1934,20 +2067,22 @@ class OperationsPanel(QWidget):
             })
             return
 
+        yaml_path = os.path.abspath(str(self.yaml_path_getter()))
         summary_lines = []
-        for item in self.plan_items:
+        plan_items = self._plan_store.list_items()
+        for item in plan_items:
             action = item.get("action", "?")
             label = item.get("label", "?")
             pos = item.get("position", "?")
             if str(action).lower() == "rollback":
-                backup_path = (item.get("payload") or {}).get("backup_path")
-                backup_label = (
-                    os.path.basename(str(backup_path))
-                    if backup_path
-                    else tr("operations.planRollbackLatest")
-                )
-                summary_lines.append(
-                    f"  {tr('operations.rollback')}: {tr('operations.planRollbackRestore', backup=backup_label)}"
+                payload = item.get("payload") or {}
+                summary_lines.extend(
+                    self._build_rollback_confirmation_lines(
+                        backup_path=payload.get("backup_path"),
+                        yaml_path=yaml_path,
+                        source_event=payload.get("source_event"),
+                        include_action_prefix=True,
+                    )
                 )
                 continue
 
@@ -1964,7 +2099,7 @@ class OperationsPanel(QWidget):
         msg = QMessageBox(self)
         msg.setIcon(QMessageBox.Warning)
         msg.setWindowTitle(tr("operations.executePlanTitle"))
-        msg.setText(tr("operations.executePlanConfirm", count=len(self.plan_items)))
+        msg.setText(tr("operations.executePlanConfirm", count=len(plan_items)))
         msg.setInformativeText("\n".join(summary_lines[:20]))
         if len(summary_lines) > 20:
             msg.setDetailedText("\n".join(summary_lines))
@@ -1973,9 +2108,8 @@ class OperationsPanel(QWidget):
         if msg.exec() != QMessageBox.Yes:
             return
 
-        yaml_path = self.yaml_path_getter()
-        original_plan = list(self.plan_items)
-        report = run_plan(yaml_path, self.plan_items, self.bridge, mode="execute")
+        original_plan = list(plan_items)
+        report = run_plan(yaml_path, plan_items, self.bridge, mode="execute")
 
         results = []
         for r in report.get("items", []):
@@ -1994,16 +2128,16 @@ class OperationsPanel(QWidget):
 
         if fail_count:
             rollback_info = self._attempt_atomic_rollback(yaml_path, results)
-            self.plan_items = original_plan
+            self._plan_store.replace_all(original_plan)
         elif remaining:
-            self.plan_items = remaining
+            self._plan_store.replace_all(remaining)
         else:
-            self.plan_items.clear()
+            self._plan_store.clear()
 
         self._run_plan_preflight(trigger="post_execute")
         self._refresh_plan_table()
         self._update_execute_button_state()
-        self.plan_preview_updated.emit(list(self.plan_items))
+        self.plan_preview_updated.emit(self._plan_store.list_items())
         execution_stats = summarize_plan_execution(report, rollback_info)
         self._show_plan_result(
             results,
@@ -2104,6 +2238,12 @@ class OperationsPanel(QWidget):
         event["timestamp"] = datetime.now().isoformat()
         self.operation_event.emit(event)
 
+    def emit_external_operation_event(self, event):
+        """Public helper for non-plan modules to emit operation events."""
+        if not isinstance(event, dict):
+            return
+        self._emit_operation_event(dict(event))
+
     def _build_execution_summary_text(self, execution_stats):
         """Build a user-facing summary for execution event payloads."""
         if execution_stats.get("fail_count", 0) <= 0:
@@ -2182,12 +2322,12 @@ class OperationsPanel(QWidget):
         self.result_card.setVisible(True)
 
     def print_plan(self):
-        items_to_print = self.plan_items or self._last_printable_plan
+        items_to_print = self._plan_store.list_items() or self._last_printable_plan
         if not items_to_print:
             self.status_message.emit(tr("operations.noPlanToPrint"), 3000, "error")
             return
 
-        if not self.plan_items:
+        if not self._plan_store.count():
             self.status_message.emit(tr("operations.planEmptyPrintingLast"), 2500, "info")
 
         self._print_operation_sheet(items_to_print, opened_message=tr("operations.planPrintOpened"))
@@ -2205,13 +2345,12 @@ class OperationsPanel(QWidget):
         self.status_message.emit(opened_message, 2000, "info")
 
     def clear_plan(self):
-        cleared_items = list(self.plan_items)
-        self.plan_items.clear()
+        cleared_items = self._plan_store.clear()
         self._plan_validation_by_key = {}
         self._plan_preflight_report = None
         self._refresh_plan_table()
         self._update_execute_button_state()
-        self.plan_preview_updated.emit(list(self.plan_items))
+        self.plan_preview_updated.emit(self._plan_store.list_items())
         self.status_message.emit(tr("operations.planCleared"), 2000, "info")
 
         if cleared_items:
@@ -2360,27 +2499,57 @@ class OperationsPanel(QWidget):
             self.query_table.setItem(row, 2, QTableWidgetItem(preview))
         self.query_info.setText(tr("operations.foundBoxesWithEmptySlots", count=len(boxes)))
 
-    def on_export_query_csv(self):
-        if self.query_table.rowCount() == 0: return
+    def on_export_inventory_csv(self):
+        yaml_path = self.yaml_path_getter()
+        default_name = f"inventory_full_{date.today().isoformat()}.csv"
+        suggested_path = default_name
+        if yaml_path:
+            yaml_abs = os.path.abspath(os.fspath(yaml_path))
+            base_name = os.path.splitext(os.path.basename(yaml_abs))[0] or "inventory"
+            suggested_path = os.path.join(
+                os.path.dirname(yaml_abs),
+                f"{base_name}_full_{date.today().isoformat()}.csv",
+            )
+
         path, _ = QFileDialog.getSaveFileName(
             self,
             tr("operations.exportDialogTitle"),
-            "",
+            suggested_path,
             tr("operations.exportCsvFilter"),
         )
-        if not path: return
-        
-        try:
-            with open(path, "w", newline="", encoding="utf-8") as f:
-                writer = csv.writer(f)
-                headers = [self.query_table.horizontalHeaderItem(i).text() for i in range(self.query_table.columnCount())]
-                writer.writerow(headers)
-                for r in range(self.query_table.rowCount()):
-                    row = [self.query_table.item(r, c).text() for c in range(self.query_table.columnCount())]
-                    writer.writerow(row)
-            self.status_message.emit(tr("operations.exportedTo", path=path), 3000, "success")
-        except Exception as e:
-            self.status_message.emit(tr("operations.exportFailed", error=e), 5000, "error")
+        if not path:
+            return
+
+        if not str(path).lower().endswith(".csv"):
+            path = f"{path}.csv"
+
+        response = self.bridge.export_inventory_csv(
+            yaml_path,
+            output_path=path,
+        )
+        payload = response if isinstance(response, dict) else {}
+        if payload.get("ok"):
+            result = payload.get("result", {})
+            exported_path = result.get("path") if isinstance(result, dict) else None
+            count = result.get("count") if isinstance(result, dict) else None
+            if isinstance(count, int):
+                self.status_message.emit(
+                    tr("operations.exportedToWithCount", count=count, path=exported_path or path),
+                    3000,
+                    "success",
+                )
+            else:
+                self.status_message.emit(tr("operations.exportedTo", path=exported_path or path), 3000, "success")
+            return
+
+        self.status_message.emit(
+            tr(
+                "operations.exportFailed",
+                error=payload.get("message", tr("operations.unknownError")),
+            ),
+            5000,
+            "error",
+        )
 
     def on_refresh_backups(self):
         # Implementation for refresh backups
@@ -2482,8 +2651,20 @@ class OperationsPanel(QWidget):
         self.audit_print_selected_btn.clicked.connect(self.on_print_selected_audit_guide)
         btn_row.addWidget(self.audit_print_selected_btn)
 
+        self.audit_rollback_selected_btn = QPushButton(tr("operations.auditRollbackFromSelected"))
+        self.audit_rollback_selected_btn.clicked.connect(self.on_stage_rollback_from_selected_audit)
+        btn_row.addWidget(self.audit_rollback_selected_btn)
+
+        self.audit_backup_toggle_btn = QPushButton(tr("operations.showAdvancedRollback"))
+        self.audit_backup_toggle_btn.clicked.connect(self.on_toggle_audit_backup_panel)
+        btn_row.addWidget(self.audit_backup_toggle_btn)
+
         btn_row.addStretch()
         layout.addLayout(btn_row)
+
+        self.audit_backup_panel = self._build_audit_backup_panel()
+        self.audit_backup_panel.setVisible(False)
+        layout.addWidget(self.audit_backup_panel)
 
         self.audit_info = QLabel(tr("operations.clickLoadAudit"))
         layout.addWidget(self.audit_info)
@@ -2500,6 +2681,15 @@ class OperationsPanel(QWidget):
         self.audit_table.cellClicked.connect(self._on_audit_row_clicked)
 
         return tab
+
+    def on_toggle_audit_backup_panel(self):
+        visible = not self.audit_backup_panel.isVisible()
+        self.audit_backup_panel.setVisible(visible)
+        self.audit_backup_toggle_btn.setText(
+            tr("operations.hideAdvancedRollback") if visible else tr("operations.showAdvancedRollback")
+        )
+        if visible and self.backup_table.rowCount() == 0:
+            self.on_refresh_backups()
 
     def on_load_audit(self):
         """Load and display audit events from JSONL file."""
@@ -2649,6 +2839,16 @@ class OperationsPanel(QWidget):
         ordered = [dedup[key] for key in sorted(dedup)]
         return ordered
 
+    def _build_audit_source_event(self, event):
+        if not isinstance(event, dict):
+            return {}
+        source_event = {}
+        for key in ("timestamp", "action", "trace_id", "session_id", "actor_id", "channel"):
+            value = event.get(key)
+            if value not in (None, ""):
+                source_event[str(key)] = value
+        return source_event
+
     def _apply_generated_audit_guide(self, guide, selected_count, print_now=False):
         items = list(guide.get("items") or [])
         warnings = list(guide.get("warnings") or [])
@@ -2719,6 +2919,40 @@ class OperationsPanel(QWidget):
         guide = build_operation_guide_from_audit_events(selected_events)
         self._apply_generated_audit_guide(guide, selected_count=len(selected_events), print_now=True)
 
+    def on_stage_rollback_from_selected_audit(self):
+        selected_events = self._get_selected_audit_events()
+        if not selected_events:
+            self.status_message.emit(tr("operations.selectAuditRowsFirst"), 2500, "error")
+            return
+        if len(selected_events) != 1:
+            self.status_message.emit(tr("operations.selectSingleAuditRow"), 3000, "error")
+            return
+
+        event = selected_events[0]
+        backup_path = str(event.get("backup_path") or "").strip()
+        if not backup_path:
+            self.status_message.emit(tr("operations.selectedAuditNoBackup"), 3000, "error")
+            return
+
+        item = build_rollback_plan_item(
+            backup_path=backup_path,
+            source="human",
+            source_event=self._build_audit_source_event(event),
+        )
+        self.add_plan_items([item])
+
+        staged = any(
+            str(it.get("action") or "").lower() == "rollback"
+            and str((it.get("payload") or {}).get("backup_path") or "") == backup_path
+            for it in self._plan_store.list_items()
+        )
+        if staged:
+            self.status_message.emit(
+                tr("operations.auditRollbackStaged", backup=os.path.basename(str(backup_path))),
+                2500,
+                "info",
+            )
+
     # --- UNDO ---
 
     def _enable_undo(self, timeout_sec=30):
@@ -2769,12 +3003,15 @@ class OperationsPanel(QWidget):
             self.status_message.emit(tr("operations.noOperationToUndo"), 3000, "error")
             return
 
+        yaml_path = os.path.abspath(str(self.yaml_path_getter()))
+        confirm_lines = self._build_rollback_confirmation_lines(
+            backup_path=self._last_operation_backup,
+            yaml_path=yaml_path,
+            include_action_prefix=False,
+        )
         if not self._confirm_execute(
             tr("operations.undo"),
-            tr(
-                "operations.restoreFromBackupMessage",
-                backup=os.path.basename(self._last_operation_backup),
-            ),
+            "\n".join(confirm_lines),
         ):
             return
 
@@ -2786,7 +3023,7 @@ class OperationsPanel(QWidget):
         self._disable_undo()
         self._handle_response(response, tr("operations.undo"))
         if response.get("ok") and executed_plan_backup:
-            self.plan_items = executed_plan_backup
+            self._plan_store.replace_all(executed_plan_backup)
             self._refresh_plan_table()
 
             action_counts = {}

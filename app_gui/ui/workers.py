@@ -3,10 +3,10 @@ from PySide6.QtCore import QObject, Signal
 class AgentRunWorker(QObject):
     finished = Signal(dict)
     progress = Signal(dict)
-    plan_staged = Signal(list)
     question_asked = Signal(dict)
 
-    def __init__(self, bridge, yaml_path, query, model, max_steps, history, thinking_enabled=True, custom_prompt=""):
+    def __init__(self, bridge, yaml_path, query, model, max_steps, history,
+                 thinking_enabled=True, custom_prompt="", plan_store=None, provider=None):
         super().__init__()
         self._bridge = bridge
         self._yaml_path = yaml_path
@@ -16,11 +16,9 @@ class AgentRunWorker(QObject):
         self._history = history
         self._thinking_enabled = bool(thinking_enabled)
         self._custom_prompt = str(custom_prompt or "")
+        self._plan_store = plan_store
+        self._provider = provider
         self._tool_runner = None
-
-    def _plan_sink(self, item):
-        """Thread-safe callback: emit plan item via Qt signal."""
-        self.plan_staged.emit([item])
 
     def _receive_runner(self, runner):
         """Callback from bridge to capture tool_runner reference."""
@@ -45,10 +43,11 @@ class AgentRunWorker(QObject):
                 max_steps=self._max_steps,
                 history=self._history,
                 on_event=self._emit_progress,
-                plan_sink=self._plan_sink,
+                plan_store=self._plan_store,
                 thinking_enabled=self._thinking_enabled,
                 custom_prompt=self._custom_prompt,
                 _expose_runner=self._receive_runner,
+                provider=self._provider,
             )
             if not isinstance(payload, dict):
                 payload = {"ok": False, "message": "Unexpected response"}
@@ -64,7 +63,7 @@ class AgentRunWorker(QObject):
     def _emit_progress(self, event):
         if not isinstance(event, dict):
             return
-        if event.get("type") in ("question", "max_steps_ask"):
+        if event.get("type") in ("question", "max_steps_ask", "manage_boxes_confirm"):
             self.question_asked.emit(event)
         else:
             self.progress.emit(event)

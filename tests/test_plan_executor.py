@@ -405,6 +405,27 @@ class RunPlanExecuteTests(unittest.TestCase):
         bridge.rollback.assert_called_once()
         self.assertEqual("/tmp/snap.bak", result.get("backup_path"))
 
+    def test_run_plan_rollback_passes_source_event(self):
+        bridge = MagicMock()
+        bridge.rollback.return_value = {"ok": True, "result": {}}
+
+        source_event = {
+            "timestamp": "2026-02-12T09:00:00",
+            "action": "record_thaw",
+            "trace_id": "trace-audit-1",
+        }
+        item = make_rollback_item("/tmp/backup.bak")
+        item["payload"]["source_event"] = dict(source_event)
+
+        result = run_plan("/tmp/test.yaml", [item], bridge=bridge, mode="execute")
+
+        self.assertTrue(result["ok"])
+        bridge.rollback.assert_called_once_with(
+            yaml_path="/tmp/test.yaml",
+            backup_path="/tmp/backup.bak",
+            source_event=source_event,
+        )
+
     def test_run_plan_rollback_must_be_alone_blocks(self):
         bridge = MagicMock()
         items = [
@@ -540,6 +561,44 @@ class MoveSwapTests(unittest.TestCase):
 
             self.assertFalse(result["ok"])
             self.assertTrue(result["blocked"])
+
+    def test_multiple_moves_same_target_blocked(self):
+        """Regression: multiple moves targeting same position should be blocked.
+        
+        User scenario: 8:3->4, 7:2->3, 6:1->3
+        - Move 8:3->4: OK (target empty)
+        - Move 7:2->3: BLOCKED (target also wanted by record 6)
+        - Move 6:1->3: BLOCKED (target also wanted by record 7)
+        
+        Since two moves target the same position (3), both are blocked.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([
+                    make_record(8, box=3, positions=[3]),
+                    make_record(7, box=3, positions=[2]),
+                    make_record(6, box=3, positions=[1]),
+                ]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+
+            items = [
+                make_move_item(record_id=8, position=3, to_position=4, box=3),
+                make_move_item(record_id=7, position=2, to_position=3, box=3),
+                make_move_item(record_id=6, position=1, to_position=3, box=3),
+            ]
+            result = preflight_plan(str(yaml_path), items, bridge=bridge)
+
+            self.assertFalse(result["ok"])
+            self.assertTrue(result["blocked"])
+            blocked_items = [r for r in result.get("items", []) if r.get("blocked")]
+            self.assertEqual(2, len(blocked_items))
+            blocked_ids = sorted([r["item"]["record_id"] for r in blocked_items])
+            self.assertEqual([6, 7], blocked_ids)
 
 
 class EditPlanTests(unittest.TestCase):

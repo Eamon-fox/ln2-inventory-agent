@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, Signal, QThread, QEvent
 from PySide6.QtGui import QTextCursor, QPalette, QMouseEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QLineEdit,
+    QPushButton, QLineEdit, QComboBox,
     QTextEdit, QSpinBox, QCheckBox
 )
 from app_gui.ui.workers import AgentRunWorker
@@ -91,13 +91,14 @@ def _md_to_html(text, is_dark=True):
 
 class AIPanel(QWidget):
     operation_completed = Signal(bool)
-    plan_items_staged = Signal(list)
     status_message = Signal(str, int) # msg, timeout
 
-    def __init__(self, bridge, yaml_path_getter):
+    def __init__(self, bridge, yaml_path_getter, plan_store=None, manage_boxes_request_handler=None):
         super().__init__()
         self.bridge = bridge
         self.yaml_path_getter = yaml_path_getter
+        self._plan_store = plan_store
+        self._manage_boxes_request_handler = manage_boxes_request_handler
         
         self.ai_history = []
         self.ai_operation_events = []
@@ -131,6 +132,7 @@ class AIPanel(QWidget):
         layout.setSpacing(0)
 
         # Controls (hidden, values managed via Settings)
+        self.ai_provider = QLineEdit()
         self.ai_model = QLineEdit()
         self.ai_steps = QSpinBox()
         self.ai_steps.setRange(1, 20)
@@ -656,13 +658,14 @@ class AIPanel(QWidget):
             history=history,
             thinking_enabled=self.ai_thinking_enabled.isChecked(),
             custom_prompt=self.ai_custom_prompt,
+            plan_store=self._plan_store,
+            provider=self.ai_provider.text().strip() or None,
         )
         self.ai_run_thread = QThread(self)
         self.ai_run_worker.moveToThread(self.ai_run_thread)
-        
+
         self.ai_run_thread.started.connect(self.ai_run_worker.run)
         self.ai_run_worker.progress.connect(self.on_progress)
-        self.ai_run_worker.plan_staged.connect(self.plan_items_staged.emit)
         self.ai_run_worker.question_asked.connect(self._handle_question_event)
         self.ai_run_worker.finished.connect(self.on_finished)
         self.ai_run_worker.finished.connect(self.ai_run_thread.quit)
@@ -675,6 +678,9 @@ class AIPanel(QWidget):
 
     def _handle_question_event(self, event_data):
         """Handle question event from agent — show dialog, unblock worker."""
+        if event_data.get("type") == "manage_boxes_confirm":
+            return self._handle_manage_boxes_confirm(event_data)
+
         if event_data.get("type") == "max_steps_ask":
             return self._handle_max_steps_ask(event_data)
 
@@ -696,6 +702,37 @@ class AIPanel(QWidget):
         else:
             if self.ai_run_worker:
                 self.ai_run_worker.cancel_answer()
+
+    def _handle_manage_boxes_confirm(self, event_data):
+        """Handle GUI confirmation request for manage_boxes tool."""
+        request = event_data.get("request") if isinstance(event_data, dict) else None
+        if not isinstance(request, dict):
+            if self.ai_run_worker:
+                self.ai_run_worker.cancel_answer()
+            return
+
+        if not callable(self._manage_boxes_request_handler):
+            self._append_tool_message("`manage_boxes` needs GUI confirmation, but no handler is available.")
+            if self.ai_run_worker:
+                self.ai_run_worker.cancel_answer()
+            return
+
+        try:
+            result = self._manage_boxes_request_handler(request)
+        except Exception as exc:
+            result = {
+                "ok": False,
+                "error_code": "gui_confirmation_failed",
+                "message": str(exc),
+            }
+
+        if not isinstance(result, dict):
+            if self.ai_run_worker:
+                self.ai_run_worker.cancel_answer()
+            return
+
+        if self.ai_run_worker:
+            self.ai_run_worker.set_answer(result)
 
     def _handle_max_steps_ask(self, event_data):
         """System-level prompt when max_steps is reached — ask user to continue or stop."""
@@ -947,7 +984,7 @@ class AIPanel(QWidget):
         self._append_history("assistant", final_text)
 
         if response.get("error_code") == "api_key_required":
-            self.status_message.emit("DeepSeek API key missing. See chat for setup steps.", 6000)
+            self.status_message.emit("API key missing. See chat for setup steps.", 6000)
 
         self.operation_completed.emit(bool(response.get("ok")))
         
@@ -1037,6 +1074,7 @@ class AIPanel(QWidget):
             execution_stats = summarize_plan_execution(report, rollback)
             total_count = execution_stats.get("total_count", 0)
             applied_count = execution_stats.get("applied_count", event_stats.get("applied", 0))
+            summary_lines = []
 
             if execution_stats.get("fail_count", 0) <= 0 and event.get("ok", False):
                 summary_text = f"**Plan executed succeeded**: {applied_count}/{total_count} operations applied"
@@ -1066,6 +1104,28 @@ class AIPanel(QWidget):
                         f"- Rollback unavailable: {execution_stats.get('rollback_message')}"
                     )
                 summary_text = "\n".join(summary_lines)
+            self._append_chat_with_collapsible("System", summary_text, details_json)
+
+        elif event_type == "box_layout_adjusted":
+            operation = str(event.get("operation") or "adjust")
+            preview = event.get("preview") if isinstance(event.get("preview"), dict) else {}
+            before_count = preview.get("box_count_before")
+            after_count = preview.get("box_count_after")
+            if operation == "add":
+                added = preview.get("added_boxes") or []
+                summary_text = (
+                    f"**Boxes updated**: added {len(added)} box(es)"
+                    f" (count {before_count} -> {after_count})"
+                )
+            elif operation == "remove":
+                removed = preview.get("removed_box")
+                mode = preview.get("renumber_mode")
+                summary_text = (
+                    f"**Boxes updated**: removed box {removed}"
+                    f" (count {before_count} -> {after_count}, mode={mode})"
+                )
+            else:
+                summary_text = "**Boxes updated**"
             self._append_chat_with_collapsible("System", summary_text, details_json)
 
         elif event_type == "plan_cleared":

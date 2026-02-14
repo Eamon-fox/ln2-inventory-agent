@@ -20,7 +20,7 @@ from .config import (
     YAML_PATH,
     YAML_SIZE_WARNING_MB,
 )
-from .position_fmt import get_box_count, get_total_slots
+from .position_fmt import get_box_numbers, get_total_slots
 from .validators import format_validation_errors, validate_inventory
 
 
@@ -141,14 +141,14 @@ def collect_inventory_stats(data):
     records = (data or {}).get("inventory", []) if isinstance(data, dict) else []
     layout = (data or {}).get("meta", {}).get("box_layout", {})
     per_box_total = get_total_slots(layout)
-    box_count = get_box_count(layout)
-    total_slots = per_box_total * box_count
+    box_numbers = get_box_numbers(layout)
+    total_slots = per_box_total * len(box_numbers)
 
     occupancy = compute_occupancy(records)
     boxes = {}
     total_occupied = 0
 
-    for box_num in range(1, box_count + 1):
+    for box_num in box_numbers:
         key = str(box_num)
         occupied = len(occupancy.get(key, []))
         empty = max(per_box_total - occupied, 0)

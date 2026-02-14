@@ -7,8 +7,9 @@ from copy import deepcopy
 from collections import defaultdict
 from datetime import datetime, timedelta
 
+from .csv_export import export_inventory_to_csv
 from .custom_fields import STRUCTURAL_FIELD_KEYS, get_effective_fields, get_required_field_keys
-from .position_fmt import get_box_count, get_position_range, get_total_slots
+from .position_fmt import get_box_numbers, get_position_range, get_total_slots
 from .operations import check_position_conflicts, find_record_by_id, get_next_id
 from .thaw_parser import ACTION_LABEL, extract_events, normalize_action
 from .validators import (
@@ -36,6 +37,24 @@ _DEFAULT_SESSION_ID = f"session-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.
 def _get_layout(data):
     """Extract box_layout dict from loaded YAML data."""
     return (data or {}).get("meta", {}).get("box_layout", {})
+
+
+def _format_box_constraint(layout):
+    """Format allowed box IDs for messages."""
+    boxes = list(get_box_numbers(layout))
+    if not boxes:
+        return "N/A"
+    if len(boxes) == 1:
+        return str(boxes[0])
+    is_contiguous = all(boxes[i] + 1 == boxes[i + 1] for i in range(len(boxes) - 1))
+    if is_contiguous:
+        return f"{boxes[0]}-{boxes[-1]}"
+    return ",".join(str(box_num) for box_num in boxes)
+
+
+def _is_middle_box(box_numbers, target_box):
+    """Return True when removing target would leave higher-numbered boxes."""
+    return any(box_num > target_box for box_num in box_numbers)
 
 
 def build_actor_context(
@@ -372,17 +391,16 @@ def tool_add_entry(
         )
 
     layout = _get_layout(data)
-    _box_count = get_box_count(layout)
     _pos_lo, _pos_hi = get_position_range(layout)
 
-    if box < 1 or box > _box_count:
+    if not validate_box(box, layout):
         return _failure_result(
             yaml_path=yaml_path,
             action=action,
             source=source,
             tool_name=tool_name,
             error_code="invalid_box",
-            message=f"盒子编号必须在 1-{_box_count} 之间",
+            message=f"盒子编号必须在 {_format_box_constraint(layout)} 范围内",
             actor_context=actor_context,
             tool_input=tool_input,
             details={"box": box},
@@ -428,10 +446,12 @@ def tool_add_entry(
     next_id = get_next_id(records)
     new_records = []
     created = []
+    cell_line = fields.pop("cell_line", None)
     for offset, pos in enumerate(list(positions)):
         tube_id = next_id + offset
         rec = {
             "id": tube_id,
+            "cell_line": cell_line or "",
             "box": box,
             "positions": [int(pos)],
             "frozen_at": frozen_at,
@@ -572,11 +592,11 @@ def tool_add_entry(
     }
 
 
-_EDITABLE_FIELDS = {"frozen_at"}
+_EDITABLE_FIELDS = {"frozen_at", "cell_line"}
 
 
 def _get_editable_fields(yaml_path):
-    """Return editable field set: frozen_at + all user-configurable fields from meta."""
+    """Return editable field set: frozen_at + cell_line + all user-configurable fields from meta."""
     try:
         data = load_yaml(yaml_path)
         meta = data.get("meta", {})
@@ -814,7 +834,6 @@ def tool_record_thaw(
     records = data.get("inventory", [])
     layout = _get_layout(data)
     _pos_lo, _pos_hi = get_position_range(layout)
-    _box_count = get_box_count(layout)
 
     if move_to_position is not None and move_to_position > _pos_hi:
         return _failure_result(
@@ -961,14 +980,14 @@ def tool_record_thaw(
         cross_box = to_box is not None and to_box != box
 
         if cross_box:
-            if not validate_box(to_box):
+            if not validate_box(to_box, layout):
                 return _failure_result(
                     yaml_path=yaml_path,
                     action=audit_action,
                     source=source,
                     tool_name=tool_name,
                     error_code="invalid_box",
-                    message=f"目标盒子编号 {to_box} 超出范围 (1-{_box_count})",
+                    message=f"目标盒子编号 {to_box} 超出范围 ({_format_box_constraint(layout)})",
                     actor_context=actor_context,
                     tool_input=tool_input,
                     before_data=data,
@@ -1387,7 +1406,6 @@ def tool_batch_thaw(
     records = data.get("inventory", [])
     layout = _get_layout(data)
     _pos_lo, _pos_hi = get_position_range(layout)
-    _box_count = get_box_count(layout)
     operations = []
     errors = []
 
@@ -1430,7 +1448,7 @@ def tool_batch_thaw(
                 continue
             if entry_to_box is not None and not validate_box(entry_to_box, layout):
                 errors.append(
-                    f"第{row_idx}条 ID {record_id}: 目标盒子 {entry_to_box} 超出范围 (1-{_box_count})"
+                    f"第{row_idx}条 ID {record_id}: 目标盒子 {entry_to_box} 超出范围 ({_format_box_constraint(layout)})"
                 )
                 continue
 
@@ -1474,6 +1492,14 @@ def tool_batch_thaw(
                     )
                     continue
                 else:
+                    # Same-box: check if destination is already touched in this batch
+                    # If so, reject this move (no implicit swap within the same batch)
+                    if dest_idx in touched_indices:
+                        dest_record = records[dest_idx]
+                        errors.append(
+                            f"第{row_idx}条 ID {record_id}: 目标位置 {to_pos} 已被本批次前序移动占用，无法完成换位"
+                        )
+                        continue
                     # Same-box: swap
                     dest_record = records[dest_idx]
                     dest_before = list(simulated_positions.get(dest_idx, []))
@@ -1951,14 +1977,33 @@ def tool_rollback(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    source_event=None,
 ):
     """Rollback inventory YAML using shared tool flow."""
     audit_action = "rollback"
     tool_name = "tool_rollback"
+    normalized_source_event = {}
+    if isinstance(source_event, dict):
+        normalized_source_event = {
+            str(key): value
+            for key, value in source_event.items()
+            if value not in (None, "")
+        }
+
+    def _details_for_target(target_path=None):
+        details = {}
+        if target_path not in (None, ""):
+            details["requested_backup"] = target_path
+        if normalized_source_event:
+            details["requested_from_event"] = dict(normalized_source_event)
+        return details or None
+
     tool_input = {
         "backup_path": backup_path,
         "dry_run": bool(dry_run),
     }
+    if normalized_source_event:
+        tool_input["source_event"] = dict(normalized_source_event)
     current_data = None
     try:
         current_data = load_yaml(yaml_path)
@@ -1983,6 +2028,7 @@ def tool_rollback(
                 actor_context=actor_context,
                 tool_input=tool_input,
                 before_data=current_data,
+                details=_details_for_target(),
             )
         return payload
 
@@ -2012,7 +2058,7 @@ def tool_rollback(
                 actor_context=actor_context,
                 tool_input=tool_input,
                 before_data=current_data,
-                details={"requested_backup": target},
+                details=_details_for_target(target),
             )
         return payload
 
@@ -2045,7 +2091,7 @@ def tool_rollback(
                 tool_input=tool_input,
                 before_data=current_data,
                 errors=payload.get("errors"),
-                details={"requested_backup": target},
+                details=_details_for_target(target),
                 extra={"backup_path": target},
             )
         return payload
@@ -2068,7 +2114,7 @@ def tool_rollback(
                 source=source,
                 tool_name=tool_name,
                 actor_context=actor_context,
-                details={"requested_backup": target},
+                details=_details_for_target(target),
                 tool_input=tool_input,
             ),
         )
@@ -2083,7 +2129,7 @@ def tool_rollback(
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=current_data,
-            details={"requested_backup": target},
+            details=_details_for_target(target),
         )
 
     return {
@@ -2092,6 +2138,356 @@ def tool_rollback(
         "result": result,
         # Expose pre-rollback snapshot so Plan executor can offer an Undo path.
         "backup_path": result.get("snapshot_before_rollback"),
+    }
+
+
+def tool_adjust_box_count(
+    yaml_path,
+    operation,
+    count=1,
+    box=None,
+    renumber_mode=None,
+    dry_run=False,
+    actor_context=None,
+    source="tool_api",
+    auto_backup=True,
+):
+    """Safely add/remove boxes without changing rows/cols/indexing.
+
+    Rules:
+    - Only updates ``meta.box_layout.box_count`` and ``meta.box_layout.box_numbers``.
+    - Remove is allowed only when target box has no active positions.
+    - Removing a middle box supports:
+      - ``keep_gaps`` (preserve box IDs with gaps)
+      - ``renumber_contiguous`` (remap to 1..N)
+    """
+
+    audit_action = "adjust_box_count"
+    tool_name = "tool_adjust_box_count"
+    tool_input = {
+        "operation": operation,
+        "count": count,
+        "box": box,
+        "renumber_mode": renumber_mode,
+        "dry_run": bool(dry_run),
+    }
+
+    op_text = str(operation or "").strip().lower()
+    op_alias = {
+        "add": "add",
+        "add_boxes": "add",
+        "increase": "add",
+        "remove": "remove",
+        "remove_box": "remove",
+        "delete": "remove",
+        "删除": "remove",
+        "增加": "add",
+    }
+    op = op_alias.get(op_text)
+    if not op:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="invalid_operation",
+            message="operation 必须是 add/remove",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            details={"operation": operation},
+        )
+
+    try:
+        data = load_yaml(yaml_path)
+    except Exception as exc:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="load_failed",
+            message=f"无法读取YAML文件: {exc}",
+            actor_context=actor_context,
+            tool_input=tool_input,
+        )
+
+    if not isinstance(data, dict):
+        data = {}
+    records = data.get("inventory") or []
+    layout = _get_layout(data)
+    current_boxes = list(get_box_numbers(layout))
+    if not current_boxes:
+        current_boxes = [1]
+
+    candidate_data = deepcopy(data)
+    if not isinstance(candidate_data, dict):
+        candidate_data = {}
+    meta = candidate_data.setdefault("meta", {})
+    if not isinstance(meta, dict):
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="invalid_meta",
+            message="meta 必须是对象",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+        )
+    candidate_layout = meta.setdefault("box_layout", {})
+    if not isinstance(candidate_layout, dict):
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="invalid_box_layout",
+            message="meta.box_layout 必须是对象",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+        )
+
+    preview = {
+        "operation": op,
+        "box_numbers_before": current_boxes,
+        "box_count_before": len(current_boxes),
+    }
+
+    if op == "add":
+        try:
+            add_count = int(count)
+        except Exception:
+            add_count = 0
+        if add_count <= 0:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="invalid_count",
+                message="count 必须是大于 0 的整数",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"count": count},
+            )
+
+        start = max(current_boxes) + 1 if current_boxes else 1
+        added_boxes = list(range(start, start + add_count))
+        new_boxes = current_boxes + added_boxes
+        preview.update(
+            {
+                "added_boxes": added_boxes,
+                "box_numbers_after": new_boxes,
+                "box_count_after": len(new_boxes),
+            }
+        )
+
+    else:
+        try:
+            target_box = int(box)
+        except Exception:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="invalid_box",
+                message="删除操作必须提供有效的 box 编号",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"box": box},
+            )
+
+        if target_box not in current_boxes:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="invalid_box",
+                message=f"盒子编号 {target_box} 不存在 (允许: {_format_box_constraint(layout)})",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"box": target_box},
+            )
+
+        blocking_records = []
+        for rec in records:
+            if not isinstance(rec, dict):
+                continue
+            if rec.get("box") != target_box:
+                continue
+            blocking_records.append(rec)
+
+        if blocking_records:
+            blocking_ids = [rec.get("id") for rec in blocking_records if rec.get("id") is not None]
+            active_ids = [
+                rec.get("id")
+                for rec in blocking_records
+                if rec.get("id") is not None and (rec.get("positions") or [])
+            ]
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="box_not_empty",
+                message=f"盒子 {target_box} 非空，无法删除",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={
+                    "box": target_box,
+                    "blocking_record_ids": blocking_ids,
+                    "active_blocking_record_ids": active_ids,
+                },
+                extra={
+                    "blocking_record_ids": blocking_ids,
+                    "active_blocking_record_ids": active_ids,
+                },
+            )
+
+        is_middle = _is_middle_box(current_boxes, target_box)
+        mode = str(renumber_mode or "").strip().lower() or None
+        if mode in {"renumber", "compact", "reindex"}:
+            mode = "renumber_contiguous"
+
+        if is_middle and mode not in {"keep_gaps", "renumber_contiguous"}:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="renumber_mode_required",
+                message="删除中间盒子时，必须指定 renumber_mode=keep_gaps 或 renumber_contiguous",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"box": target_box, "current_boxes": current_boxes},
+                extra={"choices": ["keep_gaps", "renumber_contiguous"]},
+            )
+
+        if mode is None:
+            mode = "keep_gaps"
+        if mode not in {"keep_gaps", "renumber_contiguous"}:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="invalid_renumber_mode",
+                message="renumber_mode 必须是 keep_gaps 或 renumber_contiguous",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"renumber_mode": renumber_mode},
+            )
+
+        remaining_boxes = [box_num for box_num in current_boxes if box_num != target_box]
+        if not remaining_boxes:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="min_box_count",
+                message="至少需要保留 1 个盒子，无法删除最后一个盒子",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"box": target_box},
+            )
+
+        box_mapping = {}
+        if mode == "renumber_contiguous":
+            sorted_remaining = sorted(remaining_boxes)
+            box_mapping = {old_box: idx + 1 for idx, old_box in enumerate(sorted_remaining)}
+            for rec in candidate_data.get("inventory", []):
+                if not isinstance(rec, dict):
+                    continue
+                rec_box = rec.get("box")
+                if rec_box in box_mapping:
+                    rec["box"] = box_mapping[rec_box]
+            new_boxes = list(range(1, len(sorted_remaining) + 1))
+        else:
+            new_boxes = sorted(remaining_boxes)
+
+        preview.update(
+            {
+                "removed_box": target_box,
+                "middle_box": is_middle,
+                "renumber_mode": mode,
+                "box_mapping": box_mapping,
+                "box_numbers_after": new_boxes,
+                "box_count_after": len(new_boxes),
+            }
+        )
+
+    candidate_layout["box_numbers"] = list(new_boxes)
+    candidate_layout["box_count"] = len(new_boxes)
+
+    validation_error = _validate_data_or_error(candidate_data)
+    if validation_error:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code=validation_error.get("error_code", "integrity_validation_failed"),
+            message=validation_error.get("message", "写入被阻止：完整性校验失败"),
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+            errors=validation_error.get("errors"),
+            details=preview,
+        )
+
+    if dry_run:
+        return {
+            "ok": True,
+            "dry_run": True,
+            "preview": preview,
+        }
+
+    try:
+        backup_path = write_yaml(
+            candidate_data,
+            yaml_path,
+            auto_backup=auto_backup,
+            audit_meta=_build_audit_meta(
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                actor_context=actor_context,
+                details=preview,
+                tool_input=tool_input,
+            ),
+        )
+    except Exception as exc:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="write_failed",
+            message=f"调整盒子数量失败: {exc}",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+            details=preview,
+        )
+
+    return {
+        "ok": True,
+        "dry_run": False,
+        "preview": preview,
+        "result": preview,
+        "backup_path": backup_path,
     }
 
 
@@ -2110,7 +2506,7 @@ def _str_contains(value, query, case_sensitive=False):
 def _record_search_blob(rec, case_sensitive=False):
     parts = []
     # Structural fields for search
-    for field in ("id", "box", "frozen_at"):
+    for field in ("id", "box", "frozen_at", "cell_line"):
         value = rec.get(field)
         if value is not None and value != "":
             parts.append(str(value))
@@ -2133,8 +2529,8 @@ def tool_query_inventory(
 ):
     """Query inventory records with field filters.
 
-    Accepts box, position as structural filters, plus any user field key
-    as keyword arguments (e.g. parent_cell_line="K562", short_name="clone-1").
+    Accepts box, position as structural filters, plus cell_line and any user field key
+    as keyword arguments (e.g. cell_line="K562", short_name="clone-1").
     """
     try:
         data = load_yaml(yaml_path)
@@ -2173,6 +2569,39 @@ def tool_query_inventory(
     }
 
 
+def tool_export_inventory_csv(yaml_path, output_path):
+    """Export full inventory records to a CSV file."""
+    if not output_path:
+        return {
+            "ok": False,
+            "error_code": "invalid_output_path",
+            "message": "必须提供 CSV 输出路径",
+        }
+
+    try:
+        data = load_yaml(yaml_path)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error_code": "load_failed",
+            "message": f"无法读取YAML文件: {exc}",
+        }
+
+    try:
+        result = export_inventory_to_csv(data, output_path=output_path)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error_code": "export_failed",
+            "message": f"导出CSV失败: {exc}",
+        }
+
+    return {
+        "ok": True,
+        "result": result,
+    }
+
+
 def tool_list_empty_positions(yaml_path, box=None):
     """List empty positions by box."""
     try:
@@ -2187,20 +2616,20 @@ def tool_list_empty_positions(yaml_path, box=None):
     records = data.get("inventory", [])
     layout = _get_layout(data)
     total_slots = get_total_slots(layout)
-    _box_count = get_box_count(layout)
+    box_numbers = get_box_numbers(layout)
     all_positions = set(range(1, total_slots + 1))
     occupancy = compute_occupancy(records)
 
     if box is not None:
-        if box < 1 or box > _box_count:
+        if not validate_box(box, layout):
             return {
                 "ok": False,
                 "error_code": "invalid_box",
-                "message": f"盒子编号必须在 1-{_box_count} 之间",
+                "message": f"盒子编号必须在 {_format_box_constraint(layout)} 范围内",
             }
         boxes = [str(box)]
     else:
-        boxes = [str(i) for i in range(1, _box_count + 1)]
+        boxes = [str(i) for i in box_numbers]
 
     items = []
     for box_key in boxes:
@@ -2618,15 +3047,21 @@ def tool_recommend_positions(yaml_path, count, box_preference=None, strategy="co
 
     layout = _get_layout(data)
     total_slots = get_total_slots(layout)
-    _box_count = get_box_count(layout)
+    box_numbers = get_box_numbers(layout)
     all_positions = set(range(1, total_slots + 1))
     occupancy = compute_occupancy(data.get("inventory", []))
 
     if box_preference:
+        if not validate_box(box_preference, layout):
+            return {
+                "ok": False,
+                "error_code": "invalid_box",
+                "message": f"盒子编号必须在 {_format_box_constraint(layout)} 范围内",
+            }
         boxes_to_check = [str(box_preference)]
     else:
         boxes_to_check = []
-        for box_num in range(1, _box_count + 1):
+        for box_num in box_numbers:
             key = str(box_num)
             boxes_to_check.append((key, len(occupancy.get(key, []))))
         boxes_to_check = [b for b, _ in sorted(boxes_to_check, key=lambda x: x[1])]
@@ -2679,14 +3114,15 @@ def tool_generate_stats(yaml_path):
     layout = _get_layout(data)
     total_slots = get_total_slots(layout)
     occupancy = compute_occupancy(records)
-    total_boxes = get_box_count(layout)
+    box_numbers = get_box_numbers(layout)
+    total_boxes = len(box_numbers)
 
     total_occupied = sum(len(positions) for positions in occupancy.values())
     total_capacity = total_boxes * total_slots
     overall_rate = (total_occupied / total_capacity * 100) if total_capacity > 0 else 0
 
     box_stats = {}
-    for box_num in range(1, total_boxes + 1):
+    for box_num in box_numbers:
         key = str(box_num)
         occupied_count = len(occupancy.get(key, []))
         rate = (occupied_count / total_slots * 100) if total_slots > 0 else 0

@@ -487,12 +487,13 @@ class ErrorPathTests(unittest.TestCase):
         self.assertFalse(result["ok"])
 
     def test_add_with_empty_cell_line_rejected(self):
+        """Empty short_name (required preset field) should be rejected."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [])
             result = tool_add_entry(
                 yaml_path=yp,
                 box=1, positions=[1], frozen_at="2026-02-10",
-                fields={"parent_cell_line": "", "short_name": "x"},
+                fields={"short_name": ""},
             )
             self.assertFalse(result["ok"])
 

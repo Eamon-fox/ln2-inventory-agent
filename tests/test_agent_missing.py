@@ -116,12 +116,8 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
     """Test plan staging functionality in AgentToolRunner."""
 
     def setUp(self):
-        self.staged_items = []
-
-        def mock_plan_sink(item):
-            self.staged_items.append(item)
-
-        self.plan_sink = mock_plan_sink
+        from lib.plan_store import PlanStore
+        self.plan_store = PlanStore()
 
     def _seed_yaml(self, records):
         """Create a temporary inventory YAML file."""
@@ -138,7 +134,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
 
     def test_stage_to_plan_add_entry(self):
         """Test staging add_entry operation."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_sink=self.plan_sink)
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "add_entry",
             {
@@ -151,13 +147,13 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         )
         self.assertTrue(result["ok"])
         self.assertTrue(result.get("staged"))
-        self.assertEqual(1, len(self.staged_items))
-        self.assertEqual("add", self.staged_items[0]["action"])
-        self.assertEqual(1, self.staged_items[0]["box"])
+        self.assertEqual(1, len(self.plan_store.list_items()))
+        self.assertEqual("add", self.plan_store.list_items()[0]["action"])
+        self.assertEqual(1, self.plan_store.list_items()[0]["box"])
 
     def test_stage_to_plan_record_thaw(self):
         """Test staging record_thaw operation."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_sink=self.plan_sink)
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "record_thaw",
             {
@@ -169,13 +165,13 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         )
         self.assertTrue(result["ok"])
         self.assertTrue(result.get("staged"))
-        self.assertEqual(1, len(self.staged_items))
-        self.assertEqual("takeout", self.staged_items[0]["action"])
-        self.assertEqual(5, self.staged_items[0]["position"])
+        self.assertEqual(1, len(self.plan_store.list_items()))
+        self.assertEqual("takeout", self.plan_store.list_items()[0]["action"])
+        self.assertEqual(5, self.plan_store.list_items()[0]["position"])
 
     def test_stage_to_plan_record_thaw_supports_legacy_action_alias(self):
         """Legacy alias 解冻 should normalize to thaw."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_sink=self.plan_sink)
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "record_thaw",
             {
@@ -186,12 +182,12 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
             },
         )
         self.assertTrue(result["ok"])
-        self.assertEqual(1, len(self.staged_items))
-        self.assertEqual("thaw", self.staged_items[0]["action"])
+        self.assertEqual(1, len(self.plan_store.list_items()))
+        self.assertEqual("thaw", self.plan_store.list_items()[0]["action"])
 
     def test_stage_to_plan_record_thaw_move(self):
         """Test staging record_thaw with move action."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_sink=self.plan_sink)
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "record_thaw",
             {
@@ -203,13 +199,13 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
             },
         )
         self.assertTrue(result["ok"])
-        self.assertEqual(1, len(self.staged_items))
-        self.assertEqual("move", self.staged_items[0]["action"])
-        self.assertEqual(10, self.staged_items[0]["to_position"])
+        self.assertEqual(1, len(self.plan_store.list_items()))
+        self.assertEqual("move", self.plan_store.list_items()[0]["action"])
+        self.assertEqual(10, self.plan_store.list_items()[0]["to_position"])
 
     def test_stage_to_plan_batch_thaw(self):
         """Test staging batch_thaw operation."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_sink=self.plan_sink)
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "batch_thaw",
             {
@@ -220,11 +216,11 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         )
         self.assertTrue(result["ok"])
         self.assertTrue(result.get("staged"))
-        self.assertEqual(2, len(self.staged_items))
+        self.assertEqual(2, len(self.plan_store.list_items()))
 
     def test_stage_to_plan_batch_thaw_move(self):
         """Test staging batch_thaw with move entries."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_sink=self.plan_sink)
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "batch_thaw",
             {
@@ -234,13 +230,13 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
             },
         )
         self.assertTrue(result["ok"])
-        self.assertEqual(1, len(self.staged_items))
-        self.assertEqual("move", self.staged_items[0]["action"])
-        self.assertEqual(10, self.staged_items[0]["to_position"])
+        self.assertEqual(1, len(self.plan_store.list_items()))
+        self.assertEqual("move", self.plan_store.list_items()[0]["action"])
+        self.assertEqual(10, self.plan_store.list_items()[0]["to_position"])
 
     def test_stage_to_plan_validation_failure(self):
         """Test plan validation failure with invalid box."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_sink=self.plan_sink)
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "add_entry",
             {
@@ -252,12 +248,12 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         )
         self.assertFalse(result["ok"])
         self.assertEqual("plan_validation_failed", result["error_code"])
-        self.assertEqual(0, len(self.staged_items))
+        self.assertEqual(0, len(self.plan_store.list_items()))
 
     def test_stage_to_plan_preflight_blocked_returns_tool_error(self):
         """Invalid staged write should be rejected before entering plan."""
         yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, positions=[5])])
-        runner = AgentToolRunner(yaml_path=yaml_path, plan_sink=self.plan_sink)
+        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "record_thaw",
             {
@@ -270,7 +266,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
 
         self.assertFalse(result["ok"])
         self.assertEqual("plan_preflight_failed", result["error_code"])
-        self.assertEqual(0, len(self.staged_items))
+        self.assertEqual(0, len(self.plan_store.list_items()))
         self.assertEqual(1, result.get("result", {}).get("blocked_count"))
         self.assertEqual(1, len(result.get("blocked_items", [])))
         self.assertEqual("record_not_found", result["blocked_items"][0].get("error_code"))
@@ -282,7 +278,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
             make_record(rec_id=2, box=1, positions=[10]),
         ]
         yaml_path = self._seed_yaml(records)
-        runner = AgentToolRunner(yaml_path=yaml_path, plan_sink=self.plan_sink)
+        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "batch_thaw",
             {
@@ -295,7 +291,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual("plan_preflight_failed", result["error_code"])
         self.assertFalse(result.get("staged"))
-        self.assertEqual(0, len(self.staged_items))
+        self.assertEqual(0, len(self.plan_store.list_items()))
         self.assertEqual(0, result.get("result", {}).get("staged_count"))
         self.assertEqual(1, result.get("result", {}).get("blocked_count"))
         self.assertEqual(1, len(result.get("blocked_items", [])))
@@ -303,7 +299,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
     def test_stage_to_plan_schema_mixed_batch_rejects_all(self):
         """Schema errors in batch should reject all items atomically."""
         yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, positions=[5])])
-        runner = AgentToolRunner(yaml_path=yaml_path, plan_sink=self.plan_sink)
+        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "batch_thaw",
             {
@@ -319,7 +315,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual("plan_validation_failed", result["error_code"])
         self.assertFalse(result.get("staged"))
-        self.assertEqual(0, len(self.staged_items))
+        self.assertEqual(0, len(self.plan_store.list_items()))
         self.assertEqual(0, result.get("result", {}).get("staged_count"))
         self.assertEqual(1, result.get("result", {}).get("blocked_count"))
 
@@ -328,13 +324,13 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         backup_path = create_yaml_backup(yaml_path)
         self.assertTrue(os.path.exists(str(backup_path)))
 
-        runner = AgentToolRunner(yaml_path=yaml_path, plan_sink=self.plan_sink)
+        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan("rollback", {})
 
         self.assertTrue(result["ok"])
         self.assertTrue(result.get("staged"))
-        self.assertEqual(1, len(self.staged_items))
-        staged = self.staged_items[0]
+        self.assertEqual(1, len(self.plan_store.list_items()))
+        staged = self.plan_store.list_items()[0]
         self.assertEqual("rollback", staged.get("action"))
         self.assertEqual(str(backup_path), (staged.get("payload") or {}).get("backup_path"))
 

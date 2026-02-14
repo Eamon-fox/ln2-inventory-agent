@@ -67,9 +67,16 @@ def box_to_display(box, layout=None):
     """Convert box number to display label."""
     labels = (layout or {}).get("box_labels")
     if labels and isinstance(labels, list):
-        idx = int(box) - 1
-        if 0 <= idx < len(labels):
-            return str(labels[idx])
+        try:
+            box_num = int(box)
+        except Exception:
+            box_num = None
+        if box_num is not None:
+            numbers = get_box_numbers(layout)
+            if box_num in numbers:
+                idx = numbers.index(box_num)
+                if 0 <= idx < len(labels):
+                    return str(labels[idx])
     return str(box)
 
 
@@ -77,10 +84,11 @@ def display_to_box(display, layout=None):
     """Convert display label to box number."""
     labels = (layout or {}).get("box_labels")
     if labels and isinstance(labels, list):
+        numbers = get_box_numbers(layout)
         display_str = str(display).strip()
         for i, label in enumerate(labels):
-            if str(label) == display_str:
-                return i + 1
+            if str(label) == display_str and i < len(numbers):
+                return numbers[i]
     return int(display)
 
 
@@ -88,13 +96,50 @@ def display_to_box(display, layout=None):
 # Layout helpers
 # ---------------------------------------------------------------------------
 
-def get_box_count(layout=None):
-    """Return number of boxes from layout, falling back to BOX_RANGE."""
+def get_box_numbers(layout=None):
+    """Return active box numbers from layout.
+
+    Backward compatibility:
+    - If ``box_numbers`` is present, it is treated as source of truth.
+    - Otherwise, fall back to contiguous ``1..box_count``.
+    - If ``box_count`` is absent, fall back to configured ``BOX_RANGE``.
+    """
     layout = layout or {}
+
+    raw_numbers = layout.get("box_numbers")
+    if isinstance(raw_numbers, (list, tuple)):
+        seen = set()
+        normalized = []
+        for value in raw_numbers:
+            try:
+                num = int(value)
+            except Exception:
+                continue
+            if num < 1 or num in seen:
+                continue
+            seen.add(num)
+            normalized.append(num)
+        normalized.sort()
+        if normalized:
+            return normalized
+
     bc = layout.get("box_count")
     if bc is not None:
-        return int(bc)
-    return BOX_RANGE[1] - BOX_RANGE[0] + 1
+        try:
+            count = int(bc)
+        except Exception:
+            count = 0
+        if count > 0:
+            return list(range(1, count + 1))
+        return []
+
+    lo, hi = BOX_RANGE
+    return list(range(int(lo), int(hi) + 1))
+
+
+def get_box_count(layout=None):
+    """Return number of active boxes from layout."""
+    return len(get_box_numbers(layout))
 
 
 def get_total_slots(layout=None):

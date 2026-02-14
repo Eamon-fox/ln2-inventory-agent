@@ -428,6 +428,16 @@ class FactoryValidateRoundTripTests(unittest.TestCase):
         item = build_rollback_plan_item(backup_path="/tmp/backup.bak")
         self.assertIsNone(validate_plan_item(item))
 
+    def test_build_rollback_plan_item_keeps_source_event(self):
+        from lib.plan_item_factory import build_rollback_plan_item
+
+        item = build_rollback_plan_item(
+            backup_path="/tmp/backup.bak",
+            source_event={"timestamp": "2026-02-12T09:00:00", "trace_id": "trace-audit-1"},
+        )
+        self.assertEqual("trace-audit-1", (item.get("payload") or {}).get("source_event", {}).get("trace_id"))
+        self.assertIsNone(validate_plan_item(item))
+
     def test_build_record_plan_item_passes_validation(self):
         from lib.plan_item_factory import build_record_plan_item
         for action in ("Takeout", "Thaw", "Discard"):

@@ -401,7 +401,7 @@ def input_style():
     """
 
 
-def cell_occupied_style(color="#22c55e", is_selected=False):
+def cell_occupied_style(color="#22c55e", is_selected=False, font_size=9):
     if is_selected:
         return f"""
             QPushButton {{
@@ -409,7 +409,7 @@ def cell_occupied_style(color="#22c55e", is_selected=False):
                 color: white;
                 border: 2px solid var(--accent);
                 border-radius: var(--radius-xs);
-                font-size: 9px;
+                font-size: {font_size}px;
                 font-weight: 500;
                 padding: 1px;
             }}
@@ -424,7 +424,7 @@ def cell_occupied_style(color="#22c55e", is_selected=False):
                 color: white;
                 border: 1px solid var(--cell-border-default);
                 border-radius: var(--radius-xs);
-                font-size: 9px;
+                font-size: {font_size}px;
                 font-weight: 500;
                 padding: 1px;
             }}
@@ -434,38 +434,38 @@ def cell_occupied_style(color="#22c55e", is_selected=False):
         """
 
 
-def cell_empty_style(is_selected=False):
+def cell_empty_style(is_selected=False, font_size=8):
     if is_selected:
-        return """
-            QPushButton {
+        return f"""
+            QPushButton {{
                 background-color: var(--cell-empty-selected-bg);
                 color: var(--cell-empty-selected-text);
                 border: 2px solid var(--accent);
                 border-radius: var(--radius-xs);
-                font-size: 8px;
+                font-size: {font_size}px;
                 padding: 1px;
-            }
-            QPushButton:hover {
+            }}
+            QPushButton:hover {{
                 border: 2px solid var(--accent);
                 background-color: var(--background-raised);
                 color: var(--text-weak);
-            }
+            }}
         """
     else:
-        return """
-            QPushButton {
+        return f"""
+            QPushButton {{
                 background-color: var(--cell-empty-bg);
                 color: var(--cell-empty-text);
                 border: 1px solid var(--cell-border-default);
                 border-radius: var(--radius-xs);
-                font-size: 8px;
+                font-size: {font_size}px;
                 padding: 1px;
-            }
-            QPushButton:hover {
+            }}
+            QPushButton:hover {{
                 border: 2px solid var(--accent);
                 background-color: var(--background-raised);
                 color: var(--text-weak);
-            }
+            }}
         """
 
 

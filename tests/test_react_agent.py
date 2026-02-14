@@ -111,7 +111,7 @@ class ReactAgentTests(unittest.TestCase):
                 make_data([
                     {
                         "id": 1,
-                        "parent_cell_line": "K562",
+                        "cell_line": "K562",
                         "short_name": "k562-a",
                         "box": 1,
                         "positions": [1],
@@ -212,6 +212,58 @@ class ReactAgentTests(unittest.TestCase):
         self.assertFalse(obs["ok"])
         self.assertEqual("unknown_tool", obs["error_code"])
         self.assertTrue(obs.get("_hint"))
+
+    def test_react_agent_manage_boxes_waits_for_gui_confirmation(self):
+        llm = _SequenceLLM(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_manage_boxes",
+                            "name": "manage_boxes",
+                            "arguments": {"operation": "add", "count": 1},
+                        }
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": "done",
+                    "tool_calls": [],
+                },
+            ]
+        )
+
+        with tempfile.TemporaryDirectory(prefix="ln2_react_manage_boxes_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=3)
+            events = []
+
+            def _on_event(evt):
+                payload = dict(evt or {})
+                events.append(payload)
+                if payload.get("type") == "manage_boxes_confirm":
+                    runner._set_answer(
+                        {
+                            "ok": True,
+                            "result": {"confirmed": True},
+                            "message": "confirmed by user",
+                        }
+                    )
+
+            result = agent.run("add one box", on_event=_on_event)
+
+            self.assertTrue(result["ok"])
+            self.assertEqual("done", result["final"])
+            self.assertTrue(any(e.get("type") == "manage_boxes_confirm" for e in events))
 
     def test_react_agent_includes_conversation_history_in_prompt(self):
         llm = _CapturePromptLLM()

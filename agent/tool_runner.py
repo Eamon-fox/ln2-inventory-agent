@@ -1,5 +1,6 @@
 """Tool dispatcher for agent runtime, built on unified Tool API."""
 
+import os
 import threading
 import uuid
 
@@ -7,6 +8,7 @@ from lib.tool_api import (
     build_actor_context,
     parse_batch_entries,
     tool_add_entry,
+    tool_adjust_box_count,
     tool_batch_thaw,
     tool_collect_timeline,
     tool_edit_entry,
@@ -33,10 +35,10 @@ _WRITE_TOOLS = {"add_entry", "record_thaw", "batch_thaw", "rollback", "edit_entr
 class AgentToolRunner:
     """Executes named tools with normalized input payloads."""
 
-    def __init__(self, yaml_path, session_id=None, plan_sink=None):
+    def __init__(self, yaml_path, session_id=None, plan_store=None):
         self._yaml_path = yaml_path
         self._session_id = session_id
-        self._plan_sink = plan_sink
+        self._plan_store = plan_store
         # Question tool synchronization
         self._answer_event = threading.Event()
         self._pending_answer = None
@@ -185,7 +187,11 @@ class AgentToolRunner:
             "record_thaw",
             "batch_thaw",
             "rollback",
+            "manage_boxes",
             "question",
+            "list_staged",
+            "remove_staged",
+            "clear_staged",
         ]
 
     def tool_specs(self):
@@ -193,10 +199,10 @@ class AgentToolRunner:
         return {
             "query_inventory": {
                 "required": [],
-                "optional": ["box", "position"],
-                "description": "Query inventory records. Pass any user field key as a filter (e.g. parent_cell_line, short_name).",
+                "optional": ["box", "position", "cell_line"],
+                "description": "Query inventory records. Pass any user field key as a filter (e.g. cell_line, short_name).",
                 "aliases": {
-                    "parent_cell_line": ["cell", "cell_line"],
+                    "cell_line": ["cell", "cell_line", "parent_cell_line"],
                     "short_name": ["short"],
                 },
             },
@@ -280,12 +286,13 @@ class AgentToolRunner:
             },
             "add_entry": {
                 "required": ["box", "positions", "frozen_at"],
-                "optional": ["fields", "dry_run"],
+                "optional": ["fields", "cell_line", "dry_run"],
                 "aliases": {
                     "positions": ["position", "slot"],
                     "frozen_at": ["date"],
+                    "cell_line": ["cell", "parent_cell_line"],
                 },
-                "description": "Add a new frozen entry. Pass user fields in the 'fields' dict (e.g. parent_cell_line, short_name).",
+                "description": "Add a new frozen entry. Pass cell_line as a top-level param (value from cell_line_options). Pass other user fields in the 'fields' dict (e.g. short_name).",
                 "notes": "positions accepts list[int] or comma string like '1,2,3'. fields is a dict of user field values.",
             },
             "record_thaw": {
@@ -332,6 +339,39 @@ class AgentToolRunner:
             "rollback": {
                 "required": [],
                 "optional": ["backup_path"],
+                "description": "Rollback inventory YAML to a backup snapshot. Prefer explicit backup_path after audit/timeline checks.",
+                "notes": "If backup selection is ambiguous, ask the user with question tool first, then stage rollback and wait for human Execute confirmation.",
+            },
+            "manage_boxes": {
+                "required": ["operation"],
+                "optional": ["count", "box", "renumber_mode", "dry_run"],
+                "description": "Safely add/remove inventory boxes. Removing a middle box requires choosing keep_gaps or renumber_contiguous.",
+                "params": {
+                    "operation": {
+                        "type": "string",
+                        "enum": ["add", "remove"],
+                        "description": "add = append new box IDs; remove = delete a box ID when empty.",
+                    },
+                    "count": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "How many boxes to add when operation=add.",
+                    },
+                    "box": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Target box ID to remove when operation=remove.",
+                    },
+                    "renumber_mode": {
+                        "type": "string",
+                        "enum": ["keep_gaps", "renumber_contiguous"],
+                        "description": "Required when removing a middle box.",
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "Validate and preview only; do not write YAML.",
+                    },
+                },
             },
             "question": {
                 "required": ["questions"],
@@ -370,6 +410,27 @@ class AgentToolRunner:
                 },
                 "notes": "question tool is NOT a write tool. It blocks the worker thread until user answers. "
                          "Do not call question in parallel with other tools.",
+            },
+            "list_staged": {
+                "required": [],
+                "optional": [],
+                "description": "List all currently staged plan items awaiting human approval.",
+            },
+            "remove_staged": {
+                "required": [],
+                "optional": ["index", "action", "record_id", "position"],
+                "description": "Remove a staged plan item by 0-based index OR by key (action + record_id + position). Provide either index OR the key fields.",
+                "params": {
+                    "index": {"type": "integer", "description": "0-based index of the item to remove."},
+                    "action": {"type": "string", "description": "Action of the item to remove (used with record_id + position)."},
+                    "record_id": {"type": "integer", "description": "Record ID of the item to remove."},
+                    "position": {"type": "integer", "description": "Position of the item to remove."},
+                },
+            },
+            "clear_staged": {
+                "required": [],
+                "optional": [],
+                "description": "Clear all staged plan items.",
             },
         }
 
@@ -450,6 +511,18 @@ class AgentToolRunner:
         if error_code == "position_conflict":
             return "Choose free slots via `list_empty_positions` or `recommend_positions`, then retry."
 
+        if error_code == "box_not_empty":
+            return "Remove all active tubes from that box first, then retry remove operation."
+
+        if error_code in {"renumber_mode_required", "invalid_renumber_mode"}:
+            return "When removing a middle box, choose renumber_mode: keep_gaps or renumber_contiguous."
+
+        if error_code == "min_box_count":
+            return "At least one box must remain; do not remove the last box."
+
+        if error_code == "user_cancelled":
+            return "User cancelled the confirmation dialog."
+
         if error_code == "invalid_move_target":
             return "For move operations, provide a valid `to_position` different from source position."
 
@@ -466,10 +539,16 @@ class AgentToolRunner:
             return "Provide at least one target position or entry before retrying."
 
         if error_code == "no_backups":
-            return "No backups exist yet; provide `backup_path` or create backups before rollback."
+            return (
+                "No backups exist yet; investigate write history first and confirm rollback intent with `question` tool "
+                "before choosing a backup_path."
+            )
 
         if error_code in {"validation_failed", "integrity_validation_failed", "rollback_backup_invalid"}:
-            return "Fix validation errors from response details and retry."
+            return (
+                "Rollback target is invalid for current file state. Re-check backup_path against audit/timeline and "
+                "ask user confirmation with `question` if needed before retrying."
+            )
 
         if error_code == "plan_preflight_failed":
             return (
@@ -569,7 +648,7 @@ class AgentToolRunner:
                         dk = get_display_key(data.get("meta", {}))
                     except Exception:
                         dk = "short_name"
-                    label = rec.get(dk) or rec.get("short_name") or rec.get("parent_cell_line") or "-"
+                    label = rec.get(dk) or rec.get("short_name") or "-"
                     positions = list(rec.get("positions") or [])
                     return box, label, positions
         except Exception:
@@ -579,6 +658,14 @@ class AgentToolRunner:
     @staticmethod
     def _item_desc(item):
         action = str(item.get("action") or "?")
+        if action == "rollback":
+            payload = item.get("payload") or {}
+            backup_path = str(payload.get("backup_path") or "").strip()
+            if backup_path:
+                name = os.path.basename(backup_path)
+                return f"rollback {name} ({backup_path})"
+            return "rollback latest-backup"
+
         label = str(item.get("label") or item.get("record_id") or "-")
         box = item.get("box", "?")
         pos = item.get("position", "?")
@@ -618,7 +705,7 @@ class AgentToolRunner:
                 fields = {}
             # Also pick up common aliases at top level for LLM convenience
             for alias_key, canonical in [
-                ("parent_cell_line", "parent_cell_line"), ("cell", "parent_cell_line"), ("cell_line", "parent_cell_line"),
+                ("cell_line", "cell_line"), ("cell", "cell_line"), ("parent_cell_line", "cell_line"),
                 ("short_name", "short_name"), ("short", "short_name"), ("name", "short_name"),
                 ("note", "note"), ("notes", "note"), ("memo", "note"),
                 ("plasmid_name", "plasmid_name"), ("plasmid", "plasmid_name"),
@@ -904,10 +991,8 @@ class AgentToolRunner:
                 },
             )
 
-        staged = []
-        for item in validated_items:
-            self._plan_sink(item)
-            staged.append(item)
+        staged = list(validated_items)
+        self._plan_store.add(staged)
 
         summary = [self._item_desc(s) for s in staged]
         return {
@@ -927,9 +1012,97 @@ class AgentToolRunner:
         if tool_name == "question":
             return self._run_question_tool(payload)
 
-        # Intercept write operations when plan_sink is set
-        if tool_name in _WRITE_TOOLS and self._plan_sink is not None:
+        # Intercept write operations when plan_store is set
+        if tool_name in _WRITE_TOOLS and self._plan_store is not None:
             return self._stage_to_plan(tool_name, payload, trace_id)
+
+        if tool_name == "manage_boxes":
+            def _call_manage_boxes():
+                op_raw = self._first_value(payload, "operation", "action")
+                if op_raw in (None, ""):
+                    raise ValueError("operation is required")
+
+                op_text = str(op_raw).strip().lower()
+                op_alias = {
+                    "add": "add",
+                    "add_boxes": "add",
+                    "increase": "add",
+                    "remove": "remove",
+                    "remove_box": "remove",
+                    "delete": "remove",
+                    "删除": "remove",
+                    "增加": "add",
+                }
+                op = op_alias.get(op_text)
+                if op not in {"add", "remove"}:
+                    raise ValueError("operation must be add or remove")
+
+                normalized_mode = None
+                mode_raw = self._first_value(
+                    payload,
+                    "renumber_mode",
+                    "remove_mode",
+                    "remove_strategy",
+                )
+                if mode_raw not in (None, ""):
+                    mode_text = str(mode_raw).strip().lower()
+                    mode_alias = {
+                        "keep_gaps": "keep_gaps",
+                        "keep": "keep_gaps",
+                        "gaps": "keep_gaps",
+                        "renumber_contiguous": "renumber_contiguous",
+                        "renumber": "renumber_contiguous",
+                        "compact": "renumber_contiguous",
+                    }
+                    normalized_mode = mode_alias.get(mode_text, mode_text)
+
+                add_count = None
+                target_box = None
+
+                if op == "add":
+                    add_count = self._optional_int(payload, "count", default=1) or 1
+                else:
+                    box_raw = self._first_value(payload, "box", "target_box", "remove_box", "box_id")
+                    if box_raw in (None, ""):
+                        raise ValueError("box is required when operation=remove")
+                    target_box = int(box_raw)
+
+                request = {
+                    "operation": op,
+                    "renumber_mode": normalized_mode,
+                    "count": add_count if op == "add" else None,
+                    "box": target_box if op == "remove" else None,
+                }
+
+                dry_run = self._as_bool(payload.get("dry_run", False), default=False)
+                if dry_run:
+                    call_kwargs = {
+                        "yaml_path": self._yaml_path,
+                        "operation": op,
+                        "dry_run": True,
+                        "actor_context": self._actor_context(trace_id=trace_id),
+                        "source": "agent.react",
+                    }
+                    if normalized_mode is not None:
+                        call_kwargs["renumber_mode"] = normalized_mode
+                    if op == "add":
+                        call_kwargs["count"] = add_count
+                    else:
+                        call_kwargs["box"] = target_box
+                    return tool_adjust_box_count(**call_kwargs)
+
+                return {
+                    "ok": True,
+                    "waiting_for_user_confirmation": True,
+                    "request": request,
+                    "message": "Awaiting user confirmation in GUI.",
+                }
+
+            return self._safe_call(
+                tool_name,
+                _call_manage_boxes,
+                include_expected=True,
+            )
 
         if tool_name == "query_inventory":
             def _call_query():
@@ -943,7 +1116,7 @@ class AgentToolRunner:
                     filters["position"] = pos_val
                 # Map common aliases to canonical field names
                 alias_map = {
-                    "cell": "parent_cell_line", "cell_line": "parent_cell_line", "parent_cell_line": "parent_cell_line",
+                    "cell": "cell_line", "cell_line": "cell_line", "parent_cell_line": "cell_line",
                     "short": "short_name", "short_name": "short_name",
                     "plasmid": "plasmid_name", "plasmid_name": "plasmid_name",
                     "plasmid_id": "plasmid_id",
@@ -1099,7 +1272,7 @@ class AgentToolRunner:
                 if not isinstance(fields, dict):
                     fields = {}
                 for alias_key, canonical in [
-                    ("parent_cell_line", "parent_cell_line"), ("cell", "parent_cell_line"), ("cell_line", "parent_cell_line"),
+                    ("cell_line", "cell_line"), ("cell", "cell_line"), ("parent_cell_line", "cell_line"),
                     ("short_name", "short_name"), ("short", "short_name"), ("name", "short_name"),
                     ("note", "note"), ("notes", "note"), ("memo", "note"),
                     ("plasmid_name", "plasmid_name"), ("plasmid", "plasmid_name"),
@@ -1215,6 +1388,72 @@ class AgentToolRunner:
                     source="agent.react",
                 ),
             )
+
+        # --- Plan staging tools (read/modify staging area, not YAML) ---
+
+        if tool_name == "list_staged":
+            if not self._plan_store:
+                return {"ok": True, "result": {"items": [], "count": 0},
+                        "message": "No plan store available."}
+            items = self._plan_store.list_items()
+            summary = []
+            for i, item in enumerate(items):
+                entry = {
+                    "index": i,
+                    "action": item.get("action"),
+                    "record_id": item.get("record_id"),
+                    "box": item.get("box"),
+                    "position": item.get("position"),
+                    "label": item.get("label"),
+                    "source": item.get("source"),
+                }
+                if item.get("to_position") is not None:
+                    entry["to_position"] = item["to_position"]
+                if item.get("to_box") is not None:
+                    entry["to_box"] = item["to_box"]
+                summary.append(entry)
+            return {"ok": True, "result": {"items": summary, "count": len(summary)}}
+
+        if tool_name == "remove_staged":
+            if not self._plan_store:
+                return {"ok": False, "error_code": "no_plan_store",
+                        "message": "Plan store not available."}
+            idx = self._optional_int(payload, "index")
+            if idx is not None:
+                removed = self._plan_store.remove_by_index(idx)
+                if removed is None:
+                    max_idx = self._plan_store.count() - 1
+                    return self._with_hint(tool_name, {
+                        "ok": False, "error_code": "invalid_index",
+                        "message": f"Index {idx} out of range (0..{max_idx}).",
+                    })
+                return {"ok": True,
+                        "message": f"Removed item at index {idx}: {self._item_desc(removed)}",
+                        "result": {"removed": 1}}
+            action = payload.get("action")
+            rid = self._optional_int(payload, "record_id")
+            pos = self._optional_int(payload, "position")
+            if action is None and rid is None and pos is None:
+                return self._with_hint(tool_name, {
+                    "ok": False, "error_code": "invalid_tool_input",
+                    "message": "Provide either 'index' or 'action'+'record_id'+'position'.",
+                })
+            count = self._plan_store.remove_by_key(action, rid, pos)
+            if count == 0:
+                return self._with_hint(tool_name, {
+                    "ok": False, "error_code": "not_found",
+                    "message": "No matching staged item found.",
+                })
+            return {"ok": True, "message": f"Removed {count} matching item(s).",
+                    "result": {"removed": count}}
+
+        if tool_name == "clear_staged":
+            if not self._plan_store:
+                return {"ok": False, "error_code": "no_plan_store",
+                        "message": "Plan store not available."}
+            cleared = self._plan_store.clear()
+            return {"ok": True, "message": f"Cleared {len(cleared)} staged item(s).",
+                    "result": {"cleared_count": len(cleared)}}
 
         return self._with_hint(
             tool_name,

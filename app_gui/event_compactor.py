@@ -103,6 +103,7 @@ def compact_operation_event_for_context(event: Mapping[str, Any]) -> Dict[str, A
         "plan_restored": "User undid the last execution and restored the previous plan. The inventory was rolled back.",
         "plan_executed": "Plan operations were executed against the inventory. Check stats for success/failure details.",
         "plan_execute_blocked": "Plan execution was blocked due to validation errors. The inventory is unchanged.",
+        "box_layout_adjusted": "User adjusted the active box set. This directly changed inventory box metadata.",
     }
     hint = _EVENT_HINTS.get(event_type)
     if hint:

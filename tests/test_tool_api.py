@@ -1,3 +1,4 @@
+import csv
 import json
 import sys
 import tempfile
@@ -14,9 +15,11 @@ if str(ROOT) not in sys.path:
 from lib.tool_api import (
     build_actor_context,
     tool_add_entry,
+    tool_adjust_box_count,
     tool_batch_thaw,
     tool_collect_timeline,
     tool_edit_entry,
+    tool_export_inventory_csv,
     tool_record_thaw,
     tool_rollback,
 )
@@ -338,6 +341,32 @@ class ToolApiTests(unittest.TestCase):
             self.assertFalse(result["ok"])
             self.assertEqual("validation_failed", result["error_code"])
 
+    def test_tool_batch_thaw_move_rejects_duplicate_targets_in_batch(self):
+        """Regression: multiple moves to same target position should be rejected."""
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_move_batch_dup_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        make_record(8, box=3, positions=[3]),
+                        make_record(7, box=3, positions=[2]),
+                        make_record(6, box=3, positions=[1]),
+                    ]
+                ),
+                path=str(yaml_path),
+            )
+
+            result = tool_batch_thaw(
+                yaml_path=str(yaml_path),
+                entries="8:3->4,7:2->3,6:1->3",
+                date_str="2026-02-14",
+                action="移动",
+            )
+
+            self.assertFalse(result["ok"])
+            self.assertEqual("validation_failed", result["error_code"])
+            self.assertTrue(any("已被本批次前序移动占用" in err for err in result.get("errors", [])))
+
     def test_tool_add_entry_rejects_duplicate_ids_in_inventory(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_dup_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
@@ -502,6 +531,46 @@ class ToolApiTests(unittest.TestCase):
             self.assertEqual("failed", last.get("status"))
             self.assertEqual("rollback_backup_invalid", (last.get("error") or {}).get("error_code"))
 
+    def test_tool_rollback_writes_requested_from_event(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_rollback_event_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[9])]),
+                path=str(yaml_path),
+                audit_meta={"action": "record_thaw", "source": "tests"},
+            )
+
+            source_event = {
+                "timestamp": "2026-02-12T09:00:00",
+                "action": "record_thaw",
+                "trace_id": "trace-audit-1",
+                "session_id": "session-audit-1",
+            }
+            result = tool_rollback(
+                yaml_path=str(yaml_path),
+                source_event=source_event,
+            )
+
+            self.assertTrue(result["ok"])
+
+            rows = read_audit_rows(temp_dir)
+            self.assertGreaterEqual(len(rows), 3)
+            last = rows[-1]
+            self.assertEqual("rollback", last["action"])
+            self.assertEqual("success", last.get("status"))
+
+            details = last.get("details") or {}
+            requested_from_event = details.get("requested_from_event") or {}
+            self.assertEqual("2026-02-12T09:00:00", requested_from_event.get("timestamp"))
+            self.assertEqual("record_thaw", requested_from_event.get("action"))
+            self.assertEqual("trace-audit-1", requested_from_event.get("trace_id"))
+            self.assertEqual("session-audit-1", requested_from_event.get("session_id"))
+
     def test_tool_query_inventory_filters(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_query_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
@@ -530,6 +599,78 @@ class ToolApiTests(unittest.TestCase):
             records = response["result"]["records"]
             self.assertEqual(1, len(records))
             self.assertEqual(2, records[0]["id"])
+
+    def test_tool_export_inventory_csv_writes_full_inventory(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_export_csv_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            output_path = Path(temp_dir) / "full_inventory.csv"
+            data = {
+                "meta": {
+                    "box_layout": {"rows": 9, "cols": 9},
+                    "custom_fields": [
+                        {"key": "passage_number", "label": "Passage #", "type": "int"},
+                    ],
+                },
+                "inventory": [
+                    {
+                        "id": 2,
+                        "cell_line": "HeLa",
+                        "short_name": "hela-a",
+                        "box": 2,
+                        "positions": [9],
+                        "frozen_at": "2026-02-10",
+                        "passage_number": 7,
+                    },
+                    {
+                        "id": 1,
+                        "short_name": "k562-a",
+                        "box": 1,
+                        "positions": [2],
+                        "frozen_at": "2026-02-09",
+                        "note": "no cell line",
+                    },
+                ],
+            }
+            write_yaml(data, path=str(yaml_path), audit_meta={"action": "seed", "source": "tests"})
+
+            response = tool_export_inventory_csv(
+                yaml_path=str(yaml_path),
+                output_path=str(output_path),
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertTrue(output_path.exists())
+            self.assertEqual(2, response["result"]["count"])
+            self.assertIn("cell_line", response["result"]["columns"])
+            self.assertIn("passage_number", response["result"]["columns"])
+
+            with output_path.open("r", encoding="utf-8", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+
+            self.assertEqual(2, len(rows))
+            # Sorted by box/position/id, so id=1 comes first.
+            self.assertEqual("1", rows[0]["id"])
+            self.assertEqual("", rows[0]["cell_line"])
+            self.assertEqual("2", rows[1]["id"])
+            self.assertEqual("HeLa", rows[1]["cell_line"])
+            self.assertEqual("7", rows[1]["passage_number"])
+
+    def test_tool_export_inventory_csv_requires_output_path(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_export_csv_path_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            response = tool_export_inventory_csv(
+                yaml_path=str(yaml_path),
+                output_path="",
+            )
+
+            self.assertFalse(response["ok"])
+            self.assertEqual("invalid_output_path", response["error_code"])
 
     def test_tool_search_records_keywords(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_search_") as temp_dir:
@@ -646,7 +787,7 @@ class TestToolEditEntry(unittest.TestCase):
             result = tool_edit_entry(
                 yaml_path=str(yaml_path),
                 record_id=1,
-                fields={"short_name": "new-name", "parent_cell_line": "HEK293"},
+                fields={"short_name": "new-name"},
             )
             self.assertTrue(result["ok"])
             self.assertEqual("rec-1", result["result"]["before"]["short_name"])
@@ -655,7 +796,6 @@ class TestToolEditEntry(unittest.TestCase):
             data = load_yaml(str(yaml_path))
             rec = data["inventory"][0]
             self.assertEqual("new-name", rec["short_name"])
-            self.assertEqual("HEK293", rec["parent_cell_line"])
 
     def test_edit_entry_rejects_forbidden_fields(self):
         with tempfile.TemporaryDirectory(prefix="ln2_edit_") as temp_dir:
@@ -930,6 +1070,94 @@ class TestValidatorsWithLayout(unittest.TestCase):
         layout = {"rows": 9, "cols": 9, "indexing": "alphanumeric"}
         result = parse_positions("A1,B3", layout)
         self.assertEqual([1, 12], result)
+
+
+class TestAdjustBoxCount(unittest.TestCase):
+    def _seed(self, records, layout):
+        d = tempfile.mkdtemp()
+        p = str(Path(d) / "inv.yaml")
+        write_raw_yaml(p, {"meta": {"box_layout": dict(layout)}, "inventory": list(records)})
+        return p, d
+
+    def test_add_boxes_updates_box_numbers_and_count(self):
+        p, _ = self._seed([], {"rows": 9, "cols": 9, "box_count": 5})
+        result = tool_adjust_box_count(
+            p,
+            operation="add",
+            count=2,
+            auto_backup=False,
+        )
+        self.assertTrue(result["ok"], result.get("message"))
+
+        data = load_yaml(p)
+        layout = data["meta"]["box_layout"]
+        self.assertEqual([1, 2, 3, 4, 5, 6, 7], layout.get("box_numbers"))
+        self.assertEqual(7, layout.get("box_count"))
+        self.assertEqual(9, layout.get("rows"))
+        self.assertEqual(9, layout.get("cols"))
+
+    def test_remove_middle_box_requires_mode(self):
+        p, _ = self._seed([], {"rows": 9, "cols": 9, "box_count": 5})
+        result = tool_adjust_box_count(
+            p,
+            operation="remove",
+            box=3,
+            auto_backup=False,
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual("renumber_mode_required", result.get("error_code"))
+
+    def test_remove_middle_box_keep_gaps(self):
+        p, _ = self._seed([], {"rows": 9, "cols": 9, "box_count": 5})
+        result = tool_adjust_box_count(
+            p,
+            operation="remove",
+            box=3,
+            renumber_mode="keep_gaps",
+            auto_backup=False,
+        )
+        self.assertTrue(result["ok"], result.get("message"))
+
+        data = load_yaml(p)
+        layout = data["meta"]["box_layout"]
+        self.assertEqual([1, 2, 4, 5], layout.get("box_numbers"))
+        self.assertEqual(4, layout.get("box_count"))
+
+        empty = tool_list_empty_positions(p)
+        self.assertTrue(empty["ok"])
+        self.assertEqual(["1", "2", "4", "5"], [b["box"] for b in empty["result"]["boxes"]])
+
+    def test_remove_non_empty_box_blocked(self):
+        records = [make_record(1, box=2, positions=[1])]
+        p, _ = self._seed(records, {"rows": 9, "cols": 9, "box_count": 5})
+        result = tool_adjust_box_count(
+            p,
+            operation="remove",
+            box=2,
+            renumber_mode="keep_gaps",
+            auto_backup=False,
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual("box_not_empty", result.get("error_code"))
+
+    def test_record_thaw_cross_box_respects_box_numbers(self):
+        records = [make_record(1, box=1, positions=[1])]
+        p, _ = self._seed(
+            records,
+            {"rows": 9, "cols": 9, "box_count": 4, "box_numbers": [1, 2, 4, 5]},
+        )
+        result = tool_record_thaw(
+            p,
+            record_id=1,
+            position=1,
+            action="移动",
+            to_position=2,
+            to_box=3,
+            date_str="2025-06-01",
+            auto_backup=False,
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual("invalid_box", result.get("error_code"))
 
 
 if __name__ == "__main__":

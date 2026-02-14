@@ -3,15 +3,16 @@
 import sys
 
 STRUCTURAL_FIELD_KEYS = frozenset({
-    "id", "box", "positions", "frozen_at", "thaw_events",
+    "id", "box", "positions", "frozen_at", "thaw_events", "cell_line",
 })
 
 _VALID_TYPES = {"str", "int", "float", "date"}
 
 DEFAULT_PRESET_FIELDS = [
-    {"key": "parent_cell_line", "label": "Parent Cell Line", "type": "str", "required": True},
     {"key": "short_name", "label": "Short Name", "type": "str", "required": True},
 ]
+
+DEFAULT_CELL_LINE_OPTIONS = ["K562", "HeLa", "NCCIT", "HEK293T"]
 
 
 def parse_custom_fields(meta):
@@ -90,6 +91,25 @@ def get_display_key(meta):
         return dk
     fields = get_effective_fields(meta)
     return fields[0]["key"] if fields else "id"
+
+
+def get_color_key(meta):
+    """Return the field key used for grid cell coloring and filter grouping.
+
+    Uses ``meta.color_key`` if set, otherwise ``"cell_line"``.
+    """
+    ck = (meta or {}).get("color_key")
+    if ck and isinstance(ck, str):
+        return ck
+    return "cell_line"
+
+
+def get_cell_line_options(meta):
+    """Return the list of predefined cell_line values from meta."""
+    opts = (meta or {}).get("cell_line_options")
+    if isinstance(opts, list):
+        return [str(o) for o in opts if o]
+    return list(DEFAULT_CELL_LINE_OPTIONS)
 
 
 def get_required_field_keys(meta):

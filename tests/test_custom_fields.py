@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from lib.custom_fields import STRUCTURAL_FIELD_KEYS, coerce_value, parse_custom_fields, get_effective_fields, get_display_key, get_required_field_keys, DEFAULT_PRESET_FIELDS
+from lib.custom_fields import STRUCTURAL_FIELD_KEYS, coerce_value, parse_custom_fields, get_effective_fields, get_display_key, get_required_field_keys, DEFAULT_PRESET_FIELDS, get_color_key, get_cell_line_options, DEFAULT_CELL_LINE_OPTIONS
 from lib.tool_api import (
     tool_add_entry,
     tool_edit_entry,
@@ -145,7 +145,7 @@ class TestParseCustomFields(unittest.TestCase):
                          [f["key"] for f in result])
 
     def test_all_structural_keys_in_blacklist(self):
-        expected = {"id", "box", "positions", "frozen_at", "thaw_events"}
+        expected = {"id", "box", "positions", "frozen_at", "thaw_events", "cell_line"}
         self.assertEqual(expected, STRUCTURAL_FIELD_KEYS)
 
 
@@ -449,7 +449,6 @@ class TestGetEditableFields(unittest.TestCase):
             result = _get_editable_fields(str(yaml_path))
             # Should include frozen_at + DEFAULT_PRESET_FIELDS keys
             self.assertIn("frozen_at", result)
-            self.assertIn("parent_cell_line", result)
             self.assertIn("short_name", result)
 
     def test_custom_fields_extend_editable_set(self):
@@ -480,7 +479,7 @@ class TestGetEditableFields(unittest.TestCase):
 
         result = _get_editable_fields("/nonexistent/path.yaml")
         self.assertEqual(_EDITABLE_FIELDS, result)
-        self.assertEqual({"frozen_at"}, result)
+        self.assertEqual({"frozen_at", "cell_line"}, result)
 
 
 # ===========================================================================
@@ -513,6 +512,207 @@ class TestQueryCustomFieldColumns(unittest.TestCase):
             records = result["result"]["records"]
             self.assertEqual(1, len(records))
             self.assertEqual(5, records[0]["passage_number"])
+
+
+# ===========================================================================
+# Unit tests: get_color_key
+# ===========================================================================
+
+class TestGetColorKey(unittest.TestCase):
+    """Unit tests for get_color_key()."""
+
+    def test_default_returns_cell_line(self):
+        self.assertEqual("cell_line", get_color_key(None))
+        self.assertEqual("cell_line", get_color_key({}))
+
+    def test_meta_color_key_overrides_default(self):
+        self.assertEqual("short_name", get_color_key({"color_key": "short_name"}))
+
+    def test_empty_string_falls_back_to_default(self):
+        self.assertEqual("cell_line", get_color_key({"color_key": ""}))
+
+    def test_non_string_falls_back_to_default(self):
+        self.assertEqual("cell_line", get_color_key({"color_key": 123}))
+
+
+# ===========================================================================
+# Unit tests: get_cell_line_options
+# ===========================================================================
+
+class TestGetCellLineOptions(unittest.TestCase):
+    """Unit tests for get_cell_line_options()."""
+
+    def test_default_returns_preset_options(self):
+        result = get_cell_line_options(None)
+        self.assertEqual(DEFAULT_CELL_LINE_OPTIONS, result)
+
+    def test_meta_overrides_defaults(self):
+        meta = {"cell_line_options": ["A549", "MCF7"]}
+        result = get_cell_line_options(meta)
+        self.assertEqual(["A549", "MCF7"], result)
+
+    def test_empty_list_returns_defaults(self):
+        # Empty list is still a list, so it returns empty
+        meta = {"cell_line_options": []}
+        result = get_cell_line_options(meta)
+        self.assertEqual([], result)
+
+    def test_non_list_returns_defaults(self):
+        meta = {"cell_line_options": "not a list"}
+        result = get_cell_line_options(meta)
+        self.assertEqual(DEFAULT_CELL_LINE_OPTIONS, result)
+
+    def test_filters_empty_values(self):
+        meta = {"cell_line_options": ["K562", "", None, "HeLa"]}
+        result = get_cell_line_options(meta)
+        self.assertEqual(["K562", "HeLa"], result)
+
+
+# ===========================================================================
+# Unit tests: cell_line in STRUCTURAL_FIELD_KEYS
+# ===========================================================================
+
+class TestCellLineStructural(unittest.TestCase):
+    """Verify cell_line is a structural field."""
+
+    def test_cell_line_in_structural_keys(self):
+        self.assertIn("cell_line", STRUCTURAL_FIELD_KEYS)
+
+    def test_cell_line_rejected_as_custom_field(self):
+        """cell_line cannot be defined as a custom field."""
+        raw = [{"key": "cell_line", "label": "Cell", "type": "str"}]
+        result = parse_custom_fields({"custom_fields": raw})
+        self.assertEqual([], result)
+
+
+# ===========================================================================
+# Integration: cell_line extraction in tool_add_entry
+# ===========================================================================
+
+class TestCellLineAddEntry(unittest.TestCase):
+    """Integration: cell_line is extracted from fields and stored at record top level."""
+
+    def test_cell_line_extracted_to_top_level(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_cl_add_") as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            result = tool_add_entry(
+                yaml_path=str(yaml_path),
+                box=1,
+                positions=[2],
+                frozen_at="2026-02-10",
+                fields={"cell_line": "K562", "short_name": "clone-cl"},
+                source="test_cell_line",
+            )
+
+            self.assertTrue(result["ok"])
+            data = load_yaml(str(yaml_path))
+            new_rec = data["inventory"][-1]
+            # cell_line should be at record top level, not inside fields
+            self.assertEqual("K562", new_rec["cell_line"])
+            # cell_line should NOT remain as a user field key
+            # (it's a structural field, stored at top level)
+            self.assertNotIn("cell_line", {k for k in new_rec if k not in STRUCTURAL_FIELD_KEYS and k not in ("id", "box", "positions", "frozen_at", "thaw_events", "cell_line", "short_name")})
+
+    def test_add_without_cell_line_stores_empty(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_cl_add_empty_") as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            result = tool_add_entry(
+                yaml_path=str(yaml_path),
+                box=1,
+                positions=[2],
+                frozen_at="2026-02-10",
+                fields={"short_name": "no-cl"},
+                source="test_cell_line",
+            )
+
+            self.assertTrue(result["ok"])
+            data = load_yaml(str(yaml_path))
+            new_rec = data["inventory"][-1]
+            # cell_line should exist at top level with empty string
+            self.assertIn("cell_line", new_rec)
+            self.assertEqual("", new_rec["cell_line"])
+
+
+# ===========================================================================
+# Integration: cell_line in query filters
+# ===========================================================================
+
+class TestCellLineQuery(unittest.TestCase):
+    """Integration: tool_query_inventory filters by cell_line."""
+
+    def test_query_by_cell_line(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_cl_query_") as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([
+                    {**make_record(1, box=1, positions=[1]), "cell_line": "K562"},
+                    {**make_record(2, box=1, positions=[2]), "cell_line": "HeLa"},
+                ]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            result = tool_query_inventory(str(yaml_path), cell_line="K562")
+            self.assertTrue(result["ok"])
+            self.assertEqual(1, result["result"]["count"])
+            self.assertEqual(1, result["result"]["records"][0]["id"])
+
+    def test_query_cell_line_case_insensitive(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_cl_query_ci_") as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([
+                    {**make_record(1, box=1, positions=[1]), "cell_line": "K562"},
+                ]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            result = tool_query_inventory(str(yaml_path), cell_line="k562")
+            self.assertTrue(result["ok"])
+            self.assertEqual(1, result["result"]["count"])
+
+
+# ===========================================================================
+# Integration: cell_line editable via tool_edit_entry
+# ===========================================================================
+
+class TestCellLineEdit(unittest.TestCase):
+    """Integration: cell_line can be edited via tool_edit_entry."""
+
+    def test_edit_cell_line(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_cl_edit_") as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([
+                    {**make_record(1, box=1, positions=[1]), "cell_line": "K562"},
+                ]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            result = tool_edit_entry(
+                yaml_path=str(yaml_path),
+                record_id=1,
+                fields={"cell_line": "HeLa"},
+                source="test_edit_cl",
+            )
+
+            self.assertTrue(result["ok"])
+            data = load_yaml(str(yaml_path))
+            self.assertEqual("HeLa", data["inventory"][0]["cell_line"])
 
 
 if __name__ == "__main__":

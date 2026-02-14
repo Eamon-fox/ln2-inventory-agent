@@ -3,7 +3,12 @@
 import os
 from pathlib import Path
 
-from agent.llm_client import DeepSeekLLMClient
+from agent.llm_client import (
+    DEFAULT_PROVIDER,
+    PROVIDER_DEFAULTS,
+    DeepSeekLLMClient,
+    ZhipuLLMClient,
+)
 from agent.react_agent import ReactAgent
 from agent.tool_runner import AgentToolRunner
 from app_gui.gui_config import DEFAULT_CONFIG_FILE, DEFAULT_MAX_STEPS
@@ -11,9 +16,11 @@ from lib.tool_api import (
     build_actor_context,
     parse_batch_entries,
     tool_add_entry,
+    tool_adjust_box_count,
     tool_batch_thaw,
     tool_collect_timeline,
     tool_edit_entry,
+    tool_export_inventory_csv,
     tool_generate_stats,
     tool_list_empty_positions,
     tool_list_backups,
@@ -23,16 +30,14 @@ from lib.tool_api import (
 )
 
 
-def _api_key_setup_hint():
-    auth_file = os.environ.get("OPENCODE_AUTH_FILE") or str(
-        Path.home() / ".local" / "share" / "opencode" / "auth.json"
-    )
+def _api_key_setup_hint(provider=None):
+    provider = provider or DEFAULT_PROVIDER
+    cfg = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS[DEFAULT_PROVIDER])
     return (
-        "DeepSeek API key is missing. Configure one of the following before running AI Copilot:\n"
-        "1) Environment variable: DEEPSEEK_API_KEY\n"
-        f"2) Auth file: {auth_file} (provider key: deepseek)\n"
-        "Tip: GUI advanced options are under 'Show Advanced'.\n"
-        f"GUI settings file: {DEFAULT_CONFIG_FILE}"
+        f"{cfg['display_name']} API key is missing.\n"
+        f"Set environment variable: {cfg['env_key']}\n\n"
+        "Windows: System Properties > Environment Variables\n"
+        "macOS/Linux: Add to ~/.bashrc or ~/.zshrc"
     )
 
 
@@ -63,6 +68,12 @@ class GuiToolBridge:
 
     def list_empty_positions(self, yaml_path, box=None):
         return tool_list_empty_positions(yaml_path=yaml_path, box=box)
+
+    def export_inventory_csv(self, yaml_path, output_path):
+        return tool_export_inventory_csv(
+            yaml_path=yaml_path,
+            output_path=output_path,
+        )
 
     def generate_stats(self, yaml_path):
         return tool_generate_stats(yaml_path=yaml_path)
@@ -117,12 +128,21 @@ class GuiToolBridge:
         entries = parse_batch_entries(entries_text)
         return self.batch_thaw(yaml_path=yaml_path, entries=entries, **payload)
 
-    def rollback(self, yaml_path, backup_path=None):
+    def rollback(self, yaml_path, backup_path=None, source_event=None):
         return tool_rollback(
             yaml_path=yaml_path,
             backup_path=backup_path,
+            source_event=source_event,
             actor_context=self._ctx(),
             source="app_gui",
+        )
+
+    def adjust_box_count(self, yaml_path, **payload):
+        return tool_adjust_box_count(
+            yaml_path=yaml_path,
+            actor_context=self._ctx(),
+            source="app_gui",
+            **payload,
         )
 
     def run_agent_query(
@@ -133,10 +153,11 @@ class GuiToolBridge:
         max_steps=DEFAULT_MAX_STEPS,
         history=None,
         on_event=None,
-        plan_sink=None,
+        plan_store=None,
         thinking_enabled=True,
         custom_prompt="",
         _expose_runner=None,
+        provider=None,
     ):
         prompt = str(query or "").strip()
         if not prompt:
@@ -164,15 +185,22 @@ class GuiToolBridge:
                 "result": None,
             }
 
-        chosen_model = (model or "").strip() or os.environ.get("DEEPSEEK_MODEL") or "deepseek-chat"
+        provider = (provider or "").strip().lower() or DEFAULT_PROVIDER
+        if provider not in PROVIDER_DEFAULTS:
+            provider = DEFAULT_PROVIDER
+        provider_cfg = PROVIDER_DEFAULTS[provider]
         use_thinking = bool(thinking_enabled)
+        chosen_model = (model or "").strip() or os.environ.get(f"{provider.upper()}_MODEL") or provider_cfg["model"]
 
         try:
-            llm = DeepSeekLLMClient(model=chosen_model, thinking_enabled=use_thinking)
+            if provider == "zhipu":
+                llm = ZhipuLLMClient(model=chosen_model, thinking_enabled=use_thinking)
+            else:
+                llm = DeepSeekLLMClient(model=chosen_model, thinking_enabled=use_thinking)
             runner = AgentToolRunner(
                 yaml_path=yaml_path,
                 session_id=self._session_id,
-                plan_sink=plan_sink,
+                plan_store=plan_store,
             )
             if callable(_expose_runner):
                 _expose_runner(runner)
@@ -180,11 +208,11 @@ class GuiToolBridge:
             result = agent.run(prompt, conversation_history=history, on_event=on_event)
         except RuntimeError as exc:
             message = str(exc)
-            if "DEEPSEEK_API_KEY is required" in message:
+            if "API_KEY is required" in message:
                 return {
                     "ok": False,
                     "error_code": "api_key_required",
-                    "message": _api_key_setup_hint(),
+                    "message": _api_key_setup_hint(provider),
                     "result": None,
                 }
             return {
@@ -220,6 +248,6 @@ class GuiToolBridge:
         return {
             "ok": bool(result.get("ok")),
             "result": result,
-            "mode": "deepseek",
+            "mode": provider,
             "model": chosen_model,
         }

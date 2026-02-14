@@ -5,7 +5,12 @@ from collections import defaultdict
 from datetime import datetime
 from .config import BOX_RANGE, POSITION_RANGE, VALID_ACTIONS
 from .thaw_parser import normalize_action
-from .position_fmt import get_box_count, get_total_slots, get_position_range, display_to_pos, _indexing
+from .position_fmt import (
+    get_box_numbers,
+    get_position_range,
+    display_to_pos,
+    _indexing,
+)
 
 
 def validate_date(date_str):
@@ -71,9 +76,33 @@ def validate_box(box, layout=None):
     Returns:
         bool: True if valid, False otherwise
     """
+    try:
+        box_num = int(box)
+    except Exception:
+        return False
+
     if layout is not None:
-        return 1 <= box <= get_box_count(layout)
-    return BOX_RANGE[0] <= box <= BOX_RANGE[1]
+        return box_num in set(get_box_numbers(layout))
+    return BOX_RANGE[0] <= box_num <= BOX_RANGE[1]
+
+
+def _format_box_constraint(layout=None):
+    """Format allowed box IDs for error messages."""
+    if layout is not None:
+        boxes = list(get_box_numbers(layout))
+    else:
+        boxes = list(range(BOX_RANGE[0], BOX_RANGE[1] + 1))
+
+    if not boxes:
+        return "N/A"
+    if len(boxes) == 1:
+        return str(boxes[0])
+
+    is_contiguous = all(boxes[i] + 1 == boxes[i + 1] for i in range(len(boxes) - 1))
+    if is_contiguous:
+        return f"{boxes[0]}-{boxes[-1]}"
+
+    return ",".join(str(b) for b in boxes)
 
 
 def validate_position(pos, layout=None):
@@ -204,7 +233,7 @@ def validate_record(rec, idx=None, layout=None, meta=None):
     warnings = []
     rec_id = _record_label(rec, idx)
 
-    box_count = get_box_count(layout) if layout else BOX_RANGE[1]
+    box_rule = _format_box_constraint(layout)
     pos_lo, pos_hi = get_position_range(layout) if layout else (POSITION_RANGE[0], POSITION_RANGE[1])
 
     # Structural required fields + user-defined required fields
@@ -223,7 +252,7 @@ def validate_record(rec, idx=None, layout=None, meta=None):
     if not isinstance(box, int):
         errors.append(f"{rec_id}: 'box' 必须是整数")
     elif not validate_box(box, layout):
-        errors.append(f"{rec_id}: 'box' 超出范围 (1-{box_count})")
+        errors.append(f"{rec_id}: 'box' 超出范围 ({box_rule})")
 
     # Validate required user fields are non-empty strings
     for field in sorted(user_required):

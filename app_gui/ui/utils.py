@@ -33,15 +33,31 @@ def positions_to_text(positions):
     return ", ".join(str(p) for p in sorted(positions))
 
 
-def cell_color(display_value):
-    palette = {
-        "NCCIT": "#4a90d9",
-        "K562": "#e67e22",
-        "HeLa": "#27ae60",
-        "HEK293T": "#8e44ad",
-        "NCCIT Des-MCP-APEX2": "#2c3e50",
-    }
-    return palette.get(display_value, "#7f8c8d")
+_COLOR_CYCLE = [
+    "#4a90d9", "#e67e22", "#27ae60", "#8e44ad", "#2c3e50",
+    "#e74c3c", "#16a085", "#d35400", "#2980b9", "#c0392b",
+    "#1abc9c", "#f39c12", "#9b59b6", "#34495e", "#7f8c8d",
+]
+
+_dynamic_palette = {}
+
+
+def build_color_palette(options):
+    """Build a color palette mapping from a list of option strings."""
+    global _dynamic_palette
+    _dynamic_palette = {}
+    for i, opt in enumerate(options):
+        _dynamic_palette[opt] = _COLOR_CYCLE[i % len(_COLOR_CYCLE)]
+
+
+def cell_color(value):
+    if not value:
+        return "#7f8c8d"
+    if _dynamic_palette:
+        return _dynamic_palette.get(value, "#7f8c8d")
+    # Fallback: hash-based color from cycle
+    idx = hash(value) % len(_COLOR_CYCLE)
+    return _COLOR_CYCLE[idx]
 
 def compact_json(value, max_chars=200):
     try:

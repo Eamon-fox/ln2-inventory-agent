@@ -25,6 +25,14 @@ Rules:
 8) Before asking user for missing details, first call inventory tools (e.g., query/search/list-empty) to understand current warehouse state and infer likely targets.
 9) IMPORTANT: After staging operations (e.g., via record_thaw, batch_thaw, add_entry), do NOT try to execute them. Only stage the operations and tell the user "已暂存，请人工确认执行" (staged, please confirm manually). Only the human user can execute staged operations.
 10) You have a `question` tool to ask the user clarifying questions. Use it ONLY when you cannot determine the answer from inventory data. Always try query/search tools first before asking the user. Call `question` alone — never in parallel with other tools.
+11) You do NOT have permission to add, remove, or rename inventory fields. Field management (custom fields, display key, required settings) can only be done by the user through Settings > Manage Fields. If the user asks you to modify field definitions, tell them to go to Settings and remind them to be careful with data safety when deleting fields.
+12) You can inspect and manage the staging area:
+    - `list_staged`: see what's currently queued for human approval
+    - `remove_staged`: remove a specific item by index or key
+    - `clear_staged`: clear all staged items
+    Use these to verify staging results or correct mistakes before the user executes.
+13) To add/remove LN2 boxes, use `manage_boxes`. This tool requires a GUI confirmation step by the human user before execution.
+14) Rollback is high impact. Before staging rollback, investigate context using inventory/audit/timeline tools. If backup choice is ambiguous, ask the user via `question` tool and then stage only the confirmed rollback target.
 """
 
 
@@ -268,6 +276,51 @@ class ReactAgent:
                     },
                     "message": "User answered: " + "; ".join(formatted),
                 }
+
+        if (
+            action == "manage_boxes"
+            and isinstance(observation, dict)
+            and observation.get("waiting_for_user_confirmation")
+        ):
+            runner = self._tools
+            runner._answer_event.clear()
+            runner._pending_answer = None
+            runner._answer_cancelled = False
+
+            self._emit_event(
+                getattr(self, "_on_event", None),
+                {
+                    "event": "manage_boxes_confirm",
+                    "type": "manage_boxes_confirm",
+                    "trace_id": trace_id,
+                    "tool_call_id": tool_call_id,
+                    "request": observation.get("request") or {},
+                },
+            )
+
+            answered = runner._answer_event.wait(timeout=300)
+            if not answered:
+                observation = {
+                    "ok": False,
+                    "error_code": "manage_boxes_timeout",
+                    "message": "User did not confirm box adjustment within timeout.",
+                }
+            elif runner._answer_cancelled:
+                observation = {
+                    "ok": False,
+                    "error_code": "user_cancelled",
+                    "message": "User cancelled the box adjustment.",
+                }
+            else:
+                result_payload = runner._pending_answer
+                if isinstance(result_payload, dict):
+                    observation = result_payload
+                else:
+                    observation = {
+                        "ok": False,
+                        "error_code": "invalid_confirmation_result",
+                        "message": "Invalid confirmation result payload.",
+                    }
 
         return {
             "action": action,

@@ -5,10 +5,12 @@ from PySide6.QtGui import QDrag, QDropEvent, QDragEnterEvent, QDragMoveEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QPushButton, QLineEdit, QComboBox, QCheckBox, QScrollArea,
-    QSizePolicy, QGroupBox, QMenu
+    QSizePolicy, QGroupBox, QMenu, QStackedWidget,
+    QTableWidget, QTableWidgetItem, QHeaderView
 )
-from app_gui.ui.utils import cell_color
+from app_gui.ui.utils import cell_color, build_color_palette
 from lib.position_fmt import pos_to_display, box_to_display, get_box_count
+from lib.csv_export import build_export_rows
 from app_gui.ui.theme import (
     cell_occupied_style, 
     cell_empty_style,
@@ -116,9 +118,15 @@ class OverviewPanel(QWidget):
         self.overview_hover_key = None
         self.overview_records_by_id = {}
         self._plan_items = []
+        self._current_records = []
+        self._current_font_sizes = (9, 8)
         self._plan_simulation = None
         self._hover_exec_preview_active = False
         self._status_before_hover = None
+        self._overview_view_mode = "grid"
+        self._table_rows = []
+        self._table_columns = []
+        self._table_row_records = []
 
         self.setup_ui()
 
@@ -151,6 +159,13 @@ class OverviewPanel(QWidget):
         refresh_btn = QPushButton(tr("overview.refresh"))
         refresh_btn.clicked.connect(self.refresh)
         action_row.addWidget(refresh_btn)
+
+        action_row.addWidget(QLabel(tr("overview.view")))
+        self.ov_view_mode = QComboBox()
+        self.ov_view_mode.addItem(tr("overview.viewGrid"), "grid")
+        self.ov_view_mode.addItem(tr("overview.viewTable"), "table")
+        self.ov_view_mode.currentIndexChanged.connect(self._on_view_mode_changed)
+        action_row.addWidget(self.ov_view_mode)
 
         action_row.addStretch()
         layout.addLayout(action_row)
@@ -208,9 +223,37 @@ class OverviewPanel(QWidget):
         self.ov_hover_hint.setWordWrap(True)
         layout.addWidget(self.ov_hover_hint)
 
+        # Zoom controls
+        self._zoom_level = 1.0
+        self._base_cell_size = 36  # recalculated on refresh
+        zoom_row = QHBoxLayout()
+        zoom_row.setSpacing(4)
+        zoom_out_btn = QPushButton("-")
+        zoom_out_btn.setFixedSize(24, 24)
+        zoom_out_btn.setToolTip(tr("overview.zoomOut"))
+        zoom_out_btn.clicked.connect(lambda: self._set_zoom(self._zoom_level - 0.1))
+        zoom_row.addWidget(zoom_out_btn)
+        self._zoom_label = QLabel("100%")
+        self._zoom_label.setFixedWidth(42)
+        self._zoom_label.setAlignment(Qt.AlignCenter)
+        self._zoom_label.setStyleSheet("font-size: 11px;")
+        zoom_row.addWidget(self._zoom_label)
+        zoom_in_btn = QPushButton("+")
+        zoom_in_btn.setFixedSize(24, 24)
+        zoom_in_btn.setToolTip(tr("overview.zoomIn"))
+        zoom_in_btn.clicked.connect(lambda: self._set_zoom(self._zoom_level + 0.1))
+        zoom_row.addWidget(zoom_in_btn)
+        zoom_reset_btn = QPushButton(tr("overview.zoomReset"))
+        zoom_reset_btn.setToolTip(tr("overview.zoomReset"))
+        zoom_reset_btn.clicked.connect(lambda: self._set_zoom(1.0))
+        zoom_row.addWidget(zoom_reset_btn)
+        zoom_row.addStretch()
+        layout.addLayout(zoom_row)
+
         # Grid Area
         self.ov_scroll = QScrollArea()
         self.ov_scroll.setWidgetResizable(True)
+        self.ov_scroll.installEventFilter(self)
         self.ov_boxes_widget = QWidget()
         self.ov_boxes_layout = QGridLayout(self.ov_boxes_widget)
         self.ov_boxes_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
@@ -218,7 +261,19 @@ class OverviewPanel(QWidget):
         self.ov_boxes_layout.setHorizontalSpacing(4)
         self.ov_boxes_layout.setVerticalSpacing(6)
         self.ov_scroll.setWidget(self.ov_boxes_widget)
-        layout.addWidget(self.ov_scroll, 1)
+
+        # Table Area
+        self.ov_table = QTableWidget()
+        self.ov_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.ov_table.verticalHeader().setVisible(False)
+        self.ov_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.ov_table.setSelectionMode(QTableWidget.SingleSelection)
+        self.ov_table.cellDoubleClicked.connect(self.on_table_row_double_clicked)
+
+        self.ov_view_stack = QStackedWidget()
+        self.ov_view_stack.addWidget(self.ov_scroll)  # grid
+        self.ov_view_stack.addWidget(self.ov_table)   # table
+        layout.addWidget(self.ov_view_stack, 1)
 
     def _build_card(self, layout, title):
         card = QGroupBox(title)
@@ -244,13 +299,163 @@ class OverviewPanel(QWidget):
         layout.addWidget(card)
         return value_label
 
+    def _on_view_mode_changed(self):
+        mode = self.ov_view_mode.currentData()
+        if mode not in {"grid", "table"}:
+            mode = "grid"
+
+        self._overview_view_mode = mode
+        self.ov_view_stack.setCurrentIndex(0 if mode == "grid" else 1)
+
+        is_table_mode = mode == "table"
+        self.ov_filter_show_empty.setEnabled(not is_table_mode)
+        self.ov_filter_show_empty.setToolTip(
+            tr("overview.showEmptyGridOnly") if is_table_mode else ""
+        )
+        self._apply_filters()
+
+    def _set_table_columns(self, headers):
+        self.ov_table.setRowCount(0)
+        self.ov_table.setColumnCount(len(headers))
+        self.ov_table.setHorizontalHeaderLabels(headers)
+        header = self.ov_table.horizontalHeader()
+        for idx in range(len(headers)):
+            mode = QHeaderView.Stretch if idx == len(headers) - 1 else QHeaderView.ResizeToContents
+            header.setSectionResizeMode(idx, mode)
+        self.ov_table.setSortingEnabled(False)
+
+    def _rebuild_table_rows(self, records):
+        meta = getattr(self, "_current_meta", {})
+        from lib.custom_fields import get_color_key
+
+        payload = build_export_rows(records or [], meta=meta)
+        self._table_columns = list(payload.get("columns") or [])
+
+        color_key = get_color_key(meta)
+        rows = []
+        for values in payload.get("rows") or []:
+            rid_raw = values.get("id")
+            record = None
+            if rid_raw not in (None, ""):
+                try:
+                    record = self.overview_records_by_id.get(int(rid_raw))
+                except (TypeError, ValueError):
+                    record = None
+
+            box_value = values.get("box")
+            try:
+                box_number = int(box_value)
+            except (TypeError, ValueError):
+                box_number = None
+
+            color_value = ""
+            if isinstance(record, dict):
+                color_value = str(record.get(color_key) or "")
+            elif color_key in values:
+                color_value = str(values.get(color_key) or "")
+
+            search_text = " ".join(str(values.get(col, "")) for col in self._table_columns).lower()
+            rows.append(
+                {
+                    "values": values,
+                    "record": record,
+                    "box": box_number,
+                    "color_value": color_value,
+                    "search_text": search_text,
+                }
+            )
+
+        self._table_rows = rows
+        self._set_table_columns(self._table_columns)
+        self._table_row_records = []
+
+    def _render_table_rows(self, rows):
+        self.ov_table.setRowCount(0)
+        self._table_row_records = []
+
+        for row_index, row_data in enumerate(rows):
+            self.ov_table.insertRow(row_index)
+            values = row_data.get("values") or {}
+            for col_index, column in enumerate(self._table_columns):
+                value = values.get(column, "")
+                self.ov_table.setItem(row_index, col_index, QTableWidgetItem(str(value)))
+            self._table_row_records.append(row_data.get("record"))
+
+    def on_table_row_double_clicked(self, row, _col):
+        if row < 0 or row >= len(self._table_row_records):
+            return
+
+        record = self._table_row_records[row]
+        if not isinstance(record, dict):
+            return
+
+        positions = record.get("positions") or []
+        if not positions:
+            return
+
+        try:
+            record_id = int(record.get("id"))
+            box_num = int(record.get("box"))
+            position = int(positions[0])
+        except (TypeError, ValueError):
+            return
+
+        self._set_selected_cell(box_num, position)
+        self.request_prefill_background.emit(
+            {
+                "box": box_num,
+                "position": position,
+                "record_id": record_id,
+            }
+        )
+        self.status_message.emit(t("overview.prefillTakeoutAuto", id=record_id), 2000)
+
     def eventFilter(self, obj, event):
+        # Ctrl+Wheel zoom on scroll area
+        if obj is self.ov_scroll and event.type() == QEvent.Wheel:
+            if event.modifiers() & Qt.ControlModifier:
+                delta = event.angleDelta().y()
+                if delta > 0:
+                    self._set_zoom(self._zoom_level + 0.1)
+                elif delta < 0:
+                    self._set_zoom(self._zoom_level - 0.1)
+                return True  # consume event
         if event.type() in (QEvent.Enter, QEvent.HoverEnter, QEvent.HoverMove, QEvent.MouseMove):
             box_num = obj.property("overview_box")
             position = obj.property("overview_position")
             if box_num is not None and position is not None:
                 self.on_cell_hovered(int(box_num), int(position))
         return super().eventFilter(obj, event)
+
+    def _set_zoom(self, level):
+        self._zoom_level = max(0.5, min(3.0, round(level, 1)))
+        self._zoom_label.setText(f"{int(self._zoom_level * 100)}%")
+        self._apply_zoom()
+
+    def _apply_zoom(self):
+        """Resize all existing cell buttons and repaint with scaled font."""
+        cell_size = max(12, int(self._base_cell_size * self._zoom_level))
+        font_size_occupied = max(7, int(9 * self._zoom_level))
+        font_size_empty = max(6, int(8 * self._zoom_level))
+        self._current_font_sizes = (font_size_occupied, font_size_empty)
+        for button in self.overview_cells.values():
+            button.setFixedSize(cell_size, cell_size)
+        # Repaint all cells with current data
+        self._repaint_all_cells()
+
+    def _repaint_all_cells(self):
+        """Repaint all cell buttons using cached data."""
+        records = getattr(self, "_current_records", [])
+        record_map = {}
+        for rec in records:
+            if not isinstance(rec, dict):
+                continue
+            box = rec.get("box")
+            for pos in (rec.get("positions") or []):
+                record_map[(box, pos)] = rec
+        for (box_num, position), button in self.overview_cells.items():
+            record = record_map.get((box_num, position))
+            self._paint_cell(button, box_num, position, record)
 
     def refresh(self):
         yaml_path = self.yaml_path_getter()
@@ -275,6 +480,11 @@ class OverviewPanel(QWidget):
         data = payload.get("data", {})
         records = data.get("inventory", [])
         self._current_meta = data.get("meta", {})
+        self._current_records = records
+
+        # Build color palette from meta
+        from lib.custom_fields import get_cell_line_options
+        build_color_palette(get_cell_line_options(self._current_meta))
         
         self.overview_records_by_id = {}
         for rec in records:
@@ -348,6 +558,7 @@ class OverviewPanel(QWidget):
             rec = pos_map.get(key)
             self._paint_cell(button, box_num, position, rec)
 
+        self._rebuild_table_rows(records)
         self._refresh_filter_options(records, box_numbers)
         self._apply_filters()
 
@@ -370,7 +581,8 @@ class OverviewPanel(QWidget):
 
         layout = getattr(self, "_current_layout", {})
         total_slots = rows * cols
-        cell_size = max(24, min(36, 320 // max(rows, cols)))
+        self._base_cell_size = max(24, min(36, 320 // max(rows, cols)))
+        cell_size = max(12, int(self._base_cell_size * self._zoom_level))
         columns = 3
         for idx, box_num in enumerate(box_numbers):
             box_label = box_to_display(box_num, layout)
@@ -600,24 +812,32 @@ class OverviewPanel(QWidget):
                 btn.setStyleSheet(self._focus_style(btn.styleSheet()))
 
     def _paint_cell(self, button, box_num, position, record):
-        from lib.custom_fields import get_display_key, get_effective_fields, STRUCTURAL_FIELD_KEYS
+        from lib.custom_fields import get_display_key, get_color_key, get_effective_fields, STRUCTURAL_FIELD_KEYS
         is_selected = self.overview_selected_key == (box_num, position)
         layout = getattr(self, "_current_layout", {})
         meta = getattr(self, "_current_meta", {})
         display_pos = pos_to_display(position, layout)
+        fs_occ, fs_empty = getattr(self, "_current_font_sizes", (9, 8))
         if record:
             dk = get_display_key(meta)
+            ck = get_color_key(meta)
             dk_val = str(record.get(dk) or "")
-            label = dk_val[:6] if dk_val else display_pos
-            # Color based on first user field value
-            color = cell_color(dk_val or None)
+            ck_val = str(record.get(ck) or "")
+            # Scale label truncation with zoom
+            max_chars = max(3, int(6 * self._zoom_level))
+            label = dk_val[:max_chars] if dk_val else display_pos
+            # Color based on color_key field
+            color = cell_color(ck_val or None)
             button.setText(label)
 
             # Dynamic tooltip from effective fields
+            cl = record.get("cell_line")
             tt = [
                 f"ID: {record.get('id', '-')}",
                 f"Pos: {box_num}:{position}",
             ]
+            if cl:
+                tt.append(f"Cell Line: {cl}")
             for fdef in get_effective_fields(meta):
                 fk = fdef["key"]
                 fv = record.get(fk)
@@ -626,23 +846,25 @@ class OverviewPanel(QWidget):
             tt.append(f"Date: {record.get('frozen_at', '-')}")
 
             button.setToolTip("\n".join(tt))
-            button.setStyleSheet(cell_occupied_style(color, is_selected))
-            # Dynamic search text from all non-structural keys
+            button.setStyleSheet(cell_occupied_style(color, is_selected, font_size=fs_occ))
+            # Dynamic search text — include cell_line + all user fields
             parts = [str(record.get("id", "")), str(box_num), str(position),
+                     str(record.get("cell_line") or ""),
                      str(record.get("frozen_at") or "")]
             for k, v in record.items():
                 if k not in STRUCTURAL_FIELD_KEYS and k != "id":
                     parts.append(str(v or ""))
             button.setProperty("search_text", " ".join(parts).lower())
             button.setProperty("display_key_value", dk_val)
+            button.setProperty("color_key_value", ck_val)
             button.setProperty("is_empty", False)
             button.set_record_id(int(record.get("id", 0)))
         else:
             button.setText(display_pos)
             button.setToolTip(t("overview.emptyCellTooltip", box=box_num, position=position))
-            button.setStyleSheet(cell_empty_style(is_selected))
+            button.setStyleSheet(cell_empty_style(is_selected, font_size=fs_empty))
             button.setProperty("search_text", f"empty box {box_num} position {position}".lower())
-            button.setProperty("cell_line", "")
+            button.setProperty("color_key_value", "")
             button.setProperty("is_empty", True)
             button.set_record_id(None)
 
@@ -672,7 +894,7 @@ class OverviewPanel(QWidget):
                 self._paint_cell(button, key[0], key[1], rec)
 
     def _refresh_filter_options(self, records, box_numbers):
-        from lib.custom_fields import get_display_key
+        from lib.custom_fields import get_color_key
         prev_box = self.ov_filter_box.currentData()
         prev_cell = self.ov_filter_cell.currentData()
 
@@ -686,8 +908,8 @@ class OverviewPanel(QWidget):
         self.ov_filter_box.blockSignals(False)
 
         meta = getattr(self, "_current_meta", {})
-        dk = get_display_key(meta)
-        values = sorted({str(rec.get(dk)) for rec in records if rec.get(dk)})
+        ck = get_color_key(meta)
+        values = sorted({str(rec.get(ck)) for rec in records if rec.get(ck)})
         self.ov_filter_cell.blockSignals(True)
         self.ov_filter_cell.clear()
         self.ov_filter_cell.addItem(tr("overview.allCells"), None)
@@ -703,6 +925,22 @@ class OverviewPanel(QWidget):
         selected_cell = self.ov_filter_cell.currentData()
         show_empty = self.ov_filter_show_empty.isChecked()
 
+        if self._overview_view_mode == "table":
+            self._apply_filters_table(
+                keyword=keyword,
+                selected_box=selected_box,
+                selected_cell=selected_cell,
+            )
+            return
+
+        self._apply_filters_grid(
+            keyword=keyword,
+            selected_box=selected_box,
+            selected_cell=selected_cell,
+            show_empty=show_empty,
+        )
+
+    def _apply_filters_grid(self, keyword, selected_box, selected_cell, show_empty):
         visible_boxes = 0
         visible_slots = 0
         per_box = {box: {"occ": 0, "emp": 0} for box in self.overview_box_groups.keys()}
@@ -711,7 +949,7 @@ class OverviewPanel(QWidget):
             record = self.overview_pos_map.get((box_num, position))
             is_empty = record is None
             match_box = selected_box is None or box_num == selected_box
-            match_cell = selected_cell is None or (record and str(button.property("display_key_value") or "") == selected_cell)
+            match_cell = selected_cell is None or (record and str(button.property("color_key_value") or "") == selected_cell)
             match_empty = show_empty or not is_empty
 
             if keyword:
@@ -756,6 +994,39 @@ class OverviewPanel(QWidget):
             )
         )
 
+    def _apply_filters_table(self, keyword, selected_box, selected_cell):
+        matched_rows = []
+        matched_boxes = set()
+
+        for row_data in self._table_rows:
+            box_num = row_data.get("box")
+            color_value = str(row_data.get("color_value") or "")
+
+            match_box = selected_box is None or box_num == selected_box
+            match_cell = selected_cell is None or color_value == selected_cell
+
+            if keyword:
+                match_keyword = keyword in str(row_data.get("search_text") or "")
+            else:
+                match_keyword = True
+
+            if not (match_box and match_cell and match_keyword):
+                continue
+
+            matched_rows.append(row_data)
+            if box_num is not None:
+                matched_boxes.add(box_num)
+
+        self._render_table_rows(matched_rows)
+        self.ov_status.setText(
+            t(
+                "overview.filterStatusTable",
+                records=len(matched_rows),
+                boxes=len(matched_boxes),
+                time=datetime.now().strftime("%H:%M:%S"),
+            )
+        )
+
     def on_toggle_filters(self, checked):
         self.ov_filter_advanced_widget.setVisible(bool(checked))
         self.ov_filter_toggle_btn.setText(tr("overview.hideFilters") if checked else tr("overview.moreFilters"))
@@ -785,14 +1056,16 @@ class OverviewPanel(QWidget):
                 "position": int(position),
                 "record_id": rec_id,
             })
-            self.status_message.emit(f"Auto-prefilled Takeout for ID {rec_id}.", 2000)
+            self.status_message.emit(t("overview.prefillTakeoutAuto", id=rec_id), 2000)
         else:
             self.request_add_prefill_background.emit({
                 "box": int(box_num),
                 "position": int(position),
             })
-            self.status_message.emit(f"Auto-prefilled Add Entry (Box {box_num} Pos {position}).", 2000)
-            self.status_message.emit(f"Auto-prefilled Add Entry (Box {box_num} Pos {position}).", 2000)
+            self.status_message.emit(
+                t("overview.prefillAddAuto", box=box_num, position=position),
+                2000,
+            )
 
     def on_cell_hovered(self, box_num, position, force=False):
         hover_key = (box_num, position)
@@ -835,11 +1108,11 @@ class OverviewPanel(QWidget):
         act_query = None
 
         if record:
-            act_thaw = menu.addAction("Thaw / Takeout")
-            act_move = menu.addAction("Move")
-            act_query = menu.addAction("Query")
+            act_thaw = menu.addAction(tr("operations.thaw"))
+            act_move = menu.addAction(tr("operations.move"))
+            act_query = menu.addAction(tr("operations.query"))
         else:
-            act_add = menu.addAction("Add Entry")
+            act_add = menu.addAction(tr("operations.add"))
 
         selected = menu.exec(global_pos)
         if selected is None:
@@ -850,7 +1123,10 @@ class OverviewPanel(QWidget):
                 "box": int(box_num),
                 "position": int(position),
             })
-            self.status_message.emit(f"Prefill Add Entry (Box {box_num} Pos {position})", 2000)
+            self.status_message.emit(
+                t("overview.prefillAdd", box=box_num, position=position),
+                2000,
+            )
             return
 
         if not record:
@@ -863,7 +1139,7 @@ class OverviewPanel(QWidget):
                 "position": int(position),
                 "record_id": rec_id,
             })
-            self.status_message.emit(f"Prefill Thaw for ID {rec_id}", 2000)
+            self.status_message.emit(t("overview.prefillThaw", id=rec_id), 2000)
             return
         if selected == act_move:
             self.request_move_prefill.emit({
@@ -871,7 +1147,7 @@ class OverviewPanel(QWidget):
                 "position": int(position),
                 "record_id": rec_id,
             })
-            self.status_message.emit(f"Prefill Move for ID {rec_id}", 2000)
+            self.status_message.emit(t("overview.prefillMove", id=rec_id), 2000)
             return
         if selected == act_query:
             self.request_query_prefill.emit({
@@ -879,7 +1155,7 @@ class OverviewPanel(QWidget):
                 "position": int(position),
                 "record_id": rec_id,
             })
-            self.status_message.emit(f"Query ID {rec_id}", 2000)
+            self.status_message.emit(t("overview.prefillQuery", id=rec_id), 2000)
 
     def _on_cell_drop(self, from_box, from_pos, to_box, to_pos, record_id):
         if from_box == to_box and from_pos == to_pos:

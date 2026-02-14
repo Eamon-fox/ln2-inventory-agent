@@ -38,6 +38,41 @@ class AgentToolRunnerTests(unittest.TestCase):
         self.assertIn("query_inventory", names)
         self.assertIn("add_entry", names)
         self.assertIn("record_thaw", names)
+        self.assertIn("manage_boxes", names)
+
+    def test_manage_boxes_returns_confirmation_marker(self):
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        response = runner.run("manage_boxes", {"operation": "add", "count": 1})
+        self.assertTrue(response["ok"])
+        self.assertTrue(response.get("waiting_for_user_confirmation"))
+        self.assertEqual("add", response.get("request", {}).get("operation"))
+
+    def test_manage_boxes_not_staged_when_plan_store_enabled(self):
+        from lib.plan_store import PlanStore
+
+        store = PlanStore()
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=store)
+        response = runner.run("manage_boxes", {"operation": "add", "count": 1})
+        self.assertTrue(response["ok"])
+        self.assertTrue(response.get("waiting_for_user_confirmation"))
+        self.assertEqual(0, store.count())
+
+    def test_manage_boxes_dry_run_dispatches_tool_api(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_box_dry_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run(
+                "manage_boxes",
+                {"operation": "add", "count": 2, "dry_run": True},
+            )
+            self.assertTrue(response["ok"])
+            self.assertTrue(response.get("dry_run"))
+            self.assertEqual("add", response.get("preview", {}).get("operation"))
 
     def test_query_inventory_dispatch(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_query_") as temp_dir:
@@ -47,7 +82,7 @@ class AgentToolRunnerTests(unittest.TestCase):
                     make_record(1, box=1, positions=[1]),
                     {
                         "id": 2,
-                        "parent_cell_line": "K562",
+                        "cell_line": "K562",
                         "short_name": "k562-a",
                         "box": 2,
                         "positions": [10],
@@ -72,7 +107,7 @@ class AgentToolRunnerTests(unittest.TestCase):
                     [
                         {
                             "id": 2,
-                            "parent_cell_line": "K562",
+                            "cell_line": "K562",
                             "short_name": "k562-a",
                             "box": 2,
                             "positions": [10],
@@ -243,7 +278,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             current = load_yaml(str(yaml_path))
             records = current.get("inventory", [])
             self.assertEqual(2, len(records))
-            self.assertEqual("K562", records[-1]["parent_cell_line"])
+            self.assertEqual("K562", records[-1]["cell_line"])
             self.assertEqual([2], records[-1]["positions"])
 
     def test_record_thaw_supports_id_and_pos_alias(self):
@@ -353,6 +388,17 @@ class AgentToolRunnerTests(unittest.TestCase):
         )
         self.assertEqual(["fuzzy", "exact", "keywords"], mode_schema.get("enum"))
 
+    def test_rollback_tool_spec_mentions_question_workflow(self):
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        rollback_spec = runner.tool_specs().get("rollback", {})
+
+        description = str(rollback_spec.get("description") or "").lower()
+        notes = str(rollback_spec.get("notes") or "").lower()
+
+        self.assertIn("backup_path", description)
+        self.assertIn("question", notes)
+        self.assertIn("human", notes)
+
 
 class EditEntryToolRunnerTests(unittest.TestCase):
     """Integration tests for edit_entry through AgentToolRunner."""
@@ -367,10 +413,11 @@ class EditEntryToolRunnerTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
-            staged = []
+            from lib.plan_store import PlanStore
+            store = PlanStore()
             runner = AgentToolRunner(
                 yaml_path=str(yaml_path),
-                plan_sink=lambda item: staged.append(item),
+                plan_store=store,
             )
 
             response = runner.run(
@@ -379,8 +426,8 @@ class EditEntryToolRunnerTests(unittest.TestCase):
             )
 
             self.assertTrue(response["ok"])
-            self.assertEqual(1, len(staged))
-            item = staged[0]
+            self.assertEqual(1, store.count())
+            item = store.list_items()[0]
             self.assertEqual("edit", item["action"])
             self.assertEqual(1, item["record_id"])
             self.assertEqual(2, item["box"])
@@ -443,10 +490,11 @@ class EditEntryToolRunnerTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
-            staged = []
+            from lib.plan_store import PlanStore
+            store = PlanStore()
             runner = AgentToolRunner(
                 yaml_path=str(yaml_path),
-                plan_sink=lambda item: staged.append(item),
+                plan_store=store,
             )
 
             response = runner.run(
@@ -456,8 +504,8 @@ class EditEntryToolRunnerTests(unittest.TestCase):
 
             # Should still stage (validation happens at plan execution time)
             self.assertTrue(response["ok"])
-            self.assertEqual(1, len(staged))
-            item = staged[0]
+            self.assertEqual(1, store.count())
+            item = store.list_items()[0]
             self.assertEqual(999, item["record_id"])
             # Defaults from _lookup_record_info when record not found
             self.assertEqual(0, item["box"])
@@ -471,6 +519,85 @@ class EditEntryToolRunnerTests(unittest.TestCase):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
         specs = runner.tool_specs()
         self.assertIn("edit_entry", specs)
+
+    # --- cell_line alias tests ---
+
+    def test_add_entry_parent_cell_line_alias_maps_to_cell_line(self):
+        """parent_cell_line alias should map to cell_line in add_entry."""
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_pcl_alias_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, positions=[1])]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run(
+                "add_entry",
+                {
+                    "parent_cell_line": "HeLa",
+                    "short_name": "pcl-alias",
+                    "box": 1,
+                    "position": 2,
+                    "date": "2026-02-10",
+                },
+            )
+            self.assertTrue(response["ok"])
+
+            current = load_yaml(str(yaml_path))
+            records = current.get("inventory", [])
+            self.assertEqual(2, len(records))
+            self.assertEqual("HeLa", records[-1]["cell_line"])
+
+    def test_query_parent_cell_line_alias(self):
+        """parent_cell_line alias should work in query_inventory."""
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_pcl_query_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([
+                    {**make_record(1, box=1, positions=[1]), "cell_line": "K562"},
+                    {**make_record(2, box=2, positions=[2]), "cell_line": "HeLa"},
+                ]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            # Use parent_cell_line alias
+            response = runner.run("query_inventory", {"parent_cell_line": "K562"})
+            self.assertTrue(response["ok"])
+            self.assertEqual(1, response["result"]["count"])
+            self.assertEqual(1, response["result"]["records"][0]["id"])
+
+    def test_query_cell_alias(self):
+        """Short 'cell' alias should work in query_inventory."""
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_cell_query_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([
+                    {**make_record(1, box=1, positions=[1]), "cell_line": "NCCIT"},
+                ]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run("query_inventory", {"cell": "NCCIT"})
+            self.assertTrue(response["ok"])
+            self.assertEqual(1, response["result"]["count"])
+
+    def test_add_entry_cell_line_in_tool_specs(self):
+        """cell_line should be listed as optional param in add_entry spec."""
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        specs = runner.tool_specs()
+        self.assertIn("cell_line", specs["add_entry"]["optional"])
+
+    def test_query_cell_line_in_tool_specs(self):
+        """cell_line should be listed as optional param in query_inventory spec."""
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        specs = runner.tool_specs()
+        self.assertIn("cell_line", specs["query_inventory"]["optional"])
 
 
 if __name__ == "__main__":

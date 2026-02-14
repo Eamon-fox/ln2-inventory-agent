@@ -261,5 +261,65 @@ class UiUtilsTests(unittest.TestCase):
         self.assertEqual("1, 2, 3", result)
 
 
+# ===========================================================================
+# Unit tests: build_color_palette / cell_color
+# ===========================================================================
+
+class TestColorPalette(unittest.TestCase):
+    """Unit tests for build_color_palette() and cell_color()."""
+
+    def test_build_palette_assigns_unique_colors(self):
+        from app_gui.ui import utils as _utils
+        _utils.build_color_palette(["K562", "HeLa", "NCCIT"])
+        self.assertEqual(3, len(_utils._dynamic_palette))
+        # Each option gets a different color
+        colors = list(_utils._dynamic_palette.values())
+        self.assertEqual(len(set(colors)), len(colors))
+
+    def test_build_palette_cycles_on_overflow(self):
+        from app_gui.ui import utils as _utils
+        # More options than colors in cycle
+        options = [f"opt_{i}" for i in range(len(_utils._COLOR_CYCLE) + 3)]
+        _utils.build_color_palette(options)
+        self.assertEqual(len(options), len(_utils._dynamic_palette))
+        # First and (first + cycle_len) should share the same color
+        self.assertEqual(
+            _utils._dynamic_palette["opt_0"],
+            _utils._dynamic_palette[f"opt_{len(_utils._COLOR_CYCLE)}"],
+        )
+
+    def test_cell_color_uses_dynamic_palette(self):
+        from app_gui.ui import utils as _utils
+        _utils.build_color_palette(["K562", "HeLa"])
+        color = _utils.cell_color("K562")
+        self.assertTrue(color.startswith("#"))
+        # Known value should not be the fallback gray
+        self.assertNotEqual("#7f8c8d", _utils.cell_color("K562"))
+
+    def test_cell_color_unknown_value_returns_fallback(self):
+        from app_gui.ui import utils as _utils
+        _utils.build_color_palette(["K562"])
+        self.assertEqual("#7f8c8d", _utils.cell_color("UnknownLine"))
+
+    def test_cell_color_empty_returns_gray(self):
+        from app_gui.ui import utils as _utils
+        _utils.build_color_palette(["K562"])
+        self.assertEqual("#7f8c8d", _utils.cell_color(""))
+        self.assertEqual("#7f8c8d", _utils.cell_color(None))
+
+    def test_cell_color_no_palette_uses_hash_fallback(self):
+        from app_gui.ui import utils as _utils
+        _utils.build_color_palette([])  # empty palette
+        color = _utils.cell_color("SomeValue")
+        self.assertIn(color, _utils._COLOR_CYCLE)
+
+    def test_build_palette_empty_list_clears(self):
+        from app_gui.ui import utils as _utils
+        _utils.build_color_palette(["K562"])
+        self.assertEqual(1, len(_utils._dynamic_palette))
+        _utils.build_color_palette([])
+        self.assertEqual(0, len(_utils._dynamic_palette))
+
+
 if __name__ == "__main__":
     unittest.main()

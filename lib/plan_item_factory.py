@@ -42,7 +42,7 @@ def resolve_record_context(record: Optional[Dict[str, Any]], fallback_box: int =
             label = record.get(display_key) or "-"
         else:
             # Fallback: try short_name, then first non-structural string value
-            label = record.get("short_name") or record.get("parent_cell_line") or "-"
+            label = record.get("short_name") or "-"
         try:
             box = int(record.get("box", box) or box)
         except Exception:
@@ -166,11 +166,15 @@ def build_rollback_plan_item(
     backup_path: Optional[str],
     source: str = "human",
     label: Optional[str] = None,
+    source_event: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Build a normalized rollback PlanItem payload.
 
     Rollback items are executed via the Plan queue (human-in-the-loop) and must
     be the only item in the plan batch.
+
+    source_event can be provided to keep a lightweight link to the audit event
+    that triggered this rollback request.
     """
     display_label = label
     if not display_label:
@@ -183,6 +187,18 @@ def build_rollback_plan_item(
             except Exception:
                 display_label = "Rollback"
 
+    payload: Dict[str, Any] = {
+        "backup_path": backup_path,
+    }
+    if isinstance(source_event, dict):
+        compact_event = {
+            str(key): value
+            for key, value in source_event.items()
+            if value not in (None, "")
+        }
+        if compact_event:
+            payload["source_event"] = compact_event
+
     return {
         "action": "rollback",
         # Keep box/position integers to satisfy existing PlanItem schema.
@@ -191,9 +207,7 @@ def build_rollback_plan_item(
         "record_id": None,
         "label": display_label,
         "source": source,
-        "payload": {
-            "backup_path": backup_path,
-        },
+        "payload": payload,
     }
 
 

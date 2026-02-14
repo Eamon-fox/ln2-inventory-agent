@@ -58,6 +58,7 @@ class _FakeOperationsBridge:
         self.last_add_payload = None
         self.last_query_filters = None
         self.last_empty_box = None
+        self.last_export_payload = None
         self.last_record_payload = None
         self.last_batch_payload = None
         self.add_response = {"ok": True, "result": {"new_id": 99}}
@@ -92,6 +93,14 @@ class _FakeOperationsBridge:
                 ]
             },
         }
+        self.export_response = {
+            "ok": True,
+            "result": {
+                "path": "/tmp/export.csv",
+                "count": 1,
+                "columns": ["id", "cell_line"],
+            },
+        }
 
     def add_entry(self, yaml_path, **payload):
         self.last_add_payload = {"yaml_path": yaml_path, **payload}
@@ -104,6 +113,10 @@ class _FakeOperationsBridge:
     def list_empty_positions(self, yaml_path, box=None):
         self.last_empty_box = box
         return self.empty_response
+
+    def export_inventory_csv(self, yaml_path, output_path):
+        self.last_export_payload = {"yaml_path": yaml_path, "output_path": output_path}
+        return self.export_response
 
     def record_thaw(self, yaml_path, **payload):
         self.last_record_payload = {"yaml_path": yaml_path, **payload}
@@ -121,6 +134,15 @@ class _FakeOperationsBridge:
             "preview": {"count": len(entries), "operations": []},
             "result": {"count": len(entries), "record_ids": record_ids},
         }
+
+    def generate_stats(self, yaml_path):
+        return {"ok": True, "result": {"total_records": 0, "total_slots": 405, "occupied_slots": 0, "boxes": {}}}
+
+    def search_records(self, yaml_path, **kwargs):
+        return {"ok": True, "result": {"records": [], "count": 0}}
+
+    def collect_timeline(self, yaml_path, **kwargs):
+        return {"ok": True, "result": {"events": []}}
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
@@ -204,7 +226,6 @@ class GuiPanelRegressionTests(unittest.TestCase):
         panel._current_custom_fields = list(DEFAULT_PRESET_FIELDS)
         panel._rebuild_custom_add_fields(panel._current_custom_fields)
 
-        panel._add_custom_widgets["parent_cell_line"].setText("K562")
         panel._add_custom_widgets["short_name"].setText("K562_clone12")
         panel.a_box.setValue(1)
         panel.a_positions.setText("30-32,35")
@@ -256,6 +277,64 @@ class GuiPanelRegressionTests(unittest.TestCase):
 
         mode_keys = [panel.op_mode_combo.itemData(i) for i in range(panel.op_mode_combo.count())]
         self.assertIn("move", mode_keys)
+        self.assertNotIn("rollback", mode_keys)
+
+    def test_rollback_controls_are_embedded_in_audit_tab(self):
+        panel = self._new_operations_panel()
+
+        self.assertEqual(-1, panel.op_mode_combo.findData("rollback"))
+        self.assertTrue(hasattr(panel, "audit_backup_toggle_btn"))
+        self.assertTrue(hasattr(panel, "audit_backup_panel"))
+        self.assertFalse(panel.audit_backup_panel.isVisible())
+        self.assertTrue(hasattr(panel, "rb_backup_path"))
+        self.assertTrue(hasattr(panel, "backup_table"))
+
+    def test_second_rollback_stage_is_rejected_instead_of_replaced(self):
+        panel = self._new_operations_panel()
+        messages = []
+        panel.status_message.connect(lambda msg, _timeout, _level: messages.append(msg))
+
+        panel._stage_rollback("/tmp/backup_a.bak")
+        panel._stage_rollback("/tmp/backup_b.bak")
+
+        self.assertEqual(1, len(panel.plan_items))
+        payload = panel.plan_items[0].get("payload") or {}
+        self.assertEqual("/tmp/backup_a.bak", payload.get("backup_path"))
+        self.assertTrue(any(tr("operations.planRejectedRollbackDuplicate") in msg for msg in messages))
+
+    def test_plan_store_queued_refresh_keeps_ui_consistent_after_external_clear(self):
+        from PySide6.QtCore import QMetaObject, Qt
+        from lib.plan_item_factory import build_rollback_plan_item
+        from lib.plan_store import PlanStore
+
+        store = PlanStore()
+        panel = OperationsPanel(
+            bridge=object(),
+            yaml_path_getter=lambda: "/tmp/inventory.yaml",
+            plan_store=store,
+        )
+
+        def _on_change():
+            QMetaObject.invokeMethod(panel, "_on_store_changed", Qt.QueuedConnection)
+
+        store._on_change = _on_change
+
+        store.add([build_rollback_plan_item(backup_path="/tmp/backup_a.bak", source="ai")])
+        for _ in range(5):
+            self._app.processEvents()
+
+        self.assertEqual(1, store.count())
+        self.assertEqual(1, panel.plan_table.rowCount())
+        self.assertTrue(panel.plan_clear_btn.isEnabled())
+
+        store.clear()
+        for _ in range(5):
+            self._app.processEvents()
+
+        self.assertEqual(0, store.count())
+        self.assertEqual(0, panel.plan_table.rowCount())
+        self.assertFalse(panel.plan_table.isVisible())
+        self.assertFalse(panel.plan_clear_btn.isEnabled())
 
     def test_operations_panel_move_tab_has_from_and_to_position(self):
         panel = self._new_operations_panel()
@@ -403,7 +482,6 @@ class GuiPanelRegressionTests(unittest.TestCase):
         panel._current_custom_fields = list(DEFAULT_PRESET_FIELDS)
         panel._rebuild_query_fields(panel._current_custom_fields)
 
-        panel._query_field_widgets["parent_cell_line"].setText("K562")
         panel._query_field_widgets["short_name"].setText("clone12")
         panel.q_box.setValue(2)
         panel.q_position.setValue(10)
@@ -413,7 +491,6 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual(
             {
                 "yaml_path": "/tmp/inventory.yaml",
-                "parent_cell_line": "K562",
                 "short_name": "clone12",
                 "box": 2,
                 "position": 10,
@@ -434,6 +511,63 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual(2, bridge.last_empty_box)
         self.assertEqual(1, panel.query_table.rowCount())
         self.assertEqual("2", panel.query_table.item(0, 0).text())
+
+    def test_operations_panel_query_tab_has_no_export_button(self):
+        panel = self._new_operations_panel()
+        from PySide6.QtWidgets import QPushButton
+
+        query_widget = panel.op_stack.widget(panel.op_mode_indexes["query"])
+        query_button_texts = [btn.text() for btn in query_widget.findChildren(QPushButton)]
+
+        self.assertNotIn(tr("operations.exportCsv"), query_button_texts)
+        self.assertTrue(hasattr(panel, "export_full_csv_btn"))
+
+    def test_operations_panel_export_full_csv_uses_bridge_without_query_rows(self):
+        panel = self._new_operations_panel()
+        bridge = _FakeOperationsBridge()
+        panel.bridge = bridge
+        panel.query_table.setRowCount(0)
+
+        messages = []
+        panel.status_message.connect(lambda msg, timeout, level: messages.append((msg, timeout, level)))
+
+        from unittest.mock import patch
+        with patch(
+            "app_gui.ui.operations_panel.QFileDialog.getSaveFileName",
+            return_value=("/tmp/full_export.csv", "CSV Files (*.csv)"),
+        ):
+            panel.on_export_inventory_csv()
+
+        self.assertEqual(
+            {
+                "yaml_path": "/tmp/inventory.yaml",
+                "output_path": "/tmp/full_export.csv",
+            },
+            bridge.last_export_payload,
+        )
+        self.assertTrue(messages)
+        self.assertEqual("success", messages[-1][2])
+
+    def test_operations_panel_export_full_csv_appends_csv_extension(self):
+        panel = self._new_operations_panel()
+        bridge = _FakeOperationsBridge()
+        panel.bridge = bridge
+
+        from unittest.mock import patch
+
+        with patch(
+            "app_gui.ui.operations_panel.QFileDialog.getSaveFileName",
+            return_value=("/tmp/full_export", "CSV Files (*.csv)"),
+        ):
+            panel.on_export_inventory_csv()
+
+        self.assertEqual(
+            {
+                "yaml_path": "/tmp/inventory.yaml",
+                "output_path": "/tmp/full_export.csv",
+            },
+            bridge.last_export_payload,
+        )
 
     def test_overview_double_click_prefills_background_only(self):
         panel = self._new_overview_panel()
@@ -486,9 +620,11 @@ class GuiPanelRegressionTests(unittest.TestCase):
         emitted_add = []
         emitted_bg_add = []
         emitted_bg_thaw = []
+        status_messages = []
         panel.request_add_prefill.connect(lambda payload: emitted_add.append(payload))
         panel.request_add_prefill_background.connect(lambda payload: emitted_bg_add.append(payload))
         panel.request_prefill_background.connect(lambda payload: emitted_bg_thaw.append(payload))
+        panel.status_message.connect(lambda msg, timeout: status_messages.append((msg, timeout)))
 
         panel.on_cell_double_clicked(1, 1)
 
@@ -496,6 +632,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual([{"box": 1, "position": 1}], emitted_bg_add)
         self.assertEqual([], emitted_bg_thaw)
         self.assertEqual([], emitted_add)
+        self.assertEqual(1, len(status_messages))
         # Button uses CSS variables for styling; verify it has a stylesheet applied
         self.assertTrue(len(button.styleSheet()) > 0)
 
@@ -1029,24 +1166,24 @@ if __name__ == "__main__":
 
 
 class ToolRunnerPlanSinkTests(unittest.TestCase):
-    """Test that AgentToolRunner stages write operations when plan_sink is set."""
+    """Test that AgentToolRunner stages write operations when plan_store is set."""
 
     def setUp(self):
-        self.staged = []
-        self.sink = lambda item: self.staged.append(item)
+        from lib.plan_store import PlanStore
+        self.store = PlanStore()
 
     def _make_runner(self, yaml_path="/tmp/inventory.yaml"):
         from agent.tool_runner import AgentToolRunner
         return AgentToolRunner(
             yaml_path=yaml_path,
-            plan_sink=self.sink,
+            plan_store=self.store,
         )
 
     def test_read_tool_not_intercepted(self):
         runner = self._make_runner()
         result = runner.run("query_inventory", {"cell": "K562"})
         # Should execute normally (may fail if YAML not found, but not staged)
-        self.assertEqual(0, len(self.staged))
+        self.assertEqual(0, self.store.count())
 
     def test_add_entry_staged(self):
         runner = self._make_runner()
@@ -1057,8 +1194,8 @@ class ToolRunnerPlanSinkTests(unittest.TestCase):
             "positions": [30],
         })
         self.assertTrue(result.get("staged"))
-        self.assertEqual(1, len(self.staged))
-        item = self.staged[0]
+        self.assertEqual(1, self.store.count())
+        item = self.store.list_items()[0]
         self.assertEqual("add", item["action"])
         self.assertEqual("ai", item["source"])
         self.assertEqual(1, item["box"])
@@ -1071,8 +1208,8 @@ class ToolRunnerPlanSinkTests(unittest.TestCase):
             "action": "Takeout",
         })
         self.assertTrue(result.get("staged"))
-        self.assertEqual(1, len(self.staged))
-        item = self.staged[0]
+        self.assertEqual(1, self.store.count())
+        item = self.store.list_items()[0]
         self.assertEqual("takeout", item["action"])
         self.assertEqual(5, item["record_id"])
         self.assertEqual(10, item["position"])
@@ -1082,7 +1219,7 @@ class ToolRunnerPlanSinkTests(unittest.TestCase):
         runner = AgentToolRunner(
             yaml_path="/tmp/inventory.yaml",
         )
-        # Without plan_sink, add_entry should attempt execution (may error but not stage)
+        # Without plan_store, add_entry should attempt execution (may error but not stage)
         result = runner.run("add_entry", {
             "parent_cell_line": "K562",
             "short_name": "test",
@@ -1090,7 +1227,7 @@ class ToolRunnerPlanSinkTests(unittest.TestCase):
             "positions": [1],
         })
         self.assertFalse(result.get("staged", False))
-        self.assertEqual(0, len(self.staged))
+        self.assertEqual(0, self.store.count())
 
 
 # ── Regression tests: plan dedup + execute fallback ──────────────
@@ -1419,7 +1556,7 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
 
         # User can use undo to rollback, then re-execute
         # For this test, just clear and re-add with fix
-        panel.plan_items.clear()
+        panel.clear_plan()
         
         # Now execute again — this time all succeed
         bridge.batch_should_fail = False
@@ -1548,6 +1685,181 @@ class UndoRestoresPlanRegressionTests(unittest.TestCase):
 
         self.assertTrue(bridge.rollback_called)
         self.assertEqual(0, len(panel.plan_items))
+
+
+@unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
+class RollbackConfirmationDialogTests(unittest.TestCase):
+    """Regression: rollback confirmations should show complete backup context."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._app = QApplication.instance() or QApplication([])
+
+    def _seed_yaml_and_backup(self):
+        import tempfile
+        from lib.yaml_ops import create_yaml_backup, write_yaml
+
+        tmpdir = tempfile.mkdtemp(prefix="ln2_rb_confirm_")
+        yaml_path = os.path.join(tmpdir, "inventory.yaml")
+        write_yaml(
+            {
+                "meta": {"box_layout": {"rows": 9, "cols": 9}},
+                "inventory": [
+                    {
+                        "id": 1,
+                        "parent_cell_line": "K562",
+                        "short_name": "A",
+                        "box": 1,
+                        "positions": [5],
+                        "frozen_at": "2025-01-01",
+                    }
+                ],
+            },
+            path=yaml_path,
+            audit_meta={"action": "seed", "source": "tests"},
+        )
+        backup_path = str(create_yaml_backup(yaml_path))
+        return yaml_path, tmpdir, backup_path
+
+    def _cleanup_yaml(self, tmpdir):
+        import shutil
+
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_execute_plan_rollback_confirmation_includes_full_paths_and_source(self):
+        yaml_path, tmpdir, backup_path = self._seed_yaml_and_backup()
+        try:
+            panel = OperationsPanel(bridge=_FakeOperationsBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.add_plan_items(
+                [
+                    {
+                        "action": "rollback",
+                        "box": 0,
+                        "position": 1,
+                        "record_id": None,
+                        "label": "Rollback",
+                        "source": "human",
+                        "payload": {
+                            "backup_path": backup_path,
+                            "source_event": {
+                                "timestamp": "2026-02-12T09:00:00",
+                                "action": "record_thaw",
+                                "trace_id": "trace-audit-1",
+                            },
+                        },
+                    }
+                ]
+            )
+
+            captured = {}
+
+            def _capture_info(_self, text):
+                captured["info"] = text
+
+            def _fake_tr(key, **kwargs):
+                if kwargs:
+                    detail = ",".join(f"{k}={v}" for k, v in sorted(kwargs.items()))
+                    return f"{key}|{detail}"
+                return key
+
+            from unittest.mock import patch
+
+            with patch("app_gui.ui.operations_panel.tr", side_effect=_fake_tr), patch.object(
+                QMessageBox,
+                "setInformativeText",
+                new=_capture_info,
+            ), patch.object(QMessageBox, "exec", return_value=QMessageBox.No):
+                panel.execute_plan()
+
+            info = str(captured.get("info") or "")
+            self.assertIn(os.path.abspath(yaml_path), info)
+            self.assertIn(os.path.abspath(backup_path), info)
+            self.assertIn("trace-audit-1", info)
+            self.assertIn("record_thaw", info)
+        finally:
+            self._cleanup_yaml(tmpdir)
+
+    def test_undo_confirmation_includes_backup_and_yaml_paths(self):
+        yaml_path, tmpdir, backup_path = self._seed_yaml_and_backup()
+        try:
+            panel = OperationsPanel(bridge=_UndoBridge(), yaml_path_getter=lambda: yaml_path)
+            panel._last_operation_backup = backup_path
+
+            captured = {}
+
+            def _capture_info(_self, text):
+                captured["info"] = text
+
+            def _fake_tr(key, **kwargs):
+                if kwargs:
+                    detail = ",".join(f"{k}={v}" for k, v in sorted(kwargs.items()))
+                    return f"{key}|{detail}"
+                return key
+
+            from unittest.mock import patch
+
+            with patch("app_gui.ui.operations_panel.tr", side_effect=_fake_tr), patch.object(
+                QMessageBox,
+                "setInformativeText",
+                new=_capture_info,
+            ), patch.object(QMessageBox, "exec", return_value=QMessageBox.No):
+                panel.on_undo_last()
+
+            info = str(captured.get("info") or "")
+            self.assertIn(os.path.abspath(yaml_path), info)
+            self.assertIn(os.path.abspath(backup_path), info)
+            self.assertIn(os.path.basename(backup_path), info)
+        finally:
+            self._cleanup_yaml(tmpdir)
+
+    def test_plan_table_rollback_row_shows_dense_context(self):
+        yaml_path, tmpdir, backup_path = self._seed_yaml_and_backup()
+        try:
+            panel = OperationsPanel(bridge=_FakeOperationsBridge(), yaml_path_getter=lambda: yaml_path)
+
+            rollback_item = {
+                "action": "rollback",
+                "box": 0,
+                "position": 1,
+                "record_id": None,
+                "label": "Rollback",
+                "source": "human",
+                "payload": {
+                    "backup_path": backup_path,
+                    "source_event": {
+                        "timestamp": "2026-02-12T09:00:00",
+                        "action": "record_thaw",
+                        "trace_id": "trace-audit-1",
+                    },
+                },
+            }
+
+            def _fake_tr(key, **kwargs):
+                if kwargs:
+                    detail = ",".join(f"{k}={v}" for k, v in sorted(kwargs.items()))
+                    return f"{key}|{detail}"
+                return key
+
+            from unittest.mock import patch
+
+            with patch("app_gui.ui.operations_panel.tr", side_effect=_fake_tr):
+                panel.add_plan_items([rollback_item])
+
+            self.assertEqual(1, panel.plan_table.rowCount())
+            label_item = panel.plan_table.item(0, 6)
+            note_item = panel.plan_table.item(0, 7)
+
+            self.assertIsNotNone(label_item)
+            self.assertIsNotNone(note_item)
+            self.assertIn(os.path.basename(backup_path), label_item.text())
+            self.assertIn("trace-audit-1", note_item.text())
+
+            tooltip = label_item.toolTip()
+            self.assertIn(os.path.abspath(yaml_path), tooltip)
+            self.assertIn(os.path.abspath(backup_path), tooltip)
+            self.assertIn("record_thaw", tooltip)
+        finally:
+            self._cleanup_yaml(tmpdir)
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
@@ -1700,6 +2012,88 @@ class AuditGuideSelectionRegressionTests(unittest.TestCase):
             panel.on_print_selected_audit_guide()
 
         open_url.assert_called_once()
+
+    def test_stage_rollback_from_selected_audit_requires_single_row(self):
+        panel = self._new_panel()
+        events = [
+            {
+                "timestamp": "2026-02-12T09:00:00",
+                "action": "record_thaw",
+                "status": "success",
+                "backup_path": "/tmp/inventory.yaml.20260212-090000.bak",
+            },
+            {
+                "timestamp": "2026-02-12T09:01:00",
+                "action": "batch_thaw",
+                "status": "success",
+                "backup_path": "/tmp/inventory.yaml.20260212-090100.bak",
+            },
+        ]
+        self._seed_audit_rows(panel, events)
+        panel.audit_table.selectAll()
+
+        messages = []
+        panel.status_message.connect(lambda msg, _timeout, _level: messages.append(msg))
+        panel.on_stage_rollback_from_selected_audit()
+
+        self.assertEqual(0, len(panel.plan_items))
+        self.assertTrue(any(tr("operations.selectSingleAuditRow") in msg for msg in messages))
+
+    def test_stage_rollback_from_selected_audit_requires_backup_path(self):
+        panel = self._new_panel()
+        events = [
+            {
+                "timestamp": "2026-02-12T09:00:00",
+                "action": "record_thaw",
+                "status": "success",
+                "backup_path": "",
+            }
+        ]
+        self._seed_audit_rows(panel, events)
+        panel.audit_table.selectRow(0)
+
+        messages = []
+        panel.status_message.connect(lambda msg, _timeout, _level: messages.append(msg))
+        panel.on_stage_rollback_from_selected_audit()
+
+        self.assertEqual(0, len(panel.plan_items))
+        self.assertTrue(any(tr("operations.selectedAuditNoBackup") in msg for msg in messages))
+
+    def test_stage_rollback_from_selected_audit_stages_plan_item(self):
+        panel = self._new_panel()
+        backup_path = "/tmp/inventory.yaml.20260212-090000.bak"
+        events = [
+            {
+                "timestamp": "2026-02-12T09:00:00",
+                "action": "record_thaw",
+                "status": "success",
+                "trace_id": "trace-audit-1",
+                "session_id": "session-audit-1",
+                "actor_id": "gui-user",
+                "channel": "gui",
+                "backup_path": backup_path,
+            }
+        ]
+        self._seed_audit_rows(panel, events)
+        panel.audit_table.selectRow(0)
+
+        messages = []
+        panel.status_message.connect(lambda msg, _timeout, _level: messages.append(msg))
+        panel.on_stage_rollback_from_selected_audit()
+
+        self.assertEqual(1, len(panel.plan_items))
+        item = panel.plan_items[0]
+        self.assertEqual("rollback", item.get("action"))
+        payload = item.get("payload") or {}
+        self.assertEqual(backup_path, payload.get("backup_path"))
+
+        source_event = payload.get("source_event") or {}
+        self.assertEqual("2026-02-12T09:00:00", source_event.get("timestamp"))
+        self.assertEqual("record_thaw", source_event.get("action"))
+        self.assertEqual("trace-audit-1", source_event.get("trace_id"))
+
+        expected = tr("operations.auditRollbackStaged", backup=os.path.basename(backup_path))
+        self.assertTrue(any(expected in msg for msg in messages))
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
@@ -2049,3 +2443,311 @@ class ExecuteFailurePreservesPlanTests(unittest.TestCase):
             panel.execute_plan()
 
         self.assertEqual(0, len(panel.plan_items))
+
+
+# ===========================================================================
+# cell_line dropdown and color_key filter tests
+# ===========================================================================
+
+@unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 not available")
+class CellLineDropdownTests(unittest.TestCase):
+    """Tests for cell_line QComboBox in operations panel."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._app = QApplication.instance() or QApplication([])
+
+    def test_cell_line_combo_exists(self):
+        """Operations panel should have a cell_line combo box."""
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        self.assertTrue(hasattr(panel, "a_cell_line"))
+        from PySide6.QtWidgets import QComboBox
+        self.assertIsInstance(panel.a_cell_line, QComboBox)
+
+    def test_cell_line_combo_starts_with_empty(self):
+        """Cell line combo should start with an empty option."""
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        self.assertEqual("", panel.a_cell_line.itemText(0))
+
+    def test_refresh_cell_line_options_populates_combo(self):
+        """_refresh_cell_line_options should populate from meta."""
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        meta = {"cell_line_options": ["K562", "HeLa", "NCCIT"]}
+        panel._refresh_cell_line_options(meta)
+        # 1 empty + 3 options
+        self.assertEqual(4, panel.a_cell_line.count())
+        self.assertEqual("K562", panel.a_cell_line.itemText(1))
+        self.assertEqual("HeLa", panel.a_cell_line.itemText(2))
+        self.assertEqual("NCCIT", panel.a_cell_line.itemText(3))
+
+    def test_refresh_cell_line_options_preserves_selection(self):
+        """Refreshing options should preserve the current selection."""
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        meta = {"cell_line_options": ["K562", "HeLa"]}
+        panel._refresh_cell_line_options(meta)
+        panel.a_cell_line.setCurrentIndex(2)  # HeLa
+        self.assertEqual("HeLa", panel.a_cell_line.currentText())
+
+        # Refresh again with same options
+        panel._refresh_cell_line_options(meta)
+        self.assertEqual("HeLa", panel.a_cell_line.currentText())
+
+    def test_refresh_cell_line_options_defaults_when_no_meta(self):
+        """Without meta options, should use DEFAULT_CELL_LINE_OPTIONS."""
+        from lib.custom_fields import DEFAULT_CELL_LINE_OPTIONS
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        panel._refresh_cell_line_options({})
+        # 1 empty + len(defaults)
+        self.assertEqual(1 + len(DEFAULT_CELL_LINE_OPTIONS), panel.a_cell_line.count())
+
+
+@unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 not available")
+class OverviewColorKeyFilterTests(unittest.TestCase):
+    """Tests for overview panel filtering by color_key."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._app = QApplication.instance() or QApplication([])
+
+    def _seed_yaml(self, records, meta_extra=None):
+        import tempfile, shutil
+        tmpdir = tempfile.mkdtemp(prefix="ln2_ov_ck_")
+        yaml_path = os.path.join(tmpdir, "inventory.yaml")
+        meta = {"box_layout": {"rows": 9, "cols": 9}}
+        if meta_extra:
+            meta.update(meta_extra)
+        from lib.yaml_ops import write_yaml
+        write_yaml(
+            {"meta": meta, "inventory": records},
+            path=yaml_path,
+            audit_meta={"action": "seed", "source": "tests"},
+        )
+        return yaml_path, tmpdir
+
+    def _cleanup(self, tmpdir):
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_filter_dropdown_uses_color_key_values(self):
+        """Filter dropdown should show unique values of the color_key field."""
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "positions": [1], "frozen_at": "2025-01-01"},
+            {"id": 2, "cell_line": "HeLa", "short_name": "B", "box": 1, "positions": [2], "frozen_at": "2025-01-01"},
+            {"id": 3, "cell_line": "K562", "short_name": "C", "box": 1, "positions": [3], "frozen_at": "2025-01-01"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+
+            items = [panel.ov_filter_cell.itemText(i) for i in range(panel.ov_filter_cell.count())]
+            self.assertIn(tr("overview.allCells"), items)
+            self.assertIn("K562", items)
+            self.assertIn("HeLa", items)
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_filter_by_color_key_hides_non_matching(self):
+        """Selecting a color_key value should filter the dropdown correctly."""
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "positions": [1], "frozen_at": "2025-01-01"},
+            {"id": 2, "cell_line": "HeLa", "short_name": "B", "box": 1, "positions": [2], "frozen_at": "2025-01-01"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+
+            # Verify pos_map is populated
+            self.assertIn((1, 1), panel.overview_pos_map)
+            self.assertIn((1, 2), panel.overview_pos_map)
+
+            # Verify color_key_value property is set on buttons
+            btn_1 = panel.overview_cells.get((1, 1))
+            btn_2 = panel.overview_cells.get((1, 2))
+            self.assertIsNotNone(btn_1)
+            self.assertIsNotNone(btn_2)
+            self.assertEqual("K562", btn_1.property("color_key_value"))
+            self.assertEqual("HeLa", btn_2.property("color_key_value"))
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_color_key_custom_field(self):
+        """color_key can be set to a user field like short_name."""
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "Alpha", "box": 1, "positions": [1], "frozen_at": "2025-01-01"},
+            {"id": 2, "cell_line": "K562", "short_name": "Beta", "box": 1, "positions": [2], "frozen_at": "2025-01-01"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "short_name"})
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+
+            items = [panel.ov_filter_cell.itemText(i) for i in range(panel.ov_filter_cell.count())]
+            self.assertIn("Alpha", items)
+            self.assertIn("Beta", items)
+        finally:
+            self._cleanup(tmpdir)
+
+
+@unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 not available")
+class OverviewTableViewTests(unittest.TestCase):
+    """Tests for Overview table view and shared live filters."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._app = QApplication.instance() or QApplication([])
+
+    def _seed_yaml(self, records, meta_extra=None):
+        import tempfile
+
+        tmpdir = tempfile.mkdtemp(prefix="ln2_ov_table_")
+        yaml_path = os.path.join(tmpdir, "inventory.yaml")
+        meta = {"box_layout": {"rows": 9, "cols": 9}}
+        if meta_extra:
+            meta.update(meta_extra)
+        from lib.yaml_ops import write_yaml
+
+        write_yaml(
+            {"meta": meta, "inventory": records},
+            path=yaml_path,
+            audit_meta={"action": "seed", "source": "tests"},
+        )
+        return yaml_path, tmpdir
+
+    def _cleanup(self, tmpdir):
+        import shutil
+
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def _switch_to_table(self, panel):
+        idx = panel.ov_view_mode.findData("table")
+        self.assertGreaterEqual(idx, 0)
+        panel.ov_view_mode.setCurrentIndex(idx)
+
+    def test_table_view_uses_export_columns(self):
+        records = [
+            {
+                "id": 1,
+                "cell_line": "K562",
+                "short_name": "A",
+                "box": 1,
+                "positions": [1],
+                "frozen_at": "2025-01-01",
+                "passage_number": 3,
+            },
+            {
+                "id": 2,
+                "cell_line": "HeLa",
+                "short_name": "B",
+                "box": 2,
+                "positions": [2],
+                "frozen_at": "2025-01-01",
+                "passage_number": 7,
+            },
+        ]
+        meta_extra = {
+            "custom_fields": [{"key": "passage_number", "label": "Passage #", "type": "int"}],
+            "color_key": "cell_line",
+        }
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra=meta_extra)
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            headers = [
+                panel.ov_table.horizontalHeaderItem(i).text()
+                for i in range(panel.ov_table.columnCount())
+            ]
+            self.assertIn("id", headers)
+            self.assertIn("cell_line", headers)
+            self.assertIn("position", headers)
+            self.assertIn("passage_number", headers)
+            self.assertEqual(2, panel.ov_table.rowCount())
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_table_view_shares_live_filters(self):
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "clone-A", "box": 1, "positions": [1], "frozen_at": "2025-01-01"},
+            {"id": 2, "cell_line": "HeLa", "short_name": "clone-B", "box": 2, "positions": [2], "frozen_at": "2025-01-01"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+            self.assertEqual(2, panel.ov_table.rowCount())
+
+            panel.ov_filter_keyword.setText("hela")
+            self.assertEqual(1, panel.ov_table.rowCount())
+            self.assertEqual("2", panel.ov_table.item(0, 0).text())
+
+            panel.ov_filter_keyword.clear()
+            box_idx = panel.ov_filter_box.findData(1)
+            self.assertGreaterEqual(box_idx, 0)
+            panel.ov_filter_box.setCurrentIndex(box_idx)
+            self.assertEqual(1, panel.ov_table.rowCount())
+            self.assertEqual("1", panel.ov_table.item(0, 0).text())
+
+            panel.ov_filter_box.setCurrentIndex(0)
+            cell_idx = panel.ov_filter_cell.findData("K562")
+            self.assertGreaterEqual(cell_idx, 0)
+            panel.ov_filter_cell.setCurrentIndex(cell_idx)
+            self.assertEqual(1, panel.ov_table.rowCount())
+            self.assertEqual("1", panel.ov_table.item(0, 0).text())
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_table_mode_disables_show_empty_toggle(self):
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "positions": [1], "frozen_at": "2025-01-01"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records)
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+
+            self.assertTrue(panel.ov_filter_show_empty.isEnabled())
+            self._switch_to_table(panel)
+            self.assertFalse(panel.ov_filter_show_empty.isEnabled())
+
+            grid_idx = panel.ov_view_mode.findData("grid")
+            self.assertGreaterEqual(grid_idx, 0)
+            panel.ov_view_mode.setCurrentIndex(grid_idx)
+            self.assertTrue(panel.ov_filter_show_empty.isEnabled())
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_table_double_click_prefills_takeout_context(self):
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "positions": [5], "frozen_at": "2025-01-01"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records)
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            emitted = []
+            panel.request_prefill_background.connect(lambda payload: emitted.append(payload))
+            panel.on_table_row_double_clicked(0, 0)
+
+            self.assertEqual(
+                [{"box": 1, "position": 5, "record_id": 1}],
+                emitted,
+            )
+        finally:
+            self._cleanup(tmpdir)

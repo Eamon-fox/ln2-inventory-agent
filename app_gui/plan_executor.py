@@ -85,11 +85,27 @@ def _analyze_move_plan(items: List[Dict[str, object]]) -> Dict[str, object]:
 
 
 def _validate_moves_holistically(items: List[Dict[str, object]], records: List[Dict[str, object]]) -> List[Dict[str, object]]:
-    """Validate move operations as a whole, supporting swap semantics."""
+    """Validate move operations as a whole, supporting swap semantics.
+    
+    Blocks moves to positions already claimed by earlier moves in the same batch,
+    unless it's a valid swap pair (A->B and B->A in the batch).
+    """
     errors = []
     analysis = _analyze_move_plan(items)
     move_graph = analysis["move_graph"]
     reverse_graph = analysis["reverse_graph"]
+
+    # Pre-scan to detect duplicate destinations in the batch
+    # Count how many moves target each (box, position)
+    dest_counts: Dict[Tuple[int, int], int] = {}
+    for item in items:
+        if item.get("action") != "move":
+            continue
+        to_box = int(item.get("to_box", item.get("box", 0)) or 0)
+        to_pos = int(item.get("to_position", 0) or 0)
+        if to_pos:
+            key = (to_box, to_pos)
+            dest_counts[key] = dest_counts.get(key, 0) + 1
 
     pos_map: Dict[Tuple[int, int], Dict[str, object]] = {}
     for rec in records:
@@ -99,12 +115,18 @@ def _validate_moves_holistically(items: List[Dict[str, object]], records: List[D
         for pos in rec.get("positions") or []:
             pos_map[(int(box), int(pos))] = rec
 
-    for item in items:
+    # Track which records have been "claimed" (their source position is being moved from)
+    # This is used to detect when a move targets a position that was already claimed by earlier move
+    claimed_positions: Dict[Tuple[int, int], int] = {}  # (box, pos) -> record_id that moved from here
+    
+    for item_idx, item in enumerate(items):
         if item.get("action") != "move":
             continue
         from_box = int(item.get("box", 0) or 0)
         from_pos = int(item.get("position", 0) or 0)
         record_id = int(item.get("record_id", 0) or 0)
+        to_box = int(item.get("to_box", from_box) or from_box)
+        to_pos = int(item.get("to_position", 0) or 0)
 
         src = (from_box, from_pos)
         rec_at_src = pos_map.get(src)
@@ -115,32 +137,73 @@ def _validate_moves_holistically(items: List[Dict[str, object]], records: List[D
                 "error_code": "source_empty",
                 "message": f"No record at source position Box {from_box}:{from_pos}",
             })
+            continue
         elif int(rec_at_src.get("id", 0)) != record_id:
             errors.append({
                 "item": item,
                 "error_code": "source_mismatch",
                 "message": f"Record ID mismatch at Box {from_box}:{from_pos}: expected {record_id}, found {rec_at_src.get('id')}",
             })
-
-    for item in items:
-        if item.get("action") != "move":
             continue
-        to_box = int(item.get("to_box", item.get("box", 0)) or 0)
-        to_pos = int(item.get("to_position", 0) or 0)
+
+        # Check destination
         dst = (to_box, to_pos)
+        
+        # Check if multiple moves in batch target this same position
+        if dest_counts.get(dst, 0) > 1:
+            errors.append({
+                "item": item,
+                "error_code": "target_conflict_in_batch",
+                "message": f"Multiple moves in batch target Box {to_box}:{to_pos} - only one move allowed per target position",
+            })
+            continue
 
         if dst in pos_map:
             existing = pos_map[dst]
             existing_id = int(existing.get("id", 0))
 
-            is_being_moved_away = dst in move_graph
+            # Check if destination is claimed by an earlier move in this batch
+            is_claimed = dst in claimed_positions
+            
+            # Check if this is part of a valid swap pair (A->B and B->A)
+            # In a valid swap: record A moves to B's position, and record B moves to A's position
+            is_valid_swap = False
+            if dst in move_graph:
+                src_record_id = move_graph[dst][2]  # record_id moving to dst
+                # Check if the record at dst is moving to src position
+                for other_item in items:
+                    if other_item.get("action") != "move":
+                        continue
+                    other_record_id = int(other_item.get("record_id", 0) or 0)
+                    other_to_box = int(other_item.get("to_box", other_item.get("box", 0)) or 0)
+                    other_to_pos = int(other_item.get("to_position", 0) or 0)
+                    if other_record_id == existing_id and other_to_box == from_box and other_to_pos == from_pos:
+                        is_valid_swap = True
+                        break
 
-            if not is_being_moved_away:
+            if is_claimed and not is_valid_swap:
+                # This destination was already claimed by an earlier move
+                # and it's not a valid swap pair
                 errors.append({
                     "item": item,
-                    "error_code": "target_occupied",
-                    "message": f"Target position Box {to_box}:{to_pos} is occupied by ID {existing.get('id')} and not part of swap",
+                    "error_code": "target_occupied_by_batch_move",
+                    "message": f"Target position Box {to_box}:{to_pos} is already claimed by another move in this batch",
                 })
+                continue
+
+            if not is_claimed and not is_valid_swap:
+                # Original logic: check if being moved away
+                is_being_moved_away = dst in move_graph
+                if not is_being_moved_away:
+                    errors.append({
+                        "item": item,
+                        "error_code": "target_occupied",
+                        "message": f"Target position Box {to_box}:{to_pos} is occupied by ID {existing.get('id')} and not part of swap",
+                    })
+                    continue
+
+        # Mark this position as claimed by this record's move
+        claimed_positions[dst] = record_id
 
     return errors
 
@@ -295,6 +358,7 @@ def run_plan(
     for item in rollbacks:
         payload = dict(item.get("payload") or {})
         backup_path = payload.get("backup_path")
+        source_event = payload.get("source_event")
 
         if mode == "preflight":
             response = _run_dry_tool(
@@ -302,9 +366,16 @@ def run_plan(
                 yaml_path=yaml_path,
                 tool_name="tool_rollback",
                 backup_path=backup_path,
+                source_event=source_event,
             )
         else:
-            response = bridge.rollback(yaml_path=yaml_path, backup_path=backup_path)
+            rollback_kwargs = {
+                "yaml_path": yaml_path,
+                "backup_path": backup_path,
+            }
+            if isinstance(source_event, dict) and source_event:
+                rollback_kwargs["source_event"] = source_event
+            response = bridge.rollback(**rollback_kwargs)
 
         if response.get("ok"):
             reports.append(_make_ok_item(item, response))

@@ -7,6 +7,7 @@ from lib.position_fmt import (
     box_to_display,
     display_to_box,
     get_box_count,
+    get_box_numbers,
     get_total_slots,
     get_position_range,
 )
@@ -114,6 +115,14 @@ class TestBoxDisplay:
         layout = {"box_labels": ["A", "B", "C"]}
         assert display_to_box("B", layout) == 2
 
+    def test_box_labels_with_explicit_box_numbers(self):
+        layout = {
+            "box_numbers": [1, 2, 4],
+            "box_labels": ["A", "B", "D"],
+        }
+        assert box_to_display(4, layout) == "D"
+        assert display_to_box("D", layout) == 4
+
 
 class TestLayoutHelpers:
     """get_box_count, get_total_slots, get_position_range."""
@@ -131,6 +140,11 @@ class TestLayoutHelpers:
     def test_box_count_fallback(self):
         # No box_count in layout → falls back to BOX_RANGE default (5)
         assert get_box_count({}) == 5
+
+    def test_box_numbers_override_box_count(self):
+        layout = {"box_count": 8, "box_numbers": [1, 2, 4, 5]}
+        assert get_box_numbers(layout) == [1, 2, 4, 5]
+        assert get_box_count(layout) == 4
 
     def test_8x12(self):
         layout = {"rows": 8, "cols": 12}

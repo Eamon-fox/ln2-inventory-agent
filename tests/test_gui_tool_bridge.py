@@ -1,3 +1,4 @@
+import csv
 import sys
 import tempfile
 import unittest
@@ -63,6 +64,25 @@ inventory:
         self.assertTrue(response.get("ok"))
         # 'cell' and 'unknown' are not actual record keys, so no records match
         self.assertEqual(0, response.get("result", {}).get("count"))
+
+    def test_export_inventory_csv_writes_full_snapshot(self):
+        tmp, path = self._write_inventory()
+        self.addCleanup(tmp.cleanup)
+        bridge = GuiToolBridge()
+
+        output_path = Path(tmp.name) / "full_export.csv"
+        response = bridge.export_inventory_csv(str(path), str(output_path))
+
+        self.assertTrue(response.get("ok"))
+        self.assertTrue(output_path.exists())
+
+        with output_path.open("r", encoding="utf-8", newline="") as handle:
+            rows = list(csv.reader(handle))
+
+        self.assertGreaterEqual(len(rows), 2)
+        self.assertEqual("id", rows[0][0])
+        self.assertIn("cell_line", rows[0])
+        self.assertEqual("5", rows[1][0])
 
 
 if __name__ == "__main__":

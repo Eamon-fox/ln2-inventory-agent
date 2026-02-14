@@ -10,6 +10,8 @@ import sys
 
 import yaml
 
+from agent.llm_client import DEFAULT_PROVIDER, PROVIDER_DEFAULTS
+
 DEFAULT_CONFIG_DIR = os.path.expanduser("~/.ln2agent")
 DEFAULT_CONFIG_FILE = os.path.join(DEFAULT_CONFIG_DIR, "config.yaml")
 
@@ -38,7 +40,8 @@ DEFAULT_GUI_CONFIG = {
     "language": "en",
     "theme": "dark",
     "ai": {
-        "model": "deepseek-chat",
+        "provider": DEFAULT_PROVIDER,
+        "model": None,
         "max_steps": DEFAULT_MAX_STEPS,
         "thinking_enabled": True,
         "custom_prompt": "",
@@ -48,10 +51,21 @@ DEFAULT_GUI_CONFIG = {
 
 def load_gui_config(path=DEFAULT_CONFIG_FILE):
     """Load GUI config from YAML file. Returns dict with defaults merged."""
+    def _apply_defaults(cfg):
+        provider = cfg.get("ai", {}).get("provider") or DEFAULT_PROVIDER
+        if provider not in PROVIDER_DEFAULTS:
+            provider = DEFAULT_PROVIDER
+        cfg.setdefault("ai", {})["provider"] = provider
+        if not str(cfg.get("ai", {}).get("model") or "").strip():
+            cfg["ai"]["model"] = PROVIDER_DEFAULTS[provider]["model"]
+        cfg["ai"]["thinking_enabled"] = bool(cfg.get("ai", {}).get("thinking_enabled", True))
+        if not cfg.get("ai", {}).get("custom_prompt"):
+            cfg["ai"]["custom_prompt"] = _load_default_prompt()
+        return cfg
+
     if not os.path.isfile(path):
         cfg = copy.deepcopy(DEFAULT_GUI_CONFIG)
-        cfg["ai"]["custom_prompt"] = _load_default_prompt()
-        return cfg
+        return _apply_defaults(cfg)
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
@@ -61,19 +75,13 @@ def load_gui_config(path=DEFAULT_CONFIG_FILE):
                 merged[key] = data[key]
         if "ai" in data and isinstance(data["ai"], dict):
             merged["ai"] = copy.deepcopy(DEFAULT_GUI_CONFIG["ai"])
-            for key in ("model", "max_steps", "thinking_enabled", "custom_prompt"):
+            for key in ("provider", "model", "max_steps", "thinking_enabled", "custom_prompt"):
                 if key in data["ai"]:
                     merged["ai"][key] = data["ai"][key]
-        if not str(merged["ai"].get("model") or "").strip():
-            merged["ai"]["model"] = DEFAULT_GUI_CONFIG["ai"]["model"]
-        merged["ai"]["thinking_enabled"] = bool(merged["ai"].get("thinking_enabled", True))
-        if not merged["ai"].get("custom_prompt"):
-            merged["ai"]["custom_prompt"] = _load_default_prompt()
-        return merged
+        return _apply_defaults(merged)
     except Exception:
         cfg = copy.deepcopy(DEFAULT_GUI_CONFIG)
-        cfg["ai"]["custom_prompt"] = _load_default_prompt()
-        return cfg
+        return _apply_defaults(cfg)
 
 
 def save_gui_config(config, path=DEFAULT_CONFIG_FILE):

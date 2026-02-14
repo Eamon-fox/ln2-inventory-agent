@@ -12,11 +12,12 @@ from app_gui.gui_config import load_gui_config, save_gui_config, DEFAULT_GUI_CON
 
 
 class GuiConfigTests(unittest.TestCase):
-    def test_load_gui_config_defaults_to_deepseek_chat_model(self):
+    def test_load_gui_config_defaults(self):
         with tempfile.TemporaryDirectory(prefix="ln2_gui_cfg_") as temp_dir:
             config_path = Path(temp_dir) / "config.yaml"
             cfg = load_gui_config(path=str(config_path))
 
+        self.assertEqual("deepseek", cfg["ai"]["provider"])
         self.assertEqual("deepseek-chat", cfg["ai"]["model"])
         self.assertEqual(12, cfg["ai"]["max_steps"])
         self.assertTrue(cfg["ai"]["thinking_enabled"])
