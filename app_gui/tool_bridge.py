@@ -1,7 +1,6 @@
 """GUI-facing bridge to the unified Tool API."""
 
 import os
-from pathlib import Path
 
 from agent.llm_client import (
     DEFAULT_PROVIDER,
@@ -11,7 +10,7 @@ from agent.llm_client import (
 )
 from agent.react_agent import ReactAgent
 from agent.tool_runner import AgentToolRunner
-from app_gui.gui_config import DEFAULT_CONFIG_FILE, DEFAULT_MAX_STEPS
+from app_gui.gui_config import DEFAULT_MAX_STEPS
 from lib.tool_api import (
     build_actor_context,
     parse_batch_entries,
@@ -46,6 +45,15 @@ class GuiToolBridge:
 
     def __init__(self, session_id=None):
         self._session_id = session_id
+        self._api_keys = {}
+
+    def set_api_keys(self, api_keys):
+        """Set per-provider API keys for LLM clients."""
+        self._api_keys = api_keys if isinstance(api_keys, dict) else {}
+
+    def _get_api_key(self, provider):
+        """Get API key for the given provider."""
+        return self._api_keys.get(provider)
 
     def _ctx(self):
         return build_actor_context(
@@ -191,12 +199,13 @@ class GuiToolBridge:
         provider_cfg = PROVIDER_DEFAULTS[provider]
         use_thinking = bool(thinking_enabled)
         chosen_model = (model or "").strip() or os.environ.get(f"{provider.upper()}_MODEL") or provider_cfg["model"]
+        api_key = self._get_api_key(provider)
 
         try:
             if provider == "zhipu":
-                llm = ZhipuLLMClient(model=chosen_model, thinking_enabled=use_thinking)
+                llm = ZhipuLLMClient(model=chosen_model, api_key=api_key, thinking_enabled=use_thinking)
             else:
-                llm = DeepSeekLLMClient(model=chosen_model, thinking_enabled=use_thinking)
+                llm = DeepSeekLLMClient(model=chosen_model, api_key=api_key, thinking_enabled=use_thinking)
             runner = AgentToolRunner(
                 yaml_path=yaml_path,
                 session_id=self._session_id,

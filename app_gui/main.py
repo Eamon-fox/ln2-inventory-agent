@@ -38,6 +38,22 @@ from app_gui.ui.overview_panel import OverviewPanel
 from app_gui.ui.operations_panel import OperationsPanel
 from app_gui.ui.ai_panel import AIPanel
 
+APP_VERSION = "1.0.1"
+APP_RELEASE_URL = "https://github.com/Eamon-fox/ln2-inventory-agent/releases"
+
+
+def _parse_version(v: str) -> tuple:
+    """Parse version string like '1.0.2' to tuple (1, 0, 2) for comparison."""
+    try:
+        return tuple(int(x) for x in v.split("."))
+    except (ValueError, AttributeError):
+        return (0, 0, 0)
+
+
+def _is_version_newer(new_version: str, old_version: str) -> bool:
+    """Return True if new_version > old_version using semver comparison."""
+    return _parse_version(new_version) > _parse_version(old_version)
+
 
 class _NoWheelComboBox(QComboBox):
     """Let parent scroll area handle mouse wheel."""
@@ -117,6 +133,11 @@ class SettingsDialog(QDialog):
         box_btn = QPushButton(tr("main.manageBoxes"))
         box_btn.clicked.connect(self._open_manage_boxes)
         tool_row.addWidget(box_btn)
+
+        import_btn = QPushButton(tr("main.importPromptTitle"))
+        import_btn.clicked.connect(self._open_import_prompt)
+        tool_row.addWidget(import_btn)
+
         tool_row.addStretch()
         data_layout.addRow("", tool_row)
 
@@ -125,10 +146,15 @@ class SettingsDialog(QDialog):
         ai_group = QGroupBox(tr("settings.ai"))
         ai_layout = QFormLayout(ai_group)
 
-        self.api_key_edit = QLineEdit(self._config.get("api_key") or "")
-        self.api_key_edit.setEchoMode(QLineEdit.Password)
-        self.api_key_edit.setPlaceholderText("sk-...")
-        ai_layout.addRow(tr("settings.apiKey"), self.api_key_edit)
+        api_keys_config = self._config.get("api_keys", {})
+        self._api_key_edits = {}
+        for provider_id, cfg in PROVIDER_DEFAULTS.items():
+            key_edit = QLineEdit(api_keys_config.get(provider_id, ""))
+            key_edit.setEchoMode(QLineEdit.Password)
+            key_edit.setPlaceholderText("sk-...")
+            self._api_key_edits[provider_id] = key_edit
+            label = f'{cfg["display_name"]} ({cfg["env_key"]}):'
+            ai_layout.addRow(label, key_edit)
 
         api_hint = QLabel(tr("settings.apiKeyHint"))
         api_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
@@ -223,9 +249,9 @@ class SettingsDialog(QDialog):
         about_group = QGroupBox(tr("settings.about"))
         about_layout = QVBoxLayout(about_group)
         about_label = QLabel(
-            f'{tr("app.title")}  v1.0<br>'
+            f'{tr("app.title")}  v{APP_VERSION}<br>'
             f'{tr("settings.aboutDesc")}<br><br>'
-            f'GitHub: <a href="https://github.com/Eamon-fox/ln2-inventory-agent">'
+            f'GitHub: <a href="{APP_RELEASE_URL}">'
             f'Eamon-fox/ln2-inventory-agent</a>'
         )
         about_label.setOpenExternalLinks(True)
@@ -417,6 +443,10 @@ class SettingsDialog(QDialog):
         if callable(self._on_manage_boxes):
             self._on_manage_boxes(self.yaml_edit.text().strip())
 
+    def _open_import_prompt(self):
+        dlg = ImportPromptDialog(self)
+        dlg.exec()
+
     def _on_provider_changed(self):
         provider = self.ai_provider_combo.currentData()
         cfg = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS[DEFAULT_PROVIDER])
@@ -426,9 +456,14 @@ class SettingsDialog(QDialog):
     def get_values(self):
         provider = self.ai_provider_combo.currentData() or DEFAULT_PROVIDER
         provider_cfg = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS[DEFAULT_PROVIDER])
+        api_keys = {}
+        for prov_id, edit in self._api_key_edits.items():
+            key_text = edit.text().strip()
+            if key_text:
+                api_keys[prov_id] = key_text
         return {
             "yaml_path": self.yaml_edit.text().strip(),
-            "api_key": self.api_key_edit.text().strip() or None,
+            "api_keys": api_keys,
             "language": self.lang_combo.currentData(),
             "theme": self.theme_combo.currentData(),
             "ai_provider": provider,
@@ -446,6 +481,140 @@ _BOX_PRESETS = [
     ("8 x 12  (96)", 8, 12),
     ("5 x 5  (25)", 5, 5),
 ]
+
+
+def _get_import_prompt():
+    return """你是数据清洗与结构化助手。请把我粘贴的 Excel/CSV/表格数据转换为 LN2 Inventory YAML。
+
+严格要求：
+1) 只输出 YAML 纯文本，不要 Markdown 代码块，不要解释。
+2) 顶层必须包含：
+meta:
+  version: "1.0"
+  box_layout:
+    rows: 9
+    cols: 9
+  custom_fields: []
+inventory: []
+3) 数据模型是 tube-level：一条 inventory 记录 = 一支物理冻存管。
+4) 每条记录必填：
+   - id: 正整数，唯一
+   - short_name: 非空字符串
+   - box: 整数
+   - positions: 仅包含 1 个整数的列表（如 [12]）
+   - frozen_at: YYYY-MM-DD
+5) 常用可选字段：
+    - cell_line, plasmid_name, plasmid_id, note, thaw_events
+6) 字段映射：
+    - 若原表是 cell_line 列，直接映射
+   - 若有 quantity/tube_count>1，拆成多条记录
+7) 若位置是 A1/B3 形式，换算为整数 position：
+   position = (row_index-1)*cols + col_index，其中 A=1, B=2...
+8) 空值统一用 null；字符串去首尾空格；日期统一 YYYY-MM-DD。
+9) 如果缺少必填字段（尤其 box/position/frozen_at），先列出"缺失信息清单"，先不要输出 YAML。
+
+输出前自检：
+- 顶层只有 meta 和 inventory
+- inventory 是列表
+- 每条 positions 只有一个整数
+- id 无重复
+
+下面是原始数据：
+<<<DATA
+（把 Excel 粘贴内容放这里）
+DATA"""
+
+
+def _get_yaml_example():
+    return """meta:
+  version: "1.0"
+  box_layout:
+    rows: 9
+    cols: 9
+  custom_fields: []
+
+inventory:
+  - id: 1
+    cell_line: K562
+    short_name: K562_ctrl_A
+    plasmid_name: pLenti-empty
+    plasmid_id: p0001
+    box: 1
+    positions: [1]
+    frozen_at: "2026-02-01"
+    note: baseline control
+
+  - id: 2
+    cell_line: HeLa
+    short_name: HeLa_test_B
+    plasmid_name: null
+    plasmid_id: null
+    box: 1
+    positions: [2]
+    frozen_at: "2026-01-15"
+    note: null"""
+
+
+class ImportPromptDialog(QDialog):
+    """Dialog showing import prompt for converting Excel/CSV to YAML."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("main.importPromptTitle"))
+        self.setMinimumWidth(700)
+        self.setMinimumHeight(500)
+
+        layout = QVBoxLayout(self)
+
+        desc = QLabel(tr("main.importPromptDesc"))
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color: #64748b; font-size: 12px; margin-bottom: 8px;")
+        layout.addWidget(desc)
+
+        self.prompt_edit = QTextEdit()
+        self.prompt_edit.setPlainText(_get_import_prompt())
+        self.prompt_edit.setReadOnly(True)
+        self.prompt_edit.setFontFamily("monospace")
+        self.prompt_edit.setFontPointSize(10)
+        layout.addWidget(self.prompt_edit, 1)
+
+        buttons = QDialogButtonBox()
+        copy_btn = QPushButton(tr("main.importPromptCopy"))
+        copy_btn.clicked.connect(self._copy_prompt)
+        buttons.addButton(copy_btn, QDialogButtonBox.ActionRole)
+
+        view_yaml_btn = QPushButton(tr("main.importPromptViewYaml"))
+        view_yaml_btn.clicked.connect(self._view_yaml_example)
+        buttons.addButton(view_yaml_btn, QDialogButtonBox.ActionRole)
+
+        close_btn = QDialogButtonBox.Close
+        buttons.addButton(close_btn)
+        layout.addWidget(buttons)
+
+    def _copy_prompt(self):
+        try:
+            QApplication.clipboard().setText(_get_import_prompt())
+            self.status_message = tr("main.importPromptCopied")
+            QMessageBox.information(self, tr("common.info"), tr("main.importPromptCopied"))
+        except Exception as e:
+            print(f"[ImportPrompt] Copy failed: {e}")
+
+    def _view_yaml_example(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("main.importPromptViewYamlTitle"))
+        dlg.setMinimumWidth(500)
+        dlg.setMinimumHeight(400)
+        layout = QVBoxLayout(dlg)
+        text_edit = QTextEdit()
+        text_edit.setPlainText(_get_yaml_example())
+        text_edit.setReadOnly(True)
+        text_edit.setFontFamily("monospace")
+        text_edit.setFontPointSize(10)
+        layout.addWidget(text_edit)
+        close_btn = QDialogButtonBox(QDialogButtonBox.Close)
+        close_btn.rejected.connect(dlg.reject)
+        layout.addWidget(close_btn)
+        dlg.exec()
 
 
 class NewDatasetDialog(QDialog):
@@ -836,8 +1005,8 @@ class MainWindow(QMainWindow):
         self.gui_config = load_gui_config()
         set_language(self.gui_config.get("language") or "en")
 
-        if self.gui_config.get("api_key") and not os.environ.get("DEEPSEEK_API_KEY"):
-            os.environ["DEEPSEEK_API_KEY"] = self.gui_config["api_key"]
+        self.bridge = GuiToolBridge()
+        self.bridge.set_api_keys(self.gui_config.get("api_keys", {}))
 
         # One-time migration from QSettings if unified config file does not exist yet
         if not os.path.isfile(DEFAULT_CONFIG_FILE):
@@ -855,13 +1024,13 @@ class MainWindow(QMainWindow):
 
         self.current_yaml_path = self.gui_config.get("yaml_path") or YAML_PATH
 
-        self.bridge = GuiToolBridge()
-
         self.setup_ui()
         self.connect_signals()
         self.restore_ui_settings()
 
         self.statusBar().showMessage(tr("app.ready"), 2000)
+        self._check_release_notice_once()
+        self._check_empty_inventory_prompt()
         self.overview_panel.refresh()
         if not os.path.isfile(self.current_yaml_path):
             self.statusBar().showMessage(
@@ -967,6 +1136,98 @@ class MainWindow(QMainWindow):
     def show_status(self, msg, timeout=2000, level="info"):
         self.statusBar().showMessage(msg, timeout)
 
+    def _check_release_notice_once(self):
+        """Check if there's a new release and notify user once."""
+        try:
+            latest_release = APP_VERSION
+            last_notified = self.gui_config.get("last_notified_release", "0.0.0")
+            if not _is_version_newer(latest_release, last_notified):
+                return
+
+            release_notes = self.gui_config.get("release_notes_preview", "") or tr("main.releaseNotesDefault")
+            title = tr("main.newReleaseTitle")
+            message = t("main.newReleaseMessage", version=APP_VERSION, notes=release_notes)
+
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle(title)
+            msg_box.setText(message)
+            msg_box.setIcon(QMessageBox.Information)
+
+            copy_btn = msg_box.addButton(tr("main.newReleaseCopy"), QMessageBox.ActionRole)
+            open_btn = msg_box.addButton(tr("main.newReleaseOpen"), QMessageBox.ActionRole)
+            later_btn = msg_box.addButton(tr("main.newReleaseLater"), QMessageBox.RejectRole)
+
+            msg_box.setDefaultButton(later_btn)
+            msg_box.exec()
+
+            clicked = msg_box.clickedButton()
+            if clicked == copy_btn:
+                try:
+                    QApplication.clipboard().setText(APP_RELEASE_URL)
+                except Exception as e:
+                    print(f"[VersionCheck] Copy to clipboard failed: {e}")
+            elif clicked == open_btn:
+                try:
+                    from PySide6.QtCore import QUrl
+                    from PySide6.QtGui import QDesktopServices
+                    QDesktopServices.openUrl(QUrl(APP_RELEASE_URL))
+                except Exception as e:
+                    print(f"[VersionCheck] Open URL failed: {e}")
+
+            self.gui_config["last_notified_release"] = latest_release
+            save_gui_config(self.gui_config)
+
+        except Exception as e:
+            print(f"[VersionCheck] Release check failed: {e}")
+
+    def _check_empty_inventory_prompt(self):
+        """Show import prompt if inventory is empty and user hasn't seen the prompt."""
+        try:
+            if self.gui_config.get("import_prompt_seen", False):
+                return
+
+            if not os.path.isfile(self.current_yaml_path):
+                return
+
+            try:
+                with open(self.current_yaml_path, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+            except Exception:
+                return
+
+            inventory = data.get("inventory") if isinstance(data, dict) else None
+            if inventory and len(inventory) > 0:
+                return
+
+            title = tr("main.importStartupTitle")
+            message = tr("main.importStartupMessage")
+
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle(title)
+            msg_box.setText(message)
+            msg_box.setIcon(QMessageBox.Information)
+
+            import_btn = msg_box.addButton(tr("main.importStartupAction"), QDialogButtonBox.ActionRole)
+            new_btn = msg_box.addButton(tr("main.importPromptNewInventory"), QDialogButtonBox.ActionRole)
+            later_btn = msg_box.addButton(QDialogButtonBox.Close)
+            later_btn.setText(tr("main.newReleaseLater"))
+
+            msg_box.setDefaultButton(import_btn)
+            msg_box.exec()
+
+            clicked = msg_box.clickedButton()
+            self.gui_config["import_prompt_seen"] = True
+            save_gui_config(self.gui_config)
+
+            if clicked == import_btn:
+                dlg = ImportPromptDialog(self)
+                dlg.exec()
+            elif clicked == new_btn:
+                self.on_create_new_dataset()
+
+        except Exception as e:
+            print(f"[ImportPrompt] Empty inventory check failed: {e}")
+
     def _wire_plan_store(self):
         """Connect PlanStore.on_change to OperationsPanel refresh (thread-safe)."""
         from PySide6.QtCore import QMetaObject, Qt as QtConst
@@ -990,7 +1251,7 @@ class MainWindow(QMainWindow):
             self,
             config={
                 "yaml_path": self.current_yaml_path,
-                "api_key": self.gui_config.get("api_key"),
+                "api_keys": self.gui_config.get("api_keys", {}),
                 "ai": self.gui_config.get("ai", {}),
                 "language": self.gui_config.get("language", "en"),
                 "theme": self.gui_config.get("theme", "dark"),
@@ -1003,10 +1264,7 @@ class MainWindow(QMainWindow):
 
         values = dialog.get_values()
         self.current_yaml_path = values["yaml_path"]
-        api_key = values["api_key"]
-        self.gui_config["api_key"] = api_key
-        if api_key:
-            os.environ["DEEPSEEK_API_KEY"] = api_key
+        self.gui_config["api_keys"] = values.get("api_keys", {})
 
         new_lang = values.get("language", "en")
         if new_lang != self.gui_config.get("language"):
@@ -1027,12 +1285,15 @@ class MainWindow(QMainWindow):
             )
 
         self.gui_config["ai"] = {
+            "provider": values.get("ai_provider", "deepseek"),
             "model": values.get("ai_model", "deepseek-chat"),
             "max_steps": values.get("ai_max_steps", 8),
             "thinking_enabled": values.get("ai_thinking_enabled", True),
             "thinking_expanded": values.get("ai_thinking_expanded", True),
             "custom_prompt": values.get("ai_custom_prompt", ""),
         }
+        self.bridge.set_api_keys(self.gui_config["api_keys"])
+        self.ai_panel.ai_provider.setText(self.gui_config["ai"]["provider"])
         self.ai_panel.ai_model.setText(self.gui_config["ai"]["model"])
         self.ai_panel.ai_steps.setValue(self.gui_config["ai"]["max_steps"])
         self.ai_panel.ai_thinking_enabled.setChecked(self.gui_config["ai"]["thinking_enabled"])

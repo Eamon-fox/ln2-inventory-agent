@@ -337,7 +337,7 @@ def tool_add_entry(
     """Add a new frozen entry using the shared tool flow.
 
     Args:
-        fields: dict of user-configurable field values (e.g. parent_cell_line, short_name, etc.)
+        fields: dict of user-configurable field values (e.g. cell_line, short_name, etc.)
     """
     action = "add_entry"
     tool_name = "tool_add_entry"
@@ -1094,7 +1094,7 @@ def tool_record_thaw(
 
     preview = {
         "record_id": record_id,
-        "parent_cell_line": record.get("parent_cell_line"),
+        "cell_line": record.get("cell_line"),
         "short_name": record.get("short_name"),
         "box": record.get("box"),
         "action_en": action_en,
@@ -1591,7 +1591,7 @@ def tool_batch_thaw(
             "operations": [
                 {
                     "record_id": op["record_id"],
-                    "parent_cell_line": op["record"].get("parent_cell_line"),
+                    "cell_line": op["record"].get("cell_line"),
                     "short_name": op["record"].get("short_name"),
                     "box": op["record"].get("box"),
                     "position": op["position"],
@@ -1819,7 +1819,7 @@ def tool_batch_thaw(
         "operations": [
             {
                 "record_id": op["record_id"],
-                "parent_cell_line": op["record"].get("parent_cell_line"),
+                "cell_line": op["record"].get("cell_line"),
                 "short_name": op["record"].get("short_name"),
                 "box": op["record"].get("box"),
                 "position": op["position"],
@@ -3136,7 +3136,7 @@ def tool_generate_stats(yaml_path):
     cell_lines = defaultdict(int)
     for rec in records:
         if rec.get("positions"):
-            cell_lines[rec.get("parent_cell_line", "Unknown")] += len(rec.get("positions", []))
+            cell_lines[rec.get("cell_line", "Unknown")] += len(rec.get("positions", []))
 
     # Flatten the stats structure for easier access, but keep nested structure for backward compatibility
     stats_nested = {

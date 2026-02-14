@@ -4,12 +4,8 @@ import json
 import os
 import uuid
 from abc import ABC, abstractmethod
-from pathlib import Path
 from urllib import error as urlerror
 from urllib import request as urlrequest
-
-
-_DEFAULT_OPENCODE_AUTH_FILE = Path.home() / ".local" / "share" / "opencode" / "auth.json"
 
 
 PROVIDER_DEFAULTS = {
@@ -28,70 +24,6 @@ PROVIDER_DEFAULTS = {
 }
 
 DEFAULT_PROVIDER = "deepseek"
-
-
-def load_opencode_auth_env(auth_file=None, force=False):
-    """Load provider API keys from opencode auth file into env vars."""
-    path = Path(auth_file or os.environ.get("OPENCODE_AUTH_FILE") or _DEFAULT_OPENCODE_AUTH_FILE)
-    if not path.exists() or not path.is_file():
-        return {
-            "ok": False,
-            "path": str(path),
-            "reason": "missing_auth_file",
-            "loaded_env": [],
-        }
-
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {
-            "ok": False,
-            "path": str(path),
-            "reason": "invalid_json",
-            "loaded_env": [],
-        }
-
-    if not isinstance(payload, dict):
-        return {
-            "ok": False,
-            "path": str(path),
-            "reason": "invalid_payload",
-            "loaded_env": [],
-        }
-
-    loaded_env = []
-    provider_env_map = {
-        "openai": ["OPENAI_API_KEY"],
-        "anthropic": ["ANTHROPIC_API_KEY"],
-        "deepseek": ["DEEPSEEK_API_KEY"],
-        "openrouter": ["OPENROUTER_API_KEY"],
-        "moonshotai-cn": ["MOONSHOT_API_KEY", "KIMI_API_KEY"],
-        "moonshot": ["MOONSHOT_API_KEY", "KIMI_API_KEY"],
-        "kimi": ["MOONSHOT_API_KEY", "KIMI_API_KEY"],
-        "zhipuai-coding-plan": ["ZHIPUAI_API_KEY", "ZHIPU_API_KEY", "GLM_API_KEY"],
-        "zhipuai": ["ZHIPUAI_API_KEY", "ZHIPU_API_KEY", "GLM_API_KEY"],
-        "zhipu": ["ZHIPUAI_API_KEY", "ZHIPU_API_KEY", "GLM_API_KEY"],
-        "glm": ["ZHIPUAI_API_KEY", "ZHIPU_API_KEY", "GLM_API_KEY"],
-    }
-
-    for provider, env_keys in provider_env_map.items():
-        info = payload.get(provider)
-        if not isinstance(info, dict):
-            continue
-        key = info.get("key")
-        if not key:
-            continue
-
-        for env_name in env_keys:
-            if force or not os.environ.get(env_name):
-                os.environ[env_name] = str(key)
-                loaded_env.append(env_name)
-
-    return {
-        "ok": True,
-        "path": str(path),
-        "loaded_env": loaded_env,
-    }
 
 
 class LLMClient(ABC):
@@ -134,7 +66,6 @@ class DeepSeekLLMClient(LLMClient):
         self._base_url = (base_url or os.environ.get("DEEPSEEK_BASE_URL") or "https://api.deepseek.com").rstrip("/")
         self._timeout = int(timeout)
         self._thinking_enabled = bool(thinking_enabled)
-        self._auth_load = load_opencode_auth_env()
         self._api_key = api_key or os.environ.get("DEEPSEEK_API_KEY")
 
         if not self._api_key:
@@ -496,7 +427,6 @@ class ZhipuLLMClient(LLMClient):
         self._base_url = (base_url or os.environ.get("ZHIPU_BASE_URL") or "https://open.bigmodel.cn/api/paas/v4").rstrip("/")
         self._timeout = int(timeout)
         self._thinking_enabled = bool(thinking_enabled)
-        load_opencode_auth_env()
         self._api_key = api_key or os.environ.get("ZHIPUAI_API_KEY") or os.environ.get("ZHIPU_API_KEY") or os.environ.get("GLM_API_KEY")
 
         if not self._api_key:

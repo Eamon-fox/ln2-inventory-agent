@@ -522,54 +522,6 @@ class EditEntryToolRunnerTests(unittest.TestCase):
 
     # --- cell_line alias tests ---
 
-    def test_add_entry_parent_cell_line_alias_maps_to_cell_line(self):
-        """parent_cell_line alias should map to cell_line in add_entry."""
-        with tempfile.TemporaryDirectory(prefix="ln2_agent_pcl_alias_") as temp_dir:
-            yaml_path = Path(temp_dir) / "inventory.yaml"
-            write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
-
-            runner = AgentToolRunner(yaml_path=str(yaml_path))
-            response = runner.run(
-                "add_entry",
-                {
-                    "parent_cell_line": "HeLa",
-                    "short_name": "pcl-alias",
-                    "box": 1,
-                    "position": 2,
-                    "date": "2026-02-10",
-                },
-            )
-            self.assertTrue(response["ok"])
-
-            current = load_yaml(str(yaml_path))
-            records = current.get("inventory", [])
-            self.assertEqual(2, len(records))
-            self.assertEqual("HeLa", records[-1]["cell_line"])
-
-    def test_query_parent_cell_line_alias(self):
-        """parent_cell_line alias should work in query_inventory."""
-        with tempfile.TemporaryDirectory(prefix="ln2_agent_pcl_query_") as temp_dir:
-            yaml_path = Path(temp_dir) / "inventory.yaml"
-            write_yaml(
-                make_data([
-                    {**make_record(1, box=1, positions=[1]), "cell_line": "K562"},
-                    {**make_record(2, box=2, positions=[2]), "cell_line": "HeLa"},
-                ]),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
-
-            runner = AgentToolRunner(yaml_path=str(yaml_path))
-            # Use parent_cell_line alias
-            response = runner.run("query_inventory", {"parent_cell_line": "K562"})
-            self.assertTrue(response["ok"])
-            self.assertEqual(1, response["result"]["count"])
-            self.assertEqual(1, response["result"]["records"][0]["id"])
-
     def test_query_cell_alias(self):
         """Short 'cell' alias should work in query_inventory."""
         with tempfile.TemporaryDirectory(prefix="ln2_agent_cell_query_") as temp_dir:

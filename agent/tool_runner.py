@@ -202,7 +202,7 @@ class AgentToolRunner:
                 "optional": ["box", "position", "cell_line"],
                 "description": "Query inventory records. Pass any user field key as a filter (e.g. cell_line, short_name).",
                 "aliases": {
-                    "cell_line": ["cell", "cell_line", "parent_cell_line"],
+                    "cell_line": ["cell", "cell_line"],
                     "short_name": ["short"],
                 },
             },
@@ -290,7 +290,7 @@ class AgentToolRunner:
                 "aliases": {
                     "positions": ["position", "slot"],
                     "frozen_at": ["date"],
-                    "cell_line": ["cell", "parent_cell_line"],
+                    "cell_line": ["cell", "cell_line"],
                 },
                 "description": "Add a new frozen entry. Pass cell_line as a top-level param (value from cell_line_options). Pass other user fields in the 'fields' dict (e.g. short_name).",
                 "notes": "positions accepts list[int] or comma string like '1,2,3'. fields is a dict of user field values.",
@@ -705,7 +705,7 @@ class AgentToolRunner:
                 fields = {}
             # Also pick up common aliases at top level for LLM convenience
             for alias_key, canonical in [
-                ("cell_line", "cell_line"), ("cell", "cell_line"), ("parent_cell_line", "cell_line"),
+                ("cell_line", "cell_line"), ("cell", "cell_line"),
                 ("short_name", "short_name"), ("short", "short_name"), ("name", "short_name"),
                 ("note", "note"), ("notes", "note"), ("memo", "note"),
                 ("plasmid_name", "plasmid_name"), ("plasmid", "plasmid_name"),
@@ -1116,7 +1116,7 @@ class AgentToolRunner:
                     filters["position"] = pos_val
                 # Map common aliases to canonical field names
                 alias_map = {
-                    "cell": "cell_line", "cell_line": "cell_line", "parent_cell_line": "cell_line",
+                    "cell": "cell_line", "cell_line": "cell_line",
                     "short": "short_name", "short_name": "short_name",
                     "plasmid": "plasmid_name", "plasmid_name": "plasmid_name",
                     "plasmid_id": "plasmid_id",
@@ -1272,7 +1272,7 @@ class AgentToolRunner:
                 if not isinstance(fields, dict):
                     fields = {}
                 for alias_key, canonical in [
-                    ("cell_line", "cell_line"), ("cell", "cell_line"), ("parent_cell_line", "cell_line"),
+                    ("cell_line", "cell_line"), ("cell", "cell_line"),
                     ("short_name", "short_name"), ("short", "short_name"), ("name", "short_name"),
                     ("note", "note"), ("notes", "note"), ("memo", "note"),
                     ("plasmid_name", "plasmid_name"), ("plasmid", "plasmid_name"),

@@ -42,12 +42,12 @@ def _setup_cjk_font(app):
 
 
 def apply_dark_theme(app):
-    """Applies opencode-style dark theme to the QApplication."""
+    """Applies the dark theme to the QApplication."""
     _apply_theme(app, "dark")
 
 
 def apply_light_theme(app):
-    """Applies opencode-style light theme to the QApplication."""
+    """Applies the light theme to the QApplication."""
     _apply_theme(app, "light")
 
 
@@ -174,7 +174,7 @@ def _apply_theme(app, mode):
             QPushButton[variant="danger"]:pressed { background-color: var(--btn-danger-border); }
             QPushButton[variant="ghost"] { background-color: transparent; color: var(--text-weak); border: none; }
             QPushButton[variant="ghost"]:hover { background-color: var(--background-raised); }
-            /* AI Panel - opencode-style floating dock */
+            /* AI Panel - floating dock */
             QTextEdit#aiChatArea { border: none; background-color: transparent; padding: 2px 4px; color: var(--text-strong); }
             QWidget#aiPromptDock { background-color: transparent; }
             QWidget#aiInputContainer { background-color: rgba(0,0,0,0.04); border: 1px solid rgba(0,0,0,0.06); border-radius: 12px; }
@@ -300,7 +300,7 @@ def _apply_theme(app, mode):
             QPushButton[variant="danger"]:pressed { background-color: var(--btn-danger-border); }
             QPushButton[variant="ghost"] { background-color: transparent; color: var(--text-weak); border: none; }
             QPushButton[variant="ghost"]:hover { background-color: var(--background-raised); }
-            /* AI Panel - opencode-style floating dock */
+            /* AI Panel - floating dock */
             QTextEdit#aiChatArea { border: none; background-color: transparent; padding: 2px 4px; color: var(--text-strong); }
             QWidget#aiPromptDock { background-color: transparent; }
             QWidget#aiInputContainer { background-color: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; }

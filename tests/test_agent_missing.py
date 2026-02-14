@@ -3,7 +3,7 @@
 Tests for:
 - tool_runner.py: plan staging, normalization, hints
 - react_agent.py: history, parsing, step limits
-- llm_client.py: auth loading
+- llm_client.py: client behavior
 """
 
 import json
@@ -19,7 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agent.tool_runner import AgentToolRunner
-from agent.llm_client import DeepSeekLLMClient, load_opencode_auth_env
+from agent.llm_client import DeepSeekLLMClient
 from lib.yaml_ops import create_yaml_backup, load_yaml, write_yaml
 
 
@@ -421,59 +421,14 @@ class ToolRunnerHintTests(unittest.TestCase):
         self.assertIn("corrected", hint.lower())
 
 
-# ── llm_client.py Tests ──────────────────────────────────────────
-
-
-class LLMClientAuthTests(unittest.TestCase):
-    """Test LLM client authentication loading."""
-
-    def test_load_opencode_auth_env_file_not_exist(self):
-        """Test load_opencode_auth_env with non-existent file."""
-        with tempfile.TemporaryDirectory() as td:
-            fake_path = Path(td) / "nonexistent_auth.json"
-            # Should not raise, just return dict with ok=False
-            result = load_opencode_auth_env(auth_file=str(fake_path))
-            self.assertIsNotNone(result)
-            self.assertFalse(result.get("ok"))
-            self.assertEqual("missing_auth_file", result.get("reason"))
-
-    def test_load_opencode_auth_env_no_env_var(self):
-        """Test load_opencode_auth_env when env var not set."""
-        with patch.dict("os.environ", {}, clear=True):
-            # Patch _DEFAULT_OPENCODE_AUTH_FILE to point to non-existent path
-            from agent import llm_client as llm_module
-            orig_default = llm_module._DEFAULT_OPENCODE_AUTH_FILE
-            llm_module._DEFAULT_OPENCODE_AUTH_FILE = Path("/tmp/definitely-not-real-auth-file-xyz.json")
-            try:
-                result = load_opencode_auth_env()
-                self.assertIsNotNone(result)
-                self.assertFalse(result.get("ok"))
-            finally:
-                llm_module._DEFAULT_OPENCODE_AUTH_FILE = orig_default
-
-    def test_load_opencode_auth_env_valid_json(self):
-        """Test load_opencode_auth_env with valid JSON file."""
-        with tempfile.TemporaryDirectory() as td:
-            auth_file = Path(td) / "auth.json"
-            # Valid auth.json structure with provider sections
-            auth_file.write_text('{"deepseek": {"type": "api", "key": "test-key-123"}}')
-            with patch.dict("os.environ", {"DEEPSEEK_API_KEY": ""}, clear=False):
-                result = load_opencode_auth_env(auth_file=str(auth_file))
-            self.assertIsNotNone(result)
-            self.assertTrue(result.get("ok"))
-
-
 class DeepSeekLLMClientMockTests(unittest.TestCase):
     """Test DeepSeekLLMClient with mocked responses."""
 
     def test_deepseek_client_requires_api_key(self):
         """Test DeepSeekLLMClient requires API key."""
-        # Patch load_opencode_auth_env to not find any key
-        with patch("agent.llm_client.load_opencode_auth_env") as mock_load:
-            mock_load.return_value = {"ok": False, "loaded_env": []}
-            with patch.dict("os.environ", {}, clear=True):
-                with self.assertRaises(RuntimeError):
-                    DeepSeekLLMClient()
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaises(RuntimeError):
+                DeepSeekLLMClient()
 
 
 # ── react_agent.py Tests (Unit Tests) ───────────────────────────

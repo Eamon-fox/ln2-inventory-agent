@@ -485,7 +485,7 @@ class OperationsPanel(QWidget):
         """Create a read-only field with lock/unlock/confirm inline edit controls.
 
         Args:
-            field_name: YAML record key (e.g. 'parent_cell_line', 'short_name').
+            field_name: YAML record key (e.g. 'cell_line', 'short_name').
             record_id_getter: callable returning current record ID (int).
             refresh_callback: callable to restore original value on cancel.
         Returns:

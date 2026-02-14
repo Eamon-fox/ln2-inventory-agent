@@ -48,3 +48,14 @@ def test_tr_not_called_with_keyword_args():
     ]
 
     assert not bad_calls, f"tr() called with kwargs at lines: {bad_calls}"
+
+
+def test_app_version_constant_exists_and_about_uses_it():
+    text = _source_text()
+
+    assert "APP_VERSION = " in text
+    assert re.search(r'APP_VERSION\s*=\s*"[\d.]+"', text)
+    assert re.search(r'v\{APP_VERSION\}', text)
+    assert "APP_RELEASE_URL" in text
+    assert "_check_release_notice_once" in text
+    assert "_is_version_newer" in text or "_parse_version" in text

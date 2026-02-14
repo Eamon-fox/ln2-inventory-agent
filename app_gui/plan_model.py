@@ -90,7 +90,7 @@ def _extract_sample_info(item):
     # Fallback to top-level keys on item/payload (legacy compat)
     if not user_vals:
         for src in (item, payload):
-            for k in ("parent_cell_line", "short_name"):
+            for k in ("cell_line", "short_name"):
                 text = str(src.get(k) or "").strip()
                 if text and text not in user_vals:
                     user_vals.append(text)

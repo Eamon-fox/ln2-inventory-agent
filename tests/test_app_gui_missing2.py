@@ -41,7 +41,7 @@ class PlanModelValidationTests(unittest.TestCase):
             "position": 5,
             "record_id": None,
             "label": "test-clone",
-            "parent_cell_line": "K562",
+            "cell_line": "K562",
             "short_name": "clone-new",
             "frozen_at": "2026-02-10",
         }
@@ -107,7 +107,7 @@ class PlanModelValidationTests(unittest.TestCase):
             "position": 5,
             "record_id": None,
             "label": "test-clone",
-            "parent_cell_line": "K562",
+            "cell_line": "K562",
             "short_name": "clone-new",
             "frozen_at": "2026-02-10",
         }
@@ -122,7 +122,7 @@ class PlanModelValidationTests(unittest.TestCase):
             "position": 999,
             "record_id": None,
             "label": "test-clone",
-            "parent_cell_line": "K562",
+            "cell_line": "K562",
             "short_name": "clone-new",
             "frozen_at": "2026-02-10",
         }
@@ -154,7 +154,7 @@ class PlanModelRenderingTests(unittest.TestCase):
                 "position": 5,
                 "record_id": 1,
                 "label": "K562-clone1",
-                "parent_cell_line": "K562",
+                "cell_line": "K562",
                 "short_name": "clone1",
             },
         ]

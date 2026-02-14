@@ -266,9 +266,7 @@ def _parse_add_entry(
     detail_fields = details.get("fields") or {}
     label = (
         str(input_fields.get("short_name") or tool_input.get("short_name") or "").strip()
-        or str(input_fields.get("parent_cell_line") or tool_input.get("parent_cell_line") or "").strip()
         or str(detail_fields.get("short_name") or details.get("short_name") or "").strip()
-        or str(detail_fields.get("parent_cell_line") or details.get("parent_cell_line") or "").strip()
         or (f"ID {record_id}" if record_id is not None else "new")
     )
 
@@ -591,9 +589,9 @@ def _lookup_label(lookup: Dict[int, Dict[str, Any]], record_id: int) -> Optional
     record = lookup.get(record_id)
     if not isinstance(record, dict):
         return None
-    # Try all non-structural keys; prefer short_name then parent_cell_line for
+    # Try all non-structural keys; prefer short_name then cell_line for
     # backwards compat, then fall back to any non-empty user field value.
-    for key in ("short_name", "parent_cell_line"):
+    for key in ("short_name", "cell_line"):
         val = str(record.get(key) or "").strip()
         if val:
             return val
