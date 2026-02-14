@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="app_gui/assets/icon.png" width="128" alt="LN2 Inventory Agent">
+</p>
+
 # LN2 Inventory Agent
 
 [English](README.md) | [简体中文](README.zh-CN.md)
