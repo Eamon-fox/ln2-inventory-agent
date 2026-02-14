@@ -1,91 +1,592 @@
-# ln2-inventory
+# LN2 Inventory Agent — 液氮冻存库存管理
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-> 本项目首先是一个 **Claude Code agent skill**（见 `SKILL.md`），同时也可作为独立的 **桌面 GUI** 和 **Python 库** 使用。
+> 面向生物实验室的液氮冻存管库存管理系统：桌面 GUI + AI Copilot，共享一套 Tool API，所有写操作经过校验、备份、审计。
 
-液氮（LN2）冻存库存管理工具。数据存放在单一 YAML 文件中；所有写操作都会经过校验、自动备份，并写入追加式 JSONL 审计日志。
+## 亮点
 
-## 特性
+- **Tube 级数据模型** — 一条记录 = 一支物理冻存管，位置精确到盒内格位
+- **双前端共享 API** — 桌面 GUI（PySide6）+ 内嵌 AI Copilot（DeepSeek / 智谱 GLM）
+- **统一 Tool API** — 所有前端共享 `lib/tool_api.py`，行为一致、结果格式统一
+- **写操作安全链** — 每次写入：校验 → 备份 → 写入 → 审计，全程可追溯
+- **中英文双语** — GUI 界面、取出动作、搜索均支持中英文
+- **单文件存储** — 数据存放在一个 YAML 文件中，易于版本控制和迁移
 
-- Tube 级数据模型（一个 `inventory[]` 记录 == 一支物理冻存管）
-- 添加、查询、搜索
+---
+
+## 快速开始
+
+### 1. 安装依赖
+
+```bash
+pip install -r requirements.txt   # PyYAML, mistune
+```
+
+### 2. 准备数据文件
+
+```bash
+# 使用 demo 数据快速体验
+cp demo/ln2_inventory.demo.yaml ln2_inventory.yaml
+```
+
+### 3. 启动 GUI
+
+```bash
+pip install PySide6
+python app_gui/main.py
+```
+
+程序默认从当前目录读取 `ln2_inventory.yaml`。首次启动时，GUI 会引导你选择或创建数据文件。
+
+---
+
+## 功能特性
+
+### 库存管理
+
+- 添加冻存管（支持批量多位置）
 - 取出 / 复苏 / 扔掉 / 移动（单条与批量）
-- 位置冲突检查、空位列表、占用统计
-- 备份与回滚 + 审计日志
-- 统一 Tool API（GUI 与 AI Copilot 共用）
+- 编辑记录元数据（冻存日期、备注、自定义字段等）
+- 位置冲突检测 — 同一格位不允许重复占用
+- 空位查询与智能推荐（连续位置 / 指定盒子偏好）
+- 搜索（模糊 / 精确 / 关键词 AND）
+- 统计概览（占用率、各盒分布、近期冻存/取出趋势）
+- 时间线回溯（按天数或全量历史）
 
-## 运行项目
+### AI Copilot 智能助手
 
-```bash
-python -m pip install -r requirements.txt
-cp references/ln2_inventory.sample.yaml ln2_inventory.yaml
+- 自然语言对话操作库存（"帮我把 3 号盒第 5 管取出"）
+- 写操作自动暂存 — 不直接执行，需人工确认
+- 支持 DeepSeek 和智谱 GLM 两个模型提供商
+- 流式输出 + 思维链展示
 
-# GUI（可选）
-pip install PySide6
-python app_gui/main.py
+### 数据安全
 
-# 测试
-pytest -q
+- 每次写操作前自动备份（保留最近 200 份）
+- JSONL 审计日志（记录操作者、会话、追踪 ID）
+- 一键回滚到任意备份快照
+- 写入前完整性校验（ID 唯一性、位置冲突、日期格式等）
+
+### GUI 功能
+
+- 9×9 网格可视化（每盒 81 个位置）
+- 深色 / 浅色 / 跟随系统主题
+- 国际化（英文、简体中文）
+- 操作计划暂存 → 预览 → 批量执行 → 撤销
+- CSV / HTML 导出
+- 自定义字段管理
+
+---
+
+## 架构设计
+
+### 四层架构
+
+```
+┌─────────────────────────────────────────────────────┐
+│                    前端层 (Frontends)                  │
+│  ┌──────────────┐  ┌──────────────────────────────┐  │
+│  │   桌面 GUI    │  │        AI Copilot            │  │
+│  │  (PySide6)   │  │      (ReAct Agent)           │  │
+│  └──────┬───────┘  └──────────────┬───────────────┘  │
+│         │                        │                   │
+├─────────┴────────────────────────┴───────────────────┤
+│                  适配层 (Adapters)                     │
+│  tool_bridge.py        tool_runner.py                │
+│  (GUI actor 标记)       (Agent 调度 + 计划暂存)        │
+├──────────────────────────────────────────────────────┤
+│               统一 Tool API (lib/tool_api.py)         │
+│  add_entry · record_thaw · batch_thaw · edit_entry   │
+│  query_inventory · search_records · generate_stats   │
+│  rollback · recommend_positions · ...                │
+├──────────────────────────────────────────────────────┤
+│                  基础层 (Foundation)                   │
+│  yaml_ops.py    validators.py    config.py           │
+│  (YAML I/O +    (校验 + 日期     (运行时配置           │
+│   备份 + 审计)    解析)            优先级合并)          │
+│  thaw_parser.py  operations.py   custom_fields.py    │
+│  (动作归一化)     (ID/位置查找)    (自定义字段)         │
+└──────────────────────────────────────────────────────┘
+                         │
+                         ▼
+              ln2_inventory.yaml (单一数据文件)
 ```
 
-## 配置
+### 统一 Tool API
 
-运行时配置是可选的。默认从当前工作目录读取 `ln2_inventory.yaml`。
+所有工具函数位于 `lib/tool_api.py`，返回统一格式：
 
-如需自定义路径或 schema 范围：
-
-```bash
-export LN2_CONFIG_FILE=/path/to/my_config.json
+```python
+{
+    "ok": True,           # 操作是否成功
+    "result": { ... },    # 成功时的数据
+    "error_code": "...",  # 失败时的错误码
+    "message": "..."      # 人类可读的消息
+}
 ```
 
-可用配置项见 `references/ln2_config.sample.json`（`yaml_path`、`schema.box_range`、`schema.position_range`、`safety.*` 等）。
+### 数据流
 
-## AI Copilot（DeepSeek）
-
-```bash
-export DEEPSEEK_API_KEY="<your-key>"
-export DEEPSEEK_MODEL="deepseek-chat"   # 可选
-# 使用 GUI 的 “AI Copilot” 选项卡对话；写操作会先进入 Plan queue，确认后再执行。
-pip install PySide6
-python app_gui/main.py
+```
+用户操作 → 前端适配 → Tool API → 校验 → 备份 → 写入 YAML → 审计日志
+                                   ↓ (失败)
+                              返回错误码 + 提示
 ```
 
-## 打包（Windows EXE）
+写操作在 AI Copilot 中会被拦截并暂存到计划队列，等待用户在 GUI 中确认后才执行。
+
+---
+
+## 数据模型
+
+### YAML 结构
+
+```yaml
+meta:
+  box_layout:
+    rows: 9
+    cols: 9
+  custom_fields:          # 可选：用户自定义字段
+    - key: "project"
+      label: "项目"
+      type: "text"
+      required: false
+
+inventory:
+  - id: 1
+    parent_cell_line: "NCCIT"
+    short_name: "NCCIT_ctrl_A"
+    plasmid_name: "pLenti-empty"
+    plasmid_id: "p0001"
+    box: 1
+    positions: [1]
+    frozen_at: "2026-02-01"
+    note: "baseline control clone"
+    thaw_events: null
+```
+
+### Tube 级模型
+
+每条 `inventory[]` 记录代表一支物理冻存管：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | int | 自增唯一 ID |
+| `parent_cell_line` | str | 亲本细胞系 |
+| `short_name` | str | 简称（用于网格显示） |
+| `plasmid_name` | str | 质粒名称 |
+| `plasmid_id` | str | 质粒编号 |
+| `box` | int | 盒子编号（默认 1-5） |
+| `positions` | list[int] | 盒内位置（通常只有一个元素） |
+| `frozen_at` | str | 冻存日期（YYYY-MM-DD） |
+| `note` | str | 备注 |
+| `thaw_events` | list | 取出/复苏事件列表 |
+
+### 取出/复苏事件
+
+`thaw_events` 记录每次对冻存管的操作：
+
+```yaml
+thaw_events:
+  - date: "2026-02-10"
+    action: "takeout"       # takeout / thaw / discard / move
+    positions: [1]
+    note: "用于实验"
+```
+
+四种动作支持中英文输入：
+
+| 中文 | 英文 | 说明 |
+|------|------|------|
+| 取出 | takeout | 从液氮罐取出 |
+| 复苏 | thaw | 复苏培养 |
+| 扔掉 | discard | 丢弃 |
+| 移动 | move | 移动到其他位置/盒子 |
+
+### 自定义字段
+
+通过 `meta.custom_fields` 定义额外字段，所有前端自动识别。在 GUI 的 Settings > Manage Fields 中管理。
+
+---
+
+## Tool API 参考
+
+### 写入工具
+
+| 工具名 | 说明 | 关键参数 |
+|--------|------|----------|
+| `tool_add_entry` | 添加冻存管 | `box`, `positions`, `frozen_at`, `fields` |
+| `tool_record_thaw` | 记录取出/复苏 | `record_id`, `date`, `action`, `position` |
+| `tool_batch_thaw` | 批量取出/复苏 | `entries`, `date`, `action` |
+| `tool_edit_entry` | 编辑记录字段 | `record_id`, `fields` |
+| `tool_rollback` | 回滚到备份 | `backup_path` |
+| `tool_adjust_box_count` | 增减盒子数量 | `operation`, `count`/`box` |
+
+### 读取工具
+
+| 工具名 | 说明 | 关键参数 |
+|--------|------|----------|
+| `tool_query_inventory` | 查询库存记录 | `box`, `position`, `cell_line` |
+| `tool_search_records` | 文本搜索 | `query`, `mode`, `max_results` |
+| `tool_list_empty_positions` | 列出空位 | `box` |
+| `tool_recommend_positions` | 推荐空位 | `count`, `box_preference`, `strategy` |
+| `tool_recent_frozen` | 近期冻存 | `days`, `count` |
+| `tool_query_thaw_events` | 查询取出事件 | `date`, `days`, `action` |
+| `tool_collect_timeline` | 时间线汇总 | `days`, `all_history` |
+| `tool_generate_stats` | 统计概览 | — |
+| `tool_get_raw_entries` | 获取原始记录 | `ids` |
+| `tool_list_backups` | 列出备份 | — |
+| `tool_export_inventory_csv` | 导出 CSV | — |
+
+<details>
+<summary>批量操作 entries 格式说明</summary>
+
+`batch_thaw` 的 `entries` 参数支持多种格式：
+
+```
+# 仅 ID（自动推断位置）
+"182,183"
+
+# ID:位置
+"182:23,183:41"
+
+# ID:源位置->目标位置（同盒移动）
+"182:23->31,183:41->42"
+
+# ID:源位置->目标位置:目标盒（跨盒移动）
+"182:23->31:2,183:41->42:3"
+```
+
+也支持 list/dict 格式：
+```python
+# list 格式
+[[182, 23], [183, 41]]
+
+# dict 格式
+[{"record_id": 182, "position": 23}, {"record_id": 183, "position": 41}]
+```
+
+</details>
+
+---
+
+## GUI 使用指南
+
+### 总览面板（Overview）
+
+- 9×9 网格展示每个盒子的位置占用情况
+- 点击格位查看详情，多选格位可批量操作
+- 顶部筛选栏按盒子、细胞系过滤
+- 颜色区分：已占用 / 空位 / 已取出
+
+### 操作面板（Operations）
+
+- 添加冻存管：填写盒子、位置、冻存日期和其他字段
+- 取出/复苏：选择记录和动作类型
+- 移动：支持同盒和跨盒移动
+- 计划暂存区：操作先进入暂存队列，预览确认后批量执行
+- 撤销：执行后可一键回滚
+- 导出：CSV 和 HTML 格式
+
+### AI Copilot 面板
+
+- 自然语言对话，流式输出
+- 思维链（Thinking）可展开查看
+- 写操作自动暂存到计划队列
+- 工具调用过程实时展示
+
+### 设置
+
+- 数据文件路径
+- AI 提供商和模型选择
+- API Key 管理
+- 语言和主题切换
+- 自定义字段管理
+- 自定义 AI 提示词
+
+---
+
+## AI Copilot 智能助手
+
+### 支持的模型
+
+| 提供商 | 默认模型 | 环境变量 |
+|--------|----------|----------|
+| DeepSeek | `deepseek-chat` | `DEEPSEEK_API_KEY` |
+| 智谱 GLM | `glm-5` | `ZHIPUAI_API_KEY` |
+
+在 GUI 设置中选择提供商并填入 API Key，或通过环境变量配置：
+
+```bash
+# DeepSeek
+export DEEPSEEK_API_KEY="sk-..."
+
+# 智谱 GLM
+export ZHIPUAI_API_KEY="..."
+```
+
+### 工作原理（ReAct 循环）
+
+AI Copilot 基于 ReAct（Reasoning + Acting）模式运行：
+
+```
+用户消息 → LLM 推理 → 调用工具 → 观察结果 → 继续推理或回答
+                ↑                              │
+                └──────────────────────────────┘
+                      (最多 12 步循环)
+```
+
+- LLM 通过原生工具调用（function calling）与库存交互
+- 支持并行工具调用（ThreadPoolExecutor）
+- 工具结果包含 `_hint` 字段，帮助 LLM 从错误中恢复
+
+### 计划暂存机制
+
+写操作（添加、取出、编辑、回滚）在 AI Copilot 中不会直接执行：
+
+1. AI 调用写入工具 → 操作被拦截并暂存到计划队列
+2. AI 回复"已暂存，请人工确认执行"
+3. 用户在操作面板的计划区查看、预览
+4. 确认执行 → 实际写入 YAML
+5. 执行后可撤销（回滚到执行前的备份）
+
+这确保了 AI 不会在未经确认的情况下修改数据。
+
+---
+
+## 配置说明
+
+### 运行时配置（LN2_CONFIG_FILE）
+
+通过环境变量指向一个 JSON 文件，覆盖默认配置：
+
+```bash
+export LN2_CONFIG_FILE=/path/to/config.json
+```
+
+```json
+{
+  "yaml_path": "/data/ln2_inventory.yaml",
+  "schema": {
+    "box_range": [1, 10],
+    "position_range": [1, 81]
+  },
+  "safety": {
+    "backup_keep_count": 200,
+    "total_empty_warning_threshold": 20,
+    "box_empty_warning_threshold": 5,
+    "yaml_size_warning_mb": 5
+  }
+}
+```
+
+配置优先级：内置默认值 → `LN2_CONFIG_FILE` JSON → PyInstaller 冻结检测。
+
+### GUI 配置（~/.ln2agent/config.yaml）
+
+GUI 的持久化配置存储在 `~/.ln2agent/config.yaml`：
+
+```yaml
+yaml_path: /data/ln2_inventory.yaml
+language: zh-CN          # en | zh-CN
+theme: dark              # dark | light | auto
+api_keys:
+  deepseek: "sk-..."
+  zhipu: "..."
+ai:
+  provider: deepseek     # deepseek | zhipu
+  model: deepseek-chat
+  max_steps: 12
+  thinking_enabled: true
+  custom_prompt: ""
+```
+
+### 环境变量
+
+| 变量 | 说明 |
+|------|------|
+| `LN2_CONFIG_FILE` | 运行时配置 JSON 路径 |
+| `DEEPSEEK_API_KEY` | DeepSeek API 密钥 |
+| `DEEPSEEK_MODEL` | DeepSeek 模型名（默认 `deepseek-chat`） |
+| `DEEPSEEK_BASE_URL` | DeepSeek API 地址（默认官方） |
+| `ZHIPUAI_API_KEY` | 智谱 API 密钥 |
+
+---
+
+## 备份与审计
+
+### 自动备份
+
+每次写操作前，系统自动将当前 YAML 文件复制到备份目录：
+
+```
+ln2_inventory_backups/
+├── ln2_inventory_20260210_143022.yaml
+├── ln2_inventory_20260210_142815.yaml
+└── ...
+```
+
+默认保留最近 200 份备份，超出后自动轮转删除最旧的。
+
+### JSONL 审计日志
+
+所有写操作记录到 `ln2_inventory_audit.jsonl`：
+
+```json
+{
+  "timestamp": "2026-02-10T14:30:22",
+  "action": "add_entry",
+  "tool_name": "tool_add_entry",
+  "actor_type": "human",
+  "actor_id": "human",
+  "channel": "gui",
+  "session_id": "session-20260210143000-a1b2c3d4",
+  "trace_id": "trace-e5f6a7b8",
+  "status": "success",
+  "details": { ... }
+}
+```
+
+审计日志区分操作来源（`actor_type`: human / agent）和渠道（`channel`: gui / agent / cli）。
+
+### 回滚
+
+通过 `tool_rollback` 或 GUI 操作面板回滚到任意备份快照。回滚本身也会触发备份和审计记录。
+
+---
+
+## 国际化
+
+GUI 支持英文和简体中文，翻译文件位于：
+
+```
+app_gui/i18n/translations/
+├── en.json
+└── zh-CN.json
+```
+
+在 GUI 设置中切换语言，或修改 `~/.ln2agent/config.yaml` 中的 `language` 字段。
+
+代码中使用 `tr("key.subkey")` 引用翻译文本。
+
+---
+
+## 测试
+
+```bash
+# 运行全部测试
+pytest tests/
+
+# 运行单个测试文件
+pytest tests/test_tool_api.py -v
+
+# 运行单个测试用例
+pytest tests/test_tool_api.py::TestToolAddEntry::test_basic_add -v
+
+# GUI 相关测试（需要 PySide6）
+pytest tests/test_gui_panels.py -v
+```
+
+测试使用真实 YAML 文件（临时目录），不依赖 mock 框架。
+
+---
+
+## 打包发布
+
+### PyInstaller（Windows EXE）
 
 ```bash
 pip install pyinstaller
 pyinstaller ln2_inventory.spec
 ```
 
-Inno Setup 脚本：`installer/windows/LN2InventoryAgent.iss`
+构建产物位于 `dist/` 目录，采用 onedir 模式。
+
+### Inno Setup 安装包
+
+使用 Inno Setup 脚本生成 Windows 安装程序：
 
 ```bat
-"C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe" installer\\windows\\LN2InventoryAgent.iss
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\windows\LN2InventoryAgent.iss
 ```
 
-可选辅助脚本：`installer/windows/build_installer.bat`
+辅助脚本：`installer/windows/build_installer.bat`
+
+---
 
 ## 项目结构
 
 ```
-lib/              # 共享库（Tool API、YAML I/O、校验）
-app_gui/          # 桌面 GUI（PySide6）
-agent/            # ReAct 运行时与工具调度
-tests/            # 单元测试（pytest）
-references/       # 示例文件与文档
-demo/             # 打包用 demo 数据集
-installer/        # Windows 安装包资源（Inno Setup）
-SKILL.md          # Claude Code skill 定义
+ln2-inventory-agent/
+├── lib/                        # 共享库
+│   ├── tool_api.py             # 统一 Tool API（17+ 工具函数）
+│   ├── config.py               # 运行时配置（优先级合并）
+│   ├── yaml_ops.py             # YAML I/O + 备份 + 审计
+│   ├── validators.py           # 校验（日期/盒子/位置/完整性）
+│   ├── thaw_parser.py          # 取出动作中英文归一化
+│   ├── operations.py           # ID/位置查找
+│   ├── custom_fields.py        # 自定义字段管理
+│   ├── csv_export.py           # CSV 导出
+│   ├── position_fmt.py         # 盒子布局与位置计算
+│   ├── plan_item_factory.py    # 计划项构建
+│   └── plan_store.py           # 计划暂存区
+│
+├── agent/                      # AI Agent 运行时
+│   ├── react_agent.py          # ReAct 循环（推理 + 工具调用）
+│   ├── llm_client.py           # LLM 客户端（DeepSeek / 智谱）
+│   └── tool_runner.py          # 工具调度 + 计划暂存拦截
+│
+├── app_gui/                    # 桌面 GUI
+│   ├── main.py                 # 入口
+│   ├── gui_config.py           # GUI 配置管理
+│   ├── tool_bridge.py          # GUI → Tool API 适配器
+│   ├── plan_model.py           # 计划数据模型
+│   ├── plan_executor.py        # 计划执行器
+│   ├── plan_gate.py            # 计划校验门控
+│   ├── plan_preview.py         # 计划预览
+│   ├── plan_outcome.py         # 执行结果展示
+│   ├── audit_guide.py          # 审计引导
+│   ├── event_compactor.py      # 事件压缩
+│   ├── ui/
+│   │   ├── overview_panel.py   # 总览面板（9×9 网格）
+│   │   ├── operations_panel.py # 操作面板（表单 + 计划）
+│   │   ├── ai_panel.py         # AI Copilot 面板
+│   │   ├── theme.py            # 主题管理
+│   │   ├── utils.py            # UI 工具函数
+│   │   └── workers.py          # 后台工作线程
+│   ├── i18n/translations/      # 翻译文件
+│   │   ├── en.json
+│   │   └── zh-CN.json
+│   └── assets/                 # 静态资源
+│       └── default_prompt.txt  # 默认 AI 提示词
+│
+├── tests/                      # 单元测试（pytest）
+├── demo/                       # Demo 数据集
+│   └── ln2_inventory.demo.yaml
+├── installer/                  # Windows 安装包资源
+│   └── windows/
+│       ├── LN2InventoryAgent.iss
+│       └── build_installer.bat
+├── requirements.txt            # Python 依赖
+├── ln2_inventory.spec          # PyInstaller 构建配置
+└── LICENSE                     # MIT
 ```
+
+---
 
 ## 依赖
 
-- Python 3.8+
-- PyYAML（`requirements.txt`）
-- 可选：PySide6（GUI）
-- 可选：`DEEPSEEK_API_KEY`（真实模型 AI Copilot）
+| 包 | 版本 | 用途 |
+|----|------|------|
+| PyYAML | >= 5.0 | YAML 数据读写 |
+| mistune | >= 2.0 | Markdown 渲染（AI 回复） |
+| PySide6 | — | 桌面 GUI（可选） |
 
-## License
+Python 3.8+
 
-MIT
+---
+
+## 许可证
+
+[MIT](LICENSE) - Copyright (c) 2026 Yiming Fan
