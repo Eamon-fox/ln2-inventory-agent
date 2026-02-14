@@ -105,6 +105,7 @@ class OverviewPanel(QWidget):
 
     def __init__(self, bridge, yaml_path_getter):
         super().__init__()
+        self.setObjectName("OverviewPanel")
         self.bridge = bridge
         self.yaml_path_getter = yaml_path_getter
         

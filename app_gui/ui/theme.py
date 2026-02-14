@@ -181,6 +181,7 @@ def _apply_theme(app, mode):
             QTextEdit#aiPromptInput { border: none; border-radius: 8px; background-color: transparent; padding: 2px 4px; font-size: 13px; color: var(--text-strong); }
             QPushButton[class="quick-prompt-btn"] { padding: 3px 10px; font-size: 11px; border-radius: 10px; background-color: rgba(0,0,0,0.05); border: none; color: #646464; }
             QPushButton[class="quick-prompt-btn"]:hover { background-color: rgba(0,0,0,0.09); color: #1e1e1e; }
+            QWidget#OverviewPanel { background-color: #f8f8f8; }
         """)
     else:
         dark_palette = QPalette()
@@ -307,6 +308,7 @@ def _apply_theme(app, mode):
             QTextEdit#aiPromptInput { border: none; border-radius: 8px; background-color: transparent; padding: 2px 4px; font-size: 13px; color: var(--text-strong); }
             QPushButton[class="quick-prompt-btn"] { padding: 3px 10px; font-size: 11px; border-radius: 10px; background-color: rgba(255,255,255,0.06); border: none; color: #888888; }
             QPushButton[class="quick-prompt-btn"]:hover { background-color: rgba(255,255,255,0.1); color: #e8e8e8; }
+            QWidget#OverviewPanel { background-color: #202020; }
         """)
 
 

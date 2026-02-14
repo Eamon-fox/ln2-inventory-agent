@@ -37,8 +37,8 @@ def _load_default_prompt():
 DEFAULT_GUI_CONFIG = {
     "yaml_path": None,
     "api_keys": {},
-    "language": "en",
-    "theme": "dark",
+    "language": "zh-CN",
+    "theme": "light",
     "last_notified_release": "0.0.0",
     "release_notes_preview": "",
     "import_prompt_seen": False,

@@ -16,8 +16,8 @@ CONFIG_ENV_VAR = "LN2_CONFIG_FILE"
 
 def _default_yaml_path():
     if getattr(sys, "frozen", False):
-        return os.path.join(os.path.dirname(sys.executable), "ln2_inventory.yaml")
-    return os.path.join(os.getcwd(), "ln2_inventory.yaml")
+        return os.path.join(os.path.dirname(sys.executable), "demo", "ln2_inventory.demo.yaml")
+    return os.path.join(os.getcwd(), "demo", "ln2_inventory.demo.yaml")
 
 
 DEFAULT_CONFIG = {

@@ -2,15 +2,11 @@
 
 import os
 
-from agent.llm_client import (
-    DEFAULT_PROVIDER,
-    PROVIDER_DEFAULTS,
-    DeepSeekLLMClient,
-    ZhipuLLMClient,
-)
+from agent.llm_client import DEFAULT_PROVIDER, DeepSeekLLMClient, PROVIDER_DEFAULTS
 from agent.react_agent import ReactAgent
 from agent.tool_runner import AgentToolRunner
-from app_gui.gui_config import DEFAULT_MAX_STEPS
+from app_gui.gui_config import DEFAULT_CONFIG_FILE, DEFAULT_MAX_STEPS
+from app_gui.i18n import tr
 from lib.tool_api import (
     build_actor_context,
     parse_batch_entries,
@@ -30,13 +26,12 @@ from lib.tool_api import (
 
 
 def _api_key_setup_hint(provider=None):
-    provider = provider or DEFAULT_PROVIDER
-    cfg = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS[DEFAULT_PROVIDER])
-    return (
-        f"{cfg['display_name']} API key is missing.\n"
-        f"Set environment variable: {cfg['env_key']}\n\n"
-        "Windows: System Properties > Environment Variables\n"
-        "macOS/Linux: Add to ~/.bashrc or ~/.zshrc"
+    provider_cfg = provider or DEFAULT_PROVIDER
+    cfg = PROVIDER_DEFAULTS.get(provider_cfg, PROVIDER_DEFAULTS[DEFAULT_PROVIDER])
+    return tr(
+        "settings.apiKeyMissing",
+        provider=cfg["display_name"],
+        env_key=cfg["env_key"],
     )
 
 

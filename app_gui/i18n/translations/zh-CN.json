@@ -33,7 +33,8 @@
     "selectInventoryFile": "选择库存文件",
     "about": "关于",
     "aboutDesc": "液氮罐库存管理工具，内置 AI 助手（需自备 API Key）。",
-    "supportHint": "Vibe Coding 搞这个把 API 额度刷爆了，孩子饿得头昏眼花，求投喂 🙏"
+    "supportHint": "请作者喝咖啡：",
+    "apiKeyMissing": "缺少 {provider} API 密钥。请通过以下方式配置：\n1) 设置对话框（自动保存到 ~/.ln2agent/config.yaml）\n2) 环境变量：{env_key}"
   },
   "main": {
     "settings": "设置",

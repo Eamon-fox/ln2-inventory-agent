@@ -4,6 +4,7 @@ meta:
     cols: 9
 inventory:
 - id: 1
+  cell_line: NCCIT
   parent_cell_line: NCCIT
   short_name: NCCIT_ctrl_A
   plasmid_name: pLenti-empty
@@ -16,6 +17,7 @@ inventory:
   note: baseline control clone
   thaw_events: null
 - id: 2
+  cell_line: NCCIT
   parent_cell_line: NCCIT
   short_name: NCCIT_ctrl_A
   plasmid_name: pLenti-empty
@@ -28,6 +30,7 @@ inventory:
   note: baseline control clone
   thaw_events: null
 - id: 3
+  cell_line: NCCIT
   parent_cell_line: NCCIT
   short_name: NCCIT_DesMCP_APEX2
   plasmid_name: pDesMCP-APEX2
@@ -40,6 +43,7 @@ inventory:
   note: engineered derivative line
   thaw_events: null
 - id: 4
+  cell_line: NCCIT
   parent_cell_line: NCCIT
   short_name: NCCIT_DesMCP_APEX2
   plasmid_name: pDesMCP-APEX2
@@ -52,6 +56,7 @@ inventory:
   note: engineered derivative line
   thaw_events: null
 - id: 5
+  cell_line: NCCIT
   parent_cell_line: NCCIT
   short_name: NCCIT_DesMCP_APEX2
   plasmid_name: pDesMCP-APEX2
@@ -64,6 +69,7 @@ inventory:
   note: engineered derivative line
   thaw_events: null
 - id: 6
+  cell_line: NCCIT
   parent_cell_line: NCCIT
   short_name: NCCIT_1
   plasmid_name: null
@@ -76,6 +82,7 @@ inventory:
   note: null
   thaw_events: null
 - id: 7
+  cell_line: NCCIT
   parent_cell_line: NCCIT
   short_name: NCCIT_1
   plasmid_name: null
@@ -88,6 +95,7 @@ inventory:
   note: null
   thaw_events: null
 - id: 8
+  cell_line: NCCIT
   parent_cell_line: NCCIT
   short_name: NCCIT_1
   plasmid_name: null
@@ -100,6 +108,7 @@ inventory:
   note: null
   thaw_events: null
 - id: 9
+  cell_line: K562
   parent_cell_line: K562
   short_name: K562_RTCB_dTAG_clone12
   plasmid_name: pGEMT-N-RTCB-dTAG
@@ -112,6 +121,7 @@ inventory:
   note: validation clone
   thaw_events: null
 - id: 10
+  cell_line: K562
   parent_cell_line: K562
   short_name: K562_RTCB_dTAG_clone12
   plasmid_name: pGEMT-N-RTCB-dTAG
@@ -124,6 +134,7 @@ inventory:
   note: validation clone
   thaw_events: null
 - id: 11
+  cell_line: K562
   parent_cell_line: K562
   short_name: K562_RTCB_KO_pool
   plasmid_name: pX330-RTCB
@@ -136,6 +147,7 @@ inventory:
   note: CRISPR knockout pool
   thaw_events: null
 - id: 12
+  cell_line: K562
   parent_cell_line: K562
   short_name: K562_RTCB_KO_pool
   plasmid_name: pX330-RTCB
@@ -148,6 +160,7 @@ inventory:
   note: CRISPR knockout pool
   thaw_events: null
 - id: 13
+  cell_line: K562
   parent_cell_line: K562
   short_name: K562_NUP107_hit
   plasmid_name: hit-validation
@@ -160,6 +173,7 @@ inventory:
   note: stitchR hit validation
   thaw_events: null
 - id: 14
+  cell_line: K562
   parent_cell_line: K562
   short_name: K562_RTCB_hit
   plasmid_name: hit-validation
@@ -172,6 +186,7 @@ inventory:
   note: high-priority rescue line
   thaw_events: null
 - id: 15
+  cell_line: HEK293T
   parent_cell_line: HEK293T
   short_name: HEK293T_reporter36
   plasmid_name: StitchR-reporter-v2
@@ -184,6 +199,7 @@ inventory:
   note: reporter stable line
   thaw_events: null
 - id: 16
+  cell_line: HEK293T wt
   parent_cell_line: HEK293T wt
   short_name: HEK293T wt
   plasmid_name: null
@@ -196,6 +212,7 @@ inventory:
   note: null
   thaw_events: null
 - id: 17
+  cell_line: U2OS
   parent_cell_line: U2OS
   short_name: U2OS_backup_stock
   plasmid_name: null
@@ -208,6 +225,7 @@ inventory:
   note: long-term backup stock
   thaw_events: null
 - id: 18
+  cell_line: U2OS
   parent_cell_line: U2OS
   short_name: U2OS_backup_stock
   plasmid_name: null
@@ -220,6 +238,7 @@ inventory:
   note: long-term backup stock
   thaw_events: null
 - id: 19
+  cell_line: U2OS
   parent_cell_line: U2OS
   short_name: U2OS_backup_stock
   plasmid_name: null
@@ -232,6 +251,7 @@ inventory:
   note: long-term backup stock
   thaw_events: null
 - id: 20
+  cell_line: K562
   parent_cell_line: K562
   short_name: K562_RTCB_KO_pool
   plasmid_name: pX330-RTCB
@@ -249,6 +269,7 @@ inventory:
     - 17
     note: recovery culture
 - id: 21
+  cell_line: K562
   parent_cell_line: K562
   short_name: K562_RTCB_KO_pool
   plasmid_name: pX330-RTCB
@@ -261,6 +282,7 @@ inventory:
   note: CRISPR knockout pool (original stock)
   thaw_events: null
 - id: 22
+  cell_line: HeLa
   parent_cell_line: HeLa
   short_name: HeLa_archive_C
   plasmid_name: null
@@ -273,6 +295,7 @@ inventory:
   note: archive stock
   thaw_events: null
 - id: 23
+  cell_line: HeLa
   parent_cell_line: HeLa
   short_name: HeLa_archive_C
   plasmid_name: null
@@ -285,6 +308,7 @@ inventory:
   note: archive stock
   thaw_events: null
 - id: 24
+  cell_line: K562
   parent_cell_line: K562
   short_name: K562_NUP107_hit
   plasmid_name: hit-validation
@@ -297,6 +321,7 @@ inventory:
   note: stitchR hit validation
   thaw_events: null
 - id: 25
+  cell_line: K562
   parent_cell_line: K562
   short_name: K562_RTCB_hit
   plasmid_name: hit-validation
@@ -309,6 +334,7 @@ inventory:
   note: high-priority rescue line
   thaw_events: null
 - id: 26
+  cell_line: K562
   parent_cell_line: K562
   short_name: K562_RTCB_hit
   plasmid_name: hit-validation
@@ -321,6 +347,7 @@ inventory:
   note: high-priority rescue line
   thaw_events: null
 - id: 27
+  cell_line: HCT116
   parent_cell_line: HCT116
   short_name: HCT116_ctrl_pool
   plasmid_name: pLenti-empty

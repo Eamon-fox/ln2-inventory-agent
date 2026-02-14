@@ -33,7 +33,8 @@
     "selectInventoryFile": "Select Inventory File",
     "about": "About",
     "aboutDesc": "Liquid nitrogen tank inventory management with built-in AI assistant (BYO API key).",
-    "supportHint": "Vibe-coding this app emptied my API credits. Send coffee plz 🙏"
+    "supportHint": "Buy me a coffee:",
+    "apiKeyMissing": "{provider} API key is missing. Configure one of the following:\n1) Settings dialog (saved to ~/.ln2agent/config.yaml)\n2) Environment variable: {env_key}"
   },
   "main": {
     "settings": "Settings",
