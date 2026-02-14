@@ -275,7 +275,7 @@ class SettingsDialog(QDialog):
             donate_img.setPixmap(donate_scaled)
             donate_img.setFixedSize(donate_scaled.size())
             donate_img.setAlignment(Qt.AlignCenter)
-            donate_text = QLabel("Thanks for supporting ~")
+            donate_text = QLabel(tr("settings.supportHint"))
             donate_text.setStyleSheet("color: var(--text-muted); font-size: 12px; margin-top: 8px;")
             donate_text.setAlignment(Qt.AlignCenter)
             donate_vbox.addWidget(donate_img, alignment=Qt.AlignCenter)

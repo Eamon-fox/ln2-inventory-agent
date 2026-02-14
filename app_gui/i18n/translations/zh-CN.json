@@ -32,7 +32,8 @@
     "themeLight": "浅色",
     "selectInventoryFile": "选择库存文件",
     "about": "关于",
-    "aboutDesc": "液氮罐库存管理工具，内置 AI 助手（需自备 API Key）。"
+    "aboutDesc": "液氮罐库存管理工具，内置 AI 助手（需自备 API Key）。",
+    "supportHint": "Vibe Coding 搞这个把 API 额度刷爆了，孩子饿得头昏眼花，求投喂 🙏"
   },
   "main": {
     "settings": "设置",

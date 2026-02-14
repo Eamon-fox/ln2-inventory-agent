@@ -32,7 +32,8 @@
     "themeLight": "Light",
     "selectInventoryFile": "Select Inventory File",
     "about": "About",
-    "aboutDesc": "Liquid nitrogen tank inventory management with built-in AI assistant (BYO API key)."
+    "aboutDesc": "Liquid nitrogen tank inventory management with built-in AI assistant (BYO API key).",
+    "supportHint": "Vibe-coding this app emptied my API credits. Send coffee plz 🙏"
   },
   "main": {
     "settings": "Settings",
