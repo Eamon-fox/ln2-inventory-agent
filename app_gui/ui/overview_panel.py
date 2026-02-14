@@ -483,8 +483,8 @@ class OverviewPanel(QWidget):
         self._current_records = records
 
         # Build color palette from meta
-        from lib.custom_fields import get_cell_line_options
-        build_color_palette(get_cell_line_options(self._current_meta))
+        from lib.custom_fields import get_color_key_options
+        build_color_palette(get_color_key_options(self._current_meta))
         
         self.overview_records_by_id = {}
         for rec in records:

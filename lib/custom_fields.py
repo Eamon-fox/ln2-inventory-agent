@@ -112,6 +112,23 @@ def get_cell_line_options(meta):
     return list(DEFAULT_CELL_LINE_OPTIONS)
 
 
+def get_color_key_options(meta):
+    """Return the list of predefined values for the color_key field.
+
+    Uses ``{color_key}_options`` from meta if available (e.g., ``short_name_options``).
+    For ``cell_line``, falls back to ``cell_line_options`` / ``DEFAULT_CELL_LINE_OPTIONS``.
+    Returns an empty list if no options are defined (will use hash-based fallback).
+    """
+    color_key = get_color_key(meta)
+    if color_key == "cell_line":
+        return get_cell_line_options(meta)
+    opts_key = f"{color_key}_options"
+    opts = (meta or {}).get(opts_key)
+    if isinstance(opts, list):
+        return [str(o) for o in opts if o]
+    return []
+
+
 def get_required_field_keys(meta):
     """Return the set of user-field keys marked as required."""
     fields = get_effective_fields(meta)
