@@ -11,7 +11,7 @@
     "browse": "浏览",
     "ai": "AI 助手",
     "apiKey": "DeepSeek API 密钥：",
-    "apiKeyHint": "可选。在 platform.deepseek.com 获取密钥\n留空则使用 DEEPSEEK_API_KEY 环境变量。",
+    "apiKeyHint": "可选。在 <a href=\"https://platform.deepseek.com\">platform.deepseek.com</a> 获取密钥\n留空则使用 DEEPSEEK_API_KEY 环境变量。",
     "aiModel": "模型：",
     "aiMaxSteps": "最大步数：",
     "aiThinking": "开启思考：",
@@ -39,8 +39,10 @@
     "new": "新建库存",
     "fileCreated": "已新建数据集：{path}",
     "datasetLabel": "数据集：{dataset} | 操作员：{actor}",
-    "languageChangedRestart": "语言已更改，请重启应用后生效。",
-    "themeChangedRestart": "主题已更改，请重启应用后生效。",
+    "languageChangedRestart": "语言已更改，是否立即重启生效？",
+    "themeChangedRestart": "主题已更改，是否立即重启生效？",
+    "restartNow": "立即重启",
+    "restartLater": "稍后",
     "aiBusyTitle": "忙碌中",
     "aiBusyMessage": "AI 运行仍在进行中，请先停止任务或等待完成。",
     "newDatasetLayout": "新建数据集 - 冻存盒布局",
@@ -391,7 +393,8 @@
     "questionAsking": "Agent 正在向您提问...",
     "questionTimeout": "提问超时，Agent 将继续执行",
     "maxStepsTitle": "继续运行？",
-    "maxStepsMessage": "Agent 已执行 {steps} 步但未完成。是否继续运行？"
+    "maxStepsMessage": "Agent 已执行 {steps} 步但未完成。是否继续运行？",
+    "apiKeyMissing": "缺少 DeepSeek API 密钥。请通过以下方式配置：\n1) 设置对话框（自动保存到 ~/.ln2agent/config.yaml）\n2) 环境变量：DEEPSEEK_API_KEY"
   },
   "common": {
     "info": "信息",

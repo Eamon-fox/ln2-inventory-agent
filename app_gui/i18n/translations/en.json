@@ -11,7 +11,7 @@
     "browse": "Browse",
     "ai": "AI Assistant",
     "apiKey": "DeepSeek API Key:",
-    "apiKeyHint": "Optional. Get your key at platform.deepseek.com\nLeave empty to use DEEPSEEK_API_KEY environment variable.",
+    "apiKeyHint": "Optional. Get your key at <a href=\"https://platform.deepseek.com\">platform.deepseek.com</a>\nLeave empty to use DEEPSEEK_API_KEY environment variable.",
     "aiModel": "Model:",
     "aiMaxSteps": "Max Steps:",
     "aiThinking": "Enable Thinking:",
@@ -39,8 +39,10 @@
     "new": "New Inventory",
     "fileCreated": "Created new dataset: {path}",
     "datasetLabel": "Dataset: {dataset} | Actor: {actor}",
-    "languageChangedRestart": "Language changed. Please restart the application to apply.",
-    "themeChangedRestart": "Theme changed. Please restart the application to apply.",
+    "languageChangedRestart": "Language changed. Restart now to apply?",
+    "themeChangedRestart": "Theme changed. Restart now to apply?",
+    "restartNow": "Restart Now",
+    "restartLater": "Later",
     "aiBusyTitle": "Busy",
     "aiBusyMessage": "AI run is still in progress. Please stop it or wait.",
     "newDatasetLayout": "New Dataset - Box Layout",
@@ -391,7 +393,8 @@
     "questionAsking": "Agent is asking you a question...",
     "questionTimeout": "Question timed out, agent will continue",
     "maxStepsTitle": "Continue Agent?",
-    "maxStepsMessage": "Agent has reached {steps} steps without a final answer. Continue running?"
+    "maxStepsMessage": "Agent has reached {steps} steps without a final answer. Continue running?",
+    "apiKeyMissing": "DeepSeek API key is missing. Configure one of the following:\n1) Settings dialog (saved to ~/.ln2agent/config.yaml)\n2) Environment variable: DEEPSEEK_API_KEY"
   },
   "common": {
     "info": "Info",

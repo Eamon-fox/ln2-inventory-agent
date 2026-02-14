@@ -28,6 +28,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
+DisableDirPage=no
 OutputDir=..\..\dist\installer
 OutputBaseFilename=LN2InventoryAgent-Setup-{#MyAppVersion}
 Compression=lzma
@@ -54,3 +55,40 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+function DirIsEmpty(Path: string): Boolean;
+var
+  FindRec: TFindRec;
+begin
+  Result := True;
+  if FindFirst(Path + '\*', FindRec) then
+  begin
+    repeat
+      if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
+      begin
+        Result := False;
+        FindClose(FindRec);
+        Exit;
+      end;
+    until not FindNext(FindRec);
+    FindClose(FindRec);
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  ConfigDir: string;
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    ConfigDir := ExpandConstant('{%USERPROFILE}\.ln2agent');
+    if DirExists(ConfigDir) then
+    begin
+      if MsgBox('Delete configuration files?', mbConfirmation, MB_YESNO) = IDYES then
+      begin
+        DelTree(ConfigDir, True, True, True);
+      end;
+    end;
+  end;
+end;

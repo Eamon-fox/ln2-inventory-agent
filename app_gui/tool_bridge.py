@@ -1,12 +1,12 @@
 """GUI-facing bridge to the unified Tool API."""
 
 import os
-from pathlib import Path
 
 from agent.llm_client import DeepSeekLLMClient
 from agent.react_agent import ReactAgent
 from agent.tool_runner import AgentToolRunner
 from app_gui.gui_config import DEFAULT_CONFIG_FILE, DEFAULT_MAX_STEPS
+from app_gui.i18n import tr
 from lib.tool_api import (
     build_actor_context,
     parse_batch_entries,
@@ -24,16 +24,7 @@ from lib.tool_api import (
 
 
 def _api_key_setup_hint():
-    auth_file = os.environ.get("OPENCODE_AUTH_FILE") or str(
-        Path.home() / ".local" / "share" / "opencode" / "auth.json"
-    )
-    return (
-        "DeepSeek API key is missing. Configure one of the following before running AI Copilot:\n"
-        "1) Environment variable: DEEPSEEK_API_KEY\n"
-        f"2) Auth file: {auth_file} (provider key: deepseek)\n"
-        "Tip: GUI advanced options are under 'Show Advanced'.\n"
-        f"GUI settings file: {DEFAULT_CONFIG_FILE}"
-    )
+    return tr("ai.apiKeyMissing", config_file=DEFAULT_CONFIG_FILE)
 
 
 class GuiToolBridge:

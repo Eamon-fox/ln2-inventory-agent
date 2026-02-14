@@ -119,6 +119,7 @@ class SettingsDialog(QDialog):
         api_hint = QLabel(tr("settings.apiKeyHint"))
         api_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
         api_hint.setWordWrap(True)
+        api_hint.setOpenExternalLinks(True)
         ai_layout.addRow("", api_hint)
 
         ai_advanced = self._config.get("ai", {})
@@ -769,20 +770,12 @@ class MainWindow(QMainWindow):
         new_lang = values.get("language", "en")
         if new_lang != self.gui_config.get("language"):
             self.gui_config["language"] = new_lang
-            QMessageBox.information(
-                self,
-                tr("common.info"),
-                tr("main.languageChangedRestart")
-            )
+            self._ask_restart(tr("main.languageChangedRestart"))
 
         new_theme = values.get("theme", "dark")
         if new_theme != self.gui_config.get("theme"):
             self.gui_config["theme"] = new_theme
-            QMessageBox.information(
-                self,
-                tr("common.info"),
-                tr("main.themeChangedRestart")
-            )
+            self._ask_restart(tr("main.themeChangedRestart"))
 
         self.gui_config["ai"] = {
             "model": values.get("ai_model", "deepseek-chat"),
@@ -806,6 +799,21 @@ class MainWindow(QMainWindow):
             )
         self.gui_config["yaml_path"] = self.current_yaml_path
         save_gui_config(self.gui_config)
+
+    def _ask_restart(self, message):
+        box = QMessageBox(self)
+        box.setWindowTitle(tr("common.info"))
+        box.setText(message)
+        btn_restart = box.addButton(tr("main.restartNow"), QMessageBox.AcceptRole)
+        btn_later = box.addButton(tr("main.restartLater"), QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() == btn_restart:
+            self._restart_app()
+
+    def _restart_app(self):
+        save_gui_config(self.gui_config)
+        QApplication.quit()
+        os.execv(sys.executable, [sys.executable] + sys.argv)
 
     def on_create_new_dataset(self, update_window=True):
         layout_dlg = NewDatasetDialog(self)
