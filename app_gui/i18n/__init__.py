@@ -1,4 +1,4 @@
-"""Internationalization (i18n) module for LN2 Inventory Agent.
+"""Internationalization (i18n) module for SnowFox.
 
 Usage:
     from app_gui.i18n import tr, set_language, get_language

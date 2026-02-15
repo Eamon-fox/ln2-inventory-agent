@@ -1,1 +1,1 @@
-"""GUI app package for ln2-inventory-agent."""
+"""GUI app package for SnowFox."""

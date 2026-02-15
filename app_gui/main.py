@@ -39,8 +39,8 @@ from app_gui.ui.operations_panel import OperationsPanel
 from app_gui.ui.ai_panel import AIPanel
 
 APP_VERSION = "1.0.1"
-APP_RELEASE_URL = "https://github.com/Eamon-fox/ln2-inventory-agent/releases"
-_GITHUB_API_LATEST = "https://api.github.com/repos/Eamon-fox/ln2-inventory-agent/releases/latest"
+APP_RELEASE_URL = "https://github.com/Eamon-fox/snowfox/releases"
+_GITHUB_API_LATEST = "https://api.github.com/repos/Eamon-fox/snowfox/releases/latest"
 
 
 def _parse_version(v: str) -> tuple:
@@ -259,7 +259,7 @@ class SettingsDialog(QDialog):
             f'{tr("app.title")}  v{APP_VERSION}<br>'
             f'{tr("settings.aboutDesc")}<br><br>'
             f'GitHub: <a href="{APP_RELEASE_URL}">'
-            f'Eamon-fox/ln2-inventory-agent</a>'
+            f'Eamon-fox/snowfox</a>'
         )
         about_label.setOpenExternalLinks(True)
         about_label.setWordWrap(True)
