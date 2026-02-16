@@ -18,6 +18,7 @@ from app_gui.ui.theme import (
     cell_preview_takeout_style,
     cell_preview_move_source_style,
     cell_preview_move_target_style,
+    FONT_SIZE_CELL,
     FONT_SIZE_XS,
     FONT_SIZE_MD,
     FONT_SIZE_XL,
@@ -557,8 +558,8 @@ class OverviewPanel(QWidget):
     def _apply_zoom(self):
         """Resize all existing cell buttons and repaint with scaled font."""
         cell_size = max(12, int(self._base_cell_size * self._zoom_level))
-        font_size_occupied = max(7, int(9 * self._zoom_level))
-        font_size_empty = max(6, int(8 * self._zoom_level))
+        font_size_occupied = max(8, int(FONT_SIZE_CELL * self._zoom_level))
+        font_size_empty = max(7, int((FONT_SIZE_CELL - 2) * self._zoom_level))
         self._current_font_sizes = (font_size_occupied, font_size_empty)
         for button in self.overview_cells.values():
             if isinstance(button, CellButton):
@@ -736,7 +737,8 @@ class OverviewPanel(QWidget):
 
         layout = getattr(self, "_current_layout", {})
         total_slots = rows * cols
-        self._base_cell_size = max(24, min(36, 320 // max(rows, cols)))
+        # Increased base cell size to accommodate larger fonts
+        self._base_cell_size = max(28, min(42, 360 // max(rows, cols)))
         cell_size = max(12, int(self._base_cell_size * self._zoom_level))
         columns = 3
         for idx, box_num in enumerate(box_numbers):
@@ -978,7 +980,7 @@ class OverviewPanel(QWidget):
             dk_val = str(record.get(dk) or "")
             ck_val = str(record.get(ck) or "")
             # Scale label truncation with zoom
-            max_chars = max(3, int(6 * self._zoom_level))
+            max_chars = max(4, int(8 * self._zoom_level))
             label = dk_val[:max_chars] if dk_val else display_pos
             # Color based on color_key field
             color = cell_color(ck_val or None)

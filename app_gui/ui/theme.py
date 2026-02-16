@@ -8,16 +8,16 @@ from PySide6.QtCore import Qt
 # Typography / Font Size Configuration
 # =============================================================================
 # Usage in f-strings: f"font-size: {FONT_SIZE_SM}px;"
-FONT_SIZE_CELL = 9       # Grid cells, smallest text
-FONT_SIZE_MONO = 10      # Monospace/code blocks
-FONT_SIZE_XS = 11        # Hints, small buttons, secondary text
-FONT_SIZE_SM = 12        # Body text, tooltips
-FONT_SIZE_MD = 13        # Default size for buttons, inputs, titles
-FONT_SIZE_LG = 14        # Large titles
-FONT_SIZE_XL = 16        # Extra large (big numbers)
-FONT_SIZE_XXL = 20       # Huge text (rarely used)
+FONT_SIZE_CELL = 12      # Grid cells, smallest text
+FONT_SIZE_MONO = 12      # Monospace/code blocks
+FONT_SIZE_XS = 12        # Hints, small buttons, secondary text
+FONT_SIZE_SM = 13        # Body text, tooltips
+FONT_SIZE_MD = 14        # Default size for buttons, inputs, titles
+FONT_SIZE_LG = 16        # Large titles
+FONT_SIZE_XL = 20        # Extra large (big numbers)
+FONT_SIZE_XXL = 24       # Huge text (rarely used)
 
-FONT_POINT_SIZE = 10     # QApplication global font point size
+FONT_POINT_SIZE = 11     # QApplication global font point size
 
 _CJK_FONT_CANDIDATES = [
     os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "msyh.ttc"),
@@ -47,6 +47,8 @@ def _setup_cjk_font(app):
     font = QFont("Inter")
     font.setPointSize(FONT_POINT_SIZE)
     fallbacks = [
+        "Segoe UI",
+        "Roboto",
         "Cantarell",
         "DejaVu Sans",
     ]
