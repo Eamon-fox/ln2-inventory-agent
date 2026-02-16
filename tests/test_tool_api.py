@@ -32,7 +32,7 @@ from lib.tool_api import (
     tool_generate_stats,
     tool_list_empty_positions,
 )
-from lib.yaml_ops import load_yaml, write_yaml
+from lib.yaml_ops import get_audit_log_path, load_yaml, read_audit_events, write_yaml
 
 
 def make_record(rec_id=1, box=1, positions=None):
@@ -61,14 +61,10 @@ def write_raw_yaml(path, data):
 
 
 def read_audit_rows(temp_dir):
-    audit_path = Path(temp_dir) / "ln2_inventory_audit.jsonl"
-    if not audit_path.exists():
+    yaml_path = Path(temp_dir) / "inventory.yaml"
+    if not yaml_path.exists():
         return []
-    return [
-        json.loads(line)
-        for line in audit_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    return read_audit_events(str(yaml_path))
 
 
 class ToolApiTests(unittest.TestCase):
@@ -105,7 +101,7 @@ class ToolApiTests(unittest.TestCase):
             # Tube-level model: positions [2,3] creates 2 new tube records.
             self.assertEqual(3, len(current["inventory"]))
 
-            audit_path = Path(temp_dir) / "ln2_inventory_audit.jsonl"
+            audit_path = Path(get_audit_log_path(str(yaml_path)))
             lines = [
                 json.loads(line)
                 for line in audit_path.read_text(encoding="utf-8").splitlines()
@@ -144,7 +140,7 @@ class ToolApiTests(unittest.TestCase):
             current = load_yaml(str(yaml_path))
             self.assertEqual([1], current["inventory"][0]["positions"])
 
-            audit_path = Path(temp_dir) / "ln2_inventory_audit.jsonl"
+            audit_path = Path(get_audit_log_path(str(yaml_path)))
             lines = [line for line in audit_path.read_text(encoding="utf-8").splitlines() if line.strip()]
             self.assertEqual(1, len(lines))
 

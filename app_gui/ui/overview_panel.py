@@ -1,6 +1,6 @@
 from datetime import date, datetime
 import os
-from PySide6.QtCore import Qt, Signal, QEvent, QMimeData, QPoint
+from PySide6.QtCore import Qt, Signal, QEvent, QMimeData, QPoint, QRect, QEasingCurve, QPropertyAnimation, QTimer
 from PySide6.QtGui import QDrag, QDropEvent, QDragEnterEvent, QDragMoveEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
@@ -35,14 +35,131 @@ class CellButton(QPushButton):
         self.record_id = None
         self.setAcceptDrops(True)
         self._drag_start_pos = None
+        # Keep hover feedback snappy; long animations feel laggy in dense grids.
+        self._hover_duration_ms = 80
+        self._hover_scale = 1.08
+        self._base_rect = QRect()
+        self._is_hovered = False
+        self._hover_anim = None
+        self._hover_anim_on_finished = None
+        self._hover_proxy = None
 
     def set_record_id(self, record_id):
         self.record_id = record_id
+
+    def _scaled_rect(self):
+        if not self._base_rect.isValid() or self._base_rect.width() <= 0 or self._base_rect.height() <= 0:
+            return QRect()
+        width = max(1, int(round(self._base_rect.width() * self._hover_scale)))
+        height = max(1, int(round(self._base_rect.height() * self._hover_scale)))
+        dx = (width - self._base_rect.width()) // 2
+        dy = (height - self._base_rect.height()) // 2
+        return QRect(self._base_rect.x() - dx, self._base_rect.y() - dy, width, height)
+
+    def _ensure_hover_proxy(self):
+        if self._hover_proxy is not None:
+            return self._hover_proxy
+        parent = self.parentWidget() or self
+        proxy = QPushButton(parent)
+        proxy.setObjectName("OverviewCellHoverProxy")
+        proxy.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        proxy.setFocusPolicy(Qt.NoFocus)
+        proxy.hide()
+        self._hover_anim = QPropertyAnimation(proxy, b"geometry", proxy)
+        self._hover_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._hover_anim.finished.connect(self._on_hover_animation_finished)
+        self._hover_proxy = proxy
+        return proxy
+
+    def _on_hover_animation_finished(self):
+        callback = self._hover_anim_on_finished
+        self._hover_anim_on_finished = None
+        if callback is not None:
+            callback()
+
+    def _sync_hover_proxy(self):
+        proxy = self._ensure_hover_proxy()
+        proxy.setText(self.text())
+        proxy.setStyleSheet(self.styleSheet())
+        proxy.setToolTip(self.toolTip())
+        proxy.setFont(self.font())
+        proxy.setGeometry(self._base_rect)
+
+    def _animate_proxy_to(self, rect, on_finished=None):
+        proxy = self._hover_proxy
+        if proxy is None or not rect.isValid():
+            if on_finished is not None:
+                on_finished()
+            return
+        animation = self._hover_anim
+        if animation is None:
+            self._ensure_hover_proxy()
+            animation = self._hover_anim
+        if animation is None:
+            if on_finished is not None:
+                on_finished()
+            return
+        animation.stop()
+        self._hover_anim_on_finished = on_finished
+        animation.setDuration(self._hover_duration_ms)
+        animation.setStartValue(proxy.geometry())
+        animation.setEndValue(rect)
+        animation.start()
+
+    def reset_hover_state(self, clear_base=False):
+        if self._hover_anim is not None:
+            self._hover_anim.stop()
+        self._hover_anim_on_finished = None
+        self._is_hovered = False
+        if self._hover_proxy is not None:
+            self._hover_proxy.hide()
+        if clear_base:
+            self._base_rect = QRect()
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.doubleClicked.emit(self.box, self.pos)
         super().mouseDoubleClickEvent(event)
+
+    def enterEvent(self, event):
+        self.start_hover_visual()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.stop_hover_visual()
+        super().leaveEvent(event)
+
+    def start_hover_visual(self):
+        if not self.isVisible():
+            return
+        self._is_hovered = True
+        rect = self.geometry()
+        if rect.isValid() and rect.width() > 0 and rect.height() > 0:
+            self._base_rect = QRect(rect)
+        else:
+            return
+        self._sync_hover_proxy()
+        self._hover_proxy.show()
+        self._hover_proxy.raise_()
+        target = self._scaled_rect()
+        if target.isValid():
+            self._animate_proxy_to(target)
+
+    def stop_hover_visual(self):
+        self._is_hovered = False
+        proxy = self._hover_proxy
+        if proxy is None:
+            return
+        # Avoid animating shrink-out on leave; many concurrent leave animations
+        # cause perceived input lag when moving quickly across cells.
+        if self._hover_anim is not None:
+            self._hover_anim.stop()
+        self._hover_anim_on_finished = None
+        proxy.hide()
+
+    def hideEvent(self, event):
+        self.reset_hover_state()
+        super().hideEvent(event)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -108,7 +225,7 @@ class OverviewPanel(QWidget):
         self.setObjectName("OverviewPanel")
         self.bridge = bridge
         self.yaml_path_getter = yaml_path_getter
-        
+
         # State
         self.overview_shape = None
         self.overview_cells = {}
@@ -128,6 +245,7 @@ class OverviewPanel(QWidget):
         self._table_rows = []
         self._table_columns = []
         self._table_row_records = []
+        self._hover_warmed = False
 
         self.setup_ui()
 
@@ -269,7 +387,7 @@ class OverviewPanel(QWidget):
         self.ov_table.verticalHeader().setVisible(False)
         self.ov_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.ov_table.setSelectionMode(QTableWidget.SingleSelection)
-        self.ov_table.cellDoubleClicked.connect(self.on_table_row_double_clicked)
+        self.ov_table.cellClicked.connect(self.on_table_row_double_clicked)
 
         self.ov_view_stack = QStackedWidget()
         self.ov_view_stack.addWidget(self.ov_scroll)  # grid
@@ -440,6 +558,8 @@ class OverviewPanel(QWidget):
         font_size_empty = max(6, int(8 * self._zoom_level))
         self._current_font_sizes = (font_size_occupied, font_size_empty)
         for button in self.overview_cells.values():
+            if isinstance(button, CellButton):
+                button.reset_hover_state(clear_base=True)
             button.setFixedSize(cell_size, cell_size)
         # Repaint all cells with current data
         self._repaint_all_cells()
@@ -457,6 +577,31 @@ class OverviewPanel(QWidget):
         for (box_num, position), button in self.overview_cells.items():
             record = record_map.get((box_num, position))
             self._paint_cell(button, box_num, position, record)
+
+    def _warm_hover_animation(self):
+        """Pre-create hover proxy and animation to eliminate first-hover cold-start delay.
+
+        Called once after initial data load via QTimer to avoid blocking UI render.
+        Finds the first visible CellButton and creates its hover proxy/animation,
+        which warms up Qt's QPropertyAnimation and style parsing subsystems.
+        """
+        if self._hover_warmed or not self.overview_cells:
+            return
+        self._hover_warmed = True
+
+        # Pick a representative cell (first visible one) to warm the animation system.
+        for button in self.overview_cells.values():
+            if isinstance(button, CellButton) and button.isVisible():
+                # Trigger proxy and animation creation without showing anything.
+                button._ensure_hover_proxy()
+                # Pre-warm animation with a no-op to initialize QPropertyAnimation internals.
+                if button._hover_anim is not None:
+                    button._hover_anim.setDuration(1)
+                    button._hover_anim.setStartValue(QRect(0, 0, 1, 1))
+                    button._hover_anim.setEndValue(QRect(0, 0, 1, 1))
+                    button._hover_anim.start()
+                    button._hover_anim.stop()
+                break
 
     def refresh(self):
         yaml_path = self.yaml_path_getter()
@@ -567,6 +712,10 @@ class OverviewPanel(QWidget):
             t("overview.loadedStatus", count=len(records), time=datetime.now().strftime("%H:%M:%S"))
         )
 
+        # Warm hover animation system after initial UI render to eliminate first-hover delay.
+        if not self._hover_warmed and self.overview_cells:
+            QTimer.singleShot(50, self._warm_hover_animation)
+
     def _rebuild_boxes(self, rows, cols, box_numbers):
         # clear layout
         while self.ov_boxes_layout.count():
@@ -608,7 +757,6 @@ class OverviewPanel(QWidget):
                 button = CellButton(display_text, box_num, position)
                 button.setFixedSize(cell_size, cell_size)
                 button.setMouseTracking(True)
-                button.setAttribute(Qt.WA_Hover, True)
                 button.setProperty("overview_box", box_num)
                 button.setProperty("overview_position", position)
                 button.installEventFilter(self)
@@ -1042,7 +1190,7 @@ class OverviewPanel(QWidget):
         self._apply_filters()
 
     def on_cell_clicked(self, box_num, position):
-        self.on_cell_hovered(box_num, position, force=True)
+        self.on_cell_double_clicked(box_num, position)
 
     def on_cell_double_clicked(self, box_num, position):
         record = self.overview_pos_map.get((box_num, position))

@@ -21,7 +21,7 @@ from lib.tool_api import (
     tool_batch_thaw,
     tool_record_thaw,
 )
-from lib.yaml_ops import load_yaml, write_yaml
+from lib.yaml_ops import load_yaml, write_yaml, read_audit_events
 
 
 def make_record(rec_id=1, box=1, positions=None, **extra):
@@ -55,14 +55,10 @@ def _seed(temp_dir, records):
 
 
 def _read_audit(temp_dir):
-    audit_path = Path(temp_dir) / "ln2_inventory_audit.jsonl"
-    if not audit_path.exists():
+    yaml_path = Path(temp_dir) / "inventory.yaml"
+    if not yaml_path.exists():
         return []
-    return [
-        json.loads(line)
-        for line in audit_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    return read_audit_events(str(yaml_path))
 
 
 # ── parse_batch_entries ─────────────────────────────────────────────

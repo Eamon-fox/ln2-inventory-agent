@@ -10,8 +10,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from lib.yaml_ops import (
+    get_audit_log_path,
     list_yaml_backups,
     load_yaml,
+    read_audit_events,
     rollback_yaml,
     write_yaml,
 )
@@ -74,7 +76,7 @@ class YamlOpsSafetyTests(unittest.TestCase):
             backups = list_yaml_backups(str(yaml_path))
             self.assertEqual(1, len(backups))
 
-            audit_path = Path(temp_dir) / "ln2_inventory_audit.jsonl"
+            audit_path = Path(get_audit_log_path(str(yaml_path)))
             self.assertTrue(audit_path.exists())
 
             lines = [json.loads(line) for line in audit_path.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -89,6 +91,21 @@ class YamlOpsSafetyTests(unittest.TestCase):
             self.assertTrue(last.get("session_id"))
             self.assertTrue(last.get("trace_id"))
             self.assertEqual("success", last.get("status"))
+
+    def test_audit_logs_are_isolated_per_yaml_file(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_audit_isolation_") as temp_dir:
+            yaml_a = Path(temp_dir) / "inventory_a.yaml"
+            yaml_b = Path(temp_dir) / "inventory_b.yaml"
+
+            write_yaml(make_data([make_record(1, box=1, positions=[1])]), path=str(yaml_a))
+            write_yaml(make_data([make_record(2, box=2, positions=[2])]), path=str(yaml_b))
+
+            audit_a = Path(get_audit_log_path(str(yaml_a)))
+            audit_b = Path(get_audit_log_path(str(yaml_b)))
+
+            self.assertNotEqual(str(audit_a), str(audit_b))
+            self.assertTrue(audit_a.exists())
+            self.assertTrue(audit_b.exists())
 
     def test_rollback_yaml_restores_latest_backup(self):
         with tempfile.TemporaryDirectory(prefix="ln2_rollback_") as temp_dir:

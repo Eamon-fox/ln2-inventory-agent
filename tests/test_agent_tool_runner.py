@@ -10,7 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agent.tool_runner import AgentToolRunner
-from lib.yaml_ops import load_yaml, write_yaml
+from lib.yaml_ops import load_yaml, read_audit_events, write_yaml
 
 
 def make_record(rec_id=1, box=1, positions=None):
@@ -164,12 +164,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             # Tube-level model: positions "2,3" creates 2 new tube records.
             self.assertEqual(3, len(current["inventory"]))
 
-            audit_path = Path(temp_dir) / "ln2_inventory_audit.jsonl"
-            rows = [
-                json.loads(line)
-                for line in audit_path.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
+            rows = read_audit_events(str(yaml_path))
             last = rows[-1]
             self.assertEqual("agent", last["actor_type"])
             self.assertEqual("agent", last["channel"])

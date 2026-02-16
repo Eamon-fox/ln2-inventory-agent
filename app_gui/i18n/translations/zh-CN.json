@@ -1,6 +1,6 @@
 {
   "app": {
-    "title": "LN2 库存管理助手",
+    "title": "SnowFox",
     "ready": "就绪"
   },
   "settings": {
@@ -146,7 +146,7 @@
     "showEmptyGridOnly": "仅对格子视图生效",
     "clearFilter": "清除筛选",
     "hoverHint": "悬停格子查看详情。",
-    "emptyHint": "[空] 暂无样品。双击格子存入第一条记录。",
+    "emptyHint": "[空] 暂无样品。单击格子存入第一条记录。",
     "filterStatus": "已匹配 {slots} 个空位，跨越 {boxes} 个盒子 | {time}",
     "filterStatusTable": "已匹配 {records} 条记录，跨越 {boxes} 个盒子 | {time}",
     "prefillTakeoutAuto": "已自动预填取出（ID {id}）。",
@@ -241,7 +241,7 @@
     "hideBatchMove": "隐藏批量移动",
     "entriesText": "条目（文本）",
     "orUseTable": "或使用表格",
-    "emptyPlan": "[空] 还未添加计划项。\n\n可通过以下方式添加：\n1. 在总览面板双击格子\n2. 使用上方取出/移动/添加表单\n3. 让 AI 助手生成计划并应用",
+    "emptyPlan": "[空] 还未添加计划项。\n\n可通过以下方式添加：\n1. 在总览面板单击格子\n2. 使用上方取出/移动/添加表单\n3. 让 AI 助手生成计划并应用",
     "selectedContext": "选中记录上下文",
     "noPrefill": "暂无预填。",
     "recordLoaded": "记录已加载 - 表单已自动填写。",

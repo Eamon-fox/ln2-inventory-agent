@@ -3,6 +3,7 @@
 Configuration precedence:
 1) Built-in defaults in this file
 2) JSON file from environment variable ``LN2_CONFIG_FILE``
+3) Artifact root from environment variable ``LN2_ARTIFACT_ROOT``
 """
 
 import copy
@@ -12,12 +13,54 @@ import sys
 
 
 CONFIG_ENV_VAR = "LN2_CONFIG_FILE"
+ARTIFACT_ENV_VAR = "LN2_ARTIFACT_ROOT"
+
+
+def _resolve_artifact_root():
+    """Resolve artifact root directory for backups, audits, and registry.
+    
+    Priority:
+    1. LN2_ARTIFACT_ROOT environment variable
+    2. Frozen mode: <exe_dir>/.ln2agent-data
+    3. Source mode: <project_root>/.ln2agent-data
+    4. Fallback: ~/.ln2agent/data (if others not writable)
+    """
+    env_root = os.environ.get(ARTIFACT_ENV_VAR)
+    if env_root:
+        expanded = os.path.expanduser(env_root)
+        if os.path.isabs(expanded):
+            return os.path.abspath(expanded)
+        return os.path.abspath(expanded)
+    
+    if getattr(sys, "frozen", False):
+        candidate = os.path.join(os.path.dirname(sys.executable), ".ln2agent-data")
+        if os.access(os.path.dirname(sys.executable), os.W_OK):
+            return candidate
+    
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    candidate = os.path.join(project_root, ".ln2agent-data")
+    if os.access(project_root, os.W_OK):
+        return candidate
+    
+    fallback = os.path.expanduser("~/.ln2agent/data")
+    os.makedirs(fallback, exist_ok=True)
+    return fallback
+
+
+ARTIFACT_ROOT = _resolve_artifact_root()
+REGISTRY_DIR = os.path.join(ARTIFACT_ROOT, "registry")
+AUDIT_DIR = os.path.join(ARTIFACT_ROOT, "audits")
+BACKUP_DIR = os.path.join(ARTIFACT_ROOT, "backups")
+REGISTRY_PATH = os.path.join(REGISTRY_DIR, "inventory_index.json")
 
 
 def _default_yaml_path():
     if getattr(sys, "frozen", False):
         return os.path.join(os.path.dirname(sys.executable), "demo", "ln2_inventory.demo.yaml")
-    return os.path.join(os.getcwd(), "demo", "ln2_inventory.demo.yaml")
+
+    # In source mode, use a deterministic project-relative demo path.
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(project_root, "demo", "ln2_inventory.demo.yaml")
 
 
 DEFAULT_CONFIG = {

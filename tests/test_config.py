@@ -46,6 +46,22 @@ class RuntimeConfigTests(unittest.TestCase):
             self.assertEqual(42, mod.BACKUP_KEEP_COUNT)
             self.assertEqual(1.5, mod.YAML_SIZE_WARNING_MB)
 
+    def test_default_yaml_path_uses_repo_demo_when_available(self):
+        mod = importlib.reload(config_module)
+        expected = str((ROOT / "demo" / "ln2_inventory.demo.yaml").resolve())
+        self.assertEqual(expected, mod.YAML_PATH)
+
+    def test_default_yaml_path_is_not_cwd_dependent(self):
+        previous_cwd = os.getcwd()
+        try:
+            with tempfile.TemporaryDirectory(prefix="ln2_cfg_cwd_") as temp_dir:
+                os.chdir(temp_dir)
+                mod = importlib.reload(config_module)
+                expected = str((ROOT / "demo" / "ln2_inventory.demo.yaml").resolve())
+                self.assertEqual(expected, mod.YAML_PATH)
+        finally:
+            os.chdir(previous_cwd)
+
 
 if __name__ == "__main__":
     unittest.main()

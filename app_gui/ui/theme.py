@@ -58,39 +58,39 @@ def _apply_theme(app, mode):
 
     if mode == "light":
         palette = QPalette()
-        palette.setColor(QPalette.Window, QColor(250, 250, 250))
-        palette.setColor(QPalette.WindowText, QColor(30, 30, 30))
-        palette.setColor(QPalette.Base, QColor(245, 245, 245))
-        palette.setColor(QPalette.AlternateBase, QColor(250, 250, 250))
-        palette.setColor(QPalette.ToolTipBase, QColor(30, 30, 30))
+        palette.setColor(QPalette.Window, QColor(247, 250, 252))
+        palette.setColor(QPalette.WindowText, QColor(15, 23, 42))
+        palette.setColor(QPalette.Base, QColor(241, 246, 251))
+        palette.setColor(QPalette.AlternateBase, QColor(247, 250, 252))
+        palette.setColor(QPalette.ToolTipBase, QColor(15, 23, 42))
         palette.setColor(QPalette.ToolTipText, QColor(255, 255, 255))
-        palette.setColor(QPalette.Text, QColor(30, 30, 30))
+        palette.setColor(QPalette.Text, QColor(15, 23, 42))
         palette.setColor(QPalette.Button, QColor(255, 255, 255))
-        palette.setColor(QPalette.ButtonText, QColor(30, 30, 30))
+        palette.setColor(QPalette.ButtonText, QColor(15, 23, 42))
         palette.setColor(QPalette.BrightText, Qt.red)
-        palette.setColor(QPalette.Link, QColor(37, 99, 235))
-        palette.setColor(QPalette.Highlight, QColor(37, 99, 235))
+        palette.setColor(QPalette.Link, QColor(43, 127, 229))
+        palette.setColor(QPalette.Highlight, QColor(43, 127, 229))
         palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
-        palette.setColor(QPalette.Disabled, QPalette.Text, QColor(180, 180, 180))
-        palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(180, 180, 180))
-        palette.setColor(QPalette.PlaceholderText, QColor(160, 160, 160))
+        palette.setColor(QPalette.Disabled, QPalette.Text, QColor(148, 163, 184))
+        palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(148, 163, 184))
+        palette.setColor(QPalette.PlaceholderText, QColor(148, 163, 184))
         
         app.setPalette(palette)
 
         app.setStyleSheet("""
             :root {
-                --background-base: #fafafa;
-                --background-strong: #f5f5f5;
+                --background-base: #f7fafc;
+                --background-strong: #eef3f8;
                 --background-raised: #ffffff;
-                --background-inset: #f0f0f0;
-                --text-strong: #1e1e1e;
-                --text-weak: #646464;
-                --text-muted: #a0a0a0;
-                --border-weak: rgba(0,0,0,0.08);
-                --border-subtle: rgba(0,0,0,0.12);
-                --accent: #2563eb;
-                --accent-hover: #1d4ed8;
-                --accent-muted: rgba(37,99,235,0.1);
+                --background-inset: #f1f6fb;
+                --text-strong: #0f172a;
+                --text-weak: #334155;
+                --text-muted: #64748b;
+                --border-weak: rgba(15,23,42,0.10);
+                --border-subtle: rgba(15,23,42,0.18);
+                --accent: #2b7fe5;
+                --accent-hover: #1f6ed0;
+                --accent-muted: rgba(43,127,229,0.14);
                 --success: #16a34a;
                 --warning: #d97706;
                 --error: #dc2626;
@@ -104,18 +104,18 @@ def _apply_theme(app, mode):
                 --btn-warning: #d97706;
                 --btn-warning-hover: #b45309;
                 --btn-warning-border: #92400e;
-                --btn-primary: #2563eb;
-                --btn-primary-hover: #1d4ed8;
-                --btn-primary-border: #1e3a8a;
+                --btn-primary: #2b7fe5;
+                --btn-primary-hover: #1f6ed0;
+                --btn-primary-border: #174f98;
                 --status-success: #15803d;
                 --status-warning: #b45309;
                 --status-error: #b91c1c;
                 --status-muted: #64748b;
-                --cell-border-default: #d0d0d0;
-                --cell-empty-bg: #f5f5f5;
-                --cell-empty-selected-bg: #e8e8e8;
-                --cell-empty-text: #808080;
-                --cell-empty-selected-text: #606060;
+                --cell-border-default: #c6d3e3;
+                --cell-empty-bg: #eef3f8;
+                --cell-empty-selected-bg: #deebf8;
+                --cell-empty-text: #6b7f95;
+                --cell-empty-selected-text: #34506d;
             }
             QToolTip { color: #1e1e1e; background-color: #ffffff; border: 1px solid rgba(0,0,0,0.1); border-radius: 4px; padding: 4px 8px; font-size: 12px; }
             QGroupBox { border: 1px solid var(--border-weak); border-radius: var(--radius-md); margin-top: 12px; font-weight: 500; color: var(--text-weak); padding-top: 8px; }
@@ -131,8 +131,8 @@ def _apply_theme(app, mode):
             QComboBox::down-arrow { image: none; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid var(--text-weak); margin-right: 8px; }
             QComboBox QAbstractItemView { background-color: var(--background-raised); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); selection-background-color: var(--accent-muted); selection-color: var(--text-strong); padding: 4px; }
             QPushButton { background-color: var(--background-raised); border: 1px solid var(--border-weak); border-radius: var(--radius-sm); color: var(--text-strong); padding: 8px 16px; font-weight: 500; font-size: 13px; }
-            QPushButton:hover { background-color: #f0f0f0; border-color: var(--border-subtle); }
-            QPushButton:pressed { background-color: #e5e5e5; }
+            QPushButton:hover { background-color: #f2f6fb; border-color: var(--border-subtle); }
+            QPushButton:pressed { background-color: #e6eef7; }
             QPushButton:disabled { background-color: var(--background-strong); color: var(--text-muted); border-color: transparent; }
             QPushButton[variant="primary"] { background-color: var(--accent); color: #ffffff; border-color: var(--accent); font-weight: 500; }
             QPushButton[variant="primary"]:hover { background-color: var(--accent-hover); border-color: var(--accent-hover); }
@@ -179,45 +179,45 @@ def _apply_theme(app, mode):
             QWidget#aiPromptDock { background-color: transparent; }
             QWidget#aiInputContainer { background-color: rgba(0,0,0,0.04); border: 1px solid rgba(0,0,0,0.06); border-radius: 12px; }
             QTextEdit#aiPromptInput { border: none; border-radius: 8px; background-color: transparent; padding: 2px 4px; font-size: 13px; color: var(--text-strong); }
-            QPushButton[class="quick-prompt-btn"] { padding: 3px 10px; font-size: 11px; border-radius: 10px; background-color: rgba(0,0,0,0.05); border: none; color: #646464; }
-            QPushButton[class="quick-prompt-btn"]:hover { background-color: rgba(0,0,0,0.09); color: #1e1e1e; }
-            QWidget#OverviewPanel { background-color: #f8f8f8; }
+            QPushButton[class="quick-prompt-btn"] { padding: 3px 10px; font-size: 11px; border-radius: 10px; background-color: rgba(43,127,229,0.10); border: none; color: #34506d; }
+            QPushButton[class="quick-prompt-btn"]:hover { background-color: rgba(43,127,229,0.18); color: #0f172a; }
+            QWidget#OverviewPanel { background-color: #f5f9fd; }
         """)
     else:
         dark_palette = QPalette()
-        dark_palette.setColor(QPalette.Window, QColor(26, 26, 26))
-        dark_palette.setColor(QPalette.WindowText, QColor(232, 232, 232))
-        dark_palette.setColor(QPalette.Base, QColor(36, 36, 36))
-        dark_palette.setColor(QPalette.AlternateBase, QColor(26, 26, 26))
-        dark_palette.setColor(QPalette.ToolTipBase, QColor(232, 232, 232))
-        dark_palette.setColor(QPalette.ToolTipText, QColor(36, 36, 36))
-        dark_palette.setColor(QPalette.Text, QColor(232, 232, 232))
-        dark_palette.setColor(QPalette.Button, QColor(45, 45, 45))
-        dark_palette.setColor(QPalette.ButtonText, QColor(232, 232, 232))
+        dark_palette.setColor(QPalette.Window, QColor(15, 23, 36))
+        dark_palette.setColor(QPalette.WindowText, QColor(230, 241, 255))
+        dark_palette.setColor(QPalette.Base, QColor(19, 32, 51))
+        dark_palette.setColor(QPalette.AlternateBase, QColor(15, 23, 36))
+        dark_palette.setColor(QPalette.ToolTipBase, QColor(230, 241, 255))
+        dark_palette.setColor(QPalette.ToolTipText, QColor(19, 32, 51))
+        dark_palette.setColor(QPalette.Text, QColor(230, 241, 255))
+        dark_palette.setColor(QPalette.Button, QColor(27, 42, 63))
+        dark_palette.setColor(QPalette.ButtonText, QColor(230, 241, 255))
         dark_palette.setColor(QPalette.BrightText, Qt.red)
-        dark_palette.setColor(QPalette.Link, QColor(56, 189, 248))
-        dark_palette.setColor(QPalette.Highlight, QColor(14, 165, 233))
+        dark_palette.setColor(QPalette.Link, QColor(99, 179, 255))
+        dark_palette.setColor(QPalette.Highlight, QColor(99, 179, 255))
         dark_palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
-        dark_palette.setColor(QPalette.Disabled, QPalette.Text, QColor(85, 85, 85))
-        dark_palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(85, 85, 85))
-        dark_palette.setColor(QPalette.PlaceholderText, QColor(100, 100, 100))
+        dark_palette.setColor(QPalette.Disabled, QPalette.Text, QColor(109, 130, 152))
+        dark_palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(109, 130, 152))
+        dark_palette.setColor(QPalette.PlaceholderText, QColor(109, 130, 152))
         
         app.setPalette(dark_palette)
 
         app.setStyleSheet("""
             :root {
-                --background-base: #1a1a1a;
-                --background-strong: #242424;
-                --background-raised: #2d2d2d;
-                --background-inset: #1f1f1f;
-                --text-strong: #e8e8e8;
-                --text-weak: #888888;
-                --text-muted: #555555;
-                --border-weak: rgba(255,255,255,0.08);
-                --border-subtle: rgba(255,255,255,0.12);
-                --accent: #38bdf8;
-                --accent-hover: #64b4ff;
-                --accent-muted: rgba(56,189,248,0.15);
+                --background-base: #0f1724;
+                --background-strong: #152235;
+                --background-raised: #1b2a3f;
+                --background-inset: #132033;
+                --text-strong: #e6f1ff;
+                --text-weak: #9fb3c8;
+                --text-muted: #6d8298;
+                --border-weak: rgba(159,179,200,0.15);
+                --border-subtle: rgba(159,179,200,0.24);
+                --accent: #63b3ff;
+                --accent-hover: #8bc7ff;
+                --accent-muted: rgba(99,179,255,0.22);
                 --success: #22c55e;
                 --warning: #f59e0b;
                 --error: #ef4444;
@@ -231,18 +231,18 @@ def _apply_theme(app, mode):
                 --btn-warning: #f59e0b;
                 --btn-warning-hover: #d97706;
                 --btn-warning-border: #b45309;
-                --btn-primary: #38bdf8;
-                --btn-primary-hover: #60a5fa;
-                --btn-primary-border: #0284c7;
+                --btn-primary: #63b3ff;
+                --btn-primary-hover: #8bc7ff;
+                --btn-primary-border: #3c90df;
                 --status-success: #22c55e;
                 --status-warning: #f59e0b;
                 --status-error: #ef4444;
                 --status-muted: #94a3b8;
-                --cell-border-default: #505050;
-                --cell-empty-bg: #2d2d2d;
-                --cell-empty-selected-bg: #3a3a3a;
-                --cell-empty-text: #888888;
-                --cell-empty-selected-text: #a0a0a0;
+                --cell-border-default: #36506d;
+                --cell-empty-bg: #1a2a40;
+                --cell-empty-selected-bg: #223956;
+                --cell-empty-text: #86a0bb;
+                --cell-empty-selected-text: #c6dbf3;
             }
             QToolTip { color: #1a1a1a; background-color: #e8e8e8; border: 1px solid rgba(0,0,0,0.1); border-radius: 4px; padding: 4px 8px; font-size: 12px; }
             QGroupBox { border: 1px solid var(--border-weak); border-radius: var(--radius-md); margin-top: 12px; font-weight: 500; color: var(--text-weak); padding-top: 8px; }
@@ -258,8 +258,8 @@ def _apply_theme(app, mode):
             QComboBox::down-arrow { image: none; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid var(--text-weak); margin-right: 8px; }
             QComboBox QAbstractItemView { background-color: var(--background-raised); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); selection-background-color: var(--accent-muted); selection-color: var(--text-strong); padding: 4px; }
             QPushButton { background-color: var(--background-raised); border: 1px solid var(--border-weak); border-radius: var(--radius-sm); color: var(--text-strong); padding: 8px 16px; font-weight: 500; font-size: 13px; }
-            QPushButton:hover { background-color: #383838; border-color: var(--border-subtle); }
-            QPushButton:pressed { background-color: #333333; }
+            QPushButton:hover { background-color: #24364d; border-color: var(--border-subtle); }
+            QPushButton:pressed { background-color: #1e3047; }
             QPushButton:disabled { background-color: var(--background-strong); color: var(--text-muted); border-color: transparent; }
             QPushButton[variant="primary"] { background-color: var(--accent); color: #000000; border-color: var(--accent); font-weight: 500; }
             QPushButton[variant="primary"]:hover { background-color: var(--accent-hover); border-color: var(--accent-hover); }
@@ -306,9 +306,9 @@ def _apply_theme(app, mode):
             QWidget#aiPromptDock { background-color: transparent; }
             QWidget#aiInputContainer { background-color: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; }
             QTextEdit#aiPromptInput { border: none; border-radius: 8px; background-color: transparent; padding: 2px 4px; font-size: 13px; color: var(--text-strong); }
-            QPushButton[class="quick-prompt-btn"] { padding: 3px 10px; font-size: 11px; border-radius: 10px; background-color: rgba(255,255,255,0.06); border: none; color: #888888; }
-            QPushButton[class="quick-prompt-btn"]:hover { background-color: rgba(255,255,255,0.1); color: #e8e8e8; }
-            QWidget#OverviewPanel { background-color: #202020; }
+            QPushButton[class="quick-prompt-btn"] { padding: 3px 10px; font-size: 11px; border-radius: 10px; background-color: rgba(99,179,255,0.16); border: none; color: #a9c6e3; }
+            QPushButton[class="quick-prompt-btn"]:hover { background-color: rgba(99,179,255,0.24); color: #e6f1ff; }
+            QWidget#OverviewPanel { background-color: #112033; }
         """)
 
 
@@ -414,6 +414,7 @@ def cell_occupied_style(color="#22c55e", is_selected=False, font_size=9):
                 font-size: {font_size}px;
                 font-weight: 500;
                 padding: 1px;
+
             }}
             QPushButton:hover {{
                 border: 2px solid var(--accent);
@@ -429,6 +430,7 @@ def cell_occupied_style(color="#22c55e", is_selected=False, font_size=9):
                 font-size: {font_size}px;
                 font-weight: 500;
                 padding: 1px;
+
             }}
             QPushButton:hover {{
                 border: 2px solid var(--accent);
@@ -446,6 +448,7 @@ def cell_empty_style(is_selected=False, font_size=8):
                 border-radius: var(--radius-xs);
                 font-size: {font_size}px;
                 padding: 1px;
+
             }}
             QPushButton:hover {{
                 border: 2px solid var(--accent);
@@ -462,6 +465,7 @@ def cell_empty_style(is_selected=False, font_size=8):
                 border-radius: var(--radius-xs);
                 font-size: {font_size}px;
                 padding: 1px;
+
             }}
             QPushButton:hover {{
                 border: 2px solid var(--accent);
@@ -481,6 +485,7 @@ def cell_preview_add_style():
             font-size: 9px;
             font-weight: 500;
             padding: 1px;
+            cursor: pointing-hand;
         }}
     """
 
@@ -495,6 +500,7 @@ def cell_preview_takeout_style():
             font-size: 9px;
             font-weight: 500;
             padding: 1px;
+            cursor: pointing-hand;
         }}
     """
 
@@ -509,6 +515,7 @@ def cell_preview_move_source_style():
             font-size: 9px;
             font-weight: 500;
             padding: 1px;
+            cursor: pointing-hand;
         }}
     """
 
@@ -523,6 +530,7 @@ def cell_preview_move_target_style():
             font-size: 9px;
             font-weight: 500;
             padding: 1px;
+            cursor: pointing-hand;
         }}
     """
 

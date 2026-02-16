@@ -10,12 +10,15 @@ inventory:
   plasmid_name: pLenti-empty
   plasmid_id: p0001
   box: 1
-  positions:
-  - 1
+  positions: []
   frozen_at: '2026-02-01'
   thaw_log: null
   note: baseline control clone
-  thaw_events: null
+  thaw_events:
+  - date: '2026-02-16'
+    action: takeout
+    positions:
+    - 1
 - id: 2
   cell_line: NCCIT
   parent_cell_line: NCCIT
@@ -193,11 +196,25 @@ inventory:
   plasmid_id: rep-036
   box: 1
   positions:
-  - 15
+  - 1
   frozen_at: '2026-02-08'
   thaw_log: null
   note: reporter stable line
-  thaw_events: null
+  thaw_events:
+  - date: '2026-02-16'
+    action: move
+    positions:
+    - 15
+    from_position: 15
+    to_position: 20
+    note: Drag from Overview
+  - date: '2026-02-16'
+    action: move
+    positions:
+    - 20
+    from_position: 20
+    to_position: 1
+    note: Drag from Overview
 - id: 16
   cell_line: HEK293T wt
   parent_cell_line: HEK293T wt
@@ -245,11 +262,18 @@ inventory:
   plasmid_id: null
   box: 1
   positions:
-  - 19
+  - 15
   frozen_at: '2026-02-04'
   thaw_log: null
   note: long-term backup stock
-  thaw_events: null
+  thaw_events:
+  - date: '2026-02-16'
+    action: move
+    positions:
+    - 19
+    from_position: 19
+    to_position: 15
+    note: Drag from Overview
 - id: 20
   cell_line: K562
   parent_cell_line: K562

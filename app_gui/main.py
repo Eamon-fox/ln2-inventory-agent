@@ -3,7 +3,7 @@
 import os
 import sys
 import yaml
-from PySide6.QtCore import Qt, QSettings, Slot
+from PySide6.QtCore import Qt, QSettings, Slot, QTimer
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
@@ -41,6 +41,7 @@ from app_gui.ui.ai_panel import AIPanel
 APP_VERSION = "1.0.1"
 APP_RELEASE_URL = "https://github.com/Eamon-fox/snowfox/releases"
 _GITHUB_API_LATEST = "https://api.github.com/repos/Eamon-fox/snowfox/releases/latest"
+INVENTORY_FILE_NAME = "ln2_inventory.yaml"
 
 
 def _parse_version(v: str) -> tuple:
@@ -54,6 +55,33 @@ def _parse_version(v: str) -> tuple:
 def _is_version_newer(new_version: str, old_version: str) -> bool:
     """Return True if new_version > old_version using semver comparison."""
     return _parse_version(new_version) > _parse_version(old_version)
+
+
+def _normalize_inventory_yaml_path(path_text, force_canonical_file=False) -> str:
+    """Normalize inventory YAML path.
+
+    - Empty input -> ""
+    - Directory input -> <dir>/ln2_inventory.yaml
+    - File input -> keep as-is unless force_canonical_file=True
+    - Special case: demo path with .demo. suffix -> keep as-is (don't rename)
+    """
+    raw = str(path_text or "").strip()
+    if not raw:
+        return ""
+
+    abs_path = os.path.abspath(raw)
+
+    # Preserve demo/default inventory paths that have .demo. suffix
+    if ".demo." in os.path.basename(abs_path).lower():
+        return abs_path
+
+    if os.path.isdir(abs_path):
+        return os.path.join(abs_path, INVENTORY_FILE_NAME)
+
+    if force_canonical_file:
+        return os.path.join(os.path.dirname(abs_path), INVENTORY_FILE_NAME)
+
+    return abs_path
 
 
 class _NoWheelComboBox(QComboBox):
@@ -259,7 +287,7 @@ class SettingsDialog(QDialog):
             f'{tr("app.title")}  v{APP_VERSION}<br>'
             f'{tr("settings.aboutDesc")}<br><br>'
             f'GitHub: <a href="{APP_RELEASE_URL}">'
-            f'Eamon-fox/snowfox</a>'
+            f'SnowFox</a>'
         )
         about_label.setOpenExternalLinks(True)
         about_label.setWordWrap(True)
@@ -306,14 +334,14 @@ class SettingsDialog(QDialog):
             "YAML Files (*.yaml *.yml)",
         )
         if path:
-            self.yaml_edit.setText(path)
+            self.yaml_edit.setText(_normalize_inventory_yaml_path(path))
 
     def _emit_create_new_dataset_request(self):
         if not callable(self._on_create_new_dataset):
             return
         new_path = self._on_create_new_dataset(update_window=False)
         if new_path:
-            self.yaml_edit.setText(new_path)
+            self.yaml_edit.setText(_normalize_inventory_yaml_path(new_path))
 
     def _on_check_update(self):
         """Manually check for updates from GitHub."""
@@ -531,7 +559,7 @@ class SettingsDialog(QDialog):
             if key_text:
                 api_keys[prov_id] = key_text
         return {
-            "yaml_path": self.yaml_edit.text().strip(),
+            "yaml_path": _normalize_inventory_yaml_path(self.yaml_edit.text().strip()),
             "api_keys": api_keys,
             "language": self.lang_combo.currentData(),
             "theme": self.theme_combo.currentData(),
@@ -1088,35 +1116,50 @@ class MainWindow(QMainWindow):
         self.bridge = GuiToolBridge()
         self.bridge.set_api_keys(self.gui_config.get("api_keys", {}))
 
-        # One-time migration from QSettings if unified config file does not exist yet
-        if not os.path.isfile(DEFAULT_CONFIG_FILE):
-            migrated_yaml = self.settings.value("ui/current_yaml_path", "", type=str)
+        # One-time migration from legacy QSettings if unified config file does not exist yet.
+        # Guarded by a dedicated marker to avoid re-importing stale paths after users
+        # intentionally remove ~/.ln2agent/config.yaml.
+        migrated_once = self.settings.value("migration/unified_config_done", False, type=bool)
+        if (not os.path.isfile(DEFAULT_CONFIG_FILE)) and (not migrated_once):
             migrated_model = self.settings.value("ai/model", "", type=str)
             migrated_steps = self.settings.value("ai/max_steps", 8, type=int)
-            if migrated_yaml:
-                self.gui_config["yaml_path"] = migrated_yaml
             self.gui_config["ai"] = {
                 "model": migrated_model or "deepseek-chat",
                 "max_steps": migrated_steps,
                 "thinking_enabled": True,
             }
             save_gui_config(self.gui_config)
+            self.settings.setValue("migration/unified_config_done", True)
 
-        self.current_yaml_path = self.gui_config.get("yaml_path") or YAML_PATH
+        configured_yaml = _normalize_inventory_yaml_path(self.gui_config.get("yaml_path") or "")
+        self.current_yaml_path = configured_yaml or YAML_PATH
 
         self.setup_ui()
         self.connect_signals()
         self.restore_ui_settings()
+        self._startup_checks_scheduled = False
+        self._floating_dialog_refs = []
 
         self.statusBar().showMessage(tr("app.ready"), 2000)
-        self._check_release_notice_once()
-        self._check_empty_inventory_prompt()
         self.overview_panel.refresh()
         if not os.path.isfile(self.current_yaml_path):
             self.statusBar().showMessage(
                 t("main.fileNotFound", path=self.current_yaml_path),
                 6000,
             )
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._startup_checks_scheduled:
+            return
+        self._startup_checks_scheduled = True
+        # Run startup dialogs after the main window is visible to avoid
+        # modal deadlock perception when the dialog is not foregrounded.
+        QTimer.singleShot(150, self._run_startup_checks)
+
+    def _run_startup_checks(self):
+        self._check_release_notice_once()
+        self._check_empty_inventory_prompt()
 
     def setup_ui(self):
         container = QWidget()
@@ -1216,6 +1259,24 @@ class MainWindow(QMainWindow):
     def show_status(self, msg, timeout=2000, level="info"):
         self.statusBar().showMessage(msg, timeout)
 
+    def _show_nonblocking_dialog(self, dialog):
+        """Show dialog without modal lock and keep Python reference alive."""
+        dialog.setAttribute(Qt.WA_DeleteOnClose, True)
+        dialog.setWindowModality(Qt.NonModal)
+        dialog.setModal(False)
+        self._floating_dialog_refs.append(dialog)
+
+        def _release_ref(_result=0):
+            try:
+                self._floating_dialog_refs.remove(dialog)
+            except ValueError:
+                pass
+
+        dialog.finished.connect(_release_ref)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
     def _check_release_notice_once(self):
         """Fetch latest release from GitHub in background and notify if newer."""
         import threading
@@ -1231,7 +1292,7 @@ class MainWindow(QMainWindow):
                 )
                 with urllib.request.urlopen(req, timeout=8) as resp:
                     data = json.loads(resp.read())
-                latest_tag = data.get("tag_name", "").lstrip("v").lstrip("1.0.1")
+                latest_tag = str(data.get("tag_name", "")).strip().lstrip("vV")
                 if not _is_version_newer(latest_tag, APP_VERSION):
                     return
                 last_notified = self.gui_config.get("last_notified_release", "0.0.0")
@@ -1267,24 +1328,30 @@ class MainWindow(QMainWindow):
             later_btn = msg_box.addButton(tr("main.newReleaseLater"), QMessageBox.RejectRole)
 
             msg_box.setDefaultButton(later_btn)
-            msg_box.exec()
 
-            clicked = msg_box.clickedButton()
-            if clicked == copy_btn:
-                try:
-                    QApplication.clipboard().setText(APP_RELEASE_URL)
-                except Exception as e:
-                    print(f"[VersionCheck] Copy to clipboard failed: {e}")
-            elif clicked == open_btn:
-                try:
-                    from PySide6.QtCore import QUrl
-                    from PySide6.QtGui import QDesktopServices
-                    QDesktopServices.openUrl(QUrl(APP_RELEASE_URL))
-                except Exception as e:
-                    print(f"[VersionCheck] Open URL failed: {e}")
+            def _mark_notified_once():
+                if self.gui_config.get("last_notified_release") == latest_tag:
+                    return
+                self.gui_config["last_notified_release"] = latest_tag
+                save_gui_config(self.gui_config)
 
-            self.gui_config["last_notified_release"] = latest_tag
-            save_gui_config(self.gui_config)
+            def _handle_button(clicked):
+                if clicked == copy_btn:
+                    try:
+                        QApplication.clipboard().setText(APP_RELEASE_URL)
+                    except Exception as e:
+                        print(f"[VersionCheck] Copy to clipboard failed: {e}")
+                elif clicked == open_btn:
+                    try:
+                        from PySide6.QtCore import QUrl
+                        from PySide6.QtGui import QDesktopServices
+                        QDesktopServices.openUrl(QUrl(APP_RELEASE_URL))
+                    except Exception as e:
+                        print(f"[VersionCheck] Open URL failed: {e}")
+
+            msg_box.buttonClicked.connect(_handle_button)
+            msg_box.finished.connect(lambda _result: _mark_notified_once())
+            self._show_nonblocking_dialog(msg_box)
 
         except Exception as e:
             print(f"[VersionCheck] Dialog failed: {e}")
@@ -1316,23 +1383,30 @@ class MainWindow(QMainWindow):
             msg_box.setText(message)
             msg_box.setIcon(QMessageBox.Information)
 
-            import_btn = msg_box.addButton(tr("main.importStartupAction"), QDialogButtonBox.ActionRole)
-            new_btn = msg_box.addButton(tr("main.importPromptNewInventory"), QDialogButtonBox.ActionRole)
-            later_btn = msg_box.addButton(QDialogButtonBox.Close)
+            import_btn = msg_box.addButton(tr("main.importStartupAction"), QMessageBox.ActionRole)
+            new_btn = msg_box.addButton(tr("main.importPromptNewInventory"), QMessageBox.ActionRole)
+            later_btn = msg_box.addButton(QMessageBox.Close)
             later_btn.setText(tr("main.newReleaseLater"))
 
             msg_box.setDefaultButton(import_btn)
-            msg_box.exec()
 
-            clicked = msg_box.clickedButton()
-            self.gui_config["import_prompt_seen"] = True
-            save_gui_config(self.gui_config)
+            def _mark_prompt_seen_once():
+                if self.gui_config.get("import_prompt_seen", False):
+                    return
+                self.gui_config["import_prompt_seen"] = True
+                save_gui_config(self.gui_config)
 
-            if clicked == import_btn:
-                dlg = ImportPromptDialog(self)
-                dlg.exec()
-            elif clicked == new_btn:
-                self.on_create_new_dataset()
+            def _handle_import_prompt(clicked):
+                _mark_prompt_seen_once()
+                if clicked == import_btn:
+                    dlg = ImportPromptDialog(self)
+                    dlg.exec()
+                elif clicked == new_btn:
+                    self.on_create_new_dataset()
+
+            msg_box.buttonClicked.connect(_handle_import_prompt)
+            msg_box.finished.connect(lambda _result: _mark_prompt_seen_once())
+            self._show_nonblocking_dialog(msg_box)
 
         except Exception as e:
             print(f"[ImportPrompt] Empty inventory check failed: {e}")
@@ -1356,6 +1430,7 @@ class MainWindow(QMainWindow):
         self.dataset_label.setText(self.current_yaml_path)
 
     def on_open_settings(self):
+        previous_yaml_abs = os.path.abspath(str(self.current_yaml_path or ""))
         dialog = SettingsDialog(
             self,
             config={
@@ -1373,7 +1448,8 @@ class MainWindow(QMainWindow):
             return
 
         values = dialog.get_values()
-        self.current_yaml_path = values["yaml_path"]
+        selected_yaml = _normalize_inventory_yaml_path(values["yaml_path"])
+        self.current_yaml_path = selected_yaml or self.current_yaml_path or YAML_PATH
         self.gui_config["api_keys"] = values.get("api_keys", {})
 
         new_lang = values.get("language", "en")
@@ -1401,6 +1477,10 @@ class MainWindow(QMainWindow):
         self.ai_panel.ai_thinking_enabled.setChecked(self.gui_config["ai"]["thinking_enabled"])
         self.ai_panel.ai_thinking_collapsed = not self.gui_config["ai"]["thinking_expanded"]
         self.ai_panel.ai_custom_prompt = self.gui_config["ai"].get("custom_prompt", "")
+
+        new_yaml_abs = os.path.abspath(str(self.current_yaml_path or ""))
+        if previous_yaml_abs != new_yaml_abs:
+            self.operations_panel.reset_for_dataset_switch()
 
         self._update_dataset_label()
         self.overview_panel.refresh()
@@ -1672,6 +1752,7 @@ class MainWindow(QMainWindow):
         return response
 
     def on_create_new_dataset(self, update_window=True):
+        previous_yaml_abs = os.path.abspath(str(self.current_yaml_path or ""))
         layout_dlg = NewDatasetDialog(self)
         if layout_dlg.exec() != QDialog.Accepted:
             return
@@ -1679,7 +1760,7 @@ class MainWindow(QMainWindow):
 
         default_path = self.current_yaml_path
         if not default_path or os.path.isdir(default_path):
-            default_path = os.path.join(os.getcwd(), "ln2_inventory.yaml")
+            default_path = os.path.join(os.getcwd(), INVENTORY_FILE_NAME)
         target_path, _ = QFileDialog.getSaveFileName(
             self,
             tr("main.new"),
@@ -1689,12 +1770,7 @@ class MainWindow(QMainWindow):
         if not target_path:
             return
 
-        target_path = os.path.abspath(target_path)
-        if os.path.isdir(target_path):
-            target_path = os.path.join(target_path, "ln2_inventory.yaml")
-
-        if not target_path.lower().endswith((".yaml", ".yml")):
-            target_path += ".yaml"
+        target_path = _normalize_inventory_yaml_path(target_path, force_canonical_file=True)
 
         target_dir = os.path.dirname(target_path)
         if target_dir and not os.path.isdir(target_dir):
@@ -1726,6 +1802,8 @@ class MainWindow(QMainWindow):
             return target_path
 
         self.current_yaml_path = target_path
+        if previous_yaml_abs != os.path.abspath(str(self.current_yaml_path or "")):
+            self.operations_panel.reset_for_dataset_switch()
         self._update_dataset_label()
         self.gui_config["yaml_path"] = self.current_yaml_path
         save_gui_config(self.gui_config)
@@ -1785,10 +1863,16 @@ def main():
     app = QApplication(sys.argv)
 
     # Set application icon (taskbar, window title bar, etc.)
-    icon_path = os.path.join(ROOT, "app_gui", "assets", "icon.png")
-    if os.path.isfile(icon_path):
-        from PySide6.QtGui import QIcon
-        app.setWindowIcon(QIcon(icon_path))
+    icon_candidates = [
+        os.path.join(ROOT, "app_gui", "assets", "snowfox-icon-v2.png"),
+        os.path.join(ROOT, "app_gui", "assets", "snowfox-icon-v1.png"),
+        os.path.join(ROOT, "app_gui", "assets", "icon.png"),
+    ]
+    for icon_path in icon_candidates:
+        if os.path.isfile(icon_path):
+            from PySide6.QtGui import QIcon
+            app.setWindowIcon(QIcon(icon_path))
+            break
 
     gui_config = load_gui_config()
     theme = gui_config.get("theme", "dark")

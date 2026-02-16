@@ -31,6 +31,7 @@ from lib.plan_item_factory import (
 )
 from lib.validators import parse_positions
 from lib.plan_store import PlanStore
+from lib.yaml_ops import get_audit_log_path, get_legacy_audit_log_path
 
 _ACTION_I18N_KEY = {
     "takeout": "overview.takeout",
@@ -2386,6 +2387,41 @@ class OperationsPanel(QWidget):
                 }
             )
 
+    def reset_for_dataset_switch(self):
+        """Clear transient plan/undo/audit state when switching datasets."""
+        self._plan_store.clear()
+        self._plan_validation_by_key = {}
+        self._plan_preflight_report = None
+        self._last_printable_plan = []
+        self._audit_events = []
+        self.rb_backup_path.clear()
+        self._disable_undo()
+
+        self._setup_table(
+            self.backup_table,
+            [tr("operations.backupColIndex"), tr("operations.backupColDate"), tr("operations.backupColSize"), tr("operations.backupColPath")],
+            sortable=True,
+        )
+        self.backup_info.setText(tr("operations.backupsInfo"))
+
+        self._setup_table(
+            self.audit_table,
+            [
+                tr("operations.colTimestamp"),
+                tr("operations.colAction"),
+                tr("operations.colActor"),
+                tr("operations.colStatus"),
+                tr("operations.colChannel"),
+                tr("operations.colDetails"),
+            ],
+            sortable=True,
+        )
+        self.audit_info.setText(tr("operations.clickLoadAudit"))
+
+        self._refresh_plan_table()
+        self._update_execute_button_state()
+        self.plan_preview_updated.emit(self._plan_store.list_items())
+
     # --- Query & Rollback Stubs (simplified) ---
     def on_query_records(self):
         box = self.q_box.value()
@@ -2695,8 +2731,12 @@ class OperationsPanel(QWidget):
         """Load and display audit events from JSONL file."""
         yaml_path = self.yaml_path_getter()
         yaml_abs = os.path.abspath(yaml_path)
-        from lib.config import AUDIT_LOG_FILE
-        audit_path = os.path.join(os.path.dirname(yaml_abs), AUDIT_LOG_FILE)
+        audit_path = get_audit_log_path(yaml_abs)
+        if not os.path.isfile(audit_path):
+            # Backward compatibility for logs written by older versions.
+            legacy_path = get_legacy_audit_log_path(yaml_abs)
+            if os.path.isfile(legacy_path):
+                audit_path = legacy_path
 
         if not os.path.isfile(audit_path):
             self.audit_info.setText(tr("operations.auditFileNotFound", path=audit_path))

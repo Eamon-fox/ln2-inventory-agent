@@ -12,7 +12,9 @@ from datetime import datetime
 
 import yaml
 from .config import (
+    AUDIT_DIR,
     AUDIT_LOG_FILE,
+    BACKUP_DIR,
     BACKUP_DIR_NAME,
     BACKUP_KEEP_COUNT,
     BOX_EMPTY_WARNING_THRESHOLD,
@@ -31,6 +33,91 @@ def _ensure_inventory_integrity(data, prefix="完整性校验失败"):
         raise ValueError(format_validation_errors(errors, prefix=prefix))
 
 
+def resolve_instance_id(yaml_path, mode="read"):
+    """Resolve or create unique instance ID for a YAML file.
+    
+    The instance ID is stored in the YAML's meta.inventory_instance_id field.
+    This allows tracking inventory identity even when files are moved/renamed.
+    
+    Args:
+        yaml_path: Path to the YAML file
+        mode: "read" or "write". In write mode, creates ID if missing.
+    
+    Returns:
+        str: The instance ID (UUID format)
+    
+    Raises:
+        FileNotFoundError: If file doesn't exist in write mode
+    """
+    yaml_abs = _abs_path(yaml_path)
+    
+    if mode == "read":
+        if not os.path.exists(yaml_abs):
+            raise FileNotFoundError(f"YAML not found: {yaml_abs}")
+        try:
+            data = load_yaml(yaml_abs)
+            instance_id = (data or {}).get("meta", {}).get("inventory_instance_id")
+            if instance_id:
+                return instance_id
+            return None
+        except Exception:
+            return None
+    
+    elif mode == "write":
+        if not os.path.exists(yaml_abs):
+            raise FileNotFoundError(f"YAML not found: {yaml_abs}")
+        
+        data = load_yaml(yaml_abs)
+        if not isinstance(data, dict):
+            data = {"meta": {}, "inventory": []}
+        
+        meta = data.get("meta", {})
+        if not isinstance(meta, dict):
+            meta = {}
+        
+        instance_id = meta.get("inventory_instance_id")
+        if not instance_id:
+            instance_id = str(uuid.uuid4())
+            meta["inventory_instance_id"] = instance_id
+            data["meta"] = meta
+            with open(yaml_abs, "w", encoding="utf-8") as f:
+                yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False, width=120)
+        
+        return instance_id
+    
+    raise ValueError(f"Invalid mode: {mode}. Use 'read' or 'write'.")
+
+
+def get_instance_backup_dir(yaml_path):
+    """Return the backup directory for a specific inventory instance.
+    
+    Returns:
+        str: Path like <BACKUP_DIR>/<instance_id>/
+    """
+    yaml_abs = _abs_path(yaml_path)
+    instance_id = resolve_instance_id(yaml_abs, mode="read")
+    if instance_id:
+        return os.path.join(BACKUP_DIR, instance_id)
+    
+    stem = os.path.splitext(os.path.basename(yaml_abs))[0] or "inventory"
+    return os.path.join(BACKUP_DIR, f"legacy-{stem}")
+
+
+def get_instance_audit_path(yaml_path):
+    """Return the audit log path for a specific inventory instance.
+    
+    Returns:
+        str: Path like <AUDIT_DIR>/<instance_id>.audit.jsonl
+    """
+    yaml_abs = _abs_path(yaml_path)
+    instance_id = resolve_instance_id(yaml_abs, mode="read")
+    if instance_id:
+        return os.path.join(AUDIT_DIR, f"{instance_id}.audit.jsonl")
+    
+    stem = os.path.splitext(os.path.basename(yaml_abs))[0] or "inventory"
+    return os.path.join(AUDIT_DIR, f"legacy-{stem}.audit.jsonl")
+
+
 def _abs_path(path):
     """Return absolute filesystem path."""
     return os.path.abspath(os.fspath(path if path is not None else YAML_PATH))
@@ -44,22 +131,40 @@ def load_yaml(path=YAML_PATH):
 
 
 def _backup_dir(yaml_path):
-    yaml_abs = _abs_path(yaml_path)
-    return os.path.join(os.path.dirname(yaml_abs), BACKUP_DIR_NAME)
+    """Return the backup directory for a YAML file (instance-based)."""
+    return get_instance_backup_dir(yaml_path)
 
 
 def list_yaml_backups(yaml_path=YAML_PATH, limit=None):
-    """List backups for a YAML file, newest first."""
+    """List backups for a YAML file, newest first.
+    
+    Searches in the instance-based backup directory. Also checks legacy
+    backup locations (both old per-file and new centralized) for backward compatibility.
+    """
     yaml_abs = _abs_path(yaml_path)
-    backup_dir = _backup_dir(yaml_abs)
-    if not os.path.isdir(backup_dir):
-        return []
-
-    base = os.path.basename(yaml_abs)
+    
     backups = []
-    for name in os.listdir(backup_dir):
-        if name.startswith(f"{base}.") and name.endswith(".bak"):
-            backups.append(os.path.join(backup_dir, name))
+    instance_id = resolve_instance_id(yaml_abs, mode="read")
+    
+    if instance_id:
+        backup_dir = get_instance_backup_dir(yaml_abs)
+        if os.path.isdir(backup_dir):
+            for name in os.listdir(backup_dir):
+                if name.endswith(".bak"):
+                    backups.append(os.path.join(backup_dir, name))
+    else:
+        legacy_stem_dir = get_instance_backup_dir(yaml_abs)
+        if os.path.isdir(legacy_stem_dir):
+            for name in os.listdir(legacy_stem_dir):
+                if name.endswith(".bak"):
+                    backups.append(os.path.join(legacy_stem_dir, name))
+    
+    legacy_dir = os.path.join(os.path.dirname(yaml_abs), BACKUP_DIR_NAME)
+    if os.path.isdir(legacy_dir):
+        base = os.path.basename(yaml_abs)
+        for name in os.listdir(legacy_dir):
+            if name.startswith(f"{base}.") and name.endswith(".bak"):
+                backups.append(os.path.join(legacy_dir, name))
 
     backups.sort(key=lambda p: os.path.getmtime(p), reverse=True)
     if limit is not None:
@@ -103,8 +208,54 @@ def create_yaml_backup(yaml_path=YAML_PATH, keep=BACKUP_KEEP_COUNT):
 
 
 def _audit_log_path(yaml_path):
+    return get_audit_log_path(yaml_path)
+
+
+def get_legacy_audit_log_path(yaml_path=YAML_PATH):
+    """Return legacy shared audit path (for backward-compatible reads)."""
     yaml_abs = _abs_path(yaml_path)
     return os.path.join(os.path.dirname(yaml_abs), AUDIT_LOG_FILE)
+
+
+def get_audit_log_path(yaml_path=YAML_PATH):
+    """Return per-inventory audit log path in centralized audit directory.
+    
+    Uses instance-based path from get_instance_audit_path(). Also checks
+    legacy location for backward compatibility.
+    """
+    return get_instance_audit_path(yaml_path)
+
+
+def read_audit_events(yaml_path=YAML_PATH, limit=None):
+    """Read audit events for a YAML file from both new and legacy locations.
+    
+    Reads from instance-based audit path first, then falls back to legacy
+    location if not found.
+    
+    Returns:
+        list: Audit events (dicts), newest first
+    """
+    yaml_abs = _abs_path(yaml_path)
+    
+    new_path = get_instance_audit_path(yaml_abs)
+    legacy_path = get_legacy_audit_log_path(yaml_abs)
+    
+    events = []
+    for path in [new_path, legacy_path]:
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            events.append(json.loads(line))
+            except Exception:
+                pass
+    
+    events.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
+    if limit is not None:
+        return events[: max(0, int(limit))]
+    return events
 
 
 def _inventory_box_total(data):
@@ -283,6 +434,7 @@ def _delta_stats(before_stats, after_stats):
 
 def _append_audit_event(yaml_path, event):
     log_path = _audit_log_path(yaml_path)
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
     with open(log_path, "a", encoding="utf-8") as f:
         f.write(json.dumps(event, ensure_ascii=False, sort_keys=True))
         f.write("\n")
@@ -389,12 +541,27 @@ def write_yaml(
 
     _ensure_inventory_integrity(data, prefix="写入被阻止：库存完整性校验失败")
 
+    existing_instance_id = None
     before_data = None
     if os.path.exists(yaml_abs):
         try:
             before_data = load_yaml(yaml_abs)
+            existing_instance_id = (before_data or {}).get("meta", {}).get("inventory_instance_id")
         except Exception as exc:
             print(f"warning: failed to load existing YAML before write: {exc}", file=sys.stderr)
+
+    instance_id = existing_instance_id
+    if not instance_id:
+        instance_id = str(uuid.uuid4())
+
+    if not isinstance(data, dict):
+        data = {"meta": {}, "inventory": []}
+    meta = data.get("meta", {})
+    if not isinstance(meta, dict):
+        meta = {}
+    if "inventory_instance_id" not in meta:
+        meta["inventory_instance_id"] = instance_id
+        data["meta"] = meta
 
     backup_path = None
     if auto_backup:
