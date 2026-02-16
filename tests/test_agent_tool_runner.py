@@ -13,13 +13,13 @@ from agent.tool_runner import AgentToolRunner
 from lib.yaml_ops import load_yaml, read_audit_events, write_yaml
 
 
-def make_record(rec_id=1, box=1, positions=None):
+def make_record(rec_id=1, box=1, position=None):
     return {
         "id": rec_id,
         "parent_cell_line": "NCCIT",
         "short_name": f"rec-{rec_id}",
         "box": box,
-        "positions": positions if positions is not None else [1],
+        "position": position if position is not None else 1,
         "frozen_at": "2025-01-01",
     }
 
@@ -79,13 +79,13 @@ class AgentToolRunnerTests(unittest.TestCase):
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
                 make_data([
-                    make_record(1, box=1, positions=[1]),
+                    make_record(1, box=1, position=1),
                     {
                         "id": 2,
                         "cell_line": "K562",
                         "short_name": "k562-a",
                         "box": 2,
-                        "positions": [10],
+                        "position": 10,
                         "frozen_at": "2026-02-10",
                     },
                 ]),
@@ -110,7 +110,7 @@ class AgentToolRunnerTests(unittest.TestCase):
                             "cell_line": "K562",
                             "short_name": "k562-a",
                             "box": 2,
-                            "positions": [10],
+                            "position": 10,
                             "frozen_at": "2026-02-10",
                         }
                     ]
@@ -137,7 +137,7 @@ class AgentToolRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_add_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -176,7 +176,7 @@ class AgentToolRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_bad_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -207,7 +207,7 @@ class AgentToolRunnerTests(unittest.TestCase):
                         "parent_cell_line": "K562",
                         "short_name": "k562-a",
                         "box": 2,
-                        "positions": [10],
+                        "position": 10,
                         "frozen_at": "2026-02-10",
                     }
                 ]),
@@ -232,7 +232,7 @@ class AgentToolRunnerTests(unittest.TestCase):
                         "parent_cell_line": "NCCIT",
                         "short_name": "nccit-abc",
                         "box": 1,
-                        "positions": [1],
+                        "position": 1,
                         "frozen_at": "2026-02-10",
                     }
                 ]),
@@ -251,7 +251,7 @@ class AgentToolRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_add_alias_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -274,13 +274,13 @@ class AgentToolRunnerTests(unittest.TestCase):
             records = current.get("inventory", [])
             self.assertEqual(2, len(records))
             self.assertEqual("K562", records[-1]["cell_line"])
-            self.assertEqual([2], records[-1]["positions"])
+            self.assertEqual(2, records[-1]["position"])
 
     def test_record_thaw_supports_id_and_pos_alias(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_thaw_alias_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -301,7 +301,7 @@ class AgentToolRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_move_alias_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -320,13 +320,13 @@ class AgentToolRunnerTests(unittest.TestCase):
 
             self.assertTrue(response["ok"])
             current = load_yaml(str(yaml_path))
-            self.assertEqual([2], current["inventory"][0]["positions"])
+            self.assertEqual(2, current["inventory"][0]["position"])
 
     def test_record_thaw_move_missing_target_returns_hint(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_move_hint_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -403,7 +403,7 @@ class EditEntryToolRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_edit_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=2, positions=[15])]),
+                make_data([make_record(1, box=2, position=15)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -434,7 +434,7 @@ class EditEntryToolRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_edit_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -449,7 +449,7 @@ class EditEntryToolRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_edit_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -464,7 +464,7 @@ class EditEntryToolRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_edit_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -480,7 +480,7 @@ class EditEntryToolRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_edit_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -523,7 +523,7 @@ class EditEntryToolRunnerTests(unittest.TestCase):
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
                 make_data([
-                    {**make_record(1, box=1, positions=[1]), "cell_line": "NCCIT"},
+                    {**make_record(1, box=1, position=1), "cell_line": "NCCIT"},
                 ]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},

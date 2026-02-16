@@ -175,7 +175,7 @@
     "ctxCell": "细胞系",
     "ctxShort": "简称",
     "ctxBox": "盒子",
-    "ctxAllPos": "所有位置",
+    "ctxPos": "位置",
     "ctxTarget": "目标",
     "ctxCheck": "检查",
     "ctxFrozen": "存入日期",

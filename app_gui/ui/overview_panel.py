@@ -508,14 +508,14 @@ class OverviewPanel(QWidget):
         if not isinstance(record, dict):
             return
 
-        positions = record.get("positions") or []
-        if not positions:
+        position = record.get("position")
+        if position is None:
             return
 
         try:
             record_id = int(record.get("id"))
             box_num = int(record.get("box"))
-            position = int(positions[0])
+            position = int(position)
         except (TypeError, ValueError):
             return
 
@@ -572,7 +572,8 @@ class OverviewPanel(QWidget):
             if not isinstance(rec, dict):
                 continue
             box = rec.get("box")
-            for pos in (rec.get("positions") or []):
+            pos = rec.get("position")
+            if box is not None and pos is not None:
                 record_map[(box, pos)] = rec
         for (box_num, position), button in self.overview_cells.items():
             record = record_map.get((box_num, position))
@@ -661,9 +662,10 @@ class OverviewPanel(QWidget):
         pos_map = {}
         for rec in records:
             box = rec.get("box")
-            if box is None: continue
-            for pos in rec.get("positions") or []:
-                pos_map[(int(box), int(pos))] = rec
+            pos = rec.get("position")
+            if box is None or pos is None:
+                continue
+            pos_map[(int(box), int(pos))] = rec
 
         self.overview_pos_map = pos_map
 

@@ -704,7 +704,7 @@ class OperationsPanel(QWidget):
 
         # Read-only context fields (not editable via inline edit)
         self.t_ctx_box = self._make_readonly_field()
-        self.t_ctx_positions = self._make_readonly_field()
+        self.t_ctx_position = self._make_readonly_field()
         self.t_ctx_events = self._make_readonly_field()
         self.t_ctx_source = self._make_readonly_field()
 
@@ -712,13 +712,14 @@ class OperationsPanel(QWidget):
         self._thaw_ctx_insert_row = form.rowCount()
 
         form.addRow(tr("overview.ctxBox"), self.t_ctx_box)
-        form.addRow(tr("overview.ctxAllPos"), self.t_ctx_positions)
+        form.addRow(tr("overview.ctxPos"), self.t_ctx_position)
         form.addRow(tr("overview.ctxFrozen"), t_frozen_w)
         form.addRow(tr("overview.ctxHistory"), self.t_ctx_events)
         form.addRow(tr("overview.ctxSource"), self.t_ctx_source)
 
-        # Editable: target position (populated from record positions)
+        # Editable: target position (hidden, kept for compat - single value now)
         self.t_position = QComboBox()
+        self.t_position.setVisible(False)
         form.addRow(tr("operations.position"), self.t_position)
 
         # Editable fields
@@ -792,19 +793,20 @@ class OperationsPanel(QWidget):
 
         # Read-only context fields (not editable via inline edit)
         self.m_ctx_box = self._make_readonly_field()
-        self.m_ctx_positions = self._make_readonly_field()
+        self.m_ctx_position = self._make_readonly_field()
         self.m_ctx_events = self._make_readonly_field()
 
         # User fields placeholder — will be rebuilt dynamically
         self._move_ctx_insert_row = form.rowCount()
 
         form.addRow(tr("overview.ctxBox"), self.m_ctx_box)
-        form.addRow(tr("overview.ctxAllPos"), self.m_ctx_positions)
+        form.addRow(tr("overview.ctxPos"), self.m_ctx_position)
         form.addRow(tr("overview.ctxFrozen"), m_frozen_w)
         form.addRow(tr("overview.ctxHistory"), self.m_ctx_events)
 
-        # Editable: move fields
+        # Editable: move fields (from_position hidden, kept for compat)
         self.m_from_position = QComboBox()
+        self.m_from_position.setVisible(False)
         self.m_to_position = QSpinBox()
         self.m_to_position.setRange(1, 999)
         self.m_to_position.valueChanged.connect(self._refresh_move_record_context)
@@ -812,7 +814,6 @@ class OperationsPanel(QWidget):
         self.m_to_box.setRange(0, 99)
         self.m_to_box.setSpecialValueText(tr("operations.sameBox"))
 
-        form.addRow(tr("operations.fromPosition"), self.m_from_position)
         form.addRow(tr("operations.toPosition"), self.m_to_position)
         form.addRow(tr("operations.toBox"), self.m_to_box)
 
@@ -1119,7 +1120,7 @@ class OperationsPanel(QWidget):
             self.t_ctx_status.setText(tr("operations.recordNotFound"))
             self.t_ctx_status.setStyleSheet("color: var(--status-warning);")
             self.t_position.clear()
-            for lbl in [self.t_ctx_box, self.t_ctx_positions, self.t_ctx_frozen,
+            for lbl in [self.t_ctx_box, self.t_ctx_position, self.t_ctx_frozen,
                         self.t_ctx_events]:
                 lbl.setText("-")
             for key, (container, lbl) in self._thaw_ctx_widgets.items():
@@ -1134,29 +1135,19 @@ class OperationsPanel(QWidget):
 
         self.t_ctx_box.setText(str(record.get("box") or "-"))
 
-        positions = record.get("positions") or []
-        self.t_ctx_positions.setText(positions_to_text(positions))
+        position = record.get("position")
+        self.t_ctx_position.setText(str(position) if position is not None else "-")
         self.t_ctx_frozen.setText(str(record.get("frozen_at") or "-"))
         # Populate dynamic user field context
         for key, (container, lbl) in self._thaw_ctx_widgets.items():
             lbl.setText(str(record.get(key) or "-"))
 
-        # Populate position combo
-        prev = self.t_position.currentData()
+        # Set single position (hidden combo, kept for compat)
         self.t_position.blockSignals(True)
         self.t_position.clear()
-        for p in sorted(int(x) for x in positions):
-            self.t_position.addItem(str(p), p)
-        # Restore previous selection or prefill
-        restore = None
-        if self.t_prefill_source:
-            restore = self.t_prefill_source.get("position")
-        if restore is None:
-            restore = prev
-        if restore is not None:
-            idx = self.t_position.findData(int(restore))
-            if idx >= 0:
-                self.t_position.setCurrentIndex(idx)
+        if position is not None:
+            self.t_position.addItem(str(position), position)
+            self.t_position.setCurrentIndex(0)
         self.t_position.blockSignals(False)
 
         # History
@@ -1165,7 +1156,7 @@ class OperationsPanel(QWidget):
             last = events[-1]
             last_date = str(last.get("date") or "-")
             last_action = str(last.get("action") or "-")
-            last_pos = positions_to_text(last.get("positions") or [])
+            last_pos = str(last.get("position") or "-")
             self.t_ctx_events.setText(
                 tr(
                     "operations.historySummary",
@@ -1424,7 +1415,7 @@ class OperationsPanel(QWidget):
             self.m_ctx_status.setStyleSheet("color: var(--status-warning);")
             self.m_from_position.clear()
             self.m_ctx_target.setText("-")
-            for lbl in [self.m_ctx_box, self.m_ctx_positions, self.m_ctx_frozen,
+            for lbl in [self.m_ctx_box, self.m_ctx_position, self.m_ctx_frozen,
                         self.m_ctx_events]:
                 lbl.setText("-")
             for key, (container, lbl) in self._move_ctx_widgets.items():
@@ -1435,30 +1426,22 @@ class OperationsPanel(QWidget):
         self.m_ctx_status.setStyleSheet("color: var(--status-success);")
         self.m_ctx_box.setText(str(record.get("box") or "-"))
 
-        positions = record.get("positions") or []
-        self.m_ctx_positions.setText(positions_to_text(positions))
+        position = record.get("position")
+        self.m_ctx_position.setText(str(position) if position is not None else "-")
         self.m_ctx_frozen.setText(str(record.get("frozen_at") or "-"))
         # Populate dynamic user field context
         for key, (container, lbl) in self._move_ctx_widgets.items():
             lbl.setText(str(record.get(key) or "-"))
 
-        # Populate from-position combo
-        prev = self.m_from_position.currentData()
+        # Set single position (hidden combo, kept for compat)
         self.m_from_position.blockSignals(True)
         self.m_from_position.clear()
-        for p in sorted(int(x) for x in positions):
-            self.m_from_position.addItem(str(p), p)
-        restore = getattr(self, "_m_prefill_position", None)
-        if restore is None:
-            restore = prev
-        if restore is not None:
-            idx = self.m_from_position.findData(int(restore))
-            if idx >= 0:
-                self.m_from_position.setCurrentIndex(idx)
-        self._m_prefill_position = None
+        if position is not None:
+            self.m_from_position.addItem(str(position), position)
+            self.m_from_position.setCurrentIndex(0)
         self.m_from_position.blockSignals(False)
 
-        from_pos = self.m_from_position.currentData()
+        from_pos = self.m_from_position.currentData() or position
         self.m_ctx_target.setText(f"{from_pos} -> {to_pos}")
 
         events = record.get("thaw_events") or []
@@ -1466,7 +1449,7 @@ class OperationsPanel(QWidget):
             last = events[-1]
             last_date = str(last.get("date") or "-")
             last_action = str(last.get("action") or "-")
-            last_pos = positions_to_text(last.get("positions") or [])
+            last_pos = str(last.get("position") or "-")
             self.m_ctx_events.setText(
                 tr(
                     "operations.historySummary",

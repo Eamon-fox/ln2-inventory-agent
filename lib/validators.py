@@ -199,7 +199,7 @@ def format_chinese_date(date_str, weekday=False):
 def has_depletion_history(rec):
     """Return True if record has thaw/takeout/discard history.
 
-    Fully consumed records are expected to end with ``positions=[]``.
+    Fully consumed records are expected to end with ``position=None``.
     """
     thaw_events = rec.get("thaw_events") or []
     for ev in thaw_events:
@@ -237,7 +237,7 @@ def validate_record(rec, idx=None, layout=None, meta=None):
     pos_lo, pos_hi = get_position_range(layout) if layout else (POSITION_RANGE[0], POSITION_RANGE[1])
 
     # Structural required fields + user-defined required fields
-    structural_required = ["id", "box", "positions", "frozen_at"]
+    structural_required = ["id", "box", "frozen_at"]
     user_required = get_required_field_keys(meta)
     required_fields = structural_required + sorted(user_required)
     for field in required_fields:
@@ -260,26 +260,17 @@ def validate_record(rec, idx=None, layout=None, meta=None):
         if isinstance(value, str) and not value.strip():
             errors.append(f"{rec_id}: '{field}' 必须是非空字符串")
 
-    positions = rec.get("positions")
-    if not isinstance(positions, list):
-        errors.append(f"{rec_id}: 'positions' 必须是列表")
-    elif not positions:
-        if not has_depletion_history(rec):
-            errors.append(f"{rec_id}: 'positions' 为空，但没有取出/复苏/扔掉历史")
+    # Validate position (single integer, optional for consumed records)
+    position = rec.get("position")
+    if position is not None:
+        if not isinstance(position, int):
+            errors.append(f"{rec_id}: 'position' 必须是整数")
+        elif not validate_position(position, layout):
+            errors.append(f"{rec_id}: 'position' {position} 超出范围 ({pos_lo}-{pos_hi})")
     else:
-        if len(positions) > 1:
-            errors.append(f"{rec_id}: 'positions' 最多只能包含 1 个位置（tube 为最小单元）")
-        seen_positions = set()
-        for pos in positions:
-            if not isinstance(pos, int):
-                errors.append(f"{rec_id}: 位置 {pos} 必须是整数")
-                continue
-            if not validate_position(pos, layout):
-                errors.append(f"{rec_id}: 位置 {pos} 超出范围 ({pos_lo}-{pos_hi})")
-                continue
-            if pos in seen_positions:
-                errors.append(f"{rec_id}: 'positions' 中存在重复值 {pos}")
-            seen_positions.add(pos)
+        # position is None - record should have depletion history
+        if not has_depletion_history(rec):
+            errors.append(f"{rec_id}: 'position' 为空，但没有取出/复苏/扔掉历史")
 
     frozen_at = rec.get("frozen_at")
     if not validate_date(frozen_at):
@@ -356,11 +347,11 @@ def check_position_conflicts(records):
         if not isinstance(rec, dict):
             continue
         box = rec.get("box")
-        if box is None:
+        position = rec.get("position")
+        if box is None or position is None:
             continue
-        for pos in rec.get("positions") or []:
-            if isinstance(pos, int):
-                usage[(int(box), int(pos))].append((idx, rec))
+        if isinstance(position, int):
+            usage[(int(box), int(position))].append((idx, rec))
 
     conflicts = []
     for (box, pos), entries in usage.items():

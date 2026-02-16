@@ -21,7 +21,8 @@ def _to_int(value: Any, default: int = 0) -> int:
 
 def _copy_record(rec: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(rec)
-    out["positions"] = list(rec.get("positions") or [])
+    pos = rec.get("position")
+    out["position"] = pos
     return out
 
 
@@ -30,21 +31,18 @@ def _build_owner_map(records_by_id: Dict[int, Dict[str, Any]]) -> tuple[Dict[Loc
     errors: List[str] = []
     for rid, rec in records_by_id.items():
         box = rec.get("box")
-        if box is None:
+        pos = rec.get("position")
+        if box is None or pos is None:
             continue
         try:
             box_i = int(box)
+            loc = (box_i, int(pos))
         except (TypeError, ValueError):
             continue
-        for pos in rec.get("positions") or []:
-            try:
-                loc = (box_i, int(pos))
-            except (TypeError, ValueError):
-                continue
-            prev = owner.get(loc)
-            if prev is not None and prev != rid:
-                errors.append(f"Position conflict at Box {loc[0]}:{loc[1]} (IDs {prev} vs {rid})")
-            owner[loc] = rid
+        prev = owner.get(loc)
+        if prev is not None and prev != rid:
+            errors.append(f"Position conflict at Box {loc[0]}:{loc[1]} (IDs {prev} vs {rid})")
+        owner[loc] = rid
     return owner, errors
 
 
@@ -158,7 +156,7 @@ def simulate_plan_pos_map(
             rec = {
                 "id": rid,
                 "box": box,
-                "positions": [pos],
+                "position": pos,
                 "frozen_at": payload.get("frozen_at"),
             }
             fields = payload.get("fields") or {}
@@ -184,10 +182,10 @@ def simulate_plan_pos_map(
             continue
 
         current_box = _to_int(rec.get("box"), default=0)
-        current_positions = list(rec.get("positions") or [])
-        if from_pos not in current_positions:
+        current_position = rec.get("position")
+        if current_position != from_pos:
             errors.append(
-                f"Move preview failed: ID {record_id} source pos {from_pos} not in {current_positions}."
+                f"Move preview failed: ID {record_id} source pos {from_pos} does not match {current_position}."
             )
             continue
 
@@ -207,7 +205,7 @@ def simulate_plan_pos_map(
         if dest_owner is None:
             owner.pop(src_loc, None)
             owner[dst_loc] = record_id
-            rec["positions"] = [to_pos]
+            rec["position"] = to_pos
             if cross_box:
                 rec["box"] = target_box
             continue
@@ -233,13 +231,13 @@ def simulate_plan_pos_map(
             errors.append(f"Move preview failed: swap target ID {dest_owner} is not in the same box.")
             continue
 
-        dest_positions = list(dest_rec.get("positions") or [])
-        if to_pos not in dest_positions:
-            errors.append(f"Move preview failed: swap target pos {to_pos} not in {dest_positions}.")
+        dest_position = dest_rec.get("position")
+        if dest_position != to_pos:
+            errors.append(f"Move preview failed: swap target pos {to_pos} does not match {dest_position}.")
             continue
 
-        dest_rec["positions"] = [from_pos if p == to_pos else p for p in dest_positions]
-        rec["positions"] = [to_pos]
+        dest_rec["position"] = from_pos
+        rec["position"] = to_pos
         owner[src_loc] = dest_owner
         owner[dst_loc] = record_id
 
@@ -261,14 +259,14 @@ def simulate_plan_pos_map(
                 continue
 
             current_box = _to_int(rec.get("box"), default=0)
-            current_positions = list(rec.get("positions") or [])
-            if pos not in current_positions:
+            current_position = rec.get("position")
+            if current_position != pos:
                 errors.append(
-                    f"{action_name.capitalize()} preview failed: ID {record_id} pos {pos} not in {current_positions}."
+                    f"{action_name.capitalize()} preview failed: ID {record_id} pos {pos} does not match {current_position}."
                 )
                 continue
 
-            rec["positions"] = [p for p in current_positions if p != pos]
+            rec["position"] = None
             owner.pop((current_box, pos), None)
 
     pos_map = {loc: records_by_id[rid] for loc, rid in owner.items() if rid in records_by_id}

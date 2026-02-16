@@ -24,13 +24,13 @@ from lib.tool_api import (
 from lib.yaml_ops import load_yaml, write_yaml, read_audit_events
 
 
-def make_record(rec_id=1, box=1, positions=None, **extra):
+def make_record(rec_id=1, box=1, position=None, **extra):
     base = {
         "id": rec_id,
         "parent_cell_line": "NCCIT",
         "short_name": f"rec-{rec_id}",
         "box": box,
-        "positions": positions if positions is not None else [1],
+        "position": position if position is not None else 1,
         "frozen_at": "2025-01-01",
     }
     base.update(extra)
@@ -91,20 +91,20 @@ class PositionConsistencyTests(unittest.TestCase):
     def test_takeout_removes_position_completely(self):
         """After takeout, the removed position must NOT appear in positions list."""
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[2])])
+            yp = _seed(td, [make_record(1, box=1, position=2)])
             tool_record_thaw(
                 yaml_path=yp, record_id=1, position=2,
                 date_str="2026-02-10", action="取出",
             )
             data = load_yaml(yp)
-            positions = data["inventory"][0]["positions"]
-            self.assertNotIn(2, positions)
-            self.assertEqual([], positions)
+            position = data["inventory"][0]["position"]
+            self.assertNotEqual(2, position)
+            self.assertIsNone(position)
 
     def test_takeout_creates_thaw_event(self):
         """Every takeout must record a thaw_event with the removed position."""
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[1])])
+            yp = _seed(td, [make_record(1, box=1, position=1)])
             tool_record_thaw(
                 yaml_path=yp, record_id=1, position=1,
                 date_str="2026-02-10", action="取出",
@@ -115,60 +115,60 @@ class PositionConsistencyTests(unittest.TestCase):
             self.assertEqual([1], events[0]["positions"])
 
     def test_takeout_last_position_results_in_empty_list(self):
-        """Taking out the only remaining position yields positions=[]."""
+        """Taking out the only remaining position yields position=None."""
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[5])])
+            yp = _seed(td, [make_record(1, box=1, position=5)])
             result = tool_record_thaw(
                 yaml_path=yp, record_id=1, position=5,
                 date_str="2026-02-10", action="取出",
             )
             self.assertTrue(result["ok"])
             data = load_yaml(yp)
-            self.assertEqual([], data["inventory"][0]["positions"])
+            self.assertIsNone(data["inventory"][0]["position"])
 
     def test_move_preserves_position_count(self):
         """Move must not change the total number of positions on the record."""
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[1])])
+            yp = _seed(td, [make_record(1, box=1, position=1)])
             tool_record_thaw(
                 yaml_path=yp, record_id=1, position=1, to_position=10,
                 date_str="2026-02-10", action="move",
             )
             data = load_yaml(yp)
-            self.assertEqual(1, len(data["inventory"][0]["positions"]))
+            self.assertIsNotNone(data["inventory"][0]["position"])
 
     def test_move_replaces_old_with_new(self):
         """After move, old position is gone and new position is present."""
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[1])])
+            yp = _seed(td, [make_record(1, box=1, position=1)])
             tool_record_thaw(
                 yaml_path=yp, record_id=1, position=1, to_position=5,
                 date_str="2026-02-10", action="move",
             )
             data = load_yaml(yp)
-            positions = data["inventory"][0]["positions"]
-            self.assertNotIn(1, positions)
-            self.assertIn(5, positions)
+            position = data["inventory"][0]["position"]
+            self.assertNotEqual(1, position)
+            self.assertEqual(5, position)
 
     def test_swap_preserves_both_records_position_count(self):
         """Swap must not change position counts on either record."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [
-                make_record(1, box=1, positions=[1]),
-                make_record(2, box=1, positions=[3]),
+                make_record(1, box=1, position=1),
+                make_record(2, box=1, position=3),
             ])
             tool_record_thaw(
                 yaml_path=yp, record_id=1, position=1, to_position=3,
                 date_str="2026-02-10", action="move",
             )
             data = load_yaml(yp)
-            self.assertEqual(1, len(data["inventory"][0]["positions"]))
-            self.assertEqual(1, len(data["inventory"][1]["positions"]))
+            self.assertIsNotNone(data["inventory"][0]["position"])
+            self.assertIsNotNone(data["inventory"][1]["position"])
 
     def test_add_entry_creates_record_with_specified_positions(self):
         """After add, the new tube records must cover exactly the requested positions."""
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[1])])
+            yp = _seed(td, [make_record(1, box=1, position=1)])
             result = tool_add_entry(
                 yaml_path=yp,
                 box=2, positions=[10, 11, 12],
@@ -180,13 +180,12 @@ class PositionConsistencyTests(unittest.TestCase):
             new_ids = set(result.get("result", {}).get("new_ids") or [])
             new_recs = [rec for rec in data.get("inventory", []) if rec.get("id") in new_ids]
             self.assertEqual(3, len(new_recs))
-            self.assertEqual({10, 11, 12}, {int(rec["positions"][0]) for rec in new_recs})
-            self.assertTrue(all(len(rec.get("positions") or []) == 1 for rec in new_recs))
+            self.assertEqual({10, 11, 12}, {rec["position"] for rec in new_recs})
 
     def test_no_double_occupancy_after_add(self):
         """Adding to a position already occupied must be rejected."""
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[5])])
+            yp = _seed(td, [make_record(1, box=1, position=5)])
             result = tool_add_entry(
                 yaml_path=yp,
                 box=1, positions=[5],
@@ -206,9 +205,9 @@ class BatchSameRecordTests(unittest.TestCase):
         """Batch takeout across multiple tubes should consume each tube independently."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [
-                make_record(1, box=1, positions=[1]),
-                make_record(2, box=1, positions=[2]),
-                make_record(3, box=1, positions=[3]),
+                make_record(1, box=1, position=1),
+                make_record(2, box=1, position=2),
+                make_record(3, box=1, position=3),
             ])
             result = tool_batch_thaw(
                 yaml_path=yp,
@@ -217,17 +216,17 @@ class BatchSameRecordTests(unittest.TestCase):
             )
             self.assertTrue(result["ok"])
             data = load_yaml(yp)
-            self.assertEqual([], data["inventory"][0]["positions"])
-            self.assertEqual([], data["inventory"][1]["positions"])
-            self.assertEqual([], data["inventory"][2]["positions"])
+            self.assertIsNone(data["inventory"][0]["position"])
+            self.assertIsNone(data["inventory"][1]["position"])
+            self.assertIsNone(data["inventory"][2]["position"])
 
     def test_takeout_two_of_three_positions(self):
         """Taking out 2 of 3 tubes should leave the untouched tube unchanged."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [
-                make_record(1, box=1, positions=[10]),
-                make_record(2, box=1, positions=[20]),
-                make_record(3, box=1, positions=[30]),
+                make_record(1, box=1, position=10),
+                make_record(2, box=1, position=20),
+                make_record(3, box=1, position=30),
             ])
             result = tool_batch_thaw(
                 yaml_path=yp,
@@ -236,18 +235,18 @@ class BatchSameRecordTests(unittest.TestCase):
             )
             self.assertTrue(result["ok"])
             data = load_yaml(yp)
-            self.assertEqual([], data["inventory"][0]["positions"])
-            self.assertEqual([20], data["inventory"][1]["positions"])
-            self.assertEqual([], data["inventory"][2]["positions"])
+            self.assertIsNone(data["inventory"][0]["position"])
+            self.assertEqual(20, data["inventory"][1]["position"])
+            self.assertIsNone(data["inventory"][2]["position"])
 
     def test_mixed_records_batch(self):
         """Batch targeting different records + same record together."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [
-                make_record(1, box=1, positions=[1]),
-                make_record(2, box=1, positions=[2]),
-                make_record(3, box=1, positions=[3]),
-                make_record(4, box=1, positions=[4]),
+                make_record(1, box=1, position=1),
+                make_record(2, box=1, position=2),
+                make_record(3, box=1, position=3),
+                make_record(4, box=1, position=4),
             ])
             result = tool_batch_thaw(
                 yaml_path=yp,
@@ -258,15 +257,15 @@ class BatchSameRecordTests(unittest.TestCase):
             data = load_yaml(yp)
             # IDs 1,2,4 are consumed; ID 3 untouched.
             by_id = {int(rec.get("id")): rec for rec in data.get("inventory", [])}
-            self.assertEqual([], by_id[1]["positions"])
-            self.assertEqual([], by_id[2]["positions"])
-            self.assertEqual([3], by_id[3]["positions"])
-            self.assertEqual([], by_id[4]["positions"])
+            self.assertIsNone(by_id[1]["position"])
+            self.assertIsNone(by_id[2]["position"])
+            self.assertEqual(3, by_id[3]["position"])
+            self.assertIsNone(by_id[4]["position"])
 
     def test_batch_duplicate_position_same_record_detected(self):
         """Trying to remove the same position twice should fail on the second one."""
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[1])])
+            yp = _seed(td, [make_record(1, box=1, position=1)])
             result = tool_batch_thaw(
                 yaml_path=yp,
                 entries=[(1, 1), (1, 1)],
@@ -300,7 +299,7 @@ class AuditTrailTests(unittest.TestCase):
 
     def test_successful_thaw_writes_audit(self):
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[1])])
+            yp = _seed(td, [make_record(1, box=1, position=1)])
             tool_record_thaw(
                 yaml_path=yp, record_id=1, position=1,
                 date_str="2026-02-10", action="取出",
@@ -312,8 +311,8 @@ class AuditTrailTests(unittest.TestCase):
     def test_successful_batch_writes_audit(self):
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [
-                make_record(1, box=1, positions=[1]),
-                make_record(2, box=1, positions=[2]),
+                make_record(1, box=1, position=1),
+                make_record(2, box=1, position=2),
             ])
             tool_batch_thaw(
                 yaml_path=yp,
@@ -326,7 +325,7 @@ class AuditTrailTests(unittest.TestCase):
 
     def test_failed_add_writes_failed_audit(self):
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[1])])
+            yp = _seed(td, [make_record(1, box=1, position=1)])
             tool_add_entry(
                 yaml_path=yp,
                 box=99, positions=[1],  # invalid box
@@ -346,8 +345,8 @@ class BoundaryValueTests(unittest.TestCase):
         """Operations at position=1 and position=81 should work."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [
-                make_record(1, box=1, positions=[1]),
-                make_record(2, box=1, positions=[81]),
+                make_record(1, box=1, position=1),
+                make_record(2, box=1, position=81),
             ])
 
             r1 = tool_record_thaw(
@@ -363,12 +362,12 @@ class BoundaryValueTests(unittest.TestCase):
             self.assertTrue(r2["ok"])
 
             data = load_yaml(yp)
-            self.assertEqual([], data["inventory"][0]["positions"])
-            self.assertEqual([], data["inventory"][1]["positions"])
+            self.assertIsNone(data["inventory"][0]["position"])
+            self.assertIsNone(data["inventory"][1]["position"])
 
     def test_position_zero_rejected(self):
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[1])])
+            yp = _seed(td, [make_record(1, box=1, position=1)])
             result = tool_record_thaw(
                 yaml_path=yp, record_id=1, position=0,
                 date_str="2026-02-10",
@@ -377,7 +376,7 @@ class BoundaryValueTests(unittest.TestCase):
 
     def test_position_82_rejected(self):
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[1])])
+            yp = _seed(td, [make_record(1, box=1, position=1)])
             result = tool_record_thaw(
                 yaml_path=yp, record_id=1, position=82,
                 date_str="2026-02-10",
@@ -429,7 +428,7 @@ class BoundaryValueTests(unittest.TestCase):
 class ErrorPathTests(unittest.TestCase):
     def test_thaw_nonexistent_record(self):
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[1])])
+            yp = _seed(td, [make_record(1, box=1, position=1)])
             result = tool_record_thaw(
                 yaml_path=yp, record_id=999, position=1,
                 date_str="2026-02-10",
@@ -438,7 +437,7 @@ class ErrorPathTests(unittest.TestCase):
 
     def test_thaw_position_not_in_record(self):
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[1])])
+            yp = _seed(td, [make_record(1, box=1, position=1)])
             result = tool_record_thaw(
                 yaml_path=yp, record_id=1, position=2,
                 date_str="2026-02-10",
@@ -447,7 +446,7 @@ class ErrorPathTests(unittest.TestCase):
 
     def test_move_to_same_position_rejected(self):
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[1])])
+            yp = _seed(td, [make_record(1, box=1, position=1)])
             result = tool_record_thaw(
                 yaml_path=yp, record_id=1, position=1, to_position=1,
                 date_str="2026-02-10", action="move",
@@ -456,7 +455,7 @@ class ErrorPathTests(unittest.TestCase):
 
     def test_batch_nonexistent_record_fails(self):
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[1])])
+            yp = _seed(td, [make_record(1, box=1, position=1)])
             result = tool_batch_thaw(
                 yaml_path=yp,
                 entries=[(999, 1)],
@@ -466,7 +465,7 @@ class ErrorPathTests(unittest.TestCase):
 
     def test_batch_position_not_in_record_fails(self):
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[1])])
+            yp = _seed(td, [make_record(1, box=1, position=1)])
             result = tool_batch_thaw(
                 yaml_path=yp,
                 entries=[(1, 50)],
@@ -513,7 +512,7 @@ class CrossBoxMoveTests(unittest.TestCase):
     def test_record_thaw_move_cross_box_updates_box_field(self):
         """Move with to_box should update the record's box field."""
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=2, positions=[5])])
+            yp = _seed(td, [make_record(1, box=2, position=5)])
             result = tool_record_thaw(
                 yaml_path=yp, record_id=1, position=5, to_position=4,
                 to_box=1,
@@ -523,15 +522,15 @@ class CrossBoxMoveTests(unittest.TestCase):
             data = load_yaml(yp)
             rec = data["inventory"][0]
             self.assertEqual(1, rec["box"])
-            self.assertIn(4, rec["positions"])
-            self.assertNotIn(5, rec["positions"])
+            self.assertEqual(4, rec["position"])
+            self.assertNotEqual(5, rec["position"])
 
     def test_record_thaw_move_cross_box_rejects_occupied_target(self):
         """Cross-box move to an occupied position should be rejected."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [
-                make_record(1, box=2, positions=[5]),
-                make_record(2, box=1, positions=[4]),
+                make_record(1, box=2, position=5),
+                make_record(2, box=1, position=4),
             ])
             result = tool_record_thaw(
                 yaml_path=yp, record_id=1, position=5, to_position=4,
@@ -544,8 +543,8 @@ class CrossBoxMoveTests(unittest.TestCase):
         """Same-box swap should still work after adding to_box support."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [
-                make_record(1, box=1, positions=[1]),
-                make_record(2, box=1, positions=[2]),
+                make_record(1, box=1, position=1),
+                make_record(2, box=1, position=2),
             ])
             result = tool_record_thaw(
                 yaml_path=yp, record_id=1, position=1, to_position=2,
@@ -553,15 +552,15 @@ class CrossBoxMoveTests(unittest.TestCase):
             )
             self.assertTrue(result["ok"])
             data = load_yaml(yp)
-            self.assertIn(2, data["inventory"][0]["positions"])
-            self.assertIn(1, data["inventory"][1]["positions"])
+            self.assertEqual(2, data["inventory"][0]["position"])
+            self.assertEqual(1, data["inventory"][1]["position"])
 
     def test_batch_move_cross_box_multiple_records(self):
         """Batch cross-box move using 4-tuple entries."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [
-                make_record(1, box=2, positions=[5]),
-                make_record(2, box=3, positions=[10]),
+                make_record(1, box=2, position=5),
+                make_record(2, box=3, position=10),
             ])
             result = tool_batch_thaw(
                 yaml_path=yp,
@@ -571,17 +570,17 @@ class CrossBoxMoveTests(unittest.TestCase):
             self.assertTrue(result["ok"])
             data = load_yaml(yp)
             self.assertEqual(1, data["inventory"][0]["box"])
-            self.assertEqual([4], data["inventory"][0]["positions"])
+            self.assertEqual(4, data["inventory"][0]["position"])
             self.assertEqual(1, data["inventory"][1]["box"])
-            self.assertEqual([5], data["inventory"][1]["positions"])
+            self.assertEqual(5, data["inventory"][1]["position"])
 
     def test_batch_move_cross_box_multiple_tubes(self):
         """Move multiple tubes to a new box in one batch."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [
-                make_record(1, box=2, positions=[5]),
-                make_record(2, box=2, positions=[6]),
-                make_record(3, box=2, positions=[7]),
+                make_record(1, box=2, position=5),
+                make_record(2, box=2, position=6),
+                make_record(3, box=2, position=7),
             ])
             result = tool_batch_thaw(
                 yaml_path=yp,
@@ -592,11 +591,11 @@ class CrossBoxMoveTests(unittest.TestCase):
             data = load_yaml(yp)
             by_id = {int(rec.get("id")): rec for rec in data.get("inventory", [])}
             self.assertEqual(1, by_id[1]["box"])
-            self.assertEqual([1], by_id[1]["positions"])
+            self.assertEqual(1, by_id[1]["position"])
             self.assertEqual(1, by_id[2]["box"])
-            self.assertEqual([2], by_id[2]["positions"])
+            self.assertEqual(2, by_id[2]["position"])
             self.assertEqual(1, by_id[3]["box"])
-            self.assertEqual([3], by_id[3]["positions"])
+            self.assertEqual(3, by_id[3]["position"])
 
     def test_parse_batch_entries_4part_format(self):
         """parse_batch_entries should support 'id:from->to:box' format."""
@@ -610,7 +609,7 @@ class CrossBoxMoveTests(unittest.TestCase):
     def test_cross_box_move_event_records_from_and_to_box(self):
         """The thaw_event for a cross-box move should contain from_box and to_box."""
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=2, positions=[5])])
+            yp = _seed(td, [make_record(1, box=2, position=5)])
             tool_record_thaw(
                 yaml_path=yp, record_id=1, position=5, to_position=4,
                 to_box=1,
@@ -626,7 +625,7 @@ class CrossBoxMoveTests(unittest.TestCase):
     def test_cross_box_move_invalid_box_rejected(self):
         """Cross-box move with out-of-range to_box should be rejected."""
         with tempfile.TemporaryDirectory() as td:
-            yp = _seed(td, [make_record(1, box=1, positions=[1])])
+            yp = _seed(td, [make_record(1, box=1, position=1)])
             result = tool_record_thaw(
                 yaml_path=yp, record_id=1, position=1, to_position=1,
                 to_box=99,

@@ -1,7 +1,7 @@
 # SnowFox
 
 <p align="center">
-  <img src="app_gui/assets/snowfox-icon-v2.png" alt="SnowFox Icon" width="220" />
+  <img src="app_gui/assets/snowfox-icon-v3.png" alt="SnowFox Icon" width="220" />
 </p>
 
 > 给生医药实验室的液氮冻存盒管理软件：像 Excel 一样好上手，但比 Excel 更不容易出错。

@@ -23,13 +23,13 @@ from agent.llm_client import DeepSeekLLMClient
 from lib.yaml_ops import create_yaml_backup, load_yaml, write_yaml
 
 
-def make_record(rec_id=1, box=1, positions=None):
+def make_record(rec_id=1, box=1, position=None):
     return {
         "id": rec_id,
         "parent_cell_line": "NCCIT",
         "short_name": f"rec-{rec_id}",
         "box": box,
-        "positions": positions if positions is not None else [1],
+        "position": position if position is not None else 1,
         "frozen_at": "2025-01-01",
     }
 
@@ -252,7 +252,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
 
     def test_stage_to_plan_preflight_blocked_returns_tool_error(self):
         """Invalid staged write should be rejected before entering plan."""
-        yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, positions=[5])])
+        yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=5)])
         runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "record_thaw",
@@ -274,8 +274,8 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
     def test_stage_to_plan_preflight_mixed_batch_rejects_all(self):
         """Mixed-valid batch should be rejected atomically."""
         records = [
-            make_record(rec_id=1, box=1, positions=[5]),
-            make_record(rec_id=2, box=1, positions=[10]),
+            make_record(rec_id=1, box=1, position=5),
+            make_record(rec_id=2, box=1, position=10),
         ]
         yaml_path = self._seed_yaml(records)
         runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
@@ -298,7 +298,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
 
     def test_stage_to_plan_schema_mixed_batch_rejects_all(self):
         """Schema errors in batch should reject all items atomically."""
-        yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, positions=[5])])
+        yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=5)])
         runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "batch_thaw",
@@ -320,7 +320,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertEqual(1, result.get("result", {}).get("blocked_count"))
 
     def test_stage_to_plan_rollback_resolves_latest_backup(self):
-        yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, positions=[5])])
+        yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=5)])
         backup_path = create_yaml_backup(yaml_path)
         self.assertTrue(os.path.exists(str(backup_path)))
 

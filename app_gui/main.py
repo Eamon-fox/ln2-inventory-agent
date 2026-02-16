@@ -594,12 +594,12 @@ meta:
   custom_fields: []
 inventory: []
 3) 数据模型是 tube-level：一条 inventory 记录 = 一支物理冻存管。
-4) 每条记录必填：
-   - id: 正整数，唯一
-   - short_name: 非空字符串
-   - box: 整数
-   - positions: 仅包含 1 个整数的列表（如 [12]）
-   - frozen_at: YYYY-MM-DD
+ 4) 每条记录必填：
+    - id: 正整数，唯一
+    - short_name: 非空字符串
+    - box: 整数
+    - position: 整数（如 12）
+    - frozen_at: YYYY-MM-DD
 5) 常用可选字段：
     - cell_line, plasmid_name, plasmid_id, note, thaw_events
 6) 字段映射：
@@ -607,14 +607,14 @@ inventory: []
    - 若有 quantity/tube_count>1，拆成多条记录
 7) 若位置是 A1/B3 形式，换算为整数 position：
    position = (row_index-1)*cols + col_index，其中 A=1, B=2...
-8) 空值统一用 null；字符串去首尾空格；日期统一 YYYY-MM-DD。
-9) 如果缺少必填字段（尤其 box/position/frozen_at），先列出"缺失信息清单"，先不要输出 YAML。
+ 8) 空值统一用 null；字符串去首尾空格；日期统一 YYYY-MM-DD。
+ 9) 如果缺少必填字段（尤其 box/position/frozen_at），先列出"缺失信息清单"，先不要输出 YAML。
 
-输出前自检：
-- 顶层只有 meta 和 inventory
-- inventory 是列表
-- 每条 positions 只有一个整数
-- id 无重复
+ 输出前自检：
+ - 顶层只有 meta 和 inventory
+ - inventory 是列表
+ - 每条 position 是单个整数
+ - id 无重复
 
 下面是原始数据：
 <<<DATA
@@ -647,7 +647,7 @@ inventory:
     plasmid_id: p0001
     passage_number: 3
     box: 1
-    positions: [1]
+    position: 1
     frozen_at: "2026-02-01"
     note: baseline control
 
@@ -658,7 +658,7 @@ inventory:
     plasmid_id: null
     passage_number: 5
     box: 1
-    positions: [2]
+    position: 2
     frozen_at: "2026-01-15"
     note: null"""
 
@@ -852,7 +852,7 @@ class CustomFieldsDialog(QDialog):
         _STRUCTURAL_DISPLAY = [
             ("id", "ID", "int"),
             ("box", "Box", "int"),
-            ("positions", "Positions", "str"),
+            ("position", "Position", "int"),
             ("cell_line", "Cell Line", "str"),
             ("frozen_at", "Frozen At", "date"),
             ("thaw_events", "Thaw Events", "str"),
@@ -1864,6 +1864,7 @@ def main():
 
     # Set application icon (taskbar, window title bar, etc.)
     icon_candidates = [
+        os.path.join(ROOT, "app_gui", "assets", "snowfox-icon-v3.png"),
         os.path.join(ROOT, "app_gui", "assets", "snowfox-icon-v2.png"),
         os.path.join(ROOT, "app_gui", "assets", "snowfox-icon-v1.png"),
         os.path.join(ROOT, "app_gui", "assets", "icon.png"),

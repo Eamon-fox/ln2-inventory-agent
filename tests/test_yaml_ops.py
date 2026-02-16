@@ -19,13 +19,13 @@ from lib.yaml_ops import (
 )
 
 
-def make_record(rec_id=1, box=1, positions=None):
+def make_record(rec_id=1, box=1, position=None):
     return {
         "id": rec_id,
         "parent_cell_line": "NCCIT",
         "short_name": f"rec-{rec_id}",
         "box": box,
-        "positions": positions if positions is not None else [1],
+        "position": position if position is not None else 1,
         "frozen_at": "2025-01-01",
     }
 
@@ -55,7 +55,7 @@ class YamlOpsSafetyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_safety_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
 
-            data_v1 = make_data([make_record(1, box=1, positions=[1])])
+            data_v1 = make_data([make_record(1, box=1, position=1)])
             write_yaml(
                 data_v1,
                 path=str(yaml_path),
@@ -63,9 +63,9 @@ class YamlOpsSafetyTests(unittest.TestCase):
             )
 
             data_v2 = make_data([
-                make_record(1, box=1, positions=[1]),
-                make_record(2, box=2, positions=[3]),
-                make_record(3, box=2, positions=[4]),
+                make_record(1, box=1, position=1),
+                make_record(2, box=2, position=3),
+                make_record(3, box=2, position=4),
             ])
             write_yaml(
                 data_v2,
@@ -97,8 +97,8 @@ class YamlOpsSafetyTests(unittest.TestCase):
             yaml_a = Path(temp_dir) / "inventory_a.yaml"
             yaml_b = Path(temp_dir) / "inventory_b.yaml"
 
-            write_yaml(make_data([make_record(1, box=1, positions=[1])]), path=str(yaml_a))
-            write_yaml(make_data([make_record(2, box=2, positions=[2])]), path=str(yaml_b))
+            write_yaml(make_data([make_record(1, box=1, position=1)]), path=str(yaml_a))
+            write_yaml(make_data([make_record(2, box=2, position=2)]), path=str(yaml_b))
 
             audit_a = Path(get_audit_log_path(str(yaml_a)))
             audit_b = Path(get_audit_log_path(str(yaml_b)))
@@ -111,14 +111,14 @@ class YamlOpsSafetyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_rollback_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
 
-            data_v1 = make_data([make_record(1, box=1, positions=[1])])
-            data_v2 = make_data([make_record(1, box=1, positions=[9])])
+            data_v1 = make_data([make_record(1, box=1, position=1)])
+            data_v2 = make_data([make_record(1, box=1, position=9)])
 
             write_yaml(data_v1, path=str(yaml_path))
             write_yaml(data_v2, path=str(yaml_path))
 
             current = load_yaml(str(yaml_path))
-            self.assertEqual([9], current["inventory"][0]["positions"])
+            self.assertEqual(9, current["inventory"][0]["position"])
 
             result = rollback_yaml(
                 path=str(yaml_path),
@@ -126,14 +126,14 @@ class YamlOpsSafetyTests(unittest.TestCase):
             )
 
             restored = load_yaml(str(yaml_path))
-            self.assertEqual([1], restored["inventory"][0]["positions"])
+            self.assertEqual(1, restored["inventory"][0]["position"])
             self.assertTrue(Path(result["restored_from"]).exists())
             self.assertTrue(Path(result["snapshot_before_rollback"]).exists())
 
     def test_write_yaml_rejects_invalid_inventory(self):
         with tempfile.TemporaryDirectory(prefix="ln2_write_guard_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
-            invalid = make_data([make_record(1, box=99, positions=[1])])
+            invalid = make_data([make_record(1, box=99, position=1)])
 
             with self.assertRaises(ValueError) as ctx:
                 write_yaml(invalid, path=str(yaml_path))
@@ -146,13 +146,13 @@ class YamlOpsSafetyTests(unittest.TestCase):
             yaml_path = Path(temp_dir) / "inventory.yaml"
 
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
             )
 
             invalid_backup = Path(temp_dir) / "inventory.invalid.bak"
             invalid_backup.write_text(
-                "meta:\n  box_layout:\n    rows: 9\n    cols: 9\ninventory:\n  - id: 1\n    parent_cell_line: NCCIT\n    short_name: bad\n    box: 1\n    positions: []\n    frozen_at: 2025-01-01\n",
+                "meta:\n  box_layout:\n    rows: 9\n    cols: 9\ninventory:\n  - id: 1\n    parent_cell_line: NCCIT\n    short_name: bad\n    box: 1\n    position: null\n    frozen_at: 2025-01-01\n",
                 encoding="utf-8",
             )
 
@@ -164,7 +164,7 @@ class YamlOpsSafetyTests(unittest.TestCase):
 
             self.assertIn("回滚被阻止", str(ctx.exception))
             current = load_yaml(str(yaml_path))
-            self.assertEqual([1], current["inventory"][0]["positions"])
+            self.assertEqual(1, current["inventory"][0]["position"])
 
 
 if __name__ == "__main__":

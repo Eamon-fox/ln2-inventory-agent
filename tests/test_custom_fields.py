@@ -25,13 +25,13 @@ from lib.yaml_ops import load_yaml, write_yaml
 # Helpers (same pattern as test_tool_api.py)
 # ---------------------------------------------------------------------------
 
-def make_record(rec_id=1, box=1, positions=None, **extra):
+def make_record(rec_id=1, box=1, position=None, **extra):
     rec = {
         "id": rec_id,
         "parent_cell_line": "NCCIT",
         "short_name": f"rec-{rec_id}",
         "box": box,
-        "positions": positions if positions is not None else [1],
+        "position": position if position is not None else 1,
         "frozen_at": "2025-01-01",
     }
     rec.update(extra)
@@ -93,7 +93,7 @@ class TestParseCustomFields(unittest.TestCase):
         self.assertEqual("10% DMSO", result[0]["default"])
 
     def test_core_field_key_rejected(self):
-        for core_key in ("id", "box", "positions", "frozen_at", "thaw_events"):
+        for core_key in ("id", "box", "position", "frozen_at", "thaw_events"):
             meta = {"custom_fields": [{"key": core_key, "label": "X"}]}
             result = parse_custom_fields(meta)
             self.assertEqual([], result, f"structural key {core_key!r} should be rejected")
@@ -145,7 +145,7 @@ class TestParseCustomFields(unittest.TestCase):
                          [f["key"] for f in result])
 
     def test_all_structural_keys_in_blacklist(self):
-        expected = {"id", "box", "positions", "frozen_at", "thaw_events", "cell_line"}
+        expected = {"id", "box", "position", "frozen_at", "thaw_events", "cell_line"}
         self.assertEqual(expected, STRUCTURAL_FIELD_KEYS)
 
 
@@ -206,7 +206,7 @@ class TestToolAddEntryCustomData(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
                 make_data(
-                    [make_record(1, box=1, positions=[1])],
+                    [make_record(1, box=1, position=1)],
                     custom_fields=[
                         {"key": "passage_number", "label": "Passage #", "type": "int"},
                         {"key": "medium", "label": "Medium", "type": "str"},
@@ -237,7 +237,7 @@ class TestToolAddEntryCustomData(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
                 make_data(
-                    [make_record(1, box=1, positions=[1])],
+                    [make_record(1, box=1, position=1)],
                     custom_fields=[
                         {"key": "passage_number", "label": "Passage #", "type": "int"},
                     ],
@@ -265,7 +265,7 @@ class TestToolAddEntryCustomData(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_cf_add_core_") as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -299,7 +299,7 @@ class TestToolEditEntryCustomFields(unittest.TestCase):
     def test_edit_custom_field(self):
         with tempfile.TemporaryDirectory(prefix="ln2_cf_edit_") as td:
             yaml_path = Path(td) / "inventory.yaml"
-            rec = make_record(1, box=1, positions=[1], passage_number=3)
+            rec = make_record(1, box=1, position=1, passage_number=3)
             write_yaml(
                 make_data(
                     [rec],
@@ -330,7 +330,7 @@ class TestToolEditEntryCustomFields(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
                 make_data(
-                    [make_record(1, box=1, positions=[1])],
+                    [make_record(1, box=1, position=1)],
                     custom_fields=[],
                 ),
                 path=str(yaml_path),
@@ -350,7 +350,7 @@ class TestToolEditEntryCustomFields(unittest.TestCase):
     def test_edit_custom_and_core_field_together(self):
         with tempfile.TemporaryDirectory(prefix="ln2_cf_edit_mix_") as td:
             yaml_path = Path(td) / "inventory.yaml"
-            rec = make_record(1, box=1, positions=[1], passage_number=1, note="old")
+            rec = make_record(1, box=1, position=1, passage_number=1, note="old")
             write_yaml(
                 make_data(
                     [rec],
@@ -388,7 +388,7 @@ class TestSearchCustomFields(unittest.TestCase):
     def test_search_finds_custom_field_value(self):
         with tempfile.TemporaryDirectory(prefix="ln2_cf_search_") as td:
             yaml_path = Path(td) / "inventory.yaml"
-            rec = make_record(1, box=1, positions=[1], virus_titer="MOI50")
+            rec = make_record(1, box=1, position=1, virus_titer="MOI50")
             write_yaml(
                 make_data(
                     [rec],
@@ -412,7 +412,7 @@ class TestSearchCustomFields(unittest.TestCase):
     def test_search_does_not_match_absent_custom_value(self):
         with tempfile.TemporaryDirectory(prefix="ln2_cf_search_miss_") as td:
             yaml_path = Path(td) / "inventory.yaml"
-            rec = make_record(1, box=1, positions=[1])
+            rec = make_record(1, box=1, position=1)
             write_yaml(
                 make_data(
                     [rec],
@@ -492,7 +492,7 @@ class TestQueryCustomFieldColumns(unittest.TestCase):
     def test_query_returns_custom_field_in_records(self):
         with tempfile.TemporaryDirectory(prefix="ln2_cf_query_") as td:
             yaml_path = Path(td) / "inventory.yaml"
-            rec = make_record(1, box=1, positions=[1], passage_number=5)
+            rec = make_record(1, box=1, position=1, passage_number=5)
             write_yaml(
                 make_data(
                     [rec],
@@ -596,7 +596,7 @@ class TestCellLineAddEntry(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_cl_add_") as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -623,7 +623,7 @@ class TestCellLineAddEntry(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_cl_add_empty_") as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -657,8 +657,8 @@ class TestCellLineQuery(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
                 make_data([
-                    {**make_record(1, box=1, positions=[1]), "cell_line": "K562"},
-                    {**make_record(2, box=1, positions=[2]), "cell_line": "HeLa"},
+                    {**make_record(1, box=1, position=1), "cell_line": "K562"},
+                    {**make_record(2, box=1, position=2), "cell_line": "HeLa"},
                 ]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
@@ -674,7 +674,7 @@ class TestCellLineQuery(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
                 make_data([
-                    {**make_record(1, box=1, positions=[1]), "cell_line": "K562"},
+                    {**make_record(1, box=1, position=1), "cell_line": "K562"},
                 ]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
@@ -697,7 +697,7 @@ class TestCellLineEdit(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
                 make_data([
-                    {**make_record(1, box=1, positions=[1]), "cell_line": "K562"},
+                    {**make_record(1, box=1, position=1), "cell_line": "K562"},
                 ]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},

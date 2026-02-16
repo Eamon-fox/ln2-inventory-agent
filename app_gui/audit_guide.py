@@ -249,6 +249,12 @@ def _parse_add_entry(
                 pv = _as_int(p)
                 if pv is not None:
                     positions.append(pv)
+    # Also check for single position field
+    if not positions:
+        single_pos = tool_input.get("position") or details.get("position")
+        pv = _as_int(single_pos)
+        if pv is not None:
+            positions.append(pv)
     if not positions:
         warnings.append(f"{timestamp} add_entry: missing positions, skipped")
         return []

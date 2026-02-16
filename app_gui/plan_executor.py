@@ -110,10 +110,10 @@ def _validate_moves_holistically(items: List[Dict[str, object]], records: List[D
     pos_map: Dict[Tuple[int, int], Dict[str, object]] = {}
     for rec in records:
         box = rec.get("box")
-        if box is None:
+        pos = rec.get("position")
+        if box is None or pos is None:
             continue
-        for pos in rec.get("positions") or []:
-            pos_map[(int(box), int(pos))] = rec
+        pos_map[(int(box), int(pos))] = rec
 
     # Track which records have been "claimed" (their source position is being moved from)
     # This is used to detect when a move targets a position that was already claimed by earlier move
@@ -403,7 +403,8 @@ def run_plan(
     for item in adds:
         payload = item.get("payload") or {}
         box = int(payload.get("box") or item.get("box") or 0)
-        for pos in payload.get("positions") or []:
+        positions = payload.get("positions") or []
+        for pos in positions:
             key = (box, int(pos))
             if key in _add_claimed:
                 _add_blocked_ids.add(id(item))

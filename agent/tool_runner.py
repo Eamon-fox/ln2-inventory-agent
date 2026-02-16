@@ -633,7 +633,7 @@ class AgentToolRunner:
     # --- Plan staging (human-in-the-loop) ---
 
     def _lookup_record_info(self, record_id):
-        """Quick lookup to get (box, label, positions) for a record ID."""
+        """Quick lookup to get (box, label, position) for a record ID."""
         from lib.custom_fields import get_display_key
         try:
             result = tool_get_raw_entries(yaml_path=self._yaml_path, ids=[record_id])
@@ -649,11 +649,11 @@ class AgentToolRunner:
                     except Exception:
                         dk = "short_name"
                     label = rec.get(dk) or rec.get("short_name") or "-"
-                    positions = list(rec.get("positions") or [])
-                    return box, label, positions
+                    position = rec.get("position")
+                    return box, label, position
         except Exception:
             pass
-        return 0, "-", []
+        return 0, "-", None
 
     @staticmethod
     def _item_desc(item):
@@ -774,10 +774,10 @@ class AgentToolRunner:
             to_box_raw = self._first_value(payload, "to_box", "target_box", "new_box", "dest_box")
             to_box = int(to_box_raw) if to_box_raw not in (None, "") else None
 
-            box, label, positions = self._lookup_record_info(rid)
+            box, label, position = self._lookup_record_info(rid)
             if pos is None:
-                if len(positions) == 1:
-                    pos = int(positions[0])
+                if position is not None:
+                    pos = int(position)
                 else:
                     return self._with_hint(
                         tool_name,
@@ -786,7 +786,7 @@ class AgentToolRunner:
                             "error_code": "invalid_tool_input",
                             "message": (
                                 f"position is missing and cannot be inferred for record_id={rid}. "
-                                f"current positions: {positions}"
+                                f"record has no position (may be consumed)."
                             ),
                         },
                     )
@@ -879,10 +879,10 @@ class AgentToolRunner:
                         },
                     )
 
-                box, label, positions = self._lookup_record_info(rid)
+                box, label, position = self._lookup_record_info(rid)
                 if pos is None:
-                    if len(positions) == 1:
-                        pos = int(positions[0])
+                    if position is not None:
+                        pos = int(position)
                     else:
                         # Keep staging atomic: let plan validation reject schema-invalid rows.
                         pos = 0
@@ -923,8 +923,8 @@ class AgentToolRunner:
                     "ok": False, "error_code": "invalid_tool_input",
                     "message": "fields must be a non-empty object",
                 })
-            box, label, positions = self._lookup_record_info(rid)
-            pos = int(positions[0]) if positions else 1
+            box, label, position = self._lookup_record_info(rid)
+            pos = int(position) if position is not None else 1
             items.append(
                 build_edit_plan_item(
                     record_id=rid,

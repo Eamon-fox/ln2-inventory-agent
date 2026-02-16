@@ -71,7 +71,7 @@ class _FakeOperationsBridge:
                         "parent_cell_line": "K562",
                         "short_name": "K562_clone12",
                         "box": 2,
-                        "positions": [10],
+                        "position": 10,
                         "frozen_at": "2026-02-10",
                         "plasmid_id": "P-001",
                         "note": "demo",
@@ -208,7 +208,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
                     "parent_cell_line": "K562",
                     "short_name": "k562-a",
                     "box": 1,
-                    "positions": [1],
+                    "position": 1,
                     "frozen_at": "2026-02-10",
                 }
             }
@@ -351,7 +351,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
         panel = self._new_operations_panel()
         panel.update_records_cache({
             11: {"id": 11, "parent_cell_line": "K562", "short_name": "K562-move",
-                 "box": 2, "positions": [5, 8]},
+                 "box": 2, "position": 5},
         })
 
         panel.m_id.setValue(11)
@@ -373,7 +373,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
         panel = self._new_operations_panel()
         panel.update_records_cache({
             12: {"id": 12, "parent_cell_line": "K562", "short_name": "K562-bm",
-                 "box": 3, "positions": [23, 31]},
+                 "box": 3, "position": 23},
         })
 
         panel.bm_table.setRowCount(1)
@@ -418,7 +418,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
                     "parent_cell_line": "K562",
                     "short_name": "K562_RTCB_dTAG_clone12",
                     "box": 1,
-                    "positions": [30, 31],
+                    "position": 30,
                     "frozen_at": "2026-02-10",
                 }
             }
@@ -436,7 +436,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
         panel = self._new_operations_panel()
         panel.update_records_cache({
             7: {"id": 7, "parent_cell_line": "K562", "short_name": "K562_move",
-                "box": 2, "positions": [15, 20]},
+                "box": 2, "position": 15},
         })
 
         panel.set_move_prefill({"box": 2, "position": 15, "record_id": 7})
@@ -578,7 +578,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
             "parent_cell_line": "K562",
             "short_name": "K562_test",
             "box": 1,
-            "positions": [1],
+            "position": 1,
         }
         panel.overview_pos_map = {(1, 1): record}
         button = panel.overview_cells[(1, 1)]
@@ -803,7 +803,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
             "parent_cell_line": "K562",
             "short_name": "K562_test",
             "box": 1,
-            "positions": [1],
+            "position": 1,
         }
         panel.overview_pos_map = {(1, 1): record}
         button = panel.overview_cells[(1, 1)]
@@ -835,7 +835,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
             "parent_cell_line": "K562",
             "short_name": "K562_test",
             "box": 1,
-            "positions": [1],
+            "position": 1,
         }
         panel.overview_pos_map = {(1, 1): record}
         button = panel.overview_cells[(1, 1)]
@@ -867,7 +867,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
             "parent_cell_line": "K562",
             "short_name": "K562_test",
             "box": 1,
-            "positions": [1],
+            "position": 1,
         }
         panel.overview_pos_map = {(1, 1): record}
         button = panel.overview_cells[(1, 1)]
@@ -1033,7 +1033,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
         panel = self._new_operations_panel()
         panel.update_records_cache({
             5: {"id": 5, "parent_cell_line": "K562", "short_name": "K562_test",
-                "box": 2, "positions": [10]},
+                "box": 2, "position": 10},
         })
 
         panel.t_id.setValue(5)
@@ -1349,7 +1349,7 @@ class ToolRunnerPlanSinkTests(unittest.TestCase):
             "parent_cell_line": "K562",
             "short_name": "K562_test",
             "box": 1,
-            "positions": [30],
+            "position": 30,
         })
         self.assertTrue(result.get("staged"))
         self.assertEqual(1, self.store.count())
@@ -1382,7 +1382,7 @@ class ToolRunnerPlanSinkTests(unittest.TestCase):
             "parent_cell_line": "K562",
             "short_name": "test",
             "box": 1,
-            "positions": [1],
+            "position": 1,
         })
         self.assertFalse(result.get("staged", False))
         self.assertEqual(0, self.store.count())
@@ -1868,7 +1868,7 @@ class RollbackConfirmationDialogTests(unittest.TestCase):
                         "parent_cell_line": "K562",
                         "short_name": "A",
                         "box": 1,
-                        "positions": [5],
+                        "position": 5,
                         "frozen_at": "2025-01-01",
                     }
                 ],
@@ -2281,7 +2281,7 @@ class PlanPreflightGuardTests(unittest.TestCase):
 
     def test_add_items_triggers_preflight(self):
         """Adding items to plan should trigger preflight validation."""
-        records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "positions": [5], "frozen_at": "2025-01-01"}]
+        records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "position": 5, "frozen_at": "2025-01-01"}]
         yaml_path, tmpdir = self._seed_yaml(records)
 
         try:
@@ -2298,7 +2298,7 @@ class PlanPreflightGuardTests(unittest.TestCase):
 
     def test_preflight_marks_blocked_items_in_table(self):
         """Blocked items should show BLOCKED status in table."""
-        records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "positions": [5], "frozen_at": "2025-01-01"}]
+        records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "position": 5, "frozen_at": "2025-01-01"}]
         yaml_path, tmpdir = self._seed_yaml(records)
 
         try:
@@ -2317,7 +2317,7 @@ class PlanPreflightGuardTests(unittest.TestCase):
 
     def test_execute_button_disabled_when_blocked(self):
         """Execute button should be disabled when plan has blocked items."""
-        records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "positions": [5], "frozen_at": "2025-01-01"}]
+        records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "position": 5, "frozen_at": "2025-01-01"}]
         yaml_path, tmpdir = self._seed_yaml(records)
 
         try:
@@ -2333,7 +2333,7 @@ class PlanPreflightGuardTests(unittest.TestCase):
 
     def test_execute_button_enabled_when_valid(self):
         """Execute button should be enabled when all items are valid."""
-        records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "positions": [5], "frozen_at": "2025-01-01"}]
+        records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "position": 5, "frozen_at": "2025-01-01"}]
         yaml_path, tmpdir = self._seed_yaml(records)
 
         try:
@@ -2375,7 +2375,7 @@ class ExecuteInterceptTests(unittest.TestCase):
 
     def test_execute_blocked_does_not_call_bridge(self):
         """When plan is blocked, execute should not call bridge methods."""
-        records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "positions": [5], "frozen_at": "2025-01-01"}]
+        records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "position": 5, "frozen_at": "2025-01-01"}]
         yaml_path, tmpdir = self._seed_yaml(records)
 
         try:
@@ -2397,7 +2397,7 @@ class ExecuteInterceptTests(unittest.TestCase):
 
     def test_execute_blocked_emits_operation_event(self):
         """Blocked execution should emit operation_event."""
-        records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "positions": [5], "frozen_at": "2025-01-01"}]
+        records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "position": 5, "frozen_at": "2025-01-01"}]
         yaml_path, tmpdir = self._seed_yaml(records)
 
         try:
@@ -2689,9 +2689,9 @@ class OverviewColorKeyFilterTests(unittest.TestCase):
     def test_filter_dropdown_uses_color_key_values(self):
         """Filter dropdown should show unique values of the color_key field."""
         records = [
-            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "positions": [1], "frozen_at": "2025-01-01"},
-            {"id": 2, "cell_line": "HeLa", "short_name": "B", "box": 1, "positions": [2], "frozen_at": "2025-01-01"},
-            {"id": 3, "cell_line": "K562", "short_name": "C", "box": 1, "positions": [3], "frozen_at": "2025-01-01"},
+            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+            {"id": 2, "cell_line": "HeLa", "short_name": "B", "box": 1, "position": 2, "frozen_at": "2025-01-01"},
+            {"id": 3, "cell_line": "K562", "short_name": "C", "box": 1, "position": 3, "frozen_at": "2025-01-01"},
         ]
         yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
         try:
@@ -2709,8 +2709,8 @@ class OverviewColorKeyFilterTests(unittest.TestCase):
     def test_filter_by_color_key_hides_non_matching(self):
         """Selecting a color_key value should filter the dropdown correctly."""
         records = [
-            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "positions": [1], "frozen_at": "2025-01-01"},
-            {"id": 2, "cell_line": "HeLa", "short_name": "B", "box": 1, "positions": [2], "frozen_at": "2025-01-01"},
+            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+            {"id": 2, "cell_line": "HeLa", "short_name": "B", "box": 1, "position": 2, "frozen_at": "2025-01-01"},
         ]
         yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
         try:
@@ -2735,8 +2735,8 @@ class OverviewColorKeyFilterTests(unittest.TestCase):
     def test_color_key_custom_field(self):
         """color_key can be set to a user field like short_name."""
         records = [
-            {"id": 1, "cell_line": "K562", "short_name": "Alpha", "box": 1, "positions": [1], "frozen_at": "2025-01-01"},
-            {"id": 2, "cell_line": "K562", "short_name": "Beta", "box": 1, "positions": [2], "frozen_at": "2025-01-01"},
+            {"id": 1, "cell_line": "K562", "short_name": "Alpha", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+            {"id": 2, "cell_line": "K562", "short_name": "Beta", "box": 1, "position": 2, "frozen_at": "2025-01-01"},
         ]
         yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "short_name"})
         try:
@@ -2793,7 +2793,7 @@ class OverviewTableViewTests(unittest.TestCase):
                 "cell_line": "K562",
                 "short_name": "A",
                 "box": 1,
-                "positions": [1],
+                "position": 1,
                 "frozen_at": "2025-01-01",
                 "passage_number": 3,
             },
@@ -2802,7 +2802,7 @@ class OverviewTableViewTests(unittest.TestCase):
                 "cell_line": "HeLa",
                 "short_name": "B",
                 "box": 2,
-                "positions": [2],
+                "position": 2,
                 "frozen_at": "2025-01-01",
                 "passage_number": 7,
             },
@@ -2833,8 +2833,8 @@ class OverviewTableViewTests(unittest.TestCase):
 
     def test_table_view_shares_live_filters(self):
         records = [
-            {"id": 1, "cell_line": "K562", "short_name": "clone-A", "box": 1, "positions": [1], "frozen_at": "2025-01-01"},
-            {"id": 2, "cell_line": "HeLa", "short_name": "clone-B", "box": 2, "positions": [2], "frozen_at": "2025-01-01"},
+            {"id": 1, "cell_line": "K562", "short_name": "clone-A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+            {"id": 2, "cell_line": "HeLa", "short_name": "clone-B", "box": 2, "position": 2, "frozen_at": "2025-01-01"},
         ]
         yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
         try:
@@ -2867,7 +2867,7 @@ class OverviewTableViewTests(unittest.TestCase):
 
     def test_table_mode_disables_show_empty_toggle(self):
         records = [
-            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "positions": [1], "frozen_at": "2025-01-01"},
+            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
         ]
         yaml_path, tmpdir = self._seed_yaml(records)
         try:
@@ -2889,7 +2889,7 @@ class OverviewTableViewTests(unittest.TestCase):
 
     def test_table_click_prefills_takeout_context(self):
         records = [
-            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "positions": [5], "frozen_at": "2025-01-01"},
+            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 5, "frozen_at": "2025-01-01"},
         ]
         yaml_path, tmpdir = self._seed_yaml(records)
         try:
