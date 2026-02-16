@@ -3,6 +3,8 @@ Shared utilities for the UI.
 """
 import json
 
+from app_gui.ui.theme import FONT_SIZE_MONO, FONT_SIZE_XS, FONT_SIZE_SM, FONT_SIZE_MD
+
 # Keep this module importable without PySide6 so non-GUI unit tests can run.
 try:
     from PySide6.QtCore import Qt  # type: ignore
@@ -10,19 +12,19 @@ except Exception:  # pragma: no cover
     Qt = None  # type: ignore
 
 
-HELP_BUTTON_STYLE = """
-    QPushButton {
+HELP_BUTTON_STYLE = f"""
+    QPushButton {{
         background-color: var(--background-raised);
         color: var(--text-weak);
         border: 1px solid var(--border-weak);
         border-radius: 10px;
         font-weight: 500;
-        font-size: 12px;
-    }
-    QPushButton:hover {
+        font-size: {FONT_SIZE_SM}px;
+    }}
+    QPushButton:hover {{
         background-color: var(--background-strong);
         border-color: var(--border-subtle);
-    }
+    }}
 """
 
 
@@ -106,10 +108,10 @@ class CollapsibleBox:
         
         html = f'''<div style="margin: 8px 0; background-color: {header_bg}; border: 1px solid {border_color}; border-radius: 6px; padding: 8px 12px;">
     <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-        <span style="font-size: 10px; color: {muted_color};">{arrow}</span>
-        <span style="font-size: 13px; color: {text_color}; font-weight: 500;">{summary}</span>
-        <span style="font-size: 11px; color: {accent_color};">({len(content)} chars)</span>
+        <span style="font-size: {FONT_SIZE_MONO}px; color: {muted_color};">{arrow}</span>
+        <span style="font-size: {FONT_SIZE_MD}px; color: {text_color}; font-weight: 500;">{summary}</span>
+        <span style="font-size: {FONT_SIZE_XS}px; color: {accent_color};">({len(content)} chars)</span>
     </div>
-    <div style="font-size: 12px; color: {muted_color}; font-family: 'IBM Plex Mono', 'Consolas', monospace; white-space: pre-wrap; margin-top: 8px; padding: 8px; background-color: {content_bg}; border-radius: 4px;">{escaped_content}</div>
+    <div style="font-size: {FONT_SIZE_SM}px; color: {muted_color}; font-family: 'IBM Plex Mono', 'Consolas', monospace; white-space: pre-wrap; margin-top: 8px; padding: 8px; background-color: {content_bg}; border-radius: 4px;">{escaped_content}</div>
 </div>'''
         return html

@@ -18,6 +18,9 @@ from app_gui.ui.theme import (
     cell_preview_takeout_style,
     cell_preview_move_source_style,
     cell_preview_move_target_style,
+    FONT_SIZE_XS,
+    FONT_SIZE_MD,
+    FONT_SIZE_XL,
 )
 from app_gui.i18n import tr, t
 from app_gui.plan_preview import simulate_plan_pos_map
@@ -355,7 +358,7 @@ class OverviewPanel(QWidget):
         self._zoom_label = QLabel("100%")
         self._zoom_label.setFixedWidth(42)
         self._zoom_label.setAlignment(Qt.AlignCenter)
-        self._zoom_label.setStyleSheet("font-size: 11px;")
+        self._zoom_label.setStyleSheet(f"font-size: {FONT_SIZE_XS}px;")
         zoom_row.addWidget(self._zoom_label)
         zoom_in_btn = QPushButton("+")
         zoom_in_btn.setFixedSize(24, 24)
@@ -396,24 +399,24 @@ class OverviewPanel(QWidget):
 
     def _build_card(self, layout, title):
         card = QGroupBox(title)
-        card.setStyleSheet("""
-            QGroupBox {
+        card.setStyleSheet(f"""
+            QGroupBox {{
                 background-color: var(--background-inset);
                 border: 1px solid var(--border-weak);
                 border-radius: var(--radius-md);
                 margin-top: 8px;
                 padding-top: 8px;
-            }
-            QGroupBox::title {
+            }}
+            QGroupBox::title {{
                 color: var(--text-weak);
-                font-size: 11px;
-            }
+                font-size: {FONT_SIZE_XS}px;
+            }}
         """)
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(8, 6, 8, 6)
         value_label = QLabel("-")
         value_label.setAlignment(Qt.AlignCenter)
-        value_label.setStyleSheet("font-size: 16px; font-weight: 500; color: var(--text-strong);")
+        value_label.setStyleSheet(f"font-size: {FONT_SIZE_XL}px; font-weight: 500; color: var(--text-strong);")
         card_layout.addWidget(value_label)
         layout.addWidget(card)
         return value_label

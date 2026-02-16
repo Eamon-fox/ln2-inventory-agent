@@ -33,7 +33,10 @@ from lib.config import YAML_PATH
 from lib.plan_store import PlanStore
 from lib.position_fmt import get_box_numbers
 from lib.yaml_ops import load_yaml
-from app_gui.ui.theme import apply_dark_theme, apply_light_theme
+from app_gui.ui.theme import (
+    apply_dark_theme, apply_light_theme,
+    FONT_SIZE_XS, FONT_SIZE_SM, FONT_SIZE_MONO
+)
 from app_gui.ui.overview_panel import OverviewPanel
 from app_gui.ui.operations_panel import OperationsPanel
 from app_gui.ui.ai_panel import AIPanel
@@ -151,7 +154,7 @@ class SettingsDialog(QDialog):
         data_layout.addRow(tr("settings.inventoryFile"), yaml_row)
 
         yaml_hint = QLabel(tr("settings.inventoryFileHint"))
-        yaml_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
+        yaml_hint.setStyleSheet(f"color: #64748b; font-size: {FONT_SIZE_XS}px; margin-left: 100px;")
         yaml_hint.setWordWrap(True)
         data_layout.addRow("", yaml_hint)
 
@@ -187,12 +190,12 @@ class SettingsDialog(QDialog):
             ai_layout.addRow(label, key_edit)
             if cfg.get("help_url"):
                 help_label = QLabel(f'<a href="{cfg["help_url"]}">{cfg["help_url"]}</a>')
-                help_label.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
+                help_label.setStyleSheet(f"color: #64748b; font-size: {FONT_SIZE_XS}px; margin-left: 100px;")
                 help_label.setOpenExternalLinks(True)
                 ai_layout.addRow("", help_label)
 
         api_hint = QLabel(tr("settings.apiKeyHint"))
-        api_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
+        api_hint.setStyleSheet(f"color: #64748b; font-size: {FONT_SIZE_XS}px; margin-left: 100px;")
         api_hint.setWordWrap(True)
         ai_layout.addRow("", api_hint)
 
@@ -235,7 +238,7 @@ class SettingsDialog(QDialog):
         ai_layout.addRow(tr("settings.customPrompt"), self.ai_custom_prompt)
 
         custom_prompt_hint = QLabel(tr("settings.customPromptHint"))
-        custom_prompt_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
+        custom_prompt_hint.setStyleSheet(f"color: #64748b; font-size: {FONT_SIZE_XS}px; margin-left: 100px;")
         custom_prompt_hint.setWordWrap(True)
         ai_layout.addRow("", custom_prompt_hint)
 
@@ -255,7 +258,7 @@ class SettingsDialog(QDialog):
         lang_layout.addRow(tr("settings.language"), self.lang_combo)
 
         lang_hint = QLabel(tr("settings.languageHint"))
-        lang_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
+        lang_hint.setStyleSheet(f"color: #64748b; font-size: {FONT_SIZE_XS}px; margin-left: 100px;")
         lang_hint.setWordWrap(True)
         lang_layout.addRow("", lang_hint)
 
@@ -275,7 +278,7 @@ class SettingsDialog(QDialog):
         theme_layout.addRow(tr("settings.theme"), self.theme_combo)
 
         theme_hint = QLabel(tr("settings.themeHint"))
-        theme_hint.setStyleSheet("color: var(--text-muted); font-size: 11px; margin-left: 100px;")
+        theme_hint.setStyleSheet(f"color: var(--text-muted); font-size: {FONT_SIZE_XS}px; margin-left: 100px;")
         theme_hint.setWordWrap(True)
         theme_layout.addRow("", theme_hint)
 
@@ -291,7 +294,7 @@ class SettingsDialog(QDialog):
         )
         about_label.setOpenExternalLinks(True)
         about_label.setWordWrap(True)
-        about_label.setStyleSheet("color: var(--text-muted); font-size: 12px; padding: 4px;")
+        about_label.setStyleSheet(f"color: var(--text-muted); font-size: {FONT_SIZE_SM}px; padding: 4px;")
         about_layout.addWidget(about_label)
 
         self._check_update_btn = QPushButton(tr("settings.checkUpdate"))
@@ -305,7 +308,7 @@ class SettingsDialog(QDialog):
             donate_vbox = QVBoxLayout()
             donate_vbox.setAlignment(Qt.AlignCenter)
             donate_text = QLabel(tr("settings.supportHint"))
-            donate_text.setStyleSheet("color: var(--text-muted); font-size: 12px; margin-bottom: 4px;")
+            donate_text.setStyleSheet(f"color: var(--text-muted); font-size: {FONT_SIZE_SM}px; margin-bottom: 4px;")
             donate_text.setAlignment(Qt.AlignCenter)
             donate_pixmap = QPixmap(donate_path)
             donate_img = QLabel()
@@ -676,14 +679,14 @@ class ImportPromptDialog(QDialog):
 
         desc = QLabel(tr("main.importPromptDesc"))
         desc.setWordWrap(True)
-        desc.setStyleSheet("color: #64748b; font-size: 12px; margin-bottom: 8px;")
+        desc.setStyleSheet(f"color: #64748b; font-size: {FONT_SIZE_SM}px; margin-bottom: 8px;")
         layout.addWidget(desc)
 
         self.prompt_edit = QTextEdit()
         self.prompt_edit.setPlainText(_get_import_prompt())
         self.prompt_edit.setReadOnly(True)
         self.prompt_edit.setFontFamily("monospace")
-        self.prompt_edit.setFontPointSize(10)
+        self.prompt_edit.setFontPointSize(FONT_SIZE_MONO)
         layout.addWidget(self.prompt_edit, 1)
 
         buttons = QDialogButtonBox()
@@ -717,7 +720,7 @@ class ImportPromptDialog(QDialog):
         text_edit.setPlainText(_get_yaml_example())
         text_edit.setReadOnly(True)
         text_edit.setFontFamily("monospace")
-        text_edit.setFontPointSize(10)
+        text_edit.setFontPointSize(FONT_SIZE_MONO)
         layout.addWidget(text_edit)
         close_btn = QDialogButtonBox(QDialogButtonBox.Close)
         close_btn.rejected.connect(dlg.reject)
@@ -809,7 +812,7 @@ class CustomFieldsDialog(QDialog):
 
         desc = QLabel(tr("main.customFieldsDesc"))
         desc.setWordWrap(True)
-        desc.setStyleSheet("color: #64748b; font-size: 12px; margin-bottom: 4px;")
+        desc.setStyleSheet(f"color: #64748b; font-size: {FONT_SIZE_SM}px; margin-bottom: 4px;")
         root.addWidget(desc)
 
         # Scrollable area for everything
@@ -840,10 +843,10 @@ class CustomFieldsDialog(QDialog):
                             (tr("main.cfType"), 70), (tr("main.cfDefault"), 100)]:
             lbl = QLabel(text)
             lbl.setFixedWidth(width)
-            lbl.setStyleSheet("font-size: 11px; color: #64748b; font-weight: 600;")
+            lbl.setStyleSheet(f"font-size: {FONT_SIZE_XS}px; color: #64748b; font-weight: 600;")
             s_header_l.addWidget(lbl)
         req_lbl = QLabel(tr("main.cfRequired"))
-        req_lbl.setStyleSheet("font-size: 11px; color: #64748b; font-weight: 600;")
+        req_lbl.setStyleSheet(f"font-size: {FONT_SIZE_XS}px; color: #64748b; font-weight: 600;")
         s_header_l.addWidget(req_lbl)
         spacer_lbl = QWidget(); spacer_lbl.setFixedWidth(60)
         s_header_l.addWidget(spacer_lbl)
@@ -892,10 +895,10 @@ class CustomFieldsDialog(QDialog):
                             (tr("main.cfType"), 70), (tr("main.cfDefault"), 100)]:
             lbl = QLabel(text)
             lbl.setFixedWidth(width)
-            lbl.setStyleSheet("font-size: 11px; color: #64748b; font-weight: 600;")
+            lbl.setStyleSheet(f"font-size: {FONT_SIZE_XS}px; color: #64748b; font-weight: 600;")
             u_header_l.addWidget(lbl)
         req_lbl = QLabel(tr("main.cfRequired"))
-        req_lbl.setStyleSheet("font-size: 11px; color: #64748b; font-weight: 600;")
+        req_lbl.setStyleSheet(f"font-size: {FONT_SIZE_XS}px; color: #64748b; font-weight: 600;")
         u_header_l.addWidget(req_lbl)
         rm_spacer = QWidget(); rm_spacer.setFixedWidth(60)
         u_header_l.addWidget(rm_spacer)
@@ -1203,16 +1206,16 @@ class MainWindow(QMainWindow):
 
         self.overview_panel.setMinimumWidth(int(sw * 0.15))
         self.operations_panel.setMinimumWidth(int(sw * 0.10))
-        self.ai_panel.setMinimumWidth(int(sw * 0.12))
-        self.ai_panel.setMaximumWidth(int(sw * 0.22))
+        self.operations_panel.setMaximumWidth(int(sw * 0.12))
+        self.ai_panel.setMaximumWidth(int(sw * 0.11))
 
         splitter.addWidget(self.overview_panel)
         splitter.addWidget(self.operations_panel)
         splitter.addWidget(self.ai_panel)
 
         splitter.setStretchFactor(0, 5)
-        splitter.setStretchFactor(1, 3)
-        splitter.setStretchFactor(2, 2)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 1)
         root.addWidget(splitter, 1)
 
         self.setCentralWidget(container)

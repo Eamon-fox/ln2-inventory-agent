@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 )
 from app_gui.ui.workers import AgentRunWorker
 from app_gui.ui.utils import compact_json
+from app_gui.ui.theme import FONT_SIZE_XS, FONT_SIZE_SM
 from app_gui.event_compactor import compact_operation_event_for_context
 from app_gui.i18n import tr
 from app_gui.plan_outcome import collect_blocked_items, summarize_plan_execution
@@ -199,7 +200,7 @@ class AIPanel(QWidget):
         # Shortcut hint (subtle, right-aligned)
         hint = QLabel("Enter ↵  Shift+Enter ⏎")
         hint.setProperty("muted", True)
-        hint.setStyleSheet("font-size: 11px; padding-right: 2px;")
+        hint.setStyleSheet(f"font-size: {FONT_SIZE_XS}px; padding-right: 2px;")
         action_bar.addWidget(hint)
 
         ic_layout.addLayout(action_bar)
@@ -1236,23 +1237,23 @@ class AIPanel(QWidget):
             has_more = len(lines) > 3
             html = (
                 f'<div style="margin: 4px 0; border: 1px solid {border}; border-radius: 4px; '
-                f'background: {bg}; padding: 6px 8px; font-family: monospace; font-size: 12px; '
+                f'background: {bg}; padding: 6px 8px; font-family: monospace; font-size: {FONT_SIZE_SM}px; '
                 f'color: {text_color}; white-space: pre-wrap; overflow: hidden;">'
                 f'{preview_escaped}'
             )
             if has_more:
                 html += (
-                    f'<br/><a href="{block_id}" style="color: {link_color}; font-size: 11px; '
+                    f'<br/><a href="{block_id}" style="color: {link_color}; font-size: {FONT_SIZE_XS}px; '
                     f'text-decoration: none;">&#9660; Expand ({len(lines)} lines)</a>'
                 )
             html += '</div>'
         else:
             html = (
                 f'<div style="margin: 4px 0; border: 1px solid {border}; border-radius: 4px; '
-                f'background: {bg}; padding: 6px 8px; font-family: monospace; font-size: 12px; '
+                f'background: {bg}; padding: 6px 8px; font-family: monospace; font-size: {FONT_SIZE_SM}px; '
                 f'color: {text_color}; white-space: pre-wrap; max-height: 300px; overflow-y: auto;">'
                 f'{escaped}'
-                f'<br/><a href="{block_id}" style="color: {link_color}; font-size: 11px; '
+                f'<br/><a href="{block_id}" style="color: {link_color}; font-size: {FONT_SIZE_XS}px; '
                 f'text-decoration: none;">&#9650; Collapse</a>'
                 f'</div>'
             )

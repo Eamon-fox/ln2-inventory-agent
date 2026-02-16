@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QFormLayout, QDateEdit, QSpinBox, QDoubleSpinBox, QScrollArea, QTextBrowser
 )
 from app_gui.ui.utils import positions_to_text
-from app_gui.ui.theme import get_theme_color
+from app_gui.ui.theme import get_theme_color, FONT_SIZE_SM, FONT_SIZE_MD, FONT_SIZE_LG
 from app_gui.gui_config import load_gui_config
 from app_gui.i18n import tr
 from app_gui.plan_model import render_operation_sheet
@@ -152,7 +152,7 @@ class OperationsPanel(QWidget):
 
         result_header = QHBoxLayout()
         result_title = QLabel(tr("operations.lastResult"))
-        result_title.setStyleSheet("color: var(--text-weak); font-size: 13px; font-weight: bold; border: none;")
+        result_title.setStyleSheet(f"color: var(--text-weak); font-size: {FONT_SIZE_MD}px; font-weight: bold; border: none;")
         result_header.addWidget(result_title)
         result_header.addStretch()
         self._result_hide_btn = QPushButton(tr("operations.hideResult"))
@@ -505,14 +505,14 @@ class OperationsPanel(QWidget):
         lock_btn = QPushButton("\U0001F512")  # 🔒
         lock_btn.setFixedSize(22, 22)
         lock_btn.setToolTip(tr("operations.edit"))
-        lock_btn.setStyleSheet("QPushButton { border: none; padding: 0; font-size: 12px; }")
+        lock_btn.setStyleSheet(f"QPushButton {{ border: none; padding: 0; font-size: {FONT_SIZE_SM}px; }}")
         row.addWidget(lock_btn)
 
         confirm_btn = QPushButton("\u2713")  # ✓
         confirm_btn.setFixedSize(22, 22)
         confirm_btn.setVisible(False)
         confirm_btn.setStyleSheet(
-            "QPushButton { border: none; padding: 0; font-size: 14px; font-weight: bold; color: var(--status-success); }"
+            f"QPushButton {{ border: none; padding: 0; font-size: {FONT_SIZE_LG}px; font-weight: bold; color: var(--status-success); }}"
         )
         row.addWidget(confirm_btn)
 

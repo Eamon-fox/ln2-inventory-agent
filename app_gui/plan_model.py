@@ -4,6 +4,8 @@ from collections import defaultdict
 from datetime import date
 from typing import Dict, List, Optional
 
+from app_gui.ui.theme import FONT_SIZE_MONO, FONT_SIZE_XS, FONT_SIZE_SM, FONT_SIZE_MD, FONT_SIZE_XXL
+
 _VALID_ACTIONS = {"takeout", "thaw", "discard", "move", "add", "rollback", "edit"}
 _BOX_RANGE = (1, 5)
 
@@ -214,7 +216,7 @@ def render_operation_sheet(items):
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
             margin: 0;
             padding: 20px;
-            font-size: 12px;
+            font-size: {FONT_SIZE_SM}px;
             color: #1f2937;
             background: #fff;
         }}
@@ -227,14 +229,14 @@ def render_operation_sheet(items):
         
         .header h1 {{
             margin: 0 0 5px 0;
-            font-size: 20px;
+            font-size: {FONT_SIZE_XXL}px;
         }}
         
         .header-meta {{
             display: flex;
             gap: 30px;
             color: #6b7280;
-            font-size: 11px;
+            font-size: {FONT_SIZE_XS}px;
         }}
         
         .header-meta span {{
@@ -276,17 +278,17 @@ def render_operation_sheet(items):
             border-radius: 4px;
             color: white;
             font-weight: bold;
-            font-size: 13px;
+            font-size: {FONT_SIZE_MD}px;
         }}
         
         .action-count {{
             color: #6b7280;
-            font-size: 11px;
+            font-size: {FONT_SIZE_XS}px;
         }}
         
         .action-desc {{
             color: #9ca3af;
-            font-size: 10px;
+            font-size: {FONT_SIZE_MONO}px;
             font-style: italic;
         }}
         
@@ -300,7 +302,7 @@ def render_operation_sheet(items):
             background: #f3f4f6;
             padding: 8px;
             text-align: left;
-            font-size: 10px;
+            font-size: {FONT_SIZE_MONO}px;
             text-transform: uppercase;
             color: #6b7280;
             border-bottom: 1px solid #e5e7eb;
@@ -333,14 +335,14 @@ def render_operation_sheet(items):
         .pos-cell {{
             font-family: 'SF Mono', 'Consolas', monospace;
             font-weight: 600;
-            font-size: 13px;
+            font-size: {FONT_SIZE_MD}px;
             color: #1f2937;
         }}
         
         .warning {{
             color: #ef4444;
             font-weight: bold;
-            font-size: 10px;
+            font-size: {FONT_SIZE_MONO}px;
             margin-left: 5px;
         }}
         
@@ -350,14 +352,14 @@ def render_operation_sheet(items):
         }}
         
         .sample-meta {{
-            font-size: 10px;
+            font-size: {FONT_SIZE_MONO}px;
             color: #6b7280;
             margin-top: 2px;
         }}
         
         .note-cell {{
             color: #6b7280;
-            font-size: 11px;
+            font-size: {FONT_SIZE_XS}px;
             max-width: 150px;
         }}
         
@@ -366,7 +368,7 @@ def render_operation_sheet(items):
         }}
         
         .confirm-line {{
-            font-size: 10px;
+            font-size: {FONT_SIZE_MONO}px;
             color: #9ca3af;
             margin: 2px 0;
         }}
@@ -375,7 +377,7 @@ def render_operation_sheet(items):
             margin-top: 30px;
             padding-top: 15px;
             border-top: 1px solid #e5e7eb;
-            font-size: 10px;
+            font-size: {FONT_SIZE_MONO}px;
             color: #9ca3af;
         }}
         
@@ -398,7 +400,7 @@ def render_operation_sheet(items):
             border-radius: 4px;
             padding: 10px;
             margin-bottom: 20px;
-            font-size: 11px;
+            font-size: {FONT_SIZE_XS}px;
         }}
         
         .tips-title {{
