@@ -11,12 +11,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from lib.custom_fields import STRUCTURAL_FIELD_KEYS, coerce_value, parse_custom_fields, get_effective_fields, get_display_key, get_required_field_keys, DEFAULT_PRESET_FIELDS, get_color_key, get_cell_line_options, DEFAULT_CELL_LINE_OPTIONS
+from lib.custom_fields import STRUCTURAL_FIELD_KEYS, coerce_value, parse_custom_fields, get_effective_fields, get_display_key, get_required_field_keys, DEFAULT_PRESET_FIELDS, get_color_key, get_cell_line_options, DEFAULT_CELL_LINE_OPTIONS, is_cell_line_required
 from lib.tool_api import (
     tool_add_entry,
     tool_edit_entry,
     tool_search_records,
 )
+from lib.validators import validate_inventory
 from lib.yaml_ops import load_yaml, write_yaml
 
 
@@ -541,6 +542,64 @@ class TestGetCellLineOptions(unittest.TestCase):
         self.assertEqual(["K562", "HeLa"], result)
 
 
+class TestCellLineRequiredFlag(unittest.TestCase):
+    """Unit tests for is_cell_line_required()."""
+
+    def test_default_is_not_required(self):
+        self.assertFalse(is_cell_line_required(None))
+        self.assertFalse(is_cell_line_required({}))
+
+    def test_meta_flag_controls_required(self):
+        self.assertTrue(is_cell_line_required({"cell_line_required": True}))
+        self.assertFalse(is_cell_line_required({"cell_line_required": False}))
+
+
+class TestCellLineBaselineValidation(unittest.TestCase):
+    """validate_inventory should tolerate historical cell_line dirtiness."""
+
+    def test_non_option_cell_line_is_warning_not_error(self):
+        data = {
+            "meta": {
+                "box_layout": {"rows": 9, "cols": 9},
+                "cell_line_required": True,
+                "cell_line_options": ["K562", "HeLa"],
+            },
+            "inventory": [
+                {
+                    "id": 1,
+                    "cell_line": "U2OS",
+                    "short_name": "legacy",
+                    "box": 1,
+                    "position": 1,
+                    "frozen_at": "2025-01-01",
+                }
+            ],
+        }
+        errors, warnings = validate_inventory(data)
+        self.assertEqual([], errors)
+        self.assertTrue(any("不在预设选项中" in w for w in warnings))
+
+    def test_missing_cell_line_key_is_warning_not_error(self):
+        data = {
+            "meta": {
+                "box_layout": {"rows": 9, "cols": 9},
+                "cell_line_options": ["K562", "HeLa"],
+            },
+            "inventory": [
+                {
+                    "id": 1,
+                    "short_name": "legacy",
+                    "box": 1,
+                    "position": 1,
+                    "frozen_at": "2025-01-01",
+                }
+            ],
+        }
+        errors, warnings = validate_inventory(data)
+        self.assertEqual([], errors)
+        self.assertTrue(any("缺少字段 'cell_line'" in w for w in warnings))
+
+
 # ===========================================================================
 # Unit tests: cell_line in STRUCTURAL_FIELD_KEYS
 # ===========================================================================
@@ -617,6 +676,62 @@ class TestCellLineAddEntry(unittest.TestCase):
             self.assertIn("cell_line", new_rec)
             self.assertEqual("", new_rec["cell_line"])
 
+    def test_required_cell_line_rejects_empty(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_cl_required_empty_") as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                {
+                    "meta": {
+                        "box_layout": {"rows": 9, "cols": 9},
+                        "cell_line_required": True,
+                        "cell_line_options": ["K562", "HeLa"],
+                    },
+                    "inventory": [make_record(1, box=1, position=1)],
+                },
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            result = tool_add_entry(
+                yaml_path=str(yaml_path),
+                box=1,
+                positions=[2],
+                frozen_at="2026-02-10",
+                fields={"short_name": "no-cl"},
+                source="test_cell_line",
+            )
+
+            self.assertFalse(result["ok"])
+            self.assertEqual("missing_required_fields", result.get("error_code"))
+
+    def test_required_cell_line_rejects_value_outside_options(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_cl_required_opts_") as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                {
+                    "meta": {
+                        "box_layout": {"rows": 9, "cols": 9},
+                        "cell_line_required": True,
+                        "cell_line_options": ["K562", "HeLa"],
+                    },
+                    "inventory": [make_record(1, box=1, position=1)],
+                },
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            result = tool_add_entry(
+                yaml_path=str(yaml_path),
+                box=1,
+                positions=[2],
+                frozen_at="2026-02-10",
+                fields={"cell_line": "CustomCell", "short_name": "bad-cl"},
+                source="test_cell_line",
+            )
+
+            self.assertFalse(result["ok"])
+            self.assertEqual("invalid_cell_line", result.get("error_code"))
+
 
 
 # ===========================================================================
@@ -647,6 +762,112 @@ class TestCellLineEdit(unittest.TestCase):
             self.assertTrue(result["ok"])
             data = load_yaml(str(yaml_path))
             self.assertEqual("HeLa", data["inventory"][0]["cell_line"])
+
+    def test_edit_cell_line_rejects_value_outside_options(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_cl_edit_invalid_") as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                {
+                    "meta": {
+                        "box_layout": {"rows": 9, "cols": 9},
+                        "cell_line_required": True,
+                        "cell_line_options": ["K562", "HeLa"],
+                    },
+                    "inventory": [{**make_record(1, box=1, position=1), "cell_line": "K562"}],
+                },
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            result = tool_edit_entry(
+                yaml_path=str(yaml_path),
+                record_id=1,
+                fields={"cell_line": "CustomCell"},
+                source="test_edit_cl",
+            )
+
+            self.assertFalse(result["ok"])
+            self.assertEqual("invalid_cell_line", result.get("error_code"))
+
+    def test_edit_cell_line_allows_empty_when_not_required(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_cl_edit_optional_") as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                {
+                    "meta": {
+                        "box_layout": {"rows": 9, "cols": 9},
+                        "cell_line_required": False,
+                        "cell_line_options": ["K562", "HeLa"],
+                    },
+                    "inventory": [{**make_record(1, box=1, position=1), "cell_line": "K562"}],
+                },
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            result = tool_edit_entry(
+                yaml_path=str(yaml_path),
+                record_id=1,
+                fields={"cell_line": ""},
+                source="test_edit_cl",
+            )
+
+            self.assertTrue(result["ok"])
+            data = load_yaml(str(yaml_path))
+            self.assertEqual("", data["inventory"][0]["cell_line"])
+
+    def test_edit_cell_line_rejects_empty_when_required(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_cl_edit_required_") as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                {
+                    "meta": {
+                        "box_layout": {"rows": 9, "cols": 9},
+                        "cell_line_required": True,
+                        "cell_line_options": ["K562", "HeLa"],
+                    },
+                    "inventory": [{**make_record(1, box=1, position=1), "cell_line": "K562"}],
+                },
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            result = tool_edit_entry(
+                yaml_path=str(yaml_path),
+                record_id=1,
+                fields={"cell_line": ""},
+                source="test_edit_cl",
+            )
+
+            self.assertFalse(result["ok"])
+            self.assertEqual("invalid_cell_line", result.get("error_code"))
+
+    def test_edit_other_field_succeeds_even_with_legacy_invalid_cell_line(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_cl_edit_legacy_") as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                {
+                    "meta": {
+                        "box_layout": {"rows": 9, "cols": 9},
+                        "cell_line_required": True,
+                        "cell_line_options": ["K562", "HeLa"],
+                    },
+                    "inventory": [{**make_record(1, box=1, position=1), "cell_line": "U2OS"}],
+                },
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            result = tool_edit_entry(
+                yaml_path=str(yaml_path),
+                record_id=1,
+                fields={"short_name": "updated"},
+                source="test_edit_cl",
+            )
+
+            self.assertTrue(result["ok"])
+            data = load_yaml(str(yaml_path))
+            self.assertEqual("updated", data["inventory"][0]["short_name"])
 
 
 if __name__ == "__main__":

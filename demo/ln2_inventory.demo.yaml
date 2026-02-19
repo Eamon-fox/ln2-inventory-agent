@@ -14,6 +14,9 @@ meta:
   - HeLa
   - NCCIT
   - HEK293T
+  - HCT116
+  - U2OS
+  cell_line_required: true
 inventory:
 - id: 1
   cell_line: NCCIT
@@ -214,9 +217,9 @@ inventory:
     note: Drag from Overview
   position: 1
 - id: 16
-  cell_line: HEK293T wt
+  cell_line: HEK293T
   parent_cell_line: HEK293T wt
-  short_name: HEK293T wt
+  short_name: HEK293T
   plasmid_name: null
   plasmid_id: null
   box: 1

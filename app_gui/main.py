@@ -44,6 +44,7 @@ from app_gui.ui.theme import (
 from app_gui.ui.overview_panel import OverviewPanel
 from app_gui.ui.operations_panel import OperationsPanel
 from app_gui.ui.ai_panel import AIPanel
+from app_gui.system_notice import build_system_notice
 
 APP_VERSION = "1.0.1"
 APP_RELEASE_URL = "https://github.com/Eamon-fox/snowfox/releases"
@@ -249,7 +250,7 @@ class SettingsDialog(QDialog):
         content_layout.addWidget(ai_group)
 
         from app_gui.i18n import SUPPORTED_LANGUAGES
-        lang_group = QGroupBox(tr("settings.language").rstrip("："))
+        lang_group = QGroupBox()
         lang_layout = QFormLayout(lang_group)
 
         self.lang_combo = _NoWheelComboBox()
@@ -268,7 +269,7 @@ class SettingsDialog(QDialog):
 
         content_layout.addWidget(lang_group)
 
-        theme_group = QGroupBox(tr("settings.theme"))
+        theme_group = QGroupBox()
         theme_layout = QFormLayout(theme_group)
 
         self.theme_combo = _NoWheelComboBox()
@@ -332,6 +333,15 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def _notify_data_changed(self, *, yaml_path=None, meta=None):
+        """Notify parent window after metadata edits (best-effort backward compatible)."""
+        if not callable(self._on_data_changed):
+            return
+        try:
+            self._on_data_changed(yaml_path=yaml_path, meta=meta)
+        except TypeError:
+            self._on_data_changed()
 
     def _browse_yaml(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -423,9 +433,11 @@ class SettingsDialog(QDialog):
         current_dk = meta.get("display_key")
         current_ck = meta.get("color_key")
         current_clo = meta.get("cell_line_options")
+        current_cl_required = bool(meta.get("cell_line_required", True))
 
         dlg = CustomFieldsDialog(self, custom_fields=existing, display_key=current_dk,
-                                 color_key=current_ck, cell_line_options=current_clo)
+                                 color_key=current_ck, cell_line_options=current_clo,
+                                 cell_line_required=current_cl_required)
         if dlg.exec() != QDialog.Accepted:
             return
 
@@ -433,6 +445,7 @@ class SettingsDialog(QDialog):
         new_dk = dlg.get_display_key()
         new_ck = dlg.get_color_key()
         new_clo = dlg.get_cell_line_options()
+        new_cl_required = dlg.get_cell_line_required()
         inventory = data.get("inventory") or []
 
         # --- Step 1: handle renames (old_key -> new_key) ---
@@ -537,11 +550,11 @@ class SettingsDialog(QDialog):
             meta["cell_line_options"] = new_clo
         elif "cell_line_options" in meta:
             del meta["cell_line_options"]
+        meta["cell_line_required"] = bool(new_cl_required)
         data["meta"] = meta
         with open(yaml_path, "w", encoding="utf-8") as f:
             yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
-        if callable(self._on_data_changed):
-            self._on_data_changed()
+        self._notify_data_changed(yaml_path=yaml_path, meta=meta)
 
     def _open_manage_boxes(self):
         if callable(self._on_manage_boxes):
@@ -806,7 +819,15 @@ _FIELD_TYPES = ["str", "int", "float", "date"]
 class CustomFieldsDialog(QDialog):
     """Visual editor for meta.custom_fields."""
 
-    def __init__(self, parent=None, custom_fields=None, display_key=None, color_key=None, cell_line_options=None):
+    def __init__(
+        self,
+        parent=None,
+        custom_fields=None,
+        display_key=None,
+        color_key=None,
+        cell_line_options=None,
+        cell_line_required=True,
+    ):
         super().__init__(parent)
         self.setWindowTitle(tr("main.customFieldsTitle"))
         self.setMinimumWidth(620)
@@ -864,6 +885,7 @@ class CustomFieldsDialog(QDialog):
             ("frozen_at", "Frozen At", "date"),
             ("thaw_events", "Thaw Events", "str"),
         ]
+        self._cell_line_required_cb = None
         for s_key, s_label, s_type in _STRUCTURAL_DISPLAY:
             row_w = QWidget()
             row_l = QHBoxLayout(row_w)
@@ -877,7 +899,14 @@ class CustomFieldsDialog(QDialog):
             row_l.addWidget(t_combo)
             d_edit = QLineEdit(); d_edit.setFixedWidth(100); d_edit.setEnabled(False)
             row_l.addWidget(d_edit)
-            r_cb = QCheckBox(tr("main.cfRequired")); r_cb.setChecked(True); r_cb.setEnabled(False)
+            r_cb = QCheckBox(tr("main.cfRequired"))
+            if s_key == "cell_line":
+                r_cb.setChecked(bool(cell_line_required))
+                r_cb.setEnabled(True)
+                self._cell_line_required_cb = r_cb
+            else:
+                r_cb.setChecked(True)
+                r_cb.setEnabled(False)
             row_l.addWidget(r_cb)
             spacer = QWidget(); spacer.setFixedWidth(60)
             row_l.addWidget(spacer)
@@ -1000,6 +1029,11 @@ class CustomFieldsDialog(QDialog):
         if not text:
             return []
         return [line.strip() for line in text.splitlines() if line.strip()]
+
+    def get_cell_line_required(self):
+        if self._cell_line_required_cb is None:
+            return True
+        return bool(self._cell_line_required_cb.isChecked())
 
     def _add_row(self, key="", label="", ftype="str", default=None, *, required=False, original_key=None):
         from lib.custom_fields import STRUCTURAL_FIELD_KEYS
@@ -1493,7 +1527,7 @@ class MainWindow(QMainWindow):
             },
             on_create_new_dataset=self.on_create_new_dataset,
             on_manage_boxes=self.on_manage_boxes,
-            on_data_changed=lambda: self.overview_panel.refresh(),
+            on_data_changed=self._on_settings_data_changed,
         )
         if dialog.exec() != QDialog.Accepted:
             return
@@ -1535,6 +1569,7 @@ class MainWindow(QMainWindow):
 
         self._update_dataset_label()
         self.overview_panel.refresh()
+        self.operations_panel.apply_meta_update()
         if not os.path.isfile(self.current_yaml_path):
             self.statusBar().showMessage(
                 t("main.fileNotFound", path=self.current_yaml_path),
@@ -1542,6 +1577,20 @@ class MainWindow(QMainWindow):
             )
         self.gui_config["yaml_path"] = self.current_yaml_path
         save_gui_config(self.gui_config)
+
+    def _on_settings_data_changed(self, *, yaml_path=None, meta=None):
+        """Apply settings metadata updates immediately for the active dataset."""
+        target_yaml = _normalize_inventory_yaml_path(yaml_path or self.current_yaml_path)
+        current_yaml = _normalize_inventory_yaml_path(self.current_yaml_path)
+        if target_yaml and current_yaml:
+            try:
+                if os.path.abspath(str(target_yaml)) != os.path.abspath(str(current_yaml)):
+                    return
+            except Exception:
+                return
+
+        self.operations_panel.apply_meta_update(meta if isinstance(meta, dict) else None)
+        self.overview_panel.refresh()
 
     def _ask_restart(self, message):
         box = QMessageBox(self)
@@ -1803,17 +1852,26 @@ class MainWindow(QMainWindow):
         if response.get("ok"):
             self.overview_panel.refresh()
             self.on_operation_completed(True)
-        self.operations_panel.emit_external_operation_event(
-            {
-                "type": "box_layout_adjusted",
-                "source": "ai" if from_ai else "settings",
+        notice_level = "success" if response.get("ok") else "error"
+        notice_text = str(
+            response.get("message")
+            or (tr("main.boxAdjustSuccess") if response.get("ok") else tr("main.boxAdjustFailed"))
+        )
+        notice = build_system_notice(
+            code="box.layout.adjusted",
+            text=notice_text,
+            level=notice_level,
+            source="ai" if from_ai else "settings",
+            timeout_ms=3000,
+            data={
                 "operation": op,
                 "ok": bool(response.get("ok")),
                 "preview": response.get("preview") or response.get("result") or {},
                 "error_code": response.get("error_code"),
-                "message": response.get("message"),
-            }
+            },
         )
+        self.show_status(notice_text, 3000, notice_level)
+        self.operations_panel.emit_external_operation_event(notice)
 
         return response
 
@@ -1848,14 +1906,19 @@ class MainWindow(QMainWindow):
             return
         custom_fields = cf_dlg.get_custom_fields()
         display_key = cf_dlg.get_display_key()
+        cell_line_required = cf_dlg.get_cell_line_required()
+        cell_line_options = cf_dlg.get_cell_line_options()
 
         meta = {
             "version": "1.0",
             "box_layout": box_layout,
             "custom_fields": custom_fields,
+            "cell_line_required": bool(cell_line_required),
         }
         if display_key:
             meta["display_key"] = display_key
+        if cell_line_options:
+            meta["cell_line_options"] = cell_line_options
 
         new_payload = {
             "meta": meta,

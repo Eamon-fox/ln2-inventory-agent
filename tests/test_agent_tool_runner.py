@@ -269,6 +269,25 @@ class AgentToolRunnerTests(unittest.TestCase):
             self.assertEqual("write_requires_execute_mode", response["error_code"])
             self.assertIn("stage", response.get("_hint", "").lower())
 
+    def test_plan_preflight_hint_guides_record_repair_flow(self):
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        payload = {
+            "error_code": "plan_preflight_failed",
+            "message": "写入被阻止：库存完整性校验失败\n- 记录 #16 (id=16): invalid cell_line",
+            "blocked_items": [
+                {
+                    "action": "takeout",
+                    "record_id": 21,
+                    "message": "写入被阻止：库存完整性校验失败\n- 记录 #16 (id=16): invalid cell_line",
+                }
+            ],
+        }
+
+        hint = runner._hint_for_error("record_thaw", payload)
+        self.assertIn("get_raw_entries", hint)
+        self.assertIn("edit_entry", hint)
+        self.assertIn("16", hint)
+
     def test_tool_specs_expose_required_fields(self):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
         specs = runner.tool_specs()

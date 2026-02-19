@@ -13,6 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -319,6 +320,37 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertEqual(0, result.get("result", {}).get("staged_count"))
         self.assertEqual(1, result.get("result", {}).get("blocked_count"))
 
+    def test_stage_to_plan_validates_existing_plus_incoming_as_one_batch(self):
+        """Second staged add must be rejected if it conflicts with existing staged items."""
+        yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=1)])
+        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
+
+        first = runner._stage_to_plan(
+            "add_entry",
+            {
+                "fields": {"short_name": "clone-a"},
+                "box": 1,
+                "positions": [2],
+                "frozen_at": "2026-02-10",
+            },
+        )
+        self.assertTrue(first["ok"])
+        self.assertEqual(1, len(self.plan_store.list_items()))
+
+        second = runner._stage_to_plan(
+            "add_entry",
+            {
+                "fields": {"short_name": "clone-b"},
+                "box": 1,
+                "positions": [2],
+                "frozen_at": "2026-02-10",
+            },
+        )
+
+        self.assertFalse(second["ok"])
+        self.assertEqual("plan_preflight_failed", second["error_code"])
+        self.assertEqual(1, len(self.plan_store.list_items()))
+
     def test_stage_to_plan_rollback_resolves_latest_backup(self):
         yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=5)])
         backup_path = create_yaml_backup(yaml_path)
@@ -333,6 +365,48 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         staged = self.plan_store.list_items()[0]
         self.assertEqual("rollback", staged.get("action"))
         self.assertEqual(str(backup_path), (staged.get("payload") or {}).get("backup_path"))
+
+    def test_stage_to_plan_allows_valid_write_when_baseline_cell_line_is_dirty(self):
+        """Historical cell_line mismatch should not block staging of valid incoming writes."""
+        tmpdir = tempfile.TemporaryDirectory(prefix="tool_runner_stage_badbase_")
+        self.addCleanup(tmpdir.cleanup)
+        yaml_path = Path(tmpdir.name) / "inventory.yaml"
+        bad_data = {
+            "meta": {
+                "box_layout": {"rows": 9, "cols": 9},
+                "cell_line_required": True,
+                "cell_line_options": ["K562", "HeLa"],
+            },
+            "inventory": [
+                {
+                    "id": 1,
+                    "cell_line": "U2OS",
+                    "short_name": "bad",
+                    "box": 1,
+                    "position": 5,
+                    "frozen_at": "2025-01-01",
+                }
+            ],
+        }
+        yaml_path.write_text(
+            yaml.safe_dump(bad_data, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+
+        runner = AgentToolRunner(yaml_path=str(yaml_path), plan_store=self.plan_store)
+        result = runner._stage_to_plan(
+            "add_entry",
+            {
+                "fields": {"short_name": "clone-a", "cell_line": "K562"},
+                "box": 1,
+                "positions": [6],
+                "frozen_at": "2026-02-10",
+            },
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result.get("staged"))
+        self.assertEqual(1, len(self.plan_store.list_items()))
 
 
 class ToolRunnerHintTests(unittest.TestCase):

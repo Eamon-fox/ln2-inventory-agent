@@ -135,6 +135,15 @@ def get_required_field_keys(meta):
     return {f["key"] for f in fields if f.get("required")}
 
 
+def is_cell_line_required(meta):
+    """Check if cell_line is marked as required.
+
+    Backward-compatible default is False when the flag is absent.
+    GUI defaults the checkbox to checked for newly saved configs.
+    """
+    return bool((meta or {}).get("cell_line_required", False))
+
+
 def coerce_value(value, field_type):
     """Coerce a user-input value to the declared type.
 

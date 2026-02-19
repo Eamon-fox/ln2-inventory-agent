@@ -1,11 +1,11 @@
 from datetime import date, datetime
 import os
 from PySide6.QtCore import Qt, Signal, QEvent, QMimeData, QPoint, QRect, QEasingCurve, QPropertyAnimation, QTimer
-from PySide6.QtGui import QDrag, QDropEvent, QDragEnterEvent, QDragMoveEvent
+from PySide6.QtGui import QColor, QDrag, QDropEvent, QDragEnterEvent, QDragMoveEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QPushButton, QLineEdit, QComboBox, QCheckBox, QScrollArea,
-    QSizePolicy, QGroupBox, QMenu, QStackedWidget,
+    QSizePolicy, QGroupBox, QMenu, QStackedWidget, QButtonGroup,
     QTableWidget, QTableWidgetItem, QHeaderView
 )
 from app_gui.ui.utils import cell_color, build_color_palette
@@ -284,15 +284,21 @@ class OverviewPanel(QWidget):
 
         # View mode toggle buttons (segmented control style)
         view_toggle_container = QWidget()
+        view_toggle_container.setObjectName("overviewViewToggle")
+        view_toggle_container.setAttribute(Qt.WA_StyledBackground, True)
         view_toggle_layout = QHBoxLayout(view_toggle_container)
         view_toggle_layout.setContentsMargins(0, 0, 0, 0)
         view_toggle_layout.setSpacing(0)
+
+        self._view_mode_group = QButtonGroup(self)
+        self._view_mode_group.setExclusive(True)
 
         self.ov_view_grid_btn = QPushButton(tr("overview.viewGrid"))
         self.ov_view_grid_btn.setCheckable(True)
         self.ov_view_grid_btn.setChecked(True)
         self.ov_view_grid_btn.setProperty("segmented", "left")
         self.ov_view_grid_btn.setFocusPolicy(Qt.NoFocus)
+        self._view_mode_group.addButton(self.ov_view_grid_btn)
         self.ov_view_grid_btn.clicked.connect(lambda: self._on_view_mode_changed("grid"))
         view_toggle_layout.addWidget(self.ov_view_grid_btn)
 
@@ -300,6 +306,7 @@ class OverviewPanel(QWidget):
         self.ov_view_table_btn.setCheckable(True)
         self.ov_view_table_btn.setProperty("segmented", "right")
         self.ov_view_table_btn.setFocusPolicy(Qt.NoFocus)
+        self._view_mode_group.addButton(self.ov_view_table_btn)
         self.ov_view_table_btn.clicked.connect(lambda: self._on_view_mode_changed("table"))
         view_toggle_layout.addWidget(self.ov_view_table_btn)
 
@@ -519,9 +526,15 @@ class OverviewPanel(QWidget):
         for row_index, row_data in enumerate(rows):
             self.ov_table.insertRow(row_index)
             values = row_data.get("values") or {}
+            color_value = str(row_data.get("color_value") or "")
+            row_bg = QColor(cell_color(color_value or None))
+            row_fg = QColor("#ffffff")
             for col_index, column in enumerate(self._table_columns):
                 value = values.get(column, "")
-                self.ov_table.setItem(row_index, col_index, QTableWidgetItem(str(value)))
+                item = QTableWidgetItem(str(value))
+                item.setBackground(row_bg)
+                item.setForeground(row_fg)
+                self.ov_table.setItem(row_index, col_index, item)
             self._table_row_records.append(row_data.get("record"))
 
     def on_table_row_double_clicked(self, row, _col):

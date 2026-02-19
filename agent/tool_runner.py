@@ -1,6 +1,7 @@
 """Tool dispatcher for agent runtime, built on unified Tool API."""
 
 import os
+import re
 import threading
 import uuid
 
@@ -23,9 +24,9 @@ from lib.tool_api import (
     tool_rollback,
     tool_search_records,
 )
-from app_gui.plan_gate import validate_plan_batch
+from app_gui.plan_gate import validate_stage_request
 from lib.plan_item_factory import build_add_plan_item, build_edit_plan_item, build_record_plan_item, build_rollback_plan_item
-from lib.validators import parse_positions, validate_plan_item_with_history
+from lib.validators import parse_positions
 from lib.yaml_ops import load_yaml
 
 _WRITE_TOOLS = {"add_entry", "record_thaw", "batch_thaw", "rollback", "edit_entry"}
@@ -99,6 +100,37 @@ class AgentToolRunner:
         if text in {"0", "false", "no", "n", "off", ""}:
             return False
         return bool(default)
+
+    @staticmethod
+    def _iter_text_chunks(value):
+        """Yield nested text fragments from mixed dict/list payloads."""
+        if value is None:
+            return
+        if isinstance(value, str):
+            yield value
+            return
+        if isinstance(value, dict):
+            for nested in value.values():
+                yield from AgentToolRunner._iter_text_chunks(nested)
+            return
+        if isinstance(value, (list, tuple, set)):
+            for nested in value:
+                yield from AgentToolRunner._iter_text_chunks(nested)
+            return
+        yield str(value)
+
+    @staticmethod
+    def _extract_record_ids_from_payload(*values):
+        """Extract candidate record IDs from error payload text."""
+        ids = set()
+        for value in values:
+            for text in AgentToolRunner._iter_text_chunks(value):
+                for raw in re.findall(r"id\s*=\s*(\d+)", text, flags=re.IGNORECASE):
+                    try:
+                        ids.add(int(raw))
+                    except Exception:
+                        pass
+        return sorted(ids)
 
     @staticmethod
     def _normalize_positions(value):
@@ -260,7 +292,7 @@ class AgentToolRunner:
                 "required": ["record_id", "fields"],
                 "optional": [],
                 "description": "Edit metadata fields of an existing record. "
-                               "Allowed fields: frozen_at plus any user-defined fields from meta.custom_fields. "
+                               "Allowed fields: `cell_line`, `frozen_at`, plus any user-defined fields from meta.custom_fields. "
                                "Structural fields (id, box, positions) cannot be changed.",
                 "params": {
                     "record_id": {
@@ -546,6 +578,19 @@ class AgentToolRunner:
             )
 
         if error_code == "plan_preflight_failed":
+            record_ids = self._extract_record_ids_from_payload(
+                payload.get("message"),
+                payload.get("blocked_items"),
+                payload.get("errors"),
+                payload.get("repair_candidates"),
+            )
+            if record_ids:
+                ids_text = ", ".join(str(i) for i in record_ids[:12])
+                return (
+                    "Preflight failed due to baseline integrity issues. "
+                    f"Fetch affected records with `get_raw_entries` ids=[{ids_text}], then repair invalid fields via `edit_entry` "
+                    "(for example, normalize `cell_line` to configured options), and retry staging."
+                )
             return (
                 "One or more write operations are invalid against current inventory state. "
                 "Review blocked details, then retry only corrected operations."
@@ -942,47 +987,9 @@ class AgentToolRunner:
                 )
             )
 
-        # Validate each item against existing plan items (shared with operations_panel)
-        existing_items = self._plan_store.list_items() if self._plan_store else []
-        validated_items = []
-        blocked_items = []
-
-        for item in items:
-            is_valid, error_msg = validate_plan_item_with_history(item, existing_items)
-            if is_valid:
-                validated_items.append(item)
-                # Add to existing for subsequent validations
-                existing_items.append(item)
-            else:
-                # Add blocking info to the item
-                item_with_error = dict(item)
-                item_with_error["_validation_error"] = error_msg
-                blocked_items.append(item_with_error)
-
-        if blocked_items:
-            detail_lines = []
-            for blocked in blocked_items[:3]:
-                desc = self._item_desc(blocked)
-                error = blocked.get("_validation_error", "Unknown error")
-                detail_lines.append(f"{desc}: {error}")
-            detail = "; ".join(detail_lines)
-            if len(blocked_items) > 3:
-                detail += f"; ... and {len(blocked_items) - 3} more"
-
-            return self._with_hint(
-                tool_name,
-                {
-                    "ok": False,
-                    "error_code": "plan_validation_failed",
-                    "message": f"All operations rejected by validation: {detail}",
-                    "staged": False,
-                    "result": {"staged_count": 0, "blocked_count": len(blocked_items)},
-                    "blocked_items": blocked_items,
-                },
-            )
-
-        gate = validate_plan_batch(
-            items=validated_items,
+        gate = validate_stage_request(
+            existing_items=self._plan_store.list_items() if self._plan_store else [],
+            incoming_items=items,
             yaml_path=self._yaml_path,
             bridge=None,
             run_preflight=True,
@@ -992,15 +999,24 @@ class AgentToolRunner:
             gate_blocked = list(gate.get("blocked_items") or [])
             has_preflight = any(err.get("kind") == "preflight" for err in gate_errors)
             error_code = "plan_preflight_failed" if has_preflight else "plan_validation_failed"
+            repair_ids = self._extract_record_ids_from_payload(gate_errors, gate_blocked)
 
             detail_lines = []
             for blocked in gate_blocked[:3]:
                 desc = self._item_desc(blocked)
                 error = blocked.get("message") or blocked.get("error_code") or "Unknown error"
+                if isinstance(error, str):
+                    error = error.splitlines()[0].strip()
                 detail_lines.append(f"{desc}: {error}")
             detail = "; ".join(detail_lines)
             if len(gate_blocked) > 3:
                 detail += f"; ... and {len(gate_blocked) - 3} more"
+
+            result_payload = {
+                "staged_count": 0,
+                "blocked_count": len(gate_blocked),
+                "repair_candidates": {"record_ids": repair_ids} if repair_ids else {},
+            }
 
             return self._with_hint(
                 tool_name,
@@ -1009,12 +1025,24 @@ class AgentToolRunner:
                     "error_code": error_code,
                     "message": f"All operations rejected by validation: {detail}",
                     "staged": False,
-                    "result": {"staged_count": 0, "blocked_count": len(gate_blocked)},
+                    "result": result_payload,
                     "blocked_items": gate_blocked,
+                    "repair_candidates": {"record_ids": repair_ids} if repair_ids else {},
                 },
             )
 
-        staged = list(validated_items)
+        staged = list(gate.get("accepted_items") or [])
+        if not self._plan_store:
+            return self._with_hint(
+                tool_name,
+                {
+                    "ok": False,
+                    "error_code": "no_plan_store",
+                    "message": "Plan store not available.",
+                    "staged": False,
+                    "result": {"staged_count": 0, "blocked_count": 0},
+                },
+            )
         self._plan_store.add(staged)
 
         summary = [self._item_desc(s) for s in staged]

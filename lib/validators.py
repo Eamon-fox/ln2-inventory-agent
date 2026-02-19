@@ -229,7 +229,7 @@ def validate_record(rec, idx=None, layout=None, meta=None):
     Returns:
         tuple[list[str], list[str]]: (errors, warnings)
     """
-    from .custom_fields import get_required_field_keys
+    from .custom_fields import get_required_field_keys, get_cell_line_options, is_cell_line_required
 
     errors = []
     warnings = []
@@ -261,6 +261,34 @@ def validate_record(rec, idx=None, layout=None, meta=None):
         value = rec.get(field)
         if isinstance(value, str) and not value.strip():
             errors.append(f"{rec_id}: '{field}' 必须是非空字符串")
+
+    # Relaxed baseline validation for cell_line:
+    # - Do not block historical inventory due to non-option / empty values.
+    # - Enforce strict options only during write tools (add/edit).
+    if isinstance(meta, dict):
+        cell_line_options = get_cell_line_options(meta)
+        cell_line_required = is_cell_line_required(meta)
+        has_cell_line_key = "cell_line" in rec
+
+        if not has_cell_line_key:
+            warnings.append(f"{rec_id}: 缺少字段 'cell_line'（历史数据兼容：仅警告）")
+        else:
+            raw_cell_line = rec.get("cell_line")
+            if raw_cell_line is None:
+                cell_line = ""
+            elif isinstance(raw_cell_line, str):
+                cell_line = raw_cell_line.strip()
+            else:
+                cell_line = str(raw_cell_line).strip()
+                warnings.append(f"{rec_id}: 'cell_line' 不是字符串（历史数据兼容：仅警告）")
+
+            if cell_line_required and not cell_line:
+                warnings.append(f"{rec_id}: 'cell_line' 为空（required=true，历史数据兼容：仅警告）")
+            elif cell_line and cell_line_options and cell_line not in cell_line_options:
+                opts_str = ", ".join(cell_line_options[:5])
+                if len(cell_line_options) > 5:
+                    opts_str += f" 等共{len(cell_line_options)}个"
+                warnings.append(f"{rec_id}: 'cell_line' 不在预设选项中 ({opts_str})（历史数据兼容：仅警告）")
 
     # Validate position (single integer, optional for consumed records)
     position = rec.get("position")

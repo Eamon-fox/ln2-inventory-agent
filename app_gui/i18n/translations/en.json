@@ -304,6 +304,8 @@
     "boxSourceText": "Box {box}:{position}",
     "colSource": "Source",
     "colAction": "Action",
+    "colPosition": "Target",
+    "colChanges": "Changes",
     "colBox": "Box",
     "colPos": "Pos",
     "colToPos": "→Pos",

@@ -49,7 +49,8 @@ def validate_plan_item(item: dict) -> Optional[str]:
                 return "to_box must be a positive integer"
 
     if action == "add":
-        # No hardcoded required fields; required checks happen at execution time via meta
+        # Keep this as lightweight schema validation.
+        # Full write validation is handled by the shared staging gate.
         pass
     elif action == "edit":
         rid = item.get("record_id")

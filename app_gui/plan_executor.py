@@ -74,7 +74,22 @@ def preflight_plan(
 
     with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False, mode="w", encoding="utf-8") as tmp:
         tmp_path = tmp.name
+
+    try:
         write_yaml(data, tmp_path, auto_backup=False, audit_meta={"action": "preflight", "source": "plan_executor"})
+    except Exception as exc:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+        reports = [_make_error_item(it, "preflight_snapshot_invalid", str(exc)) for it in items]
+        return {
+            "ok": False,
+            "blocked": True,
+            "items": reports,
+            "stats": {"total": len(items), "ok": 0, "blocked": len(reports)},
+            "summary": f"Preflight blocked before simulation: {exc}",
+        }
 
     try:
         result = run_plan(
@@ -164,7 +179,7 @@ def run_plan(
         source_event = payload.get("source_event")
 
         if mode == "preflight":
-            response = _run_dry_tool(
+            response = _run_preflight_tool(
                 bridge=bridge,
                 yaml_path=yaml_path,
                 tool_name="tool_rollback",
@@ -239,7 +254,7 @@ def run_plan(
     for item in edits:
         payload = dict(item.get("payload") or {})
         if mode == "preflight":
-            response = _run_dry_tool(
+            response = _run_preflight_tool(
                 bridge=bridge,
                 yaml_path=yaml_path,
                 tool_name="tool_edit_entry",
@@ -320,13 +335,17 @@ def run_plan(
     }
 
 
-def _run_dry_tool(
+def _run_preflight_tool(
     bridge: object,
     yaml_path: str,
     tool_name: str,
     **payload: object,
 ) -> Dict[str, object]:
-    """Invoke a lib.tool_api tool in dry-run mode with shared metadata."""
+    """Invoke lib.tool_api in preflight using full execute-mode validation.
+
+    Preflight always runs against a temporary YAML copy, so execute-mode writes are
+    safe and let us reuse the same validation path as real execution.
+    """
     try:
         from lib import tool_api
     except ImportError:
@@ -341,18 +360,18 @@ def _run_dry_tool(
 
     return tool_fn(
         yaml_path=yaml_path,
-        dry_run=True,
-        execution_mode="preflight",
+        dry_run=False,
+        execution_mode="execute",
         actor_context=actor_context,
-        source="plan_executor",
+        source="plan_executor.preflight",
         auto_backup=False,
         **payload,
     )
 
 
 def _preflight_add_entry(bridge: object, yaml_path: str, payload: Dict[str, object]) -> Dict[str, object]:
-    """Validate add_entry without writing (using dry_run semantics)."""
-    return _run_dry_tool(
+    """Validate add_entry with the same path as execute mode."""
+    return _run_preflight_tool(
         bridge=bridge,
         yaml_path=yaml_path,
         tool_name="tool_add_entry",
@@ -364,8 +383,8 @@ def _preflight_add_entry(bridge: object, yaml_path: str, payload: Dict[str, obje
 
 
 def _preflight_batch_thaw(bridge: object, yaml_path: str, payload: Dict[str, object]) -> Dict[str, object]:
-    """Validate batch_thaw without writing (using dry_run semantics)."""
-    return _run_dry_tool(
+    """Validate batch_thaw with the same path as execute mode."""
+    return _run_preflight_tool(
         bridge=bridge,
         yaml_path=yaml_path,
         tool_name="tool_batch_thaw",
@@ -451,7 +470,7 @@ def _execute_thaw_batch(
                 "action": action_name,
                 "note": p.get("note"),
             }
-            response = _run_dry_tool(
+            response = _run_preflight_tool(
                 bridge=bridge,
                 yaml_path=yaml_path,
                 tool_name="tool_record_thaw",

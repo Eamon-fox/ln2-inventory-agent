@@ -68,8 +68,26 @@ def validate_plan_batch(
     if run_preflight and valid_items and yaml_path and os.path.isfile(yaml_path):
         try:
             preflight_report = preflight_plan(yaml_path, valid_items, bridge)
-        except Exception:
-            preflight_report = None
+        except Exception as exc:
+            preflight_errors.append(
+                {
+                    "kind": "preflight",
+                    "item": valid_items[0],
+                    "error_code": "plan_preflight_failed",
+                    "message": f"Preflight exception: {exc}",
+                }
+            )
+            preflight_report = {
+                "ok": False,
+                "blocked": True,
+                "items": [],
+                "stats": {
+                    "total": len(valid_items),
+                    "ok": 0,
+                    "blocked": len(valid_items),
+                },
+                "summary": f"Preflight exception: {exc}",
+            }
         if isinstance(preflight_report, dict):
             for report_item in preflight_report.get("items", []):
                 if report_item.get("blocked"):
@@ -105,5 +123,69 @@ def validate_plan_batch(
             "valid": len(valid_items),
             "accepted": len(accepted_items),
             "blocked": len(blocked_items),
+        },
+    }
+
+
+def validate_stage_request(
+    *,
+    existing_items: List[Dict[str, Any]],
+    incoming_items: List[Dict[str, Any]],
+    yaml_path: Optional[str],
+    bridge: Any = None,
+    run_preflight: bool = True,
+) -> Dict[str, Any]:
+    """Validate a staging request as one atomic batch.
+
+    The validation target is always ``existing_items + incoming_items`` so GUI and
+    agent staging share the same full validation outcome.
+    """
+    existing = list(existing_items or [])
+    incoming = list(incoming_items or [])
+    combined = existing + incoming
+
+    gate = validate_plan_batch(
+        items=combined,
+        yaml_path=yaml_path,
+        bridge=bridge,
+        run_preflight=run_preflight,
+    )
+
+    if gate.get("blocked"):
+        incoming_ids = {id(item) for item in incoming}
+        incoming_errors = [
+            err
+            for err in (gate.get("errors") or [])
+            if isinstance(err.get("item"), dict) and id(err.get("item")) in incoming_ids
+        ]
+        relevant_errors = incoming_errors or list(gate.get("errors") or [])
+        blocked_items = [_blocked_item_payload(err) for err in relevant_errors]
+        return {
+            "ok": False,
+            "blocked": True,
+            "errors": relevant_errors,
+            "blocked_items": blocked_items,
+            "accepted_items": [],
+            "preflight_report": gate.get("preflight_report"),
+            "stats": {
+                "existing": len(existing),
+                "incoming": len(incoming),
+                "total": len(combined),
+                "blocked": len(blocked_items),
+            },
+        }
+
+    return {
+        "ok": True,
+        "blocked": False,
+        "errors": [],
+        "blocked_items": [],
+        "accepted_items": incoming,
+        "preflight_report": gate.get("preflight_report"),
+        "stats": {
+            "existing": len(existing),
+            "incoming": len(incoming),
+            "total": len(combined),
+            "blocked": 0,
         },
     }

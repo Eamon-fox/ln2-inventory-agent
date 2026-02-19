@@ -305,6 +305,7 @@
     "colSource": "来源",
     "colAction": "操作",
     "colPosition": "位置",
+    "colChanges": "变更",
     "colBox": "盒子",
     "colPos": "位置",
     "colToPos": "→位置",

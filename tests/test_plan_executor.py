@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -125,7 +126,7 @@ def make_edit_item(record_id=1, box=1, position=1, fields=None, **extra):
         "source": "human",
         "payload": {
             "record_id": record_id,
-            "fields": fields or {"cell_line": "UPDATED"},
+            "fields": fields or {"cell_line": "K562"},
         },
     }
     base.update(extra)
@@ -199,6 +200,41 @@ class PreflightPlanTests(unittest.TestCase):
 
             # Original file should not be modified by preflight
             self.assertEqual(original_mtime, os.path.getmtime(str(yaml_path)))
+
+    def test_preflight_allows_baseline_invalid_cell_line_when_incoming_is_valid(self):
+        """Historical cell_line mismatches should not block preflight staging."""
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            bad_data = {
+                "meta": {
+                    "box_layout": {"rows": 9, "cols": 9},
+                    "cell_line_required": True,
+                    "cell_line_options": ["K562", "HeLa"],
+                },
+                "inventory": [
+                    {
+                        "id": 1,
+                        "cell_line": "U2OS",
+                        "short_name": "bad",
+                        "box": 1,
+                        "position": 5,
+                        "frozen_at": "2025-01-01",
+                    }
+                ],
+            }
+            yaml_path.write_text(
+                yaml.safe_dump(bad_data, allow_unicode=True, sort_keys=False),
+                encoding="utf-8",
+            )
+
+            bridge = MagicMock()
+            add_item = make_add_item(box=1, position=6)
+            add_item["payload"]["fields"]["cell_line"] = "K562"
+            result = preflight_plan(str(yaml_path), [add_item], bridge=bridge)
+
+            self.assertTrue(result["ok"])
+            self.assertFalse(result["blocked"])
+            self.assertEqual(1, result["stats"]["ok"])
 
     def test_preflight_rollback_valid_succeeds(self):
         with tempfile.TemporaryDirectory() as td:

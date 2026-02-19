@@ -156,7 +156,7 @@ class PlanTableColumnsTests(unittest.TestCase):
         return panel
 
     def test_plan_table_has_fixed_columns(self):
-        """Plan table should include action, position, frozen_date, cell_line, date columns."""
+        """Plan table should use unified fixed columns for mixed operations."""
         panel = self._new_operations_panel()
         panel.update_records_cache({
             1: {"id": 1, "cell_line": "K562", "box": 1, "position": 5, "frozen_at": "2025-01-01"},
@@ -178,12 +178,13 @@ class PlanTableColumnsTests(unittest.TestCase):
 
         self.assertIn(tr("operations.colAction"), headers)
         self.assertIn(tr("operations.colPosition"), headers)
-        self.assertIn(tr("operations.frozenDate"), headers)
-        self.assertIn(tr("operations.cellLine"), headers)
         self.assertIn(tr("operations.date"), headers)
+        self.assertIn(tr("operations.colChanges"), headers)
+        self.assertIn(tr("operations.colNote"), headers)
+        self.assertIn(tr("operations.colStatus"), headers)
 
-    def test_plan_table_shows_frozen_date_and_cell_line(self):
-        """Plan table should display frozen_date and cell_line from record."""
+    def test_plan_table_shows_changes_summary_for_thaw_item(self):
+        """Plan table should summarize record metadata in Changes column."""
         panel = self._new_operations_panel()
         panel.update_records_cache({
             2: {"id": 2, "cell_line": "HeLa", "box": 2, "position": 10, "frozen_at": "2024-12-25"},
@@ -197,15 +198,52 @@ class PlanTableColumnsTests(unittest.TestCase):
             "payload": {"date_str": "2025-02-19", "action": "Takeout"},
         }])
 
-        # Find frozen_date and cell_line column indices
+        # Find date and changes column indices
         headers = [panel.plan_table.horizontalHeaderItem(i).text()
                    for i in range(panel.plan_table.columnCount())]
-        frozen_col = headers.index(tr("operations.frozenDate"))
-        cell_line_col = headers.index(tr("operations.cellLine"))
+        date_col = headers.index(tr("operations.date"))
+        changes_col = headers.index(tr("operations.colChanges"))
 
-        # Check values
-        self.assertEqual("2024-12-25", panel.plan_table.item(0, frozen_col).text())
-        self.assertEqual("HeLa", panel.plan_table.item(0, cell_line_col).text())
+        self.assertEqual("2025-02-19", panel.plan_table.item(0, date_col).text())
+        self.assertIn("HeLa", panel.plan_table.item(0, changes_col).text())
+
+    def test_plan_table_shows_edit_field_diff(self):
+        """Edit rows should display changed fields in Changes column."""
+        panel = self._new_operations_panel()
+        panel.update_records_cache(
+            {
+                7: {
+                    "id": 7,
+                    "cell_line": "K562",
+                    "short_name": "old-name",
+                    "box": 1,
+                    "position": 9,
+                    "frozen_at": "2025-01-01",
+                }
+            }
+        )
+
+        panel.add_plan_items(
+            [
+                {
+                    "action": "edit",
+                    "record_id": 7,
+                    "box": 1,
+                    "position": 9,
+                    "payload": {"record_id": 7, "fields": {"short_name": "new-name", "cell_line": "HeLa"}},
+                }
+            ]
+        )
+
+        headers = [
+            panel.plan_table.horizontalHeaderItem(i).text()
+            for i in range(panel.plan_table.columnCount())
+        ]
+        changes_col = headers.index(tr("operations.colChanges"))
+        cell_text = panel.plan_table.item(0, changes_col).text()
+        self.assertIn("Short Name", cell_text)
+        self.assertIn("new-name", cell_text)
+        self.assertIn("HeLa", cell_text)
 
 
 if __name__ == "__main__":

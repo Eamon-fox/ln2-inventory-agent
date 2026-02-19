@@ -13,8 +13,8 @@ from app_gui.ui.workers import AgentRunWorker
 from app_gui.ui.utils import compact_json
 from app_gui.ui.theme import FONT_SIZE_XS, FONT_SIZE_SM
 from app_gui.event_compactor import compact_operation_event_for_context
+from app_gui.system_notice import build_system_notice, coerce_system_notice
 from app_gui.i18n import tr
-from app_gui.plan_outcome import collect_blocked_items, summarize_plan_execution
 from lib.config import AUDIT_LOG_FILE
 import os
 import json
@@ -1038,180 +1038,32 @@ class AIPanel(QWidget):
         if len(self.ai_history) > 20:
             self.ai_history = self.ai_history[-20:]
 
-    def on_operation_event(self, event):
-        """Receive operation events from operations panel and display them."""
-        event_type = event.get("type", "unknown")
-        timestamp = event.get("timestamp", datetime.now().isoformat())
+    def _render_system_notice(self, notice):
+        """Render one normalized notice to chat with expandable raw payload."""
+        summary_text = str(notice.get("text") or notice.get("code") or "System notice")
+        details_json = json.dumps(notice, ensure_ascii=False, indent=2)
+        self._append_chat_with_collapsible("System", summary_text, details_json)
 
-        self.ai_operation_events.append(event)
+    def on_operation_event(self, event):
+        """Receive operation events and normalize them to one notice shape."""
+        raw_event = event if isinstance(event, dict) else {"message": str(event)}
+        notice = coerce_system_notice(raw_event)
+        if notice is None:
+            notice = build_system_notice(
+                code="event.raw",
+                text=str(raw_event.get("message") or "System event"),
+                level="info",
+                source=str(raw_event.get("source") or "operations"),
+                data={"legacy_event": raw_event},
+            )
+            if raw_event.get("timestamp"):
+                notice["timestamp"] = raw_event.get("timestamp")
+
+        self.ai_operation_events.append(notice)
         if len(self.ai_operation_events) > 20:
             self.ai_operation_events = self.ai_operation_events[-20:]
 
-        details_json = json.dumps(event, ensure_ascii=False, indent=2)
-
-        if event_type == "plan_execute_blocked":
-            report = event.get("report", {})
-            blocked_items = collect_blocked_items(report)
-            blocked_count = event.get("blocked_count", len(blocked_items))
-            summary_lines = [f"**Plan blocked**: {blocked_count} item(s) have validation errors"]
-            for item in blocked_items[:3]:
-                rec = item.get("item", {})
-                err = item.get("message", "Unknown error")
-                summary_lines.append(f"- ID {rec.get('record_id', '?')}: {err}")
-            if len(blocked_items) > 3:
-                summary_lines.append(f"- ... and {len(blocked_items) - 3} more")
-            summary_text = "\n".join(summary_lines)
-            self._append_chat_with_collapsible("System", summary_text, details_json)
-
-        elif event_type == "plan_executed":
-            event_stats = event.get("stats") if isinstance(event.get("stats"), dict) else {}
-            report = event.get("report")
-            if not isinstance(report, dict):
-                report = {"stats": event_stats, "items": []}
-            elif not isinstance(report.get("stats"), dict):
-                report = dict(report)
-                report["stats"] = event_stats
-            rollback = event.get("rollback")
-            execution_stats = summarize_plan_execution(report, rollback)
-            total_count = execution_stats.get("total_count", 0)
-            applied_count = execution_stats.get("applied_count", event_stats.get("applied", 0))
-            summary_lines = []
-
-            if execution_stats.get("fail_count", 0) <= 0 and event.get("ok", False):
-                summary_text = f"**Plan executed succeeded**: {applied_count}/{total_count} operations applied"
-            else:
-                blocked_count = execution_stats.get("blocked_count", event_stats.get("blocked", 0))
-                if execution_stats.get("rollback_ok"):
-                    summary_lines = [f"**Plan rejected atomically**: 0/{total_count} operations applied"]
-                else:
-                    summary_lines = [f"**Plan executed had issues**: {applied_count}/{total_count} operations applied"]
-                if blocked_count:
-                    summary_lines.append(f"- Blocked: {blocked_count} item(s)")
-                blocked_items = collect_blocked_items(report)
-                for item in blocked_items[:3]:
-                    rec = item.get("item", {})
-                    err = item.get("message", "Unknown error")
-                    summary_lines.append(f"- ID {rec.get('record_id', '?')}: {err}")
-                if len(blocked_items) > 3:
-                    summary_lines.append(f"- ... and {len(blocked_items) - 3} more")
-                if execution_stats.get("rollback_ok"):
-                    summary_lines.append("- Rollback applied: partial changes reverted")
-                elif execution_stats.get("rollback_attempted"):
-                    summary_lines.append(
-                        f"- Rollback failed: {execution_stats.get('rollback_message') or 'unknown error'}"
-                    )
-                elif execution_stats.get("rollback_message"):
-                    summary_lines.append(
-                        f"- Rollback unavailable: {execution_stats.get('rollback_message')}"
-                    )
-                summary_text = "\n".join(summary_lines)
-            self._append_chat_with_collapsible("System", summary_text, details_json)
-
-        elif event_type == "box_layout_adjusted":
-            operation = str(event.get("operation") or "adjust")
-            preview = event.get("preview") if isinstance(event.get("preview"), dict) else {}
-            before_count = preview.get("box_count_before")
-            after_count = preview.get("box_count_after")
-            if operation == "add":
-                added = preview.get("added_boxes") or []
-                summary_text = (
-                    f"**Boxes updated**: added {len(added)} box(es)"
-                    f" (count {before_count} -> {after_count})"
-                )
-            elif operation == "remove":
-                removed = preview.get("removed_box")
-                mode = preview.get("renumber_mode")
-                summary_text = (
-                    f"**Boxes updated**: removed box {removed}"
-                    f" (count {before_count} -> {after_count}, mode={mode})"
-                )
-            else:
-                summary_text = "**Boxes updated**"
-            self._append_chat_with_collapsible("System", summary_text, details_json)
-
-        elif event_type == "plan_cleared":
-            cleared_count = event.get("cleared_count", 0)
-            action_counts = event.get("action_counts") if isinstance(event.get("action_counts"), dict) else {}
-            parts = []
-            for k, v in sorted(action_counts.items(), key=lambda kv: str(kv[0])):
-                try:
-                    parts.append(f"{k}={int(v)}")
-                except Exception:
-                    parts.append(f"{k}={v}")
-            breakdown = f" ({', '.join(parts)})" if parts else ""
-            summary_text = f"**Plan cleared**: {cleared_count} item(s) removed{breakdown}"
-            self._append_chat_with_collapsible("System", summary_text, details_json)
-
-        elif event_type == "plan_staged":
-            # Get operation items from event
-            items = event.get("items", [])
-
-            if not items:
-                # Fallback if items not provided
-                action_counts = event.get("action_counts") if isinstance(event.get("action_counts"), dict) else {}
-                parts = [f"{k}={v}" for k, v in sorted(action_counts.items(), key=lambda kv: str(kv[0]))]
-                summary_text = f"**Plan staged**: {', '.join(parts) if parts else 'operation added'}"
-                self._append_chat_message("System", summary_text)
-                return
-
-            # Format each operation
-            op_lines = []
-            for item in items:
-                action = item.get("action", "?").title()
-                box = item.get("box", "?")
-                pos = item.get("position", "?")
-
-                if action.lower() == "move":
-                    to_pos = item.get("to_position", "?")
-                    to_box = item.get("to_box")
-                    if to_box and to_box != box:
-                        op_lines.append(f"**{action}**: Box{box}:{pos} → Box{to_box}:{to_pos}")
-                    else:
-                        op_lines.append(f"**{action}**: Box{box}:{pos} → {to_pos}")
-                elif action.lower() == "add":
-                    payload = item.get("payload", {})
-                    positions = payload.get("positions", [])
-                    if len(positions) == 1:
-                        op_lines.append(f"**{action}**: Box{box}:{positions[0]}")
-                    elif len(positions) <= 3:
-                        pos_str = ", ".join(str(p) for p in positions)
-                        op_lines.append(f"**{action}**: Box{box}: {pos_str}")
-                    else:
-                        pos_str = ", ".join(str(p) for p in positions[:3])
-                        op_lines.append(f"**{action}**: Box{box}: {pos_str}, ... (+{len(positions)-3})")
-                else:
-                    # takeout, thaw, discard
-                    op_lines.append(f"**{action}**: Box{box}:{pos}")
-
-            summary_text = "\n".join(op_lines)
-            self._append_chat_message("System", summary_text)
-
-        elif event_type == "plan_removed":
-            removed_count = event.get("removed_count", 0)
-            total_count = event.get("total_count", 0)
-            action_counts = event.get("action_counts") if isinstance(event.get("action_counts"), dict) else {}
-            parts = []
-            for k, v in sorted(action_counts.items(), key=lambda kv: str(kv[0])):
-                try:
-                    parts.append(f"{k}={int(v)}")
-                except Exception:
-                    parts.append(f"{k}={v}")
-            breakdown = f" ({', '.join(parts)})" if parts else ""
-            summary_text = f"**Plan updated**: {removed_count} item(s) removed{breakdown}, {total_count} remaining"
-            self._append_chat_with_collapsible("System", summary_text, details_json)
-
-        elif event_type == "plan_restored":
-            restored_count = event.get("restored_count", 0)
-            action_counts = event.get("action_counts") if isinstance(event.get("action_counts"), dict) else {}
-            parts = []
-            for k, v in sorted(action_counts.items(), key=lambda kv: str(kv[0])):
-                try:
-                    parts.append(f"{k}={int(v)}")
-                except Exception:
-                    parts.append(f"{k}={v}")
-            breakdown = f" ({', '.join(parts)})" if parts else ""
-            summary_text = f"**Plan restored**: {restored_count} item(s) restored via undo{breakdown}"
-            self._append_chat_with_collapsible("System", summary_text, details_json)
+        self._render_system_notice(notice)
 
     def _format_event_details(self, details_json):
         """Format event JSON as human-readable text."""
@@ -1224,7 +1076,7 @@ class AIPanel(QWidget):
         if not isinstance(event, dict):
             return str(event)
 
-        event_type = event.get("type", "unknown")
+        event_type = str(event.get("type", "unknown"))
         lines = []
 
         # Translate event type
@@ -1237,6 +1089,25 @@ class AIPanel(QWidget):
         ts = event.get("timestamp")
         if ts:
             lines.append(f"{tr('eventDetails.time')}: {ts}")
+
+        if event_type == "system_notice":
+            lines.append(f"Code: {event.get('code', 'notice')}")
+            lines.append(f"Level: {event.get('level', 'info')}")
+            lines.append(f"Text: {event.get('text', '')}")
+
+            details = event.get("details")
+            if details:
+                lines.append("\nDetails:")
+                lines.append(str(details))
+
+            data = event.get("data")
+            if isinstance(data, dict) and data:
+                lines.append("\nData:")
+                try:
+                    lines.append(json.dumps(data, ensure_ascii=False, indent=2))
+                except Exception:
+                    lines.append(str(data))
+            return "\n".join(lines)
 
         # Type-specific formatting
         if event_type == "plan_staged":

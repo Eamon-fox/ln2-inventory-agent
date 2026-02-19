@@ -8,7 +8,13 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 from .csv_export import export_inventory_to_csv
-from .custom_fields import STRUCTURAL_FIELD_KEYS, get_effective_fields, get_required_field_keys
+from .custom_fields import (
+    STRUCTURAL_FIELD_KEYS,
+    get_cell_line_options,
+    get_effective_fields,
+    get_required_field_keys,
+    is_cell_line_required,
+)
 from .position_fmt import get_box_numbers, get_position_range, get_total_slots
 from .operations import check_position_conflicts, find_record_by_id, get_next_id
 from .thaw_parser import ACTION_LABEL, canonicalize_non_move_action, extract_events, normalize_action
@@ -663,6 +669,11 @@ def tool_add_entry(
     meta = data.get("meta", {})
     required_keys = get_required_field_keys(meta)
     missing = [k for k in sorted(required_keys) if not fields.get(k)]
+
+    cell_line_text = str(fields.get("cell_line") or "").strip()
+    if is_cell_line_required(meta) and not cell_line_text:
+        missing.append("cell_line")
+
     if missing:
         return _failure_result(
             yaml_path=yaml_path,
@@ -676,6 +687,36 @@ def tool_add_entry(
             before_data=data,
             details={"missing": missing},
         )
+
+    if cell_line_text:
+        cell_line_options = get_cell_line_options(meta)
+        if not cell_line_options:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=action,
+                source=source,
+                tool_name=tool_name,
+                error_code="invalid_cell_line_options",
+                message="cell_line 需要预设选项，但 meta.cell_line_options 为空",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+            )
+        if cell_line_text not in cell_line_options:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=action,
+                source=source,
+                tool_name=tool_name,
+                error_code="invalid_cell_line",
+                message="cell_line 必须来自预设下拉选项",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"cell_line": cell_line_text, "options": cell_line_options},
+            )
+
+        fields["cell_line"] = cell_line_text
 
     # Tube-level model: one record == one physical tube.
     # Add multiple tubes by creating multiple records, one per position.
@@ -901,6 +942,55 @@ def tool_edit_entry(
             message=f"无法读取YAML文件: {exc}",
             actor_context=actor_context, tool_input=tool_input,
         )
+
+    meta = data.get("meta", {})
+    if "cell_line" in fields:
+        raw_cell_line = fields.get("cell_line")
+        cell_line_text = str(raw_cell_line or "").strip()
+
+        if is_cell_line_required(meta) and not cell_line_text:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=action,
+                source=source,
+                tool_name=tool_name,
+                error_code="invalid_cell_line",
+                message="cell_line 为必填，不能为空",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+            )
+
+        if cell_line_text:
+            cell_line_options = get_cell_line_options(meta)
+            if not cell_line_options:
+                return _failure_result(
+                    yaml_path=yaml_path,
+                    action=action,
+                    source=source,
+                    tool_name=tool_name,
+                    error_code="invalid_cell_line_options",
+                    message="cell_line 需要预设选项，但 meta.cell_line_options 为空",
+                    actor_context=actor_context,
+                    tool_input=tool_input,
+                    before_data=data,
+                )
+            if cell_line_text not in cell_line_options:
+                return _failure_result(
+                    yaml_path=yaml_path,
+                    action=action,
+                    source=source,
+                    tool_name=tool_name,
+                    error_code="invalid_cell_line",
+                    message="cell_line 必须来自预设下拉选项",
+                    actor_context=actor_context,
+                    tool_input=tool_input,
+                    before_data=data,
+                    details={"cell_line": cell_line_text, "options": cell_line_options},
+                )
+
+        fields = dict(fields)
+        fields["cell_line"] = cell_line_text
 
     _idx, record = find_record_by_id(data.get("inventory", []), record_id)
     if record is None:

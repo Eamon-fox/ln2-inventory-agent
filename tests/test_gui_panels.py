@@ -17,6 +17,7 @@ try:
     from app_gui.ui.ai_panel import AIPanel
     from app_gui.ui.overview_panel import OverviewPanel
     from app_gui.ui.operations_panel import OperationsPanel, _localized_action
+    from app_gui.ui.utils import cell_color
     from app_gui.i18n import tr
 
     PYSIDE_AVAILABLE = True
@@ -27,6 +28,7 @@ except Exception:
     AIPanel = None
     OverviewPanel = None
     OperationsPanel = None
+    cell_color = None
     tr = None
     PYSIDE_AVAILABLE = False
 
@@ -1840,8 +1842,12 @@ class RollbackConfirmationDialogTests(unittest.TestCase):
                 panel.add_plan_items([rollback_item])
 
             self.assertEqual(1, panel.plan_table.rowCount())
-            # New layout: column 0 = action, column 1 = position, then note (no custom fields = index 2)
-            note_item = panel.plan_table.item(0, 2)
+            headers = [
+                panel.plan_table.horizontalHeaderItem(i).text()
+                for i in range(panel.plan_table.columnCount())
+            ]
+            note_col = headers.index(_fake_tr("operations.colNote"))
+            note_item = panel.plan_table.item(0, note_col)
 
             self.assertIsNotNone(note_item)
             # Note contains rollback info with trace_id
@@ -2231,7 +2237,7 @@ class ExecuteInterceptTests(unittest.TestCase):
             self._cleanup_yaml(tmpdir)
 
     def test_execute_blocked_emits_operation_event(self):
-        """No operation_event is emitted when there is no staged plan."""
+        """Execute with empty plan emits a normalized system notice."""
         records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "position": 5, "frozen_at": "2025-01-01"}]
         yaml_path, tmpdir = self._seed_yaml(records)
 
@@ -2247,7 +2253,32 @@ class ExecuteInterceptTests(unittest.TestCase):
 
             panel.execute_plan()
 
-            self.assertEqual(0, len(events))
+            self.assertEqual(1, len(events))
+            self.assertEqual("system_notice", events[0].get("type"))
+            self.assertEqual("plan.execute.empty", events[0].get("code"))
+        finally:
+            self._cleanup_yaml(tmpdir)
+
+    def test_stage_blocked_emits_system_notice_event(self):
+        """Staging rejection should emit a system notice with blocked details."""
+        records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "position": 5, "frozen_at": "2025-01-01"}]
+        yaml_path, tmpdir = self._seed_yaml(records)
+
+        try:
+            bridge = _FakeOperationsBridge()
+            panel = OperationsPanel(bridge=bridge, yaml_path_getter=lambda: yaml_path)
+
+            events = []
+            panel.operation_event.connect(lambda ev: events.append(ev))
+
+            # record_id=999 does not exist; staging must be blocked.
+            panel.add_plan_items([_make_takeout_item(record_id=999, position=5)])
+
+            self.assertTrue(events)
+            latest = events[-1]
+            self.assertEqual("system_notice", latest.get("type"))
+            self.assertEqual("plan.stage.blocked", latest.get("code"))
+            self.assertTrue((latest.get("data") or {}).get("blocked_items"))
         finally:
             self._cleanup_yaml(tmpdir)
 
@@ -2265,7 +2296,7 @@ class OperationEventFeedTests(unittest.TestCase):
         return AIPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
 
     def test_ai_panel_receives_operation_events(self):
-        """AI panel should store and display operation events."""
+        """AI panel should normalize operation events to system notices."""
         panel = self._new_ai_panel()
 
         panel.on_operation_event({
@@ -2277,10 +2308,10 @@ class OperationEventFeedTests(unittest.TestCase):
         })
 
         self.assertEqual(1, len(panel.ai_operation_events))
+        self.assertEqual("system_notice", panel.ai_operation_events[0].get("type"))
         chat_text = panel.ai_chat.toPlainText().lower()
         self.assertIn("succeeded", chat_text)
-        # Event details are rendered in the chat area (no separate ai_report widget)
-        self.assertIn("plan executed", chat_text)
+        self.assertIn("plan.execute.result", chat_text)
 
     def test_ai_panel_limits_operation_events(self):
         """AI panel should limit stored operation events to prevent memory growth."""
@@ -2312,7 +2343,7 @@ class OperationEventFeedTests(unittest.TestCase):
         self.assertIn("2", chat_text)
 
     def test_ai_panel_shows_plan_executed_failure_details(self):
-        """Failed plan_executed event should surface blocked details and rollback."""
+        """Failed plan_executed event should surface summary and raw details."""
         panel = self._new_ai_panel()
 
         panel.on_operation_event({
@@ -2334,9 +2365,11 @@ class OperationEventFeedTests(unittest.TestCase):
         })
 
         chat_text = panel.ai_chat.toPlainText().lower()
-        self.assertIn("rejected atomically", chat_text)
-        self.assertIn("record 2 failed", chat_text)
-        self.assertIn("rollback", chat_text)
+        self.assertIn("blocked: 1/3", chat_text)
+        self.assertTrue(panel.ai_collapsible_blocks)
+        details_text = str(panel.ai_collapsible_blocks[-1].get("content", "")).lower()
+        self.assertIn("record 2 failed", details_text)
+        self.assertIn("rollback", details_text)
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
@@ -2492,6 +2525,27 @@ class CellLineDropdownTests(unittest.TestCase):
         # 1 empty + len(defaults)
         self.assertEqual(1 + len(DEFAULT_CELL_LINE_OPTIONS), panel.a_cell_line.count())
 
+    def test_apply_meta_update_switches_required_mode_immediately(self):
+        """Changing cell_line_required should update add-form combo immediately."""
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+
+        panel.apply_meta_update({
+            "cell_line_required": True,
+            "cell_line_options": ["K562", "HeLa"],
+            "custom_fields": [],
+        })
+        self.assertEqual(2, panel.a_cell_line.count())
+        self.assertEqual("K562", panel.a_cell_line.itemText(0))
+
+        panel.apply_meta_update({
+            "cell_line_required": False,
+            "cell_line_options": ["K562", "HeLa"],
+            "custom_fields": [],
+        })
+        self.assertEqual(3, panel.a_cell_line.count())
+        self.assertEqual("", panel.a_cell_line.itemText(0))
+        self.assertEqual("K562", panel.a_cell_line.itemText(1))
+
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 not available")
 class OverviewColorKeyFilterTests(unittest.TestCase):
@@ -2616,9 +2670,20 @@ class OverviewTableViewTests(unittest.TestCase):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
     def _switch_to_table(self, panel):
-        idx = panel.ov_view_mode.findData("table")
-        self.assertGreaterEqual(idx, 0)
-        panel.ov_view_mode.setCurrentIndex(idx)
+        if hasattr(panel, "ov_view_mode"):
+            idx = panel.ov_view_mode.findData("table")
+            self.assertGreaterEqual(idx, 0)
+            panel.ov_view_mode.setCurrentIndex(idx)
+        else:
+            panel._on_view_mode_changed("table")
+
+    def _switch_to_grid(self, panel):
+        if hasattr(panel, "ov_view_mode"):
+            idx = panel.ov_view_mode.findData("grid")
+            self.assertGreaterEqual(idx, 0)
+            panel.ov_view_mode.setCurrentIndex(idx)
+        else:
+            panel._on_view_mode_changed("grid")
 
     def test_table_view_uses_export_columns(self):
         records = [
@@ -2699,6 +2764,37 @@ class OverviewTableViewTests(unittest.TestCase):
         finally:
             self._cleanup(tmpdir)
 
+    def test_table_view_row_color_matches_grid_palette(self):
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "clone-A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+            {"id": 2, "cell_line": "HeLa", "short_name": "clone-B", "box": 2, "position": 2, "frozen_at": "2025-01-01"},
+        ]
+        meta_extra = {"color_key": "cell_line", "cell_line_options": ["K562", "HeLa"]}
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra=meta_extra)
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            headers = [panel.ov_table.horizontalHeaderItem(i).text() for i in range(panel.ov_table.columnCount())]
+            id_col = headers.index("id")
+
+            row_bg_by_id = {}
+            for row in range(panel.ov_table.rowCount()):
+                rid = panel.ov_table.item(row, id_col).text()
+                first_color = panel.ov_table.item(row, 0).background().color().name().lower()
+                for col in range(panel.ov_table.columnCount()):
+                    item_color = panel.ov_table.item(row, col).background().color().name().lower()
+                    self.assertEqual(first_color, item_color)
+                row_bg_by_id[rid] = first_color
+
+            self.assertEqual(cell_color("K562").lower(), row_bg_by_id.get("1"))
+            self.assertEqual(cell_color("HeLa").lower(), row_bg_by_id.get("2"))
+        finally:
+            self._cleanup(tmpdir)
+
     def test_table_mode_disables_show_empty_toggle(self):
         records = [
             {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
@@ -2714,9 +2810,7 @@ class OverviewTableViewTests(unittest.TestCase):
             self._switch_to_table(panel)
             self.assertFalse(panel.ov_filter_show_empty.isEnabled())
 
-            grid_idx = panel.ov_view_mode.findData("grid")
-            self.assertGreaterEqual(grid_idx, 0)
-            panel.ov_view_mode.setCurrentIndex(grid_idx)
+            self._switch_to_grid(panel)
             self.assertTrue(panel.ov_filter_show_empty.isEnabled())
         finally:
             self._cleanup(tmpdir)
