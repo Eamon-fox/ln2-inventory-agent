@@ -283,11 +283,18 @@ class OverviewPanel(QWidget):
         action_row.addWidget(refresh_btn)
 
         action_row.addWidget(QLabel(tr("overview.view")))
-        self.ov_view_mode = QComboBox()
-        self.ov_view_mode.addItem(tr("overview.viewGrid"), "grid")
-        self.ov_view_mode.addItem(tr("overview.viewTable"), "table")
-        self.ov_view_mode.currentIndexChanged.connect(self._on_view_mode_changed)
-        action_row.addWidget(self.ov_view_mode)
+
+        # View mode toggle buttons (flat layout)
+        self.ov_view_grid_btn = QPushButton(tr("overview.viewGrid"))
+        self.ov_view_grid_btn.setCheckable(True)
+        self.ov_view_grid_btn.setChecked(True)
+        self.ov_view_grid_btn.clicked.connect(lambda: self._on_view_mode_changed("grid"))
+        action_row.addWidget(self.ov_view_grid_btn)
+
+        self.ov_view_table_btn = QPushButton(tr("overview.viewTable"))
+        self.ov_view_table_btn.setCheckable(True)
+        self.ov_view_table_btn.clicked.connect(lambda: self._on_view_mode_changed("table"))
+        action_row.addWidget(self.ov_view_table_btn)
 
         action_row.addStretch()
         layout.addLayout(action_row)
@@ -423,10 +430,13 @@ class OverviewPanel(QWidget):
         layout.addWidget(card)
         return value_label
 
-    def _on_view_mode_changed(self):
-        mode = self.ov_view_mode.currentData()
+    def _on_view_mode_changed(self, mode):
         if mode not in {"grid", "table"}:
             mode = "grid"
+
+        # Update button states
+        self.ov_view_grid_btn.setChecked(mode == "grid")
+        self.ov_view_table_btn.setChecked(mode == "table")
 
         self._overview_view_mode = mode
         self.ov_view_stack.setCurrentIndex(0 if mode == "grid" else 1)
