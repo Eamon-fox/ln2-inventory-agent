@@ -1188,6 +1188,10 @@ class MainWindow(QMainWindow):
         settings_btn.clicked.connect(self.on_open_settings)
         top.addWidget(settings_btn)
 
+        audit_log_btn = QPushButton(tr("main.auditLog"))
+        audit_log_btn.clicked.connect(self.on_open_audit_log)
+        top.addWidget(audit_log_btn)
+
         root.addLayout(top)
 
         # Panels
@@ -1553,6 +1557,17 @@ class MainWindow(QMainWindow):
         save_gui_config(self.gui_config)
         QApplication.quit()
         os.execv(sys.executable, [sys.executable] + sys.argv)
+
+    def on_open_audit_log(self):
+        """Open audit log dialog."""
+        from app_gui.ui.audit_dialog import AuditLogDialog
+
+        dialog = AuditLogDialog(
+            self,
+            yaml_path_getter=lambda: self.current_yaml_path,
+            bridge=self.tool_bridge
+        )
+        dialog.exec()  # Modal dialog
 
     def on_manage_boxes(self, yaml_path_override=None):
         request = self._prompt_manage_boxes_request(yaml_path_override=yaml_path_override)

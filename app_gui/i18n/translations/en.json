@@ -43,6 +43,7 @@
   },
   "main": {
     "settings": "Settings",
+    "auditLog": "Audit Log",
     "fileNotFound": "File not found: {path}",
     "new": "New Inventory",
     "fileCreated": "Created new dataset: {path}",

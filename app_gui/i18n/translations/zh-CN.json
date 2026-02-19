@@ -43,6 +43,7 @@
   },
   "main": {
     "settings": "设置",
+    "auditLog": "审计日志",
     "fileNotFound": "文件未找到：{path}",
     "new": "新建库存",
     "fileCreated": "已新建数据集：{path}",
