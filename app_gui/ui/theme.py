@@ -250,10 +250,10 @@ def _apply_theme(app, mode):
             QPushButton[variant="ghost"]:hover {{ background-color: var(--background-raised); }}
             QPushButton[variant="ghost"]:focus {{ border: var(--border-medium) solid var(--accent); outline: none; }}
             QCheckBox {{ color: var(--text-strong); spacing: var(--space-2); font-size: {FONT_SIZE_MD}px; }}
-            QCheckBox::indicator {{ width: 16px; height: 16px; border-radius: 3px; border: var(--border-thin) solid var(--border-subtle); background-color: var(--background-raised); }}
+            QCheckBox::indicator {{ width: 18px; height: 18px; border-radius: 3px; border: var(--border-thin) solid var(--border-subtle); background-color: var(--background-raised); }}
             QCheckBox::indicator:hover {{ border-color: var(--accent); }}
             QCheckBox::indicator:focus {{ border: var(--border-medium) solid var(--accent); }}
-            QCheckBox::indicator:checked {{ background-color: var(--accent); border-color: var(--accent); }}
+            QCheckBox::indicator:checked {{ background-color: var(--accent); border-color: var(--accent); image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iMTIiIHZpZXdCb3g9IjAgMCAxMiAxMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJNMTAgM0w0LjUgOC41TDIgNiIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz48L3N2Zz4=); }}
             QCheckBox::indicator:checked:hover {{ background-color: var(--accent-hover); }}
             QRadioButton {{ color: var(--text-strong); spacing: var(--space-2); font-size: {FONT_SIZE_MD}px; }}
             QRadioButton::indicator {{ width: 16px; height: 16px; border-radius: 8px; border: var(--border-thin) solid var(--border-subtle); background-color: var(--background-raised); }}
