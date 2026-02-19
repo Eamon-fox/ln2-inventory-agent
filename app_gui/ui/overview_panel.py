@@ -284,17 +284,28 @@ class OverviewPanel(QWidget):
 
         action_row.addWidget(QLabel(tr("overview.view")))
 
-        # View mode toggle buttons (flat layout)
+        # View mode toggle buttons (segmented control style)
+        view_toggle_container = QWidget()
+        view_toggle_layout = QHBoxLayout(view_toggle_container)
+        view_toggle_layout.setContentsMargins(0, 0, 0, 0)
+        view_toggle_layout.setSpacing(0)
+
         self.ov_view_grid_btn = QPushButton(tr("overview.viewGrid"))
         self.ov_view_grid_btn.setCheckable(True)
         self.ov_view_grid_btn.setChecked(True)
+        self.ov_view_grid_btn.setProperty("segmented", "left")
+        self.ov_view_grid_btn.setFocusPolicy(Qt.NoFocus)
         self.ov_view_grid_btn.clicked.connect(lambda: self._on_view_mode_changed("grid"))
-        action_row.addWidget(self.ov_view_grid_btn)
+        view_toggle_layout.addWidget(self.ov_view_grid_btn)
 
         self.ov_view_table_btn = QPushButton(tr("overview.viewTable"))
         self.ov_view_table_btn.setCheckable(True)
+        self.ov_view_table_btn.setProperty("segmented", "right")
+        self.ov_view_table_btn.setFocusPolicy(Qt.NoFocus)
         self.ov_view_table_btn.clicked.connect(lambda: self._on_view_mode_changed("table"))
-        action_row.addWidget(self.ov_view_table_btn)
+        view_toggle_layout.addWidget(self.ov_view_table_btn)
+
+        action_row.addWidget(view_toggle_container)
 
         action_row.addStretch()
         layout.addLayout(action_row)

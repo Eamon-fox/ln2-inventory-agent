@@ -249,12 +249,18 @@ def _apply_theme(app, mode):
             QPushButton[variant="ghost"] {{ background-color: transparent; border-color: transparent; color: var(--text-strong); }}
             QPushButton[variant="ghost"]:hover {{ background-color: var(--background-raised); }}
             QPushButton[variant="ghost"]:focus {{ border: var(--border-medium) solid var(--accent); outline: none; }}
+            QPushButton[segmented="left"] {{ background-color: transparent; border: var(--border-thin) solid var(--border-subtle); border-radius: var(--radius-sm) 0 0 var(--radius-sm); color: var(--text-weak); padding: var(--space-2) var(--space-4); }}
+            QPushButton[segmented="left"]:checked {{ background-color: var(--accent); color: #ffffff; border-color: var(--accent); }}
+            QPushButton[segmented="left"]:hover:!checked {{ background-color: var(--background-raised); color: var(--text-strong); }}
+            QPushButton[segmented="right"] {{ background-color: transparent; border: var(--border-thin) solid var(--border-subtle); border-left: none; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; color: var(--text-weak); padding: var(--space-2) var(--space-4); }}
+            QPushButton[segmented="right"]:checked {{ background-color: var(--accent); color: #ffffff; border-color: var(--accent); border-left: var(--border-thin) solid var(--accent); }}
+            QPushButton[segmented="right"]:hover:!checked {{ background-color: var(--background-raised); color: var(--text-strong); }}
             QCheckBox {{ color: var(--text-strong); spacing: var(--space-2); font-size: {FONT_SIZE_MD}px; }}
-            QCheckBox::indicator {{ width: 18px; height: 18px; border-radius: 3px; border: var(--border-thin) solid var(--border-subtle); background-color: var(--background-raised); }}
-            QCheckBox::indicator:hover {{ border-color: var(--accent); }}
+            QCheckBox::indicator {{ width: 18px; height: 18px; border-radius: 3px; border: var(--border-medium) solid var(--border-subtle); background-color: var(--background-raised); }}
+            QCheckBox::indicator:hover {{ border-color: var(--accent); background-color: var(--background-raised); }}
             QCheckBox::indicator:focus {{ border: var(--border-medium) solid var(--accent); }}
-            QCheckBox::indicator:checked {{ background-color: var(--accent); border-color: var(--accent); image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iMTIiIHZpZXdCb3g9IjAgMCAxMiAxMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJNMTAgM0w0LjUgOC41TDIgNiIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz48L3N2Zz4=); }}
-            QCheckBox::indicator:checked:hover {{ background-color: var(--accent-hover); }}
+            QCheckBox::indicator:checked {{ background-color: var(--accent); border: var(--border-medium) solid var(--accent); }}
+            QCheckBox::indicator:checked:hover {{ background-color: var(--accent-hover); border: var(--border-medium) solid var(--accent-hover); }}
             QRadioButton {{ color: var(--text-strong); spacing: var(--space-2); font-size: {FONT_SIZE_MD}px; }}
             QRadioButton::indicator {{ width: 16px; height: 16px; border-radius: 8px; border: var(--border-thin) solid var(--border-subtle); background-color: var(--background-raised); }}
             QRadioButton::indicator:hover {{ border-color: var(--accent); }}
@@ -397,12 +403,18 @@ def _apply_theme(app, mode):
             QPushButton[variant="ghost"] {{ background-color: transparent; border-color: transparent; color: var(--text-strong); }}
             QPushButton[variant="ghost"]:hover {{ background-color: var(--background-raised); }}
             QPushButton[variant="ghost"]:focus {{ border: var(--border-medium) solid var(--accent); outline: none; }}
+            QPushButton[segmented="left"] {{ background-color: transparent; border: var(--border-thin) solid var(--border-subtle); border-radius: var(--radius-sm) 0 0 var(--radius-sm); color: var(--text-weak); padding: var(--space-2) var(--space-4); }}
+            QPushButton[segmented="left"]:checked {{ background-color: var(--accent); color: #000000; border-color: var(--accent); }}
+            QPushButton[segmented="left"]:hover:!checked {{ background-color: var(--background-raised); color: var(--text-strong); }}
+            QPushButton[segmented="right"] {{ background-color: transparent; border: var(--border-thin) solid var(--border-subtle); border-left: none; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; color: var(--text-weak); padding: var(--space-2) var(--space-4); }}
+            QPushButton[segmented="right"]:checked {{ background-color: var(--accent); color: #000000; border-color: var(--accent); border-left: var(--border-thin) solid var(--accent); }}
+            QPushButton[segmented="right"]:hover:!checked {{ background-color: var(--background-raised); color: var(--text-strong); }}
             QCheckBox {{ color: var(--text-strong); spacing: var(--space-2); font-size: {FONT_SIZE_MD}px; }}
-            QCheckBox::indicator {{ width: 16px; height: 16px; border-radius: 3px; border: var(--border-thin) solid var(--border-subtle); background-color: var(--background-inset); }}
-            QCheckBox::indicator:hover {{ border-color: var(--accent); }}
+            QCheckBox::indicator {{ width: 18px; height: 18px; border-radius: 3px; border: var(--border-medium) solid var(--border-subtle); background-color: var(--background-inset); }}
+            QCheckBox::indicator:hover {{ border-color: var(--accent); background-color: var(--background-inset); }}
             QCheckBox::indicator:focus {{ border: var(--border-medium) solid var(--accent); }}
-            QCheckBox::indicator:checked {{ background-color: var(--accent); border-color: var(--accent); }}
-            QCheckBox::indicator:checked:hover {{ background-color: var(--accent-hover); }}
+            QCheckBox::indicator:checked {{ background-color: var(--accent); border: var(--border-medium) solid var(--accent); }}
+            QCheckBox::indicator:checked:hover {{ background-color: var(--accent-hover); border: var(--border-medium) solid var(--accent-hover); }}
             QRadioButton {{ color: var(--text-strong); spacing: var(--space-2); font-size: {FONT_SIZE_MD}px; }}
             QRadioButton::indicator {{ width: 16px; height: 16px; border-radius: 8px; border: var(--border-thin) solid var(--border-subtle); background-color: var(--background-inset); }}
             QRadioButton::indicator:hover {{ border-color: var(--accent); }}
