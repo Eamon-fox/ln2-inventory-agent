@@ -229,20 +229,20 @@ def _apply_theme(app, mode):
                 --cell-empty-selected-text: #34506d;
             }}
             QToolTip {{ color: #1e1e1e; background-color: #ffffff; border: 1px solid rgba(0,0,0,0.1); border-radius: 4px; padding: 4px 8px; font-size: {FONT_SIZE_SM}px; }}
-            QGroupBox {{ border: 1px solid var(--border-weak); border-radius: var(--radius-md); margin-top: 12px; font-weight: 500; color: var(--text-weak); padding-top: 8px; }}
+            QGroupBox {{ border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-lg); margin-top: var(--space-3); font-weight: {FONT_WEIGHT_MEDIUM}; color: var(--text-weak); padding-top: var(--space-2); }}
             QGroupBox::title {{ subcontrol-origin: margin; subcontrol-position: top left; padding: 0 8px; left: 8px; color: var(--text-weak); font-size: {FONT_SIZE_MD}px; }}
-            QTableWidget {{ gridline-color: rgba(0,0,0,0.06); background-color: var(--background-inset); selection-background-color: var(--accent-muted); border: 1px solid var(--border-weak); border-radius: var(--radius-sm); }}
+            QTableWidget {{ gridline-color: rgba(0,0,0,0.06); background-color: var(--background-inset); selection-background-color: var(--accent-muted); border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-md); }}
             QTableWidget::item {{ padding: 4px 8px; border: none; }}
             QTableWidget::item:selected {{ background-color: var(--accent-muted); color: var(--text-strong); }}
             QHeaderView::section {{ background-color: var(--background-strong); color: var(--text-weak); padding: 6px 8px; border: none; border-bottom: 1px solid var(--border-weak); border-right: 1px solid var(--border-weak); font-weight: 500; font-size: {FONT_SIZE_SM}px; }}
-            QLineEdit, QDateEdit, QComboBox, QTextEdit {{ background-color: var(--background-inset); border: 1px solid var(--border-weak); border-radius: var(--radius-sm); color: var(--text-strong); padding: 6px 10px; selection-background-color: var(--accent-muted); font-size: {FONT_SIZE_MD}px; }}
-            QLineEdit:focus, QDateEdit:focus, QComboBox:focus, QTextEdit:focus {{ border: 1px solid var(--accent); background-color: var(--background-raised); }}
-            QLineEdit:disabled, QDateEdit:disabled, QComboBox:disabled, QTextEdit:disabled {{ background-color: var(--background-strong); color: var(--text-muted); border-color: transparent; }}
-            QPushButton {{ background-color: var(--background-raised); border: 1px solid var(--border-weak); border-radius: var(--radius-sm); color: var(--text-strong); padding: 4px 12px; font-weight: 500; font-size: {FONT_SIZE_MD}px; }}
+            QLineEdit, QDateEdit, QComboBox, QTextEdit {{ background-color: var(--background-inset); border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-md); color: var(--text-strong); padding: var(--space-2) var(--space-3); selection-background-color: var(--accent-muted); font-size: {FONT_SIZE_MD}px; transition: all {ANIMATION_DURATION_NORMAL}ms {ANIMATION_EASING}; }}
+            QLineEdit:focus, QDateEdit:focus, QComboBox:focus, QTextEdit:focus {{ border: var(--border-medium) solid var(--accent); background-color: var(--background-raised); }}
+            QLineEdit:disabled, QDateEdit:disabled, QComboBox:disabled, QTextEdit:disabled {{ background-color: var(--background-strong); color: var(--text-muted); border-color: transparent; opacity: 0.6; }}
+            QPushButton {{ background-color: var(--background-raised); border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-md); color: var(--text-strong); padding: var(--space-2) var(--space-3); font-weight: {FONT_WEIGHT_MEDIUM}; font-size: {FONT_SIZE_MD}px; transition: all {ANIMATION_DURATION_NORMAL}ms {ANIMATION_EASING}; }}
             QPushButton:hover {{ background-color: #f2f6fb; border-color: var(--border-subtle); }}
             QPushButton:pressed {{ background-color: #e6eef7; }}
-            QPushButton:disabled {{ background-color: var(--background-strong); color: var(--text-muted); border-color: transparent; }}
-            QPushButton[variant="primary"] {{ background-color: var(--accent); color: #ffffff; border-color: var(--accent); font-weight: 500; }}
+            QPushButton:disabled {{ background-color: var(--background-strong); color: var(--text-muted); border-color: transparent; opacity: 0.6; }}
+            QPushButton[variant="primary"] {{ background-color: var(--accent); color: #ffffff; border-color: var(--accent); font-weight: {FONT_WEIGHT_MEDIUM}; }}
             QPushButton[variant="primary"]:hover {{ background-color: var(--accent-hover); border-color: var(--accent-hover); }}
             QPushButton[variant="ghost"] {{ background-color: transparent; border-color: transparent; color: var(--text-strong); }}
             QPushButton[variant="ghost"]:hover {{ background-color: var(--background-raised); }}
@@ -372,20 +372,20 @@ def _apply_theme(app, mode):
                 --cell-empty-selected-text: #c6dbf3;
             }}
             QToolTip {{ color: #1a1a1a; background-color: #e8e8e8; border: 1px solid rgba(0,0,0,0.1); border-radius: 4px; padding: 4px 8px; font-size: {FONT_SIZE_SM}px; }}
-            QGroupBox {{ border: 1px solid var(--border-weak); border-radius: var(--radius-md); margin-top: 12px; font-weight: 500; color: var(--text-weak); padding-top: 8px; }}
+            QGroupBox {{ border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-lg); margin-top: var(--space-3); font-weight: {FONT_WEIGHT_MEDIUM}; color: var(--text-weak); padding-top: var(--space-2); }}
             QGroupBox::title {{ subcontrol-origin: margin; subcontrol-position: top left; padding: 0 8px; left: 8px; color: var(--text-weak); font-size: {FONT_SIZE_MD}px; }}
-            QTableWidget {{ gridline-color: rgba(255,255,255,0.06); background-color: var(--background-inset); selection-background-color: var(--accent-muted); border: 1px solid var(--border-weak); border-radius: var(--radius-sm); }}
+            QTableWidget {{ gridline-color: rgba(255,255,255,0.06); background-color: var(--background-inset); selection-background-color: var(--accent-muted); border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-md); }}
             QTableWidget::item {{ padding: 4px 8px; border: none; }}
             QTableWidget::item:selected {{ background-color: var(--accent-muted); color: var(--text-strong); }}
             QHeaderView::section {{ background-color: var(--background-strong); color: var(--text-weak); padding: 6px 8px; border: none; border-bottom: 1px solid var(--border-weak); border-right: 1px solid var(--border-weak); font-weight: 500; font-size: {FONT_SIZE_SM}px; }}
-            QLineEdit, QDateEdit, QComboBox, QTextEdit {{ background-color: var(--background-inset); border: 1px solid var(--border-weak); border-radius: var(--radius-sm); color: var(--text-strong); padding: 6px 10px; selection-background-color: var(--accent-muted); font-size: {FONT_SIZE_MD}px; }}
+            QLineEdit, QDateEdit, QComboBox, QTextEdit {{ background-color: var(--background-inset); border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-md); color: var(--text-strong); padding: var(--space-2) var(--space-3); selection-background-color: var(--accent-muted); font-size: {FONT_SIZE_MD}px; transition: all {ANIMATION_DURATION_NORMAL}ms {ANIMATION_EASING}; }}
             QLineEdit:focus, QDateEdit:focus, QComboBox:focus, QTextEdit:focus {{ border: 1px solid var(--accent); background-color: var(--background-base); }}
-            QLineEdit:disabled, QDateEdit:disabled, QComboBox:disabled, QTextEdit:disabled {{ background-color: var(--background-strong); color: var(--text-muted); border-color: transparent; }}
-            QPushButton {{ background-color: var(--background-raised); border: 1px solid var(--border-weak); border-radius: var(--radius-sm); color: var(--text-strong); padding: 4px 12px; font-weight: 500; font-size: {FONT_SIZE_MD}px; }}
+            QLineEdit:disabled, QDateEdit:disabled, QComboBox:disabled, QTextEdit:disabled {{ background-color: var(--background-strong); color: var(--text-muted); border-color: transparent; opacity: 0.6; }}
+            QPushButton {{ background-color: var(--background-raised); border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-md); color: var(--text-strong); padding: var(--space-2) var(--space-3); font-weight: {FONT_WEIGHT_MEDIUM}; font-size: {FONT_SIZE_MD}px; transition: all {ANIMATION_DURATION_NORMAL}ms {ANIMATION_EASING}; }}
             QPushButton:hover {{ background-color: #24364d; border-color: var(--border-subtle); }}
             QPushButton:pressed {{ background-color: #1e3047; }}
-            QPushButton:disabled {{ background-color: var(--background-strong); color: var(--text-muted); border-color: transparent; }}
-            QPushButton[variant="primary"] {{ background-color: var(--accent); color: #000000; border-color: var(--accent); font-weight: 500; }}
+            QPushButton:disabled {{ background-color: var(--background-strong); color: var(--text-muted); border-color: transparent; opacity: 0.6; }}
+            QPushButton[variant="primary"] {{ background-color: var(--accent); color: #000000; border-color: var(--accent); font-weight: {FONT_WEIGHT_MEDIUM}; }}
             QPushButton[variant="primary"]:hover {{ background-color: var(--accent-hover); border-color: var(--accent-hover); }}
             QPushButton[variant="ghost"] {{ background-color: transparent; border-color: transparent; color: var(--text-strong); }}
             QPushButton[variant="ghost"]:hover {{ background-color: var(--background-raised); }}
