@@ -282,8 +282,6 @@ class OverviewPanel(QWidget):
         refresh_btn.clicked.connect(self.refresh)
         action_row.addWidget(refresh_btn)
 
-        action_row.addWidget(QLabel(tr("overview.view")))
-
         # View mode toggle buttons (segmented control style)
         view_toggle_container = QWidget()
         view_toggle_layout = QHBoxLayout(view_toggle_container)

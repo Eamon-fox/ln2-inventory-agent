@@ -179,20 +179,17 @@ class AIPanel(QWidget):
 
         self.ai_run_btn = QPushButton(tr("ai.runAgent"))
         self.ai_run_btn.setProperty("variant", "primary")
-        self.ai_run_btn.setFixedHeight(28)
         self.ai_run_btn.setMinimumWidth(60)
         self.ai_run_btn.clicked.connect(self.on_run_ai_agent)
         action_bar.addWidget(self.ai_run_btn)
 
         self.ai_stop_btn = QPushButton(tr("ai.stop"))
-        self.ai_stop_btn.setFixedHeight(28)
         self.ai_stop_btn.setMinimumWidth(60)
         self.ai_stop_btn.setEnabled(False)
         self.ai_stop_btn.clicked.connect(self.on_stop_ai_agent)
         action_bar.addWidget(self.ai_stop_btn)
 
         ai_clear_btn = QPushButton(tr("ai.clear"))
-        ai_clear_btn.setFixedHeight(28)
         ai_clear_btn.setMinimumWidth(60)
         ai_clear_btn.setProperty("variant", "ghost")
         ai_clear_btn.clicked.connect(self.on_clear)

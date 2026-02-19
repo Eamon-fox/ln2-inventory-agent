@@ -157,7 +157,6 @@ class OperationsPanel(QWidget):
         result_header.addWidget(result_title)
         result_header.addStretch()
         self._result_hide_btn = QPushButton(tr("operations.hideResult"))
-        self._result_hide_btn.setFixedHeight(20)
         self._result_hide_btn.clicked.connect(lambda: self.result_card.setVisible(False))
         result_header.addWidget(self._result_hide_btn)
         result_card_layout.addLayout(result_header)
@@ -1044,9 +1043,7 @@ class OperationsPanel(QWidget):
 
     def _style_stage_button(self, btn):
         btn.setProperty("variant", "primary")
-        btn.setFixedHeight(30)
         btn.setMinimumWidth(86)
-        btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
     def _set_plan_feedback(self, text="", level="info"):
         label = getattr(self, "plan_feedback_label", None)
