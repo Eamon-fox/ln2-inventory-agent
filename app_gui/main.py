@@ -1565,7 +1565,7 @@ class MainWindow(QMainWindow):
         dialog = AuditLogDialog(
             self,
             yaml_path_getter=lambda: self.current_yaml_path,
-            bridge=self.tool_bridge
+            bridge=self.bridge
         )
         dialog.exec()  # Modal dialog
 
