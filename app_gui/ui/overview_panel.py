@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QPushButton, QLineEdit, QComboBox, QCheckBox, QScrollArea,
     QSizePolicy, QGroupBox, QMenu, QStackedWidget, QButtonGroup,
-    QTableWidget, QTableWidgetItem, QHeaderView
+    QTableWidget, QTableWidgetItem, QHeaderView, QStyledItemDelegate, QStyle
 )
 from app_gui.ui.utils import cell_color, build_color_palette
 from lib.position_fmt import pos_to_display, box_to_display, get_box_count
@@ -27,6 +27,31 @@ from app_gui.i18n import tr, t
 from app_gui.plan_preview import simulate_plan_pos_map
 
 MIME_TYPE_MOVE = "application/x-ln2-move"
+TABLE_ROW_TINT_ROLE = Qt.UserRole + 41
+
+
+class _OverviewTableTintDelegate(QStyledItemDelegate):
+    """Paint row-level color tint for table view cells."""
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+
+        # Keep selected row highlight from theme unchanged.
+        if option.state & QStyle.State_Selected:
+            return
+
+        tint_hex = index.data(TABLE_ROW_TINT_ROLE)
+        if not tint_hex:
+            return
+
+        tint = QColor(str(tint_hex))
+        if not tint.isValid():
+            return
+
+        tint.setAlpha(128)
+        painter.save()
+        painter.fillRect(option.rect, tint)
+        painter.restore()
 
 class CellButton(QPushButton):
     doubleClicked = Signal(int, int)
@@ -415,6 +440,7 @@ class OverviewPanel(QWidget):
         self.ov_table.verticalHeader().setVisible(False)
         self.ov_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.ov_table.setSelectionMode(QTableWidget.SingleSelection)
+        self.ov_table.setItemDelegate(_OverviewTableTintDelegate(self.ov_table))
         self.ov_table.cellClicked.connect(self.on_table_row_double_clicked)
 
         self.ov_view_stack = QStackedWidget()
@@ -527,13 +553,11 @@ class OverviewPanel(QWidget):
             self.ov_table.insertRow(row_index)
             values = row_data.get("values") or {}
             color_value = str(row_data.get("color_value") or "")
-            row_bg = QColor(cell_color(color_value or None))
-            row_fg = QColor("#ffffff")
+            row_tint = cell_color(color_value or None)
             for col_index, column in enumerate(self._table_columns):
                 value = values.get(column, "")
                 item = QTableWidgetItem(str(value))
-                item.setBackground(row_bg)
-                item.setForeground(row_fg)
+                item.setData(TABLE_ROW_TINT_ROLE, row_tint)
                 self.ov_table.setItem(row_index, col_index, item)
             self._table_row_records.append(row_data.get("record"))
 

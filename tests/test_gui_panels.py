@@ -11,11 +11,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 try:
-    from PySide6.QtCore import QDate
+    from PySide6.QtCore import QDate, Qt
     from PySide6.QtWidgets import QApplication, QMessageBox
 
     from app_gui.ui.ai_panel import AIPanel
-    from app_gui.ui.overview_panel import OverviewPanel
+    from app_gui.ui.overview_panel import OverviewPanel, TABLE_ROW_TINT_ROLE
     from app_gui.ui.operations_panel import OperationsPanel, _localized_action
     from app_gui.ui.utils import cell_color
     from app_gui.i18n import tr
@@ -23,10 +23,12 @@ try:
     PYSIDE_AVAILABLE = True
 except Exception:
     QDate = None
+    Qt = None
     QApplication = None
     QMessageBox = None
     AIPanel = None
     OverviewPanel = None
+    TABLE_ROW_TINT_ROLE = None
     OperationsPanel = None
     cell_color = None
     tr = None
@@ -2782,11 +2784,12 @@ class OverviewTableViewTests(unittest.TestCase):
             id_col = headers.index("id")
 
             row_bg_by_id = {}
+            tint_role = int(TABLE_ROW_TINT_ROLE)
             for row in range(panel.ov_table.rowCount()):
                 rid = panel.ov_table.item(row, id_col).text()
-                first_color = panel.ov_table.item(row, 0).background().color().name().lower()
+                first_color = str(panel.ov_table.item(row, 0).data(tint_role) or "").lower()
                 for col in range(panel.ov_table.columnCount()):
-                    item_color = panel.ov_table.item(row, col).background().color().name().lower()
+                    item_color = str(panel.ov_table.item(row, col).data(tint_role) or "").lower()
                     self.assertEqual(first_color, item_color)
                 row_bg_by_id[rid] = first_color
 
