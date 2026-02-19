@@ -240,20 +240,25 @@ def _apply_theme(app, mode):
             QLineEdit:disabled, QDateEdit:disabled, QComboBox:disabled, QTextEdit:disabled {{ background-color: var(--background-strong); color: var(--text-muted); border-color: transparent; opacity: 0.6; }}
             QPushButton {{ background-color: var(--background-raised); border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-md); color: var(--text-strong); padding: var(--space-2) var(--space-3); font-weight: {FONT_WEIGHT_MEDIUM}; font-size: {FONT_SIZE_MD}px; }}
             QPushButton:hover {{ background-color: #f2f6fb; border-color: var(--border-subtle); }}
+            QPushButton:focus {{ border: var(--border-medium) solid var(--accent); outline: none; }}
             QPushButton:pressed {{ background-color: #e6eef7; }}
             QPushButton:disabled {{ background-color: var(--background-strong); color: var(--text-muted); border-color: transparent; opacity: 0.6; }}
             QPushButton[variant="primary"] {{ background-color: var(--accent); color: #ffffff; border-color: var(--accent); font-weight: {FONT_WEIGHT_MEDIUM}; }}
             QPushButton[variant="primary"]:hover {{ background-color: var(--accent-hover); border-color: var(--accent-hover); }}
+            QPushButton[variant="primary"]:focus {{ border: var(--border-medium) solid var(--accent-hover); outline: none; }}
             QPushButton[variant="ghost"] {{ background-color: transparent; border-color: transparent; color: var(--text-strong); }}
             QPushButton[variant="ghost"]:hover {{ background-color: var(--background-raised); }}
-            QCheckBox {{ color: var(--text-strong); spacing: 8px; font-size: {FONT_SIZE_MD}px; }}
-            QCheckBox::indicator {{ width: 16px; height: 16px; border-radius: 3px; border: 1px solid var(--border-subtle); background-color: var(--background-raised); }}
+            QPushButton[variant="ghost"]:focus {{ border: var(--border-medium) solid var(--accent); outline: none; }}
+            QCheckBox {{ color: var(--text-strong); spacing: var(--space-2); font-size: {FONT_SIZE_MD}px; }}
+            QCheckBox::indicator {{ width: 16px; height: 16px; border-radius: 3px; border: var(--border-thin) solid var(--border-subtle); background-color: var(--background-raised); }}
             QCheckBox::indicator:hover {{ border-color: var(--accent); }}
+            QCheckBox::indicator:focus {{ border: var(--border-medium) solid var(--accent); }}
             QCheckBox::indicator:checked {{ background-color: var(--accent); border-color: var(--accent); }}
             QCheckBox::indicator:checked:hover {{ background-color: var(--accent-hover); }}
-            QRadioButton {{ color: var(--text-strong); spacing: 8px; font-size: {FONT_SIZE_MD}px; }}
-            QRadioButton::indicator {{ width: 16px; height: 16px; border-radius: 8px; border: 1px solid var(--border-subtle); background-color: var(--background-raised); }}
+            QRadioButton {{ color: var(--text-strong); spacing: var(--space-2); font-size: {FONT_SIZE_MD}px; }}
+            QRadioButton::indicator {{ width: 16px; height: 16px; border-radius: 8px; border: var(--border-thin) solid var(--border-subtle); background-color: var(--background-raised); }}
             QRadioButton::indicator:hover {{ border-color: var(--accent); }}
+            QRadioButton::indicator:focus {{ border: var(--border-medium) solid var(--accent); }}
             QRadioButton::indicator:checked {{ background-color: var(--accent); border-color: var(--accent); }}
             QScrollBar:vertical {{ border: none; background: transparent; width: 6px; margin: 2px; }}
             QScrollBar::handle:vertical {{ background: rgba(0,0,0,0.15); min-height: 24px; border-radius: 3px; }}
@@ -379,24 +384,29 @@ def _apply_theme(app, mode):
             QTableWidget::item:selected {{ background-color: var(--accent-muted); color: var(--text-strong); }}
             QHeaderView::section {{ background-color: var(--background-strong); color: var(--text-weak); padding: 6px 8px; border: none; border-bottom: 1px solid var(--border-weak); border-right: 1px solid var(--border-weak); font-weight: 500; font-size: {FONT_SIZE_SM}px; }}
             QLineEdit, QDateEdit, QComboBox, QTextEdit {{ background-color: var(--background-inset); border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-md); color: var(--text-strong); padding: var(--space-2) var(--space-3); selection-background-color: var(--accent-muted); font-size: {FONT_SIZE_MD}px; }}
-            QLineEdit:focus, QDateEdit:focus, QComboBox:focus, QTextEdit:focus {{ border: 1px solid var(--accent); background-color: var(--background-base); }}
+            QLineEdit:focus, QDateEdit:focus, QComboBox:focus, QTextEdit:focus {{ border: var(--border-medium) solid var(--accent); background-color: var(--background-base); }}
             QLineEdit:disabled, QDateEdit:disabled, QComboBox:disabled, QTextEdit:disabled {{ background-color: var(--background-strong); color: var(--text-muted); border-color: transparent; opacity: 0.6; }}
             QPushButton {{ background-color: var(--background-raised); border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-md); color: var(--text-strong); padding: var(--space-2) var(--space-3); font-weight: {FONT_WEIGHT_MEDIUM}; font-size: {FONT_SIZE_MD}px; }}
             QPushButton:hover {{ background-color: #24364d; border-color: var(--border-subtle); }}
+            QPushButton:focus {{ border: var(--border-medium) solid var(--accent); outline: none; }}
             QPushButton:pressed {{ background-color: #1e3047; }}
             QPushButton:disabled {{ background-color: var(--background-strong); color: var(--text-muted); border-color: transparent; opacity: 0.6; }}
             QPushButton[variant="primary"] {{ background-color: var(--accent); color: #000000; border-color: var(--accent); font-weight: {FONT_WEIGHT_MEDIUM}; }}
             QPushButton[variant="primary"]:hover {{ background-color: var(--accent-hover); border-color: var(--accent-hover); }}
+            QPushButton[variant="primary"]:focus {{ border: var(--border-medium) solid var(--accent-hover); outline: none; }}
             QPushButton[variant="ghost"] {{ background-color: transparent; border-color: transparent; color: var(--text-strong); }}
             QPushButton[variant="ghost"]:hover {{ background-color: var(--background-raised); }}
-            QCheckBox {{ color: var(--text-strong); spacing: 8px; font-size: {FONT_SIZE_MD}px; }}
-            QCheckBox::indicator {{ width: 16px; height: 16px; border-radius: 3px; border: 1px solid var(--border-subtle); background-color: var(--background-inset); }}
+            QPushButton[variant="ghost"]:focus {{ border: var(--border-medium) solid var(--accent); outline: none; }}
+            QCheckBox {{ color: var(--text-strong); spacing: var(--space-2); font-size: {FONT_SIZE_MD}px; }}
+            QCheckBox::indicator {{ width: 16px; height: 16px; border-radius: 3px; border: var(--border-thin) solid var(--border-subtle); background-color: var(--background-inset); }}
             QCheckBox::indicator:hover {{ border-color: var(--accent); }}
+            QCheckBox::indicator:focus {{ border: var(--border-medium) solid var(--accent); }}
             QCheckBox::indicator:checked {{ background-color: var(--accent); border-color: var(--accent); }}
             QCheckBox::indicator:checked:hover {{ background-color: var(--accent-hover); }}
-            QRadioButton {{ color: var(--text-strong); spacing: 8px; font-size: {FONT_SIZE_MD}px; }}
-            QRadioButton::indicator {{ width: 16px; height: 16px; border-radius: 8px; border: 1px solid var(--border-subtle); background-color: var(--background-inset); }}
+            QRadioButton {{ color: var(--text-strong); spacing: var(--space-2); font-size: {FONT_SIZE_MD}px; }}
+            QRadioButton::indicator {{ width: 16px; height: 16px; border-radius: 8px; border: var(--border-thin) solid var(--border-subtle); background-color: var(--background-inset); }}
             QRadioButton::indicator:hover {{ border-color: var(--accent); }}
+            QRadioButton::indicator:focus {{ border: var(--border-medium) solid var(--accent); }}
             QRadioButton::indicator:checked {{ background-color: var(--accent); border-color: var(--accent); }}
             QScrollBar:vertical {{ border: none; background: transparent; width: 6px; margin: 2px; }}
             QScrollBar::handle:vertical {{ background: rgba(255,255,255,0.1); min-height: 24px; border-radius: 3px; }}
