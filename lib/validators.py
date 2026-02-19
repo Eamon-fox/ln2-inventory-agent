@@ -203,6 +203,8 @@ def has_depletion_history(rec):
     """
     thaw_events = rec.get("thaw_events") or []
     for ev in thaw_events:
+        if not isinstance(ev, dict):
+            continue
         if normalize_action(ev.get("action")) in {"takeout", "thaw", "discard"}:
             return True
 
@@ -404,3 +406,87 @@ def format_validation_errors(errors, prefix="完整性校验失败"):
     if more > 0:
         lines.append(f"- ... 以及另外 {more} 条")
     return "\n".join(lines)
+
+
+def validate_plan_item_with_history(new_item, existing_items, tr_fn=None):
+    """Validate a new item against all existing items in plan.
+
+    This function is shared between operations_panel (human) and tool_runner (AI agent)
+    to ensure consistent validation behavior.
+
+    Args:
+        new_item: New plan item to validate
+        existing_items: List of existing plan items to check against
+        tr_fn: Optional translation function (i18n.tr). If None, uses default messages.
+
+    Returns:
+        tuple[bool, str]: (is_valid, error_message)
+            is_valid=True, error_message=None if validation passes
+            is_valid=False, error_message="error text" if blocked
+    """
+    if tr_fn is None:
+        # Default fallback without translation
+        def tr_fn(key, **kwargs):
+            return key.format(**kwargs)
+
+    # Collect all positions that will be affected by existing items
+    all_positions = []
+    for existing in existing_items:
+        action = existing.get("action", "").lower()
+        if action == "move":
+            # For move, track both from and to positions
+            box = existing.get("box", 0)
+            pos = existing.get("position")
+            to_box = existing.get("to_box")
+            to_pos = existing.get("to_position")
+            all_positions.append((box, pos))
+            # Track target position (use source box if to_box is None for same-box moves)
+            if to_pos is not None:
+                target_box = to_box if to_box is not None else box
+                all_positions.append((target_box, to_pos))
+        elif action == "add":
+            # For add, track all positions
+            box = existing.get("box", 0)
+            payload = existing.get("payload") or {}
+            positions = payload.get("positions", [])
+            for p in positions:
+                all_positions.append((box, p))
+        else:
+            # takeout/thaw/discard: track source position
+            box = existing.get("box", 0)
+            pos = existing.get("position")
+            if pos is not None:
+                all_positions.append((box, pos))
+
+    # Check if new item conflicts with any existing position
+    new_action = new_item.get("action", "").lower()
+    new_box = new_item.get("box", 0)
+
+    if new_action == "add":
+        # Add: check if any target position is occupied
+        payload = new_item.get("payload") or {}
+        positions = payload.get("positions", [])
+        for pos in positions:
+            if (new_box, pos) in all_positions:
+                return False, tr_fn("operations.positionOccupied", box=new_box, position=pos)
+    elif new_action == "move":
+        # Move: check source position, target position (same box or cross-box)
+        new_from_pos = new_item.get("position")
+        new_to_pos = new_item.get("to_position")
+        new_to_box = new_item.get("to_box")
+
+        # Check if source position is still valid (not moved away by another item)
+        if (new_box, new_from_pos) in all_positions:
+            return False, tr_fn("operations.sourcePositionAlreadyMoved")
+
+        # Check target position
+        if new_to_pos is not None:
+            if new_to_box:
+                target = (new_to_box, new_to_pos)
+            else:
+                target = (new_box, new_to_pos)
+            if target in all_positions:
+                return False, tr_fn("operations.targetPositionOccupied", box=target[0], position=target[1])
+
+    # takeout/thaw/discard: source position check already done by position occupancy check
+    return True, None

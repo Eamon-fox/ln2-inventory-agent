@@ -329,7 +329,6 @@ def render_operation_sheet(items):
         .chk-cell input {{
             width: 16px;
             height: 16px;
-            cursor: pointer;
         }}
         
         .pos-cell {{

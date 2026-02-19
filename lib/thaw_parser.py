@@ -24,6 +24,14 @@ ACTION_LABEL = {
 }
 
 
+def canonicalize_non_move_action(action):
+    """Collapse thaw/discard semantics into takeout for write paths."""
+    normalized = normalize_action(action)
+    if normalized in {"takeout", "thaw", "discard"}:
+        return "takeout"
+    return normalized
+
+
 def normalize_action(action):
     """Normalize action to canonical English form.
 

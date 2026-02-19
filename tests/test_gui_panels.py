@@ -56,43 +56,10 @@ class _FakeChatWithMarkdown:
 class _FakeOperationsBridge:
     def __init__(self):
         self.last_add_payload = None
-        self.last_query_filters = None
-        self.last_empty_box = None
         self.last_export_payload = None
         self.last_record_payload = None
         self.last_batch_payload = None
         self.add_response = {"ok": True, "result": {"new_id": 99}}
-        self.query_response = {
-            "ok": True,
-            "result": {
-                "records": [
-                    {
-                        "id": 5,
-                        "parent_cell_line": "K562",
-                        "short_name": "K562_clone12",
-                        "box": 2,
-                        "position": 10,
-                        "frozen_at": "2026-02-10",
-                        "plasmid_id": "P-001",
-                        "note": "demo",
-                    }
-                ],
-                "count": 1,
-            },
-        }
-        self.empty_response = {
-            "ok": True,
-            "result": {
-                "boxes": [
-                    {
-                        "box": "2",
-                        "empty_count": 80,
-                        "total_slots": 81,
-                        "empty_positions": [1, 2, 3],
-                    }
-                ]
-            },
-        }
         self.export_response = {
             "ok": True,
             "result": {
@@ -105,14 +72,6 @@ class _FakeOperationsBridge:
     def add_entry(self, yaml_path, **payload):
         self.last_add_payload = {"yaml_path": yaml_path, **payload}
         return self.add_response
-
-    def query_inventory(self, yaml_path, **filters):
-        self.last_query_filters = {"yaml_path": yaml_path, **filters}
-        return self.query_response
-
-    def list_empty_positions(self, yaml_path, box=None):
-        self.last_empty_box = box
-        return self.empty_response
 
     def export_inventory_csv(self, yaml_path, output_path):
         self.last_export_payload = {"yaml_path": yaml_path, "output_path": output_path}
@@ -272,6 +231,10 @@ class GuiPanelRegressionTests(unittest.TestCase):
         single_actions = [panel.t_action.itemText(i) for i in range(panel.t_action.count())]
         batch_actions = [panel.b_action.itemText(i) for i in range(panel.b_action.count())]
 
+        self.assertEqual(1, len(single_actions))
+        self.assertEqual(1, len(batch_actions))
+        self.assertEqual(tr("overview.takeout"), single_actions[0])
+        self.assertEqual(tr("overview.takeout"), batch_actions[0])
         self.assertNotIn("Move", single_actions)
         self.assertNotIn("Move", batch_actions)
 
@@ -339,7 +302,6 @@ class GuiPanelRegressionTests(unittest.TestCase):
     def test_operations_panel_move_tab_has_from_and_to_position(self):
         panel = self._new_operations_panel()
 
-        self.assertTrue(hasattr(panel, "m_from_position"))
         self.assertTrue(hasattr(panel, "m_to_position"))
         self.assertTrue(hasattr(panel, "m_to_box"))
         self.assertEqual(4, panel.bm_table.columnCount())
@@ -355,10 +317,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
         })
 
         panel.m_id.setValue(11)
-        # from_position combo is auto-populated by refresh; select position 5
-        idx = panel.m_from_position.findData(5)
-        if idx >= 0:
-            panel.m_from_position.setCurrentIndex(idx)
+        # Source position comes from record, just set target
         panel.m_to_position.setValue(8)
         panel.on_record_move()
 
@@ -442,21 +401,8 @@ class GuiPanelRegressionTests(unittest.TestCase):
         panel.set_move_prefill({"box": 2, "position": 15, "record_id": 7})
 
         self.assertEqual(7, panel.m_id.value())
-        self.assertEqual(15, panel.m_from_position.currentData())
+        # from_position is now inferred from record, not a separate widget
         self.assertEqual("move", panel.current_operation_mode)
-
-    def test_operations_panel_set_query_prefill_fills_query_and_runs(self):
-        panel = self._new_operations_panel()
-        bridge = _FakeOperationsBridge()
-        panel.bridge = bridge
-
-        panel.set_query_prefill({"box": 3, "position": 25, "record_id": 10})
-
-        self.assertEqual(3, panel.q_box.value())
-        self.assertEqual(25, panel.q_position.value())
-        self.assertEqual("query", panel.current_operation_mode)
-        self.assertEqual(3, bridge.last_query_filters.get("box"))
-        self.assertEqual(25, bridge.last_query_filters.get("position"))
 
     def test_operations_panel_batch_section_collapsed_by_default(self):
         panel = self._new_operations_panel()
@@ -471,82 +417,6 @@ class GuiPanelRegressionTests(unittest.TestCase):
         panel.t_batch_toggle_btn.setChecked(False)
         self.assertTrue(panel.t_batch_group.isHidden())
         self.assertEqual(tr("operations.showBatch"), panel.t_batch_toggle_btn.text())
-
-    def test_operations_panel_query_uses_backend_filter_names(self):
-        from lib.custom_fields import DEFAULT_PRESET_FIELDS
-        panel = self._new_operations_panel()
-        bridge = _FakeOperationsBridge()
-        panel.bridge = bridge
-
-        # Simulate effective fields being loaded
-        panel._current_custom_fields = list(DEFAULT_PRESET_FIELDS)
-        panel._rebuild_query_fields(panel._current_custom_fields)
-
-        panel._query_field_widgets["short_name"].setText("clone12")
-        panel.q_box.setValue(2)
-        panel.q_position.setValue(10)
-
-        panel.on_query_records()
-
-        self.assertEqual(
-            {
-                "yaml_path": "/tmp/inventory.yaml",
-                "short_name": "clone12",
-                "box": 2,
-                "position": 10,
-            },
-            bridge.last_query_filters,
-        )
-        self.assertEqual(1, panel.query_table.rowCount())
-        self.assertEqual("5", panel.query_table.item(0, 0).text())
-
-    def test_operations_panel_list_empty_reads_boxes_payload(self):
-        panel = self._new_operations_panel()
-        bridge = _FakeOperationsBridge()
-        panel.bridge = bridge
-
-        panel.q_box.setValue(2)
-        panel.on_list_empty()
-
-        self.assertEqual(2, bridge.last_empty_box)
-        self.assertEqual(1, panel.query_table.rowCount())
-        self.assertEqual("2", panel.query_table.item(0, 0).text())
-
-    def test_operations_panel_query_tab_has_no_export_button(self):
-        panel = self._new_operations_panel()
-        from PySide6.QtWidgets import QPushButton
-
-        query_widget = panel.op_stack.widget(panel.op_mode_indexes["query"])
-        query_button_texts = [btn.text() for btn in query_widget.findChildren(QPushButton)]
-
-        self.assertNotIn(tr("operations.exportCsv"), query_button_texts)
-        self.assertTrue(hasattr(panel, "export_full_csv_btn"))
-
-    def test_operations_panel_export_full_csv_uses_bridge_without_query_rows(self):
-        panel = self._new_operations_panel()
-        bridge = _FakeOperationsBridge()
-        panel.bridge = bridge
-        panel.query_table.setRowCount(0)
-
-        messages = []
-        panel.status_message.connect(lambda msg, timeout, level: messages.append((msg, timeout, level)))
-
-        from unittest.mock import patch
-        with patch(
-            "app_gui.ui.operations_panel.QFileDialog.getSaveFileName",
-            return_value=("/tmp/full_export.csv", "CSV Files (*.csv)"),
-        ):
-            panel.on_export_inventory_csv()
-
-        self.assertEqual(
-            {
-                "yaml_path": "/tmp/inventory.yaml",
-                "output_path": "/tmp/full_export.csv",
-            },
-            bridge.last_export_payload,
-        )
-        self.assertTrue(messages)
-        self.assertEqual("success", messages[-1][2])
 
     def test_operations_panel_export_full_csv_appends_csv_extension(self):
         panel = self._new_operations_panel()
@@ -586,11 +456,9 @@ class GuiPanelRegressionTests(unittest.TestCase):
 
         emitted_thaw = []
         emitted_move = []
-        emitted_query = []
         emitted_add = []
         panel.request_prefill.connect(lambda payload: emitted_thaw.append(payload))
         panel.request_move_prefill.connect(lambda payload: emitted_move.append(payload))
-        panel.request_query_prefill.connect(lambda payload: emitted_query.append(payload))
         panel.request_add_prefill.connect(lambda payload: emitted_add.append(payload))
 
         emitted_bg_add = []
@@ -606,7 +474,6 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual([{"box": 1, "position": 1, "record_id": 5}], emitted_bg_thaw)
         self.assertEqual([], emitted_thaw)
         self.assertEqual([], emitted_move)
-        self.assertEqual([], emitted_query)
         self.assertEqual([], emitted_add)
 
     def test_overview_click_empty_slot_prefills_add_background_only(self):
@@ -858,38 +725,6 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual((1, 1), panel.overview_selected_key)
         self.assertEqual([{"box": 1, "position": 1, "record_id": 5}], emitted_move)
 
-    def test_overview_context_menu_record_emits_query_prefill(self):
-        panel = self._new_overview_panel()
-        panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
-
-        record = {
-            "id": 5,
-            "parent_cell_line": "K562",
-            "short_name": "K562_test",
-            "box": 1,
-            "position": 1,
-        }
-        panel.overview_pos_map = {(1, 1): record}
-        button = panel.overview_cells[(1, 1)]
-        panel._paint_cell(button, 1, 1, record)
-
-        emitted_query = []
-        panel.request_query_prefill.connect(lambda payload: emitted_query.append(payload))
-
-        from unittest.mock import patch, MagicMock
-        with patch("app_gui.ui.overview_panel.QMenu") as MockMenu:
-            mock_menu = MagicMock()
-            MockMenu.return_value = mock_menu
-            mock_act_thaw = MagicMock()
-            mock_act_move = MagicMock()
-            mock_act_query = MagicMock()
-            mock_menu.addAction.side_effect = [mock_act_thaw, mock_act_move, mock_act_query]
-            mock_menu.exec.return_value = mock_act_query
-            panel.on_cell_context_menu(1, 1, button.mapToGlobal(button.rect().center()))
-
-        self.assertEqual((1, 1), panel.overview_selected_key)
-        self.assertEqual([{"box": 1, "position": 1, "record_id": 5}], emitted_query)
-
     def test_overview_context_menu_empty_slot_emits_add_prefill(self):
         panel = self._new_overview_panel()
         panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
@@ -946,7 +781,6 @@ class GuiPanelRegressionTests(unittest.TestCase):
                 "box": 1,
                 "position": 5,
                 "record_id": 10,
-                "label": "K562_A",
                 "source": "human",
                 "payload": {
                     "record_id": 10,
@@ -961,8 +795,13 @@ class GuiPanelRegressionTests(unittest.TestCase):
 
         self.assertEqual(1, len(panel.plan_items))
         self.assertEqual(1, panel.plan_table.rowCount())
-        self.assertEqual("human", panel.plan_table.item(0, 0).text())
-        self.assertEqual(_localized_action("takeout"), panel.plan_table.item(0, 1).text())
+        # Column 0 now shows merged action with ID
+        action_text = panel.plan_table.item(0, 0).text()
+        self.assertIn("takeout", action_text.lower())
+        self.assertIn("10", action_text)  # ID should be in the text
+        # Column 1 now shows position (box:position)
+        pos_text = panel.plan_table.item(0, 1).text()
+        self.assertEqual("1:5", pos_text)
 
         # Badge should show count
         idx = panel.op_mode_combo.findData("plan")
@@ -980,7 +819,6 @@ class GuiPanelRegressionTests(unittest.TestCase):
                 "box": -1,  # invalid: must be >= 0
                 "position": 5,
                 "record_id": 10,
-                "label": "test",
                 "source": "human",
                 "payload": {},
             },
@@ -989,6 +827,8 @@ class GuiPanelRegressionTests(unittest.TestCase):
 
         self.assertEqual(0, len(panel.plan_items))
         self.assertTrue(any("rejected" in m.lower() for m in messages))
+        self.assertFalse(panel.plan_feedback_label.isHidden())
+        self.assertTrue(panel.plan_feedback_label.text().strip())
 
     def test_execute_plan_calls_bridge_and_clears(self):
         panel = self._new_operations_panel()
@@ -1002,7 +842,6 @@ class GuiPanelRegressionTests(unittest.TestCase):
                 "box": 1,
                 "position": 5,
                 "record_id": 10,
-                "label": "K562_A",
                 "source": "human",
                 "payload": {
                     "record_id": 10,
@@ -1053,7 +892,6 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual(2, item["box"])
         self.assertEqual(10, item["position"])
         self.assertEqual(5, item["record_id"])
-        self.assertEqual("K562_test", item["label"])
 
     def test_ai_panel_append_chat_falls_back_when_insert_markdown_missing(self):
         panel = self._new_ai_panel()
@@ -1399,7 +1237,6 @@ def _make_move_item(record_id, position, to_position, to_box=None, label="test")
         "position": position,
         "to_position": to_position,
         "record_id": record_id,
-        "label": label,
         "source": "ai",
         "payload": {
             "record_id": record_id,
@@ -1423,7 +1260,6 @@ def _make_takeout_item(record_id, position, box=1, label="test"):
         "box": box,
         "position": position,
         "record_id": record_id,
-        "label": label,
         "source": "ai",
         "payload": {
             "record_id": record_id,
@@ -1484,9 +1320,10 @@ class _RollbackAwareBridge(_ConfigurableBridge):
             response["backup_path"] = f"/tmp/bak_{rid}.yaml"
         return response
 
-    def rollback(self, yaml_path, backup_path=None):
+    def rollback(self, yaml_path, backup_path=None, execution_mode=None):
         self.rollback_called = True
         self.rollback_backup_path = backup_path
+        _ = execution_mode
         return {"ok": True, "message": "Rolled back", "backup_path": backup_path}
 
 
@@ -1745,9 +1582,10 @@ class _UndoBridge(_FakeOperationsBridge):
         self.rollback_called = False
         self.rollback_backup_path = None
 
-    def rollback(self, yaml_path, backup_path=None):
+    def rollback(self, yaml_path, backup_path=None, execution_mode=None):
         self.rollback_called = True
         self.rollback_backup_path = backup_path
+        _ = execution_mode
         return {"ok": True, "message": "Rolled back", "backup_path": backup_path}
 
     def batch_thaw(self, yaml_path, **payload):
@@ -1895,7 +1733,6 @@ class RollbackConfirmationDialogTests(unittest.TestCase):
                         "box": 0,
                         "position": 1,
                         "record_id": None,
-                        "label": "Rollback",
                         "source": "human",
                         "payload": {
                             "backup_path": backup_path,
@@ -1980,7 +1817,6 @@ class RollbackConfirmationDialogTests(unittest.TestCase):
                 "box": 0,
                 "position": 1,
                 "record_id": None,
-                "label": "Rollback",
                 "source": "human",
                 "payload": {
                     "backup_path": backup_path,
@@ -2004,15 +1840,15 @@ class RollbackConfirmationDialogTests(unittest.TestCase):
                 panel.add_plan_items([rollback_item])
 
             self.assertEqual(1, panel.plan_table.rowCount())
-            label_item = panel.plan_table.item(0, 6)
-            note_item = panel.plan_table.item(0, 7)
+            # New layout: column 0 = action, column 1 = position, then note (no custom fields = index 2)
+            note_item = panel.plan_table.item(0, 2)
 
-            self.assertIsNotNone(label_item)
             self.assertIsNotNone(note_item)
-            self.assertIn(os.path.basename(backup_path), label_item.text())
+            # Note contains rollback info with trace_id
             self.assertIn("trace-audit-1", note_item.text())
 
-            tooltip = label_item.toolTip()
+            # Tooltip has full details
+            tooltip = note_item.toolTip()
             self.assertIn(os.path.abspath(yaml_path), tooltip)
             self.assertIn(os.path.abspath(backup_path), tooltip)
             self.assertIn("record_thaw", tooltip)
@@ -2297,7 +2133,7 @@ class PlanPreflightGuardTests(unittest.TestCase):
             self._cleanup_yaml(tmpdir)
 
     def test_preflight_marks_blocked_items_in_table(self):
-        """Blocked items should show BLOCKED status in table."""
+        """Blocked items should be rejected at staging time."""
         records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "position": 5, "frozen_at": "2025-01-01"}]
         yaml_path, tmpdir = self._seed_yaml(records)
 
@@ -2308,10 +2144,9 @@ class PlanPreflightGuardTests(unittest.TestCase):
             items = [_make_takeout_item(record_id=999, position=5)]
             panel.add_plan_items(items)
 
-            self.assertEqual(1, panel.plan_table.rowCount())
-            status_item = panel.plan_table.item(0, 8)
-            self.assertIsNotNone(status_item)
-            self.assertEqual(tr("operations.planStatusBlocked"), status_item.text())
+            self.assertEqual(0, panel.plan_table.rowCount())
+            self.assertEqual(0, len(panel.plan_items))
+            self.assertFalse(panel.plan_exec_btn.isEnabled())
         finally:
             self._cleanup_yaml(tmpdir)
 
@@ -2374,7 +2209,7 @@ class ExecuteInterceptTests(unittest.TestCase):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
     def test_execute_blocked_does_not_call_bridge(self):
-        """When plan is blocked, execute should not call bridge methods."""
+        """When staging rejects invalid items, execute remains a no-op."""
         records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "position": 5, "frozen_at": "2025-01-01"}]
         yaml_path, tmpdir = self._seed_yaml(records)
 
@@ -2390,13 +2225,13 @@ class ExecuteInterceptTests(unittest.TestCase):
 
             panel.execute_plan()
 
-            self.assertTrue(any("blocked" in m.lower() for m in messages))
+            self.assertTrue(messages)
             self.assertIsNone(bridge.last_batch_payload)
         finally:
             self._cleanup_yaml(tmpdir)
 
     def test_execute_blocked_emits_operation_event(self):
-        """Blocked execution should emit operation_event."""
+        """No operation_event is emitted when there is no staged plan."""
         records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "position": 5, "frozen_at": "2025-01-01"}]
         yaml_path, tmpdir = self._seed_yaml(records)
 
@@ -2412,8 +2247,7 @@ class ExecuteInterceptTests(unittest.TestCase):
 
             panel.execute_plan()
 
-            self.assertEqual(1, len(events))
-            self.assertEqual("plan_execute_blocked", events[0]["type"])
+            self.assertEqual(0, len(events))
         finally:
             self._cleanup_yaml(tmpdir)
 

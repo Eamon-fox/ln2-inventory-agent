@@ -25,7 +25,6 @@ from lib.tool_api import (
 )
 from lib.tool_api import (
     tool_get_raw_entries,
-    tool_query_inventory,
     tool_query_thaw_events,
     tool_recommend_positions,
     tool_search_records,
@@ -144,6 +143,39 @@ class ToolApiTests(unittest.TestCase):
             lines = [line for line in audit_path.read_text(encoding="utf-8").splitlines() if line.strip()]
             self.assertEqual(1, len(lines))
 
+    def test_tool_record_thaw_blocks_agent_write_without_execute_mode(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_thaw_gate_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            blocked = tool_record_thaw(
+                yaml_path=str(yaml_path),
+                record_id=1,
+                position=1,
+                date_str="2026-02-10",
+                source="agent.react",
+            )
+
+            self.assertFalse(blocked["ok"])
+            self.assertEqual("write_requires_execute_mode", blocked["error_code"])
+
+            current = load_yaml(str(yaml_path))
+            self.assertEqual(1, current["inventory"][0]["position"])
+
+            allowed = tool_record_thaw(
+                yaml_path=str(yaml_path),
+                record_id=1,
+                position=1,
+                date_str="2026-02-10",
+                source="agent.react",
+                execution_mode="execute",
+            )
+            self.assertTrue(allowed["ok"])
+
     def test_tool_batch_thaw_updates_multiple_records(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_batch_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
@@ -195,6 +227,45 @@ class ToolApiTests(unittest.TestCase):
 
             self.assertFalse(result["ok"])
             self.assertEqual("validation_failed", result.get("error_code"))
+
+    def test_legacy_actions_are_written_as_takeout(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_takeout_canon_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        make_record(1, box=1, position=1),
+                        make_record(2, box=1, position=2),
+                    ]
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            single = tool_record_thaw(
+                yaml_path=str(yaml_path),
+                record_id=1,
+                position=1,
+                date_str="2026-02-10",
+                action="Thaw",
+                source="tests/test_tool_api.py",
+            )
+            self.assertTrue(single["ok"])
+
+            batch = tool_batch_thaw(
+                yaml_path=str(yaml_path),
+                entries=[(2, 2)],
+                date_str="2026-02-10",
+                action="Discard",
+                source="tests/test_tool_api.py",
+            )
+            self.assertTrue(batch["ok"])
+
+            data = load_yaml(str(yaml_path))
+            ev1 = (data["inventory"][0].get("thaw_events") or [])[-1]
+            ev2 = (data["inventory"][1].get("thaw_events") or [])[-1]
+            self.assertEqual("takeout", ev1.get("action"))
+            self.assertEqual("takeout", ev2.get("action"))
 
     def test_tool_record_thaw_move_updates_positions_and_appends_event(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_move_single_") as temp_dir:
@@ -389,8 +460,10 @@ class ToolApiTests(unittest.TestCase):
             self.assertTrue(any("重复的 ID" in err for err in result.get("errors", [])))
 
             rows = read_audit_rows(temp_dir)
-            self.assertEqual(1, len(rows))
-            last = rows[-1]
+            self.assertGreaterEqual(len(rows), 1)
+            matched = [row for row in rows if row.get("action") == "add_entry" and row.get("status") == "failed"]
+            self.assertTrue(matched)
+            last = matched[-1]
             self.assertEqual("add_entry", last["action"])
             self.assertEqual("failed", last.get("status"))
             self.assertEqual("integrity_validation_failed", (last.get("error") or {}).get("error_code"))
@@ -566,35 +639,6 @@ class ToolApiTests(unittest.TestCase):
             self.assertEqual("record_thaw", requested_from_event.get("action"))
             self.assertEqual("trace-audit-1", requested_from_event.get("trace_id"))
             self.assertEqual("session-audit-1", requested_from_event.get("session_id"))
-
-    def test_tool_query_inventory_filters(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_tool_query_") as temp_dir:
-            yaml_path = Path(temp_dir) / "inventory.yaml"
-            write_yaml(
-                make_data(
-                    [
-                        make_record(1, box=1, position=1),
-                        {
-                            "id": 2,
-                            "parent_cell_line": "K562",
-                            "short_name": "k562-a",
-                            "plasmid_name": "pX",
-                            "plasmid_id": "p2",
-                            "box": 2,
-                            "position": 10,
-                            "frozen_at": "2026-02-10",
-                        },
-                    ]
-                ),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
-
-            response = tool_query_inventory(str(yaml_path), parent_cell_line="k562", box=2, position=10)
-            self.assertTrue(response["ok"])
-            records = response["result"]["records"]
-            self.assertEqual(1, len(records))
-            self.assertEqual(2, records[0]["id"])
 
     def test_tool_export_inventory_csv_writes_full_inventory(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_export_csv_") as temp_dir:

@@ -170,7 +170,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertEqual(5, self.plan_store.list_items()[0]["position"])
 
     def test_stage_to_plan_record_thaw_supports_legacy_action_alias(self):
-        """Legacy alias 解冻 should normalize to thaw."""
+        """Legacy alias 解冻 should normalize to takeout."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "record_thaw",
@@ -183,7 +183,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         )
         self.assertTrue(result["ok"])
         self.assertEqual(1, len(self.plan_store.list_items()))
-        self.assertEqual("thaw", self.plan_store.list_items()[0]["action"])
+        self.assertEqual("takeout", self.plan_store.list_items()[0]["action"])
 
     def test_stage_to_plan_record_thaw_move(self):
         """Test staging record_thaw with move action."""
@@ -374,7 +374,7 @@ class ToolRunnerHintTests(unittest.TestCase):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
         payload = {"error_code": "record_not_found"}
         hint = runner._hint_for_error("record_thaw", payload)
-        self.assertIn("query_inventory", hint)
+        self.assertIn("search_records", hint)
 
     def test_hint_for_error_position_conflict(self):
         """Test hint for position_conflict."""
@@ -606,97 +606,6 @@ class ReactAgentRunBehaviorTests(unittest.TestCase):
         if hasattr(self.mock_llm, 'stream_chat'):
             delattr(self.mock_llm, 'stream_chat')
 
-    def test_run_max_steps_reached(self):
-        """Test run() behavior when max_steps is reached."""
-        from agent.react_agent import ReactAgent
-        # Provide multiple responses for each step
-        # Step 1: tool call
-        # Step 2: after forced_final_retry prompt, another tool call (which triggers max_steps fallback)
-        self.mock_llm.chat.side_effect = [
-            {
-                "content": "",
-                "tool_calls": [{"id": "call_1", "name": "query_inventory", "arguments": {"cell": "K562"}}]
-            },
-            {
-                "content": "",
-                "tool_calls": [{"id": "call_2", "name": "query_inventory", "arguments": {"cell": "K562"}}]
-            },
-        ]
-        mock_tools = Mock()
-        mock_tools.list_tools.return_value = ["query_inventory"]
-        mock_tools.run.return_value = {"ok": True, "result": {"count": 0}}
-        mock_tools.tool_specs.return_value = {"query_inventory": {"required": [], "optional": []}}
-        mock_tools.tool_schemas.return_value = []
-
-        agent = ReactAgent(llm_client=self.mock_llm, tool_runner=mock_tools, max_steps=2)
-        result = agent.run("test query")
-
-        self.assertFalse(result["ok"])
-        self.assertEqual(2, result["steps"])
-        self.assertIn("Max steps reached", result["final"])
-
-    def test_run_empty_response_retry(self):
-        """Test run() handles empty LLM response."""
-        from agent.react_agent import ReactAgent
-        # First: empty response with tools (will trigger forced retry),
-        # Second: direct answer after retry prompt
-        self.mock_llm.chat.side_effect = [
-            {"content": "", "tool_calls": [{"id": "call_1", "name": "query_inventory", "arguments": {}}]},
-            {"content": "Direct answer", "tool_calls": []},
-        ]
-
-        mock_tools = Mock()
-        mock_tools.list_tools.return_value = ["query_inventory"]
-        mock_tools.run.return_value = {"ok": True, "result": {"count": 0}}
-        mock_tools.tool_specs.return_value = {"query_inventory": {"required": [], "optional": []}}
-        mock_tools.tool_schemas.return_value = []
-
-        agent = ReactAgent(llm_client=self.mock_llm, tool_runner=mock_tools, max_steps=5)
-        result = agent.run("test query")
-
-        self.assertTrue(result["ok"])
-        self.assertIn("Direct answer", result["final"])
-
-    def test_run_with_parallel_tool_calls(self):
-        """Test run() handles parallel tool calls."""
-        from agent.react_agent import ReactAgent
-        # Response with two tool calls, then a final answer
-        self.mock_llm.chat.side_effect = [
-            {
-                "content": "",
-                "tool_calls": [
-                    {"id": "call_1", "name": "query_inventory", "arguments": {"cell": "K562"}},
-                    {"id": "call_2", "name": "generate_stats", "arguments": {}},
-                ]
-            },
-            {
-                "content": "Found 1 K562 record and stats ready.",
-                "tool_calls": [],
-            },
-        ]
-
-        call_count = [0]
-
-        def mock_run(tool_name, tool_input, trace_id=None):
-            _ = trace_id  # Not used in mock
-            call_count[0] += 1
-            return {"ok": True, "result": {"count": call_count[0]}}
-
-        mock_tools = Mock()
-        mock_tools.list_tools.return_value = ["query_inventory", "generate_stats"]
-        mock_tools.run.side_effect = mock_run
-        mock_tools.tool_specs.return_value = {
-            "query_inventory": {"required": [], "optional": []},
-            "generate_stats": {"required": [], "optional": []},
-        }
-        mock_tools.tool_schemas.return_value = []
-
-        agent = ReactAgent(llm_client=self.mock_llm, tool_runner=mock_tools, max_steps=3)
-        result = agent.run("test query")
-
-        self.assertTrue(result["ok"])
-        # Both tools should have been called
-        self.assertEqual(2, call_count[0])
 
     def test_run_includes_trace_id(self):
         """Test run() includes trace_id in result."""

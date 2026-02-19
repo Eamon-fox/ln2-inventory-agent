@@ -219,10 +219,12 @@ class OverviewPanel(QWidget):
     request_add_prefill = Signal(dict)
     request_add_prefill_background = Signal(dict)
     request_move_prefill = Signal(dict)
-    request_query_prefill = Signal(dict)
     # Use object to preserve non-string dict keys (Qt map coercion can drop int keys).
     data_loaded = Signal(object)
     plan_items_requested = Signal(list)
+    # Statistics update for status bar
+    stats_changed = Signal(dict)  # {"total": n, "occupied": n, "empty": n, "rate": pct}
+    hover_stats_changed = Signal(str)  # Formatted string for hovered cell
 
     def __init__(self, bridge, yaml_path_getter):
         super().__init__()
@@ -250,6 +252,7 @@ class OverviewPanel(QWidget):
         self._table_columns = []
         self._table_row_records = []
         self._hover_warmed = False
+        self._show_summary_cards = True  # Can be set to False to hide cards
 
         self.setup_ui()
 
@@ -258,23 +261,19 @@ class OverviewPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 4)
         layout.setSpacing(6)
 
-        # Summary Cards
-        summary_row = QHBoxLayout()
-        summary_row.setSpacing(6)
-        
-        self.ov_total_records_value = self._build_card(summary_row, tr("overview.totalRecords"))
-        self.ov_occupied_value = self._build_card(summary_row, tr("overview.occupied"))
-        self.ov_empty_value = self._build_card(summary_row, tr("overview.empty"))
-        self.ov_rate_value = self._build_card(summary_row, tr("overview.occupancyRate"))
-        
-        layout.addLayout(summary_row)
+        # Summary Cards (can be hidden via _show_summary_cards)
+        self._summary_row = QHBoxLayout()
+        self._summary_row.setSpacing(6)
 
-        # Meta Stats
-        self.ov_total_capacity_value = QLabel("-")
-        self.ov_ops7_value = QLabel("-")
-        self.ov_meta_stats = QLabel(f"{tr('overview.capacity')}: - | {tr('overview.ops7d')}: -")
-        self.ov_meta_stats.setStyleSheet("color: var(--status-muted);")
-        layout.addWidget(self.ov_meta_stats)
+        self.ov_total_records_value = self._build_card(self._summary_row, tr("overview.totalRecords"))
+        self.ov_occupied_value = self._build_card(self._summary_row, tr("overview.occupied"))
+        self.ov_empty_value = self._build_card(self._summary_row, tr("overview.empty"))
+        self.ov_rate_value = self._build_card(self._summary_row, tr("overview.occupancyRate"))
+
+        self._summary_container = QWidget()
+        self._summary_container.setLayout(self._summary_row)
+        self._summary_container.setVisible(self._show_summary_cards)
+        layout.addWidget(self._summary_container)
 
         # Action Row
         action_row = QHBoxLayout()
@@ -351,8 +350,9 @@ class OverviewPanel(QWidget):
         self._base_cell_size = 36  # recalculated on refresh
         zoom_row = QHBoxLayout()
         zoom_row.setSpacing(4)
-        zoom_out_btn = QPushButton("-")
-        zoom_out_btn.setFixedSize(24, 24)
+        zoom_out_btn = QPushButton("−")
+        zoom_out_btn.setFixedSize(32, 32)
+        zoom_out_btn.setStyleSheet("border: none; background: transparent; font-size: 20px; font-weight: normal;")
         zoom_out_btn.setToolTip(tr("overview.zoomOut"))
         zoom_out_btn.clicked.connect(lambda: self._set_zoom(self._zoom_level - 0.1))
         zoom_row.addWidget(zoom_out_btn)
@@ -362,7 +362,8 @@ class OverviewPanel(QWidget):
         self._zoom_label.setStyleSheet(f"font-size: {FONT_SIZE_XS}px;")
         zoom_row.addWidget(self._zoom_label)
         zoom_in_btn = QPushButton("+")
-        zoom_in_btn.setFixedSize(24, 24)
+        zoom_in_btn.setFixedSize(32, 32)
+        zoom_in_btn.setStyleSheet("border: none; background: transparent; font-size: 20px; font-weight: normal;")
         zoom_in_btn.setToolTip(tr("overview.zoomIn"))
         zoom_in_btn.clicked.connect(lambda: self._set_zoom(self._zoom_level + 0.1))
         zoom_row.addWidget(zoom_in_btn)
@@ -558,8 +559,9 @@ class OverviewPanel(QWidget):
     def _apply_zoom(self):
         """Resize all existing cell buttons and repaint with scaled font."""
         cell_size = max(12, int(self._base_cell_size * self._zoom_level))
-        font_size_occupied = max(8, int(FONT_SIZE_CELL * self._zoom_level))
-        font_size_empty = max(7, int((FONT_SIZE_CELL - 2) * self._zoom_level))
+        # Scale font with zoom, baseline matches FONT_SIZE_CELL increase
+        font_size_occupied = max(9, int(FONT_SIZE_CELL * self._zoom_level))
+        font_size_empty = max(8, int((FONT_SIZE_CELL - 1) * self._zoom_level))
         self._current_font_sizes = (font_size_occupied, font_size_empty)
         for button in self.overview_cells.values():
             if isinstance(button, CellButton):
@@ -610,6 +612,7 @@ class OverviewPanel(QWidget):
 
     def refresh(self):
         yaml_path = self.yaml_path_getter()
+        self.ov_status.setText(tr("overview.statusLoading"))
         if not yaml_path or not os.path.isfile(yaml_path):
             self.ov_status.setText(t("main.fileNotFound", path=yaml_path or ""))
             self.overview_records_by_id = {}
@@ -618,8 +621,6 @@ class OverviewPanel(QWidget):
             return
 
         stats_response = self.bridge.generate_stats(yaml_path)
-        timeline_response = self.bridge.collect_timeline(yaml_path, days=7, all_history=False)
-
         if not stats_response.get("ok"):
             self.ov_status.setText(t("overview.loadFailed", error=stats_response.get('message', 'unknown error')))
             self.overview_records_by_id = {}
@@ -673,11 +674,22 @@ class OverviewPanel(QWidget):
 
         self.overview_pos_map = pos_map
 
-        self.ov_total_records_value.setText(str(len(records)))
-        self.ov_total_capacity_value.setText(str(overall.get("total_capacity", "-")))
-        self.ov_occupied_value.setText(str(overall.get("total_occupied", "-")))
-        self.ov_empty_value.setText(str(overall.get("total_empty", "-")))
-        self.ov_rate_value.setText(f"{overall.get('occupancy_rate', 0):.1f}%")
+        total_records = len(records)
+        total_occupied = overall.get("total_occupied", 0)
+        total_empty = overall.get("total_empty", 0)
+        occupancy_rate = overall.get("occupancy_rate", 0)
+        self.ov_total_records_value.setText(str(total_records))
+        self.ov_occupied_value.setText(str(total_occupied))
+        self.ov_empty_value.setText(str(total_empty))
+        self.ov_rate_value.setText(f"{occupancy_rate:.1f}%")
+
+        # Emit stats for status bar
+        self.stats_changed.emit({
+            "total": total_records,
+            "occupied": total_occupied,
+            "empty": total_empty,
+            "rate": occupancy_rate,
+        })
 
         if len(records) == 0:
             self.ov_hover_hint.setText(tr("overview.emptyHint"))
@@ -685,16 +697,6 @@ class OverviewPanel(QWidget):
         else:
             self.ov_hover_hint.setText(tr("overview.hoverHint"))
             self.ov_hover_hint.setStyleSheet("color: var(--text-weak); font-weight: 500;")
-
-        if timeline_response.get("ok"):
-            ops7 = timeline_response.get("result", {}).get("summary", {}).get("total_ops", 0)
-            self.ov_ops7_value.setText(str(ops7))
-        else:
-            self.ov_ops7_value.setText(tr("common.na"))
-
-        self.ov_meta_stats.setText(
-            tr("overview.capacity") + f": {self.ov_total_capacity_value.text()} | " + tr("overview.ops7d") + f": {self.ov_ops7_value.text()}"
-        )
 
         for box_num in box_numbers:
             stats_item = box_stats.get(str(box_num), {})
@@ -737,8 +739,8 @@ class OverviewPanel(QWidget):
 
         layout = getattr(self, "_current_layout", {})
         total_slots = rows * cols
-        # Increased base cell size to accommodate larger fonts
-        self._base_cell_size = max(28, min(42, 360 // max(rows, cols)))
+        # Base cell size scaled with FONT_SIZE_CELL increase for better readability
+        self._base_cell_size = max(30, min(45, 375 // max(rows, cols)))
         cell_size = max(12, int(self._base_cell_size * self._zoom_level))
         columns = 3
         for idx, box_num in enumerate(box_numbers):
@@ -989,17 +991,17 @@ class OverviewPanel(QWidget):
             # Dynamic tooltip from effective fields
             cl = record.get("cell_line")
             tt = [
-                f"ID: {record.get('id', '-')}",
-                f"Pos: {box_num}:{position}",
+                f"{tr('overview.tooltipId')}: {record.get('id', '-')}",
+                f"{tr('overview.tooltipPos')}: {box_num}:{position}",
             ]
             if cl:
-                tt.append(f"Cell Line: {cl}")
+                tt.append(f"{tr('overview.tooltipCellLine')}: {cl}")
             for fdef in get_effective_fields(meta):
                 fk = fdef["key"]
                 fv = record.get(fk)
                 if fv is not None and str(fv):
                     tt.append(f"{fdef.get('label', fk)}: {fv}")
-            tt.append(f"Date: {record.get('frozen_at', '-')}")
+            tt.append(f"{tr('overview.tooltipDate')}: {record.get('frozen_at', '-')}")
 
             button.setToolTip("\n".join(tt))
             button.setStyleSheet(cell_occupied_style(color, is_selected, font_size=fs_occ))
@@ -1233,10 +1235,31 @@ class OverviewPanel(QWidget):
         record = self.overview_pos_map.get((box_num, position))
         self.overview_hover_key = hover_key
         self._show_detail(box_num, position, record)
+        # Emit hover stats for status bar
+        self._emit_hover_stats(box_num, position, record)
 
     def _reset_detail(self):
         self.overview_hover_key = None
         self.ov_hover_hint.setText(tr("overview.hoverHint"))
+        # Emit empty hover stats to reset status bar
+        self.hover_stats_changed.emit("")
+
+    def _emit_hover_stats(self, box_num, position, record):
+        """Emit formatted hover stats for status bar display."""
+        if not record:
+            self.hover_stats_changed.emit(t("overview.previewEmpty", box=box_num, pos=position))
+            return
+
+        from lib.custom_fields import get_display_key
+        meta = getattr(self, "_current_meta", {})
+        dk = get_display_key(meta)
+        rec_id = str(record.get("id", "-"))
+        dk_val = str(record.get(dk, "-"))
+        frozen_at = str(record.get("frozen_at", "-"))
+        # Compact format for status bar
+        self.hover_stats_changed.emit(
+            f"ID {rec_id} | {box_num}:{position} | {dk_val} | {tr('operations.frozenDate')}: {frozen_at}"
+        )
 
     def _show_detail(self, box_num, position, record):
         if not record:
@@ -1261,12 +1284,10 @@ class OverviewPanel(QWidget):
         act_add = None
         act_thaw = None
         act_move = None
-        act_query = None
 
         if record:
             act_thaw = menu.addAction(tr("operations.thaw"))
             act_move = menu.addAction(tr("operations.move"))
-            act_query = menu.addAction(tr("operations.query"))
         else:
             act_add = menu.addAction(tr("operations.add"))
 
@@ -1305,46 +1326,23 @@ class OverviewPanel(QWidget):
             })
             self.status_message.emit(t("overview.prefillMove", id=rec_id), 2000)
             return
-        if selected == act_query:
-            self.request_query_prefill.emit({
-                "box": int(box_num),
-                "position": int(position),
-                "record_id": rec_id,
-            })
-            self.status_message.emit(t("overview.prefillQuery", id=rec_id), 2000)
 
     def _on_cell_drop(self, from_box, from_pos, to_box, to_pos, record_id):
         if from_box == to_box and from_pos == to_pos:
             return
 
-        record = self.overview_records_by_id.get(record_id)
-        label = "-"
-        if record:
-            from lib.custom_fields import get_display_key
-            meta = getattr(self, "_current_meta", {})
-            dk = get_display_key(meta)
-            label = str(record.get(dk) or "") or "-"
-
-        item = {
-            "action": "move",
+        # Prefill to Move form (same as right-click menu)
+        self.request_move_prefill.emit({
             "box": from_box,
             "position": from_pos,
-            "to_position": to_pos,
-            "to_box": to_box if to_box != from_box else None,
             "record_id": record_id,
-            "label": label,
-            "source": "human",
-            "payload": {
-                "record_id": record_id,
-                "position": from_pos,
-                "to_position": to_pos,
-                "to_box": to_box if to_box != from_box else None,
-                "date_str": date.today().isoformat(),
-                "action": "Move",
-                "note": "Drag from Overview",
-            },
-        }
-
-        self.plan_items_requested.emit([item])
+            "to_box": to_box,
+            "to_position": to_pos,
+        })
         target_desc = f"Box {to_box}:{to_pos}" if to_box != from_box else f"Pos {to_pos}"
-        self.status_message.emit(f"Move ID {record_id} to {target_desc} added to Plan.", 2000)
+        self.status_message.emit(t("overview.prefillMove", id=record_id), 2000)
+
+    def set_summary_cards_visible(self, visible):
+        """Show or hide the summary cards (used when displaying stats in status bar instead)."""
+        self._show_summary_cards = visible
+        self._summary_container.setVisible(visible)

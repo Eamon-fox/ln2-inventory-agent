@@ -11,7 +11,7 @@ from .csv_export import export_inventory_to_csv
 from .custom_fields import STRUCTURAL_FIELD_KEYS, get_effective_fields, get_required_field_keys
 from .position_fmt import get_box_numbers, get_position_range, get_total_slots
 from .operations import check_position_conflicts, find_record_by_id, get_next_id
-from .thaw_parser import ACTION_LABEL, extract_events, normalize_action
+from .thaw_parser import ACTION_LABEL, canonicalize_non_move_action, extract_events, normalize_action
 from .validators import (
     format_validation_errors,
     normalize_date_arg,
@@ -310,6 +310,264 @@ def _failure_result(
     return payload
 
 
+_ALLOWED_EXECUTION_MODES = {"direct", "preflight", "execute"}
+
+
+def _normalize_execution_mode(execution_mode):
+    mode = str(execution_mode or "").strip().lower()
+    return mode or "direct"
+
+
+def _enforce_execute_mode_for_source(source):
+    """Return True when this caller must execute writes via execute mode.
+
+    Keep plain ``tool_api`` source backward compatible for direct library users,
+    while enforcing plan execution for GUI/agent channels.
+    """
+    src = str(source or "").strip().lower()
+    if src in {"", "tool_api"}:
+        return False
+    return src.startswith("agent") or src.startswith("app_gui") or src.startswith("plan_executor")
+
+
+def _validate_execution_gate(*, dry_run=False, execution_mode=None, source="tool_api"):
+    mode = _normalize_execution_mode(execution_mode)
+    if mode not in _ALLOWED_EXECUTION_MODES:
+        return {
+            "error_code": "invalid_execution_mode",
+            "message": "execution_mode 必须是 direct/preflight/execute",
+            "details": {"execution_mode": execution_mode},
+        }, mode
+
+    if bool(dry_run):
+        return None, mode
+
+    if _enforce_execute_mode_for_source(source) and mode != "execute":
+        return {
+            "error_code": "write_requires_execute_mode",
+            "message": "只能在执行计划时写入（请先暂存到 Plan，再点击 Execute）",
+            "details": {"execution_mode": mode, "source": source},
+        }, mode
+
+    return None, mode
+
+
+def _validate_add_entry_request(payload):
+    frozen_at = payload.get("frozen_at")
+    positions = payload.get("positions")
+    if not validate_date(frozen_at):
+        return {
+            "error_code": "invalid_date",
+            "message": f"日期格式无效: {frozen_at}",
+            "details": {"frozen_at": frozen_at},
+        }, {}
+    if not positions:
+        return {
+            "error_code": "empty_positions",
+            "message": "必须指定至少一个位置",
+        }, {}
+    return None, {}
+
+
+def _validate_edit_entry_request(payload):
+    fields = payload.get("fields")
+    if not fields:
+        return {
+            "error_code": "no_fields",
+            "message": "至少需要修改一个字段",
+        }, {}
+    if "frozen_at" in fields and not validate_date(fields["frozen_at"]):
+        return {
+            "error_code": "invalid_date",
+            "message": f"日期格式无效: {fields['frozen_at']}",
+            "details": {"frozen_at": fields["frozen_at"]},
+        }, {}
+    return None, {}
+
+
+def _validate_record_thaw_request(payload):
+    date_str = payload.get("date_str")
+    action = payload.get("action")
+    to_position = payload.get("to_position")
+
+    if not validate_date(date_str):
+        return {
+            "error_code": "invalid_date",
+            "message": f"日期格式无效: {date_str}",
+            "details": {"date": date_str},
+        }, {}
+
+    action_en = normalize_action(action)
+    if not action_en:
+        return {
+            "error_code": "invalid_action",
+            "message": "操作类型必须是 取出/移动（兼容复苏/扔掉并自动归一为取出）",
+            "details": {"action": action},
+        }, {}
+
+    action_en = canonicalize_non_move_action(action_en) or action_en
+    normalized = {"action_en": action_en, "move_to_position": None}
+    if action_en == "move":
+        if to_position in (None, ""):
+            return {
+                "error_code": "invalid_move_target",
+                "message": "移动操作必须提供 to_position（目标位置）",
+            }, normalized
+        try:
+            move_to_position = int(to_position)
+        except (TypeError, ValueError):
+            return {
+                "error_code": "invalid_move_target",
+                "message": f"目标位置必须是整数: {to_position}",
+                "details": {"to_position": to_position},
+            }, normalized
+        if move_to_position < 1:
+            return {
+                "error_code": "invalid_position",
+                "message": "目标位置编号必须 >= 1",
+                "details": {"to_position": move_to_position},
+            }, normalized
+        normalized["move_to_position"] = move_to_position
+
+    return None, normalized
+
+
+def _validate_batch_thaw_request(payload):
+    date_str = payload.get("date_str")
+    action = payload.get("action")
+    entries = payload.get("entries")
+
+    if not validate_date(date_str):
+        return {
+            "error_code": "invalid_date",
+            "message": f"日期格式无效: {date_str}",
+            "details": {"date": date_str},
+        }, {}
+
+    if not entries:
+        return {
+            "error_code": "empty_entries",
+            "message": "未指定任何操作",
+        }, {}
+
+    action_en = normalize_action(action)
+    if not action_en:
+        return {
+            "error_code": "invalid_action",
+            "message": "操作类型必须是 取出/移动（兼容复苏/扔掉并自动归一为取出）",
+            "details": {"action": action},
+        }, {}
+
+    action_en = canonicalize_non_move_action(action_en) or action_en
+    return None, {"action_en": action_en}
+
+
+def _validate_adjust_box_count_request(payload):
+    operation = payload.get("operation")
+    op_text = str(operation or "").strip().lower()
+    op_alias = {
+        "add": "add",
+        "add_boxes": "add",
+        "increase": "add",
+        "remove": "remove",
+        "remove_box": "remove",
+        "delete": "remove",
+        "删除": "remove",
+        "增加": "add",
+    }
+    op = op_alias.get(op_text)
+    if not op:
+        return {
+            "error_code": "invalid_operation",
+            "message": "operation 必须是 add/remove",
+            "details": {"operation": operation},
+        }, {}
+    return None, {"op": op}
+
+
+_WRITE_REQUEST_VALIDATORS = {
+    "tool_add_entry": _validate_add_entry_request,
+    "tool_edit_entry": _validate_edit_entry_request,
+    "tool_record_thaw": _validate_record_thaw_request,
+    "tool_batch_thaw": _validate_batch_thaw_request,
+    "tool_rollback": lambda _payload: (None, {}),
+    "tool_adjust_box_count": _validate_adjust_box_count_request,
+}
+
+
+def validate_write_tool_call(
+    *,
+    yaml_path,
+    action,
+    source,
+    tool_name,
+    tool_input,
+    payload,
+    dry_run=False,
+    execution_mode=None,
+    actor_context=None,
+    before_data=None,
+):
+    """Unified write-tool validation gate.
+
+    1) Enforce execute-mode write policy for GUI/agent channels.
+    2) Dispatch to each tool's request-level validator.
+    3) Return either a normalized success payload or unified failure payload.
+    """
+    gate_issue, normalized_mode = _validate_execution_gate(
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        source=source,
+    )
+    if gate_issue:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=action,
+            source=source,
+            tool_name=tool_name,
+            error_code=gate_issue.get("error_code", "validation_failed"),
+            message=gate_issue.get("message", "写入校验失败"),
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=before_data,
+            errors=gate_issue.get("errors"),
+            details=gate_issue.get("details"),
+            extra=gate_issue.get("extra"),
+        )
+
+    validator = _WRITE_REQUEST_VALIDATORS.get(tool_name)
+    if callable(validator):
+        payload_dict = payload if isinstance(payload, dict) else {}
+        validator_result = validator(payload_dict)
+        if isinstance(validator_result, tuple) and len(validator_result) == 2:
+            issue, normalized = validator_result
+        else:
+            issue, normalized = None, {}
+        if issue:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=action,
+                source=source,
+                tool_name=tool_name,
+                error_code=issue.get("error_code", "validation_failed"),
+                message=issue.get("message", "写入校验失败"),
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=before_data,
+                errors=issue.get("errors"),
+                details=issue.get("details"),
+                extra=issue.get("extra"),
+            )
+    else:
+        normalized = {}
+
+    return {
+        "ok": True,
+        "execution_mode": normalized_mode,
+        "normalized": normalized,
+    }
+
+
 def tool_add_entry(
     yaml_path,
     box,
@@ -317,6 +575,7 @@ def tool_add_entry(
     frozen_at,
     fields=None,
     dry_run=False,
+    execution_mode=None,
     actor_context=None,
     source="tool_api",
     auto_backup=True,
@@ -335,32 +594,22 @@ def tool_add_entry(
         "frozen_at": frozen_at,
         "fields": fields,
         "dry_run": bool(dry_run),
+        "execution_mode": execution_mode,
     }
 
-    if not validate_date(frozen_at):
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_date",
-            message=f"日期格式无效: {frozen_at}",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            details={"frozen_at": frozen_at},
-        )
-
-    if not positions:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=action,
-            source=source,
-            tool_name=tool_name,
-            error_code="empty_positions",
-            message="必须指定至少一个位置",
-            actor_context=actor_context,
-            tool_input=tool_input,
-        )
+    validation = validate_write_tool_call(
+        yaml_path=yaml_path,
+        action=action,
+        source=source,
+        tool_name=tool_name,
+        tool_input=tool_input,
+        payload={"frozen_at": frozen_at, "positions": positions},
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+    )
+    if not validation.get("ok"):
+        return validation
 
     try:
         data = load_yaml(yaml_path)
@@ -598,6 +847,8 @@ def tool_edit_entry(
     yaml_path,
     record_id,
     fields,
+    dry_run=False,
+    execution_mode=None,
     actor_context=None,
     source="tool_api",
     auto_backup=True,
@@ -609,15 +860,26 @@ def tool_edit_entry(
     """
     action = "edit_entry"
     tool_name = "tool_edit_entry"
-    tool_input = {"record_id": record_id, "fields": dict(fields or {})}
+    tool_input = {
+        "record_id": record_id,
+        "fields": dict(fields or {}),
+        "dry_run": bool(dry_run),
+        "execution_mode": execution_mode,
+    }
 
-    if not fields:
-        return _failure_result(
-            yaml_path=yaml_path, action=action, source=source,
-            tool_name=tool_name, error_code="no_fields",
-            message="至少需要修改一个字段",
-            actor_context=actor_context, tool_input=tool_input,
-        )
+    validation = validate_write_tool_call(
+        yaml_path=yaml_path,
+        action=action,
+        source=source,
+        tool_name=tool_name,
+        tool_input=tool_input,
+        payload={"fields": fields or {}},
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+    )
+    if not validation.get("ok"):
+        return validation
 
     allowed = _get_editable_fields(yaml_path)
     bad_keys = set(fields.keys()) - allowed
@@ -628,16 +890,6 @@ def tool_edit_entry(
             message=f"以下字段不可编辑: {', '.join(sorted(bad_keys))}",
             actor_context=actor_context, tool_input=tool_input,
             details={"forbidden": sorted(bad_keys), "allowed": sorted(allowed)},
-        )
-
-    # Validate frozen_at if provided
-    if "frozen_at" in fields and not validate_date(fields["frozen_at"]):
-        return _failure_result(
-            yaml_path=yaml_path, action=action, source=source,
-            tool_name=tool_name, error_code="invalid_date",
-            message=f"日期格式无效: {fields['frozen_at']}",
-            actor_context=actor_context, tool_input=tool_input,
-            details={"frozen_at": fields["frozen_at"]},
         )
 
     try:
@@ -676,6 +928,17 @@ def tool_edit_entry(
             actor_context=actor_context, tool_input=tool_input,
             before_data=data, errors=validation_error.get("errors"),
         )
+
+    if dry_run:
+        return {
+            "ok": True,
+            "dry_run": True,
+            "preview": {
+                "record_id": record_id,
+                "before": before,
+                "after": dict(fields),
+            },
+        }
 
     try:
         _backup_path = write_yaml(
@@ -717,6 +980,7 @@ def tool_record_thaw(
     to_position=None,
     to_box=None,
     dry_run=False,
+    execution_mode=None,
     actor_context=None,
     source="tool_api",
     auto_backup=True,
@@ -733,76 +997,27 @@ def tool_record_thaw(
         "action": action,
         "note": note,
         "dry_run": bool(dry_run),
+        "execution_mode": execution_mode,
     }
 
-    if not validate_date(date_str):
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_date",
-            message=f"日期格式无效: {date_str}",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            details={"date": date_str},
-        )
+    validation = validate_write_tool_call(
+        yaml_path=yaml_path,
+        action=audit_action,
+        source=source,
+        tool_name=tool_name,
+        tool_input=tool_input,
+        payload={"date_str": date_str, "action": action, "to_position": to_position},
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+    )
+    if not validation.get("ok"):
+        return validation
 
-    action_en = normalize_action(action)
-    if not action_en:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_action",
-            message="操作类型必须是 取出/复苏/扔掉/移动",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            details={"action": action},
-        )
+    normalized = validation.get("normalized") or {}
+    action_en = normalized.get("action_en") or normalize_action(action) or ""
     action_cn = ACTION_LABEL.get(action_en, action)
-
-    move_to_position = None
-    if action_en == "move":
-        if to_position in (None, ""):
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="invalid_move_target",
-                message="移动操作必须提供 to_position（目标位置）",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                details={"record_id": record_id, "position": position},
-            )
-        try:
-            move_to_position = int(to_position)
-        except (TypeError, ValueError):
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="invalid_move_target",
-                message=f"目标位置必须是整数: {to_position}",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                details={"to_position": to_position},
-            )
-        if move_to_position < 1:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="invalid_position",
-                message="目标位置编号必须 >= 1",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                details={"to_position": move_to_position},
-            )
+    move_to_position = normalized.get("move_to_position")
     try:
         data = load_yaml(yaml_path)
     except Exception as exc:
@@ -1229,6 +1444,7 @@ def tool_batch_thaw(
     action="取出",
     note=None,
     dry_run=False,
+    execution_mode=None,
     actor_context=None,
     source="tool_api",
     auto_backup=True,
@@ -1242,46 +1458,24 @@ def tool_batch_thaw(
         "action": action,
         "note": note,
         "dry_run": bool(dry_run),
+        "execution_mode": execution_mode,
     }
 
-    if not validate_date(date_str):
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_date",
-            message=f"日期格式无效: {date_str}",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            details={"date": date_str},
-        )
+    validation = validate_write_tool_call(
+        yaml_path=yaml_path,
+        action=audit_action,
+        source=source,
+        tool_name=tool_name,
+        tool_input=tool_input,
+        payload={"date_str": date_str, "action": action, "entries": entries},
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+    )
+    if not validation.get("ok"):
+        return validation
 
-    if not entries:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="empty_entries",
-            message="未指定任何操作",
-            actor_context=actor_context,
-            tool_input=tool_input,
-        )
-
-    action_en = normalize_action(action)
-    if not action_en:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_action",
-            message="操作类型必须是 取出/复苏/扔掉/移动",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            details={"action": action},
-        )
+    action_en = (validation.get("normalized") or {}).get("action_en") or normalize_action(action) or ""
 
     if isinstance(entries, str):
         try:
@@ -1662,6 +1856,7 @@ def tool_batch_thaw(
 
     # Track cumulative position changes per record index so that multiple
     # entries targeting the same record correctly build on each other.
+    seen_nonmove_entries = set()
     for row_idx, entry in enumerate(normalized_entries, 1):
         if len(entry) not in (1, 2):
             errors.append(f"第{row_idx}条: 非移动操作必须使用 id 或 id:position 格式")
@@ -1694,6 +1889,12 @@ def tool_batch_thaw(
             if position < _pos_lo or position > _pos_hi:
                 errors.append(f"ID {record_id}: 位置编号 {position} 必须在 {_pos_lo}-{_pos_hi} 之间")
                 continue
+
+        entry_key = (record_id, position)
+        if entry_key in seen_nonmove_entries:
+            errors.append(f"ID {record_id}: 位置 {position} 在同一批次中重复提交")
+            continue
+        seen_nonmove_entries.add(entry_key)
 
         new_position = None
 
@@ -1888,6 +2089,7 @@ def tool_rollback(
     yaml_path,
     backup_path=None,
     dry_run=False,
+    execution_mode=None,
     actor_context=None,
     source="tool_api",
     auto_backup=True,
@@ -1915,9 +2117,25 @@ def tool_rollback(
     tool_input = {
         "backup_path": backup_path,
         "dry_run": bool(dry_run),
+        "execution_mode": execution_mode,
     }
     if normalized_source_event:
         tool_input["source_event"] = dict(normalized_source_event)
+
+    validation = validate_write_tool_call(
+        yaml_path=yaml_path,
+        action=audit_action,
+        source=source,
+        tool_name=tool_name,
+        tool_input=tool_input,
+        payload={},
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+    )
+    if not validation.get("ok"):
+        return validation
+
     current_data = None
     try:
         current_data = load_yaml(yaml_path)
@@ -2062,6 +2280,7 @@ def tool_adjust_box_count(
     box=None,
     renumber_mode=None,
     dry_run=False,
+    execution_mode=None,
     actor_context=None,
     source="tool_api",
     auto_backup=True,
@@ -2084,32 +2303,24 @@ def tool_adjust_box_count(
         "box": box,
         "renumber_mode": renumber_mode,
         "dry_run": bool(dry_run),
+        "execution_mode": execution_mode,
     }
 
-    op_text = str(operation or "").strip().lower()
-    op_alias = {
-        "add": "add",
-        "add_boxes": "add",
-        "increase": "add",
-        "remove": "remove",
-        "remove_box": "remove",
-        "delete": "remove",
-        "删除": "remove",
-        "增加": "add",
-    }
-    op = op_alias.get(op_text)
-    if not op:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_operation",
-            message="operation 必须是 add/remove",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            details={"operation": operation},
-        )
+    validation = validate_write_tool_call(
+        yaml_path=yaml_path,
+        action=audit_action,
+        source=source,
+        tool_name=tool_name,
+        tool_input=tool_input,
+        payload={"operation": operation},
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+    )
+    if not validation.get("ok"):
+        return validation
+
+    op = (validation.get("normalized") or {}).get("op")
 
     try:
         data = load_yaml(yaml_path)
@@ -2405,84 +2616,6 @@ def tool_adjust_box_count(
     }
 
 
-def _str_contains(value, query, case_sensitive=False):
-    if value is None:
-        return False
-    if query is None:
-        return False
-    text = str(value)
-    needle = str(query)
-    if case_sensitive:
-        return needle in text
-    return needle.lower() in text.lower()
-
-
-def _record_search_blob(rec, case_sensitive=False):
-    parts = []
-    # Structural fields for search
-    for field in ("id", "box", "frozen_at", "cell_line"):
-        value = rec.get(field)
-        if value is not None and value != "":
-            parts.append(str(value))
-    position = rec.get("position")
-    if position is not None:
-        parts.append(str(position))
-    # All user fields (anything not structural)
-    for key, value in rec.items():
-        if key not in STRUCTURAL_FIELD_KEYS and value is not None and value != "":
-            parts.append(str(value))
-    blob = " ".join(parts)
-    return blob if case_sensitive else blob.lower()
-
-
-def tool_query_inventory(
-    yaml_path,
-    box=None,
-    position=None,
-    **field_filters,
-):
-    """Query inventory records with field filters.
-
-    Accepts box, position as structural filters, plus cell_line and any user field key
-    as keyword arguments (e.g. cell_line="K562", short_name="clone-1").
-    """
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "load_failed",
-            "message": f"无法读取YAML文件: {exc}",
-        }
-
-    records = data.get("inventory", [])
-    matches = []
-    for rec in records:
-        if box is not None and rec.get("box") != box:
-            continue
-        if position is not None:
-            rec_position = rec.get("position")
-            if rec_position != position:
-                continue
-        # Dynamic user field filters
-        skip = False
-        for fk, fv in field_filters.items():
-            if fv and not _str_contains(rec.get(fk), fv):
-                skip = True
-                break
-        if skip:
-            continue
-        matches.append(rec)
-
-    return {
-        "ok": True,
-        "result": {
-            "records": matches,
-            "count": len(matches),
-        },
-    }
-
-
 def tool_export_inventory_csv(yaml_path, output_path):
     """Export full inventory records to a CSV file."""
     if not output_path:
@@ -2565,6 +2698,23 @@ def tool_list_empty_positions(yaml_path, box=None):
             "total_slots": total_slots,
         },
     }
+
+
+def _record_search_blob(record, case_sensitive=False):
+    """Build a normalized text blob from one inventory record for matching."""
+    parts = []
+    for value in (record or {}).values():
+        if value is None:
+            continue
+        if isinstance(value, (str, int, float, bool)):
+            parts.append(str(value))
+            continue
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, (str, int, float, bool)):
+                    parts.append(str(item))
+    blob = " ".join(parts)
+    return blob if case_sensitive else blob.lower()
 
 
 def tool_search_records(

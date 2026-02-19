@@ -16,7 +16,6 @@ from lib.tool_api import (
     tool_get_raw_entries,
     tool_list_empty_positions,
     tool_list_backups,
-    tool_query_inventory,
     tool_query_thaw_events,
     tool_recent_frozen,
     tool_recommend_positions,
@@ -26,7 +25,7 @@ from lib.tool_api import (
 )
 from app_gui.plan_gate import validate_plan_batch
 from lib.plan_item_factory import build_add_plan_item, build_edit_plan_item, build_record_plan_item, build_rollback_plan_item
-from lib.validators import parse_positions
+from lib.validators import parse_positions, validate_plan_item_with_history
 from lib.yaml_ops import load_yaml
 
 _WRITE_TOOLS = {"add_entry", "record_thaw", "batch_thaw", "rollback", "edit_entry"}
@@ -173,7 +172,6 @@ class AgentToolRunner:
 
     def list_tools(self):
         return [
-            "query_inventory",
             "list_empty_positions",
             "search_records",
             "recent_frozen",
@@ -197,15 +195,6 @@ class AgentToolRunner:
     def tool_specs(self):
         """Compact tool schemas for LLM prompt grounding."""
         return {
-            "query_inventory": {
-                "required": [],
-                "optional": ["box", "position", "cell_line"],
-                "description": "Query inventory records. Pass any user field key as a filter (e.g. cell_line, short_name).",
-                "aliases": {
-                    "cell_line": ["cell", "cell_line"],
-                    "short_name": ["short"],
-                },
-            },
             "list_empty_positions": {
                 "required": [],
                 "optional": ["box"],
@@ -247,7 +236,7 @@ class AgentToolRunner:
                 "params": {
                     "action": {
                         "type": "string",
-                        "description": "Action filter. Use one of: 取出/复苏/扔掉/移动 or takeout/thaw/discard/move.",
+                        "description": "Action filter. Recommended: 取出/移动 or takeout/move. Legacy thaw/discard filters remain supported.",
                     },
                 },
             },
@@ -309,7 +298,7 @@ class AgentToolRunner:
                 "params": {
                     "action": {
                         "type": "string",
-                        "description": "Use one of: 取出/复苏/扔掉/移动 or takeout/thaw/discard/move.",
+                        "description": "Use one of: 取出/移动 or takeout/move. Legacy 复苏/扔掉 are accepted and normalized to 取出.",
                     },
                     "to_position": {
                         "type": "integer",
@@ -328,7 +317,7 @@ class AgentToolRunner:
                 "params": {
                     "action": {
                         "type": "string",
-                        "description": "Use one of: 取出/复苏/扔掉/移动 or takeout/thaw/discard/move.",
+                        "description": "Use one of: 取出/移动 or takeout/move. Legacy 复苏/扔掉 are accepted and normalized to 取出.",
                     },
                     "to_box": {
                         "type": "integer",
@@ -502,8 +491,14 @@ class AgentToolRunner:
         if error_code in {"load_failed", "write_failed", "rollback_failed", "backup_load_failed"}:
             return "Verify yaml_path exists and file permissions are correct, then retry."
 
+        if error_code == "write_requires_execute_mode":
+            return (
+                "Write tools are execute-gated. Stage operations first, then let a human run Execute in GUI Plan tab. "
+                "Use dry_run for preview-only checks."
+            )
+
         if error_code == "record_not_found":
-            return "Call `query_inventory` first and use a valid `record_id` from results."
+            return "Call `search_records` first and use a valid `record_id` from results."
 
         if error_code == "position_not_found":
             return "Use a position that belongs to the target record."
@@ -533,7 +528,7 @@ class AgentToolRunner:
             return "Provide integer values in the configured inventory range."
 
         if error_code == "invalid_action":
-            return "Use a supported action value such as 取出 / 复苏 / 扔掉 / 移动."
+            return "Use a supported action value such as 取出 / 移动 (legacy 复苏 / 扔掉 are accepted and normalized to 取出)."
 
         if error_code in {"empty_positions", "empty_entries"}:
             return "Provide at least one target position or entry before retrying."
@@ -633,8 +628,7 @@ class AgentToolRunner:
     # --- Plan staging (human-in-the-loop) ---
 
     def _lookup_record_info(self, record_id):
-        """Quick lookup to get (box, label, position) for a record ID."""
-        from lib.custom_fields import get_display_key
+        """Quick lookup to get (box, position) for a record ID."""
         try:
             result = tool_get_raw_entries(yaml_path=self._yaml_path, ids=[record_id])
             if result.get("ok"):
@@ -642,18 +636,11 @@ class AgentToolRunner:
                 if entries:
                     rec = entries[0]
                     box = int(rec.get("box", 0))
-                    # Use display_key from meta for label
-                    try:
-                        data = load_yaml(self._yaml_path)
-                        dk = get_display_key(data.get("meta", {}))
-                    except Exception:
-                        dk = "short_name"
-                    label = rec.get(dk) or rec.get("short_name") or "-"
                     position = rec.get("position")
-                    return box, label, position
+                    return box, position
         except Exception:
             pass
-        return 0, "-", None
+        return 0, None
 
     @staticmethod
     def _item_desc(item):
@@ -774,7 +761,7 @@ class AgentToolRunner:
             to_box_raw = self._first_value(payload, "to_box", "target_box", "new_box", "dest_box")
             to_box = int(to_box_raw) if to_box_raw not in (None, "") else None
 
-            box, label, position = self._lookup_record_info(rid)
+            box, position = self._lookup_record_info(rid)
             if pos is None:
                 if position is not None:
                     pos = int(position)
@@ -797,7 +784,6 @@ class AgentToolRunner:
                     record_id=rid,
                     position=pos,
                     box=box,
-                    label=label,
                     date_str=self._first_value(payload, "date", "thaw_date"),
                     note=self._first_value(payload, "note", "notes", "memo"),
                     to_position=to_pos,
@@ -879,7 +865,7 @@ class AgentToolRunner:
                         },
                     )
 
-                box, label, position = self._lookup_record_info(rid)
+                box, position = self._lookup_record_info(rid)
                 if pos is None:
                     if position is not None:
                         pos = int(position)
@@ -893,7 +879,6 @@ class AgentToolRunner:
                         record_id=rid,
                         position=pos,
                         box=box,
-                        label=label,
                         date_str=payload.get("date"),
                         note=payload.get("note"),
                         to_position=to_pos,
@@ -923,7 +908,7 @@ class AgentToolRunner:
                     "ok": False, "error_code": "invalid_tool_input",
                     "message": "fields must be a non-empty object",
                 })
-            box, label, position = self._lookup_record_info(rid)
+            box, position = self._lookup_record_info(rid)
             pos = int(position) if position is not None else 1
             items.append(
                 build_edit_plan_item(
@@ -931,7 +916,6 @@ class AgentToolRunner:
                     fields=fields,
                     box=box,
                     position=pos,
-                    label=label,
                     source="ai",
                 )
             )
@@ -958,36 +942,75 @@ class AgentToolRunner:
                 )
             )
 
-        gate_result = validate_plan_batch(
-            items=items,
-            yaml_path=self._yaml_path,
-            bridge=None,
-            run_preflight=True,
-        )
-        validated_items = list(gate_result.get("accepted_items") or [])
-        errors = list(gate_result.get("errors") or [])
-        blocked_payload = list(gate_result.get("blocked_items") or [])
-        blocked_count = len(blocked_payload)
-        has_preflight_errors = any(err.get("kind") == "preflight" for err in errors)
+        # Validate each item against existing plan items (shared with operations_panel)
+        existing_items = self._plan_store.list_items() if self._plan_store else []
+        validated_items = []
+        blocked_items = []
 
-        if blocked_count:
+        for item in items:
+            is_valid, error_msg = validate_plan_item_with_history(item, existing_items)
+            if is_valid:
+                validated_items.append(item)
+                # Add to existing for subsequent validations
+                existing_items.append(item)
+            else:
+                # Add blocking info to the item
+                item_with_error = dict(item)
+                item_with_error["_validation_error"] = error_msg
+                blocked_items.append(item_with_error)
+
+        if blocked_items:
             detail_lines = []
-            for blocked in blocked_payload[:3]:
+            for blocked in blocked_items[:3]:
                 desc = self._item_desc(blocked)
-                detail_lines.append(f"{desc}: {blocked.get('message')}")
+                error = blocked.get("_validation_error", "Unknown error")
+                detail_lines.append(f"{desc}: {error}")
             detail = "; ".join(detail_lines)
-            if blocked_count > 3:
-                detail += f"; ... and {blocked_count - 3} more"
+            if len(blocked_items) > 3:
+                detail += f"; ... and {len(blocked_items) - 3} more"
 
             return self._with_hint(
                 tool_name,
                 {
                     "ok": False,
-                    "error_code": "plan_preflight_failed" if has_preflight_errors else "plan_validation_failed",
+                    "error_code": "plan_validation_failed",
                     "message": f"All operations rejected by validation: {detail}",
                     "staged": False,
-                    "result": {"staged_count": 0, "blocked_count": blocked_count},
-                    "blocked_items": blocked_payload,
+                    "result": {"staged_count": 0, "blocked_count": len(blocked_items)},
+                    "blocked_items": blocked_items,
+                },
+            )
+
+        gate = validate_plan_batch(
+            items=validated_items,
+            yaml_path=self._yaml_path,
+            bridge=None,
+            run_preflight=True,
+        )
+        if gate.get("blocked"):
+            gate_errors = list(gate.get("errors") or [])
+            gate_blocked = list(gate.get("blocked_items") or [])
+            has_preflight = any(err.get("kind") == "preflight" for err in gate_errors)
+            error_code = "plan_preflight_failed" if has_preflight else "plan_validation_failed"
+
+            detail_lines = []
+            for blocked in gate_blocked[:3]:
+                desc = self._item_desc(blocked)
+                error = blocked.get("message") or blocked.get("error_code") or "Unknown error"
+                detail_lines.append(f"{desc}: {error}")
+            detail = "; ".join(detail_lines)
+            if len(gate_blocked) > 3:
+                detail += f"; ... and {len(gate_blocked) - 3} more"
+
+            return self._with_hint(
+                tool_name,
+                {
+                    "ok": False,
+                    "error_code": error_code,
+                    "message": f"All operations rejected by validation: {detail}",
+                    "staged": False,
+                    "result": {"staged_count": 0, "blocked_count": len(gate_blocked)},
+                    "blocked_items": gate_blocked,
                 },
             )
 
@@ -1080,6 +1103,7 @@ class AgentToolRunner:
                         "yaml_path": self._yaml_path,
                         "operation": op,
                         "dry_run": True,
+                        "execution_mode": "preflight",
                         "actor_context": self._actor_context(trace_id=trace_id),
                         "source": "agent.react",
                     }
@@ -1102,39 +1126,6 @@ class AgentToolRunner:
                 tool_name,
                 _call_manage_boxes,
                 include_expected=True,
-            )
-
-        if tool_name == "query_inventory":
-            def _call_query():
-                filters = {}
-                # Known structural filters
-                box_val = self._optional_int(payload, "box")
-                if box_val is not None:
-                    filters["box"] = box_val
-                pos_val = self._optional_int(payload, "position")
-                if pos_val is not None:
-                    filters["position"] = pos_val
-                # Map common aliases to canonical field names
-                alias_map = {
-                    "cell": "cell_line", "cell_line": "cell_line",
-                    "short": "short_name", "short_name": "short_name",
-                    "plasmid": "plasmid_name", "plasmid_name": "plasmid_name",
-                    "plasmid_id": "plasmid_id",
-                    "note": "note",
-                }
-                for k, v in payload.items():
-                    if v in (None, "") or k in ("box", "position", "tool_name"):
-                        continue
-                    canonical = alias_map.get(k)
-                    if canonical and canonical not in filters:
-                        filters[canonical] = str(v)
-                return tool_query_inventory(
-                    yaml_path=self._yaml_path,
-                    **filters,
-                )
-            return self._safe_call(
-                tool_name,
-                _call_query,
             )
 
         if tool_name == "list_empty_positions":

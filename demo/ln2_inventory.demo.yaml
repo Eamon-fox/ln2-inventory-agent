@@ -2,6 +2,18 @@ meta:
   box_layout:
     rows: 9
     cols: 9
+  inventory_instance_id: 7ee520f7-5ce0-4e0e-8017-43a8d1e54c11
+  custom_fields:
+  - key: short_name
+    label: Short Name
+    type: str
+  display_key: short_name
+  color_key: cell_line
+  cell_line_options:
+  - K562
+  - HeLa
+  - NCCIT
+  - HEK293T
 inventory:
 - id: 1
   cell_line: NCCIT
@@ -106,7 +118,7 @@ inventory:
 - id: 9
   cell_line: K562
   parent_cell_line: K562
-  short_name: K562_RTCB_dTAG_clone12
+  short_name: K562_RTCB_dTAG_clone2
   plasmid_name: pGEMT-N-RTCB-dTAG
   plasmid_id: p260101-1
   box: 1

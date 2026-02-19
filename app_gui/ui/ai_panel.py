@@ -1143,18 +1143,48 @@ class AIPanel(QWidget):
             self._append_chat_with_collapsible("System", summary_text, details_json)
 
         elif event_type == "plan_staged":
-            added_count = event.get("added_count", 0)
-            total_count = event.get("total_count", 0)
-            action_counts = event.get("action_counts") if isinstance(event.get("action_counts"), dict) else {}
-            parts = []
-            for k, v in sorted(action_counts.items(), key=lambda kv: str(kv[0])):
-                try:
-                    parts.append(f"{k}={int(v)}")
-                except Exception:
-                    parts.append(f"{k}={v}")
-            breakdown = f" ({', '.join(parts)})" if parts else ""
-            summary_text = f"**Plan staged**: {added_count} item(s) added{breakdown}, {total_count} total in plan"
-            self._append_chat_with_collapsible("System", summary_text, details_json)
+            # Get operation items from event
+            items = event.get("items", [])
+
+            if not items:
+                # Fallback if items not provided
+                action_counts = event.get("action_counts") if isinstance(event.get("action_counts"), dict) else {}
+                parts = [f"{k}={v}" for k, v in sorted(action_counts.items(), key=lambda kv: str(kv[0]))]
+                summary_text = f"**Plan staged**: {', '.join(parts) if parts else 'operation added'}"
+                self._append_chat_message("System", summary_text)
+                return
+
+            # Format each operation
+            op_lines = []
+            for item in items:
+                action = item.get("action", "?").title()
+                box = item.get("box", "?")
+                pos = item.get("position", "?")
+
+                if action.lower() == "move":
+                    to_pos = item.get("to_position", "?")
+                    to_box = item.get("to_box")
+                    if to_box and to_box != box:
+                        op_lines.append(f"**{action}**: Box{box}:{pos} → Box{to_box}:{to_pos}")
+                    else:
+                        op_lines.append(f"**{action}**: Box{box}:{pos} → {to_pos}")
+                elif action.lower() == "add":
+                    payload = item.get("payload", {})
+                    positions = payload.get("positions", [])
+                    if len(positions) == 1:
+                        op_lines.append(f"**{action}**: Box{box}:{positions[0]}")
+                    elif len(positions) <= 3:
+                        pos_str = ", ".join(str(p) for p in positions)
+                        op_lines.append(f"**{action}**: Box{box}: {pos_str}")
+                    else:
+                        pos_str = ", ".join(str(p) for p in positions[:3])
+                        op_lines.append(f"**{action}**: Box{box}: {pos_str}, ... (+{len(positions)-3})")
+                else:
+                    # takeout, thaw, discard
+                    op_lines.append(f"**{action}**: Box{box}:{pos}")
+
+            summary_text = "\n".join(op_lines)
+            self._append_chat_message("System", summary_text)
 
         elif event_type == "plan_removed":
             removed_count = event.get("removed_count", 0)
@@ -1183,6 +1213,155 @@ class AIPanel(QWidget):
             summary_text = f"**Plan restored**: {restored_count} item(s) restored via undo{breakdown}"
             self._append_chat_with_collapsible("System", summary_text, details_json)
 
+    def _format_event_details(self, details_json):
+        """Format event JSON as human-readable text."""
+        from app_gui.i18n import tr
+        try:
+            event = json.loads(str(details_json)) if isinstance(details_json, str) else details_json
+        except Exception:
+            return str(details_json or "")
+
+        if not isinstance(event, dict):
+            return str(event)
+
+        event_type = event.get("type", "unknown")
+        lines = []
+
+        # Translate event type
+        type_key = f"eventDetails.eventType.{event_type}" if event_type.startswith("plan_") or event_type == "box_layout_adjusted" else None
+        if type_key:
+            lines.append(f"{tr('eventDetails.type')}: {tr(type_key, default=event_type)}")
+        else:
+            lines.append(f"{tr('eventDetails.type')}: {event_type}")
+
+        ts = event.get("timestamp")
+        if ts:
+            lines.append(f"{tr('eventDetails.time')}: {ts}")
+
+        # Type-specific formatting
+        if event_type == "plan_staged":
+            added = event.get('added_count', 0)
+            lines.append(f"{tr('eventDetails.added')}: {added} {tr('eventDetails.items')}")
+            lines.append(f"{tr('eventDetails.totalInPlan')}: {event.get('total_count', 0)}")
+            action_counts = event.get("action_counts", {})
+            if action_counts:
+                lines.append(f"  {tr('eventDetails.actionLabel')}:")
+                for k, v in sorted(action_counts.items()):
+                    action_label = tr(f"eventDetails.action.{k}", default=k)
+                    lines.append(f"    - {action_label}: {v}")
+
+        elif event_type == "plan_cleared":
+            cleared = event.get('cleared_count', 0)
+            lines.append(f"{tr('eventDetails.cleared')}: {cleared} {tr('eventDetails.items')}")
+            action_counts = event.get("action_counts", {})
+            if action_counts:
+                lines.append(f"  {tr('eventDetails.actionLabel')}:")
+                for k, v in sorted(action_counts.items()):
+                    action_label = tr(f"eventDetails.action.{k}", default=k)
+                    lines.append(f"    - {action_label}: {v}")
+
+        elif event_type == "plan_removed":
+            removed = event.get('removed_count', 0)
+            lines.append(f"{tr('eventDetails.removed')}: {removed} {tr('eventDetails.items')}")
+            lines.append(f"{tr('eventDetails.remaining')}: {event.get('total_count', 0)}")
+
+        elif event_type == "plan_restored":
+            restored = event.get('restored_count', 0)
+            lines.append(f"{tr('eventDetails.restored')}: {restored} {tr('eventDetails.items')}")
+            lines.append(f"{tr('eventDetails.backupPath')}: {event.get('backup_path', 'N/A')}")
+
+        elif event_type == "box_layout_adjusted":
+            lines.append(f"{tr('eventDetails.operation')}: {event.get('operation', 'unknown')}")
+            preview = event.get("preview", {})
+            if preview:
+                before = preview.get('box_count_before', '?')
+                after = preview.get('box_count_after', '?')
+                lines.append(f"{tr('eventDetails.before')}: {before} {tr('eventDetails.boxes')}")
+                lines.append(f"{tr('eventDetails.after')}: {after} {tr('eventDetails.boxes')}")
+                added = preview.get("added_boxes", [])
+                if added:
+                    lines.append(f"{tr('eventDetails.addedBoxes')}: {', '.join(str(b) for b in added)}")
+                removed = preview.get("removed_box")
+                if removed:
+                    lines.append(f"{tr('eventDetails.removedBox')}: {removed}")
+                    lines.append(f"{tr('eventDetails.renumberMode')}: {preview.get('renumber_mode', '?')}")
+
+        elif event_type in ("plan_executed", "plan_execute_blocked"):
+            ok = event.get("ok", False)
+            lines.append(f"{tr('eventDetails.success')}: {ok}")
+            stats = event.get("stats", {})
+            if stats:
+                lines.append(f"{tr('eventDetails.total')}: {stats.get('total', 0)}")
+                lines.append(f"{tr('eventDetails.applied')}: {stats.get('applied', 0)}")
+                lines.append(f"{tr('eventDetails.blocked')}: {stats.get('blocked', 0)}")
+
+            report = event.get("report")
+            if isinstance(report, dict):
+                items = report.get("items", [])
+                if items:
+                    lines.append(f"\n{tr('eventDetails.itemsList')} ({len(items)}):")
+                    for item in items[:5]:
+                        action_key = item.get("action", "?")
+                        action_label = tr(f"eventDetails.action.{action_key}", default=action_key)
+                        rid = item.get("record_id", "?")
+                        box = item.get("box", "?")
+                        pos = item.get("position", "?")
+                        error = item.get("error") or item.get("message")
+                        item_line = f"  - [{action_label}] {tr('eventDetails.id')}: {rid}"
+                        if box != "?" and pos != "?":
+                            item_line += f" | {tr('eventDetails.box')}: {box}, {tr('eventDetails.position')}: {pos}"
+                        lines.append(item_line)
+                        if error:
+                            lines.append(f"    {tr('eventDetails.error')}: {error}")
+                    if len(items) > 5:
+                        more = tr('eventDetails.andMore', count=len(items) - 5)
+                        lines.append(f"  - ... {more}")
+
+                # Rollback info if present
+                rollback = event.get("rollback")
+                if rollback:
+                    lines.append(f"\n{tr('eventDetails.rollback')}:")
+                    if rollback.get("ok"):
+                        lines.append(f"  {tr('eventDetails.rollbackOk')}")
+                    elif rollback.get("failed"):
+                        lines.append(f"  {tr('eventDetails.rollbackFailed')}: {rollback.get('message', '?')}")
+                    else:
+                        lines.append(f"  {tr('eventDetails.rollBackUnavailable')}: {rollback.get('message', '?')}")
+
+                # Source event if present
+                source_event = event.get("source_event")
+                if source_event:
+                    lines.append(f"\n{tr('eventDetails.sourceEvent')}:")
+                    lines.append(f"  Timestamp: {source_event.get('timestamp', '?')}")
+                    lines.append(f"  {tr('eventDetails.actionLabel')}: {source_event.get('action', '?')}")
+
+        # Add hint if available
+        if "_hint" in event:
+            lines.append(f"\n{tr('eventDetails.hint')}: {event['_hint']}")
+
+        # If we couldn't format much, fall back to sorted key-value pairs
+        if len(lines) <= 2:
+            lines = []
+            for k in sorted(event.keys()):
+                if k in ("type", "timestamp", "_hint", "response_pool", "_compact_meta", "report", "preview"):
+                    continue
+                v = event[k]
+                if isinstance(v, (list, dict)):
+                    v = f"<{type(v).__name__} with {len(v)} {tr('eventDetails.items')}>"
+                lines.append(f"{k}: {v}")
+
+        return "\n".join(lines) if lines else str(event)
+
+    def _append_chat_message(self, role, content):
+        """Append a simple message without collapsible details."""
+        is_dark = _is_dark_mode(self)
+        header_html = self._build_header_html(role, is_dark=is_dark)
+        body_html = _md_to_html(str(content or ""), is_dark)
+        self._move_chat_cursor_to_end()
+        self.ai_chat.append(header_html)
+        self.ai_chat.append(body_html)
+        self.ai_chat.append("")  # Empty line for spacing
+
     def _append_chat_with_collapsible(self, role, summary, details_json):
         is_dark = _is_dark_mode(self)
         header_html = self._build_header_html(role, is_dark=is_dark)
@@ -1191,7 +1370,8 @@ class AIPanel(QWidget):
         self.ai_chat.append(header_html)
         self.ai_chat.append(body_html)
 
-        details_text = str(details_json or "")
+        # Format details as human-readable text instead of raw JSON
+        details_text = self._format_event_details(details_json)
         block_id = f"toggle_details_{len(self.ai_collapsible_blocks)}"
         collapsed_html = self._render_collapsible_details(block_id, details_text, collapsed=True, is_dark=is_dark)
 

@@ -1,4 +1,5 @@
 import os
+import re
 
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 from PySide6.QtCore import Qt
@@ -8,7 +9,7 @@ from PySide6.QtCore import Qt
 # Typography / Font Size Configuration
 # =============================================================================
 # Usage in f-strings: f"font-size: {FONT_SIZE_SM}px;"
-FONT_SIZE_CELL = 12      # Grid cells, smallest text
+FONT_SIZE_CELL = 13      # Grid cells, smallest text (increased for overview readability)
 FONT_SIZE_MONO = 12      # Monospace/code blocks
 FONT_SIZE_XS = 12        # Hints, small buttons, secondary text
 FONT_SIZE_SM = 13        # Body text, tooltips
@@ -18,6 +19,22 @@ FONT_SIZE_XL = 20        # Extra large (big numbers)
 FONT_SIZE_XXL = 24       # Huge text (rarely used)
 
 FONT_POINT_SIZE = 11     # QApplication global font point size
+
+
+# =============================================================================
+# Layout Configuration
+# =============================================================================
+# Panel width constraints (in pixels, resolution-independent)
+LAYOUT_OVERVIEW_MIN_WIDTH = 400        # Overview panel minimum width
+LAYOUT_OPS_MIN_WIDTH = 280             # Operations panel minimum width
+LAYOUT_OPS_MAX_WIDTH = 450             # Operations panel maximum width
+LAYOUT_OPS_DEFAULT_WIDTH = 350         # Operations panel preferred width
+LAYOUT_AI_MIN_WIDTH = 280              # AI panel minimum width
+LAYOUT_AI_MAX_WIDTH = 450              # AI panel maximum width
+LAYOUT_AI_DEFAULT_WIDTH = 320          # AI panel preferred width
+
+# Spacing
+LAYOUT_SPLITTER_HANDLE_WIDTH = 6       # Width of draggable splitter handles
 
 _CJK_FONT_CANDIDATES = [
     os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "msyh.ttc"),
@@ -59,6 +76,29 @@ def _setup_cjk_font(app):
     app.setFont(font)
 
 
+def _resolve_qss_vars(stylesheet):
+    """Expand CSS var() tokens for Qt style sheets.
+
+    Qt QSS does not support CSS custom properties (``:root`` / ``var()``),
+    so we resolve them before applying the style string.
+    """
+    token_map = {}
+    for block in re.findall(r":root\s*\{([^}]*)\}", stylesheet, flags=re.S):
+        for line in block.split(";"):
+            if ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            key = key.strip()
+            value = value.strip()
+            if key.startswith("--") and value:
+                token_map[key] = value
+
+    resolved = re.sub(r":root\s*\{[^}]*\}\s*", "", stylesheet, flags=re.S)
+    for key, value in token_map.items():
+        resolved = resolved.replace(f"var({key})", value)
+    return resolved
+
+
 def apply_dark_theme(app):
     """Applies the dark theme to the QApplication."""
     _apply_theme(app, "dark")
@@ -95,7 +135,7 @@ def _apply_theme(app, mode):
         
         app.setPalette(palette)
 
-        app.setStyleSheet(f"""
+        qss = f"""
             :root {{
                 --background-base: #f7fafc;
                 --background-strong: #eef3f8;
@@ -142,13 +182,10 @@ def _apply_theme(app, mode):
             QTableWidget::item {{ padding: 4px 8px; border: none; }}
             QTableWidget::item:selected {{ background-color: var(--accent-muted); color: var(--text-strong); }}
             QHeaderView::section {{ background-color: var(--background-strong); color: var(--text-weak); padding: 6px 8px; border: none; border-bottom: 1px solid var(--border-weak); border-right: 1px solid var(--border-weak); font-weight: 500; font-size: {FONT_SIZE_SM}px; }}
-            QLineEdit, QSpinBox, QDateEdit, QComboBox, QTextEdit {{ background-color: var(--background-inset); border: 1px solid var(--border-weak); border-radius: var(--radius-sm); color: var(--text-strong); padding: 6px 10px; selection-background-color: var(--accent-muted); font-size: {FONT_SIZE_MD}px; }}
-            QLineEdit:focus, QSpinBox:focus, QDateEdit:focus, QComboBox:focus, QTextEdit:focus {{ border: 1px solid var(--accent); background-color: var(--background-raised); }}
-            QLineEdit:disabled, QSpinBox:disabled, QDateEdit:disabled, QComboBox:disabled, QTextEdit:disabled {{ background-color: var(--background-strong); color: var(--text-muted); border-color: transparent; }}
-            QComboBox::drop-down {{ border: none; width: 24px; }}
-            QComboBox::down-arrow {{ image: none; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid var(--text-weak); margin-right: 8px; }}
-            QComboBox QAbstractItemView {{ background-color: var(--background-raised); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); selection-background-color: var(--accent-muted); selection-color: var(--text-strong); padding: 4px; }}
-            QPushButton {{ background-color: var(--background-raised); border: 1px solid var(--border-weak); border-radius: var(--radius-sm); color: var(--text-strong); padding: 8px 16px; font-weight: 500; font-size: {FONT_SIZE_MD}px; }}
+            QLineEdit, QDateEdit, QComboBox, QTextEdit {{ background-color: var(--background-inset); border: 1px solid var(--border-weak); border-radius: var(--radius-sm); color: var(--text-strong); padding: 6px 10px; selection-background-color: var(--accent-muted); font-size: {FONT_SIZE_MD}px; }}
+            QLineEdit:focus, QDateEdit:focus, QComboBox:focus, QTextEdit:focus {{ border: 1px solid var(--accent); background-color: var(--background-raised); }}
+            QLineEdit:disabled, QDateEdit:disabled, QComboBox:disabled, QTextEdit:disabled {{ background-color: var(--background-strong); color: var(--text-muted); border-color: transparent; }}
+            QPushButton {{ background-color: var(--background-raised); border: 1px solid var(--border-weak); border-radius: var(--radius-sm); color: var(--text-strong); padding: 4px 12px; font-weight: 500; font-size: {FONT_SIZE_MD}px; }}
             QPushButton:hover {{ background-color: #f2f6fb; border-color: var(--border-subtle); }}
             QPushButton:pressed {{ background-color: #e6eef7; }}
             QPushButton:disabled {{ background-color: var(--background-strong); color: var(--text-muted); border-color: transparent; }}
@@ -180,9 +217,10 @@ def _apply_theme(app, mode):
             QLabel {{ color: var(--text-strong); background-color: transparent; }}
             QLabel[secondary="true"] {{ color: var(--text-weak); }}
             QLabel[muted="true"] {{ color: var(--text-muted); font-size: {FONT_SIZE_SM}px; }}
-            QSplitter::handle {{ background-color: var(--border-weak); }}
-            QSplitter::handle:horizontal {{ width: 1px; }}
-            QSplitter::handle:vertical {{ height: 1px; }}
+            QSplitter#mainSplitter::handle {{ background-color: rgba(15,23,42,0.12); border-radius: 2px; }}
+            QSplitter#mainSplitter::handle:hover {{ background-color: rgba(43,127,229,0.35); }}
+            QSplitter#mainSplitter::handle:horizontal {{ width: 6px; margin: 2px 0; }}
+            QSplitter#mainSplitter::handle:vertical {{ height: 6px; margin: 0 2px; }}
             /* Variant buttons */
             QPushButton[variant="primary"] {{ background-color: var(--btn-primary); color: #ffffff; font-weight: bold; border: 1px solid var(--btn-primary-border); }}
             QPushButton[variant="primary"]:hover {{ background-color: var(--btn-primary-hover); }}
@@ -200,7 +238,8 @@ def _apply_theme(app, mode):
             QPushButton[class="quick-prompt-btn"] {{ padding: 3px 10px; font-size: {FONT_SIZE_XS}px; border-radius: 10px; background-color: rgba(43,127,229,0.10); border: none; color: #34506d; }}
             QPushButton[class="quick-prompt-btn"]:hover {{ background-color: rgba(43,127,229,0.18); color: #0f172a; }}
             QWidget#OverviewPanel {{ background-color: #f5f9fd; }}
-        """)
+        """
+        app.setStyleSheet(_resolve_qss_vars(qss))
     else:
         dark_palette = QPalette()
         dark_palette.setColor(QPalette.Window, QColor(15, 23, 36))
@@ -222,7 +261,7 @@ def _apply_theme(app, mode):
         
         app.setPalette(dark_palette)
 
-        app.setStyleSheet(f"""
+        qss = f"""
             :root {{
                 --background-base: #0f1724;
                 --background-strong: #152235;
@@ -269,13 +308,10 @@ def _apply_theme(app, mode):
             QTableWidget::item {{ padding: 4px 8px; border: none; }}
             QTableWidget::item:selected {{ background-color: var(--accent-muted); color: var(--text-strong); }}
             QHeaderView::section {{ background-color: var(--background-strong); color: var(--text-weak); padding: 6px 8px; border: none; border-bottom: 1px solid var(--border-weak); border-right: 1px solid var(--border-weak); font-weight: 500; font-size: {FONT_SIZE_SM}px; }}
-            QLineEdit, QSpinBox, QDateEdit, QComboBox, QTextEdit {{ background-color: var(--background-inset); border: 1px solid var(--border-weak); border-radius: var(--radius-sm); color: var(--text-strong); padding: 6px 10px; selection-background-color: var(--accent-muted); font-size: {FONT_SIZE_MD}px; }}
-            QLineEdit:focus, QSpinBox:focus, QDateEdit:focus, QComboBox:focus, QTextEdit:focus {{ border: 1px solid var(--accent); background-color: var(--background-base); }}
-            QLineEdit:disabled, QSpinBox:disabled, QDateEdit:disabled, QComboBox:disabled, QTextEdit:disabled {{ background-color: var(--background-strong); color: var(--text-muted); border-color: transparent; }}
-            QComboBox::drop-down {{ border: none; width: 24px; }}
-            QComboBox::down-arrow {{ image: none; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid var(--text-weak); margin-right: 8px; }}
-            QComboBox QAbstractItemView {{ background-color: var(--background-raised); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); selection-background-color: var(--accent-muted); selection-color: var(--text-strong); padding: 4px; }}
-            QPushButton {{ background-color: var(--background-raised); border: 1px solid var(--border-weak); border-radius: var(--radius-sm); color: var(--text-strong); padding: 8px 16px; font-weight: 500; font-size: {FONT_SIZE_MD}px; }}
+            QLineEdit, QDateEdit, QComboBox, QTextEdit {{ background-color: var(--background-inset); border: 1px solid var(--border-weak); border-radius: var(--radius-sm); color: var(--text-strong); padding: 6px 10px; selection-background-color: var(--accent-muted); font-size: {FONT_SIZE_MD}px; }}
+            QLineEdit:focus, QDateEdit:focus, QComboBox:focus, QTextEdit:focus {{ border: 1px solid var(--accent); background-color: var(--background-base); }}
+            QLineEdit:disabled, QDateEdit:disabled, QComboBox:disabled, QTextEdit:disabled {{ background-color: var(--background-strong); color: var(--text-muted); border-color: transparent; }}
+            QPushButton {{ background-color: var(--background-raised); border: 1px solid var(--border-weak); border-radius: var(--radius-sm); color: var(--text-strong); padding: 4px 12px; font-weight: 500; font-size: {FONT_SIZE_MD}px; }}
             QPushButton:hover {{ background-color: #24364d; border-color: var(--border-subtle); }}
             QPushButton:pressed {{ background-color: #1e3047; }}
             QPushButton:disabled {{ background-color: var(--background-strong); color: var(--text-muted); border-color: transparent; }}
@@ -307,9 +343,10 @@ def _apply_theme(app, mode):
             QLabel {{ color: var(--text-strong); background-color: transparent; }}
             QLabel[secondary="true"] {{ color: var(--text-weak); }}
             QLabel[muted="true"] {{ color: var(--text-muted); font-size: {FONT_SIZE_SM}px; }}
-            QSplitter::handle {{ background-color: var(--border-weak); }}
-            QSplitter::handle:horizontal {{ width: 1px; }}
-            QSplitter::handle:vertical {{ height: 1px; }}
+            QSplitter#mainSplitter::handle {{ background-color: rgba(159,179,200,0.18); border-radius: 2px; }}
+            QSplitter#mainSplitter::handle:hover {{ background-color: rgba(99,179,255,0.42); }}
+            QSplitter#mainSplitter::handle:horizontal {{ width: 6px; margin: 2px 0; }}
+            QSplitter#mainSplitter::handle:vertical {{ height: 6px; margin: 0 2px; }}
             /* Variant buttons */
             QPushButton[variant="primary"] {{ background-color: var(--btn-primary); color: #ffffff; font-weight: bold; border: 1px solid var(--btn-primary-border); }}
             QPushButton[variant="primary"]:hover {{ background-color: var(--btn-primary-hover); }}
@@ -327,7 +364,8 @@ def _apply_theme(app, mode):
             QPushButton[class="quick-prompt-btn"] {{ padding: 3px 10px; font-size: {FONT_SIZE_XS}px; border-radius: 10px; background-color: rgba(99,179,255,0.16); border: none; color: #a9c6e3; }}
             QPushButton[class="quick-prompt-btn"]:hover {{ background-color: rgba(99,179,255,0.24); color: #e6f1ff; }}
             QWidget#OverviewPanel {{ background-color: #112033; }}
-        """)
+        """
+        app.setStyleSheet(_resolve_qss_vars(qss))
 
 
 def card_style():
@@ -345,7 +383,7 @@ def button_primary_style():
             color: #ffffff;
             border: 1px solid var(--btn-primary-border);
             border-radius: var(--radius-sm);
-            padding: 8px 16px;
+            padding: 4px 12px;
             font-weight: 500;
         }
         QPushButton:hover {
@@ -364,7 +402,7 @@ def button_ghost_style():
             color: var(--text-strong);
             border: none;
             border-radius: var(--radius-sm);
-            padding: 8px 16px;
+            padding: 4px 12px;
         }
         QPushButton:hover {
             background-color: var(--background-raised);
@@ -379,7 +417,7 @@ def button_danger_style():
             color: #ffffff;
             border: 1px solid var(--btn-danger-border);
             border-radius: var(--radius-sm);
-            padding: 8px 16px;
+            padding: 4px 12px;
             font-weight: 500;
         }
         QPushButton:hover {
@@ -398,7 +436,7 @@ def button_warning_style():
             color: #ffffff;
             border: 1px solid var(--btn-warning-border);
             border-radius: var(--radius-sm);
-            padding: 8px 16px;
+            padding: 4px 12px;
             font-weight: 500;
         }
         QPushButton:hover {
@@ -503,7 +541,6 @@ def cell_preview_add_style():
             font-size: {FONT_SIZE_CELL}px;
             font-weight: 500;
             padding: 1px;
-            cursor: pointing-hand;
         }}
     """
 
@@ -518,7 +555,6 @@ def cell_preview_takeout_style():
             font-size: {FONT_SIZE_CELL}px;
             font-weight: 500;
             padding: 1px;
-            cursor: pointing-hand;
         }}
     """
 
@@ -533,7 +569,6 @@ def cell_preview_move_source_style():
             font-size: {FONT_SIZE_CELL}px;
             font-weight: 500;
             padding: 1px;
-            cursor: pointing-hand;
         }}
     """
 
@@ -548,7 +583,6 @@ def cell_preview_move_target_style():
             font-size: {FONT_SIZE_CELL}px;
             font-weight: 500;
             padding: 1px;
-            cursor: pointing-hand;
         }}
     """
 

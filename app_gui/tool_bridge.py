@@ -19,7 +19,6 @@ from lib.tool_api import (
     tool_generate_stats,
     tool_list_empty_positions,
     tool_list_backups,
-    tool_query_inventory,
     tool_record_thaw,
     tool_rollback,
 )
@@ -57,18 +56,6 @@ class GuiToolBridge:
             session_id=self._session_id,
         )
 
-    def query_inventory(self, yaml_path, **filters):
-        # Separate structural filters from user field filters
-        structural = {}
-        field_filters = {}
-        for key, value in filters.items():
-            if key in ("box", "position"):
-                structural[key] = value
-            elif value:
-                field_filters[key] = value
-
-        return tool_query_inventory(yaml_path=yaml_path, **structural, **field_filters)
-
     def list_empty_positions(self, yaml_path, box=None):
         return tool_list_empty_positions(yaml_path=yaml_path, box=box)
 
@@ -102,11 +89,12 @@ class GuiToolBridge:
             **payload,
         )
 
-    def edit_entry(self, yaml_path, record_id, fields):
+    def edit_entry(self, yaml_path, record_id, fields, execution_mode=None):
         return tool_edit_entry(
             yaml_path=yaml_path,
             record_id=record_id,
             fields=fields,
+            execution_mode=execution_mode,
             actor_context=self._ctx(),
             source="app_gui",
         )
@@ -131,11 +119,12 @@ class GuiToolBridge:
         entries = parse_batch_entries(entries_text)
         return self.batch_thaw(yaml_path=yaml_path, entries=entries, **payload)
 
-    def rollback(self, yaml_path, backup_path=None, source_event=None):
+    def rollback(self, yaml_path, backup_path=None, source_event=None, execution_mode=None):
         return tool_rollback(
             yaml_path=yaml_path,
             backup_path=backup_path,
             source_event=source_event,
+            execution_mode=execution_mode,
             actor_context=self._ctx(),
             source="app_gui",
         )

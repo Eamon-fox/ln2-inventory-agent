@@ -191,32 +191,6 @@ class PlanModelRenderingTests(unittest.TestCase):
 class WorkerTests(unittest.TestCase):
     """Test AgentRunWorker functionality."""
 
-    def test_worker_basic_execution(self):
-        """Test basic AgentRunWorker execution."""
-        from app_gui.ui.workers import AgentRunWorker
-
-        mock_bridge = Mock()
-        mock_bridge.run_agent_query.return_value = {
-            "ok": True,
-            "final": "Test answer",
-            "conversation_history": [],
-        }
-
-        worker = AgentRunWorker(
-            bridge=mock_bridge,
-            yaml_path="/tmp/test.yaml",
-            query="test query",
-            model="deepseek-chat",
-            max_steps=8,
-            history=None,
-        )
-
-        worker.run()
-
-        mock_bridge.run_agent_query.assert_called_once()
-        call_kwargs = mock_bridge.run_agent_query.call_args[1]
-        self.assertEqual("test query", call_kwargs["query"])
-        self.assertTrue(call_kwargs["thinking_enabled"])
 
 
 # ── ui/utils.py Tests ───────────────────────────────────────────

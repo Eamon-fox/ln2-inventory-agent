@@ -46,17 +46,26 @@ def _record_sort_key(record):
 
 
 def build_export_columns(meta=None):
-    """Build stable CSV column order for full inventory export."""
-    columns = list(CORE_EXPORT_COLUMNS)
+    """Build stable CSV column order for full inventory export.
+    
+    Columns are dynamically generated from:
+    - Structural fields (id, box, position, frozen_at, thaw_events, cell_line)
+    - User-defined custom fields (from meta.custom_fields)
+    """
+    from .custom_fields import STRUCTURAL_FIELD_KEYS
+    
+    STRUCTURAL_COLUMNS = ["id", "box", "position", "frozen_at", "thaw_events", "cell_line"]
+    
+    columns = list(STRUCTURAL_COLUMNS)
+    
     for field_def in get_effective_fields(meta or {}):
         key = str(field_def.get("key") or "").strip()
         if not key:
             continue
-        if key in STRUCTURAL_FIELD_KEYS:
-            continue
         if key in columns:
             continue
         columns.append(key)
+    
     return columns
 
 

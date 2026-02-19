@@ -35,7 +35,11 @@ from lib.position_fmt import get_box_numbers
 from lib.yaml_ops import load_yaml
 from app_gui.ui.theme import (
     apply_dark_theme, apply_light_theme,
-    FONT_SIZE_XS, FONT_SIZE_SM, FONT_SIZE_MONO
+    FONT_SIZE_XS, FONT_SIZE_SM, FONT_SIZE_MONO,
+    LAYOUT_OVERVIEW_MIN_WIDTH,
+    LAYOUT_OPS_MIN_WIDTH, LAYOUT_OPS_MAX_WIDTH, LAYOUT_OPS_DEFAULT_WIDTH,
+    LAYOUT_AI_MIN_WIDTH, LAYOUT_AI_MAX_WIDTH, LAYOUT_AI_DEFAULT_WIDTH,
+    LAYOUT_SPLITTER_HANDLE_WIDTH,
 )
 from app_gui.ui.overview_panel import OverviewPanel
 from app_gui.ui.operations_panel import OperationsPanel
@@ -1167,8 +1171,8 @@ class MainWindow(QMainWindow):
     def setup_ui(self):
         container = QWidget()
         root = QVBoxLayout(container)
-        root.setContentsMargins(8, 8, 8, 8)
-        root.setSpacing(8)
+        root.setContentsMargins(8, 8, 8, 4)
+        root.setSpacing(4)
 
         # Top Bar
         top = QHBoxLayout()
@@ -1188,8 +1192,9 @@ class MainWindow(QMainWindow):
 
         # Panels
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setObjectName("mainSplitter")
         splitter.setChildrenCollapsible(False)
-        splitter.setHandleWidth(6)
+        splitter.setHandleWidth(LAYOUT_SPLITTER_HANDLE_WIDTH)
 
         self.overview_panel = OverviewPanel(self.bridge, lambda: self.current_yaml_path)
         self.plan_store = PlanStore()
@@ -1201,22 +1206,36 @@ class MainWindow(QMainWindow):
             manage_boxes_request_handler=self.handle_manage_boxes_request,
         )
 
-        screen = QApplication.primaryScreen()
-        sw = screen.availableGeometry().width() if screen else 1920
-
-        self.overview_panel.setMinimumWidth(int(sw * 0.15))
-        self.operations_panel.setMinimumWidth(int(sw * 0.10))
-        self.operations_panel.setMaximumWidth(int(sw * 0.12))
-        self.ai_panel.setMaximumWidth(int(sw * 0.11))
+        # Apply layout constraints from theme.py
+        self.operations_panel.setMinimumWidth(LAYOUT_OPS_MIN_WIDTH)
+        self.operations_panel.setMaximumWidth(LAYOUT_OPS_MAX_WIDTH)
+        self.ai_panel.setMinimumWidth(LAYOUT_AI_MIN_WIDTH)
+        self.ai_panel.setMaximumWidth(LAYOUT_AI_MAX_WIDTH)
+        self.overview_panel.setMinimumWidth(LAYOUT_OVERVIEW_MIN_WIDTH)
 
         splitter.addWidget(self.overview_panel)
         splitter.addWidget(self.operations_panel)
         splitter.addWidget(self.ai_panel)
 
-        splitter.setStretchFactor(0, 5)
-        splitter.setStretchFactor(1, 1)
-        splitter.setStretchFactor(2, 1)
+        # Set initial sizes: give side panels their preferred widths,
+        # let overview take the remaining space
+        screen = QApplication.primaryScreen()
+        sw = screen.availableGeometry().width() if screen else 1920
+        overview_width = sw - LAYOUT_OPS_DEFAULT_WIDTH - LAYOUT_AI_DEFAULT_WIDTH - 40
+
+        splitter.setSizes([overview_width, LAYOUT_OPS_DEFAULT_WIDTH, LAYOUT_AI_DEFAULT_WIDTH])
+
+        # Stretch factor: overview grows, side panels stay fixed
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        splitter.setStretchFactor(2, 0)
         root.addWidget(splitter, 1)
+
+        # Status bar for statistics (Excel-like bottom bar)
+        self.stats_bar = QLabel()
+        self.stats_bar.setStyleSheet(f"color: var(--text-muted); font-size: {FONT_SIZE_XS}px; padding: 1px 6px;")
+        self.stats_bar.setMinimumHeight(16)  # Compact height
+        root.addWidget(self.stats_bar)
 
         self.setCentralWidget(container)
 
@@ -1231,7 +1250,6 @@ class MainWindow(QMainWindow):
         self.overview_panel.request_add_prefill.connect(self.operations_panel.set_add_prefill)
         self.overview_panel.request_add_prefill_background.connect(self.operations_panel.set_add_prefill_background)
         self.overview_panel.request_move_prefill.connect(self.operations_panel.set_move_prefill)
-        self.overview_panel.request_query_prefill.connect(self.operations_panel.set_query_prefill)
         self.overview_panel.data_loaded.connect(self.operations_panel.update_records_cache)
 
         # Operations -> Overview (plan preview)
@@ -1259,8 +1277,34 @@ class MainWindow(QMainWindow):
         self.operations_panel.status_message.connect(self.show_status)
         self.ai_panel.status_message.connect(self.show_status)
 
+        # Overview stats -> status bar
+        self.overview_panel.stats_changed.connect(self._update_stats_bar)
+        self.overview_panel.hover_stats_changed.connect(self._update_hover_stats)
+
+        # Hide summary cards (stats shown in status bar instead)
+        self.overview_panel.set_summary_cards_visible(False)
+
     def show_status(self, msg, timeout=2000, level="info"):
         self.statusBar().showMessage(msg, timeout)
+
+    def _update_stats_bar(self, stats):
+        """Update the stats bar with overview statistics."""
+        if not isinstance(stats, dict):
+            return
+        total = stats.get("total", 0)
+        occupied = stats.get("occupied", 0)
+        empty = stats.get("empty", 0)
+        rate = stats.get("rate", 0)
+        text = f"{tr('overview.totalRecords')}: {total}  |  {tr('overview.occupied')}: {occupied}  |  {tr('overview.empty')}: {empty}  |  {tr('overview.occupancyRate')}: {rate:.1f}%"
+        self.stats_bar.setText(text)
+
+    def _update_hover_stats(self, hover_text):
+        """Update the stats bar with hover information."""
+        if hover_text:
+            self.stats_bar.setText(hover_text)
+        else:
+            # Reset to overall stats (will be updated on next refresh)
+            self.stats_bar.setText("")
 
     def _show_nonblocking_dialog(self, dialog):
         """Show dialog without modal lock and keep Python reference alive."""
@@ -1735,7 +1779,11 @@ class MainWindow(QMainWindow):
                     "message": tr("main.boxCancelled"),
                 }
 
-        response = self.bridge.adjust_box_count(yaml_path=yaml_path, **payload)
+        response = self.bridge.adjust_box_count(
+            yaml_path=yaml_path,
+            execution_mode="execute",
+            **payload,
+        )
 
         if response.get("ok"):
             self.overview_panel.refresh()

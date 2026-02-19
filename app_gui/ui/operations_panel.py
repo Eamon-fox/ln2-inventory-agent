@@ -9,11 +9,11 @@ from PySide6.QtWidgets import (
     QPushButton, QLineEdit, QComboBox,
     QStackedWidget, QTableWidget, QTableWidgetItem,
     QHeaderView, QFileDialog, QMessageBox, QGroupBox,
-    QAbstractItemView,
+    QAbstractItemView, QSizePolicy,
     QFormLayout, QDateEdit, QSpinBox, QDoubleSpinBox, QScrollArea, QTextBrowser
 )
 from app_gui.ui.utils import positions_to_text
-from app_gui.ui.theme import get_theme_color, FONT_SIZE_SM, FONT_SIZE_MD, FONT_SIZE_LG
+from app_gui.ui.theme import get_theme_color, FONT_SIZE_XS, FONT_SIZE_SM, FONT_SIZE_MD, FONT_SIZE_LG
 from app_gui.gui_config import load_gui_config
 from app_gui.i18n import tr
 from app_gui.plan_model import render_operation_sheet
@@ -27,9 +27,9 @@ from lib.plan_item_factory import (
     build_record_plan_item,
     build_rollback_plan_item,
     iter_batch_entries,
-    resolve_record_context,
+    resolve_record_box,
 )
-from lib.validators import parse_positions
+from lib.validators import parse_positions, validate_plan_item_with_history
 from lib.plan_store import PlanStore
 from lib.yaml_ops import get_audit_log_path, get_legacy_audit_log_path
 
@@ -65,7 +65,6 @@ class OperationsPanel(QWidget):
 
         self.records_cache = {}
         self.current_operation_mode = "thaw"
-        self.query_last_mode = "records"
         self.t_prefill_source = None
         self._default_date_anchor = QDate.currentDate()
         self._last_operation_backup = None
@@ -98,7 +97,6 @@ class OperationsPanel(QWidget):
             ("thaw", tr("operations.thaw")),
             ("move", tr("operations.move")),
             ("add", tr("operations.add")),
-            ("query", tr("operations.query")),
             ("audit", tr("operations.auditLog")),
         ]
         for mode_key, mode_label in modes:
@@ -126,10 +124,18 @@ class OperationsPanel(QWidget):
             "add": self.op_stack.addWidget(self._build_add_tab()),
             "thaw": self.op_stack.addWidget(self._build_thaw_tab()),
             "move": self.op_stack.addWidget(self._build_move_tab()),
-            "query": self.op_stack.addWidget(self._build_query_tab()),
             "audit": self.op_stack.addWidget(self._build_audit_tab()),
         }
         layout.addWidget(self.op_stack, 2)
+
+        # Inline feedback near operation forms (more visible than status bar).
+        self.plan_feedback_label = QLabel("")
+        self.plan_feedback_label.setWordWrap(True)
+        self.plan_feedback_label.setVisible(False)
+        feedback_row = QHBoxLayout()
+        feedback_row.setContentsMargins(9, 0, 9, 0)
+        feedback_row.addWidget(self.plan_feedback_label)
+        layout.addLayout(feedback_row)
 
         # Plan Queue is always visible to reduce context switching.
         self.plan_panel = self._build_plan_tab()
@@ -293,7 +299,6 @@ class OperationsPanel(QWidget):
         self._rebuild_custom_add_fields(custom_fields)
         self._rebuild_ctx_user_fields("thaw", custom_fields)
         self._rebuild_ctx_user_fields("move", custom_fields)
-        self._rebuild_query_fields(custom_fields)
         # Refresh cell_line dropdown options
         self._refresh_cell_line_options(meta)
 
@@ -316,23 +321,6 @@ class OperationsPanel(QWidget):
             else:
                 combo.setEditText(prev)
         combo.blockSignals(False)
-
-    def _rebuild_query_fields(self, custom_fields):
-        """Rebuild user field query inputs in the query form."""
-        form = getattr(self, "_query_form", None)
-        if form is None:
-            return
-        # Remove old user field rows
-        for key, widget in self._query_field_widgets.items():
-            form.removeRow(widget)
-        self._query_field_widgets = {}
-        # Insert new user field rows
-        for fdef in (custom_fields or []):
-            key = fdef["key"]
-            flabel = fdef.get("label", key)
-            widget = QLineEdit()
-            form.insertRow(form.rowCount(), flabel, widget)
-            self._query_field_widgets[key] = widget
 
     def _rebuild_ctx_user_fields(self, prefix, custom_fields):
         """Rebuild user field context rows in thaw/move form."""
@@ -395,8 +383,11 @@ class OperationsPanel(QWidget):
     def _apply_thaw_prefill(self, source_info, switch_mode=True):
         payload = dict(source_info or {})
         self.t_prefill_source = payload
-        if "record_id" in payload:
-            self.t_id.setValue(int(payload["record_id"]))
+        # Fill source box + position (will auto-lookup record ID)
+        if "box" in payload:
+            self.t_from_box.setValue(int(payload["box"]))
+        if "position" in payload:
+            self.t_from_position.setValue(int(payload["position"]))
         self.t_action.setCurrentIndex(0)
         self._refresh_thaw_record_context()
         if switch_mode:
@@ -410,18 +401,19 @@ class OperationsPanel(QWidget):
 
     def set_move_prefill(self, source_info):
         self._m_prefill_position = source_info.get("position")
-        if "record_id" in source_info:
-            self.m_id.setValue(int(source_info["record_id"]))
+        # Fill source box + position (will auto-lookup record ID)
+        if "box" in source_info:
+            self.m_from_box.setValue(int(source_info["box"]))
+        if "position" in source_info:
+            self.m_from_position.setValue(int(source_info["position"]))
+        # Fill target box + position (mark as user-specified)
+        if "to_box" in source_info:
+            self._m_to_box_user_specified = True
+            self.m_to_box.setValue(int(source_info["to_box"]))
+        if "to_position" in source_info:
+            self.m_to_position.setValue(int(source_info["to_position"]))
         self._refresh_move_record_context()
         self.set_mode("move")
-
-    def set_query_prefill(self, source_info):
-        if "box" in source_info:
-            self.q_box.setValue(int(source_info["box"]))
-        if "position" in source_info:
-            self.q_position.setValue(int(source_info["position"]))
-        self.set_mode("query")
-        self.on_query_records()
 
     def _apply_add_prefill(self, source_info, switch_mode=True):
         payload = dict(source_info or {})
@@ -560,6 +552,7 @@ class OperationsPanel(QWidget):
                 yaml_path=yaml_path,
                 record_id=rid,
                 fields={field_name: new_value},
+                execution_mode="execute",
             )
             if result.get("ok"):
                 field.setReadOnly(True)
@@ -595,11 +588,29 @@ class OperationsPanel(QWidget):
         layout = QVBoxLayout(tab)
 
         form = QFormLayout()
-        # Structural fields (always present)
+
+        # Target selection: Box + Positions (inline)
+        target_row = QHBoxLayout()
+        box_label = QLabel("Box")
+        box_label.setStyleSheet(f"color: var(--text-muted); font-size: {FONT_SIZE_SM}px; padding-right: 4px;")
+        target_row.addWidget(box_label)
+
         self.a_box = QSpinBox()
         self.a_box.setRange(1, 99)
+        self.a_box.setFixedWidth(60)
+        target_row.addWidget(self.a_box)
+
+        colon_label = QLabel(":")
+        colon_label.setStyleSheet(f"color: var(--text-muted); font-size: {FONT_SIZE_MD}px; padding: 0 4px;")
+        target_row.addWidget(colon_label)
+
         self.a_positions = QLineEdit()
         self.a_positions.setPlaceholderText(tr("operations.positionsPh"))
+        target_row.addWidget(self.a_positions)
+
+        form.addRow(tr("operations.to"), target_row)
+
+        # Other fields
         self.a_date = QDateEdit()
         self.a_date.setCalendarPopup(True)
         self.a_date.setDisplayFormat("yyyy-MM-dd")
@@ -610,8 +621,6 @@ class OperationsPanel(QWidget):
         self.a_cell_line.setEditable(True)
         self.a_cell_line.addItem("")  # allow empty
 
-        form.addRow(tr("operations.box"), self.a_box)
-        form.addRow(tr("operations.positions"), self.a_positions)
         form.addRow(tr("operations.frozenDate"), self.a_date)
         form.addRow(tr("operations.cellLine"), self.a_cell_line)
 
@@ -686,11 +695,36 @@ class OperationsPanel(QWidget):
 
         form = QFormLayout()
 
-        # Editable: record ID
+        # Source selection: Box + Position
+        source_row = QHBoxLayout()
+        box_label = QLabel("Box")
+        box_label.setStyleSheet(f"color: var(--text-muted); font-size: {FONT_SIZE_SM}px; padding-right: 4px;")
+        source_row.addWidget(box_label)
+
+        self.t_from_box = QSpinBox()
+        self.t_from_box.setRange(1, 99)
+        self.t_from_box.setFixedWidth(60)
+        self.t_from_box.valueChanged.connect(self._refresh_thaw_record_context)
+        source_row.addWidget(self.t_from_box)
+
+        colon_label = QLabel(":")
+        colon_label.setStyleSheet(f"color: var(--text-muted); font-size: {FONT_SIZE_MD}px; padding: 0 4px;")
+        source_row.addWidget(colon_label)
+
+        self.t_from_position = QSpinBox()
+        self.t_from_position.setRange(1, 999)
+        self.t_from_position.setFixedWidth(60)
+        self.t_from_position.valueChanged.connect(self._refresh_thaw_record_context)
+        source_row.addWidget(self.t_from_position)
+
+        source_row.addStretch()
+
+        form.addRow(tr("operations.from"), source_row)
+
+        # Hidden internal record ID (auto-filled from box:position lookup)
         self.t_id = QSpinBox()
         self.t_id.setRange(1, 999999)
-        self.t_id.valueChanged.connect(self._refresh_thaw_record_context)
-        form.addRow(tr("operations.recordId"), self.t_id)
+        self.t_id.setVisible(False)
 
         _t_rid = lambda: self.t_id.value()
         _t_refresh = lambda: self._refresh_thaw_record_context()
@@ -702,25 +736,23 @@ class OperationsPanel(QWidget):
         self._thaw_ctx_form = form
         self._thaw_ctx_widgets = {}  # key -> (container_widget, label_widget)
 
-        # Read-only context fields (not editable via inline edit)
+        # Read-only context fields (not editable via inline edit) - kept for compatibility
         self.t_ctx_box = self._make_readonly_field()
         self.t_ctx_position = self._make_readonly_field()
+        self.t_ctx_cell_line = self._make_readonly_field()
         self.t_ctx_events = self._make_readonly_field()
         self.t_ctx_source = self._make_readonly_field()
 
         # User fields placeholder — will be rebuilt dynamically
         self._thaw_ctx_insert_row = form.rowCount()
 
-        form.addRow(tr("overview.ctxBox"), self.t_ctx_box)
-        form.addRow(tr("overview.ctxPos"), self.t_ctx_position)
         form.addRow(tr("overview.ctxFrozen"), t_frozen_w)
+        form.addRow(tr("operations.cellLine"), self.t_ctx_cell_line)
         form.addRow(tr("overview.ctxHistory"), self.t_ctx_events)
-        form.addRow(tr("overview.ctxSource"), self.t_ctx_source)
 
         # Editable: target position (hidden, kept for compat - single value now)
         self.t_position = QComboBox()
         self.t_position.setVisible(False)
-        form.addRow(tr("operations.position"), self.t_position)
 
         # Editable fields
         self.t_date = QDateEdit()
@@ -743,20 +775,15 @@ class OperationsPanel(QWidget):
         self.t_ctx_check = QLabel()
         self.t_action = QComboBox()  # hidden, kept for compat
         self.t_action.addItem(tr("overview.takeout"), "Takeout")
-        self.t_action.addItem(tr("overview.thaw"), "Thaw")
-        self.t_action.addItem(tr("overview.discard"), "Discard")
 
         # Action buttons at bottom
         btn_row = QHBoxLayout()
         self.t_takeout_btn = QPushButton(tr("overview.takeout"))
-        self.t_thaw_btn = QPushButton(tr("overview.thaw"))
-        self.t_discard_btn = QPushButton(tr("overview.discard"))
-        for btn in (self.t_takeout_btn, self.t_thaw_btn, self.t_discard_btn):
+        for btn in (self.t_takeout_btn,):
             self._style_stage_button(btn)
             btn_row.addWidget(btn)
+        btn_row.addStretch(1)
         self.t_takeout_btn.clicked.connect(lambda: self._record_thaw_with_action("Takeout"))
-        self.t_thaw_btn.clicked.connect(lambda: self._record_thaw_with_action("Thaw"))
-        self.t_discard_btn.clicked.connect(lambda: self._record_thaw_with_action("Discard"))
         # Keep t_apply_btn as alias for the first button (compat)
         self.t_apply_btn = self.t_takeout_btn
         form.addRow("", btn_row)
@@ -775,11 +802,60 @@ class OperationsPanel(QWidget):
 
         form = QFormLayout()
 
-        # Editable: record ID
+        # Source selection: Box + Position
+        source_row = QHBoxLayout()
+        box_label = QLabel("Box")
+        box_label.setStyleSheet(f"color: var(--text-muted); font-size: {FONT_SIZE_SM}px; padding-right: 4px;")
+        source_row.addWidget(box_label)
+
+        self.m_from_box = QSpinBox()
+        self.m_from_box.setRange(1, 99)
+        self.m_from_box.setFixedWidth(60)
+        self.m_from_box.valueChanged.connect(self._on_move_source_changed)
+        source_row.addWidget(self.m_from_box)
+
+        colon_label = QLabel(":")
+        colon_label.setStyleSheet(f"color: var(--text-muted); font-size: {FONT_SIZE_MD}px; padding: 0 4px;")
+        source_row.addWidget(colon_label)
+
+        self.m_from_position = QSpinBox()
+        self.m_from_position.setRange(1, 999)
+        self.m_from_position.setFixedWidth(60)
+        self.m_from_position.valueChanged.connect(self._on_move_source_changed)
+        source_row.addWidget(self.m_from_position)
+
+        source_row.addStretch()
+
+        form.addRow(tr("operations.from"), source_row)
+
+        # Target selection: Box + Position
+        target_row = QHBoxLayout()
+        box_label2 = QLabel("Box")
+        box_label2.setStyleSheet(f"color: var(--text-muted); font-size: {FONT_SIZE_SM}px; padding-right: 4px;")
+        target_row.addWidget(box_label2)
+
+        self.m_to_box = QSpinBox()
+        self.m_to_box.setRange(1, 99)
+        self.m_to_box.setFixedWidth(60)
+        target_row.addWidget(self.m_to_box)
+
+        colon_label2 = QLabel(":")
+        colon_label2.setStyleSheet(f"color: var(--text-muted); font-size: {FONT_SIZE_MD}px; padding: 0 4px;")
+        target_row.addWidget(colon_label2)
+
+        self.m_to_position = QSpinBox()
+        self.m_to_position.setRange(1, 999)
+        self.m_to_position.setFixedWidth(60)
+        target_row.addWidget(self.m_to_position)
+
+        target_row.addStretch()
+
+        form.addRow(tr("operations.to"), target_row)
+
+        # Hidden internal record ID (auto-filled from box:position lookup)
         self.m_id = QSpinBox()
         self.m_id.setRange(1, 999999)
-        self.m_id.valueChanged.connect(self._refresh_move_record_context)
-        form.addRow(tr("operations.recordId"), self.m_id)
+        self.m_id.setVisible(False)
 
         _m_rid = lambda: self.m_id.value()
         _m_refresh = lambda: self._refresh_move_record_context()
@@ -791,35 +867,18 @@ class OperationsPanel(QWidget):
         self._move_ctx_form = form
         self._move_ctx_widgets = {}  # key -> (container_widget, label_widget)
 
-        # Read-only context fields (not editable via inline edit)
+        # Read-only context fields (not editable via inline edit) - kept for compat
         self.m_ctx_box = self._make_readonly_field()
         self.m_ctx_position = self._make_readonly_field()
+        self.m_ctx_cell_line = self._make_readonly_field()
         self.m_ctx_events = self._make_readonly_field()
 
         # User fields placeholder — will be rebuilt dynamically
         self._move_ctx_insert_row = form.rowCount()
 
-        form.addRow(tr("overview.ctxBox"), self.m_ctx_box)
-        form.addRow(tr("overview.ctxPos"), self.m_ctx_position)
         form.addRow(tr("overview.ctxFrozen"), m_frozen_w)
+        form.addRow(tr("operations.cellLine"), self.m_ctx_cell_line)
         form.addRow(tr("overview.ctxHistory"), self.m_ctx_events)
-
-        # Editable: move fields (from_position hidden, kept for compat)
-        self.m_from_position = QComboBox()
-        self.m_from_position.setVisible(False)
-        self.m_to_position = QSpinBox()
-        self.m_to_position.setRange(1, 999)
-        self.m_to_position.valueChanged.connect(self._refresh_move_record_context)
-        self.m_to_box = QSpinBox()
-        self.m_to_box.setRange(0, 99)
-        self.m_to_box.setSpecialValueText(tr("operations.sameBox"))
-
-        form.addRow(tr("operations.toPosition"), self.m_to_position)
-        form.addRow(tr("operations.toBox"), self.m_to_box)
-
-        # Read-only: move direction
-        self.m_ctx_target = self._make_readonly_field()
-        form.addRow(tr("overview.ctxMove"), self.m_ctx_target)
 
         # Editable fields
         self.m_date = QDateEdit()
@@ -871,7 +930,7 @@ class OperationsPanel(QWidget):
         self.b_date.setDisplayFormat("yyyy-MM-dd")
         self.b_date.setDate(QDate.currentDate())
         self.b_action = QComboBox(self.t_batch_group)
-        self.b_action.addItems([tr("overview.takeout"), tr("overview.thaw"), tr("overview.discard")])
+        self.b_action.addItems([tr("overview.takeout")])
         self.b_note = QLineEdit(self.t_batch_group)
         self.b_table = QTableWidget(self.t_batch_group)
         self.b_table.setColumnCount(2)
@@ -970,6 +1029,7 @@ class OperationsPanel(QWidget):
 
         toolbar.addStretch(1)
         layout.addLayout(toolbar)
+
         return tab
 
     def _on_toggle_move_batch_section(self, checked):
@@ -980,60 +1040,6 @@ class OperationsPanel(QWidget):
             self.m_batch_toggle_btn.setText(
                 tr("operations.hideBatchMove") if visible else tr("operations.showBatchMove")
             )
-
-    # --- QUERY TAB ---
-    def _build_query_tab(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-
-        form = QFormLayout()
-        # Structural query fields (always present)
-        self.q_box = QSpinBox()
-        self.q_box.setRange(0, 99)
-        self.q_box.setSpecialValueText(tr("operations.any"))
-        self.q_position = QSpinBox()
-        self.q_position.setRange(0, 999)
-        self.q_position.setSpecialValueText(tr("operations.any"))
-
-        form.addRow(tr("operations.box"), self.q_box)
-        form.addRow(tr("operations.position"), self.q_position)
-
-        # Dynamic user field query inputs — populated by _rebuild_query_fields
-        self._query_form = form
-        self._query_field_widgets = {}  # key -> QLineEdit
-
-        layout.addLayout(form)
-
-        btn_row = QHBoxLayout()
-        query_btn = QPushButton(tr("operations.queryRecords"))
-        query_btn.clicked.connect(self.on_query_records)
-        btn_row.addWidget(query_btn)
-
-        empty_btn = QPushButton(tr("operations.listEmpty"))
-        empty_btn.clicked.connect(self.on_list_empty)
-        btn_row.addWidget(empty_btn)
-        layout.addLayout(btn_row)
-
-        self.query_info = QLabel(tr("operations.queryInfo"))
-        layout.addWidget(self.query_info)
-
-        self.query_table = QTableWidget()
-        layout.addWidget(self.query_table, 1)
-        self._setup_table(
-            self.query_table,
-            [
-                tr("operations.colId"),
-                tr("operations.colCell"),
-                tr("operations.colShort"),
-                tr("operations.colBox"),
-                tr("operations.colPositions"),
-                tr("operations.colFrozenAt"),
-                tr("operations.colPlasmidId"),
-                tr("operations.colNote"),
-            ],
-            sortable=False,
-        )
-        return tab
 
     # --- AUDIT BACKUP ROLLBACK PANEL ---
     def _build_audit_backup_panel(self):
@@ -1084,6 +1090,31 @@ class OperationsPanel(QWidget):
 
     def _style_stage_button(self, btn):
         btn.setProperty("variant", "primary")
+        btn.setFixedHeight(30)
+        btn.setMinimumWidth(86)
+        btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+    def _set_plan_feedback(self, text="", level="info"):
+        label = getattr(self, "plan_feedback_label", None)
+        if label is None:
+            return
+        message = str(text or "").strip()
+        if not message:
+            label.clear()
+            label.setVisible(False)
+            return
+        palettes = {
+            "error": ("var(--status-error)", "rgba(220, 53, 69, 0.12)"),
+            "warning": ("var(--status-warning)", "rgba(255, 193, 7, 0.12)"),
+            "info": ("var(--text-muted)", "var(--background-inset)"),
+        }
+        fg, bg = palettes.get(level, palettes["info"])
+        label.setStyleSheet(
+            f"color: {fg}; background: {bg}; border: 1px solid var(--border-weak); "
+            "border-radius: var(--radius-sm); padding: 8px 10px;"
+        )
+        label.setText(message)
+        label.setVisible(True)
 
     def _ensure_today_defaults(self):
         today = QDate.currentDate()
@@ -1105,8 +1136,24 @@ class OperationsPanel(QWidget):
             return None
 
     def _refresh_thaw_record_context(self):
-        record_id = self.t_id.value()
-        record = self._lookup_record(record_id)
+        # Lookup record by box + position
+        from_box = self.t_from_box.value()
+        from_pos = self.t_from_position.value()
+
+        # Find record at this position
+        record = None
+        record_id = None
+        for rid, rec in self.records_cache.items():
+            if rec.get("box") == from_box and rec.get("position") == from_pos:
+                record = rec
+                record_id = rid
+                break
+
+        # Update internal ID
+        if record_id:
+            self.t_id.blockSignals(True)
+            self.t_id.setValue(record_id)
+            self.t_id.blockSignals(False)
 
         source_text = "-"
         if self.t_prefill_source:
@@ -1121,7 +1168,7 @@ class OperationsPanel(QWidget):
             self.t_ctx_status.setStyleSheet("color: var(--status-warning);")
             self.t_position.clear()
             for lbl in [self.t_ctx_box, self.t_ctx_position, self.t_ctx_frozen,
-                        self.t_ctx_events]:
+                        self.t_ctx_cell_line, self.t_ctx_events]:
                 lbl.setText("-")
             for key, (container, lbl) in self._thaw_ctx_widgets.items():
                 lbl.setText("-")
@@ -1133,11 +1180,13 @@ class OperationsPanel(QWidget):
             self.t_ctx_status.setText(tr("operations.recordContextLoaded"))
         self.t_ctx_status.setStyleSheet("color: var(--status-success);")
 
-        self.t_ctx_box.setText(str(record.get("box") or "-"))
-
+        box = str(record.get("box") or "-")
         position = record.get("position")
+
+        self.t_ctx_box.setText(box)
         self.t_ctx_position.setText(str(position) if position is not None else "-")
         self.t_ctx_frozen.setText(str(record.get("frozen_at") or "-"))
+        self.t_ctx_cell_line.setText(str(record.get("cell_line") or "-"))
         # Populate dynamic user field context
         for key, (container, lbl) in self._thaw_ctx_widgets.items():
             lbl.setText(str(record.get(key) or "-"))
@@ -1266,11 +1315,13 @@ class OperationsPanel(QWidget):
         self.add_plan_items([item])
 
     def _record_thaw_with_action(self, action_text):
+        action_alias = {"Thaw": "Takeout", "Discard": "Takeout"}
+        action_text = action_alias.get(str(action_text), str(action_text or "Takeout"))
         idx = self.t_action.findData(action_text)
         if idx >= 0:
             self.t_action.setCurrentIndex(idx)
         else:
-            self.t_action.setCurrentText(action_text)
+            self.t_action.setCurrentText(str(action_text))
         self.on_record_thaw()
 
     def on_record_thaw(self):
@@ -1279,42 +1330,63 @@ class OperationsPanel(QWidget):
 
         record = self._lookup_record(self.t_id.value())
         fallback_box = int((self.t_prefill_source or {}).get("box", 0) or 0)
-        box, label = resolve_record_context(record, fallback_box=fallback_box)
+        box = resolve_record_box(record, fallback_box=fallback_box)
         item = build_record_plan_item(
             action=action_text,
             record_id=self.t_id.value(),
             position=self.t_position.currentData(),
             box=box,
-            label=label,
             date_str=self.t_date.date().toString("yyyy-MM-dd"),
             note=self.t_note.text().strip() or None,
             source="human",
             payload_action=action_text,
         )
+
+        # Validate with history items before adding to plan
+        if not self._validate_item_with_history(item):
+            return
+
         self.add_plan_items([item])
 
+    def _validate_item_with_history(self, new_item):
+        """Validate a new item against all existing items in plan.
+
+        Returns True if validation passes, False if blocked.
+        """
+        existing_items = self._plan_store.list_items()
+        is_valid, error_msg = validate_plan_item_with_history(new_item, existing_items, tr)
+        if not is_valid:
+            self.status_message.emit(error_msg, 5000, "warning")
+        return is_valid
     def on_record_move(self):
         self._ensure_today_defaults()
 
-        from_pos = self.m_from_position.currentData()
+        record = self._lookup_record(self.m_id.value())
+        if not record:
+            return
+
+        from_pos = record.get("position")
+        from_box = resolve_record_box(record, fallback_box=0)
         to_pos = self.m_to_position.value()
-        to_box = self.m_to_box.value() if self.m_to_box.value() > 0 else None
-        if from_pos == to_pos and to_box is None:
+        to_box = self.m_to_box.value()
+
+        # Check if move is to same position
+        if from_pos == to_pos and from_box == to_box:
             self.status_message.emit(tr("operations.moveMustDiffer"), 4000, "error")
             return
 
-        record = self._lookup_record(self.m_id.value())
-        box, label = resolve_record_context(record, fallback_box=0)
+        # Only set to_box if different from source
+        to_box_param = to_box if to_box != from_box else None
+
         item = build_record_plan_item(
             action="move",
             record_id=self.m_id.value(),
             position=from_pos,
-            box=box,
-            label=label,
+            box=from_box,
             date_str=self.m_date.date().toString("yyyy-MM-dd"),
             note=self.m_note.text().strip() or None,
             to_position=to_pos,
-            to_box=to_box,
+            to_box=to_box_param,
             source="human",
             payload_action="Move",
         )
@@ -1383,14 +1455,13 @@ class OperationsPanel(QWidget):
                 continue
 
             record = self._lookup_record(rid)
-            box, label = resolve_record_context(record, fallback_box=0)
+            box = resolve_record_box(record, fallback_box=0)
             items.append(
                 build_record_plan_item(
                     action="move",
                     record_id=rid,
                     position=from_pos,
                     box=box,
-                    label=label,
                     date_str=date_str,
                     note=note,
                     to_position=to_pos,
@@ -1402,21 +1473,40 @@ class OperationsPanel(QWidget):
 
         self.add_plan_items(items)
 
+    def _on_move_source_changed(self):
+        """Called when user manually changes source box/position."""
+        # Reset user-specified flag so target box can auto-fill
+        self._m_to_box_user_specified = False
+        self._refresh_move_record_context()
+
     def _refresh_move_record_context(self):
         if not hasattr(self, "m_ctx_status"):
             return
 
-        record_id = self.m_id.value()
-        to_pos = self.m_to_position.value()
-        record = self._lookup_record(record_id)
+        # Lookup record by box + position
+        from_box = self.m_from_box.value()
+        from_pos = self.m_from_position.value()
+
+        # Find record at this position
+        record = None
+        record_id = None
+        for rid, rec in self.records_cache.items():
+            if rec.get("box") == from_box and rec.get("position") == from_pos:
+                record = rec
+                record_id = rid
+                break
+
+        # Update internal ID
+        if record_id:
+            self.m_id.blockSignals(True)
+            self.m_id.setValue(record_id)
+            self.m_id.blockSignals(False)
 
         if not record:
             self.m_ctx_status.setText(tr("operations.recordNotFound"))
             self.m_ctx_status.setStyleSheet("color: var(--status-warning);")
-            self.m_from_position.clear()
-            self.m_ctx_target.setText("-")
             for lbl in [self.m_ctx_box, self.m_ctx_position, self.m_ctx_frozen,
-                        self.m_ctx_events]:
+                        self.m_ctx_cell_line, self.m_ctx_events]:
                 lbl.setText("-")
             for key, (container, lbl) in self._move_ctx_widgets.items():
                 lbl.setText("-")
@@ -1424,25 +1514,27 @@ class OperationsPanel(QWidget):
 
         self.m_ctx_status.setText(tr("operations.recordContextLoaded"))
         self.m_ctx_status.setStyleSheet("color: var(--status-success);")
-        self.m_ctx_box.setText(str(record.get("box") or "-"))
 
+        box = str(record.get("box") or "-")
         position = record.get("position")
+
+        # Auto-fill target box with source box (only if not user-specified)
+        if not getattr(self, "_m_to_box_user_specified", False):
+            try:
+                box_num = int(box)
+                self.m_to_box.blockSignals(True)
+                self.m_to_box.setValue(box_num)
+                self.m_to_box.blockSignals(False)
+            except (ValueError, TypeError):
+                pass
+
+        self.m_ctx_box.setText(box)
         self.m_ctx_position.setText(str(position) if position is not None else "-")
         self.m_ctx_frozen.setText(str(record.get("frozen_at") or "-"))
+        self.m_ctx_cell_line.setText(str(record.get("cell_line") or "-"))
         # Populate dynamic user field context
         for key, (container, lbl) in self._move_ctx_widgets.items():
             lbl.setText(str(record.get(key) or "-"))
-
-        # Set single position (hidden combo, kept for compat)
-        self.m_from_position.blockSignals(True)
-        self.m_from_position.clear()
-        if position is not None:
-            self.m_from_position.addItem(str(position), position)
-            self.m_from_position.setCurrentIndex(0)
-        self.m_from_position.blockSignals(False)
-
-        from_pos = self.m_from_position.currentData() or position
-        self.m_ctx_target.setText(f"{from_pos} -> {to_pos}")
 
         events = record.get("thaw_events") or []
         if events:
@@ -1514,14 +1606,13 @@ class OperationsPanel(QWidget):
             rid = int(normalized.get("record_id", 0) or 0)
             pos = int(normalized.get("position", 0) or 0)
             record = self._lookup_record(rid)
-            box, label = resolve_record_context(record, fallback_box=0)
+            box = resolve_record_box(record, fallback_box=0)
             items.append(
                 build_record_plan_item(
                     action=action_text,
                     record_id=rid,
                     position=pos,
                     box=box,
-                    label=label,
                     date_str=date_str,
                     note=note,
                     source="human",
@@ -1717,7 +1808,6 @@ class OperationsPanel(QWidget):
     def _refresh_after_plan_items_changed(self, emit_preview=True):
         self._plan_hover_row = None
         self._emit_plan_hover_item(None)
-        self._run_plan_preflight(trigger="edit")
         self._refresh_plan_table()
         self._update_execute_button_state()
         if emit_preview:
@@ -1788,6 +1878,7 @@ class OperationsPanel(QWidget):
     def add_plan_items(self, items):
         """Validate and add items to the plan staging area (with dedup)."""
         incoming = list(items or [])
+        self._set_plan_feedback("")
 
         incoming_has_rollback = any(
             str(it.get("action") or "").lower() == "rollback" for it in incoming
@@ -1819,15 +1910,68 @@ class OperationsPanel(QWidget):
             )
             return
 
+        # Validate each incoming item against existing plan items
+        existing_items = self._plan_store.list_items()
+        validated_incoming = []
+        blocked_by_history = []
+
+        for item in incoming:
+            is_valid, error_msg = validate_plan_item_with_history(item, existing_items, tr_fn=tr)
+            if is_valid:
+                validated_incoming.append(item)
+                # Add to existing for subsequent validations within this batch
+                existing_items.append(item)
+            else:
+                item_with_error = dict(item)
+                item_with_error["_validation_error"] = error_msg
+                blocked_by_history.append(item_with_error)
+
+        if blocked_by_history:
+            detail_lines = []
+            for blocked in blocked_by_history[:3]:
+                action = blocked.get("action", "?")
+                box = blocked.get("box", "?")
+                pos = blocked.get("position", "?")
+                error = blocked.get("_validation_error", "Unknown error")
+                detail_lines.append(f"{action} Box{box}:{pos}: {error}")
+            detail = "; ".join(detail_lines)
+            if len(blocked_by_history) > 3:
+                detail += f"; ... +{len(blocked_by_history) - 3}"
+
+            self.status_message.emit(
+                tr("operations.planRejected", error=detail_lines[0] if detail_lines else "Validation failed"),
+                5000,
+                "error"
+            )
+            feedback = "\n".join(f"- {msg}" for msg in detail_lines)
+            if len(blocked_by_history) > 3:
+                feedback += f"\n... +{len(blocked_by_history) - 3}"
+            self._set_plan_feedback(feedback, level="error")
+
+        # Only validate items that passed history check
+        if not validated_incoming:
+            return
+
         gate = validate_plan_batch(
-            items=incoming,
+            items=validated_incoming,
             yaml_path=self.yaml_path_getter(),
             bridge=self.bridge,
-            run_preflight=False,
+            run_preflight=True,
         )
+        blocked_messages = []
         for blocked in gate.get("blocked_items", []):
             err = blocked.get("message") or blocked.get("error_code") or "invalid plan item"
-            self.status_message.emit(tr("operations.planRejected", error=err), 4000, "error")
+            if err not in blocked_messages:
+                blocked_messages.append(str(err))
+
+        if blocked_messages:
+            first = blocked_messages[0]
+            self.status_message.emit(tr("operations.planRejected", error=first), 5000, "error")
+            preview = blocked_messages[:3]
+            feedback = "\n".join(f"- {msg}" for msg in preview)
+            if len(blocked_messages) > 3:
+                feedback += f"\n... +{len(blocked_messages) - 3}"
+            self._set_plan_feedback(feedback, level="error")
 
         accepted = list(gate.get("accepted_items") or [])
         if not accepted:
@@ -1836,11 +1980,10 @@ class OperationsPanel(QWidget):
         added = self._plan_store.add(accepted)
 
         if added:
-            self._run_plan_preflight(trigger="add")
             self._refresh_plan_table()
-            self._update_execute_button_state()
             self.plan_preview_updated.emit(self._plan_store.list_items())
             self.status_message.emit(tr("operations.planAddedCount", count=added), 2000, "info")
+            self._set_plan_feedback("")
 
             action_counts = {}
             sample = []
@@ -1871,6 +2014,7 @@ class OperationsPanel(QWidget):
                     "total_count": self._plan_store.count(),
                     "action_counts": action_counts,
                     "sample": sample,
+                    "items": accepted,  # Add items for AI panel display
                 }
             )
 
@@ -1926,11 +2070,30 @@ class OperationsPanel(QWidget):
         self._plan_hover_row = None
         self._emit_plan_hover_item(None)
 
+        # Build dynamic table headers: action, position, fixed fields, custom fields, note
+        custom_fields = self._current_custom_fields
+        headers = [
+            tr("operations.colAction"),      # Action + ID
+            tr("operations.colPosition"),    # Box:Position info
+            tr("operations.frozenDate"),     # Frozen date (for context)
+            tr("operations.cellLine"),       # Cell line
+            tr("operations.date"),           # Operation date
+        ]
+        # Add custom field columns
+        for fdef in custom_fields:
+            headers.append(fdef.get("label", fdef["key"]))
+        # Add note column last
+        headers.append(tr("operations.colNote"))
+
         self._setup_table(
             self.plan_table,
-            [tr("operations.colSource"), tr("operations.colAction"), tr("operations.colBox"), tr("operations.colPos"), tr("operations.colToPos"), tr("operations.colToBox"), tr("operations.colLabel"), tr("operations.colNote"), tr("operations.colStatus")],
+            headers,
             sortable=False,
         )
+
+        # Map column indices
+        fixed_col_count = 5  # action, position, frozen_date, cell_line, date
+        note_col_idx = fixed_col_count + len(custom_fields)
 
         plan_items = self._plan_store.list_items()
         yaml_path_for_rollback = os.path.abspath(str(self.yaml_path_getter()))
@@ -1939,52 +2102,101 @@ class OperationsPanel(QWidget):
             action_text = str(item.get("action", "") or "")
             action_norm = action_text.lower()
             is_rollback = action_norm == "rollback"
+            is_add = action_norm == "add"
 
-            self.plan_table.setItem(row, 0, QTableWidgetItem(item.get("source", "")))
-            self.plan_table.setItem(row, 1, QTableWidgetItem(_localized_action(action_text)))
-
+            # Column 0: action + ID
+            record_id = item.get("record_id")
             if is_rollback:
-                box_text = ""
-                pos_text = ""
-                to_pos = None
-                to_box = None
+                display_text = tr("operations.rollback")
+            elif is_add:
+                display_text = tr("operations.add")
             else:
-                box_text = item.get("box", "")
-                pos_val = item.get("position", "")
-                pos_text = "" if pos_val in (None, "") else str(pos_val)
+                # thaw/move/edit: show action + ID
+                action_label = _localized_action(action_text)
+                display_text = f"{action_label} (ID {record_id})" if record_id else action_label
+            action_item = QTableWidgetItem(display_text)
+            self.plan_table.setItem(row, 0, action_item)
+
+            # Column 1: Simplified position (box:position or box:pos → to_box:to_pos)
+            if is_rollback:
+                pos_text = "-"
+            elif is_add:
+                box = item.get("box", "")
+                # For add, show box with positions count
+                payload = item.get("payload") or {}
+                positions = payload.get("positions", [])
+                if positions and isinstance(positions, list):
+                    pos_text = f"{box}: [{', '.join(str(p) for p in positions)}]"
+                else:
+                    pos_text = f"{box}: ?"
+            else:
+                box = item.get("box", "")
+                pos = item.get("position", "")
                 to_pos = item.get("to_position")
                 to_box = item.get("to_box")
+                if to_pos and (to_box is None or to_box == box):
+                    # Same box move
+                    pos_text = f"{box}:{pos} → {to_pos}"
+                elif to_pos and to_box:
+                    # Cross-box move
+                    pos_text = f"{box}:{pos} → {to_box}:{to_pos}"
+                else:
+                    pos_text = f"{box}:{pos}"
+            self.plan_table.setItem(row, 1, QTableWidgetItem(pos_text))
 
-            self.plan_table.setItem(row, 2, QTableWidgetItem("" if box_text in (None, "") else str(box_text)))
-            self.plan_table.setItem(row, 3, QTableWidgetItem(pos_text))
-            self.plan_table.setItem(row, 4, QTableWidgetItem(str(to_pos) if to_pos else ""))
-            self.plan_table.setItem(row, 5, QTableWidgetItem(str(to_box) if to_box else ""))
-
+            # Get payload and record_id for subsequent columns
             payload = item.get("payload") or {}
-            label_text = str(item.get("label", "") or "")
-            backup_path = payload.get("backup_path")
-            source_event = payload.get("source_event") if isinstance(payload, dict) else None
-            rollback_tooltip = ""
-            if is_rollback:
-                rollback_lines = self._build_rollback_confirmation_lines(
-                    backup_path=backup_path,
-                    yaml_path=yaml_path_for_rollback,
-                    source_event=source_event,
-                    include_action_prefix=False,
-                )
-                rollback_tooltip = "\n".join(rollback_lines)
-                backup_label = (
-                    os.path.basename(str(backup_path))
-                    if backup_path
-                    else tr("operations.planRollbackLatest")
-                )
-                label_text = f"{tr('operations.rollback')}: {backup_label}"
-            label_item = QTableWidgetItem(label_text)
-            if is_rollback and rollback_tooltip:
-                label_item.setToolTip(rollback_tooltip)
-            self.plan_table.setItem(row, 6, label_item)
+            record_id = item.get("record_id")
 
+            # Column 2: Frozen date
+            frozen_date = ""
+            if not is_rollback:
+                if is_add:
+                    frozen_date = payload.get("date_str", "")
+                elif record_id and record_id in self.records_cache:
+                    record = self.records_cache[record_id]
+                    frozen_date = str(record.get("frozen_at", ""))
+            self.plan_table.setItem(row, 2, QTableWidgetItem(frozen_date))
+
+            # Column 3: Cell line
+            cell_line = ""
+            if not is_rollback:
+                if is_add:
+                    fields = payload.get("fields") or {}
+                    cell_line = str(fields.get("cell_line", ""))
+                elif record_id and record_id in self.records_cache:
+                    record = self.records_cache[record_id]
+                    cell_line = str(record.get("cell_line", ""))
+            self.plan_table.setItem(row, 3, QTableWidgetItem(cell_line))
+
+            # Column 4: Operation date
+            op_date = payload.get("date_str", "") if not is_rollback else ""
+            self.plan_table.setItem(row, 4, QTableWidgetItem(op_date))
+
+            # Custom field columns
+            col_idx = fixed_col_count
+            for fdef in custom_fields:
+                field_key = fdef["key"]
+                if is_rollback:
+                    value = ""
+                elif is_add:
+                    # For add, get from fields
+                    fields = payload.get("fields") or {}
+                    value = str(fields.get(field_key, "")) if field_key in fields else ""
+                else:
+                    # For thaw/move/edit, get from record cache
+                    if record_id and record_id in self.records_cache:
+                        record = self.records_cache[record_id]
+                        value = str(record.get(field_key, "")) if field_key in record else ""
+                    else:
+                        value = ""
+                self.plan_table.setItem(row, col_idx, QTableWidgetItem(value))
+                col_idx += 1
+
+            # Note column (last)
             if is_rollback:
+                backup_path = payload.get("backup_path")
+                source_event = payload.get("source_event") if isinstance(payload, dict) else None
                 note = ""
                 if isinstance(source_event, dict) and source_event:
                     note = tr(
@@ -2003,27 +2215,22 @@ class OperationsPanel(QWidget):
                     except Exception:
                         note = tr("operations.planRollbackBackupMissing", path=backup_abs)
                 note_item = QTableWidgetItem(str(note))
+                # Add tooltip for rollback
+                rollback_tooltip = ""
+                if backup_path or source_event:
+                    rollback_lines = self._build_rollback_confirmation_lines(
+                        backup_path=backup_path,
+                        yaml_path=yaml_path_for_rollback,
+                        source_event=source_event,
+                        include_action_prefix=False,
+                    )
+                    rollback_tooltip = "\n".join(rollback_lines)
                 if rollback_tooltip:
                     note_item.setToolTip(rollback_tooltip)
-                self.plan_table.setItem(row, 7, note_item)
+                self.plan_table.setItem(row, note_col_idx, note_item)
             else:
                 note = (payload.get("note", "") if isinstance(payload, dict) else "") or ""
-                self.plan_table.setItem(row, 7, QTableWidgetItem(str(note)))
-
-            key = self._plan_item_key(item)
-            validation = self._plan_validation_by_key.get(key, {})
-            status_item = QTableWidgetItem()
-            is_dark = load_gui_config().get("theme", "dark") == "dark"
-            if validation.get("blocked"):
-                status_item.setText(tr("operations.planStatusBlocked"))
-                status_item.setForeground(get_theme_color("error", is_dark))
-                status_item.setToolTip(validation.get("message", ""))
-            elif validation.get("ok"):
-                status_item.setText(tr("operations.planStatusReady"))
-                status_item.setForeground(get_theme_color("success", is_dark))
-            else:
-                status_item.setText("-")
-            self.plan_table.setItem(row, 8, status_item)
+                self.plan_table.setItem(row, note_col_idx, QTableWidgetItem(str(note)))
 
         self._refresh_plan_toolbar_state()
 
@@ -2031,26 +2238,11 @@ class OperationsPanel(QWidget):
         """Execute all staged plan items after user confirmation."""
         if not self._plan_store.count():
             self.status_message.emit(tr("operations.planNoItemsToExecute"), 3000, "error")
+            self._set_plan_feedback(tr("operations.planNoItemsToExecute"), level="warning")
             return
 
-        # Always re-run preflight right before execution to avoid stale validation.
-        self._run_plan_preflight(trigger="execute")
-
-        if self._plan_preflight_report and self._plan_preflight_report.get("blocked"):
-            blocked_count = self._plan_preflight_report.get("stats", {}).get("blocked", 0)
-            self.status_message.emit(
-                tr("operations.planExecuteBlocked", count=blocked_count),
-                4000,
-                "error",
-            )
-            self._emit_operation_event({
-                "type": "plan_execute_blocked",
-                "source": "operations_panel",
-                "blocked_count": blocked_count,
-                "report": self._plan_preflight_report,
-            })
-            return
-
+        # Validation happens at button click time, proceed directly to execution.
+        # Backend validation will catch any edge cases for safety.
         yaml_path = os.path.abspath(str(self.yaml_path_getter()))
         summary_lines = []
         plan_items = self._plan_store.list_items()
@@ -2330,6 +2522,7 @@ class OperationsPanel(QWidget):
 
     def clear_plan(self):
         cleared_items = self._plan_store.clear()
+        self._set_plan_feedback("")
         self._plan_validation_by_key = {}
         self._plan_preflight_report = None
         self._refresh_plan_table()
@@ -2373,6 +2566,7 @@ class OperationsPanel(QWidget):
     def reset_for_dataset_switch(self):
         """Clear transient plan/undo/audit state when switching datasets."""
         self._plan_store.clear()
+        self._set_plan_feedback("")
         self._plan_validation_by_key = {}
         self._plan_preflight_report = None
         self._last_printable_plan = []
@@ -2404,119 +2598,6 @@ class OperationsPanel(QWidget):
         self._refresh_plan_table()
         self._update_execute_button_state()
         self.plan_preview_updated.emit(self._plan_store.list_items())
-
-    # --- Query & Rollback Stubs (simplified) ---
-    def on_query_records(self):
-        box = self.q_box.value()
-        box_val = box if box > 0 else None
-        pos = self.q_position.value()
-        pos_val = pos if pos > 0 else None
-
-        # Collect dynamic user field filters
-        field_filters = {}
-        for key, widget in self._query_field_widgets.items():
-            val = widget.text().strip()
-            if val:
-                field_filters[key] = val
-
-        response = self.bridge.query_inventory(
-            self.yaml_path_getter(),
-            box=box_val,
-            position=pos_val,
-            **field_filters,
-        )
-
-        payload = response if isinstance(response, dict) else {}
-        result = payload.get("result", {})
-        records = []
-        if isinstance(result, dict):
-            records = result.get("records", [])
-        elif isinstance(result, list):
-            records = result
-        if not isinstance(records, list):
-            records = []
-
-        self._render_query_results(records)
-        self.query_last_mode = "records"
-
-        if not payload.get("ok", False):
-            self.status_message.emit(
-                tr(
-                    "operations.queryFailed",
-                    error=payload.get("message", tr("operations.unknownResult")),
-                ),
-                5000,
-                "error",
-            )
-
-    def on_list_empty(self):
-        box = self.q_box.value()
-        box_val = box if box > 0 else None
-        response = self.bridge.list_empty_positions(self.yaml_path_getter(), box=box_val)
-
-        payload = response if isinstance(response, dict) else {}
-        result = payload.get("result", {})
-        boxes = []
-        if isinstance(result, dict):
-            boxes = result.get("boxes", [])
-        elif isinstance(result, list):
-            boxes = result
-        if not isinstance(boxes, list):
-            boxes = []
-
-        self._render_empty_results(boxes)
-        self.query_last_mode = "empty"
-
-        if not payload.get("ok", False):
-            self.status_message.emit(
-                tr(
-                    "operations.listEmptyFailed",
-                    error=payload.get("message", tr("operations.unknownResult")),
-                ),
-                5000,
-                "error",
-            )
-
-    def _render_query_results(self, records):
-        custom_fields = getattr(self, "_current_custom_fields", [])
-        # Structural columns + dynamic user field columns
-        headers = [
-            tr("operations.colId"),
-            tr("operations.colBox"),
-            tr("operations.colPositions"),
-            tr("operations.colFrozenAt"),
-        ]
-        for cf in custom_fields:
-            headers.append(cf.get("label", cf["key"]))
-
-        self._setup_table(self.query_table, headers)
-        rows = [rec for rec in records if isinstance(rec, dict)]
-        for row, rec in enumerate(rows):
-            self.query_table.insertRow(row)
-            self.query_table.setItem(row, 0, QTableWidgetItem(str(rec.get("id"))))
-            self.query_table.setItem(row, 1, QTableWidgetItem(str(rec.get("box"))))
-            self.query_table.setItem(row, 2, QTableWidgetItem(positions_to_text(rec.get("positions"))))
-            self.query_table.setItem(row, 3, QTableWidgetItem(str(rec.get("frozen_at"))))
-            for ci, cf in enumerate(custom_fields):
-                self.query_table.setItem(row, 4 + ci, QTableWidgetItem(str(rec.get(cf["key"], ""))))
-        self.query_info.setText(tr("operations.foundRecords", count=len(rows)))
-
-    def _render_empty_results(self, boxes):
-        self._setup_table(
-            self.query_table,
-            [tr("operations.colBox"), tr("operations.colEmptyTotal"), tr("operations.colPositions")],
-            sortable=False,
-        )
-        for row, item in enumerate(boxes):
-            self.query_table.insertRow(row)
-            self.query_table.setItem(row, 0, QTableWidgetItem(str(item.get("box"))))
-            self.query_table.setItem(row, 1, QTableWidgetItem(f"{item.get('empty_count')}/{item.get('total_slots')}"))
-            
-            pos_list = item.get("empty_positions", [])
-            preview = ",".join(str(p) for p in pos_list[:20])
-            if len(pos_list) > 20: preview += "..."
-            self.query_table.setItem(row, 2, QTableWidgetItem(preview))
-        self.query_info.setText(tr("operations.foundBoxesWithEmptySlots", count=len(boxes)))
 
     def on_export_inventory_csv(self):
         yaml_path = self.yaml_path_getter()
@@ -3042,6 +3123,7 @@ class OperationsPanel(QWidget):
         response = self.bridge.rollback(
             self.yaml_path_getter(),
             backup_path=self._last_operation_backup,
+            execution_mode="execute",
         )
         self._disable_undo()
         self._handle_response(response, tr("operations.undo"))

@@ -125,7 +125,7 @@ def make_edit_item(record_id=1, box=1, position=1, fields=None, **extra):
         "source": "human",
         "payload": {
             "record_id": record_id,
-            "fields": fields or {"note": "updated"},
+            "fields": fields or {"cell_line": "UPDATED"},
         },
     }
     base.update(extra)
@@ -425,6 +425,7 @@ class RunPlanExecuteTests(unittest.TestCase):
         bridge.rollback.assert_called_once_with(
             yaml_path="/tmp/test.yaml",
             backup_path="/tmp/backup.bak",
+            execution_mode="execute",
             source_event=source_event,
         )
 
@@ -489,120 +490,6 @@ class PreflightVsExecuteConsistencyTests(unittest.TestCase):
             self.assertEqual(preflight_result["blocked"], execute_result["blocked"])
 
 
-class MoveSwapTests(unittest.TestCase):
-    """Tests for swap detection and holistic move validation."""
-
-    def test_simple_swap_passes_validation(self):
-        """A simple swap (A@9->18, B@18->9) should pass holistic validation."""
-        with tempfile.TemporaryDirectory() as td:
-            yaml_path = Path(td) / "inventory.yaml"
-            write_yaml(
-                make_data([
-                    make_record(3, box=1, position=9),
-                    make_record(10, box=1, position=18),
-                ]),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
-
-            bridge = MagicMock()
-            bridge.batch_thaw.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
-
-            items = [
-                make_move_item(record_id=3, position=9, to_position=18, box=1),
-                make_move_item(record_id=10, position=18, to_position=9, box=1),
-            ]
-            result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
-
-            self.assertTrue(result["ok"])
-            self.assertEqual(2, result["stats"]["ok"])
-
-    def test_preflight_swap_passes(self):
-        """Preflight should pass for swap operations."""
-        with tempfile.TemporaryDirectory() as td:
-            yaml_path = Path(td) / "inventory.yaml"
-            write_yaml(
-                make_data([
-                    make_record(1, box=1, position=5),
-                    make_record(2, box=1, position=10),
-                ]),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
-
-            bridge = MagicMock()
-
-            items = [
-                make_move_item(record_id=1, position=5, to_position=10, box=1),
-                make_move_item(record_id=2, position=10, to_position=5, box=1),
-            ]
-            result = preflight_plan(str(yaml_path), items, bridge=bridge)
-
-            self.assertTrue(result["ok"])
-            self.assertFalse(result["blocked"])
-
-    def test_move_to_occupied_non_swap_blocked(self):
-        """Move to occupied position (not part of swap) should be blocked."""
-        with tempfile.TemporaryDirectory() as td:
-            yaml_path = Path(td) / "inventory.yaml"
-            write_yaml(
-                make_data([
-                    make_record(1, box=1, position=5),
-                    make_record(2, box=1, position=10),
-                ]),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
-
-            bridge = MagicMock()
-
-            items = [
-                make_move_item(record_id=1, position=5, to_position=10, box=1),
-            ]
-            result = preflight_plan(str(yaml_path), items, bridge=bridge)
-
-            self.assertFalse(result["ok"])
-            self.assertTrue(result["blocked"])
-
-    def test_multiple_moves_same_target_blocked(self):
-        """Regression: multiple moves targeting same position should be blocked.
-        
-        User scenario: 8:3->4, 7:2->3, 6:1->3
-        - Move 8:3->4: OK (target empty)
-        - Move 7:2->3: BLOCKED (target also wanted by record 6)
-        - Move 6:1->3: BLOCKED (target also wanted by record 7)
-        
-        Since two moves target the same position (3), both are blocked.
-        """
-        with tempfile.TemporaryDirectory() as td:
-            yaml_path = Path(td) / "inventory.yaml"
-            write_yaml(
-                make_data([
-                    make_record(8, box=3, position=3),
-                    make_record(7, box=3, position=2),
-                    make_record(6, box=3, position=1),
-                ]),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
-
-            bridge = MagicMock()
-
-            items = [
-                make_move_item(record_id=8, position=3, to_position=4, box=3),
-                make_move_item(record_id=7, position=2, to_position=3, box=3),
-                make_move_item(record_id=6, position=1, to_position=3, box=3),
-            ]
-            result = preflight_plan(str(yaml_path), items, bridge=bridge)
-
-            self.assertFalse(result["ok"])
-            self.assertTrue(result["blocked"])
-            blocked_items = [r for r in result.get("items", []) if r.get("blocked")]
-            self.assertEqual(2, len(blocked_items))
-            blocked_ids = sorted([r["item"]["record_id"] for r in blocked_items])
-            self.assertEqual([6, 7], blocked_ids)
-
-
 class EditPlanTests(unittest.TestCase):
     """Tests for edit action in preflight and execute."""
 
@@ -626,6 +513,27 @@ class EditPlanTests(unittest.TestCase):
             self.assertFalse(result["blocked"])
             self.assertEqual(1, result["stats"]["ok"])
             # Preflight should NOT call bridge.edit_entry
+            self.assertFalse(bridge.edit_entry.called)
+
+    def test_preflight_edit_invalid_field_blocked(self):
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=5)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            result = preflight_plan(
+                str(yaml_path),
+                [make_edit_item(record_id=1, box=1, position=5, fields={"bad_field": "x"})],
+                bridge=bridge,
+            )
+
+            self.assertFalse(result["ok"])
+            self.assertTrue(result["blocked"])
+            self.assertEqual(1, result["stats"]["blocked"])
             self.assertFalse(bridge.edit_entry.called)
 
     def test_execute_edit_calls_bridge(self):

@@ -15,7 +15,6 @@ from lib.custom_fields import STRUCTURAL_FIELD_KEYS, coerce_value, parse_custom_
 from lib.tool_api import (
     tool_add_entry,
     tool_edit_entry,
-    tool_query_inventory,
     tool_search_records,
 )
 from lib.yaml_ops import load_yaml, write_yaml
@@ -486,32 +485,6 @@ class TestGetEditableFields(unittest.TestCase):
 # Integration tests: query includes custom field columns
 # ===========================================================================
 
-class TestQueryCustomFieldColumns(unittest.TestCase):
-    """Integration: query results include custom field values."""
-
-    def test_query_returns_custom_field_in_records(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_cf_query_") as td:
-            yaml_path = Path(td) / "inventory.yaml"
-            rec = make_record(1, box=1, position=1, passage_number=5)
-            write_yaml(
-                make_data(
-                    [rec],
-                    custom_fields=[
-                        {"key": "passage_number", "label": "Passage #", "type": "int"},
-                    ],
-                ),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
-
-            result = tool_query_inventory(
-                yaml_path=str(yaml_path),
-            )
-
-            self.assertTrue(result["ok"])
-            records = result["result"]["records"]
-            self.assertEqual(1, len(records))
-            self.assertEqual(5, records[0]["passage_number"])
 
 
 # ===========================================================================
@@ -644,45 +617,6 @@ class TestCellLineAddEntry(unittest.TestCase):
             self.assertIn("cell_line", new_rec)
             self.assertEqual("", new_rec["cell_line"])
 
-
-# ===========================================================================
-# Integration: cell_line in query filters
-# ===========================================================================
-
-class TestCellLineQuery(unittest.TestCase):
-    """Integration: tool_query_inventory filters by cell_line."""
-
-    def test_query_by_cell_line(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_cl_query_") as td:
-            yaml_path = Path(td) / "inventory.yaml"
-            write_yaml(
-                make_data([
-                    {**make_record(1, box=1, position=1), "cell_line": "K562"},
-                    {**make_record(2, box=1, position=2), "cell_line": "HeLa"},
-                ]),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
-
-            result = tool_query_inventory(str(yaml_path), cell_line="K562")
-            self.assertTrue(result["ok"])
-            self.assertEqual(1, result["result"]["count"])
-            self.assertEqual(1, result["result"]["records"][0]["id"])
-
-    def test_query_cell_line_case_insensitive(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_cl_query_ci_") as td:
-            yaml_path = Path(td) / "inventory.yaml"
-            write_yaml(
-                make_data([
-                    {**make_record(1, box=1, position=1), "cell_line": "K562"},
-                ]),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
-
-            result = tool_query_inventory(str(yaml_path), cell_line="k562")
-            self.assertTrue(result["ok"])
-            self.assertEqual(1, result["result"]["count"])
 
 
 # ===========================================================================
