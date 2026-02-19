@@ -20,6 +20,42 @@ FONT_SIZE_XXL = 24       # Huge text (rarely used)
 
 FONT_POINT_SIZE = 11     # QApplication global font point size
 
+# Font weights for better typography hierarchy
+FONT_WEIGHT_NORMAL = 400
+FONT_WEIGHT_MEDIUM = 500
+FONT_WEIGHT_SEMIBOLD = 600
+FONT_WEIGHT_BOLD = 700
+
+# Line heights for better readability
+LINE_HEIGHT_TIGHT = 1.2   # Headings
+LINE_HEIGHT_NORMAL = 1.5  # Body text
+LINE_HEIGHT_RELAXED = 1.75 # Long-form content
+
+
+# =============================================================================
+# Spacing System (4px-based scale)
+# =============================================================================
+# Consistent spacing tokens for margins, paddings, and gaps
+SPACE_1 = 4    # Tight spacing
+SPACE_2 = 8    # Default spacing
+SPACE_3 = 12   # Medium spacing
+SPACE_4 = 16   # Large spacing
+SPACE_5 = 20   # XL spacing
+SPACE_6 = 24   # XXL spacing
+SPACE_8 = 32   # Huge spacing
+
+
+# =============================================================================
+# Animation System
+# =============================================================================
+# Duration constants for consistent animations
+ANIMATION_DURATION_FAST = 80    # Quick feedback (hover)
+ANIMATION_DURATION_NORMAL = 150 # Standard transitions
+ANIMATION_DURATION_SLOW = 300   # Smooth entrances
+
+# Material Design easing function
+ANIMATION_EASING = "cubic-bezier(0.4, 0.0, 0.2, 1)"
+
 
 # =============================================================================
 # Layout Configuration
@@ -152,10 +188,27 @@ def _apply_theme(app, mode):
                 --success: #16a34a;
                 --warning: #d97706;
                 --error: #dc2626;
+
+                /* Border radius scale */
                 --radius-xs: 2px;
                 --radius-sm: 4px;
                 --radius-md: 6px;
                 --radius-lg: 8px;
+
+                /* Spacing scale (4px-based) */
+                --space-1: 4px;
+                --space-2: 8px;
+                --space-3: 12px;
+                --space-4: 16px;
+                --space-5: 20px;
+                --space-6: 24px;
+                --space-8: 32px;
+
+                /* Border system */
+                --border-thin: 1px;
+                --border-medium: 2px;
+                --border-thick: 3px;
+
                 --btn-danger: #dc2626;
                 --btn-danger-hover: #b91c1c;
                 --btn-danger-border: #7f1d1d;
@@ -278,10 +331,27 @@ def _apply_theme(app, mode):
                 --success: #22c55e;
                 --warning: #f59e0b;
                 --error: #ef4444;
+
+                /* Border radius scale */
                 --radius-xs: 2px;
                 --radius-sm: 4px;
                 --radius-md: 6px;
                 --radius-lg: 8px;
+
+                /* Spacing scale (4px-based) */
+                --space-1: 4px;
+                --space-2: 8px;
+                --space-3: 12px;
+                --space-4: 16px;
+                --space-5: 20px;
+                --space-6: 24px;
+                --space-8: 32px;
+
+                /* Border system */
+                --border-thin: 1px;
+                --border-medium: 2px;
+                --border-thick: 3px;
+
                 --btn-danger: #ef4444;
                 --btn-danger-hover: #dc2626;
                 --btn-danger-border: #991b1b;
