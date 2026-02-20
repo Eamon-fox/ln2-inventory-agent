@@ -234,11 +234,11 @@ class ValidateRecordTests(unittest.TestCase):
         errors, warnings = validate_record(self._valid_record())
         self.assertEqual([], errors)
 
-    def test_missing_required_field(self):
+    def test_missing_required_structural_field(self):
         rec = self._valid_record()
-        del rec["short_name"]
+        del rec["frozen_at"]
         errors, _ = validate_record(rec)
-        self.assertTrue(any("short_name" in e for e in errors))
+        self.assertTrue(any("frozen_at" in e for e in errors))
 
     def test_id_must_be_positive_int(self):
         errors, _ = validate_record(self._valid_record(id=0))

@@ -50,7 +50,6 @@ from app_gui.system_notice import build_system_notice
 APP_VERSION = "1.0.1"
 APP_RELEASE_URL = "https://github.com/Eamon-fox/snowfox/releases"
 _GITHUB_API_LATEST = "https://api.github.com/repos/Eamon-fox/snowfox/releases/latest"
-INVENTORY_FILE_NAME = "ln2_inventory.yaml"
 
 
 def _parse_version(v: str) -> tuple:
@@ -66,12 +65,12 @@ def _is_version_newer(new_version: str, old_version: str) -> bool:
     return _parse_version(new_version) > _parse_version(old_version)
 
 
-def _normalize_inventory_yaml_path(path_text, force_canonical_file=False) -> str:
+def _normalize_inventory_yaml_path(path_text) -> str:
     """Normalize inventory YAML path.
 
     - Empty input -> ""
-    - Directory input -> <dir>/ln2_inventory.yaml
-    - File input -> keep as-is unless force_canonical_file=True
+    - Directory input -> keep as-is
+    - File input -> keep as-is
     - Special case: demo path with .demo. suffix -> keep as-is (don't rename)
     """
     raw = str(path_text or "").strip()
@@ -83,12 +82,6 @@ def _normalize_inventory_yaml_path(path_text, force_canonical_file=False) -> str
     # Preserve demo/default inventory paths that have .demo. suffix
     if ".demo." in os.path.basename(abs_path).lower():
         return abs_path
-
-    if os.path.isdir(abs_path):
-        return os.path.join(abs_path, INVENTORY_FILE_NAME)
-
-    if force_canonical_file:
-        return os.path.join(os.path.dirname(abs_path), INVENTORY_FILE_NAME)
 
     return abs_path
 
@@ -363,7 +356,9 @@ class SettingsDialog(QDialog):
     def _emit_create_new_dataset_request(self):
         if not callable(self._on_create_new_dataset):
             return
-        new_path = self._on_create_new_dataset(update_window=False)
+        # Create + switch immediately so users keep the newly created dataset
+        # even if they close Settings without pressing OK.
+        new_path = self._on_create_new_dataset(update_window=True)
         if new_path:
             self.yaml_edit.setText(_normalize_inventory_yaml_path(new_path))
 
@@ -623,12 +618,11 @@ inventory: []
 3) 数据模型是 tube-level：一条 inventory 记录 = 一支物理冻存管。
  4) 每条记录必填：
     - id: 正整数，唯一
-    - short_name: 非空字符串
     - box: 整数
     - position: 整数（如 12）
     - frozen_at: YYYY-MM-DD
 5) 常用可选字段：
-    - cell_line, plasmid_name, plasmid_id, note, thaw_events
+    - cell_line, short_name, plasmid_name, plasmid_id, note, thaw_events
 6) 字段映射：
     - 若原表是 cell_line 列，直接映射
    - 若有 quantity/tube_count>1，拆成多条记录
@@ -858,31 +852,30 @@ class CustomFieldsDialog(QDialog):
         scroll.setWidget(scroll_content)
         root.addWidget(scroll, 1)
 
-        from lib.custom_fields import STRUCTURAL_FIELD_KEYS, DEFAULT_PRESET_FIELDS
+        # Unified fields area (structural + custom)
+        fields_group = QGroupBox(tr("main.cfFields"))
+        fields_layout = QVBoxLayout(fields_group)
+        fields_layout.setContentsMargins(8, 4, 8, 4)
+        fields_layout.setSpacing(6)
 
-        # --- Structural fields (read-only, same row style as user fields) ---
-        struct_group = QGroupBox(tr("main.cfCoreFields"))
-        struct_layout = QVBoxLayout(struct_group)
-        struct_layout.setContentsMargins(8, 4, 8, 4)
-        struct_layout.setSpacing(6)
-
-        # Column header for structural fields
-        s_header = QWidget()
-        s_header_l = QHBoxLayout(s_header)
-        s_header_l.setContentsMargins(0, 0, 0, 0)
-        s_header_l.setSpacing(4)
+        # Column header
+        header = QWidget()
+        header_l = QHBoxLayout(header)
+        header_l.setContentsMargins(0, 0, 0, 0)
+        header_l.setSpacing(4)
         for text, width in [(tr("main.cfKey"), 140), (tr("main.cfLabel"), 120),
                             (tr("main.cfType"), 70), (tr("main.cfDefault"), 100)]:
             lbl = QLabel(text)
             lbl.setFixedWidth(width)
             lbl.setProperty("role", "cfHeaderLabel")
-            s_header_l.addWidget(lbl)
+            header_l.addWidget(lbl)
         req_lbl = QLabel(tr("main.cfRequired"))
         req_lbl.setProperty("role", "cfHeaderLabel")
-        s_header_l.addWidget(req_lbl)
-        spacer_lbl = QWidget(); spacer_lbl.setFixedWidth(60)
-        s_header_l.addWidget(spacer_lbl)
-        struct_layout.addWidget(s_header)
+        header_l.addWidget(req_lbl)
+        action_lbl = QLabel()
+        action_lbl.setFixedWidth(60)
+        header_l.addWidget(action_lbl)
+        fields_layout.addWidget(header)
 
         _STRUCTURAL_DISPLAY = [
             ("id", "ID", "int"),
@@ -917,47 +910,30 @@ class CustomFieldsDialog(QDialog):
             row_l.addWidget(r_cb)
             spacer = QWidget(); spacer.setFixedWidth(60)
             row_l.addWidget(spacer)
-            struct_layout.addWidget(row_w)
-        scroll_layout.addWidget(struct_group)
+            fields_layout.addWidget(row_w)
 
-        # --- User fields (all editable) ---
-        custom_group = QGroupBox(tr("main.cfCustomFields"))
-        self._rows_layout = QVBoxLayout(custom_group)
-        self._rows_layout.setContentsMargins(8, 4, 8, 4)
+        self._rows_layout = QVBoxLayout()
+        self._rows_layout.setContentsMargins(0, 0, 0, 0)
         self._rows_layout.setSpacing(6)
-
-        # Column header for user fields
-        u_header = QWidget()
-        u_header_l = QHBoxLayout(u_header)
-        u_header_l.setContentsMargins(0, 0, 0, 0)
-        u_header_l.setSpacing(4)
-        for text, width in [(tr("main.cfKey"), 140), (tr("main.cfLabel"), 120),
-                            (tr("main.cfType"), 70), (tr("main.cfDefault"), 100)]:
-            lbl = QLabel(text)
-            lbl.setFixedWidth(width)
-            lbl.setProperty("role", "cfHeaderLabel")
-            u_header_l.addWidget(lbl)
-        req_lbl = QLabel(tr("main.cfRequired"))
-        req_lbl.setProperty("role", "cfHeaderLabel")
-        u_header_l.addWidget(req_lbl)
-        rm_spacer = QWidget(); rm_spacer.setFixedWidth(60)
-        u_header_l.addWidget(rm_spacer)
-        self._rows_layout.addWidget(u_header)
-
-        scroll_layout.addWidget(custom_group)
-
-        scroll_layout.addStretch()
+        fields_layout.addLayout(self._rows_layout)
 
         self._field_rows = []
 
-        # Populate: use provided fields, or default preset
-        fields_to_show = custom_fields if custom_fields else list(DEFAULT_PRESET_FIELDS)
+        fields_to_show = custom_fields if custom_fields else []
         for f in fields_to_show:
             k = f.get("key", "")
             self._add_row(k, f.get("label", ""),
                           f.get("type", "str"), f.get("default"),
                           required=f.get("required", False),
                           original_key=k)
+
+        add_btn = QPushButton(tr("main.cfAdd"))
+        add_btn.clicked.connect(lambda: self._add_row())
+        fields_layout.addWidget(add_btn)
+
+        scroll_layout.addWidget(fields_group)
+
+        scroll_layout.addStretch()
 
         # Display key selector
         dk_row = QHBoxLayout()
@@ -988,11 +964,6 @@ class CustomFieldsDialog(QDialog):
             self._cell_line_options_edit.setPlainText("\n".join(DEFAULT_CELL_LINE_OPTIONS))
         root.addLayout(clo_row)
         clo_row.addWidget(self._cell_line_options_edit)
-
-        # Add button
-        add_btn = QPushButton(tr("main.cfAdd"))
-        add_btn.clicked.connect(lambda: self._add_row())
-        root.addWidget(add_btn)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
@@ -1892,9 +1863,9 @@ class MainWindow(QMainWindow):
             return
         box_layout = layout_dlg.get_layout()
 
-        default_path = self.current_yaml_path
-        if not default_path or os.path.isdir(default_path):
-            default_path = os.path.join(os.getcwd(), INVENTORY_FILE_NAME)
+        default_path = str(self.current_yaml_path or "").strip()
+        if not default_path:
+            default_path = os.getcwd()
         target_path, _ = QFileDialog.getSaveFileName(
             self,
             tr("main.new"),
@@ -1904,7 +1875,7 @@ class MainWindow(QMainWindow):
         if not target_path:
             return
 
-        target_path = _normalize_inventory_yaml_path(target_path, force_canonical_file=True)
+        target_path = _normalize_inventory_yaml_path(target_path)
 
         target_dir = os.path.dirname(target_path)
         if target_dir and not os.path.isdir(target_dir):

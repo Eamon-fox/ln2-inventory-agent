@@ -370,6 +370,8 @@ def _get_common_qss():
         QWidget#resultCard[state="error"] {{ border-color: var(--error); }}
         QLabel#operationsResultTitle {{ color: var(--text-weak); font-size: {FONT_SIZE_MD}px; font-weight: {FONT_WEIGHT_BOLD}; border: none; }}
         QTextBrowser#operationsResultSummary {{ color: var(--text-strong); border: none; background: transparent; }}
+        QWidget#operationsResultActions {{ background: transparent; }}
+        QWidget#operationsResultActions QPushButton {{ min-height: 28px; }}
         QLabel#operationsPlanFeedback {{ border: 1px solid var(--border-weak); border-radius: var(--radius-sm); padding: 8px 10px; }}
         QLabel#operationsPlanFeedback[level="info"] {{ color: var(--text-muted); background: var(--background-inset); }}
         QLabel#operationsPlanFeedback[level="warning"] {{ color: var(--status-warning); background: rgba(255, 193, 7, 0.12); }}
@@ -381,10 +383,6 @@ def _get_common_qss():
         QPushButton#inlineLockBtn {{ border: none; padding: 0; font-size: {FONT_SIZE_SM}px; background: transparent; }}
         QPushButton#inlineConfirmBtn {{ border: none; padding: 0; font-size: {FONT_SIZE_LG}px; font-weight: {FONT_WEIGHT_BOLD}; color: var(--status-success); background: transparent; }}
         QLabel[role="mutedInline"] {{ color: var(--text-muted); }}
-        QFrame#undoPrintContainer {{ background-color: var(--status-success-bg); border: 1px solid var(--status-success); border-radius: var(--radius-sm); padding: 8px; }}
-        QLabel#undoSuccessLabel {{ color: var(--status-success); font-weight: {FONT_WEIGHT_MEDIUM}; }}
-        QPushButton#undoCloseBtn {{ background: transparent; border: none; font-size: {FONT_SIZE_XXL}px; font-weight: {FONT_WEIGHT_BOLD}; color: var(--text-secondary); }}
-        QPushButton#undoCloseBtn:hover {{ color: var(--text-primary); }}
         QWidget#overviewStatCard {{ background-color: var(--background-inset); border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-md); margin-top: 8px; padding-top: 8px; }}
         QWidget#overviewStatCard QLabel#overviewStatValue {{ color: var(--text-strong); font-weight: {FONT_WEIGHT_MEDIUM}; font-size: {FONT_SIZE_XL}px; }}
         QPushButton#overviewIconButton {{ border: none; background: transparent; }}

@@ -42,7 +42,7 @@ ai:
         with tempfile.TemporaryDirectory(prefix="ln2_gui_cfg_save_") as temp_dir:
             config_path = Path(temp_dir) / "config.yaml"
             source = {
-                "yaml_path": "/tmp/ln2_inventory.yaml",
+                "yaml_path": "/tmp/inventory.yaml",
                 "ai": {
                     "model": "deepseek-chat",
                     "max_steps": 12,
@@ -104,7 +104,7 @@ class ApiKeysConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_gui_cfg_apikeys_save_") as temp_dir:
             config_path = Path(temp_dir) / "config.yaml"
             source = {
-                "yaml_path": "/tmp/ln2_inventory.yaml",
+                "yaml_path": "/tmp/inventory.yaml",
                 "api_keys": {
                     "deepseek": "sk-deepseek-123",
                     "zhipu": "glm-zhipu-456",

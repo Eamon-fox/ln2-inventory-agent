@@ -241,7 +241,7 @@ class PlanTableColumnsTests(unittest.TestCase):
         ]
         changes_col = headers.index(tr("operations.colChanges"))
         cell_text = panel.plan_table.item(0, changes_col).text()
-        self.assertIn("Short Name", cell_text)
+        self.assertIn("operations.shortName", cell_text)
         self.assertIn("new-name", cell_text)
         self.assertIn("HeLa", cell_text)
 

@@ -8,11 +8,36 @@ STRUCTURAL_FIELD_KEYS = frozenset({
 
 _VALID_TYPES = {"str", "int", "float", "date"}
 
-DEFAULT_PRESET_FIELDS = [
-    {"key": "short_name", "label": "Short Name", "type": "str", "required": True},
-]
+# Keep empty by default: users explicitly decide their own custom fields.
+DEFAULT_PRESET_FIELDS = []
 
-DEFAULT_CELL_LINE_OPTIONS = ["K562", "HeLa", "NCCIT", "HEK293T"]
+DEFAULT_CELL_LINE_OPTIONS = [
+    "K562",
+    "HeLa",
+    "NCCIT",
+    "HEK293T",
+    "HCT116",
+    "U2OS",
+    "A549",
+    "MCF7",
+    "HepG2",
+    "Huh7",
+    "SW480",
+    "SW620",
+    "HT29",
+    "DLD1",
+    "RKO",
+    "PC3",
+    "DU145",
+    "LNCaP",
+    "A375",
+    "SK-MEL-28",
+    "Jurkat",
+    "Raji",
+    "THP-1",
+    "MDA-MB-231",
+    "mESC",
+]
 
 
 def parse_custom_fields(meta):
@@ -73,7 +98,7 @@ def parse_custom_fields(meta):
 def get_effective_fields(meta):
     """Return the list of user-configurable field definitions from meta.
 
-    Returns parsed custom_fields, or DEFAULT_PRESET_FIELDS if none defined.
+    Returns parsed custom_fields, or DEFAULT_PRESET_FIELDS when none defined.
     """
     fields = parse_custom_fields(meta)
     if fields:

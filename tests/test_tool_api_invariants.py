@@ -481,8 +481,8 @@ class ErrorPathTests(unittest.TestCase):
         )
         self.assertFalse(result["ok"])
 
-    def test_add_with_empty_cell_line_rejected(self):
-        """Empty short_name (required preset field) should be rejected."""
+    def test_add_with_empty_short_name_is_allowed_without_preset(self):
+        """When no custom fields are required, empty short_name should not block add."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [])
             result = tool_add_entry(
@@ -490,9 +490,9 @@ class ErrorPathTests(unittest.TestCase):
                 box=1, positions=[1], frozen_at="2026-02-10",
                 fields={"short_name": ""},
             )
-            self.assertFalse(result["ok"])
+            self.assertTrue(result["ok"])
 
-    def test_add_with_empty_short_name_rejected(self):
+    def test_add_with_empty_short_name_and_other_fields_is_allowed(self):
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [])
             result = tool_add_entry(
@@ -500,7 +500,7 @@ class ErrorPathTests(unittest.TestCase):
                 box=1, positions=[1], frozen_at="2026-02-10",
                 fields={"parent_cell_line": "K562", "short_name": ""},
             )
-            self.assertFalse(result["ok"])
+            self.assertTrue(result["ok"])
 
 
 # ── Cross-box move tests ──────────────────────────────────────────

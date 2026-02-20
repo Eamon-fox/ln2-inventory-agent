@@ -447,9 +447,8 @@ class TestGetEditableFields(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_raw_yaml(str(yaml_path), make_data([make_record()]))
             result = _get_editable_fields(str(yaml_path))
-            # Should include frozen_at + DEFAULT_PRESET_FIELDS keys
-            self.assertIn("frozen_at", result)
-            self.assertIn("short_name", result)
+            self.assertEqual(_EDITABLE_FIELDS, result)
+            self.assertEqual({"frozen_at", "cell_line"}, result)
 
     def test_custom_fields_extend_editable_set(self):
         from lib.tool_api import _get_editable_fields
@@ -861,13 +860,13 @@ class TestCellLineEdit(unittest.TestCase):
             result = tool_edit_entry(
                 yaml_path=str(yaml_path),
                 record_id=1,
-                fields={"short_name": "updated"},
+                fields={"frozen_at": "2026-02-10"},
                 source="test_edit_cl",
             )
 
             self.assertTrue(result["ok"])
             data = load_yaml(str(yaml_path))
-            self.assertEqual("updated", data["inventory"][0]["short_name"])
+            self.assertEqual("2026-02-10", data["inventory"][0]["frozen_at"])
 
 
 if __name__ == "__main__":

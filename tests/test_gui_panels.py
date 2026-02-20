@@ -182,11 +182,12 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual(1, int(record.get("id")))
 
     def test_operations_panel_add_entry_parses_positions_text(self):
-        from lib.custom_fields import DEFAULT_PRESET_FIELDS
         panel = self._new_operations_panel()
 
         # Simulate effective fields being loaded
-        panel._current_custom_fields = list(DEFAULT_PRESET_FIELDS)
+        panel._current_custom_fields = [
+            {"key": "short_name", "label": "Short Name", "type": "str", "required": False}
+        ]
         panel._rebuild_custom_add_fields(panel._current_custom_fields)
 
         panel._add_custom_widgets["short_name"].setText("K562_clone12")
@@ -1888,7 +1889,7 @@ class PrintPlanRegressionTests(unittest.TestCase):
     def _new_panel(self, bridge):
         return OperationsPanel(bridge=bridge, yaml_path_getter=lambda: "/tmp/inventory.yaml")
 
-    def test_print_plan_uses_last_executed_when_plan_empty(self):
+    def test_print_last_executed_uses_recent_execution(self):
         bridge = _UndoBridge()
         panel = self._new_panel(bridge)
 
@@ -1903,7 +1904,29 @@ class PrintPlanRegressionTests(unittest.TestCase):
             panel.execute_plan()
 
         self.assertEqual(0, len(panel.plan_items))
-        self.assertEqual(2, len(panel._last_printable_plan))
+        self.assertEqual(2, len(panel._last_executed_plan))
+
+        with patch("app_gui.ui.operations_panel.QDesktopServices.openUrl", return_value=True) as open_url:
+            panel.print_last_executed()
+
+        open_url.assert_called_once()
+
+    def test_print_plan_does_not_fallback_to_last_executed(self):
+        bridge = _UndoBridge()
+        panel = self._new_panel(bridge)
+
+        items = [
+            _make_takeout_item(record_id=1, position=5),
+            _make_takeout_item(record_id=2, position=10),
+        ]
+        panel.add_plan_items(items)
+
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        self.assertEqual(0, len(panel.plan_items))
+        self.assertEqual(2, len(panel._last_executed_plan))
 
         messages = []
         panel.status_message.connect(lambda msg, _timeout, _level: messages.append(msg))
@@ -1911,10 +1934,10 @@ class PrintPlanRegressionTests(unittest.TestCase):
         with patch("app_gui.ui.operations_panel.QDesktopServices.openUrl", return_value=True) as open_url:
             panel.print_plan()
 
-        open_url.assert_called_once()
-        self.assertTrue(any(tr("operations.planEmptyPrintingLast") in msg for msg in messages))
+        open_url.assert_not_called()
+        self.assertTrue(any(tr("operations.noCurrentPlanToPrint") in msg for msg in messages))
 
-    def test_print_plan_errors_without_current_or_last_plan(self):
+    def test_print_last_executed_errors_without_recent_execution(self):
         bridge = _UndoBridge()
         panel = self._new_panel(bridge)
 
@@ -1923,10 +1946,10 @@ class PrintPlanRegressionTests(unittest.TestCase):
 
         from unittest.mock import patch
         with patch("app_gui.ui.operations_panel.QDesktopServices.openUrl", return_value=True) as open_url:
-            panel.print_plan()
+            panel.print_last_executed()
 
         open_url.assert_not_called()
-        self.assertTrue(any(tr("operations.noPlanToPrint") in msg for msg in messages))
+        self.assertTrue(any(tr("operations.noLastExecutedToPrint") in msg for msg in messages))
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")

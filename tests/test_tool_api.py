@@ -913,15 +913,15 @@ class TestToolEditEntry(unittest.TestCase):
             result = tool_edit_entry(
                 yaml_path=str(yaml_path),
                 record_id=1,
-                fields={"short_name": "new-name"},
+                fields={"frozen_at": "2026-02-01"},
             )
             self.assertTrue(result["ok"])
-            self.assertEqual("rec-1", result["result"]["before"]["short_name"])
-            self.assertEqual("new-name", result["result"]["after"]["short_name"])
+            self.assertEqual("2025-01-01", result["result"]["before"]["frozen_at"])
+            self.assertEqual("2026-02-01", result["result"]["after"]["frozen_at"])
 
             data = load_yaml(str(yaml_path))
             rec = data["inventory"][0]
-            self.assertEqual("new-name", rec["short_name"])
+            self.assertEqual("2026-02-01", rec["frozen_at"])
 
     def test_edit_entry_rejects_forbidden_fields(self):
         with tempfile.TemporaryDirectory(prefix="ln2_edit_") as temp_dir:
@@ -952,7 +952,7 @@ class TestToolEditEntry(unittest.TestCase):
             result = tool_edit_entry(
                 yaml_path=str(yaml_path),
                 record_id=999,
-                fields={"short_name": "x"},
+                fields={"frozen_at": "2026-02-01"},
             )
             self.assertFalse(result["ok"])
             self.assertEqual("record_not_found", result["error_code"])
@@ -986,7 +986,7 @@ class TestToolEditEntry(unittest.TestCase):
             tool_edit_entry(
                 yaml_path=str(yaml_path),
                 record_id=1,
-                fields={"short_name": "edited"},
+                fields={"frozen_at": "2026-02-01"},
                 actor_context=build_actor_context(actor_type="human", channel="gui"),
             )
 

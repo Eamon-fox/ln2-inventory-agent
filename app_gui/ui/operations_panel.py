@@ -69,7 +69,6 @@ class OperationsPanel(QWidget):
         self._default_date_anchor = QDate.currentDate()
         self._last_operation_backup = None
         self._last_executed_plan = []
-        self._last_printable_plan = []
         self._plan_preflight_report = None
         self._plan_validation_by_key = {}
         self._plan_hover_row = None
@@ -160,7 +159,7 @@ class OperationsPanel(QWidget):
         result_header.addWidget(result_title)
         result_header.addStretch()
         self._result_hide_btn = QPushButton(tr("operations.hideResult"))
-        self._result_hide_btn.clicked.connect(lambda: self.result_card.setVisible(False))
+        self._result_hide_btn.clicked.connect(self._on_hide_result_card)
         result_header.addWidget(self._result_hide_btn)
         result_card_layout.addLayout(result_header)
 
@@ -171,58 +170,35 @@ class OperationsPanel(QWidget):
         self.result_summary.setHtml(tr("operations.noOperations"))
         result_card_layout.addWidget(self.result_summary)
 
+        self.result_actions = QWidget()
+        self.result_actions.setObjectName("operationsResultActions")
+        result_actions_layout = QHBoxLayout(self.result_actions)
+        result_actions_layout.setContentsMargins(0, 2, 0, 0)
+        result_actions_layout.setSpacing(8)
+        result_actions_layout.addStretch()
+
+        self.undo_btn = QPushButton(tr("operations.undoLast"))
+        self.undo_btn.setIcon(get_icon(Icons.ROTATE_CCW))
+        self.undo_btn.clicked.connect(self.on_undo_last)
+        result_actions_layout.addWidget(self.undo_btn)
+
+        self.print_last_result_btn = QPushButton(tr("operations.printLastResult"))
+        self.print_last_result_btn.setIcon(get_icon(Icons.DOWNLOAD))
+        self.print_last_result_btn.clicked.connect(self.print_last_executed)
+        result_actions_layout.addWidget(self.print_last_result_btn)
+
+        self.result_actions.setVisible(False)
+        result_card_layout.addWidget(self.result_actions)
+
         self.result_card.setVisible(False)
         result_row = QHBoxLayout()
         result_row.setContentsMargins(9, 0, 9, 0)
         result_row.addWidget(self.result_card)
         layout.addLayout(result_row)
 
-        # Undo/Print container (initially hidden)
-        self._create_undo_print_container()
-        layout.addWidget(self.undo_print_container)
+        self._sync_result_actions()
 
         self.set_mode("thaw")
-
-    def _create_undo_print_container(self):
-        """Create container widget for undo and print buttons."""
-        from PySide6.QtWidgets import QFrame
-
-        # Create container frame
-        self.undo_print_container = QFrame()
-        self.undo_print_container.setObjectName("undoPrintContainer")
-
-        container_layout = QHBoxLayout(self.undo_print_container)
-        container_layout.setContentsMargins(4, 4, 4, 4)
-        container_layout.setSpacing(8)
-
-        # Success message label
-        self.undo_success_label = QLabel(tr("operations.planExecutionSuccess"))
-        self.undo_success_label.setObjectName("undoSuccessLabel")
-        container_layout.addWidget(self.undo_success_label)
-
-        container_layout.addStretch()
-
-        # Undo button
-        self.undo_btn = QPushButton(tr("operations.undoLast"))
-        self.undo_btn.setIcon(get_icon(Icons.ROTATE_CCW))
-        self.undo_btn.clicked.connect(self.on_undo_last)
-        container_layout.addWidget(self.undo_btn)
-
-        # Print guide button
-        self.print_guide_btn = QPushButton(tr("operations.printGuide"))
-        self.print_guide_btn.setIcon(get_icon(Icons.DOWNLOAD))
-        self.print_guide_btn.clicked.connect(self.print_last_plan)
-        container_layout.addWidget(self.print_guide_btn)
-
-        # Close button
-        self.undo_close_btn = QPushButton("×")
-        self.undo_close_btn.setObjectName("undoCloseBtn")
-        self.undo_close_btn.setFixedSize(24, 24)
-        self.undo_close_btn.clicked.connect(self._close_undo_print_container)
-        container_layout.addWidget(self.undo_close_btn)
-
-        # Initially hidden
-        self.undo_print_container.setVisible(False)
 
     def _is_dark_theme(self):
         return load_gui_config().get("theme", "dark") != "light"
@@ -246,6 +222,28 @@ class OperationsPanel(QWidget):
             html = html.replace(token, color_hex)
 
         self.result_summary.setText(html)
+
+    def _on_hide_result_card(self):
+        """Hide last result card and dismiss quick actions."""
+        self.result_card.setVisible(False)
+        self._disable_undo(clear_last_executed=True)
+
+    def _sync_result_actions(self):
+        """Sync visibility/enabled state of result-card action buttons."""
+        has_last_executed = bool(self._last_executed_plan)
+        has_undo = bool(self._last_operation_backup)
+
+        self.print_last_result_btn.setVisible(has_last_executed)
+        self.print_last_result_btn.setEnabled(has_last_executed)
+
+        self.undo_btn.setVisible(has_undo)
+        self.undo_btn.setEnabled(has_undo)
+        if has_undo and self._undo_remaining > 0:
+            self._update_undo_button_text()
+        else:
+            self.undo_btn.setText(tr("operations.undoLast"))
+
+        self.result_actions.setVisible(has_last_executed or has_undo)
 
     def set_mode(self, mode):
         self._ensure_today_defaults()
@@ -2165,6 +2163,14 @@ class OperationsPanel(QWidget):
             for fdef in custom_fields
             if isinstance(fdef, dict) and fdef.get("key")
         }
+        # Keep human-friendly labels for common built-in keys even when
+        # custom_fields is empty.
+        label_map.setdefault("short_name", tr("operations.shortName"))
+        label_map.setdefault("cell_line", tr("operations.cellLine"))
+        label_map.setdefault("frozen_at", tr("operations.frozenDate"))
+        label_map.setdefault("box", tr("operations.box"))
+        label_map.setdefault("position", tr("operations.position"))
+        label_map.setdefault("note", tr("operations.note"))
 
         parts = []
 
@@ -2448,8 +2454,7 @@ class OperationsPanel(QWidget):
         executed_items = [r[1] for r in results if r[0] == "OK"]
         if execution_stats.get("rollback_ok"):
             executed_items = []
-        if executed_items:
-            self._last_printable_plan = list(executed_items)
+        self._last_executed_plan = list(executed_items)
 
         if report.get("ok") and any(r[0] == "OK" for r in results):
             self.operation_completed.emit(True)
@@ -2459,8 +2464,9 @@ class OperationsPanel(QWidget):
         last_backup = report.get("backup_path")
         if last_backup and executed_items:
             self._last_operation_backup = last_backup
-            self._last_executed_plan = list(executed_items)
             self._enable_undo(timeout_sec=30)
+        else:
+            self._disable_undo(clear_last_executed=not bool(executed_items))
 
         summary_text = self._build_execution_summary_text(execution_stats)
         notice_level = "success"
@@ -2658,16 +2664,14 @@ class OperationsPanel(QWidget):
             self.result_card.style().polish(self.result_card)
 
         self.result_card.setVisible(True)
+        self._sync_result_actions()
 
     def print_plan(self):
-        """Print current plan or last executed plan with grid visualization."""
-        items_to_print = self._plan_store.list_items() or self._last_printable_plan
+        """Print current staged plan (not yet executed)."""
+        items_to_print = self._plan_store.list_items()
         if not items_to_print:
-            self.status_message.emit(tr("operations.noPlanToPrint"), 3000, "error")
+            self.status_message.emit(tr("operations.noCurrentPlanToPrint"), 3000, "error")
             return
-
-        if not self._plan_store.count():
-            self.status_message.emit(tr("operations.planEmptyPrintingLast"), 2500, "info")
 
         # Get grid state from overview panel
         grid_state = None
@@ -2681,11 +2685,11 @@ class OperationsPanel(QWidget):
 
         self._print_operation_sheet_with_grid(items_to_print, grid_state, opened_message=tr("operations.planPrintOpened"))
 
-    def print_last_plan(self):
-        """Print the last executed plan with grid visualization."""
-        items_to_print = self._last_printable_plan
+    def print_last_executed(self):
+        """Print the last successfully applied execution result."""
+        items_to_print = self._last_executed_plan
         if not items_to_print:
-            self.status_message.emit(tr("operations.noPlanToPrint"), 3000, "error")
+            self.status_message.emit(tr("operations.noLastExecutedToPrint"), 3000, "error")
             return
 
         # Get grid state from overview panel
@@ -2699,6 +2703,10 @@ class OperationsPanel(QWidget):
                 print(f"Warning: Could not extract grid state: {e}")
 
         self._print_operation_sheet_with_grid(items_to_print, grid_state, opened_message=tr("operations.guideOpened"))
+
+    def print_last_plan(self):
+        """Backward-compatible alias for printing last executed result."""
+        self.print_last_executed()
 
     def _print_operation_sheet_with_grid(self, items, grid_state, opened_message=None):
         """Print operation sheet with grid visualization."""
@@ -2778,8 +2786,7 @@ class OperationsPanel(QWidget):
         self._set_plan_feedback("")
         self._plan_validation_by_key = {}
         self._plan_preflight_report = None
-        self._last_printable_plan = []
-        self._disable_undo()
+        self._disable_undo(clear_last_executed=True)
 
         self._refresh_plan_table()
         self._update_execute_button_state()
@@ -2852,24 +2859,11 @@ class OperationsPanel(QWidget):
 
     # --- UNDO ---
 
-    def _enable_undo(self, timeout_sec=300):  # Changed from 30 to 300 (5 minutes)
-        """Enable undo button with extended timeout and add print button."""
+    def _enable_undo(self, timeout_sec=30):
+        """Enable undo countdown while keeping last-result print available."""
         if not self._last_operation_backup:
+            self._sync_result_actions()
             return
-
-        # Store executed plan for printing
-        self._last_printable_plan = list(self._last_executed_plan)
-
-        # Show container
-        self.undo_print_container.setVisible(True)
-
-        # Enable undo button
-        self.undo_btn.setEnabled(True)
-        self.undo_btn.setVisible(True)
-
-        # Enable print button
-        self.print_guide_btn.setEnabled(True)
-        self.print_guide_btn.setVisible(True)
 
         # Start countdown timer
         self._undo_remaining = timeout_sec
@@ -2879,7 +2873,7 @@ class OperationsPanel(QWidget):
         self._undo_timer = QTimer(self)
         self._undo_timer.timeout.connect(self._undo_tick)
         self._undo_timer.start(1000)
-        self._update_undo_button_text()
+        self._sync_result_actions()
 
     def _update_undo_button_text(self):
         """Update undo button text with countdown."""
@@ -2898,26 +2892,17 @@ class OperationsPanel(QWidget):
         else:
             self._update_undo_button_text()
 
-    def _disable_undo(self):
-        """Disable and hide undo/print container."""
+    def _disable_undo(self, *, clear_last_executed=False):
+        """Disable undo countdown and optionally clear last executed context."""
         if self._undo_timer is not None:
             self._undo_timer.stop()
             self._undo_timer = None
 
-        if hasattr(self, 'undo_print_container'):
-            self.undo_print_container.setVisible(False)
-
         self._undo_remaining = 0
         self._last_operation_backup = None
-        self._last_executed_plan = []
-
-    def _close_undo_print_container(self):
-        """Manually close the undo/print container."""
-        if self._undo_timer:
-            self._undo_timer.stop()
-            self._undo_timer = None
-        self.undo_print_container.setVisible(False)
-        self._undo_remaining = 0
+        if clear_last_executed:
+            self._last_executed_plan = []
+        self._sync_result_actions()
 
     def on_undo_last(self):
         if not self._last_operation_backup:
@@ -2947,7 +2932,7 @@ class OperationsPanel(QWidget):
             backup_path=self._last_operation_backup,
             execution_mode="execute",
         )
-        self._disable_undo()
+        self._disable_undo(clear_last_executed=True)
 
         restored_data = None
         if response.get("ok") and executed_plan_backup:
