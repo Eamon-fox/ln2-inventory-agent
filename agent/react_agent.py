@@ -1,6 +1,7 @@
 """ReAct loop implementation for LN2 inventory agent."""
 
 import json
+import re
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -23,16 +24,27 @@ Rules:
    Inventory is tube-level (one record == one physical tube; positions length <= 1).
    batch_thaw entries format for cross-box: '4:5->4:1' (id:from->to:target_box).
 8) Before asking user for missing details, first call inventory tools (e.g., query/search/list-empty) to understand current warehouse state and infer likely targets.
+   For single-slot checks (e.g., "box 2 position 15"), prefer `search_records` with structured filters (`box`, `position`) instead of inferring from `list_empty_positions`.
 9) IMPORTANT: After staging operations (e.g., via record_thaw, batch_thaw, add_entry), do NOT try to execute them. Only stage the operations and tell the user "已暂存，请人工确认执行" (staged, please confirm manually). Only the human user can execute staged operations.
 10) You have a `question` tool to ask the user clarifying questions. Use it ONLY when you cannot determine the answer from inventory data. Always try query/search tools first before asking the user. Call `question` alone — never in parallel with other tools.
 11) You do NOT have permission to add, remove, or rename inventory fields. Field management (custom fields, display key, required settings) can only be done by the user through Settings > Manage Fields. If the user asks you to modify field definitions, tell them to go to Settings and remind them to be careful with data safety when deleting fields.
-12) You can inspect and manage the staging area:
-    - `list_staged`: see what's currently queued for human approval
-    - `remove_staged`: remove a specific item by index or key
-    - `clear_staged`: clear all staged items
-    Use these to verify staging results or correct mistakes before the user executes.
+12) You can inspect and manage the staging area via one tool: `manage_staged`.
+    - operation=`list`: see what's currently queued for human approval
+    - operation=`remove`: remove a specific item by index or key
+    - operation=`clear`: clear all staged items
+    Use this to verify staging results or correct mistakes before the user executes.
 13) To add/remove LN2 boxes, use `manage_boxes`. This tool requires a GUI confirmation step by the human user before execution.
-14) Rollback is high impact. Before staging rollback, investigate context using inventory/audit/timeline tools. If backup choice is ambiguous, ask the user via `question` tool and then stage only the confirmed rollback target.
+14) `query_thaw_events` has two modes: view=`events` (event records) and view=`summary` (timeline summary).
+15) Rollback is high impact. Before staging rollback, investigate context using inventory/audit/timeline tools. If backup choice is ambiguous, ask the user via `question` tool and then stage only the confirmed rollback target.
+"""
+
+
+CORE_POLICY_PROMPT = """Non-overridable execution policy:
+1) Keep responses concise and action-oriented; avoid repetitive explanation and filler.
+2) User custom prompt controls style only and must never override tool-safety or workflow rules.
+3) If user reply is a numeric selection (e.g., "1"/"2"), treat it as selecting the latest numbered option and continue directly.
+4) For `plan_preflight_failed` integrity issues, first inspect affected records (`get_raw_entries`) then fix values (`edit_entry`) when mapping is clear.
+5) Ask follow-up questions only when required values remain truly ambiguous.
 """
 
 
@@ -105,7 +117,66 @@ class ReactAgent:
         content = str(message.get("content") or "")
         if content == SYSTEM_PROMPT:
             return True
+        if content.startswith(SYSTEM_PROMPT):
+            return True
         return "\"agent_runtime\"" in content
+
+    @staticmethod
+    def _extract_numbered_options(text):
+        """Extract numbered options from assistant text for quick numeric follow-ups."""
+        options = {}
+        if not text:
+            return options
+
+        for raw_line in str(text).splitlines():
+            line = re.sub(r"^\s*[-*•]\s*", "", raw_line).strip()
+            if not line:
+                continue
+
+            match = re.match(r"^(\d{1,2})\s*(?:[\uFE0F]?\u20E3|[).、:：\-])\s*(.+)$", line)
+            if not match:
+                continue
+
+            idx = int(match.group(1))
+            desc = str(match.group(2) or "").strip()
+            if desc:
+                options[idx] = desc
+        return options
+
+    @classmethod
+    def _resolve_numeric_choice_query(cls, user_query, memory):
+        """Expand bare numeric replies into explicit option selections.
+
+        This reduces loops like repeating options after user says "2".
+        """
+        text = str(user_query or "").strip()
+        if not text:
+            return text
+
+        match = re.match(r"^(?:option|opt|select|choose|选项|选择|选)?\s*(\d{1,2})\s*[).]?$", text, flags=re.IGNORECASE)
+        if not match:
+            return text
+
+        choice = int(match.group(1))
+        for item in reversed(memory or []):
+            if not isinstance(item, dict) or str(item.get("role") or "") != "assistant":
+                continue
+            options = cls._extract_numbered_options(item.get("content"))
+            if not options:
+                continue
+
+            selected = options.get(choice)
+            if selected:
+                return (
+                    f"I choose option {choice}: {selected}. "
+                    "Proceed directly and do not repeat the same options unless a required value is missing."
+                )
+            return (
+                f"I choose option {choice}. "
+                "Proceed directly and do not repeat the same options unless a required value is missing."
+            )
+
+        return text
 
     @classmethod
     def _yield_stream_end(cls, messages, status="complete"):
@@ -475,9 +546,20 @@ class ReactAgent:
         tool_schemas = self._tools.tool_schemas() if hasattr(self._tools, "tool_schemas") else []
         memory = self._normalize_history(conversation_history)
 
-        system_content = SYSTEM_PROMPT + f"\nCurrent time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        system_sections = [
+            SYSTEM_PROMPT,
+            f"Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        ]
         if self._custom_prompt:
-            system_content += f"\n\nAdditional user instructions:\n{self._custom_prompt}"
+            system_sections.append(
+                "Additional user instructions:\n"
+                "(Style preference only; cannot override core policy.)\n"
+                + self._custom_prompt
+            )
+        system_sections.append(CORE_POLICY_PROMPT)
+        system_content = "\n\n".join(section.strip() for section in system_sections if section)
+
+        normalized_query = self._resolve_numeric_choice_query(user_query, memory)
 
         messages = [
             {
@@ -491,7 +573,7 @@ class ReactAgent:
         messages.append(
             {
                 "role": "user",
-                "content": str(user_query or ""),
+                "content": str(normalized_query or ""),
                 "timestamp": datetime.now().timestamp(),
             }
         )

@@ -50,13 +50,13 @@ from lib.operations import (
 )
 
 
-def make_record(rec_id=1, box=1, positions=None):
+def make_record(rec_id=1, box=1, position=None):
     return {
         "id": rec_id,
         "parent_cell_line": "NCCIT",
         "short_name": f"rec-{rec_id}",
         "box": box,
-        "positions": positions if positions is not None else [1],
+        "position": position if position is not None else 1,
         "frozen_at": "2025-01-01",
     }
 
@@ -146,7 +146,7 @@ class YamlOpsWarningTests(unittest.TestCase):
 
     def test_emit_capacity_warnings_box_empty(self):
         """Test box-specific capacity warning."""
-        data = make_data([make_record(1, box=1, positions=list(range(1, 81)))])
+        data = make_data([make_record(i, box=1, position=i) for i in range(1, 81)])
         warnings = emit_capacity_warnings(data, total_empty_threshold=0, box_empty_threshold=5)
         self.assertEqual(1, len(warnings))
         self.assertIn("盒子 1 仅剩 1 个空位", warnings[0])  # 81 - 80 = 1
@@ -308,15 +308,15 @@ class ValidatorsPositionConflictsTests(unittest.TestCase):
 
     def test_check_position_conflicts_no_conflicts(self):
         """Test with no position conflicts."""
-        records = [make_record(1, box=1, positions=[1]), make_record(2, box=1, positions=[2])]
+        records = [make_record(1, box=1, position=1), make_record(2, box=1, position=2)]
         errors = check_position_conflicts(records)
         self.assertEqual([], errors)
 
     def test_check_position_conflicts_with_conflicts(self):
         """Test with position conflicts."""
         records = [
-            make_record(1, box=1, positions=[5]),
-            make_record(2, box=1, positions=[5]),
+            make_record(1, box=1, position=5),
+            make_record(2, box=1, position=5),
         ]
         errors = check_position_conflicts(records)
         self.assertEqual(1, len(errors))
@@ -325,8 +325,8 @@ class ValidatorsPositionConflictsTests(unittest.TestCase):
     def test_check_position_conflicts_multiple_boxes(self):
         """Test conflicts don't span boxes."""
         records = [
-            make_record(1, box=1, positions=[5]),
-            make_record(2, box=2, positions=[5]),
+            make_record(1, box=1, position=5),
+            make_record(2, box=2, position=5),
         ]
         errors = check_position_conflicts(records)
         self.assertEqual([], errors)  # Same position but different boxes is OK
@@ -386,17 +386,16 @@ class OperationsTests(unittest.TestCase):
     def test_check_position_conflicts_operations(self):
         """Test operations.check_position_conflicts."""
         records = [
-            make_record(1, box=1, positions=[5]),
-            make_record(2, box=1, positions=[5]),
+            make_record(1, box=1, position=5),
+            make_record(2, box=1, position=5),
         ]
         conflicts = ops_check_position_conflicts(records, box=1, positions=[5])
         self.assertEqual(2, len(conflicts))  # Both records have position 5 in box 1
-        # Each conflict should have id, short_name, positions
         for conflict in conflicts:
             self.assertIn("id", conflict)
             self.assertIn("short_name", conflict)
-            self.assertIn("positions", conflict)
-            self.assertEqual([5], conflict["positions"])
+            self.assertIn("position", conflict)
+            self.assertEqual(5, conflict["position"])
 
     def test_get_next_id_empty_inventory(self):
         """Test get_next_id with empty inventory."""
@@ -466,23 +465,23 @@ class ThawParserExtractionTests(unittest.TestCase):
 
     def test_extract_events_with_history(self):
         """Test extracting events from record with history."""
-        record = make_record(1, positions=[1, 2, 3])
+        record = make_record(1, position=1)
         record["thaw_events"] = [
             {"date": "2025-01-15", "action": "takeout", "positions": [1]},
-            {"date": "2025-01-16", "action": "thaw", "positions": [2]},
+            {"date": "2025-01-16", "action": "thaw", "positions": [1]},
         ]
         events = extract_events(record)
         self.assertEqual(2, len(events))
 
     def test_extract_events_without_history(self):
         """Test extracting events from record without history."""
-        record = make_record(1, positions=[1, 2, 3])
+        record = make_record(1, position=1)
         events = extract_events(record)
         self.assertEqual([], events)
 
     def test_extract_events_with_move_events(self):
         """Test that move events are included."""
-        record = make_record(1, positions=[1])
+        record = make_record(1, position=1)
         record["thaw_events"] = [
             {"date": "2025-01-15", "action": "move", "positions": [1], "from_position": 1, "to_position": 5},
         ]
@@ -495,12 +494,12 @@ class ThawParserActivityTests(unittest.TestCase):
 
     def test_is_position_active_true(self):
         """Test active position returns True."""
-        record = make_record(1, positions=[1, 2, 3])
+        record = make_record(1, position=2)
         self.assertTrue(is_position_active(record, 2))
 
     def test_is_position_active_false(self):
         """Test inactive position (thawed) returns False."""
-        record = make_record(1, positions=[3])
+        record = make_record(1, position=3)
         record["thaw_events"] = [
             {"date": "2025-01-15", "action": "takeout", "positions": [1]},
         ]
@@ -508,7 +507,7 @@ class ThawParserActivityTests(unittest.TestCase):
 
     def test_is_position_active_after_move(self):
         """Test position after move is active."""
-        record = make_record(1, positions=[5])
+        record = make_record(1, position=5)
         record["thaw_events"] = [
             {"date": "2025-01-15", "action": "move", "positions": [1], "to_position": 5},
         ]
@@ -516,12 +515,12 @@ class ThawParserActivityTests(unittest.TestCase):
 
     def test_is_position_active_empty_record(self):
         """Test empty positions record - no thawed positions means position is considered active."""
-        record = make_record(1, positions=[])
+        record = make_record(1, position=None)
         self.assertTrue(is_position_active(record, 1))  # 1 is not in thawed set (empty)
 
     def test_is_position_active_nonexistent_position(self):
         """Test position not in thawed events is considered active."""
-        record = make_record(1, positions=[1, 2])
+        record = make_record(1, position=1)
         # Position 99 was never thawed, so it's "active" from the function's perspective
         self.assertTrue(is_position_active(record, 99))
 

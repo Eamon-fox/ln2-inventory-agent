@@ -2,203 +2,198 @@ meta:
   box_layout:
     rows: 9
     cols: 9
+  inventory_instance_id: 7ee520f7-5ce0-4e0e-8017-43a8d1e54c11
+  custom_fields:
+  - key: short_name
+    label: Short Name
+    type: str
+  - key: plasmid_name
+    label: Plasmid Name
+    type: str
+  - key: plasmid_id
+    label: Plasmid ID
+    type: str
+  display_key: cell_line
+  color_key: cell_line
+  cell_line_options:
+  - K562
+  - HeLa
+  - NCCIT
+  - HEK293T
+  - HCT116
+  - U2OS
+  - A549
+  - MCF7
+  - HepG2
+  - Huh7
+  - SW480
+  - SW620
+  - HT29
+  - DLD1
+  - RKO
+  - PC3
+  - DU145
+  - LNCaP
+  - A375
+  - SK-MEL-28
+  - Jurkat
+  - Raji
+  - THP-1
+  - MDA-MB-231
+  - mESC
+  cell_line_required: true
 inventory:
 - id: 1
   cell_line: NCCIT
-  parent_cell_line: NCCIT
   short_name: NCCIT_ctrl_A
   plasmid_name: pLenti-empty
   plasmid_id: p0001
   box: 1
-  positions: []
   frozen_at: '2026-02-01'
-  thaw_log: null
   note: baseline control clone
   thaw_events:
   - date: '2026-02-16'
     action: takeout
     positions:
     - 1
+  position: null
 - id: 2
   cell_line: NCCIT
-  parent_cell_line: NCCIT
   short_name: NCCIT_ctrl_A
   plasmid_name: pLenti-empty
   plasmid_id: p0001
   box: 1
-  positions:
-  - 2
   frozen_at: '2026-02-01'
-  thaw_log: null
   note: baseline control clone
   thaw_events: null
+  position: 2
 - id: 3
   cell_line: NCCIT
-  parent_cell_line: NCCIT
   short_name: NCCIT_DesMCP_APEX2
   plasmid_name: pDesMCP-APEX2
   plasmid_id: p260109-3
   box: 1
-  positions:
-  - 3
   frozen_at: '2026-02-02'
-  thaw_log: null
   note: engineered derivative line
   thaw_events: null
+  position: 3
 - id: 4
   cell_line: NCCIT
-  parent_cell_line: NCCIT
   short_name: NCCIT_DesMCP_APEX2
   plasmid_name: pDesMCP-APEX2
   plasmid_id: p260109-3
   box: 1
-  positions:
-  - 4
   frozen_at: '2026-02-02'
-  thaw_log: null
   note: engineered derivative line
   thaw_events: null
+  position: 4
 - id: 5
   cell_line: NCCIT
-  parent_cell_line: NCCIT
   short_name: NCCIT_DesMCP_APEX2
   plasmid_name: pDesMCP-APEX2
   plasmid_id: p260109-3
   box: 1
-  positions:
-  - 5
   frozen_at: '2026-02-02'
-  thaw_log: null
   note: engineered derivative line
   thaw_events: null
+  position: 5
 - id: 6
   cell_line: NCCIT
-  parent_cell_line: NCCIT
   short_name: NCCIT_1
   plasmid_name: null
   plasmid_id: null
   box: 1
-  positions:
-  - 6
   frozen_at: '2025-04-10'
-  thaw_log: null
   note: null
   thaw_events: null
+  position: 6
 - id: 7
   cell_line: NCCIT
-  parent_cell_line: NCCIT
   short_name: NCCIT_1
   plasmid_name: null
   plasmid_id: null
   box: 1
-  positions:
-  - 7
   frozen_at: '2025-04-10'
-  thaw_log: null
   note: null
   thaw_events: null
+  position: 7
 - id: 8
   cell_line: NCCIT
-  parent_cell_line: NCCIT
   short_name: NCCIT_1
   plasmid_name: null
   plasmid_id: null
   box: 1
-  positions:
-  - 8
   frozen_at: '2026-02-11'
-  thaw_log: null
   note: null
   thaw_events: null
+  position: 8
 - id: 9
   cell_line: K562
-  parent_cell_line: K562
-  short_name: K562_RTCB_dTAG_clone12
+  short_name: K562_RTCB_dTAG_clone2
   plasmid_name: pGEMT-N-RTCB-dTAG
   plasmid_id: p260101-1
   box: 1
-  positions:
-  - 9
   frozen_at: '2026-02-03'
-  thaw_log: null
   note: validation clone
   thaw_events: null
+  position: 9
 - id: 10
   cell_line: K562
-  parent_cell_line: K562
   short_name: K562_RTCB_dTAG_clone12
   plasmid_name: pGEMT-N-RTCB-dTAG
   plasmid_id: p260101-1
   box: 1
-  positions:
-  - 10
   frozen_at: '2026-02-03'
-  thaw_log: null
   note: validation clone
   thaw_events: null
+  position: 10
 - id: 11
   cell_line: K562
-  parent_cell_line: K562
   short_name: K562_RTCB_KO_pool
   plasmid_name: pX330-RTCB
   plasmid_id: p260102-7
   box: 1
-  positions:
-  - 11
   frozen_at: '2026-02-08'
-  thaw_log: null
   note: CRISPR knockout pool
   thaw_events: null
+  position: 11
 - id: 12
   cell_line: K562
-  parent_cell_line: K562
   short_name: K562_RTCB_KO_pool
   plasmid_name: pX330-RTCB
   plasmid_id: p260102-7
   box: 1
-  positions:
-  - 12
   frozen_at: '2026-02-08'
-  thaw_log: null
   note: CRISPR knockout pool
   thaw_events: null
+  position: 12
 - id: 13
   cell_line: K562
-  parent_cell_line: K562
   short_name: K562_NUP107_hit
   plasmid_name: hit-validation
   plasmid_id: hit-nup107
   box: 1
-  positions:
-  - 13
   frozen_at: '2026-02-08'
-  thaw_log: null
   note: stitchR hit validation
   thaw_events: null
+  position: 13
 - id: 14
   cell_line: K562
-  parent_cell_line: K562
   short_name: K562_RTCB_hit
   plasmid_name: hit-validation
   plasmid_id: hit-rtcb
   box: 1
-  positions:
-  - 14
   frozen_at: '2026-02-08'
-  thaw_log: null
   note: high-priority rescue line
   thaw_events: null
+  position: 14
 - id: 15
   cell_line: HEK293T
-  parent_cell_line: HEK293T
   short_name: HEK293T_reporter36
   plasmid_name: StitchR-reporter-v2
   plasmid_id: rep-036
   box: 1
-  positions:
-  - 1
   frozen_at: '2026-02-08'
-  thaw_log: null
   note: reporter stable line
   thaw_events:
   - date: '2026-02-16'
@@ -215,56 +210,48 @@ inventory:
     from_position: 20
     to_position: 1
     note: Drag from Overview
+  position: 1
 - id: 16
-  cell_line: HEK293T wt
-  parent_cell_line: HEK293T wt
-  short_name: HEK293T wt
+  cell_line: HEK293T
+  short_name: HEK293T
   plasmid_name: null
   plasmid_id: null
   box: 1
-  positions:
-  - 16
   frozen_at: '2025-04-10'
-  thaw_log: null
   note: null
   thaw_events: null
+  position: 16
 - id: 17
   cell_line: U2OS
-  parent_cell_line: U2OS
   short_name: U2OS_backup_stock
   plasmid_name: null
   plasmid_id: null
   box: 1
-  positions:
-  - 17
   frozen_at: '2026-02-04'
-  thaw_log: null
   note: long-term backup stock
-  thaw_events: null
+  thaw_events:
+  - date: '2026-02-20'
+    action: takeout
+    positions:
+    - 17
+  position: null
 - id: 18
   cell_line: U2OS
-  parent_cell_line: U2OS
   short_name: U2OS_backup_stock
   plasmid_name: null
   plasmid_id: null
   box: 1
-  positions:
-  - 18
   frozen_at: '2026-02-04'
-  thaw_log: null
   note: long-term backup stock
   thaw_events: null
+  position: 18
 - id: 19
   cell_line: U2OS
-  parent_cell_line: U2OS
   short_name: U2OS_backup_stock
   plasmid_name: null
   plasmid_id: null
   box: 1
-  positions:
-  - 15
   frozen_at: '2026-02-04'
-  thaw_log: null
   note: long-term backup stock
   thaw_events:
   - date: '2026-02-16'
@@ -274,17 +261,14 @@ inventory:
     from_position: 19
     to_position: 15
     note: Drag from Overview
+  position: 15
 - id: 20
   cell_line: K562
-  parent_cell_line: K562
   short_name: K562_RTCB_KO_pool
   plasmid_name: pX330-RTCB
   plasmid_id: p260102-7
   box: 2
-  positions:
-  - 15
   frozen_at: '2026-01-20'
-  thaw_log: null
   note: CRISPR knockout pool (original stock)
   thaw_events:
   - date: '2026-01-28'
@@ -292,94 +276,83 @@ inventory:
     positions:
     - 17
     note: recovery culture
+  position: 15
 - id: 21
   cell_line: K562
-  parent_cell_line: K562
   short_name: K562_RTCB_KO_pool
   plasmid_name: pX330-RTCB
   plasmid_id: p260102-7
   box: 2
-  positions:
-  - 16
   frozen_at: '2026-01-20'
-  thaw_log: null
   note: CRISPR knockout pool (original stock)
-  thaw_events: null
+  thaw_events:
+  - date: '2026-02-20'
+    action: takeout
+    positions:
+    - 16
+  position: null
 - id: 22
   cell_line: HeLa
-  parent_cell_line: HeLa
   short_name: HeLa_archive_C
   plasmid_name: null
   plasmid_id: null
   box: 3
-  positions:
-  - 21
   frozen_at: '2025-12-20'
-  thaw_log: null
   note: archive stock
   thaw_events: null
+  position: 21
 - id: 23
   cell_line: HeLa
-  parent_cell_line: HeLa
   short_name: HeLa_archive_C
   plasmid_name: null
   plasmid_id: null
   box: 3
-  positions:
-  - 22
   frozen_at: '2025-12-20'
-  thaw_log: null
   note: archive stock
   thaw_events: null
+  position: 22
 - id: 24
   cell_line: K562
-  parent_cell_line: K562
   short_name: K562_NUP107_hit
   plasmid_name: hit-validation
   plasmid_id: hit-nup107
   box: 4
-  positions:
-  - 20
   frozen_at: '2026-02-06'
-  thaw_log: null
   note: stitchR hit validation
   thaw_events: null
+  position: 20
 - id: 25
   cell_line: K562
-  parent_cell_line: K562
   short_name: K562_RTCB_hit
   plasmid_name: hit-validation
   plasmid_id: hit-rtcb
   box: 5
-  positions:
-  - 40
   frozen_at: '2026-02-06'
-  thaw_log: null
   note: high-priority rescue line
   thaw_events: null
+  position: 40
 - id: 26
   cell_line: K562
-  parent_cell_line: K562
   short_name: K562_RTCB_hit
   plasmid_name: hit-validation
   plasmid_id: hit-rtcb
   box: 5
-  positions:
-  - 41
   frozen_at: '2026-02-06'
-  thaw_log: null
   note: high-priority rescue line
   thaw_events: null
+  position: 41
 - id: 27
   cell_line: HCT116
-  parent_cell_line: HCT116
   short_name: HCT116_ctrl_pool
   plasmid_name: pLenti-empty
   plasmid_id: p0001
   box: 5
-  positions:
-  - 65
   frozen_at: '2026-01-29'
-  thaw_log: null
   note: non-targeting control pool
   thaw_events: null
+  position: 65
+- id: 28
+  cell_line: K562
+  box: 2
+  position: 14
+  frozen_at: '2026-01-20'

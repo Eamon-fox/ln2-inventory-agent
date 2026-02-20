@@ -13,13 +13,13 @@ from agent.tool_runner import AgentToolRunner
 from lib.yaml_ops import load_yaml, read_audit_events, write_yaml
 
 
-def make_record(rec_id=1, box=1, positions=None):
+def make_record(rec_id=1, box=1, position=None):
     return {
         "id": rec_id,
         "parent_cell_line": "NCCIT",
         "short_name": f"rec-{rec_id}",
         "box": box,
-        "positions": positions if positions is not None else [1],
+        "position": position if position is not None else 1,
         "frozen_at": "2025-01-01",
     }
 
@@ -35,27 +35,16 @@ class AgentToolRunnerTests(unittest.TestCase):
     def test_list_tools_contains_core_entries(self):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
         names = set(runner.list_tools())
-        self.assertIn("query_inventory", names)
+        self.assertIn("search_records", names)
         self.assertIn("add_entry", names)
         self.assertIn("record_thaw", names)
         self.assertIn("manage_boxes", names)
-
-    def test_manage_boxes_returns_confirmation_marker(self):
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
-        response = runner.run("manage_boxes", {"operation": "add", "count": 1})
-        self.assertTrue(response["ok"])
-        self.assertTrue(response.get("waiting_for_user_confirmation"))
-        self.assertEqual("add", response.get("request", {}).get("operation"))
-
-    def test_manage_boxes_not_staged_when_plan_store_enabled(self):
-        from lib.plan_store import PlanStore
-
-        store = PlanStore()
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=store)
-        response = runner.run("manage_boxes", {"operation": "add", "count": 1})
-        self.assertTrue(response["ok"])
-        self.assertTrue(response.get("waiting_for_user_confirmation"))
-        self.assertEqual(0, store.count())
+        self.assertIn("manage_staged", names)
+        self.assertNotIn("recent_frozen", names)
+        self.assertNotIn("collect_timeline", names)
+        self.assertNotIn("list_staged", names)
+        self.assertNotIn("remove_staged", names)
+        self.assertNotIn("clear_staged", names)
 
     def test_manage_boxes_dry_run_dispatches_tool_api(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_box_dry_") as temp_dir:
@@ -74,70 +63,12 @@ class AgentToolRunnerTests(unittest.TestCase):
             self.assertTrue(response.get("dry_run"))
             self.assertEqual("add", response.get("preview", {}).get("operation"))
 
-    def test_query_inventory_dispatch(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_agent_query_") as temp_dir:
-            yaml_path = Path(temp_dir) / "inventory.yaml"
-            write_yaml(
-                make_data([
-                    make_record(1, box=1, positions=[1]),
-                    {
-                        "id": 2,
-                        "cell_line": "K562",
-                        "short_name": "k562-a",
-                        "box": 2,
-                        "positions": [10],
-                        "frozen_at": "2026-02-10",
-                    },
-                ]),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
 
-            runner = AgentToolRunner(yaml_path=str(yaml_path))
-            response = runner.run("query_inventory", {"cell": "K562", "box": 2})
-            self.assertTrue(response["ok"])
-            self.assertEqual(1, response["result"]["count"])
-            self.assertEqual(2, response["result"]["records"][0]["id"])
-
-    def test_query_inventory_ignores_unknown_kwargs(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_agent_query_unknown_") as temp_dir:
-            yaml_path = Path(temp_dir) / "inventory.yaml"
-            write_yaml(
-                make_data(
-                    [
-                        {
-                            "id": 2,
-                            "cell_line": "K562",
-                            "short_name": "k562-a",
-                            "box": 2,
-                            "positions": [10],
-                            "frozen_at": "2026-02-10",
-                        }
-                    ]
-                ),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
-
-            runner = AgentToolRunner(yaml_path=str(yaml_path))
-            response = runner.run(
-                "query_inventory",
-                {
-                    "cell": "K562",
-                    "limit": 3,
-                    "offset": 0,
-                    "unused": "value",
-                },
-            )
-            self.assertTrue(response["ok"])
-            self.assertEqual(1, response["result"]["count"])
-            self.assertEqual(2, response["result"]["records"][0]["id"])
-
-    def test_add_entry_writes_agent_audit_fields(self):
+    def test_add_entry_requires_execute_mode(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_add_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -149,34 +80,33 @@ class AgentToolRunnerTests(unittest.TestCase):
             response = runner.run(
                 "add_entry",
                 {
-                    "parent_cell_line": "K562",
-                    "short_name": "clone-2",
                     "box": 1,
                     "positions": "2,3",
                     "frozen_at": "2026-02-10",
-                    "note": "via runner",
+                    "fields": {
+                        "cell_line": "K562",
+                        "short_name": "clone-2",
+                        "note": "via runner",
+                    },
                 },
                 trace_id="trace-agent-test",
             )
-            self.assertTrue(response["ok"])
+            self.assertFalse(response["ok"])
+            self.assertEqual("write_requires_execute_mode", response["error_code"])
 
             current = load_yaml(str(yaml_path))
-            # Tube-level model: positions "2,3" creates 2 new tube records.
-            self.assertEqual(3, len(current["inventory"]))
+            self.assertEqual(1, len(current["inventory"]))
 
             rows = read_audit_events(str(yaml_path))
             last = rows[-1]
-            self.assertEqual("agent", last["actor_type"])
-            self.assertEqual("agent", last["channel"])
-            self.assertEqual("agent", last["actor_id"])
-            self.assertEqual("session-agent-test", last["session_id"])
-            self.assertEqual("trace-agent-test", last["trace_id"])
+            self.assertEqual("failed", last.get("status"))
+            self.assertEqual("write_requires_execute_mode", (last.get("error") or {}).get("error_code"))
 
     def test_record_thaw_requires_integer_fields(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_bad_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -197,7 +127,7 @@ class AgentToolRunnerTests(unittest.TestCase):
         self.assertTrue(response.get("_hint"))
         self.assertIn("available tools", response.get("_hint", "").lower())
 
-    def test_search_records_normalizes_keyword_mode_alias(self):
+    def test_search_records_rejects_keyword_mode_alias(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_search_alias_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -207,7 +137,7 @@ class AgentToolRunnerTests(unittest.TestCase):
                         "parent_cell_line": "K562",
                         "short_name": "k562-a",
                         "box": 2,
-                        "positions": [10],
+                        "position": 10,
                         "frozen_at": "2026-02-10",
                     }
                 ]),
@@ -218,11 +148,10 @@ class AgentToolRunnerTests(unittest.TestCase):
             runner = AgentToolRunner(yaml_path=str(yaml_path))
             response = runner.run("search_records", {"query": "K562", "mode": "keyword"})
 
-            self.assertTrue(response["ok"])
-            self.assertEqual("keywords", response["result"]["mode"])
-            self.assertEqual(1, response["result"]["total_count"])
+            self.assertFalse(response["ok"])
+            self.assertEqual("invalid_tool_input", response["error_code"])
 
-    def test_search_records_falls_back_to_fuzzy_for_invalid_mode(self):
+    def test_search_records_rejects_invalid_mode(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_search_mode_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -232,7 +161,7 @@ class AgentToolRunnerTests(unittest.TestCase):
                         "parent_cell_line": "NCCIT",
                         "short_name": "nccit-abc",
                         "box": 1,
-                        "positions": [1],
+                        "position": 1,
                         "frozen_at": "2026-02-10",
                     }
                 ]),
@@ -243,15 +172,137 @@ class AgentToolRunnerTests(unittest.TestCase):
             runner = AgentToolRunner(yaml_path=str(yaml_path))
             response = runner.run("search_records", {"query": "NCCIT", "mode": "bad-mode"})
 
-            self.assertTrue(response["ok"])
-            self.assertEqual("fuzzy", response["result"]["mode"])
-            self.assertEqual(1, response["result"]["total_count"])
+            self.assertFalse(response["ok"])
+            self.assertEqual("invalid_tool_input", response["error_code"])
 
-    def test_add_entry_supports_common_alias_fields(self):
+    def test_search_records_supports_structured_slot_filters(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_search_slot_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([
+                    {
+                        "id": 2,
+                        "parent_cell_line": "K562",
+                        "short_name": "k562-a",
+                        "box": 2,
+                        "position": 15,
+                        "frozen_at": "2026-02-10",
+                    },
+                ]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run("search_records", {"box": 2, "position": 15})
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(1, response["result"]["total_count"])
+            self.assertEqual(2, response["result"]["records"][0]["id"])
+            self.assertEqual("occupied", response["result"]["slot_lookup"]["status"])
+
+    def test_search_records_supports_location_shortcut_query(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_search_shortcut_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([
+                    {
+                        "id": 3,
+                        "parent_cell_line": "NCCIT",
+                        "short_name": "nccit-a",
+                        "box": 2,
+                        "position": 15,
+                        "frozen_at": "2026-02-10",
+                    },
+                ]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run("search_records", {"query": "2:15"})
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(1, response["result"]["total_count"])
+            self.assertEqual(3, response["result"]["records"][0]["id"])
+            self.assertEqual("2:15", response["result"]["applied_filters"]["query_shortcut"])
+
+    def test_search_records_recent_filters_replace_recent_tool(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_recent_search_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([
+                    {
+                        "id": 1,
+                        "parent_cell_line": "K562",
+                        "short_name": "old",
+                        "box": 1,
+                        "position": 1,
+                        "frozen_at": "2025-01-01",
+                    },
+                    {
+                        "id": 2,
+                        "parent_cell_line": "K562",
+                        "short_name": "new",
+                        "box": 1,
+                        "position": 2,
+                        "frozen_at": "2026-02-10",
+                    },
+                ]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run("search_records", {"recent_count": 1})
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(1, response["result"]["count"])
+            self.assertEqual("new", response["result"]["records"][0]["short_name"])
+
+    def test_search_records_rejects_mixed_recent_and_query_filters(self):
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        response = runner.run("search_records", {"query": "K562", "recent_count": 1})
+
+        self.assertFalse(response["ok"])
+        self.assertEqual("invalid_tool_input", response["error_code"])
+
+    def test_query_thaw_events_summary_mode_replaces_collect_timeline(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_timeline_summary_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([
+                    {
+                        "id": 1,
+                        "parent_cell_line": "K562",
+                        "short_name": "A",
+                        "box": 1,
+                        "position": 1,
+                        "frozen_at": "2026-02-10",
+                    }
+                ]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run("query_thaw_events", {"view": "summary", "all_history": True})
+
+            self.assertTrue(response["ok"])
+            self.assertIn("summary", response["result"])
+
+    def test_query_thaw_events_summary_rejects_event_filters(self):
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        response = runner.run("query_thaw_events", {"view": "summary", "action": "takeout"})
+
+        self.assertFalse(response["ok"])
+        self.assertEqual("invalid_tool_input", response["error_code"])
+
+    def test_add_entry_rejects_alias_fields(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_add_alias_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -268,19 +319,18 @@ class AgentToolRunnerTests(unittest.TestCase):
                     "notes": "alias payload",
                 },
             )
-            self.assertTrue(response["ok"])
+            self.assertFalse(response["ok"])
+            self.assertEqual("invalid_tool_input", response["error_code"])
 
             current = load_yaml(str(yaml_path))
             records = current.get("inventory", [])
-            self.assertEqual(2, len(records))
-            self.assertEqual("K562", records[-1]["cell_line"])
-            self.assertEqual([2], records[-1]["positions"])
+            self.assertEqual(1, len(records))
 
-    def test_record_thaw_supports_id_and_pos_alias(self):
+    def test_record_thaw_rejects_id_and_pos_alias(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_thaw_alias_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -295,13 +345,14 @@ class AgentToolRunnerTests(unittest.TestCase):
                     "action": "取出",
                 },
             )
-            self.assertTrue(response["ok"])
+            self.assertFalse(response["ok"])
+            self.assertEqual("invalid_tool_input", response["error_code"])
 
-    def test_record_thaw_move_supports_target_position_aliases(self):
+    def test_record_thaw_move_rejects_target_position_alias(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_move_alias_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -318,15 +369,16 @@ class AgentToolRunnerTests(unittest.TestCase):
                 },
             )
 
-            self.assertTrue(response["ok"])
+            self.assertFalse(response["ok"])
+            self.assertEqual("invalid_tool_input", response["error_code"])
             current = load_yaml(str(yaml_path))
-            self.assertEqual([2], current["inventory"][0]["positions"])
+            self.assertEqual(1, current["inventory"][0]["position"])
 
     def test_record_thaw_move_missing_target_returns_hint(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_move_hint_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -343,8 +395,27 @@ class AgentToolRunnerTests(unittest.TestCase):
             )
 
             self.assertFalse(response["ok"])
-            self.assertEqual("invalid_move_target", response["error_code"])
-            self.assertIn("to_position", response.get("_hint", ""))
+            self.assertEqual("invalid_tool_input", response["error_code"])
+            self.assertIn("to_position", response.get("message", ""))
+
+    def test_plan_preflight_hint_guides_record_repair_flow(self):
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        payload = {
+            "error_code": "plan_preflight_failed",
+            "message": "写入被阻止：库存完整性校验失败\n- 记录 #16 (id=16): invalid cell_line",
+            "blocked_items": [
+                {
+                    "action": "takeout",
+                    "record_id": 21,
+                    "message": "写入被阻止：库存完整性校验失败\n- 记录 #16 (id=16): invalid cell_line",
+                }
+            ],
+        }
+
+        hint = runner._hint_for_error("record_thaw", payload)
+        self.assertIn("get_raw_entries", hint)
+        self.assertIn("edit_entry", hint)
+        self.assertIn("16", hint)
 
     def test_tool_specs_expose_required_fields(self):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
@@ -354,12 +425,27 @@ class AgentToolRunnerTests(unittest.TestCase):
         self.assertIn("positions", specs["add_entry"]["required"])
 
         self.assertIn("search_records", specs)
+        self.assertEqual([], specs["search_records"].get("required"))
+        self.assertIn("box", specs["search_records"].get("optional", []))
+        self.assertIn("position", specs["search_records"].get("optional", []))
         search_params = specs["search_records"].get("params", {})
         self.assertIn("mode", search_params)
+        self.assertIn("record_id", search_params)
+        self.assertIn("active_only", search_params)
+        self.assertIn("recent_days", search_params)
+        self.assertIn("recent_count", search_params)
         self.assertEqual(
             ["fuzzy", "exact", "keywords"],
             search_params["mode"].get("enum"),
         )
+
+        self.assertNotIn("recent_frozen", specs)
+        self.assertNotIn("collect_timeline", specs)
+        self.assertNotIn("list_staged", specs)
+        self.assertNotIn("remove_staged", specs)
+        self.assertNotIn("clear_staged", specs)
+        self.assertIn("manage_staged", specs)
+        self.assertIn("operation", specs["manage_staged"].get("required", []))
 
         self.assertIn("record_thaw", specs)
         self.assertIn("to_position", specs["record_thaw"].get("optional", []))
@@ -391,8 +477,56 @@ class AgentToolRunnerTests(unittest.TestCase):
         notes = str(rollback_spec.get("notes") or "").lower()
 
         self.assertIn("backup_path", description)
-        self.assertIn("question", notes)
-        self.assertIn("human", notes)
+        self.assertIn("explicit", notes)
+
+    def test_manage_staged_list_remove_clear(self):
+        from lib.plan_store import PlanStore
+
+        store = PlanStore()
+        store.add([
+            {
+                "action": "takeout",
+                "record_id": 1,
+                "box": 1,
+                "position": 5,
+                "source": "ai",
+            },
+            {
+                "action": "move",
+                "record_id": 2,
+                "box": 1,
+                "position": 6,
+                "to_position": 7,
+                "source": "ai",
+            },
+        ])
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=store)
+
+        list_resp = runner.run("manage_staged", {"operation": "list"})
+        self.assertTrue(list_resp["ok"])
+        self.assertEqual(2, list_resp["result"]["count"])
+
+        remove_resp = runner.run("manage_staged", {"operation": "remove", "index": 0})
+        self.assertTrue(remove_resp["ok"])
+        self.assertEqual(1, remove_resp["result"]["removed"])
+
+        clear_resp = runner.run("manage_staged", {"operation": "clear"})
+        self.assertTrue(clear_resp["ok"])
+        self.assertEqual(1, clear_resp["result"]["cleared_count"])
+
+    def test_manage_staged_remove_requires_selector(self):
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        response = runner.run("manage_staged", {"operation": "remove"})
+
+        self.assertFalse(response["ok"])
+        self.assertEqual("invalid_tool_input", response["error_code"])
+
+    def test_removed_tools_are_unknown(self):
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        for name in ("recent_frozen", "collect_timeline", "list_staged", "remove_staged", "clear_staged"):
+            response = runner.run(name, {})
+            self.assertFalse(response["ok"])
+            self.assertEqual("unknown_tool", response["error_code"])
 
 
 class EditEntryToolRunnerTests(unittest.TestCase):
@@ -403,7 +537,7 @@ class EditEntryToolRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_edit_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=2, positions=[15])]),
+                make_data([make_record(1, box=2, position=15)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -417,7 +551,7 @@ class EditEntryToolRunnerTests(unittest.TestCase):
 
             response = runner.run(
                 "edit_entry",
-                {"record_id": 1, "fields": {"note": "updated note"}},
+                {"record_id": 1, "fields": {"cell_line": "HeLa"}},
             )
 
             self.assertTrue(response["ok"])
@@ -428,13 +562,13 @@ class EditEntryToolRunnerTests(unittest.TestCase):
             self.assertEqual(2, item["box"])
             self.assertEqual(15, item["position"])
             self.assertEqual("ai", item["source"])
-            self.assertEqual({"note": "updated note"}, item["payload"]["fields"])
+            self.assertEqual({"cell_line": "HeLa"}, item["payload"]["fields"])
 
     def test_edit_entry_missing_record_id(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_edit_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -449,7 +583,7 @@ class EditEntryToolRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_edit_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -464,7 +598,7 @@ class EditEntryToolRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_edit_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -474,37 +608,6 @@ class EditEntryToolRunnerTests(unittest.TestCase):
 
             self.assertFalse(response["ok"])
             self.assertEqual("invalid_tool_input", response["error_code"])
-
-    def test_edit_entry_nonexistent_record_uses_defaults(self):
-        """When record doesn't exist, lookup returns defaults (box=0, pos=1)."""
-        with tempfile.TemporaryDirectory(prefix="ln2_agent_edit_") as temp_dir:
-            yaml_path = Path(temp_dir) / "inventory.yaml"
-            write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
-
-            from lib.plan_store import PlanStore
-            store = PlanStore()
-            runner = AgentToolRunner(
-                yaml_path=str(yaml_path),
-                plan_store=store,
-            )
-
-            response = runner.run(
-                "edit_entry",
-                {"record_id": 999, "fields": {"note": "x"}},
-            )
-
-            # Should still stage (validation happens at plan execution time)
-            self.assertTrue(response["ok"])
-            self.assertEqual(1, store.count())
-            item = store.list_items()[0]
-            self.assertEqual(999, item["record_id"])
-            # Defaults from _lookup_record_info when record not found
-            self.assertEqual(0, item["box"])
-            self.assertEqual(1, item["position"])
 
     def test_edit_entry_listed_in_tools(self):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
@@ -516,35 +619,6 @@ class EditEntryToolRunnerTests(unittest.TestCase):
         self.assertIn("edit_entry", specs)
 
     # --- cell_line alias tests ---
-
-    def test_query_cell_alias(self):
-        """Short 'cell' alias should work in query_inventory."""
-        with tempfile.TemporaryDirectory(prefix="ln2_agent_cell_query_") as temp_dir:
-            yaml_path = Path(temp_dir) / "inventory.yaml"
-            write_yaml(
-                make_data([
-                    {**make_record(1, box=1, positions=[1]), "cell_line": "NCCIT"},
-                ]),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
-
-            runner = AgentToolRunner(yaml_path=str(yaml_path))
-            response = runner.run("query_inventory", {"cell": "NCCIT"})
-            self.assertTrue(response["ok"])
-            self.assertEqual(1, response["result"]["count"])
-
-    def test_add_entry_cell_line_in_tool_specs(self):
-        """cell_line should be listed as optional param in add_entry spec."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
-        specs = runner.tool_specs()
-        self.assertIn("cell_line", specs["add_entry"]["optional"])
-
-    def test_query_cell_line_in_tool_specs(self):
-        """cell_line should be listed as optional param in query_inventory spec."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
-        specs = runner.tool_specs()
-        self.assertIn("cell_line", specs["query_inventory"]["optional"])
 
 
 if __name__ == "__main__":

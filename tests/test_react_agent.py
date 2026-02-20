@@ -114,7 +114,7 @@ class ReactAgentTests(unittest.TestCase):
                         "cell_line": "K562",
                         "short_name": "k562-a",
                         "box": 1,
-                        "positions": [1],
+                        "position": 1,
                         "frozen_at": "2026-02-10",
                     }
                 ]),
@@ -130,8 +130,8 @@ class ReactAgentTests(unittest.TestCase):
                         "tool_calls": [
                             {
                                 "id": "call_1",
-                                "name": "query_inventory",
-                                "arguments": {"cell": "K562"},
+                                "name": "search_records",
+                                "arguments": {"query": "K562"},
                             }
                         ],
                     },
@@ -156,7 +156,8 @@ class ReactAgentTests(unittest.TestCase):
             self.assertGreaterEqual(len(tool_end_events), 1)
             obs = tool_end_events[0].get("observation") or {}
             self.assertTrue(obs["ok"])
-            self.assertEqual(1, obs["result"]["count"])
+            result_payload = obs.get("result") or {}
+            self.assertEqual(1, result_payload.get("total_count"))
 
             tool_start = next((e for e in events if e.get("event") == "tool_start"), None)
             if not isinstance(tool_start, dict):
@@ -468,6 +469,28 @@ class ReactAgentTests(unittest.TestCase):
         self.assertIn("请用中文回答所有问题", system_msg["content"])
         # Core rules must still be present
         self.assertIn("LN2 inventory assistant", system_msg["content"])
+        self.assertIn("Non-overridable execution policy", system_msg["content"])
+
+    def test_numeric_option_reply_is_expanded_from_recent_assistant_options(self):
+        llm = _CapturePromptLLM()
+        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
+        agent = ReactAgent(llm_client=llm, tool_runner=runner)
+
+        history = [
+            {
+                "role": "assistant",
+                "content": "1) Inspect current value\n2) Edit record #16 to valid cell_line",
+            }
+        ]
+
+        agent.run("2", conversation_history=history)
+
+        user_msg = next((m for m in reversed(llm.last_messages) if m.get("role") == "user"), None)
+        if not isinstance(user_msg, dict):
+            self.fail("User message should exist in prompt payload")
+        self.assertEqual("user", user_msg["role"])
+        self.assertIn("choose option 2", user_msg["content"].lower())
+        self.assertIn("edit record #16", user_msg["content"].lower())
 
     def test_empty_custom_prompt_not_appended(self):
         llm = _CapturePromptLLM()

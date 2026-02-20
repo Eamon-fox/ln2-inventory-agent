@@ -199,10 +199,12 @@ def format_chinese_date(date_str, weekday=False):
 def has_depletion_history(rec):
     """Return True if record has thaw/takeout/discard history.
 
-    Fully consumed records are expected to end with ``positions=[]``.
+    Fully consumed records are expected to end with ``position=None``.
     """
     thaw_events = rec.get("thaw_events") or []
     for ev in thaw_events:
+        if not isinstance(ev, dict):
+            continue
         if normalize_action(ev.get("action")) in {"takeout", "thaw", "discard"}:
             return True
 
@@ -227,7 +229,7 @@ def validate_record(rec, idx=None, layout=None, meta=None):
     Returns:
         tuple[list[str], list[str]]: (errors, warnings)
     """
-    from .custom_fields import get_required_field_keys
+    from .custom_fields import get_required_field_keys, get_cell_line_options, is_cell_line_required
 
     errors = []
     warnings = []
@@ -237,7 +239,7 @@ def validate_record(rec, idx=None, layout=None, meta=None):
     pos_lo, pos_hi = get_position_range(layout) if layout else (POSITION_RANGE[0], POSITION_RANGE[1])
 
     # Structural required fields + user-defined required fields
-    structural_required = ["id", "box", "positions", "frozen_at"]
+    structural_required = ["id", "box", "frozen_at"]
     user_required = get_required_field_keys(meta)
     required_fields = structural_required + sorted(user_required)
     for field in required_fields:
@@ -260,26 +262,45 @@ def validate_record(rec, idx=None, layout=None, meta=None):
         if isinstance(value, str) and not value.strip():
             errors.append(f"{rec_id}: '{field}' 必须是非空字符串")
 
-    positions = rec.get("positions")
-    if not isinstance(positions, list):
-        errors.append(f"{rec_id}: 'positions' 必须是列表")
-    elif not positions:
-        if not has_depletion_history(rec):
-            errors.append(f"{rec_id}: 'positions' 为空，但没有取出/复苏/扔掉历史")
+    # Relaxed baseline validation for cell_line:
+    # - Do not block historical inventory due to non-option / empty values.
+    # - Enforce strict options only during write tools (add/edit).
+    if isinstance(meta, dict):
+        cell_line_options = get_cell_line_options(meta)
+        cell_line_required = is_cell_line_required(meta)
+        has_cell_line_key = "cell_line" in rec
+
+        if not has_cell_line_key:
+            warnings.append(f"{rec_id}: 缺少字段 'cell_line'（历史数据兼容：仅警告）")
+        else:
+            raw_cell_line = rec.get("cell_line")
+            if raw_cell_line is None:
+                cell_line = ""
+            elif isinstance(raw_cell_line, str):
+                cell_line = raw_cell_line.strip()
+            else:
+                cell_line = str(raw_cell_line).strip()
+                warnings.append(f"{rec_id}: 'cell_line' 不是字符串（历史数据兼容：仅警告）")
+
+            if cell_line_required and not cell_line:
+                warnings.append(f"{rec_id}: 'cell_line' 为空（required=true，历史数据兼容：仅警告）")
+            elif cell_line and cell_line_options and cell_line not in cell_line_options:
+                opts_str = ", ".join(cell_line_options[:5])
+                if len(cell_line_options) > 5:
+                    opts_str += f" 等共{len(cell_line_options)}个"
+                warnings.append(f"{rec_id}: 'cell_line' 不在预设选项中 ({opts_str})（历史数据兼容：仅警告）")
+
+    # Validate position (single integer, optional for consumed records)
+    position = rec.get("position")
+    if position is not None:
+        if not isinstance(position, int):
+            errors.append(f"{rec_id}: 'position' 必须是整数")
+        elif not validate_position(position, layout):
+            errors.append(f"{rec_id}: 'position' {position} 超出范围 ({pos_lo}-{pos_hi})")
     else:
-        if len(positions) > 1:
-            errors.append(f"{rec_id}: 'positions' 最多只能包含 1 个位置（tube 为最小单元）")
-        seen_positions = set()
-        for pos in positions:
-            if not isinstance(pos, int):
-                errors.append(f"{rec_id}: 位置 {pos} 必须是整数")
-                continue
-            if not validate_position(pos, layout):
-                errors.append(f"{rec_id}: 位置 {pos} 超出范围 ({pos_lo}-{pos_hi})")
-                continue
-            if pos in seen_positions:
-                errors.append(f"{rec_id}: 'positions' 中存在重复值 {pos}")
-            seen_positions.add(pos)
+        # position is None - record should have depletion history
+        if not has_depletion_history(rec):
+            errors.append(f"{rec_id}: 'position' 为空，但没有取出/复苏/扔掉历史")
 
     frozen_at = rec.get("frozen_at")
     if not validate_date(frozen_at):
@@ -356,11 +377,11 @@ def check_position_conflicts(records):
         if not isinstance(rec, dict):
             continue
         box = rec.get("box")
-        if box is None:
+        position = rec.get("position")
+        if box is None or position is None:
             continue
-        for pos in rec.get("positions") or []:
-            if isinstance(pos, int):
-                usage[(int(box), int(pos))].append((idx, rec))
+        if isinstance(position, int):
+            usage[(int(box), int(position))].append((idx, rec))
 
     conflicts = []
     for (box, pos), entries in usage.items():
@@ -413,3 +434,87 @@ def format_validation_errors(errors, prefix="完整性校验失败"):
     if more > 0:
         lines.append(f"- ... 以及另外 {more} 条")
     return "\n".join(lines)
+
+
+def validate_plan_item_with_history(new_item, existing_items, tr_fn=None):
+    """Validate a new item against all existing items in plan.
+
+    This function is shared between operations_panel (human) and tool_runner (AI agent)
+    to ensure consistent validation behavior.
+
+    Args:
+        new_item: New plan item to validate
+        existing_items: List of existing plan items to check against
+        tr_fn: Optional translation function (i18n.tr). If None, uses default messages.
+
+    Returns:
+        tuple[bool, str]: (is_valid, error_message)
+            is_valid=True, error_message=None if validation passes
+            is_valid=False, error_message="error text" if blocked
+    """
+    if tr_fn is None:
+        # Default fallback without translation
+        def tr_fn(key, **kwargs):
+            return key.format(**kwargs)
+
+    # Collect all positions that will be affected by existing items
+    all_positions = []
+    for existing in existing_items:
+        action = existing.get("action", "").lower()
+        if action == "move":
+            # For move, track both from and to positions
+            box = existing.get("box", 0)
+            pos = existing.get("position")
+            to_box = existing.get("to_box")
+            to_pos = existing.get("to_position")
+            all_positions.append((box, pos))
+            # Track target position (use source box if to_box is None for same-box moves)
+            if to_pos is not None:
+                target_box = to_box if to_box is not None else box
+                all_positions.append((target_box, to_pos))
+        elif action == "add":
+            # For add, track all positions
+            box = existing.get("box", 0)
+            payload = existing.get("payload") or {}
+            positions = payload.get("positions", [])
+            for p in positions:
+                all_positions.append((box, p))
+        else:
+            # takeout/thaw/discard: track source position
+            box = existing.get("box", 0)
+            pos = existing.get("position")
+            if pos is not None:
+                all_positions.append((box, pos))
+
+    # Check if new item conflicts with any existing position
+    new_action = new_item.get("action", "").lower()
+    new_box = new_item.get("box", 0)
+
+    if new_action == "add":
+        # Add: check if any target position is occupied
+        payload = new_item.get("payload") or {}
+        positions = payload.get("positions", [])
+        for pos in positions:
+            if (new_box, pos) in all_positions:
+                return False, tr_fn("operations.positionOccupied", box=new_box, position=pos)
+    elif new_action == "move":
+        # Move: check source position, target position (same box or cross-box)
+        new_from_pos = new_item.get("position")
+        new_to_pos = new_item.get("to_position")
+        new_to_box = new_item.get("to_box")
+
+        # Check if source position is still valid (not moved away by another item)
+        if (new_box, new_from_pos) in all_positions:
+            return False, tr_fn("operations.sourcePositionAlreadyMoved")
+
+        # Check target position
+        if new_to_pos is not None:
+            if new_to_box:
+                target = (new_to_box, new_to_pos)
+            else:
+                target = (new_box, new_to_pos)
+            if target in all_positions:
+                return False, tr_fn("operations.targetPositionOccupied", box=target[0], position=target[1])
+
+    # takeout/thaw/discard: source position check already done by position occupancy check
+    return True, None

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, Iterator, Optional
 
-from lib.thaw_parser import normalize_action
+from lib.thaw_parser import canonicalize_non_move_action, normalize_action
 
 _EXTRA_ACTION_ALIAS = {
-    "解冻": "thaw",
-    "丢弃": "discard",
+    "解冻": "takeout",
+    "丢弃": "takeout",
     "take out": "takeout",
     "add_entry": "add",
     "新增": "add",
@@ -21,7 +21,8 @@ def normalize_plan_action(action: Any) -> str:
     """Normalize action text into canonical plan action."""
     normalized = normalize_action(action)
     if normalized:
-        return normalized
+        collapsed = canonicalize_non_move_action(normalized)
+        return collapsed or normalized
     raw = str(action or "").strip()
     text = raw.lower()
     if text in _EXTRA_ACTION_ALIAS:
@@ -33,21 +34,14 @@ def normalize_plan_action(action: Any) -> str:
     return text
 
 
-def resolve_record_context(record: Optional[Dict[str, Any]], fallback_box: int = 0, display_key: Optional[str] = None) -> tuple[int, str]:
-    """Resolve (box, label) from cached record."""
-    box = int(fallback_box or 0)
-    label = "-"
+def resolve_record_box(record: Optional[Dict[str, Any]], fallback_box: int = 0) -> int:
+    """Resolve box number from cached record."""
     if isinstance(record, dict):
-        if display_key:
-            label = record.get(display_key) or "-"
-        else:
-            # Fallback: try short_name, then first non-structural string value
-            label = record.get("short_name") or "-"
         try:
-            box = int(record.get("box", box) or box)
+            return int(record.get("box", fallback_box) or fallback_box)
         except Exception:
             pass
-    return box, str(label or "-")
+    return int(fallback_box or 0)
 
 
 def build_add_plan_item(
@@ -56,7 +50,6 @@ def build_add_plan_item(
     positions: Iterable[Any],
     frozen_at: Optional[str],
     fields: Optional[Dict[str, Any]] = None,
-    display_key: Optional[str] = None,
     source: str = "human",
 ) -> Dict[str, Any]:
     """Build a normalized add PlanItem payload."""
@@ -68,22 +61,11 @@ def build_add_plan_item(
         "frozen_at": frozen_at,
         "fields": fields,
     }
-    # Determine label from fields using display_key
-    label = "-"
-    if display_key and fields.get(display_key):
-        label = str(fields[display_key])
-    elif fields:
-        # Fallback: first non-empty field value
-        for v in fields.values():
-            if v:
-                label = str(v)
-                break
     return {
         "action": "add",
         "box": int(box),
         "position": normalized_positions[0] if normalized_positions else 1,
         "record_id": None,
-        "label": label,
         "source": source,
         "payload": payload,
     }
@@ -95,9 +77,7 @@ def build_record_plan_item(
     record_id: int,
     position: int,
     box: int,
-    label: str,
     date_str: Optional[str],
-    note: Optional[str] = None,
     to_position: Optional[int] = None,
     to_box: Optional[int] = None,
     source: str = "human",
@@ -113,14 +93,12 @@ def build_record_plan_item(
         "position": int(position),
         "date_str": date_str,
         "action": payload_action if payload_action is not None else str(action or ""),
-        "note": note,
     }
     item = {
         "action": action_norm,
         "box": int(box),
         "position": int(position),
         "record_id": int(record_id),
-        "label": str(label or "-"),
         "source": source,
         "payload": payload,
     }
@@ -143,7 +121,6 @@ def build_edit_plan_item(
     fields: Dict[str, Any],
     box: int = 0,
     position: int = 1,
-    label: str = "-",
     source: str = "human",
 ) -> Dict[str, Any]:
     """Build a normalized edit PlanItem payload."""
@@ -152,7 +129,6 @@ def build_edit_plan_item(
         "box": int(box),
         "position": int(position) if position else 1,
         "record_id": int(record_id),
-        "label": str(label or "-"),
         "source": source,
         "payload": {
             "record_id": int(record_id),
@@ -165,7 +141,6 @@ def build_rollback_plan_item(
     *,
     backup_path: Optional[str],
     source: str = "human",
-    label: Optional[str] = None,
     source_event: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Build a normalized rollback PlanItem payload.
@@ -176,17 +151,6 @@ def build_rollback_plan_item(
     source_event can be provided to keep a lightweight link to the audit event
     that triggered this rollback request.
     """
-    display_label = label
-    if not display_label:
-        display_label = "Rollback"
-        if backup_path:
-            try:
-                import os
-
-                display_label = f"Rollback: {os.path.basename(str(backup_path))}"
-            except Exception:
-                display_label = "Rollback"
-
     payload: Dict[str, Any] = {
         "backup_path": backup_path,
     }
@@ -205,7 +169,6 @@ def build_rollback_plan_item(
         "box": 0,
         "position": 1,
         "record_id": None,
-        "label": display_label,
         "source": source,
         "payload": payload,
     }

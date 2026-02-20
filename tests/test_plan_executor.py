@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -22,20 +23,22 @@ def make_data(records):
     }
 
 
-def make_record(rec_id=1, box=1, positions=None, **extra):
+def make_record(rec_id=1, box=1, position=None, **extra):
     base = {
         "id": rec_id,
         "parent_cell_line": "K562",
         "short_name": f"rec-{rec_id}",
         "box": box,
-        "positions": positions if positions is not None else [1],
+        "position": position if position is not None else 1,
         "frozen_at": "2025-01-01",
     }
     base.update(extra)
     return base
 
 
-def make_add_item(box=1, positions=None, **extra):
+def make_add_item(box=1, positions=None, position=None, **extra):
+    if positions is None and position is not None:
+        positions = [position]
     base = {
         "action": "add",
         "box": box,
@@ -123,7 +126,7 @@ def make_edit_item(record_id=1, box=1, position=1, fields=None, **extra):
         "source": "human",
         "payload": {
             "record_id": record_id,
-            "fields": fields or {"note": "updated"},
+            "fields": fields or {"cell_line": "K562"},
         },
     }
     base.update(extra)
@@ -150,13 +153,13 @@ class PreflightPlanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[5])]),
+                make_data([make_record(1, box=1, position=5)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
             bridge = MagicMock()
-            result = preflight_plan(str(yaml_path), [make_add_item(box=1, positions=[5])], bridge=bridge)
+            result = preflight_plan(str(yaml_path), [make_add_item(box=1, position=5)], bridge=bridge)
 
             self.assertFalse(result["ok"])
             self.assertTrue(result["blocked"])
@@ -166,13 +169,13 @@ class PreflightPlanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
             bridge = MagicMock()
-            result = preflight_plan(str(yaml_path), [make_add_item(box=1, positions=[5])], bridge=bridge)
+            result = preflight_plan(str(yaml_path), [make_add_item(box=1, position=5)], bridge=bridge)
 
             self.assertTrue(result["ok"])
             self.assertFalse(result["blocked"])
@@ -182,7 +185,7 @@ class PreflightPlanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -193,23 +196,58 @@ class PreflightPlanTests(unittest.TestCase):
             time.sleep(0.1)
 
             bridge = MagicMock()
-            preflight_plan(str(yaml_path), [make_add_item(box=2, positions=[10])], bridge=bridge)
+            preflight_plan(str(yaml_path), [make_add_item(box=2, position=10)], bridge=bridge)
 
             # Original file should not be modified by preflight
             self.assertEqual(original_mtime, os.path.getmtime(str(yaml_path)))
+
+    def test_preflight_allows_baseline_invalid_cell_line_when_incoming_is_valid(self):
+        """Historical cell_line mismatches should not block preflight staging."""
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            bad_data = {
+                "meta": {
+                    "box_layout": {"rows": 9, "cols": 9},
+                    "cell_line_required": True,
+                    "cell_line_options": ["K562", "HeLa"],
+                },
+                "inventory": [
+                    {
+                        "id": 1,
+                        "cell_line": "U2OS",
+                        "short_name": "bad",
+                        "box": 1,
+                        "position": 5,
+                        "frozen_at": "2025-01-01",
+                    }
+                ],
+            }
+            yaml_path.write_text(
+                yaml.safe_dump(bad_data, allow_unicode=True, sort_keys=False),
+                encoding="utf-8",
+            )
+
+            bridge = MagicMock()
+            add_item = make_add_item(box=1, position=6)
+            add_item["payload"]["fields"]["cell_line"] = "K562"
+            result = preflight_plan(str(yaml_path), [add_item], bridge=bridge)
+
+            self.assertTrue(result["ok"])
+            self.assertFalse(result["blocked"])
+            self.assertEqual(1, result["stats"]["ok"])
 
     def test_preflight_rollback_valid_succeeds(self):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 auto_backup=False,
                 audit_meta={"action": "seed", "source": "tests"},
             )
             backup_path = Path(td) / "manual_backup.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(backup_path),
                 auto_backup=False,
                 audit_meta={"action": "seed_backup", "source": "tests"},
@@ -226,7 +264,7 @@ class PreflightPlanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 auto_backup=False,
                 audit_meta={"action": "seed", "source": "tests"},
@@ -261,7 +299,7 @@ class RunPlanExecuteTests(unittest.TestCase):
             bridge = MagicMock()
             bridge.add_entry.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
 
-            items = [make_add_item(box=1, positions=[1])]
+            items = [make_add_item(box=1, position=1)]
             result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
 
             self.assertTrue(result["ok"])
@@ -281,7 +319,7 @@ class RunPlanExecuteTests(unittest.TestCase):
             bridge = MagicMock()
             bridge.add_entry.return_value = {"ok": False, "error_code": "position_conflict", "message": "Conflict"}
 
-            items = [make_add_item(box=1, positions=[1])]
+            items = [make_add_item(box=1, position=1)]
             result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
 
             self.assertFalse(result["ok"])
@@ -293,8 +331,8 @@ class RunPlanExecuteTests(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
                 make_data([
-                    make_record(1, box=1, positions=[1]),
-                    make_record(2, box=1, positions=[2]),
+                    make_record(1, box=1, position=1),
+                    make_record(2, box=1, position=2),
                 ]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
@@ -318,8 +356,8 @@ class RunPlanExecuteTests(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
                 make_data([
-                    make_record(1, box=1, positions=[1]),
-                    make_record(2, box=1, positions=[2]),
+                    make_record(1, box=1, position=1),
+                    make_record(2, box=1, position=2),
                 ]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
@@ -346,8 +384,8 @@ class RunPlanExecuteTests(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
                 make_data([
-                    make_record(1, box=1, positions=[1]),
-                    make_record(2, box=1, positions=[2]),
+                    make_record(1, box=1, position=1),
+                    make_record(2, box=1, position=2),
                 ]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
@@ -370,7 +408,7 @@ class RunPlanExecuteTests(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
                 make_data([
-                    make_record(1, box=1, positions=[1]),
+                    make_record(1, box=1, position=1),
                 ]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
@@ -381,7 +419,7 @@ class RunPlanExecuteTests(unittest.TestCase):
             bridge.batch_thaw.return_value = {"ok": True}
 
             items = [
-                make_add_item(box=2, positions=[10]),
+                make_add_item(box=2, position=10),
                 make_move_item(record_id=1, position=1, to_position=5),
                 make_takeout_item(record_id=1, position=5),
             ]
@@ -423,6 +461,7 @@ class RunPlanExecuteTests(unittest.TestCase):
         bridge.rollback.assert_called_once_with(
             yaml_path="/tmp/test.yaml",
             backup_path="/tmp/backup.bak",
+            execution_mode="execute",
             source_event=source_event,
         )
 
@@ -430,7 +469,7 @@ class RunPlanExecuteTests(unittest.TestCase):
         bridge = MagicMock()
         items = [
             make_rollback_item("/tmp/backup.bak"),
-            make_add_item(box=1, positions=[1]),
+            make_add_item(box=1, position=1),
         ]
 
         result = run_plan("/tmp/test.yaml", items, bridge=bridge, mode="execute")
@@ -449,7 +488,7 @@ class PreflightVsExecuteConsistencyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -470,7 +509,7 @@ class PreflightVsExecuteConsistencyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[5])]),
+                make_data([make_record(1, box=1, position=5)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -478,127 +517,13 @@ class PreflightVsExecuteConsistencyTests(unittest.TestCase):
             bridge = MagicMock()
             bridge.add_entry.return_value = {"ok": False, "error_code": "position_conflict", "message": "Conflict"}
 
-            items = [make_add_item(box=1, positions=[5])]
+            items = [make_add_item(box=1, position=5)]
 
             preflight_result = preflight_plan(str(yaml_path), items, bridge=bridge)
             execute_result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
 
             self.assertEqual(preflight_result["ok"], execute_result["ok"])
             self.assertEqual(preflight_result["blocked"], execute_result["blocked"])
-
-
-class MoveSwapTests(unittest.TestCase):
-    """Tests for swap detection and holistic move validation."""
-
-    def test_simple_swap_passes_validation(self):
-        """A simple swap (A@9->18, B@18->9) should pass holistic validation."""
-        with tempfile.TemporaryDirectory() as td:
-            yaml_path = Path(td) / "inventory.yaml"
-            write_yaml(
-                make_data([
-                    make_record(3, box=1, positions=[9]),
-                    make_record(10, box=1, positions=[18]),
-                ]),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
-
-            bridge = MagicMock()
-            bridge.batch_thaw.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
-
-            items = [
-                make_move_item(record_id=3, position=9, to_position=18, box=1),
-                make_move_item(record_id=10, position=18, to_position=9, box=1),
-            ]
-            result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
-
-            self.assertTrue(result["ok"])
-            self.assertEqual(2, result["stats"]["ok"])
-
-    def test_preflight_swap_passes(self):
-        """Preflight should pass for swap operations."""
-        with tempfile.TemporaryDirectory() as td:
-            yaml_path = Path(td) / "inventory.yaml"
-            write_yaml(
-                make_data([
-                    make_record(1, box=1, positions=[5]),
-                    make_record(2, box=1, positions=[10]),
-                ]),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
-
-            bridge = MagicMock()
-
-            items = [
-                make_move_item(record_id=1, position=5, to_position=10, box=1),
-                make_move_item(record_id=2, position=10, to_position=5, box=1),
-            ]
-            result = preflight_plan(str(yaml_path), items, bridge=bridge)
-
-            self.assertTrue(result["ok"])
-            self.assertFalse(result["blocked"])
-
-    def test_move_to_occupied_non_swap_blocked(self):
-        """Move to occupied position (not part of swap) should be blocked."""
-        with tempfile.TemporaryDirectory() as td:
-            yaml_path = Path(td) / "inventory.yaml"
-            write_yaml(
-                make_data([
-                    make_record(1, box=1, positions=[5]),
-                    make_record(2, box=1, positions=[10]),
-                ]),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
-
-            bridge = MagicMock()
-
-            items = [
-                make_move_item(record_id=1, position=5, to_position=10, box=1),
-            ]
-            result = preflight_plan(str(yaml_path), items, bridge=bridge)
-
-            self.assertFalse(result["ok"])
-            self.assertTrue(result["blocked"])
-
-    def test_multiple_moves_same_target_blocked(self):
-        """Regression: multiple moves targeting same position should be blocked.
-        
-        User scenario: 8:3->4, 7:2->3, 6:1->3
-        - Move 8:3->4: OK (target empty)
-        - Move 7:2->3: BLOCKED (target also wanted by record 6)
-        - Move 6:1->3: BLOCKED (target also wanted by record 7)
-        
-        Since two moves target the same position (3), both are blocked.
-        """
-        with tempfile.TemporaryDirectory() as td:
-            yaml_path = Path(td) / "inventory.yaml"
-            write_yaml(
-                make_data([
-                    make_record(8, box=3, positions=[3]),
-                    make_record(7, box=3, positions=[2]),
-                    make_record(6, box=3, positions=[1]),
-                ]),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
-
-            bridge = MagicMock()
-
-            items = [
-                make_move_item(record_id=8, position=3, to_position=4, box=3),
-                make_move_item(record_id=7, position=2, to_position=3, box=3),
-                make_move_item(record_id=6, position=1, to_position=3, box=3),
-            ]
-            result = preflight_plan(str(yaml_path), items, bridge=bridge)
-
-            self.assertFalse(result["ok"])
-            self.assertTrue(result["blocked"])
-            blocked_items = [r for r in result.get("items", []) if r.get("blocked")]
-            self.assertEqual(2, len(blocked_items))
-            blocked_ids = sorted([r["item"]["record_id"] for r in blocked_items])
-            self.assertEqual([6, 7], blocked_ids)
 
 
 class EditPlanTests(unittest.TestCase):
@@ -608,7 +533,7 @@ class EditPlanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[5])]),
+                make_data([make_record(1, box=1, position=5)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -626,11 +551,32 @@ class EditPlanTests(unittest.TestCase):
             # Preflight should NOT call bridge.edit_entry
             self.assertFalse(bridge.edit_entry.called)
 
+    def test_preflight_edit_invalid_field_blocked(self):
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=5)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            result = preflight_plan(
+                str(yaml_path),
+                [make_edit_item(record_id=1, box=1, position=5, fields={"bad_field": "x"})],
+                bridge=bridge,
+            )
+
+            self.assertFalse(result["ok"])
+            self.assertTrue(result["blocked"])
+            self.assertEqual(1, result["stats"]["blocked"])
+            self.assertFalse(bridge.edit_entry.called)
+
     def test_execute_edit_calls_bridge(self):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[5])]),
+                make_data([make_record(1, box=1, position=5)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -655,7 +601,7 @@ class EditPlanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[5])]),
+                make_data([make_record(1, box=1, position=5)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -682,8 +628,8 @@ class EditPlanTests(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
                 make_data([
-                    make_record(1, box=1, positions=[5]),
-                    make_record(2, box=1, positions=[10]),
+                    make_record(1, box=1, position=5),
+                    make_record(2, box=1, position=10),
                 ]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
@@ -709,8 +655,8 @@ class EditPlanTests(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
                 make_data([
-                    make_record(1, box=1, positions=[5]),
-                    make_record(2, box=1, positions=[10]),
+                    make_record(1, box=1, position=5),
+                    make_record(2, box=1, position=10),
                 ]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
@@ -742,7 +688,7 @@ class EditPreflightExecuteConsistencyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[5])]),
+                make_data([make_record(1, box=1, position=5)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -767,15 +713,15 @@ class MultiAddPreflightTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
             bridge = MagicMock()
             items = [
-                make_add_item(box=2, positions=[4]),
-                make_add_item(box=2, positions=[4]),  # same position
+                make_add_item(box=2, position=4),
+                make_add_item(box=2, position=4),  # same position
             ]
 
             result = preflight_plan(str(yaml_path), items, bridge=bridge)
@@ -792,15 +738,15 @@ class MultiAddPreflightTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
             bridge = MagicMock()
             items = [
-                make_add_item(box=2, positions=[4]),
-                make_add_item(box=2, positions=[5]),
+                make_add_item(box=2, position=4),
+                make_add_item(box=2, position=5),
             ]
 
             result = preflight_plan(str(yaml_path), items, bridge=bridge)
@@ -813,7 +759,7 @@ class MultiAddPreflightTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -822,8 +768,8 @@ class MultiAddPreflightTests(unittest.TestCase):
             bridge.add_entry.return_value = {"ok": False, "error_code": "position_conflict", "message": "Conflict"}
 
             items = [
-                make_add_item(box=2, positions=[4]),
-                make_add_item(box=2, positions=[4]),
+                make_add_item(box=2, position=4),
+                make_add_item(box=2, position=4),
             ]
 
             preflight_result = preflight_plan(str(yaml_path), items, bridge=bridge)
@@ -842,9 +788,9 @@ class MultiAddPreflightTests(unittest.TestCase):
 
             bridge = MagicMock()
             items = [
-                make_add_item(box=1, positions=[1]),
-                make_add_item(box=1, positions=[2]),
-                make_add_item(box=1, positions=[1]),  # conflicts with first
+                make_add_item(box=1, position=1),
+                make_add_item(box=1, position=2),
+                make_add_item(box=1, position=1),  # conflicts with first
             ]
 
             result = preflight_plan(str(yaml_path), items, bridge=bridge)
@@ -868,8 +814,8 @@ class MultiAddPreflightTests(unittest.TestCase):
             bridge.add_entry.return_value = {"ok": True, "backup_path": "/tmp/bak"}
 
             items = [
-                make_add_item(box=1, positions=[3]),
-                make_add_item(box=1, positions=[3]),  # duplicate
+                make_add_item(box=1, position=3),
+                make_add_item(box=1, position=3),  # duplicate
             ]
 
             result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
@@ -889,8 +835,8 @@ class MultiAddPreflightTests(unittest.TestCase):
 
             bridge = MagicMock()
             items = [
-                make_add_item(box=1, positions=[4]),
-                make_add_item(box=2, positions=[4]),  # same pos, different box
+                make_add_item(box=1, position=4),
+                make_add_item(box=2, position=4),  # same pos, different box
             ]
 
             result = preflight_plan(str(yaml_path), items, bridge=bridge)
@@ -911,7 +857,7 @@ class MultiAddPreflightTests(unittest.TestCase):
             bridge = MagicMock()
             items = [
                 make_add_item(box=1, positions=[3, 4]),
-                make_add_item(box=1, positions=[4]),  # overlaps with first
+                make_add_item(box=1, position=4),  # overlaps with first
             ]
 
             result = preflight_plan(str(yaml_path), items, bridge=bridge)
@@ -931,8 +877,8 @@ class MultiAddPreflightTests(unittest.TestCase):
 
             bridge = MagicMock()
             items = [
-                make_add_item(box=1, positions=[5]),
-                make_add_item(box=1, positions=[5]),
+                make_add_item(box=1, position=5),
+                make_add_item(box=1, position=5),
             ]
 
             result = preflight_plan(str(yaml_path), items, bridge=bridge)

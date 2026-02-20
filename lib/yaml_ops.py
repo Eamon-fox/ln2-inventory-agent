@@ -282,8 +282,9 @@ def compute_occupancy(records):
             continue
         box = str(box)
         occupied.setdefault(box, set())
-        for p in rec.get("positions") or []:
-            occupied[box].add(int(p))
+        position = rec.get("position")
+        if position is not None:
+            occupied[box].add(int(position))
     return {k: sorted(v) for k, v in sorted(occupied.items(), key=lambda x: int(x[0]))}
 
 

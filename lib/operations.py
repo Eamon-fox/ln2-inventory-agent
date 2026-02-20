@@ -30,19 +30,18 @@ def check_position_conflicts(records, box, positions):
         positions: List of positions to check
 
     Returns:
-        list: List of conflict dicts with keys: id, short_name, positions
+        list: List of conflict dicts with keys: id, short_name, position
     """
     conflicts = []
     for rec in records:
         if rec.get("box") != box:
             continue
-        rec_positions = rec.get("positions", [])
-        overlap = set(positions) & set(rec_positions)
-        if overlap:
+        rec_position = rec.get("position")
+        if rec_position is not None and rec_position in positions:
             conflicts.append({
                 "id": rec.get("id"),
                 "short_name": rec.get("short_name"),
-                "positions": sorted(overlap)
+                "position": rec_position
             })
     return conflicts
 

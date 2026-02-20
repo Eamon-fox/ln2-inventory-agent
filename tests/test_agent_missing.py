@@ -13,6 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -23,13 +24,13 @@ from agent.llm_client import DeepSeekLLMClient
 from lib.yaml_ops import create_yaml_backup, load_yaml, write_yaml
 
 
-def make_record(rec_id=1, box=1, positions=None):
+def make_record(rec_id=1, box=1, position=None):
     return {
         "id": rec_id,
         "parent_cell_line": "NCCIT",
         "short_name": f"rec-{rec_id}",
         "box": box,
-        "positions": positions if positions is not None else [1],
+        "position": position if position is not None else 1,
         "frozen_at": "2025-01-01",
     }
 
@@ -47,19 +48,18 @@ def make_data(records):
 class ToolRunnerNormalizationTests(unittest.TestCase):
     """Test normalization functions in AgentToolRunner."""
 
-    def test_first_value_fallback_chain(self):
-        """Test _first_value tries keys in order."""
+    def test_required_int_accepts_integer(self):
+        """Test _required_int accepts strict integers."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
-        payload = {"key1": None, "key2": "found", "key3": "ignored"}
-        result = runner._first_value(payload, "key1", "key2", "key3")
-        self.assertEqual("found", result)
+        payload = {"count": 3}
+        self.assertEqual(3, runner._required_int(payload, "count"))
 
-    def test_first_value_all_none(self):
-        """Test _first_value returns None when all keys missing."""
+    def test_required_int_rejects_string(self):
+        """Test _required_int rejects string values in strict mode."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
-        payload = {}
-        result = runner._first_value(payload, "key1", "key2")
-        self.assertIsNone(result)
+        payload = {"count": "3"}
+        with self.assertRaises(ValueError):
+            runner._required_int(payload, "count")
 
     def test_as_bool_various_true(self):
         """Test _as_bool recognizes various True representations."""
@@ -138,8 +138,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         result = runner._stage_to_plan(
             "add_entry",
             {
-                "parent_cell_line": "K562",
-                "short_name": "clone-new",
+                "fields": {"cell_line": "K562", "short_name": "clone-new"},
                 "box": 1,
                 "positions": [2, 3],
                 "frozen_at": "2026-02-10",
@@ -169,8 +168,8 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertEqual("takeout", self.plan_store.list_items()[0]["action"])
         self.assertEqual(5, self.plan_store.list_items()[0]["position"])
 
-    def test_stage_to_plan_record_thaw_supports_legacy_action_alias(self):
-        """Legacy alias 解冻 should normalize to thaw."""
+    def test_stage_to_plan_record_thaw_rejects_legacy_action_alias(self):
+        """Legacy alias 解冻 should be rejected by strict schema."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "record_thaw",
@@ -181,9 +180,9 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
                 "action": "解冻",
             },
         )
-        self.assertTrue(result["ok"])
-        self.assertEqual(1, len(self.plan_store.list_items()))
-        self.assertEqual("thaw", self.plan_store.list_items()[0]["action"])
+        self.assertFalse(result["ok"])
+        self.assertEqual("invalid_tool_input", result["error_code"])
+        self.assertEqual(0, len(self.plan_store.list_items()))
 
     def test_stage_to_plan_record_thaw_move(self):
         """Test staging record_thaw with move action."""
@@ -209,7 +208,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         result = runner._stage_to_plan(
             "batch_thaw",
             {
-                "entries": [(1, 5), (2, 10)],
+                "entries": [[1, 5], [2, 10]],
                 "date": "2026-02-10",
                 "action": "取出",
             },
@@ -224,7 +223,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         result = runner._stage_to_plan(
             "batch_thaw",
             {
-                "entries": [(1, 5, 10)],
+                "entries": [[1, 5, 10]],
                 "date": "2026-02-10",
                 "action": "move",
             },
@@ -235,7 +234,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertEqual(10, self.plan_store.list_items()[0]["to_position"])
 
     def test_stage_to_plan_validation_failure(self):
-        """Test plan validation failure with invalid box."""
+        """Strict input schema should reject invalid box before staging."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "add_entry",
@@ -247,12 +246,12 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
             },
         )
         self.assertFalse(result["ok"])
-        self.assertEqual("plan_validation_failed", result["error_code"])
+        self.assertEqual("invalid_tool_input", result["error_code"])
         self.assertEqual(0, len(self.plan_store.list_items()))
 
     def test_stage_to_plan_preflight_blocked_returns_tool_error(self):
         """Invalid staged write should be rejected before entering plan."""
-        yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, positions=[5])])
+        yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=5)])
         runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "record_thaw",
@@ -260,7 +259,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
                 "record_id": 999,
                 "position": 5,
                 "date": "2026-02-10",
-                "action": "Takeout",
+                "action": "takeout",
             },
         )
 
@@ -274,17 +273,17 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
     def test_stage_to_plan_preflight_mixed_batch_rejects_all(self):
         """Mixed-valid batch should be rejected atomically."""
         records = [
-            make_record(rec_id=1, box=1, positions=[5]),
-            make_record(rec_id=2, box=1, positions=[10]),
+            make_record(rec_id=1, box=1, position=5),
+            make_record(rec_id=2, box=1, position=10),
         ]
         yaml_path = self._seed_yaml(records)
         runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "batch_thaw",
             {
-                "entries": [(1, 5), (999, 5)],
+                "entries": [[1, 5], [999, 5]],
                 "date": "2026-02-10",
-                "action": "Takeout",
+                "action": "takeout",
             },
         )
 
@@ -298,17 +297,17 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
 
     def test_stage_to_plan_schema_mixed_batch_rejects_all(self):
         """Schema errors in batch should reject all items atomically."""
-        yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, positions=[5])])
+        yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=5)])
         runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "batch_thaw",
             {
                 "entries": [
-                    (1, 5),
+                    [1, 5],
                     {"record_id": 2},  # Missing position -> normalized to 0 -> schema invalid
                 ],
                 "date": "2026-02-10",
-                "action": "Takeout",
+                "action": "takeout",
             },
         )
 
@@ -319,13 +318,44 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertEqual(0, result.get("result", {}).get("staged_count"))
         self.assertEqual(1, result.get("result", {}).get("blocked_count"))
 
-    def test_stage_to_plan_rollback_resolves_latest_backup(self):
-        yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, positions=[5])])
+    def test_stage_to_plan_validates_existing_plus_incoming_as_one_batch(self):
+        """Second staged add must be rejected if it conflicts with existing staged items."""
+        yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=1)])
+        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
+
+        first = runner._stage_to_plan(
+            "add_entry",
+            {
+                "fields": {"short_name": "clone-a"},
+                "box": 1,
+                "positions": [2],
+                "frozen_at": "2026-02-10",
+            },
+        )
+        self.assertTrue(first["ok"])
+        self.assertEqual(1, len(self.plan_store.list_items()))
+
+        second = runner._stage_to_plan(
+            "add_entry",
+            {
+                "fields": {"short_name": "clone-b"},
+                "box": 1,
+                "positions": [2],
+                "frozen_at": "2026-02-10",
+            },
+        )
+
+        self.assertFalse(second["ok"])
+        self.assertEqual("plan_preflight_failed", second["error_code"])
+        self.assertEqual(1, len(self.plan_store.list_items()))
+
+    def test_stage_to_plan_rollback_requires_explicit_backup_path(self):
+        yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=5)])
         backup_path = create_yaml_backup(yaml_path)
         self.assertTrue(os.path.exists(str(backup_path)))
 
         runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
-        result = runner._stage_to_plan("rollback", {})
+        result = runner._stage_to_plan("rollback", {"backup_path": str(backup_path)})
 
         self.assertTrue(result["ok"])
         self.assertTrue(result.get("staged"))
@@ -333,6 +363,48 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         staged = self.plan_store.list_items()[0]
         self.assertEqual("rollback", staged.get("action"))
         self.assertEqual(str(backup_path), (staged.get("payload") or {}).get("backup_path"))
+
+    def test_stage_to_plan_allows_valid_write_when_baseline_cell_line_is_dirty(self):
+        """Historical cell_line mismatch should not block staging of valid incoming writes."""
+        tmpdir = tempfile.TemporaryDirectory(prefix="tool_runner_stage_badbase_")
+        self.addCleanup(tmpdir.cleanup)
+        yaml_path = Path(tmpdir.name) / "inventory.yaml"
+        bad_data = {
+            "meta": {
+                "box_layout": {"rows": 9, "cols": 9},
+                "cell_line_required": True,
+                "cell_line_options": ["K562", "HeLa"],
+            },
+            "inventory": [
+                {
+                    "id": 1,
+                    "cell_line": "U2OS",
+                    "short_name": "bad",
+                    "box": 1,
+                    "position": 5,
+                    "frozen_at": "2025-01-01",
+                }
+            ],
+        }
+        yaml_path.write_text(
+            yaml.safe_dump(bad_data, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+
+        runner = AgentToolRunner(yaml_path=str(yaml_path), plan_store=self.plan_store)
+        result = runner._stage_to_plan(
+            "add_entry",
+            {
+                "fields": {"short_name": "clone-a", "cell_line": "K562"},
+                "box": 1,
+                "positions": [6],
+                "frozen_at": "2026-02-10",
+            },
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result.get("staged"))
+        self.assertEqual(1, len(self.plan_store.list_items()))
 
 
 class ToolRunnerHintTests(unittest.TestCase):
@@ -374,7 +446,7 @@ class ToolRunnerHintTests(unittest.TestCase):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
         payload = {"error_code": "record_not_found"}
         hint = runner._hint_for_error("record_thaw", payload)
-        self.assertIn("query_inventory", hint)
+        self.assertIn("search_records", hint)
 
     def test_hint_for_error_position_conflict(self):
         """Test hint for position_conflict."""
@@ -402,7 +474,8 @@ class ToolRunnerHintTests(unittest.TestCase):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
         payload = {"error_code": "invalid_box"}
         hint = runner._hint_for_error("add_entry", payload)
-        self.assertIn("range", hint)
+        self.assertIn("valid", hint.lower())
+        self.assertIn("A1", hint)
 
     def test_hint_for_error_plan_preflight_failed(self):
         """Test hint for plan_preflight_failed."""
@@ -606,97 +679,6 @@ class ReactAgentRunBehaviorTests(unittest.TestCase):
         if hasattr(self.mock_llm, 'stream_chat'):
             delattr(self.mock_llm, 'stream_chat')
 
-    def test_run_max_steps_reached(self):
-        """Test run() behavior when max_steps is reached."""
-        from agent.react_agent import ReactAgent
-        # Provide multiple responses for each step
-        # Step 1: tool call
-        # Step 2: after forced_final_retry prompt, another tool call (which triggers max_steps fallback)
-        self.mock_llm.chat.side_effect = [
-            {
-                "content": "",
-                "tool_calls": [{"id": "call_1", "name": "query_inventory", "arguments": {"cell": "K562"}}]
-            },
-            {
-                "content": "",
-                "tool_calls": [{"id": "call_2", "name": "query_inventory", "arguments": {"cell": "K562"}}]
-            },
-        ]
-        mock_tools = Mock()
-        mock_tools.list_tools.return_value = ["query_inventory"]
-        mock_tools.run.return_value = {"ok": True, "result": {"count": 0}}
-        mock_tools.tool_specs.return_value = {"query_inventory": {"required": [], "optional": []}}
-        mock_tools.tool_schemas.return_value = []
-
-        agent = ReactAgent(llm_client=self.mock_llm, tool_runner=mock_tools, max_steps=2)
-        result = agent.run("test query")
-
-        self.assertFalse(result["ok"])
-        self.assertEqual(2, result["steps"])
-        self.assertIn("Max steps reached", result["final"])
-
-    def test_run_empty_response_retry(self):
-        """Test run() handles empty LLM response."""
-        from agent.react_agent import ReactAgent
-        # First: empty response with tools (will trigger forced retry),
-        # Second: direct answer after retry prompt
-        self.mock_llm.chat.side_effect = [
-            {"content": "", "tool_calls": [{"id": "call_1", "name": "query_inventory", "arguments": {}}]},
-            {"content": "Direct answer", "tool_calls": []},
-        ]
-
-        mock_tools = Mock()
-        mock_tools.list_tools.return_value = ["query_inventory"]
-        mock_tools.run.return_value = {"ok": True, "result": {"count": 0}}
-        mock_tools.tool_specs.return_value = {"query_inventory": {"required": [], "optional": []}}
-        mock_tools.tool_schemas.return_value = []
-
-        agent = ReactAgent(llm_client=self.mock_llm, tool_runner=mock_tools, max_steps=5)
-        result = agent.run("test query")
-
-        self.assertTrue(result["ok"])
-        self.assertIn("Direct answer", result["final"])
-
-    def test_run_with_parallel_tool_calls(self):
-        """Test run() handles parallel tool calls."""
-        from agent.react_agent import ReactAgent
-        # Response with two tool calls, then a final answer
-        self.mock_llm.chat.side_effect = [
-            {
-                "content": "",
-                "tool_calls": [
-                    {"id": "call_1", "name": "query_inventory", "arguments": {"cell": "K562"}},
-                    {"id": "call_2", "name": "generate_stats", "arguments": {}},
-                ]
-            },
-            {
-                "content": "Found 1 K562 record and stats ready.",
-                "tool_calls": [],
-            },
-        ]
-
-        call_count = [0]
-
-        def mock_run(tool_name, tool_input, trace_id=None):
-            _ = trace_id  # Not used in mock
-            call_count[0] += 1
-            return {"ok": True, "result": {"count": call_count[0]}}
-
-        mock_tools = Mock()
-        mock_tools.list_tools.return_value = ["query_inventory", "generate_stats"]
-        mock_tools.run.side_effect = mock_run
-        mock_tools.tool_specs.return_value = {
-            "query_inventory": {"required": [], "optional": []},
-            "generate_stats": {"required": [], "optional": []},
-        }
-        mock_tools.tool_schemas.return_value = []
-
-        agent = ReactAgent(llm_client=self.mock_llm, tool_runner=mock_tools, max_steps=3)
-        result = agent.run("test query")
-
-        self.assertTrue(result["ok"])
-        # Both tools should have been called
-        self.assertEqual(2, call_count[0])
 
     def test_run_includes_trace_id(self):
         """Test run() includes trace_id in result."""

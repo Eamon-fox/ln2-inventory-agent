@@ -1,28 +1,53 @@
 from datetime import date, datetime
 import os
-from PySide6.QtCore import Qt, Signal, QEvent, QMimeData, QPoint, QRect, QEasingCurve, QPropertyAnimation, QTimer
-from PySide6.QtGui import QDrag, QDropEvent, QDragEnterEvent, QDragMoveEvent
+from PySide6.QtCore import Qt, Signal, QEvent, QMimeData, QPoint, QRect, QEasingCurve, QPropertyAnimation, QTimer, QSize
+from PySide6.QtGui import QColor, QDrag, QDropEvent, QDragEnterEvent, QDragMoveEvent, QIcon
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QPushButton, QLineEdit, QComboBox, QCheckBox, QScrollArea,
-    QSizePolicy, QGroupBox, QMenu, QStackedWidget,
-    QTableWidget, QTableWidgetItem, QHeaderView
+    QSizePolicy, QGroupBox, QMenu, QStackedWidget, QButtonGroup,
+    QTableWidget, QTableWidgetItem, QHeaderView, QStyledItemDelegate, QStyle
 )
 from app_gui.ui.utils import cell_color, build_color_palette
 from lib.position_fmt import pos_to_display, box_to_display, get_box_count
 from lib.csv_export import build_export_rows
 from app_gui.ui.theme import (
-    cell_occupied_style, 
+    cell_occupied_style,
     cell_empty_style,
-    cell_preview_add_style,
-    cell_preview_takeout_style,
-    cell_preview_move_source_style,
-    cell_preview_move_target_style,
+    FONT_SIZE_CELL,
+    FONT_SIZE_XS,
+    FONT_SIZE_MD,
+    FONT_SIZE_XL,
 )
 from app_gui.i18n import tr, t
-from app_gui.plan_preview import simulate_plan_pos_map
+from app_gui.ui.icons import get_icon, Icons
 
 MIME_TYPE_MOVE = "application/x-ln2-move"
+TABLE_ROW_TINT_ROLE = Qt.UserRole + 41
+
+
+class _OverviewTableTintDelegate(QStyledItemDelegate):
+    """Paint row-level color tint for table view cells."""
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+
+        # Keep selected row highlight from theme unchanged.
+        if option.state & QStyle.State_Selected:
+            return
+
+        tint_hex = index.data(TABLE_ROW_TINT_ROLE)
+        if not tint_hex:
+            return
+
+        tint = QColor(str(tint_hex))
+        if not tint.isValid():
+            return
+
+        tint.setAlpha(128)
+        painter.save()
+        painter.fillRect(option.rect, tint)
+        painter.restore()
 
 class CellButton(QPushButton):
     doubleClicked = Signal(int, int)
@@ -215,10 +240,12 @@ class OverviewPanel(QWidget):
     request_add_prefill = Signal(dict)
     request_add_prefill_background = Signal(dict)
     request_move_prefill = Signal(dict)
-    request_query_prefill = Signal(dict)
     # Use object to preserve non-string dict keys (Qt map coercion can drop int keys).
     data_loaded = Signal(object)
     plan_items_requested = Signal(list)
+    # Statistics update for status bar
+    stats_changed = Signal(dict)  # {"total": n, "occupied": n, "empty": n, "rate": pct}
+    hover_stats_changed = Signal(str)  # Formatted string for hovered cell
 
     def __init__(self, bridge, yaml_path_getter):
         super().__init__()
@@ -235,17 +262,19 @@ class OverviewPanel(QWidget):
         self.overview_selected_key = None
         self.overview_hover_key = None
         self.overview_records_by_id = {}
-        self._plan_items = []
         self._current_records = []
         self._current_font_sizes = (9, 8)
-        self._plan_simulation = None
-        self._hover_exec_preview_active = False
-        self._status_before_hover = None
         self._overview_view_mode = "grid"
         self._table_rows = []
         self._table_columns = []
         self._table_row_records = []
         self._hover_warmed = False
+        self._show_summary_cards = True  # Can be set to False to hide cards
+
+        # Animation objects for smooth zoom and scroll transitions
+        self._zoom_animation = None
+        self._scroll_h_animation = None
+        self._scroll_v_animation = None
 
         self.setup_ui()
 
@@ -254,40 +283,19 @@ class OverviewPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 4)
         layout.setSpacing(6)
 
-        # Summary Cards
-        summary_row = QHBoxLayout()
-        summary_row.setSpacing(6)
-        
-        self.ov_total_records_value = self._build_card(summary_row, tr("overview.totalRecords"))
-        self.ov_occupied_value = self._build_card(summary_row, tr("overview.occupied"))
-        self.ov_empty_value = self._build_card(summary_row, tr("overview.empty"))
-        self.ov_rate_value = self._build_card(summary_row, tr("overview.occupancyRate"))
-        
-        layout.addLayout(summary_row)
+        # Summary Cards (can be hidden via _show_summary_cards)
+        self._summary_row = QHBoxLayout()
+        self._summary_row.setSpacing(6)
 
-        # Meta Stats
-        self.ov_total_capacity_value = QLabel("-")
-        self.ov_ops7_value = QLabel("-")
-        self.ov_meta_stats = QLabel(f"{tr('overview.capacity')}: - | {tr('overview.ops7d')}: -")
-        self.ov_meta_stats.setStyleSheet("color: var(--status-muted);")
-        layout.addWidget(self.ov_meta_stats)
+        self.ov_total_records_value = self._build_card(self._summary_row, tr("overview.totalRecords"))
+        self.ov_occupied_value = self._build_card(self._summary_row, tr("overview.occupied"))
+        self.ov_empty_value = self._build_card(self._summary_row, tr("overview.empty"))
+        self.ov_rate_value = self._build_card(self._summary_row, tr("overview.occupancyRate"))
 
-        # Action Row
-        action_row = QHBoxLayout()
-        action_row.setSpacing(6)
-        refresh_btn = QPushButton(tr("overview.refresh"))
-        refresh_btn.clicked.connect(self.refresh)
-        action_row.addWidget(refresh_btn)
-
-        action_row.addWidget(QLabel(tr("overview.view")))
-        self.ov_view_mode = QComboBox()
-        self.ov_view_mode.addItem(tr("overview.viewGrid"), "grid")
-        self.ov_view_mode.addItem(tr("overview.viewTable"), "table")
-        self.ov_view_mode.currentIndexChanged.connect(self._on_view_mode_changed)
-        action_row.addWidget(self.ov_view_mode)
-
-        action_row.addStretch()
-        layout.addLayout(action_row)
+        self._summary_container = QWidget()
+        self._summary_container.setLayout(self._summary_row)
+        self._summary_container.setVisible(self._show_summary_cards)
+        layout.addWidget(self._summary_container)
 
         # Filter Row
         filter_row = QHBoxLayout()
@@ -299,7 +307,10 @@ class OverviewPanel(QWidget):
         self.ov_filter_keyword.textChanged.connect(self._apply_filters)
         filter_row.addWidget(self.ov_filter_keyword, 2)
 
+        # More filters button with icon
         self.ov_filter_toggle_btn = QPushButton(tr("overview.moreFilters"))
+        self.ov_filter_toggle_btn.setIcon(get_icon(Icons.CHEVRON_DOWN))
+        self.ov_filter_toggle_btn.setIconSize(QSize(12, 12))
         self.ov_filter_toggle_btn.setCheckable(True)
         self.ov_filter_toggle_btn.toggled.connect(self.on_toggle_filters)
         filter_row.addWidget(self.ov_filter_toggle_btn)
@@ -324,7 +335,10 @@ class OverviewPanel(QWidget):
         self.ov_filter_show_empty.stateChanged.connect(self._apply_filters)
         advanced_filter_row.addWidget(self.ov_filter_show_empty)
 
+        # Clear filter button with icon
         clear_filter_btn = QPushButton(tr("overview.clearFilter"))
+        clear_filter_btn.setIcon(get_icon(Icons.X))
+        clear_filter_btn.setIconSize(QSize(14, 14))
         clear_filter_btn.clicked.connect(self.on_clear_filters)
         advanced_filter_row.addWidget(clear_filter_btn)
         advanced_filter_row.addStretch()
@@ -338,36 +352,133 @@ class OverviewPanel(QWidget):
         layout.addWidget(self.ov_status)
 
         self.ov_hover_hint = QLabel(tr("overview.hoverHint"))
-        self.ov_hover_hint.setStyleSheet("color: var(--text-weak); font-weight: 500;")
+        self.ov_hover_hint.setObjectName("overviewHoverHint")
+        self.ov_hover_hint.setProperty("state", "default")
         self.ov_hover_hint.setWordWrap(True)
         layout.addWidget(self.ov_hover_hint)
 
-        # Zoom controls
+        # Combined Action Row: Refresh + View Toggle + Box Navigation + Zoom Controls
+        # This row is placed right above the view stack for better space efficiency
+        action_row = QHBoxLayout()
+        action_row.setSpacing(6)
+
+        # Refresh button with icon
+        refresh_btn = QPushButton(tr("overview.refresh"))
+        refresh_btn.setIcon(get_icon(Icons.REFRESH_CW))
+        refresh_btn.setIconSize(QSize(16, 16))
+        refresh_btn.clicked.connect(self.refresh)
+        action_row.addWidget(refresh_btn)
+
+        # View mode toggle buttons (segmented control style) with icons
+        view_toggle_container = QWidget()
+        view_toggle_container.setObjectName("overviewViewToggle")
+        view_toggle_container.setAttribute(Qt.WA_StyledBackground, True)
+        view_toggle_layout = QHBoxLayout(view_toggle_container)
+        view_toggle_layout.setContentsMargins(0, 0, 0, 0)
+        view_toggle_layout.setSpacing(0)
+
+        self._view_mode_group = QButtonGroup(self)
+        self._view_mode_group.setExclusive(True)
+
+        # Grid view button with icon only (no text)
+        self.ov_view_grid_btn = QPushButton()
+        self.ov_view_grid_btn.setIcon(get_icon(Icons.GRID_3X3))
+        self.ov_view_grid_btn.setIconSize(QSize(18, 18))
+        self.ov_view_grid_btn.setToolTip(tr("overview.viewGrid"))
+        self.ov_view_grid_btn.setCheckable(True)
+        self.ov_view_grid_btn.setChecked(True)
+        self.ov_view_grid_btn.setProperty("segmented", "left")
+        self.ov_view_grid_btn.setFocusPolicy(Qt.NoFocus)
+        self._view_mode_group.addButton(self.ov_view_grid_btn)
+        self.ov_view_grid_btn.clicked.connect(lambda: self._on_view_mode_changed("grid"))
+        view_toggle_layout.addWidget(self.ov_view_grid_btn)
+
+        # Table view button with icon only (no text)
+        self.ov_view_table_btn = QPushButton()
+        self.ov_view_table_btn.setIcon(get_icon(Icons.TABLE))
+        self.ov_view_table_btn.setIconSize(QSize(18, 18))
+        self.ov_view_table_btn.setToolTip(tr("overview.viewTable"))
+        self.ov_view_table_btn.setCheckable(True)
+        self.ov_view_table_btn.setProperty("segmented", "right")
+        self.ov_view_table_btn.setFocusPolicy(Qt.NoFocus)
+        self._view_mode_group.addButton(self.ov_view_table_btn)
+        self.ov_view_table_btn.clicked.connect(lambda: self._on_view_mode_changed("table"))
+        view_toggle_layout.addWidget(self.ov_view_table_btn)
+
+        action_row.addWidget(view_toggle_container)
+
+        # Box quick navigation (populated after refresh)
+        self._box_nav_container = QWidget()
+        self._box_nav_layout = QHBoxLayout(self._box_nav_container)
+        self._box_nav_layout.setContentsMargins(0, 0, 0, 0)
+        self._box_nav_layout.setSpacing(2)
+        action_row.addWidget(self._box_nav_container)
+
+        action_row.addStretch()
+
+        # Zoom controls - unified component with smart zoom features
         self._zoom_level = 1.0
         self._base_cell_size = 36  # recalculated on refresh
-        zoom_row = QHBoxLayout()
-        zoom_row.setSpacing(4)
-        zoom_out_btn = QPushButton("-")
-        zoom_out_btn.setFixedSize(24, 24)
+
+        self._zoom_container = QWidget()
+        self._zoom_container.setObjectName("zoomControls")
+        zoom_layout = QHBoxLayout(self._zoom_container)
+        zoom_layout.setContentsMargins(0, 0, 0, 0)
+        zoom_layout.setSpacing(4)
+
+        # Manual zoom controls with icons
+        zoom_out_btn = QPushButton()
+        zoom_out_btn.setIcon(get_icon(Icons.ZOOM_OUT))
+        zoom_out_btn.setIconSize(QSize(16, 16))
+        zoom_out_btn.setFixedSize(28, 28)
+        zoom_out_btn.setObjectName("overviewIconButton")
         zoom_out_btn.setToolTip(tr("overview.zoomOut"))
         zoom_out_btn.clicked.connect(lambda: self._set_zoom(self._zoom_level - 0.1))
-        zoom_row.addWidget(zoom_out_btn)
+        zoom_layout.addWidget(zoom_out_btn)
+
         self._zoom_label = QLabel("100%")
+        self._zoom_label.setObjectName("overviewZoomLabel")
         self._zoom_label.setFixedWidth(42)
         self._zoom_label.setAlignment(Qt.AlignCenter)
-        self._zoom_label.setStyleSheet("font-size: 11px;")
-        zoom_row.addWidget(self._zoom_label)
-        zoom_in_btn = QPushButton("+")
-        zoom_in_btn.setFixedSize(24, 24)
+        zoom_layout.addWidget(self._zoom_label)
+
+        zoom_in_btn = QPushButton()
+        zoom_in_btn.setIcon(get_icon(Icons.ZOOM_IN))
+        zoom_in_btn.setIconSize(QSize(16, 16))
+        zoom_in_btn.setFixedSize(28, 28)
+        zoom_in_btn.setObjectName("overviewIconButton")
         zoom_in_btn.setToolTip(tr("overview.zoomIn"))
         zoom_in_btn.clicked.connect(lambda: self._set_zoom(self._zoom_level + 0.1))
-        zoom_row.addWidget(zoom_in_btn)
-        zoom_reset_btn = QPushButton(tr("overview.zoomReset"))
-        zoom_reset_btn.setToolTip(tr("overview.zoomReset"))
-        zoom_reset_btn.clicked.connect(lambda: self._set_zoom(1.0))
-        zoom_row.addWidget(zoom_reset_btn)
-        zoom_row.addStretch()
-        layout.addLayout(zoom_row)
+        zoom_layout.addWidget(zoom_in_btn)
+
+        # Separator
+        separator = QLabel("|")
+        separator.setObjectName("overviewZoomSeparator")
+        zoom_layout.addWidget(separator)
+
+        # Smart zoom: Fit One Box (expand/maximize single box to 90% viewport)
+        fit_one_btn = QPushButton()
+        fit_one_btn.setIcon(get_icon(Icons.MAXIMIZE))
+        fit_one_btn.setIconSize(QSize(16, 16))
+        fit_one_btn.setFixedSize(28, 28)
+        fit_one_btn.setObjectName("overviewIconButton")
+        fit_one_btn.setToolTip(tr("overview.fitOneBox"))
+        fit_one_btn.clicked.connect(self._fit_one_box)
+        zoom_layout.addWidget(fit_one_btn)
+
+        # Smart zoom: Fit All Boxes (collapse/minimize to show all boxes in viewport)
+        fit_all_btn = QPushButton()
+        fit_all_btn.setIcon(get_icon(Icons.MINIMIZE))
+        fit_all_btn.setIconSize(QSize(16, 16))
+        fit_all_btn.setFixedSize(28, 28)
+        fit_all_btn.setObjectName("overviewIconButton")
+        fit_all_btn.setToolTip(tr("overview.fitAllBoxes"))
+        fit_all_btn.clicked.connect(self._fit_all_boxes)
+        zoom_layout.addWidget(fit_all_btn)
+
+        action_row.addWidget(self._zoom_container)
+
+        layout.addLayout(action_row)
 
         # Grid Area
         self.ov_scroll = QScrollArea()
@@ -387,6 +498,7 @@ class OverviewPanel(QWidget):
         self.ov_table.verticalHeader().setVisible(False)
         self.ov_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.ov_table.setSelectionMode(QTableWidget.SingleSelection)
+        self.ov_table.setItemDelegate(_OverviewTableTintDelegate(self.ov_table))
         self.ov_table.cellClicked.connect(self.on_table_row_double_clicked)
 
         self.ov_view_stack = QStackedWidget()
@@ -396,32 +508,23 @@ class OverviewPanel(QWidget):
 
     def _build_card(self, layout, title):
         card = QGroupBox(title)
-        card.setStyleSheet("""
-            QGroupBox {
-                background-color: var(--background-inset);
-                border: 1px solid var(--border-weak);
-                border-radius: var(--radius-md);
-                margin-top: 8px;
-                padding-top: 8px;
-            }
-            QGroupBox::title {
-                color: var(--text-weak);
-                font-size: 11px;
-            }
-        """)
+        card.setObjectName("overviewStatCard")
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(8, 6, 8, 6)
         value_label = QLabel("-")
+        value_label.setObjectName("overviewStatValue")
         value_label.setAlignment(Qt.AlignCenter)
-        value_label.setStyleSheet("font-size: 16px; font-weight: 500; color: var(--text-strong);")
         card_layout.addWidget(value_label)
         layout.addWidget(card)
         return value_label
 
-    def _on_view_mode_changed(self):
-        mode = self.ov_view_mode.currentData()
+    def _on_view_mode_changed(self, mode):
         if mode not in {"grid", "table"}:
             mode = "grid"
+
+        # Update button states
+        self.ov_view_grid_btn.setChecked(mode == "grid")
+        self.ov_view_table_btn.setChecked(mode == "table")
 
         self._overview_view_mode = mode
         self.ov_view_stack.setCurrentIndex(0 if mode == "grid" else 1)
@@ -431,6 +534,13 @@ class OverviewPanel(QWidget):
         self.ov_filter_show_empty.setToolTip(
             tr("overview.showEmptyGridOnly") if is_table_mode else ""
         )
+
+        # Show/hide zoom controls and box navigation based on view mode
+        # Only show in grid mode, hide in table mode
+        is_grid_mode = mode == "grid"
+        self._zoom_container.setVisible(is_grid_mode)
+        self._box_nav_container.setVisible(is_grid_mode)
+
         self._apply_filters()
 
     def _set_table_columns(self, headers):
@@ -438,10 +548,31 @@ class OverviewPanel(QWidget):
         self.ov_table.setColumnCount(len(headers))
         self.ov_table.setHorizontalHeaderLabels(headers)
         header = self.ov_table.horizontalHeader()
-        for idx in range(len(headers)):
-            mode = QHeaderView.Stretch if idx == len(headers) - 1 else QHeaderView.ResizeToContents
-            header.setSectionResizeMode(idx, mode)
+        # Enable interactive column resizing
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        # Make header sections movable (optional, allows reordering columns)
+        header.setSectionsMovable(False)  # Keep columns in fixed order for now
+        # Enable click-to-sort on column headers
+        header.setSectionsClickable(True)
+        # Disable sorting during data population (will be enabled after)
         self.ov_table.setSortingEnabled(False)
+
+        # Set reasonable default column widths
+        default_widths = {
+            "id": 60,
+            "location": 80,
+            "frozen_at": 100,
+            "thaw_events": 200,
+            "cell_line": 100,
+            "note": 180,
+            "short_name": 150,
+        }
+        for idx, col_name in enumerate(headers):
+            if col_name in default_widths:
+                self.ov_table.setColumnWidth(idx, default_widths[col_name])
+            else:
+                # Default width for custom fields
+                self.ov_table.setColumnWidth(idx, 120)
 
     def _rebuild_table_rows(self, records):
         meta = getattr(self, "_current_meta", {})
@@ -461,11 +592,13 @@ class OverviewPanel(QWidget):
                 except (TypeError, ValueError):
                     record = None
 
-            box_value = values.get("box")
-            try:
-                box_number = int(box_value)
-            except (TypeError, ValueError):
-                box_number = None
+            # Get box from record (not from values, since we merged box:position into location)
+            box_number = None
+            if isinstance(record, dict):
+                try:
+                    box_number = int(record.get("box"))
+                except (TypeError, ValueError):
+                    pass
 
             color_value = ""
             if isinstance(record, dict):
@@ -489,33 +622,75 @@ class OverviewPanel(QWidget):
         self._table_row_records = []
 
     def _render_table_rows(self, rows):
+        # Disable sorting during data population for performance
+        self.ov_table.setSortingEnabled(False)
         self.ov_table.setRowCount(0)
         self._table_row_records = []
+
+        # Custom role for storing record reference in each row
+        RECORD_ROLE = Qt.UserRole + 100
 
         for row_index, row_data in enumerate(rows):
             self.ov_table.insertRow(row_index)
             values = row_data.get("values") or {}
+            color_value = str(row_data.get("color_value") or "")
+            row_tint = cell_color(color_value or None)
+            record = row_data.get("record")
+
             for col_index, column in enumerate(self._table_columns):
                 value = values.get(column, "")
-                self.ov_table.setItem(row_index, col_index, QTableWidgetItem(str(value)))
-            self._table_row_records.append(row_data.get("record"))
+                item = QTableWidgetItem(str(value))
+                item.setData(TABLE_ROW_TINT_ROLE, row_tint)
+
+                # Store record reference in first column for easy retrieval after sorting
+                if col_index == 0:
+                    item.setData(RECORD_ROLE, record)
+
+                # Set numeric data for proper sorting of numeric columns
+                if column == "id":
+                    try:
+                        item.setData(Qt.UserRole, int(value))
+                    except (ValueError, TypeError):
+                        pass
+                elif column == "location":
+                    # Parse "box:position" for sorting (e.g., "1:2" -> 1002)
+                    try:
+                        parts = str(value).split(":")
+                        if len(parts) == 2:
+                            box, pos = int(parts[0]), int(parts[1])
+                            # Create sortable key: box * 1000 + position
+                            item.setData(Qt.UserRole, box * 1000 + pos)
+                    except (ValueError, TypeError):
+                        pass
+
+                self.ov_table.setItem(row_index, col_index, item)
+            self._table_row_records.append(record)
+
+        # Enable sorting after data is populated
+        self.ov_table.setSortingEnabled(True)
 
     def on_table_row_double_clicked(self, row, _col):
-        if row < 0 or row >= len(self._table_row_records):
+        if row < 0 or row >= self.ov_table.rowCount():
             return
 
-        record = self._table_row_records[row]
+        # Get record from first column item (works even after sorting)
+        RECORD_ROLE = Qt.UserRole + 100
+        first_item = self.ov_table.item(row, 0)
+        if not first_item:
+            return
+
+        record = first_item.data(RECORD_ROLE)
         if not isinstance(record, dict):
             return
 
-        positions = record.get("positions") or []
-        if not positions:
+        position = record.get("position")
+        if position is None:
             return
 
         try:
             record_id = int(record.get("id"))
             box_num = int(record.get("box"))
-            position = int(positions[0])
+            position = int(position)
         except (TypeError, ValueError):
             return
 
@@ -546,16 +721,47 @@ class OverviewPanel(QWidget):
                 self.on_cell_hovered(int(box_num), int(position))
         return super().eventFilter(obj, event)
 
-    def _set_zoom(self, level):
-        self._zoom_level = max(0.5, min(3.0, round(level, 1)))
-        self._zoom_label.setText(f"{int(self._zoom_level * 100)}%")
-        self._apply_zoom()
+    def _set_zoom(self, level, animated=False):
+        """Set zoom level with optional animation."""
+        target_level = max(0.5, min(3.0, round(level, 1)))
+
+        if not animated or abs(target_level - self._zoom_level) < 0.05:
+            # Direct set without animation for small changes or when animation disabled
+            self._zoom_level = target_level
+            self._zoom_label.setText(f"{int(self._zoom_level * 100)}%")
+            self._apply_zoom()
+            return
+
+        # Animated zoom transition
+        if self._zoom_animation is not None:
+            self._zoom_animation.stop()
+
+        # Create a dummy property animation using a QLabel as proxy
+        # We'll update zoom level in the valueChanged callback
+        if not hasattr(self, '_zoom_proxy'):
+            self._zoom_proxy = QLabel()
+            self._zoom_proxy.setProperty("zoom_value", int(self._zoom_level * 100))
+
+        self._zoom_animation = QPropertyAnimation(self._zoom_proxy, b"zoom_value")
+        self._zoom_animation.setDuration(300)  # 300ms animation
+        self._zoom_animation.setEasingCurve(QEasingCurve.OutCubic)
+        self._zoom_animation.setStartValue(int(self._zoom_level * 100))
+        self._zoom_animation.setEndValue(int(target_level * 100))
+
+        def update_zoom(value):
+            self._zoom_level = value / 100.0
+            self._zoom_label.setText(f"{value}%")
+            self._apply_zoom()
+
+        self._zoom_animation.valueChanged.connect(update_zoom)
+        self._zoom_animation.start()
 
     def _apply_zoom(self):
         """Resize all existing cell buttons and repaint with scaled font."""
         cell_size = max(12, int(self._base_cell_size * self._zoom_level))
-        font_size_occupied = max(7, int(9 * self._zoom_level))
-        font_size_empty = max(6, int(8 * self._zoom_level))
+        # Scale font with zoom, baseline matches FONT_SIZE_CELL increase
+        font_size_occupied = max(9, int(FONT_SIZE_CELL * self._zoom_level))
+        font_size_empty = max(8, int((FONT_SIZE_CELL - 1) * self._zoom_level))
         self._current_font_sizes = (font_size_occupied, font_size_empty)
         for button in self.overview_cells.values():
             if isinstance(button, CellButton):
@@ -563,6 +769,161 @@ class OverviewPanel(QWidget):
             button.setFixedSize(cell_size, cell_size)
         # Repaint all cells with current data
         self._repaint_all_cells()
+
+    def _animate_scroll_to(self, target_h=None, target_v=None, duration=400):
+        """Animate scroll bars to target positions."""
+        h_bar = self.ov_scroll.horizontalScrollBar()
+        v_bar = self.ov_scroll.verticalScrollBar()
+
+        # Stop any existing scroll animations
+        if self._scroll_h_animation is not None:
+            self._scroll_h_animation.stop()
+            self._scroll_h_animation = None
+        if self._scroll_v_animation is not None:
+            self._scroll_v_animation.stop()
+            self._scroll_v_animation = None
+
+        # Animate horizontal scroll
+        if target_h is not None and h_bar.value() != target_h:
+            self._scroll_h_animation = QPropertyAnimation(h_bar, b"value", self)
+            self._scroll_h_animation.setDuration(duration)
+            self._scroll_h_animation.setEasingCurve(QEasingCurve.OutCubic)
+            self._scroll_h_animation.setStartValue(h_bar.value())
+            self._scroll_h_animation.setEndValue(int(target_h))
+            self._scroll_h_animation.start()
+
+        # Animate vertical scroll
+        if target_v is not None and v_bar.value() != target_v:
+            self._scroll_v_animation = QPropertyAnimation(v_bar, b"value", self)
+            self._scroll_v_animation.setDuration(duration)
+            self._scroll_v_animation.setEasingCurve(QEasingCurve.OutCubic)
+            self._scroll_v_animation.setStartValue(v_bar.value())
+            self._scroll_v_animation.setEndValue(int(target_v))
+            self._scroll_v_animation.start()
+
+    def _fit_one_box(self):
+        """Smart zoom: fit first box to 90% of viewport with animation."""
+        if not self.overview_box_groups:
+            return
+
+        # Get first box group
+        box_numbers = sorted(self.overview_box_groups.keys())
+        if not box_numbers:
+            return
+
+        first_box = self.overview_box_groups[box_numbers[0]]
+        viewport = self.ov_scroll.viewport()
+
+        # Calculate zoom level to fit first box to 90% of viewport
+        box_width = first_box.sizeHint().width()
+        box_height = first_box.sizeHint().height()
+        viewport_width = viewport.width()
+        viewport_height = viewport.height()
+
+        if box_width <= 0 or box_height <= 0:
+            return
+
+        # Calculate zoom to fit 90% of viewport (use smaller dimension)
+        zoom_w = (viewport_width * 0.9) / box_width * self._zoom_level
+        zoom_h = (viewport_height * 0.9) / box_height * self._zoom_level
+        target_zoom = min(zoom_w, zoom_h)
+
+        # Animate zoom
+        self._set_zoom(target_zoom, animated=True)
+
+        # Calculate scroll position to center the first box
+        # Wait for zoom animation to complete before scrolling
+        def scroll_to_box():
+            box_pos = first_box.pos()
+            target_h = max(0, box_pos.x() - (viewport_width - first_box.width()) // 2)
+            target_v = max(0, box_pos.y() - (viewport_height - first_box.height()) // 2)
+            self._animate_scroll_to(target_h, target_v)
+
+        QTimer.singleShot(320, scroll_to_box)  # Slightly after zoom animation
+
+    def _fit_all_boxes(self):
+        """Smart zoom: fit all boxes in viewport with animation."""
+        if not self.overview_box_groups:
+            return
+
+        viewport = self.ov_scroll.viewport()
+        content = self.ov_boxes_widget
+
+        # Calculate zoom level to fit all content in viewport
+        content_width = content.sizeHint().width()
+        content_height = content.sizeHint().height()
+        viewport_width = viewport.width()
+        viewport_height = viewport.height()
+
+        if content_width <= 0 or content_height <= 0:
+            return
+
+        # Calculate zoom to fit all boxes (use smaller dimension, with 95% margin)
+        zoom_w = (viewport_width * 0.95) / content_width * self._zoom_level
+        zoom_h = (viewport_height * 0.95) / content_height * self._zoom_level
+        target_zoom = min(zoom_w, zoom_h)
+
+        # Animate zoom
+        self._set_zoom(target_zoom, animated=True)
+
+        # Animate scroll to top-left
+        QTimer.singleShot(320, lambda: self._animate_scroll_to(0, 0))
+
+    def _update_box_navigation(self, box_numbers):
+        """Update box quick navigation buttons."""
+        # Clear existing buttons
+        while self._box_nav_layout.count():
+            item = self._box_nav_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+        # Add navigation buttons for each box
+        for box_num in box_numbers:
+            btn = QPushButton(str(box_num))
+            btn.setFixedSize(24, 24)
+            btn.setObjectName("overviewBoxNavButton")
+            btn.setToolTip(t("overview.jumpToBox", box=box_num))
+            btn.clicked.connect(lambda checked=False, b=box_num: self._jump_to_box(b))
+            self._box_nav_layout.addWidget(btn)
+
+    def _jump_to_box(self, box_num):
+        """Jump to specific box with animated scroll and zoom."""
+        box_group = self.overview_box_groups.get(box_num)
+        if not box_group:
+            return
+
+        viewport = self.ov_scroll.viewport()
+        box_width = box_group.sizeHint().width()
+        box_height = box_group.sizeHint().height()
+        viewport_width = viewport.width()
+        viewport_height = viewport.height()
+
+        # Calculate zoom to fit this box to 85% of viewport
+        if box_width > 0 and box_height > 0:
+            zoom_w = (viewport_width * 0.85) / box_width * self._zoom_level
+            zoom_h = (viewport_height * 0.85) / box_height * self._zoom_level
+            target_zoom = min(zoom_w, zoom_h)
+
+            # Only adjust zoom if current zoom is significantly different
+            if abs(target_zoom - self._zoom_level) > 0.15:
+                # Animate zoom
+                self._set_zoom(target_zoom, animated=True)
+
+                # Calculate scroll position after zoom
+                def scroll_to_box():
+                    box_pos = box_group.pos()
+                    target_h = max(0, box_pos.x() - (viewport_width - box_group.width()) // 2)
+                    target_v = max(0, box_pos.y() - (viewport_height - box_group.height()) // 2)
+                    self._animate_scroll_to(target_h, target_v)
+
+                QTimer.singleShot(320, scroll_to_box)
+            else:
+                # Just scroll without zoom change
+                box_pos = box_group.pos()
+                target_h = max(0, box_pos.x() - (viewport_width - box_group.width()) // 2)
+                target_v = max(0, box_pos.y() - (viewport_height - box_group.height()) // 2)
+                self._animate_scroll_to(target_h, target_v)
 
     def _repaint_all_cells(self):
         """Repaint all cell buttons using cached data."""
@@ -572,7 +933,8 @@ class OverviewPanel(QWidget):
             if not isinstance(rec, dict):
                 continue
             box = rec.get("box")
-            for pos in (rec.get("positions") or []):
+            pos = rec.get("position")
+            if box is not None and pos is not None:
                 record_map[(box, pos)] = rec
         for (box_num, position), button in self.overview_cells.items():
             record = record_map.get((box_num, position))
@@ -605,6 +967,7 @@ class OverviewPanel(QWidget):
 
     def refresh(self):
         yaml_path = self.yaml_path_getter()
+        self.ov_status.setText(tr("overview.statusLoading"))
         if not yaml_path or not os.path.isfile(yaml_path):
             self.ov_status.setText(t("main.fileNotFound", path=yaml_path or ""))
             self.overview_records_by_id = {}
@@ -613,8 +976,6 @@ class OverviewPanel(QWidget):
             return
 
         stats_response = self.bridge.generate_stats(yaml_path)
-        timeline_response = self.bridge.collect_timeline(yaml_path, days=7, all_history=False)
-
         if not stats_response.get("ok"):
             self.ov_status.setText(t("overview.loadFailed", error=stats_response.get('message', 'unknown error')))
             self.overview_records_by_id = {}
@@ -661,34 +1022,40 @@ class OverviewPanel(QWidget):
         pos_map = {}
         for rec in records:
             box = rec.get("box")
-            if box is None: continue
-            for pos in rec.get("positions") or []:
-                pos_map[(int(box), int(pos))] = rec
+            pos = rec.get("position")
+            if box is None or pos is None:
+                continue
+            pos_map[(int(box), int(pos))] = rec
 
         self.overview_pos_map = pos_map
 
-        self.ov_total_records_value.setText(str(len(records)))
-        self.ov_total_capacity_value.setText(str(overall.get("total_capacity", "-")))
-        self.ov_occupied_value.setText(str(overall.get("total_occupied", "-")))
-        self.ov_empty_value.setText(str(overall.get("total_empty", "-")))
-        self.ov_rate_value.setText(f"{overall.get('occupancy_rate', 0):.1f}%")
+        total_records = len(records)
+        total_occupied = overall.get("total_occupied", 0)
+        total_empty = overall.get("total_empty", 0)
+        occupancy_rate = overall.get("occupancy_rate", 0)
+        self.ov_total_records_value.setText(str(total_records))
+        self.ov_occupied_value.setText(str(total_occupied))
+        self.ov_empty_value.setText(str(total_empty))
+        self.ov_rate_value.setText(f"{occupancy_rate:.1f}%")
+
+        # Emit stats for status bar
+        self.stats_changed.emit({
+            "total": total_records,
+            "occupied": total_occupied,
+            "empty": total_empty,
+            "rate": occupancy_rate,
+        })
 
         if len(records) == 0:
             self.ov_hover_hint.setText(tr("overview.emptyHint"))
-            self.ov_hover_hint.setStyleSheet("color: var(--warning); font-weight: 500; padding: 8px; background-color: rgba(245,158,11,0.1); border-radius: 4px;")
+            self.ov_hover_hint.setProperty("state", "warning")
+            self.ov_hover_hint.style().unpolish(self.ov_hover_hint)
+            self.ov_hover_hint.style().polish(self.ov_hover_hint)
         else:
             self.ov_hover_hint.setText(tr("overview.hoverHint"))
-            self.ov_hover_hint.setStyleSheet("color: var(--text-weak); font-weight: 500;")
-
-        if timeline_response.get("ok"):
-            ops7 = timeline_response.get("result", {}).get("summary", {}).get("total_ops", 0)
-            self.ov_ops7_value.setText(str(ops7))
-        else:
-            self.ov_ops7_value.setText(tr("common.na"))
-
-        self.ov_meta_stats.setText(
-            tr("overview.capacity") + f": {self.ov_total_capacity_value.text()} | " + tr("overview.ops7d") + f": {self.ov_ops7_value.text()}"
-        )
+            self.ov_hover_hint.setProperty("state", "default")
+            self.ov_hover_hint.style().unpolish(self.ov_hover_hint)
+            self.ov_hover_hint.style().polish(self.ov_hover_hint)
 
         for box_num in box_numbers:
             stats_item = box_stats.get(str(box_num), {})
@@ -712,6 +1079,9 @@ class OverviewPanel(QWidget):
             t("overview.loadedStatus", count=len(records), time=datetime.now().strftime("%H:%M:%S"))
         )
 
+        # Update box navigation buttons
+        self._update_box_navigation(box_numbers)
+
         # Warm hover animation system after initial UI render to eliminate first-hover delay.
         if not self._hover_warmed and self.overview_cells:
             QTimer.singleShot(50, self._warm_hover_animation)
@@ -731,7 +1101,8 @@ class OverviewPanel(QWidget):
 
         layout = getattr(self, "_current_layout", {})
         total_slots = rows * cols
-        self._base_cell_size = max(24, min(36, 320 // max(rows, cols)))
+        # Base cell size scaled with FONT_SIZE_CELL increase for better readability
+        self._base_cell_size = max(30, min(45, 375 // max(rows, cols)))
         cell_size = max(12, int(self._base_cell_size * self._zoom_level))
         columns = 3
         for idx, box_num in enumerate(box_numbers):
@@ -783,182 +1154,8 @@ class OverviewPanel(QWidget):
             self.ov_boxes_layout.addWidget(group, idx // columns, idx % columns)
             self.overview_box_groups[box_num] = group
 
+
         self.overview_shape = (rows, cols, tuple(box_numbers))
-
-    def update_plan_preview(self, plan_items):
-        """Update overview cells to show plan preview effects."""
-        self._plan_items = list(plan_items or [])
-        self._plan_simulation = None
-        if self._plan_items:
-            try:
-                self._plan_simulation = simulate_plan_pos_map(
-                    base_records_by_id=self.overview_records_by_id,
-                    plan_items=self._plan_items,
-                )
-            except Exception:
-                self._plan_simulation = None
-        # Plan changed while hover preview is active: cancel preview and repaint
-        # the normal overlay to avoid showing stale simulated state.
-        if self._hover_exec_preview_active:
-            self._hover_exec_preview_active = False
-            if self._status_before_hover is not None:
-                self.ov_status.setText(self._status_before_hover)
-                self._status_before_hover = None
-
-        if not plan_items:
-            for (box_num, position), button in self.overview_cells.items():
-                key = (box_num, position)
-                record = self.overview_pos_map.get(key)
-                self._paint_cell(button, box_num, position, record)
-            return
-            
-        preview_positions = {
-            "add": set(),
-            "takeout": set(),
-            "move_source": set(),
-            "move_target": set(),
-        }
-        
-        for item in plan_items:
-            action = item.get("action", "").lower()
-            box = item.get("box")
-            position = item.get("position")
-            to_box = item.get("to_box")
-            to_position = item.get("to_position")
-            
-            if action == "add" and box and position:
-                preview_positions["add"].add((int(box), int(position)))
-            
-            elif action in ("takeout", "thaw", "discard") and box and position:
-                preview_positions["takeout"].add((int(box), int(position)))
-            
-            elif action == "move" and box and position:
-                preview_positions["move_source"].add((int(box), int(position)))
-                if to_position:
-                    target_box = int(to_box) if to_box else int(box)
-                    preview_positions["move_target"].add((target_box, int(to_position)))
-        
-        for (box_num, position), button in self.overview_cells.items():
-            key = (box_num, position)
-            record = self.overview_pos_map.get(key)
-            is_selected = self.overview_selected_key == key
-            
-            if key in preview_positions["add"]:
-                button.setText(tr("overview.previewAdd"))
-                button.setStyleSheet(cell_preview_add_style())
-            elif key in preview_positions["takeout"]:
-                button.setText(tr("overview.previewOut"))
-                button.setStyleSheet(cell_preview_takeout_style())
-            elif key in preview_positions["move_source"]:
-                orig_record = self.overview_pos_map.get(key)
-                label = ""
-                if orig_record:
-                    from lib.custom_fields import get_display_key
-                    _dk = get_display_key(getattr(self, "_current_meta", {}))
-                    label = str(orig_record.get(_dk) or "")[:4]
-                button.setText(f"{label}→" if label else "→")
-                button.setStyleSheet(cell_preview_move_source_style())
-            elif key in preview_positions["move_target"]:
-                button.setText("←")
-                button.setStyleSheet(cell_preview_move_target_style())
-            else:
-                self._paint_cell(button, box_num, position, record)
-
-    def _focus_style(self, base_style: str) -> str:
-        """Overlay a stronger border to highlight a cell in preview mode."""
-        return (
-            (base_style or "")
-            + """
-            QPushButton { border: 3px solid var(--warning); }
-            QPushButton:hover { border: 3px solid var(--warning); }
-            """
-        )
-
-    def on_plan_item_hovered(self, item):
-        """Show a simulated post-execution overview when hovering a plan item."""
-        if not item:
-            self._hover_exec_preview_active = False
-            if self._status_before_hover is not None:
-                self.ov_status.setText(self._status_before_hover)
-                self._status_before_hover = None
-            self.update_plan_preview(self._plan_items)
-            return
-
-        if not self._plan_items:
-            return
-
-        sim = self._plan_simulation
-        if not isinstance(sim, dict):
-            try:
-                sim = simulate_plan_pos_map(
-                    base_records_by_id=self.overview_records_by_id,
-                    plan_items=self._plan_items,
-                )
-            except Exception:
-                sim = None
-        if not isinstance(sim, dict):
-            return
-
-        pos_map = sim.get("pos_map") if isinstance(sim.get("pos_map"), dict) else {}
-        preview_errors = sim.get("errors") if isinstance(sim.get("errors"), list) else []
-
-        if self._status_before_hover is None:
-            self._status_before_hover = self.ov_status.text()
-
-        action = str(item.get("action") or "").lower()
-        label = str(item.get("label") or "")
-        suffix = f" | issues: {len(preview_errors)}" if preview_errors else ""
-        self.ov_status.setText(f"[PREVIEW] After executing plan: focus {action} {label}{suffix}".strip())
-
-        self._hover_exec_preview_active = True
-
-        # Render the simulated final occupancy map.
-        for (box_num, position), button in self.overview_cells.items():
-            key = (box_num, position)
-            record = pos_map.get(key)
-            self._paint_cell(button, box_num, position, record)
-
-        # Highlight the focused operation's affected cells (best-effort).
-        focus_keys = set()
-        payload = item.get("payload") or {}
-
-        if action == "add":
-            box = payload.get("box", item.get("box"))
-            box = int(box) if box not in (None, "") else None
-            positions = payload.get("positions") or []
-            if box is not None:
-                for p in positions:
-                    try:
-                        focus_keys.add((box, int(p)))
-                    except Exception:
-                        pass
-        elif action in ("takeout", "thaw", "discard"):
-            box = item.get("box")
-            pos = item.get("position")
-            try:
-                focus_keys.add((int(box), int(pos)))
-            except Exception:
-                pass
-        elif action == "move":
-            box = item.get("box")
-            pos = item.get("position")
-            to_pos = item.get("to_position")
-            to_box = item.get("to_box")
-            try:
-                focus_keys.add((int(box), int(pos)))
-            except Exception:
-                pass
-            if to_pos not in (None, ""):
-                try:
-                    target_box = int(to_box) if to_box else int(box)
-                    focus_keys.add((target_box, int(to_pos)))
-                except Exception:
-                    pass
-
-        for key in focus_keys:
-            btn = self.overview_cells.get(key)
-            if btn is not None:
-                btn.setStyleSheet(self._focus_style(btn.styleSheet()))
 
     def _paint_cell(self, button, box_num, position, record):
         from lib.custom_fields import get_display_key, get_color_key, get_effective_fields, STRUCTURAL_FIELD_KEYS
@@ -973,7 +1170,7 @@ class OverviewPanel(QWidget):
             dk_val = str(record.get(dk) or "")
             ck_val = str(record.get(ck) or "")
             # Scale label truncation with zoom
-            max_chars = max(3, int(6 * self._zoom_level))
+            max_chars = max(4, int(8 * self._zoom_level))
             label = dk_val[:max_chars] if dk_val else display_pos
             # Color based on color_key field
             color = cell_color(ck_val or None)
@@ -982,23 +1179,27 @@ class OverviewPanel(QWidget):
             # Dynamic tooltip from effective fields
             cl = record.get("cell_line")
             tt = [
-                f"ID: {record.get('id', '-')}",
-                f"Pos: {box_num}:{position}",
+                f"{tr('overview.tooltipId')}: {record.get('id', '-')}",
+                f"{tr('overview.tooltipPos')}: {box_num}:{position}",
             ]
             if cl:
-                tt.append(f"Cell Line: {cl}")
+                tt.append(f"{tr('overview.tooltipCellLine')}: {cl}")
+            note_value = record.get("note")
+            if note_value is not None and str(note_value).strip():
+                tt.append(f"{tr('operations.note')}: {note_value}")
             for fdef in get_effective_fields(meta):
                 fk = fdef["key"]
                 fv = record.get(fk)
                 if fv is not None and str(fv):
                     tt.append(f"{fdef.get('label', fk)}: {fv}")
-            tt.append(f"Date: {record.get('frozen_at', '-')}")
+            tt.append(f"{tr('overview.tooltipDate')}: {record.get('frozen_at', '-')}")
 
             button.setToolTip("\n".join(tt))
             button.setStyleSheet(cell_occupied_style(color, is_selected, font_size=fs_occ))
             # Dynamic search text — include cell_line + all user fields
             parts = [str(record.get("id", "")), str(box_num), str(position),
                      str(record.get("cell_line") or ""),
+                     str(record.get("note") or ""),
                      str(record.get("frozen_at") or "")]
             for k, v in record.items():
                 if k not in STRUCTURAL_FIELD_KEYS and k != "id":
@@ -1179,6 +1380,9 @@ class OverviewPanel(QWidget):
     def on_toggle_filters(self, checked):
         self.ov_filter_advanced_widget.setVisible(bool(checked))
         self.ov_filter_toggle_btn.setText(tr("overview.hideFilters") if checked else tr("overview.moreFilters"))
+        # Update icon based on state
+        icon_name = Icons.CHEVRON_UP if checked else Icons.CHEVRON_DOWN
+        self.ov_filter_toggle_btn.setIcon(get_icon(icon_name))
 
     def on_clear_filters(self):
         self.ov_filter_keyword.clear()
@@ -1226,10 +1430,31 @@ class OverviewPanel(QWidget):
         record = self.overview_pos_map.get((box_num, position))
         self.overview_hover_key = hover_key
         self._show_detail(box_num, position, record)
+        # Emit hover stats for status bar
+        self._emit_hover_stats(box_num, position, record)
 
     def _reset_detail(self):
         self.overview_hover_key = None
         self.ov_hover_hint.setText(tr("overview.hoverHint"))
+        # Emit empty hover stats to reset status bar
+        self.hover_stats_changed.emit("")
+
+    def _emit_hover_stats(self, box_num, position, record):
+        """Emit formatted hover stats for status bar display."""
+        if not record:
+            self.hover_stats_changed.emit(t("overview.previewEmpty", box=box_num, pos=position))
+            return
+
+        from lib.custom_fields import get_display_key
+        meta = getattr(self, "_current_meta", {})
+        dk = get_display_key(meta)
+        rec_id = str(record.get("id", "-"))
+        dk_val = str(record.get(dk, "-"))
+        frozen_at = str(record.get("frozen_at", "-"))
+        # Compact format for status bar
+        self.hover_stats_changed.emit(
+            f"ID {rec_id} | {box_num}:{position} | {dk_val} | {tr('operations.frozenDate')}: {frozen_at}"
+        )
 
     def _show_detail(self, box_num, position, record):
         if not record:
@@ -1252,14 +1477,11 @@ class OverviewPanel(QWidget):
 
         menu = QMenu(self)
         act_add = None
-        act_thaw = None
-        act_move = None
-        act_query = None
+        act_takeout = None
 
         if record:
-            act_thaw = menu.addAction(tr("operations.thaw"))
-            act_move = menu.addAction(tr("operations.move"))
-            act_query = menu.addAction(tr("operations.query"))
+            # 只保留"取出"选项
+            act_takeout = menu.addAction(tr("overview.takeout"))
         else:
             act_add = menu.addAction(tr("operations.add"))
 
@@ -1268,6 +1490,7 @@ class OverviewPanel(QWidget):
             return
 
         if selected == act_add:
+            # 空格子：保持原有的添加逻辑（预填充表单）
             self.request_add_prefill.emit({
                 "box": int(box_num),
                 "position": int(position),
@@ -1281,63 +1504,52 @@ class OverviewPanel(QWidget):
         if not record:
             return
 
+        # 有记录：直接创建取出 plan item
         rec_id = int(record.get("id"))
-        if selected == act_thaw:
-            self.request_prefill.emit({
-                "box": int(box_num),
-                "position": int(position),
-                "record_id": rec_id,
-            })
-            self.status_message.emit(t("overview.prefillThaw", id=rec_id), 2000)
-            return
-        if selected == act_move:
-            self.request_move_prefill.emit({
-                "box": int(box_num),
-                "position": int(position),
-                "record_id": rec_id,
-            })
-            self.status_message.emit(t("overview.prefillMove", id=rec_id), 2000)
-            return
-        if selected == act_query:
-            self.request_query_prefill.emit({
-                "box": int(box_num),
-                "position": int(position),
-                "record_id": rec_id,
-            })
-            self.status_message.emit(t("overview.prefillQuery", id=rec_id), 2000)
+        if selected == act_takeout:
+            self._create_takeout_plan_item(rec_id, box_num, position, record)
+
+    def _create_takeout_plan_item(self, record_id, box_num, position, record):
+        """Create a takeout plan item directly from overview context menu."""
+        from lib.plan_item_factory import build_record_plan_item, resolve_record_box
+        from datetime import date
+
+        # 构建 plan item（使用 Takeout 动作）
+        item = build_record_plan_item(
+            action="Takeout",
+            record_id=record_id,
+            position=position,
+            box=resolve_record_box(record, fallback_box=box_num),
+            date_str=date.today().isoformat(),
+            source="context_menu",  # 标记来源
+            payload_action="Takeout",
+        )
+
+        # 发送到 plan 列表（会自动触发 preflight 校验）
+        self.plan_items_requested.emit([item])
+
+        # 状态提示
+        self.status_message.emit(
+            t("overview.takeoutAdded", id=record_id),
+            2000,
+        )
 
     def _on_cell_drop(self, from_box, from_pos, to_box, to_pos, record_id):
         if from_box == to_box and from_pos == to_pos:
             return
 
-        record = self.overview_records_by_id.get(record_id)
-        label = "-"
-        if record:
-            from lib.custom_fields import get_display_key
-            meta = getattr(self, "_current_meta", {})
-            dk = get_display_key(meta)
-            label = str(record.get(dk) or "") or "-"
-
-        item = {
-            "action": "move",
+        # Prefill to Move form (same as right-click menu)
+        self.request_move_prefill.emit({
             "box": from_box,
             "position": from_pos,
-            "to_position": to_pos,
-            "to_box": to_box if to_box != from_box else None,
             "record_id": record_id,
-            "label": label,
-            "source": "human",
-            "payload": {
-                "record_id": record_id,
-                "position": from_pos,
-                "to_position": to_pos,
-                "to_box": to_box if to_box != from_box else None,
-                "date_str": date.today().isoformat(),
-                "action": "Move",
-                "note": "Drag from Overview",
-            },
-        }
-
-        self.plan_items_requested.emit([item])
+            "to_box": to_box,
+            "to_position": to_pos,
+        })
         target_desc = f"Box {to_box}:{to_pos}" if to_box != from_box else f"Pos {to_pos}"
-        self.status_message.emit(f"Move ID {record_id} to {target_desc} added to Plan.", 2000)
+        self.status_message.emit(t("overview.prefillMove", id=record_id), 2000)
+
+    def set_summary_cards_visible(self, visible):
+        """Show or hide the summary cards (used when displaying stats in status bar instead)."""
+        self._show_summary_cards = visible
+        self._summary_container.setVisible(visible)

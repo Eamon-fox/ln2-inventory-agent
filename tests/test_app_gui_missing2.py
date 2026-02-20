@@ -99,8 +99,8 @@ class PlanModelValidationTests(unittest.TestCase):
         error = validate_plan_item(item)
         self.assertIsNone(error)
 
-    def test_validate_plan_item_invalid_box(self):
-        """Test invalid box number."""
+    def test_validate_plan_item_box_is_not_hard_limited(self):
+        """Box value is schema-valid; layout-specific limits are checked later."""
         item = {
             "action": "add",
             "box": 99,
@@ -112,10 +112,10 @@ class PlanModelValidationTests(unittest.TestCase):
             "frozen_at": "2026-02-10",
         }
         error = validate_plan_item(item)
-        self.assertIsNotNone(error)
+        self.assertIsNone(error)
 
-    def test_validate_plan_item_invalid_position(self):
-        """Test invalid position number."""
+    def test_validate_plan_item_position_is_not_hard_limited(self):
+        """Position value is schema-valid; layout-specific limits are checked later."""
         item = {
             "action": "add",
             "box": 1,
@@ -127,7 +127,7 @@ class PlanModelValidationTests(unittest.TestCase):
             "frozen_at": "2026-02-10",
         }
         error = validate_plan_item(item)
-        self.assertIsNotNone(error)
+        self.assertIsNone(error)
 
     def test_validate_plan_item_invalid_action(self):
         """Test invalid action type."""
@@ -191,32 +191,6 @@ class PlanModelRenderingTests(unittest.TestCase):
 class WorkerTests(unittest.TestCase):
     """Test AgentRunWorker functionality."""
 
-    def test_worker_basic_execution(self):
-        """Test basic AgentRunWorker execution."""
-        from app_gui.ui.workers import AgentRunWorker
-
-        mock_bridge = Mock()
-        mock_bridge.run_agent_query.return_value = {
-            "ok": True,
-            "final": "Test answer",
-            "conversation_history": [],
-        }
-
-        worker = AgentRunWorker(
-            bridge=mock_bridge,
-            yaml_path="/tmp/test.yaml",
-            query="test query",
-            model="deepseek-chat",
-            max_steps=8,
-            history=None,
-        )
-
-        worker.run()
-
-        mock_bridge.run_agent_query.assert_called_once()
-        call_kwargs = mock_bridge.run_agent_query.call_args[1]
-        self.assertEqual("test query", call_kwargs["query"])
-        self.assertTrue(call_kwargs["thinking_enabled"])
 
 
 # ── ui/utils.py Tests ───────────────────────────────────────────

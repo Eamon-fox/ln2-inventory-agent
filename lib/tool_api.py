@@ -2,19 +2,33 @@
 
 import getpass
 import os
+import re
 import uuid
 from copy import deepcopy
 from collections import defaultdict
 from datetime import datetime, timedelta
 
 from .csv_export import export_inventory_to_csv
-from .custom_fields import STRUCTURAL_FIELD_KEYS, get_effective_fields, get_required_field_keys
-from .position_fmt import get_box_numbers, get_position_range, get_total_slots
+from .custom_fields import (
+    STRUCTURAL_FIELD_KEYS,
+    get_cell_line_options,
+    get_effective_fields,
+    get_required_field_keys,
+    is_cell_line_required,
+)
+from .position_fmt import (
+    display_to_box,
+    display_to_pos,
+    get_box_numbers,
+    get_position_range,
+    get_total_slots,
+)
 from .operations import check_position_conflicts, find_record_by_id, get_next_id
-from .thaw_parser import ACTION_LABEL, extract_events, normalize_action
+from .thaw_parser import ACTION_LABEL, canonicalize_non_move_action, extract_events, normalize_action
 from .validators import (
     format_validation_errors,
     normalize_date_arg,
+    parse_positions,
     parse_date,
     validate_box,
     validate_date,
@@ -74,7 +88,31 @@ def build_actor_context(
     }
 
 
-def parse_batch_entries(entries_str):
+def _coerce_position_value(raw_value, layout=None, field_name="position"):
+    """Convert a display/internal position value to internal integer position."""
+    if raw_value in (None, ""):
+        raise ValueError(f"{field_name} 不能为空")
+    try:
+        return int(display_to_pos(raw_value, layout))
+    except Exception as exc:
+        raise ValueError(f"{field_name} 无效: {raw_value}") from exc
+
+
+def _normalize_positions_input(positions, layout=None):
+    """Normalize add-entry positions input into a list of internal integers."""
+    if isinstance(positions, str):
+        return parse_positions(positions, layout=layout)
+
+    if isinstance(positions, (list, tuple, set)):
+        return [_coerce_position_value(value, layout=layout, field_name="position") for value in positions]
+
+    if positions in (None, ""):
+        return []
+
+    return [_coerce_position_value(positions, layout=layout, field_name="position")]
+
+
+def parse_batch_entries(entries_str, layout=None):
     """Parse batch input format.
 
     Supports:
@@ -82,6 +120,8 @@ def parse_batch_entries(entries_str):
     - ``id1:pos1,id2:pos2,...`` (takeout/thaw/discard)
     - ``id1:from1->to1,id2:from2->to2,...`` (move within same box)
     - ``id1:from1->to1:box,id2:from2->to2:box,...`` (cross-box move)
+
+    ``pos/from/to`` accepts display values under current layout (e.g. ``A1``).
     """
     result = []
     try:
@@ -103,18 +143,26 @@ def parse_batch_entries(entries_str):
             to_box = int(parts[2]) if len(parts) >= 3 else None
             if "->" in pos_text:
                 from_pos_text, to_pos_text = pos_text.split("->", 1)
-                tup = (record_id, int(from_pos_text), int(to_pos_text))
+                tup = (
+                    record_id,
+                    _coerce_position_value(from_pos_text, layout=layout, field_name="from_position"),
+                    _coerce_position_value(to_pos_text, layout=layout, field_name="to_position"),
+                )
                 if to_box is not None:
                     tup = tup + (to_box,)
                 result.append(tup)
             elif ">" in pos_text:
                 from_pos_text, to_pos_text = pos_text.split(">", 1)
-                tup = (record_id, int(from_pos_text), int(to_pos_text))
+                tup = (
+                    record_id,
+                    _coerce_position_value(from_pos_text, layout=layout, field_name="from_position"),
+                    _coerce_position_value(to_pos_text, layout=layout, field_name="to_position"),
+                )
                 if to_box is not None:
                     tup = tup + (to_box,)
                 result.append(tup)
             else:
-                result.append((record_id, int(pos_text)))
+                result.append((record_id, _coerce_position_value(pos_text, layout=layout, field_name="position")))
     except Exception as exc:
         raise ValueError(
             "输入格式错误: "
@@ -123,7 +171,7 @@ def parse_batch_entries(entries_str):
     return result
 
 
-def _coerce_batch_entry(entry):
+def _coerce_batch_entry(entry, layout=None):
     """Normalize one batch entry to a tuple of ints.
 
     Accepts tuple/list forms ``(record_id, position)`` or ``(record_id, from_pos, to_pos)``
@@ -146,20 +194,41 @@ def _coerce_batch_entry(entry):
                 return (int(record_id),)
             raise ValueError("每个条目必须包含 position/from_position")
         if to_pos is None:
-            return (int(record_id), int(from_pos))
+            return (int(record_id), _coerce_position_value(from_pos, layout=layout, field_name="position"))
         if to_box is not None:
-            return (int(record_id), int(from_pos), int(to_pos), int(to_box))
-        return (int(record_id), int(from_pos), int(to_pos))
+            return (
+                int(record_id),
+                _coerce_position_value(from_pos, layout=layout, field_name="from_position"),
+                _coerce_position_value(to_pos, layout=layout, field_name="to_position"),
+                int(to_box),
+            )
+        return (
+            int(record_id),
+            _coerce_position_value(from_pos, layout=layout, field_name="from_position"),
+            _coerce_position_value(to_pos, layout=layout, field_name="to_position"),
+        )
 
     if isinstance(entry, (list, tuple)):
         if len(entry) == 1:
             return (int(entry[0]),)
         if len(entry) == 2:
-            return (int(entry[0]), int(entry[1]))
+            return (
+                int(entry[0]),
+                _coerce_position_value(entry[1], layout=layout, field_name="position"),
+            )
         if len(entry) == 3:
-            return (int(entry[0]), int(entry[1]), int(entry[2]))
+            return (
+                int(entry[0]),
+                _coerce_position_value(entry[1], layout=layout, field_name="from_position"),
+                _coerce_position_value(entry[2], layout=layout, field_name="to_position"),
+            )
         if len(entry) == 4:
-            return (int(entry[0]), int(entry[1]), int(entry[2]), int(entry[3]))
+            return (
+                int(entry[0]),
+                _coerce_position_value(entry[1], layout=layout, field_name="from_position"),
+                _coerce_position_value(entry[2], layout=layout, field_name="to_position"),
+                int(entry[3]),
+            )
         raise ValueError(
             "每个条目必须是 (record_id) 或 (record_id, position) 或 (record_id, from_position, to_position[, to_box])"
         )
@@ -167,21 +236,14 @@ def _coerce_batch_entry(entry):
     raise ValueError("每个条目必须是 tuple/list/dict")
 
 
-def _replace_position_once(positions, old_pos, new_pos):
-    """Replace the first occurrence of old_pos with new_pos."""
-    replaced = False
-    updated = []
-    for pos in positions:
-        if not replaced and pos == old_pos:
-            updated.append(new_pos)
-            replaced = True
-        else:
-            updated.append(pos)
-    return updated, replaced
-
-
-def _build_move_event(date_str, from_position, to_position, note=None,
-                      paired_record_id=None, from_box=None, to_box=None):
+def _build_move_event(
+    date_str,
+    from_position,
+    to_position,
+    paired_record_id=None,
+    from_box=None,
+    to_box=None,
+):
     """Build normalized move event payload."""
     event = {
         "date": date_str,
@@ -196,8 +258,6 @@ def _build_move_event(date_str, from_position, to_position, note=None,
         event["to_box"] = to_box
     if paired_record_id is not None:
         event["paired_record_id"] = paired_record_id
-    if note:
-        event["note"] = note
     return event
 
 
@@ -323,6 +383,250 @@ def _failure_result(
     return payload
 
 
+_ALLOWED_EXECUTION_MODES = {"direct", "preflight", "execute"}
+
+
+def _normalize_execution_mode(execution_mode):
+    mode = str(execution_mode or "").strip().lower()
+    return mode or "direct"
+
+
+def _enforce_execute_mode_for_source(source):
+    """Return True when this caller must execute writes via execute mode.
+
+    Keep plain ``tool_api`` source backward compatible for direct library users,
+    while enforcing plan execution for GUI/agent channels.
+    """
+    src = str(source or "").strip().lower()
+    if src in {"", "tool_api"}:
+        return False
+    return src.startswith("agent") or src.startswith("app_gui") or src.startswith("plan_executor")
+
+
+def _validate_execution_gate(*, dry_run=False, execution_mode=None, source="tool_api"):
+    mode = _normalize_execution_mode(execution_mode)
+    if mode not in _ALLOWED_EXECUTION_MODES:
+        return {
+            "error_code": "invalid_execution_mode",
+            "message": "execution_mode 必须是 direct/preflight/execute",
+            "details": {"execution_mode": execution_mode},
+        }, mode
+
+    if bool(dry_run):
+        return None, mode
+
+    if _enforce_execute_mode_for_source(source) and mode != "execute":
+        return {
+            "error_code": "write_requires_execute_mode",
+            "message": "只能在执行计划时写入（请先暂存到 Plan，再点击 Execute）",
+            "details": {"execution_mode": mode, "source": source},
+        }, mode
+
+    return None, mode
+
+
+def _validate_add_entry_request(payload):
+    frozen_at = payload.get("frozen_at")
+    positions = payload.get("positions")
+    if not validate_date(frozen_at):
+        return {
+            "error_code": "invalid_date",
+            "message": f"日期格式无效: {frozen_at}",
+            "details": {"frozen_at": frozen_at},
+        }, {}
+    if not positions:
+        return {
+            "error_code": "empty_positions",
+            "message": "必须指定至少一个位置",
+        }, {}
+    return None, {}
+
+
+def _validate_edit_entry_request(payload):
+    fields = payload.get("fields")
+    if not fields:
+        return {
+            "error_code": "no_fields",
+            "message": "至少需要修改一个字段",
+        }, {}
+    if "frozen_at" in fields and not validate_date(fields["frozen_at"]):
+        return {
+            "error_code": "invalid_date",
+            "message": f"日期格式无效: {fields['frozen_at']}",
+            "details": {"frozen_at": fields["frozen_at"]},
+        }, {}
+    return None, {}
+
+
+def _validate_record_thaw_request(payload):
+    date_str = payload.get("date_str")
+    action = payload.get("action")
+    to_position = payload.get("to_position")
+
+    if not validate_date(date_str):
+        return {
+            "error_code": "invalid_date",
+            "message": f"日期格式无效: {date_str}",
+            "details": {"date": date_str},
+        }, {}
+
+    action_en = normalize_action(action)
+    if not action_en:
+        return {
+            "error_code": "invalid_action",
+            "message": "操作类型必须是 取出/移动（兼容复苏/扔掉并自动归一为取出）",
+            "details": {"action": action},
+        }, {}
+
+    action_en = canonicalize_non_move_action(action_en) or action_en
+    normalized = {"action_en": action_en, "move_to_position": None}
+    if action_en == "move":
+        if to_position in (None, ""):
+            return {
+                "error_code": "invalid_move_target",
+                "message": "移动操作必须提供 to_position（目标位置）",
+            }, normalized
+        normalized["move_to_position"] = to_position
+
+    return None, normalized
+
+
+def _validate_batch_thaw_request(payload):
+    date_str = payload.get("date_str")
+    action = payload.get("action")
+    entries = payload.get("entries")
+
+    if not validate_date(date_str):
+        return {
+            "error_code": "invalid_date",
+            "message": f"日期格式无效: {date_str}",
+            "details": {"date": date_str},
+        }, {}
+
+    if not entries:
+        return {
+            "error_code": "empty_entries",
+            "message": "未指定任何操作",
+        }, {}
+
+    action_en = normalize_action(action)
+    if not action_en:
+        return {
+            "error_code": "invalid_action",
+            "message": "操作类型必须是 取出/移动（兼容复苏/扔掉并自动归一为取出）",
+            "details": {"action": action},
+        }, {}
+
+    action_en = canonicalize_non_move_action(action_en) or action_en
+    return None, {"action_en": action_en}
+
+
+def _validate_adjust_box_count_request(payload):
+    operation = payload.get("operation")
+    op_text = str(operation or "").strip().lower()
+    op_alias = {
+        "add": "add",
+        "add_boxes": "add",
+        "increase": "add",
+        "remove": "remove",
+        "remove_box": "remove",
+        "delete": "remove",
+        "删除": "remove",
+        "增加": "add",
+    }
+    op = op_alias.get(op_text)
+    if not op:
+        return {
+            "error_code": "invalid_operation",
+            "message": "operation 必须是 add/remove",
+            "details": {"operation": operation},
+        }, {}
+    return None, {"op": op}
+
+
+_WRITE_REQUEST_VALIDATORS = {
+    "tool_add_entry": _validate_add_entry_request,
+    "tool_edit_entry": _validate_edit_entry_request,
+    "tool_record_thaw": _validate_record_thaw_request,
+    "tool_batch_thaw": _validate_batch_thaw_request,
+    "tool_rollback": lambda _payload: (None, {}),
+    "tool_adjust_box_count": _validate_adjust_box_count_request,
+}
+
+
+def validate_write_tool_call(
+    *,
+    yaml_path,
+    action,
+    source,
+    tool_name,
+    tool_input,
+    payload,
+    dry_run=False,
+    execution_mode=None,
+    actor_context=None,
+    before_data=None,
+):
+    """Unified write-tool validation gate.
+
+    1) Enforce execute-mode write policy for GUI/agent channels.
+    2) Dispatch to each tool's request-level validator.
+    3) Return either a normalized success payload or unified failure payload.
+    """
+    gate_issue, normalized_mode = _validate_execution_gate(
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        source=source,
+    )
+    if gate_issue:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=action,
+            source=source,
+            tool_name=tool_name,
+            error_code=gate_issue.get("error_code", "validation_failed"),
+            message=gate_issue.get("message", "写入校验失败"),
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=before_data,
+            errors=gate_issue.get("errors"),
+            details=gate_issue.get("details"),
+            extra=gate_issue.get("extra"),
+        )
+
+    validator = _WRITE_REQUEST_VALIDATORS.get(tool_name)
+    if callable(validator):
+        payload_dict = payload if isinstance(payload, dict) else {}
+        validator_result = validator(payload_dict)
+        if isinstance(validator_result, tuple) and len(validator_result) == 2:
+            issue, normalized = validator_result
+        else:
+            issue, normalized = None, {}
+        if issue:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=action,
+                source=source,
+                tool_name=tool_name,
+                error_code=issue.get("error_code", "validation_failed"),
+                message=issue.get("message", "写入校验失败"),
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=before_data,
+                errors=issue.get("errors"),
+                details=issue.get("details"),
+                extra=issue.get("extra"),
+            )
+    else:
+        normalized = {}
+
+    return {
+        "ok": True,
+        "execution_mode": normalized_mode,
+        "normalized": normalized,
+    }
+
+
 def tool_add_entry(
     yaml_path,
     box,
@@ -330,6 +634,7 @@ def tool_add_entry(
     frozen_at,
     fields=None,
     dry_run=False,
+    execution_mode=None,
     actor_context=None,
     source="tool_api",
     auto_backup=True,
@@ -348,32 +653,22 @@ def tool_add_entry(
         "frozen_at": frozen_at,
         "fields": fields,
         "dry_run": bool(dry_run),
+        "execution_mode": execution_mode,
     }
 
-    if not validate_date(frozen_at):
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_date",
-            message=f"日期格式无效: {frozen_at}",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            details={"frozen_at": frozen_at},
-        )
-
-    if not positions:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=action,
-            source=source,
-            tool_name=tool_name,
-            error_code="empty_positions",
-            message="必须指定至少一个位置",
-            actor_context=actor_context,
-            tool_input=tool_input,
-        )
+    validation = validate_write_tool_call(
+        yaml_path=yaml_path,
+        action=action,
+        source=source,
+        tool_name=tool_name,
+        tool_input=tool_input,
+        payload={"frozen_at": frozen_at, "positions": positions},
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+    )
+    if not validation.get("ok"):
+        return validation
 
     try:
         data = load_yaml(yaml_path)
@@ -392,6 +687,50 @@ def tool_add_entry(
 
     layout = _get_layout(data)
     _pos_lo, _pos_hi = get_position_range(layout)
+
+    try:
+        positions = _normalize_positions_input(positions, layout=layout)
+    except ValueError as exc:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=action,
+            source=source,
+            tool_name=tool_name,
+            error_code="invalid_position",
+            message=str(exc),
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+            details={"positions": positions},
+        )
+
+    if not positions:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=action,
+            source=source,
+            tool_name=tool_name,
+            error_code="empty_positions",
+            message="必须指定至少一个位置",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+        )
+
+    for pos in positions:
+        if not validate_position(pos, layout):
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=action,
+                source=source,
+                tool_name=tool_name,
+                error_code="invalid_position",
+                message=f"位置编号必须在 {_pos_lo}-{_pos_hi} 之间",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"position": pos},
+            )
 
     if not validate_box(box, layout):
         return _failure_result(
@@ -427,6 +766,11 @@ def tool_add_entry(
     meta = data.get("meta", {})
     required_keys = get_required_field_keys(meta)
     missing = [k for k in sorted(required_keys) if not fields.get(k)]
+
+    cell_line_text = str(fields.get("cell_line") or "").strip()
+    if is_cell_line_required(meta) and not cell_line_text:
+        missing.append("cell_line")
+
     if missing:
         return _failure_result(
             yaml_path=yaml_path,
@@ -441,19 +785,55 @@ def tool_add_entry(
             details={"missing": missing},
         )
 
+    if cell_line_text:
+        cell_line_options = get_cell_line_options(meta)
+        if not cell_line_options:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=action,
+                source=source,
+                tool_name=tool_name,
+                error_code="invalid_cell_line_options",
+                message="cell_line 需要预设选项，但 meta.cell_line_options 为空",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+            )
+        if cell_line_text not in cell_line_options:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=action,
+                source=source,
+                tool_name=tool_name,
+                error_code="invalid_cell_line",
+                message="cell_line 必须来自预设下拉选项",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"cell_line": cell_line_text, "options": cell_line_options},
+            )
+
+        fields["cell_line"] = cell_line_text
+
     # Tube-level model: one record == one physical tube.
     # Add multiple tubes by creating multiple records, one per position.
     next_id = get_next_id(records)
     new_records = []
     created = []
     cell_line = fields.pop("cell_line", None)
+    raw_note = fields.pop("note", None)
+    note_value = None
+    if raw_note is not None:
+        note_text = str(raw_note).strip()
+        note_value = note_text or None
     for offset, pos in enumerate(list(positions)):
         tube_id = next_id + offset
         rec = {
             "id": tube_id,
             "cell_line": cell_line or "",
+            "note": note_value,
             "box": box,
-            "positions": [int(pos)],
+            "position": int(pos),
             "frozen_at": frozen_at,
         }
         # Merge user fields (skip structural keys)
@@ -469,6 +849,7 @@ def tool_add_entry(
         "box": box,
         "positions": list(int(p) for p in positions),
         "frozen_at": frozen_at,
+        "note": note_value,
         "fields": fields,
         "created": created,
     }
@@ -592,11 +973,11 @@ def tool_add_entry(
     }
 
 
-_EDITABLE_FIELDS = {"frozen_at", "cell_line"}
+_EDITABLE_FIELDS = {"frozen_at", "cell_line", "note"}
 
 
 def _get_editable_fields(yaml_path):
-    """Return editable field set: frozen_at + cell_line + all user-configurable fields from meta."""
+    """Return editable field set: frozen_at + cell_line + note + user fields from meta."""
     try:
         data = load_yaml(yaml_path)
         meta = data.get("meta", {})
@@ -611,6 +992,8 @@ def tool_edit_entry(
     yaml_path,
     record_id,
     fields,
+    dry_run=False,
+    execution_mode=None,
     actor_context=None,
     source="tool_api",
     auto_backup=True,
@@ -622,15 +1005,26 @@ def tool_edit_entry(
     """
     action = "edit_entry"
     tool_name = "tool_edit_entry"
-    tool_input = {"record_id": record_id, "fields": dict(fields or {})}
+    tool_input = {
+        "record_id": record_id,
+        "fields": dict(fields or {}),
+        "dry_run": bool(dry_run),
+        "execution_mode": execution_mode,
+    }
 
-    if not fields:
-        return _failure_result(
-            yaml_path=yaml_path, action=action, source=source,
-            tool_name=tool_name, error_code="no_fields",
-            message="至少需要修改一个字段",
-            actor_context=actor_context, tool_input=tool_input,
-        )
+    validation = validate_write_tool_call(
+        yaml_path=yaml_path,
+        action=action,
+        source=source,
+        tool_name=tool_name,
+        tool_input=tool_input,
+        payload={"fields": fields or {}},
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+    )
+    if not validation.get("ok"):
+        return validation
 
     allowed = _get_editable_fields(yaml_path)
     bad_keys = set(fields.keys()) - allowed
@@ -643,16 +1037,6 @@ def tool_edit_entry(
             details={"forbidden": sorted(bad_keys), "allowed": sorted(allowed)},
         )
 
-    # Validate frozen_at if provided
-    if "frozen_at" in fields and not validate_date(fields["frozen_at"]):
-        return _failure_result(
-            yaml_path=yaml_path, action=action, source=source,
-            tool_name=tool_name, error_code="invalid_date",
-            message=f"日期格式无效: {fields['frozen_at']}",
-            actor_context=actor_context, tool_input=tool_input,
-            details={"frozen_at": fields["frozen_at"]},
-        )
-
     try:
         data = load_yaml(yaml_path)
     except Exception as exc:
@@ -662,6 +1046,55 @@ def tool_edit_entry(
             message=f"无法读取YAML文件: {exc}",
             actor_context=actor_context, tool_input=tool_input,
         )
+
+    meta = data.get("meta", {})
+    if "cell_line" in fields:
+        raw_cell_line = fields.get("cell_line")
+        cell_line_text = str(raw_cell_line or "").strip()
+
+        if is_cell_line_required(meta) and not cell_line_text:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=action,
+                source=source,
+                tool_name=tool_name,
+                error_code="invalid_cell_line",
+                message="cell_line 为必填，不能为空",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+            )
+
+        if cell_line_text:
+            cell_line_options = get_cell_line_options(meta)
+            if not cell_line_options:
+                return _failure_result(
+                    yaml_path=yaml_path,
+                    action=action,
+                    source=source,
+                    tool_name=tool_name,
+                    error_code="invalid_cell_line_options",
+                    message="cell_line 需要预设选项，但 meta.cell_line_options 为空",
+                    actor_context=actor_context,
+                    tool_input=tool_input,
+                    before_data=data,
+                )
+            if cell_line_text not in cell_line_options:
+                return _failure_result(
+                    yaml_path=yaml_path,
+                    action=action,
+                    source=source,
+                    tool_name=tool_name,
+                    error_code="invalid_cell_line",
+                    message="cell_line 必须来自预设下拉选项",
+                    actor_context=actor_context,
+                    tool_input=tool_input,
+                    before_data=data,
+                    details={"cell_line": cell_line_text, "options": cell_line_options},
+                )
+
+        fields = dict(fields)
+        fields["cell_line"] = cell_line_text
 
     _idx, record = find_record_by_id(data.get("inventory", []), record_id)
     if record is None:
@@ -689,6 +1122,17 @@ def tool_edit_entry(
             actor_context=actor_context, tool_input=tool_input,
             before_data=data, errors=validation_error.get("errors"),
         )
+
+    if dry_run:
+        return {
+            "ok": True,
+            "dry_run": True,
+            "preview": {
+                "record_id": record_id,
+                "before": before,
+                "after": dict(fields),
+            },
+        }
 
     try:
         _backup_path = write_yaml(
@@ -726,10 +1170,10 @@ def tool_record_thaw(
     position=None,
     date_str=None,
     action="取出",
-    note=None,
     to_position=None,
     to_box=None,
     dry_run=False,
+    execution_mode=None,
     actor_context=None,
     source="tool_api",
     auto_backup=True,
@@ -744,78 +1188,28 @@ def tool_record_thaw(
         "to_box": to_box,
         "date": date_str,
         "action": action,
-        "note": note,
         "dry_run": bool(dry_run),
+        "execution_mode": execution_mode,
     }
 
-    if not validate_date(date_str):
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_date",
-            message=f"日期格式无效: {date_str}",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            details={"date": date_str},
-        )
+    validation = validate_write_tool_call(
+        yaml_path=yaml_path,
+        action=audit_action,
+        source=source,
+        tool_name=tool_name,
+        tool_input=tool_input,
+        payload={"date_str": date_str, "action": action, "to_position": to_position},
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+    )
+    if not validation.get("ok"):
+        return validation
 
-    action_en = normalize_action(action)
-    if not action_en:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_action",
-            message="操作类型必须是 取出/复苏/扔掉/移动",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            details={"action": action},
-        )
+    normalized = validation.get("normalized") or {}
+    action_en = normalized.get("action_en") or normalize_action(action) or ""
     action_cn = ACTION_LABEL.get(action_en, action)
-
-    move_to_position = None
-    if action_en == "move":
-        if to_position in (None, ""):
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="invalid_move_target",
-                message="移动操作必须提供 to_position（目标位置）",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                details={"record_id": record_id, "position": position},
-            )
-        try:
-            move_to_position = int(to_position)
-        except (TypeError, ValueError):
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="invalid_move_target",
-                message=f"目标位置必须是整数: {to_position}",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                details={"to_position": to_position},
-            )
-        if move_to_position < 1:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="invalid_position",
-                message="目标位置编号必须 >= 1",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                details={"to_position": move_to_position},
-            )
+    move_to_position = normalized.get("move_to_position")
     try:
         data = load_yaml(yaml_path)
     except Exception as exc:
@@ -835,7 +1229,28 @@ def tool_record_thaw(
     layout = _get_layout(data)
     _pos_lo, _pos_hi = get_position_range(layout)
 
-    if move_to_position is not None and move_to_position > _pos_hi:
+    if move_to_position is not None:
+        try:
+            move_to_position = _coerce_position_value(
+                move_to_position,
+                layout=layout,
+                field_name="to_position",
+            )
+        except ValueError:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="invalid_move_target",
+                message=f"目标位置无效: {move_to_position}",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"to_position": move_to_position},
+            )
+
+    if move_to_position is not None and (move_to_position < _pos_lo or move_to_position > _pos_hi):
         return _failure_result(
             yaml_path=yaml_path,
             action=audit_action,
@@ -864,14 +1279,12 @@ def tool_record_thaw(
             details={"record_id": record_id},
         )
 
-    positions = record.get("positions", [])
+    current_position = record.get("position")
     if position in ("", "auto"):
         position = None
 
     if position is None:
-        if len(positions) == 1:
-            position = positions[0]
-        elif not positions:
+        if current_position is None:
             return _failure_result(
                 yaml_path=yaml_path,
                 action=audit_action,
@@ -883,33 +1296,20 @@ def tool_record_thaw(
                 tool_input=tool_input,
                 before_data=data,
                 details={"record_id": record_id},
-                extra={"current_positions": positions},
+                extra={"current_position": current_position},
             )
-        else:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="ambiguous_position",
-                message=f"记录 #{record_id} 存在多个位置，必须指定 position",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                details={"record_id": record_id},
-                extra={"current_positions": positions},
-            )
+        position = current_position
 
     try:
-        position = int(position)
-    except (TypeError, ValueError):
+        position = _coerce_position_value(position, layout=layout, field_name="position")
+    except ValueError:
         return _failure_result(
             yaml_path=yaml_path,
             action=audit_action,
             source=source,
             tool_name=tool_name,
             error_code="invalid_position",
-            message=f"位置必须是整数: {position}",
+            message=f"位置无效: {position}",
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=data,
@@ -927,19 +1327,19 @@ def tool_record_thaw(
             tool_input=tool_input,
             details={"position": position},
         )
-    if position not in positions:
+    if current_position is not None and position != current_position:
         return _failure_result(
             yaml_path=yaml_path,
             action=audit_action,
             source=source,
             tool_name=tool_name,
             error_code="position_not_found",
-            message=f"位置 {position} 不在记录 #{record_id} 的现有位置中",
+            message=f"位置 {position} 与记录 #{record_id} 的当前位置 {current_position} 不匹配",
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=data,
             details={"record_id": record_id, "position": position},
-            extra={"current_positions": positions},
+            extra={"current_position": current_position},
         )
 
     if action_en == "move" and move_to_position == position:
@@ -956,26 +1356,11 @@ def tool_record_thaw(
         )
 
     swap_target = None
-    swap_target_new_positions = None
+    swap_target_new_position = None
     swap_target_event = None
 
     if action_en == "move":
-        new_positions, replaced = _replace_position_once(list(positions), position, move_to_position)
-        if not replaced:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="position_not_found",
-                message=f"位置 {position} 不在记录 #{record_id} 的现有位置中",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                details={"record_id": record_id, "position": position},
-                extra={"current_positions": positions},
-            )
-
+        new_position = move_to_position
         box = record.get("box")
         cross_box = to_box is not None and to_box != box
 
@@ -993,13 +1378,12 @@ def tool_record_thaw(
                     before_data=data,
                     details={"to_box": to_box},
                 )
-            # Cross-box: check if target (to_box, to_pos) is occupied
             target_box = to_box
             for other_idx, other in enumerate(records):
                 if other.get("box") != target_box:
                     continue
-                other_positions = other.get("positions") or []
-                if move_to_position in other_positions:
+                other_position = other.get("position")
+                if other_position == move_to_position:
                     return _failure_result(
                         yaml_path=yaml_path,
                         action=audit_action,
@@ -1018,12 +1402,11 @@ def tool_record_thaw(
                         },
                     )
         else:
-            # Same-box: existing swap logic
             for other_idx, other in enumerate(records):
                 if other.get("box") != box:
                     continue
-                other_positions = other.get("positions") or []
-                if move_to_position in other_positions:
+                other_position = other.get("position")
+                if other_position == move_to_position:
                     if other_idx == idx:
                         return _failure_result(
                             yaml_path=yaml_path,
@@ -1038,34 +1421,11 @@ def tool_record_thaw(
                             details={"record_id": record_id, "to_position": move_to_position},
                         )
 
-                    swap_target_new_positions, swap_replaced = _replace_position_once(
-                        list(other_positions),
-                        move_to_position,
-                        position,
-                    )
-                    if not swap_replaced:
-                        return _failure_result(
-                            yaml_path=yaml_path,
-                            action=audit_action,
-                            source=source,
-                            tool_name=tool_name,
-                            error_code="position_conflict",
-                            message="目标位置冲突，无法完成换位",
-                            actor_context=actor_context,
-                            tool_input=tool_input,
-                            before_data=data,
-                            details={
-                                "record_id": record_id,
-                                "position": position,
-                                "to_position": move_to_position,
-                                "swap_record_id": other.get("id"),
-                            },
-                        )
-
+                    swap_target_new_position = position
                     swap_target = {
                         "idx": other_idx,
                         "record": other,
-                        "old_positions": list(other_positions),
+                        "old_position": other_position,
                     }
                     break
 
@@ -1073,7 +1433,6 @@ def tool_record_thaw(
             date_str=date_str,
             from_position=position,
             to_position=move_to_position,
-            note=note,
             paired_record_id=swap_target["record"].get("id") if swap_target else None,
             from_box=box if cross_box else None,
             to_box=to_box if cross_box else None,
@@ -1083,14 +1442,11 @@ def tool_record_thaw(
                 date_str=date_str,
                 from_position=move_to_position,
                 to_position=position,
-                note=note,
                 paired_record_id=record_id,
             )
     else:
-        new_positions = [p for p in positions if p != position]
+        new_position = None
         new_event = {"date": date_str, "action": action_en, "positions": [position]}
-        if note:
-            new_event["note"] = note
 
     preview = {
         "record_id": record_id,
@@ -1102,16 +1458,15 @@ def tool_record_thaw(
         "position": position,
         "to_position": move_to_position,
         "to_box": to_box,
-        "note": note,
         "date": date_str,
-        "positions_before": positions,
-        "positions_after": new_positions,
+        "position_before": current_position,
+        "position_after": new_position,
     }
     if swap_target:
         preview["swap_with_record_id"] = swap_target["record"].get("id")
         preview["swap_with_short_name"] = swap_target["record"].get("short_name")
-        preview["swap_positions_before"] = swap_target["old_positions"]
-        preview["swap_positions_after"] = swap_target_new_positions
+        preview["swap_position_before"] = swap_target["old_position"]
+        preview["swap_position_after"] = swap_target_new_position
 
     if dry_run:
         return {
@@ -1142,7 +1497,7 @@ def tool_record_thaw(
                 errors=validation_error.get("errors"),
             )
 
-        candidate_records[idx]["positions"] = new_positions
+        candidate_records[idx]["position"] = new_position
         if to_box is not None and to_box != record.get("box"):
             candidate_records[idx]["box"] = to_box
         thaw_events = candidate_records[idx].get("thaw_events")
@@ -1172,7 +1527,7 @@ def tool_record_thaw(
         affected_record_ids = [record_id]
         if swap_target:
             swap_idx = swap_target["idx"]
-            candidate_records[swap_idx]["positions"] = swap_target_new_positions
+            candidate_records[swap_idx]["position"] = swap_target_new_position
             swap_events = candidate_records[swap_idx].get("thaw_events")
             if swap_events is None:
                 candidate_records[swap_idx]["thaw_events"] = []
@@ -1249,7 +1604,6 @@ def tool_record_thaw(
                     "to_position": move_to_position,
                     "date": date_str,
                     "action": action,
-                    "note": note,
                 },
             ),
         )
@@ -1274,7 +1628,7 @@ def tool_record_thaw(
 
     result_payload = {
         "record_id": record_id,
-        "remaining_positions": new_positions,
+        "remaining_position": new_position,
     }
     if move_to_position is not None:
         result_payload["to_position"] = move_to_position
@@ -1295,8 +1649,8 @@ def tool_batch_thaw(
     entries,
     date_str,
     action="取出",
-    note=None,
     dry_run=False,
+    execution_mode=None,
     actor_context=None,
     source="tool_api",
     auto_backup=True,
@@ -1308,85 +1662,25 @@ def tool_batch_thaw(
         "entries": list(entries) if isinstance(entries, (list, tuple)) else entries,
         "date": date_str,
         "action": action,
-        "note": note,
         "dry_run": bool(dry_run),
+        "execution_mode": execution_mode,
     }
 
-    if not validate_date(date_str):
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_date",
-            message=f"日期格式无效: {date_str}",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            details={"date": date_str},
-        )
+    validation = validate_write_tool_call(
+        yaml_path=yaml_path,
+        action=audit_action,
+        source=source,
+        tool_name=tool_name,
+        tool_input=tool_input,
+        payload={"date_str": date_str, "action": action, "entries": entries},
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+    )
+    if not validation.get("ok"):
+        return validation
 
-    if not entries:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="empty_entries",
-            message="未指定任何操作",
-            actor_context=actor_context,
-            tool_input=tool_input,
-        )
-
-    action_en = normalize_action(action)
-    if not action_en:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_action",
-            message="操作类型必须是 取出/复苏/扔掉/移动",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            details={"action": action},
-        )
-
-    if isinstance(entries, str):
-        try:
-            entries = parse_batch_entries(entries)
-        except ValueError as exc:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="validation_failed",
-                message="批量操作参数校验失败",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                errors=[str(exc)],
-            )
-
-    normalized_entries = []
-    normalize_errors = []
-    for idx, entry in enumerate(entries, 1):
-        try:
-            normalized_entries.append(_coerce_batch_entry(entry))
-        except Exception as exc:
-            normalize_errors.append(f"第{idx}条: {exc}")
-
-    if normalize_errors:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="validation_failed",
-            message="批量操作参数校验失败",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            errors=normalize_errors,
-        )
+    action_en = (validation.get("normalized") or {}).get("action_en") or normalize_action(action) or ""
 
     try:
         data = load_yaml(yaml_path)
@@ -1406,25 +1700,63 @@ def tool_batch_thaw(
     records = data.get("inventory", [])
     layout = _get_layout(data)
     _pos_lo, _pos_hi = get_position_range(layout)
+
+    if isinstance(entries, str):
+        try:
+            entries = parse_batch_entries(entries, layout=layout)
+        except ValueError as exc:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="validation_failed",
+                message="批量操作参数校验失败",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                errors=[str(exc)],
+            )
+
+    normalized_entries = []
+    normalize_errors = []
+    for idx, entry in enumerate(entries, 1):
+        try:
+            normalized_entries.append(_coerce_batch_entry(entry, layout=layout))
+        except Exception as exc:
+            normalize_errors.append(f"第{idx}条: {exc}")
+
+    if normalize_errors:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="validation_failed",
+            message="批量操作参数校验失败",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            errors=normalize_errors,
+        )
+
     operations = []
     errors = []
 
     if action_en == "move":
-        simulated_positions = {}
+        simulated_position = {}
         simulated_box = {}
         position_owner = {}
         events_by_idx = defaultdict(list)
         touched_indices = set()
 
         for idx, rec in enumerate(records):
-            rec_positions = list(rec.get("positions") or [])
-            simulated_positions[idx] = rec_positions
+            rec_position = rec.get("position")
+            simulated_position[idx] = rec_position
             box = rec.get("box")
             simulated_box[idx] = box
-            for pos in rec_positions:
-                key = (box, pos)
+            if rec_position is not None:
+                key = (box, rec_position)
                 if key in position_owner and position_owner[key] != idx:
-                    errors.append(f"盒子 {box} 位置 {pos} 已存在冲突，无法执行移动")
+                    errors.append(f"盒子 {box} 位置 {rec_position} 已存在冲突，无法执行移动")
                 else:
                     position_owner[key] = idx
 
@@ -1464,15 +1796,15 @@ def tool_batch_thaw(
                 errors.append(f"第{row_idx}条 ID {record_id}: 起始位置与目标位置不能相同")
                 continue
 
-            source_before = list(simulated_positions.get(idx, []))
-            if from_pos not in source_before:
-                errors.append(f"第{row_idx}条 ID {record_id}: 起始位置 {from_pos} 不在现有位置 {source_before} 中")
+            source_before = simulated_position.get(idx)
+            if source_before is None:
+                errors.append(f"第{row_idx}条 ID {record_id}: 记录没有可用位置（可能已取出/复苏/扔掉）")
+                continue
+            if from_pos != source_before:
+                errors.append(f"第{row_idx}条 ID {record_id}: 起始位置 {from_pos} 与当前位置 {source_before} 不匹配")
                 continue
 
-            source_after, replaced = _replace_position_once(source_before, from_pos, to_pos)
-            if not replaced:
-                errors.append(f"第{row_idx}条 ID {record_id}: 无法在现有位置中替换 {from_pos}")
-                continue
+            source_after = to_pos
 
             target_box = entry_to_box if cross_box else current_box
             dest_idx = position_owner.get((target_box, to_pos))
@@ -1485,40 +1817,30 @@ def tool_batch_thaw(
             dest_record = None
             if dest_idx is not None:
                 if cross_box:
-                    # Cross-box: no swap support, reject occupied target
                     dest_record = records[dest_idx]
                     errors.append(
                         f"第{row_idx}条 ID {record_id}: 目标盒子 {target_box} 位置 {to_pos} 已被记录 #{dest_record.get('id')} 占用"
                     )
                     continue
                 else:
-                    # Same-box: check if destination is already touched in this batch
-                    # If so, reject this move (no implicit swap within the same batch)
                     if dest_idx in touched_indices:
                         dest_record = records[dest_idx]
                         errors.append(
                             f"第{row_idx}条 ID {record_id}: 目标位置 {to_pos} 已被本批次前序移动占用，无法完成换位"
                         )
                         continue
-                    # Same-box: swap
                     dest_record = records[dest_idx]
-                    dest_before = list(simulated_positions.get(dest_idx, []))
-                    dest_after, dest_replaced = _replace_position_once(dest_before, to_pos, from_pos)
-                    if not dest_replaced:
-                        errors.append(
-                            f"第{row_idx}条 ID {record_id}: 目标位置 {to_pos} 冲突，记录 #{dest_record.get('id')} 无法换位"
-                        )
-                        continue
+                    dest_before = simulated_position.get(dest_idx)
+                    dest_after = from_pos
 
-            simulated_positions[idx] = source_after
+            simulated_position[idx] = source_after
             touched_indices.add(idx)
 
-            # Update position_owner and simulated_box
             old_key = (current_box, from_pos)
             if dest_idx is None:
                 position_owner.pop(old_key, None)
             else:
-                simulated_positions[dest_idx] = dest_after
+                simulated_position[dest_idx] = dest_after
                 touched_indices.add(dest_idx)
                 position_owner[old_key] = dest_idx
             position_owner[(target_box, to_pos)] = idx
@@ -1530,7 +1852,6 @@ def tool_batch_thaw(
                 date_str=date_str,
                 from_position=from_pos,
                 to_position=to_pos,
-                note=note,
                 paired_record_id=dest_record.get("id") if dest_record else None,
                 from_box=current_box if cross_box else None,
                 to_box=entry_to_box if cross_box else None,
@@ -1543,7 +1864,6 @@ def tool_batch_thaw(
                         date_str=date_str,
                         from_position=to_pos,
                         to_position=from_pos,
-                        note=note,
                         paired_record_id=record_id,
                     )
                 )
@@ -1554,16 +1874,16 @@ def tool_batch_thaw(
                 "record": record,
                 "position": from_pos,
                 "to_position": to_pos,
-                "old_positions": source_before,
-                "new_positions": source_after,
+                "old_position": source_before,
+                "new_position": source_after,
             }
             if entry_to_box is not None:
                 op["to_box"] = entry_to_box
             if dest_record is not None:
                 op["swap_with_record_id"] = dest_record.get("id")
                 op["swap_with_short_name"] = dest_record.get("short_name")
-                op["swap_old_positions"] = dest_before
-                op["swap_new_positions"] = dest_after
+                op["swap_old_position"] = dest_before
+                op["swap_new_position"] = dest_after
             operations.append(op)
 
         if errors:
@@ -1586,7 +1906,6 @@ def tool_batch_thaw(
             "date": date_str,
             "action_en": action_en,
             "action_cn": ACTION_LABEL.get(action_en, action),
-            "note": note,
             "count": len(operations),
             "operations": [
                 {
@@ -1596,8 +1915,8 @@ def tool_batch_thaw(
                     "box": op["record"].get("box"),
                     "position": op["position"],
                     "to_position": op.get("to_position"),
-                    "old_positions": op["old_positions"],
-                    "new_positions": op["new_positions"],
+                    "old_position": op["old_position"],
+                    "new_position": op["new_position"],
                     "swap_with_record_id": op.get("swap_with_record_id"),
                 }
                 for op in operations
@@ -1634,7 +1953,7 @@ def tool_batch_thaw(
                 )
 
             for idx in touched_indices:
-                candidate_records[idx]["positions"] = list(simulated_positions[idx])
+                candidate_records[idx]["position"] = simulated_position[idx]
                 if simulated_box.get(idx) != records[idx].get("box"):
                     candidate_records[idx]["box"] = simulated_box[idx]
 
@@ -1708,7 +2027,6 @@ def tool_batch_thaw(
                         "entries": list(normalized_entries),
                         "date": date_str,
                         "action": action,
-                        "note": note,
                     },
                 ),
             )
@@ -1740,8 +2058,7 @@ def tool_batch_thaw(
 
     # Track cumulative position changes per record index so that multiple
     # entries targeting the same record correctly build on each other.
-    cumulative_positions: dict[int, list[int]] = {}
-
+    seen_nonmove_entries = set()
     for row_idx, entry in enumerate(normalized_entries, 1):
         if len(entry) not in (1, 2):
             errors.append(f"第{row_idx}条: 非移动操作必须使用 id 或 id:position 格式")
@@ -1754,34 +2071,34 @@ def tool_batch_thaw(
             errors.append(f"ID {record_id}: 未找到该记录")
             continue
 
-        # Use cumulative positions if this record was already seen,
-        # otherwise start from the original record positions.
-        if idx in cumulative_positions:
-            current_positions = cumulative_positions[idx]
-        else:
-            current_positions = list(record.get("positions", []))
+        current_position = record.get("position")
 
         if len(entry) == 2:
             position = entry[1]
             if position < _pos_lo or position > _pos_hi:
                 errors.append(f"ID {record_id}: 位置编号 {position} 必须在 {_pos_lo}-{_pos_hi} 之间")
                 continue
-            if position not in current_positions:
-                errors.append(f"ID {record_id}: 位置 {position} 不在现有位置 {current_positions} 中")
+            if current_position is not None and position != current_position:
+                errors.append(f"ID {record_id}: 位置 {position} 与当前位置 {current_position} 不匹配")
                 continue
         else:
-            if len(current_positions) != 1:
+            if current_position is None:
                 errors.append(
-                    f"ID {record_id}: 无法从现有位置推断操作位置（当前: {current_positions}），请使用 id:position"
+                    f"ID {record_id}: 记录没有可用位置（可能已取出/复苏/扔掉），请使用 id:position"
                 )
                 continue
-            position = current_positions[0]
+            position = current_position
             if position < _pos_lo or position > _pos_hi:
                 errors.append(f"ID {record_id}: 位置编号 {position} 必须在 {_pos_lo}-{_pos_hi} 之间")
                 continue
 
-        new_positions = [p for p in current_positions if p != position]
-        cumulative_positions[idx] = new_positions
+        entry_key = (record_id, position)
+        if entry_key in seen_nonmove_entries:
+            errors.append(f"ID {record_id}: 位置 {position} 在同一批次中重复提交")
+            continue
+        seen_nonmove_entries.add(entry_key)
+
+        new_position = None
 
         operations.append(
             {
@@ -1789,8 +2106,8 @@ def tool_batch_thaw(
                 "record_id": record_id,
                 "record": record,
                 "position": position,
-                "old_positions": current_positions.copy(),
-                "new_positions": new_positions,
+                "old_position": current_position,
+                "new_position": new_position,
             }
         )
 
@@ -1814,7 +2131,6 @@ def tool_batch_thaw(
         "date": date_str,
         "action_en": action_en,
         "action_cn": ACTION_LABEL.get(action_en, action),
-        "note": note,
         "count": len(operations),
         "operations": [
             {
@@ -1823,8 +2139,8 @@ def tool_batch_thaw(
                 "short_name": op["record"].get("short_name"),
                 "box": op["record"].get("box"),
                 "position": op["position"],
-                "old_positions": op["old_positions"],
-                "new_positions": op["new_positions"],
+                "old_position": op["old_position"],
+                "new_position": op["new_position"],
             }
             for op in operations
         ],
@@ -1862,15 +2178,13 @@ def tool_batch_thaw(
         for op in operations:
             idx = op["idx"]
             position = op["position"]
-            candidate_records[idx]["positions"] = op["new_positions"]
+            candidate_records[idx]["position"] = op["new_position"]
 
             new_event = {
                 "date": date_str,
                 "action": action_en,
                 "positions": [position],
             }
-            if note:
-                new_event["note"] = note
             thaw_events = candidate_records[idx].get("thaw_events")
             if thaw_events is None:
                 candidate_records[idx]["thaw_events"] = []
@@ -1935,7 +2249,6 @@ def tool_batch_thaw(
                     "entries": list(normalized_entries),
                     "date": date_str,
                     "action": action,
-                    "note": note,
                 },
             ),
         )
@@ -1974,6 +2287,7 @@ def tool_rollback(
     yaml_path,
     backup_path=None,
     dry_run=False,
+    execution_mode=None,
     actor_context=None,
     source="tool_api",
     auto_backup=True,
@@ -2001,9 +2315,25 @@ def tool_rollback(
     tool_input = {
         "backup_path": backup_path,
         "dry_run": bool(dry_run),
+        "execution_mode": execution_mode,
     }
     if normalized_source_event:
         tool_input["source_event"] = dict(normalized_source_event)
+
+    validation = validate_write_tool_call(
+        yaml_path=yaml_path,
+        action=audit_action,
+        source=source,
+        tool_name=tool_name,
+        tool_input=tool_input,
+        payload={},
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+    )
+    if not validation.get("ok"):
+        return validation
+
     current_data = None
     try:
         current_data = load_yaml(yaml_path)
@@ -2148,6 +2478,7 @@ def tool_adjust_box_count(
     box=None,
     renumber_mode=None,
     dry_run=False,
+    execution_mode=None,
     actor_context=None,
     source="tool_api",
     auto_backup=True,
@@ -2170,32 +2501,24 @@ def tool_adjust_box_count(
         "box": box,
         "renumber_mode": renumber_mode,
         "dry_run": bool(dry_run),
+        "execution_mode": execution_mode,
     }
 
-    op_text = str(operation or "").strip().lower()
-    op_alias = {
-        "add": "add",
-        "add_boxes": "add",
-        "increase": "add",
-        "remove": "remove",
-        "remove_box": "remove",
-        "delete": "remove",
-        "删除": "remove",
-        "增加": "add",
-    }
-    op = op_alias.get(op_text)
-    if not op:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_operation",
-            message="operation 必须是 add/remove",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            details={"operation": operation},
-        )
+    validation = validate_write_tool_call(
+        yaml_path=yaml_path,
+        action=audit_action,
+        source=source,
+        tool_name=tool_name,
+        tool_input=tool_input,
+        payload={"operation": operation},
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+    )
+    if not validation.get("ok"):
+        return validation
+
+    op = (validation.get("normalized") or {}).get("op")
 
     try:
         data = load_yaml(yaml_path)
@@ -2329,7 +2652,7 @@ def tool_adjust_box_count(
             active_ids = [
                 rec.get("id")
                 for rec in blocking_records
-                if rec.get("id") is not None and (rec.get("positions") or [])
+                if rec.get("id") is not None and rec.get("position") is not None
             ]
             return _failure_result(
                 yaml_path=yaml_path,
@@ -2491,84 +2814,6 @@ def tool_adjust_box_count(
     }
 
 
-def _str_contains(value, query, case_sensitive=False):
-    if value is None:
-        return False
-    if query is None:
-        return False
-    text = str(value)
-    needle = str(query)
-    if case_sensitive:
-        return needle in text
-    return needle.lower() in text.lower()
-
-
-def _record_search_blob(rec, case_sensitive=False):
-    parts = []
-    # Structural fields for search
-    for field in ("id", "box", "frozen_at", "cell_line"):
-        value = rec.get(field)
-        if value is not None and value != "":
-            parts.append(str(value))
-    positions = rec.get("positions") or []
-    if positions:
-        parts.append(",".join(str(p) for p in positions))
-    # All user fields (anything not structural)
-    for key, value in rec.items():
-        if key not in STRUCTURAL_FIELD_KEYS and value is not None and value != "":
-            parts.append(str(value))
-    blob = " ".join(parts)
-    return blob if case_sensitive else blob.lower()
-
-
-def tool_query_inventory(
-    yaml_path,
-    box=None,
-    position=None,
-    **field_filters,
-):
-    """Query inventory records with field filters.
-
-    Accepts box, position as structural filters, plus cell_line and any user field key
-    as keyword arguments (e.g. cell_line="K562", short_name="clone-1").
-    """
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "load_failed",
-            "message": f"无法读取YAML文件: {exc}",
-        }
-
-    records = data.get("inventory", [])
-    matches = []
-    for rec in records:
-        if box is not None and rec.get("box") != box:
-            continue
-        if position is not None:
-            positions = rec.get("positions") or []
-            if position not in positions:
-                continue
-        # Dynamic user field filters
-        skip = False
-        for fk, fv in field_filters.items():
-            if fv and not _str_contains(rec.get(fk), fv):
-                skip = True
-                break
-        if skip:
-            continue
-        matches.append(rec)
-
-    return {
-        "ok": True,
-        "result": {
-            "records": matches,
-            "count": len(matches),
-        },
-    }
-
-
 def tool_export_inventory_csv(yaml_path, output_path):
     """Export full inventory records to a CSV file."""
     if not output_path:
@@ -2653,14 +2898,59 @@ def tool_list_empty_positions(yaml_path, box=None):
     }
 
 
+def _record_search_blob(record, case_sensitive=False):
+    """Build a normalized text blob from one inventory record for matching."""
+    parts = []
+    for value in (record or {}).values():
+        if value is None:
+            continue
+        if isinstance(value, (str, int, float, bool)):
+            parts.append(str(value))
+            continue
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, (str, int, float, bool)):
+                    parts.append(str(item))
+    blob = " ".join(parts)
+    return blob if case_sensitive else blob.lower()
+
+
+def _parse_search_location_shortcut(query_text, layout):
+    """Parse compact location query like ``2:15`` into (box, position)."""
+    text = str(query_text or "").strip()
+    if not text:
+        return None
+
+    match = re.match(r"^(?:box\s*)?([^:：\s]+)\s*[:：]\s*([^:：\s]+)$", text, flags=re.IGNORECASE)
+    if not match:
+        return None
+
+    raw_box, raw_position = match.group(1), match.group(2)
+    try:
+        box_num = int(display_to_box(raw_box, layout))
+        pos_num = int(display_to_pos(raw_position, layout))
+    except Exception:
+        return None
+
+    if not validate_box(box_num, layout):
+        return None
+    if not validate_position(pos_num, layout):
+        return None
+    return box_num, pos_num
+
+
 def tool_search_records(
     yaml_path,
-    query,
+    query=None,
     mode="fuzzy",
     max_results=None,
     case_sensitive=False,
+    box=None,
+    position=None,
+    record_id=None,
+    active_only=None,
 ):
-    """Search records by fuzzy/exact/keywords mode."""
+    """Search records by text and/or structured filters."""
     try:
         data = load_yaml(yaml_path)
     except Exception as exc:
@@ -2671,9 +2961,7 @@ def tool_search_records(
         }
 
     records = data.get("inventory", [])
-    normalized_query = " ".join(str(query).split())
-    keywords = normalized_query.split() if normalized_query else []
-    q = normalized_query if case_sensitive else normalized_query.lower()
+    layout = _get_layout(data)
 
     if mode not in {"fuzzy", "exact", "keywords"}:
         return {
@@ -2682,51 +2970,230 @@ def tool_search_records(
             "message": "mode 必须是 fuzzy/exact/keywords",
         }
 
-    matches = []
+    normalized_record_id = None
+    if record_id not in (None, ""):
+        try:
+            normalized_record_id = int(record_id)
+        except (TypeError, ValueError):
+            return {
+                "ok": False,
+                "error_code": "invalid_record_id",
+                "message": f"record_id 必须是整数: {record_id}",
+            }
+
+    normalized_box = None
+    if box not in (None, ""):
+        try:
+            normalized_box = int(display_to_box(box, layout))
+        except Exception:
+            return {
+                "ok": False,
+                "error_code": "invalid_box",
+                "message": f"盒子编号必须是有效值: {box}",
+            }
+        if not validate_box(normalized_box, layout):
+            return {
+                "ok": False,
+                "error_code": "invalid_box",
+                "message": f"盒子编号必须在 {_format_box_constraint(layout)} 范围内",
+            }
+
+    normalized_position = None
+    if position not in (None, ""):
+        try:
+            normalized_position = int(display_to_pos(position, layout))
+        except Exception:
+            return {
+                "ok": False,
+                "error_code": "invalid_position",
+                "message": f"位置编号必须是有效值: {position}",
+            }
+        if not validate_position(normalized_position, layout):
+            pos_lo, pos_hi = get_position_range(layout)
+            return {
+                "ok": False,
+                "error_code": "invalid_position",
+                "message": f"位置编号必须在 {pos_lo}-{pos_hi} 之间",
+            }
+
+    normalized_active_only = None
+    if active_only not in (None, ""):
+        if isinstance(active_only, bool):
+            normalized_active_only = active_only
+        elif isinstance(active_only, (int, float)):
+            normalized_active_only = bool(active_only)
+        else:
+            flag = str(active_only).strip().lower()
+            if flag in {"1", "true", "yes", "y", "on"}:
+                normalized_active_only = True
+            elif flag in {"0", "false", "no", "n", "off"}:
+                normalized_active_only = False
+            else:
+                return {
+                    "ok": False,
+                    "error_code": "invalid_tool_input",
+                    "message": "active_only 必须是布尔值",
+                }
+
+    normalized_query = " ".join(str(query or "").split())
+    query_shortcut = None
+    if normalized_query and normalized_box is None and normalized_position is None:
+        parsed = _parse_search_location_shortcut(normalized_query, layout)
+        if parsed is not None:
+            normalized_box, normalized_position = parsed
+            query_shortcut = normalized_query
+            normalized_query = ""
+
+    keywords = normalized_query.split() if normalized_query else []
+    q = normalized_query if case_sensitive else normalized_query.lower()
+
+    scoped_records = []
     for rec in records:
-        blob = _record_search_blob(rec, case_sensitive=case_sensitive)
-        if mode in {"fuzzy", "exact"}:
-            if q and q in blob:
-                matches.append(rec)
+        if normalized_record_id is not None:
+            try:
+                if int(rec.get("id")) != normalized_record_id:
+                    continue
+            except (TypeError, ValueError):
+                continue
+
+        if normalized_box is not None:
+            try:
+                if int(rec.get("box")) != normalized_box:
+                    continue
+            except (TypeError, ValueError):
+                continue
+
+        if normalized_position is not None:
+            rec_position = rec.get("position")
+            if rec_position is None:
+                continue
+            try:
+                if int(rec_position) != normalized_position:
+                    continue
+            except (TypeError, ValueError):
+                continue
+
+        if normalized_active_only is True and rec.get("position") is None:
+            continue
+        if normalized_active_only is False and rec.get("position") is not None:
             continue
 
-        # keywords (AND)
-        ok = True
-        for kw in keywords:
-            kw_cmp = kw if case_sensitive else kw.lower()
-            if kw_cmp not in blob:
-                ok = False
-                break
-        if ok and keywords:
-            matches.append(rec)
+        scoped_records.append(rec)
+
+    has_structured_filter = any(
+        value is not None
+        for value in (
+            normalized_record_id,
+            normalized_box,
+            normalized_position,
+            normalized_active_only,
+        )
+    )
+
+    matches = []
+    if q:
+        for rec in scoped_records:
+            blob = _record_search_blob(rec, case_sensitive=case_sensitive)
+            if mode in {"fuzzy", "exact"}:
+                if q in blob:
+                    matches.append(rec)
+                continue
+
+            # keywords (AND)
+            ok = True
+            for kw in keywords:
+                kw_cmp = kw if case_sensitive else kw.lower()
+                if kw_cmp not in blob:
+                    ok = False
+                    break
+            if ok and keywords:
+                matches.append(rec)
+    elif has_structured_filter:
+        matches = list(scoped_records)
 
     total_count = len(matches)
     display_matches = matches[:max_results] if (max_results and max_results > 0) else matches
 
     suggestions = []
     if total_count == 0:
-        suggestions.extend(
-            [
-                "尝试使用更短的关键词，如 'reporter' 或 '36'",
-                "检查是否有拼写错误",
-                "使用 keywords 模式尝试分词搜索",
-            ]
-        )
+        if normalized_box is not None and normalized_position is not None:
+            suggestions.append("指定位置当前没有匹配记录，可改查其他盒子/位置")
+        elif has_structured_filter:
+            suggestions.append("检查结构化筛选条件（record_id/box/position/active_only）")
+        else:
+            suggestions.extend(
+                [
+                    "尝试使用更短的关键词，如 'reporter' 或 '36'",
+                    "检查是否有拼写错误",
+                    "使用 keywords 模式尝试分词搜索",
+                ]
+            )
     elif total_count > 50:
         suggestions.extend(["结果较多，建议添加关键词进一步缩小范围"])
 
+    slot_lookup = None
+    if normalized_box is not None and normalized_position is not None:
+        slot_matches = []
+        for rec in records:
+            try:
+                rec_box = int(rec.get("box"))
+                rec_pos_raw = rec.get("position")
+                if rec_pos_raw is None:
+                    continue
+                rec_pos = int(rec_pos_raw)
+            except (TypeError, ValueError):
+                continue
+
+            if rec_box == normalized_box and rec_pos == normalized_position:
+                slot_matches.append(rec)
+
+        status = "empty"
+        if len(slot_matches) == 1:
+            status = "occupied"
+        elif len(slot_matches) > 1:
+            status = "conflict"
+
+        slot_record_ids = []
+        for rec in slot_matches:
+            raw_id = rec.get("id")
+            if raw_id is None:
+                continue
+            try:
+                slot_record_ids.append(int(raw_id))
+            except (TypeError, ValueError):
+                continue
+
+        slot_lookup = {
+            "box": normalized_box,
+            "position": normalized_position,
+            "status": status,
+            "record_count": len(slot_matches),
+            "record_ids": slot_record_ids,
+        }
+
+    result = {
+        "query": query,
+        "normalized_query": normalized_query,
+        "keywords": keywords,
+        "mode": mode,
+        "records": display_matches,
+        "total_count": total_count,
+        "display_count": len(display_matches),
+        "suggestions": suggestions,
+        "applied_filters": {
+            "record_id": normalized_record_id,
+            "box": normalized_box,
+            "position": normalized_position,
+            "active_only": normalized_active_only,
+            "query_shortcut": query_shortcut,
+        },
+    }
+    if slot_lookup is not None:
+        result["slot_lookup"] = slot_lookup
+
     return {
         "ok": True,
-        "result": {
-            "query": query,
-            "normalized_query": normalized_query,
-            "keywords": keywords,
-            "mode": mode,
-            "records": display_matches,
-            "total_count": total_count,
-            "display_count": len(display_matches),
-            "suggestions": suggestions,
-        },
+        "result": result,
     }
 
 
@@ -3135,8 +3602,8 @@ def tool_generate_stats(yaml_path):
 
     cell_lines = defaultdict(int)
     for rec in records:
-        if rec.get("positions"):
-            cell_lines[rec.get("cell_line", "Unknown")] += len(rec.get("positions", []))
+        if rec.get("position") is not None:
+            cell_lines[rec.get("cell_line", "Unknown")] += 1
 
     # Flatten the stats structure for easier access, but keep nested structure for backward compatibility
     stats_nested = {

@@ -246,8 +246,8 @@ class RenderOperationSheetTests(unittest.TestCase):
         html = render_operation_sheet([_add_item()])
         self.assertIn("NEW", html)
 
-    def test_note_from_payload(self):
-        item = _base_item(payload={"note": "my special note"})
+    def test_note_from_fields(self):
+        item = _base_item(payload={"fields": {"note": "my special note"}})
         html = render_operation_sheet([item])
         self.assertIn("my special note", html)
 
@@ -414,7 +414,7 @@ class FactoryValidateRoundTripTests(unittest.TestCase):
     def test_build_edit_plan_item_passes_validation(self):
         from lib.plan_item_factory import build_edit_plan_item
         item = build_edit_plan_item(
-            record_id=3, fields={"note": "x"}, box=2, position=10, label="test",
+            record_id=3, fields={"note": "x"}, box=2, position=10,
         )
         self.assertIsNone(validate_plan_item(item))
 
@@ -443,9 +443,22 @@ class FactoryValidateRoundTripTests(unittest.TestCase):
         for action in ("Takeout", "Thaw", "Discard"):
             item = build_record_plan_item(
                 action=action, record_id=1, position=5, box=1,
-                label="test", date_str="2026-01-01",
+                date_str="2026-01-01",
             )
             self.assertIsNone(validate_plan_item(item), f"{action} should pass")
+
+    def test_build_record_plan_item_canonicalizes_legacy_out_actions(self):
+        from lib.plan_item_factory import build_record_plan_item
+
+        thaw_item = build_record_plan_item(
+            action="Thaw", record_id=1, position=5, box=1, date_str="2026-01-01"
+        )
+        discard_item = build_record_plan_item(
+            action="Discard", record_id=2, position=6, box=1, date_str="2026-01-01"
+        )
+
+        self.assertEqual("takeout", thaw_item.get("action"))
+        self.assertEqual("takeout", discard_item.get("action"))
 
     def test_build_add_plan_item_passes_validation(self):
         from lib.plan_item_factory import build_add_plan_item

@@ -11,13 +11,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from lib.custom_fields import STRUCTURAL_FIELD_KEYS, coerce_value, parse_custom_fields, get_effective_fields, get_display_key, get_required_field_keys, DEFAULT_PRESET_FIELDS, get_color_key, get_cell_line_options, DEFAULT_CELL_LINE_OPTIONS
+from lib.custom_fields import STRUCTURAL_FIELD_KEYS, coerce_value, parse_custom_fields, get_effective_fields, get_display_key, get_required_field_keys, DEFAULT_PRESET_FIELDS, get_color_key, get_cell_line_options, DEFAULT_CELL_LINE_OPTIONS, is_cell_line_required
 from lib.tool_api import (
     tool_add_entry,
     tool_edit_entry,
-    tool_query_inventory,
     tool_search_records,
 )
+from lib.validators import validate_inventory
 from lib.yaml_ops import load_yaml, write_yaml
 
 
@@ -25,13 +25,13 @@ from lib.yaml_ops import load_yaml, write_yaml
 # Helpers (same pattern as test_tool_api.py)
 # ---------------------------------------------------------------------------
 
-def make_record(rec_id=1, box=1, positions=None, **extra):
+def make_record(rec_id=1, box=1, position=None, **extra):
     rec = {
         "id": rec_id,
         "parent_cell_line": "NCCIT",
         "short_name": f"rec-{rec_id}",
         "box": box,
-        "positions": positions if positions is not None else [1],
+        "position": position if position is not None else 1,
         "frozen_at": "2025-01-01",
     }
     rec.update(extra)
@@ -93,7 +93,7 @@ class TestParseCustomFields(unittest.TestCase):
         self.assertEqual("10% DMSO", result[0]["default"])
 
     def test_core_field_key_rejected(self):
-        for core_key in ("id", "box", "positions", "frozen_at", "thaw_events"):
+        for core_key in ("id", "box", "position", "frozen_at", "thaw_events", "note"):
             meta = {"custom_fields": [{"key": core_key, "label": "X"}]}
             result = parse_custom_fields(meta)
             self.assertEqual([], result, f"structural key {core_key!r} should be rejected")
@@ -145,7 +145,7 @@ class TestParseCustomFields(unittest.TestCase):
                          [f["key"] for f in result])
 
     def test_all_structural_keys_in_blacklist(self):
-        expected = {"id", "box", "positions", "frozen_at", "thaw_events", "cell_line"}
+        expected = {"id", "box", "position", "frozen_at", "thaw_events", "cell_line", "note"}
         self.assertEqual(expected, STRUCTURAL_FIELD_KEYS)
 
 
@@ -206,7 +206,7 @@ class TestToolAddEntryCustomData(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
                 make_data(
-                    [make_record(1, box=1, positions=[1])],
+                    [make_record(1, box=1, position=1)],
                     custom_fields=[
                         {"key": "passage_number", "label": "Passage #", "type": "int"},
                         {"key": "medium", "label": "Medium", "type": "str"},
@@ -237,7 +237,7 @@ class TestToolAddEntryCustomData(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
                 make_data(
-                    [make_record(1, box=1, positions=[1])],
+                    [make_record(1, box=1, position=1)],
                     custom_fields=[
                         {"key": "passage_number", "label": "Passage #", "type": "int"},
                     ],
@@ -265,7 +265,7 @@ class TestToolAddEntryCustomData(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_cf_add_core_") as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -299,7 +299,7 @@ class TestToolEditEntryCustomFields(unittest.TestCase):
     def test_edit_custom_field(self):
         with tempfile.TemporaryDirectory(prefix="ln2_cf_edit_") as td:
             yaml_path = Path(td) / "inventory.yaml"
-            rec = make_record(1, box=1, positions=[1], passage_number=3)
+            rec = make_record(1, box=1, position=1, passage_number=3)
             write_yaml(
                 make_data(
                     [rec],
@@ -330,7 +330,7 @@ class TestToolEditEntryCustomFields(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
                 make_data(
-                    [make_record(1, box=1, positions=[1])],
+                    [make_record(1, box=1, position=1)],
                     custom_fields=[],
                 ),
                 path=str(yaml_path),
@@ -350,14 +350,13 @@ class TestToolEditEntryCustomFields(unittest.TestCase):
     def test_edit_custom_and_core_field_together(self):
         with tempfile.TemporaryDirectory(prefix="ln2_cf_edit_mix_") as td:
             yaml_path = Path(td) / "inventory.yaml"
-            rec = make_record(1, box=1, positions=[1], passage_number=1, note="old")
+            rec = make_record(1, box=1, position=1, passage_number=1, note="old")
             write_yaml(
                 make_data(
                     [rec],
                     custom_fields=[
                         {"key": "parent_cell_line", "label": "Cell", "type": "str", "required": True},
                         {"key": "short_name", "label": "Short", "type": "str", "required": True},
-                        {"key": "note", "label": "Note", "type": "str"},
                         {"key": "passage_number", "label": "Passage #", "type": "int"},
                     ],
                 ),
@@ -388,7 +387,7 @@ class TestSearchCustomFields(unittest.TestCase):
     def test_search_finds_custom_field_value(self):
         with tempfile.TemporaryDirectory(prefix="ln2_cf_search_") as td:
             yaml_path = Path(td) / "inventory.yaml"
-            rec = make_record(1, box=1, positions=[1], virus_titer="MOI50")
+            rec = make_record(1, box=1, position=1, virus_titer="MOI50")
             write_yaml(
                 make_data(
                     [rec],
@@ -412,7 +411,7 @@ class TestSearchCustomFields(unittest.TestCase):
     def test_search_does_not_match_absent_custom_value(self):
         with tempfile.TemporaryDirectory(prefix="ln2_cf_search_miss_") as td:
             yaml_path = Path(td) / "inventory.yaml"
-            rec = make_record(1, box=1, positions=[1])
+            rec = make_record(1, box=1, position=1)
             write_yaml(
                 make_data(
                     [rec],
@@ -447,9 +446,8 @@ class TestGetEditableFields(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_raw_yaml(str(yaml_path), make_data([make_record()]))
             result = _get_editable_fields(str(yaml_path))
-            # Should include frozen_at + DEFAULT_PRESET_FIELDS keys
-            self.assertIn("frozen_at", result)
-            self.assertIn("short_name", result)
+            self.assertEqual(_EDITABLE_FIELDS, result)
+            self.assertEqual({"frozen_at", "cell_line", "note"}, result)
 
     def test_custom_fields_extend_editable_set(self):
         from lib.tool_api import _get_editable_fields
@@ -479,39 +477,13 @@ class TestGetEditableFields(unittest.TestCase):
 
         result = _get_editable_fields("/nonexistent/path.yaml")
         self.assertEqual(_EDITABLE_FIELDS, result)
-        self.assertEqual({"frozen_at", "cell_line"}, result)
+        self.assertEqual({"frozen_at", "cell_line", "note"}, result)
 
 
 # ===========================================================================
 # Integration tests: query includes custom field columns
 # ===========================================================================
 
-class TestQueryCustomFieldColumns(unittest.TestCase):
-    """Integration: query results include custom field values."""
-
-    def test_query_returns_custom_field_in_records(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_cf_query_") as td:
-            yaml_path = Path(td) / "inventory.yaml"
-            rec = make_record(1, box=1, positions=[1], passage_number=5)
-            write_yaml(
-                make_data(
-                    [rec],
-                    custom_fields=[
-                        {"key": "passage_number", "label": "Passage #", "type": "int"},
-                    ],
-                ),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
-
-            result = tool_query_inventory(
-                yaml_path=str(yaml_path),
-            )
-
-            self.assertTrue(result["ok"])
-            records = result["result"]["records"]
-            self.assertEqual(1, len(records))
-            self.assertEqual(5, records[0]["passage_number"])
 
 
 # ===========================================================================
@@ -568,6 +540,64 @@ class TestGetCellLineOptions(unittest.TestCase):
         self.assertEqual(["K562", "HeLa"], result)
 
 
+class TestCellLineRequiredFlag(unittest.TestCase):
+    """Unit tests for is_cell_line_required()."""
+
+    def test_default_is_not_required(self):
+        self.assertFalse(is_cell_line_required(None))
+        self.assertFalse(is_cell_line_required({}))
+
+    def test_meta_flag_controls_required(self):
+        self.assertTrue(is_cell_line_required({"cell_line_required": True}))
+        self.assertFalse(is_cell_line_required({"cell_line_required": False}))
+
+
+class TestCellLineBaselineValidation(unittest.TestCase):
+    """validate_inventory should tolerate historical cell_line dirtiness."""
+
+    def test_non_option_cell_line_is_warning_not_error(self):
+        data = {
+            "meta": {
+                "box_layout": {"rows": 9, "cols": 9},
+                "cell_line_required": True,
+                "cell_line_options": ["K562", "HeLa"],
+            },
+            "inventory": [
+                {
+                    "id": 1,
+                    "cell_line": "U2OS",
+                    "short_name": "legacy",
+                    "box": 1,
+                    "position": 1,
+                    "frozen_at": "2025-01-01",
+                }
+            ],
+        }
+        errors, warnings = validate_inventory(data)
+        self.assertEqual([], errors)
+        self.assertTrue(any("不在预设选项中" in w for w in warnings))
+
+    def test_missing_cell_line_key_is_warning_not_error(self):
+        data = {
+            "meta": {
+                "box_layout": {"rows": 9, "cols": 9},
+                "cell_line_options": ["K562", "HeLa"],
+            },
+            "inventory": [
+                {
+                    "id": 1,
+                    "short_name": "legacy",
+                    "box": 1,
+                    "position": 1,
+                    "frozen_at": "2025-01-01",
+                }
+            ],
+        }
+        errors, warnings = validate_inventory(data)
+        self.assertEqual([], errors)
+        self.assertTrue(any("缺少字段 'cell_line'" in w for w in warnings))
+
+
 # ===========================================================================
 # Unit tests: cell_line in STRUCTURAL_FIELD_KEYS
 # ===========================================================================
@@ -596,7 +626,7 @@ class TestCellLineAddEntry(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_cl_add_") as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -623,7 +653,7 @@ class TestCellLineAddEntry(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_cl_add_empty_") as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, positions=[1])]),
+                make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -644,45 +674,62 @@ class TestCellLineAddEntry(unittest.TestCase):
             self.assertIn("cell_line", new_rec)
             self.assertEqual("", new_rec["cell_line"])
 
-
-# ===========================================================================
-# Integration: cell_line in query filters
-# ===========================================================================
-
-class TestCellLineQuery(unittest.TestCase):
-    """Integration: tool_query_inventory filters by cell_line."""
-
-    def test_query_by_cell_line(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_cl_query_") as td:
+    def test_required_cell_line_rejects_empty(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_cl_required_empty_") as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([
-                    {**make_record(1, box=1, positions=[1]), "cell_line": "K562"},
-                    {**make_record(2, box=1, positions=[2]), "cell_line": "HeLa"},
-                ]),
+                {
+                    "meta": {
+                        "box_layout": {"rows": 9, "cols": 9},
+                        "cell_line_required": True,
+                        "cell_line_options": ["K562", "HeLa"],
+                    },
+                    "inventory": [make_record(1, box=1, position=1)],
+                },
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
-            result = tool_query_inventory(str(yaml_path), cell_line="K562")
-            self.assertTrue(result["ok"])
-            self.assertEqual(1, result["result"]["count"])
-            self.assertEqual(1, result["result"]["records"][0]["id"])
+            result = tool_add_entry(
+                yaml_path=str(yaml_path),
+                box=1,
+                positions=[2],
+                frozen_at="2026-02-10",
+                fields={"short_name": "no-cl"},
+                source="test_cell_line",
+            )
 
-    def test_query_cell_line_case_insensitive(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_cl_query_ci_") as td:
+            self.assertFalse(result["ok"])
+            self.assertEqual("missing_required_fields", result.get("error_code"))
+
+    def test_required_cell_line_rejects_value_outside_options(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_cl_required_opts_") as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([
-                    {**make_record(1, box=1, positions=[1]), "cell_line": "K562"},
-                ]),
+                {
+                    "meta": {
+                        "box_layout": {"rows": 9, "cols": 9},
+                        "cell_line_required": True,
+                        "cell_line_options": ["K562", "HeLa"],
+                    },
+                    "inventory": [make_record(1, box=1, position=1)],
+                },
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
-            result = tool_query_inventory(str(yaml_path), cell_line="k562")
-            self.assertTrue(result["ok"])
-            self.assertEqual(1, result["result"]["count"])
+            result = tool_add_entry(
+                yaml_path=str(yaml_path),
+                box=1,
+                positions=[2],
+                frozen_at="2026-02-10",
+                fields={"cell_line": "CustomCell", "short_name": "bad-cl"},
+                source="test_cell_line",
+            )
+
+            self.assertFalse(result["ok"])
+            self.assertEqual("invalid_cell_line", result.get("error_code"))
+
 
 
 # ===========================================================================
@@ -697,7 +744,7 @@ class TestCellLineEdit(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
                 make_data([
-                    {**make_record(1, box=1, positions=[1]), "cell_line": "K562"},
+                    {**make_record(1, box=1, position=1), "cell_line": "K562"},
                 ]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
@@ -713,6 +760,112 @@ class TestCellLineEdit(unittest.TestCase):
             self.assertTrue(result["ok"])
             data = load_yaml(str(yaml_path))
             self.assertEqual("HeLa", data["inventory"][0]["cell_line"])
+
+    def test_edit_cell_line_rejects_value_outside_options(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_cl_edit_invalid_") as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                {
+                    "meta": {
+                        "box_layout": {"rows": 9, "cols": 9},
+                        "cell_line_required": True,
+                        "cell_line_options": ["K562", "HeLa"],
+                    },
+                    "inventory": [{**make_record(1, box=1, position=1), "cell_line": "K562"}],
+                },
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            result = tool_edit_entry(
+                yaml_path=str(yaml_path),
+                record_id=1,
+                fields={"cell_line": "CustomCell"},
+                source="test_edit_cl",
+            )
+
+            self.assertFalse(result["ok"])
+            self.assertEqual("invalid_cell_line", result.get("error_code"))
+
+    def test_edit_cell_line_allows_empty_when_not_required(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_cl_edit_optional_") as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                {
+                    "meta": {
+                        "box_layout": {"rows": 9, "cols": 9},
+                        "cell_line_required": False,
+                        "cell_line_options": ["K562", "HeLa"],
+                    },
+                    "inventory": [{**make_record(1, box=1, position=1), "cell_line": "K562"}],
+                },
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            result = tool_edit_entry(
+                yaml_path=str(yaml_path),
+                record_id=1,
+                fields={"cell_line": ""},
+                source="test_edit_cl",
+            )
+
+            self.assertTrue(result["ok"])
+            data = load_yaml(str(yaml_path))
+            self.assertEqual("", data["inventory"][0]["cell_line"])
+
+    def test_edit_cell_line_rejects_empty_when_required(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_cl_edit_required_") as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                {
+                    "meta": {
+                        "box_layout": {"rows": 9, "cols": 9},
+                        "cell_line_required": True,
+                        "cell_line_options": ["K562", "HeLa"],
+                    },
+                    "inventory": [{**make_record(1, box=1, position=1), "cell_line": "K562"}],
+                },
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            result = tool_edit_entry(
+                yaml_path=str(yaml_path),
+                record_id=1,
+                fields={"cell_line": ""},
+                source="test_edit_cl",
+            )
+
+            self.assertFalse(result["ok"])
+            self.assertEqual("invalid_cell_line", result.get("error_code"))
+
+    def test_edit_other_field_succeeds_even_with_legacy_invalid_cell_line(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_cl_edit_legacy_") as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                {
+                    "meta": {
+                        "box_layout": {"rows": 9, "cols": 9},
+                        "cell_line_required": True,
+                        "cell_line_options": ["K562", "HeLa"],
+                    },
+                    "inventory": [{**make_record(1, box=1, position=1), "cell_line": "U2OS"}],
+                },
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            result = tool_edit_entry(
+                yaml_path=str(yaml_path),
+                record_id=1,
+                fields={"frozen_at": "2026-02-10"},
+                source="test_edit_cl",
+            )
+
+            self.assertTrue(result["ok"])
+            data = load_yaml(str(yaml_path))
+            self.assertEqual("2026-02-10", data["inventory"][0]["frozen_at"])
 
 
 if __name__ == "__main__":

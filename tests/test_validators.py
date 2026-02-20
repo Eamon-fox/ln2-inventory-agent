@@ -188,15 +188,15 @@ class CheckDuplicateIdsTests(unittest.TestCase):
 class CheckPositionConflictsTests(unittest.TestCase):
     def test_no_conflict(self):
         records = [
-            {"box": 1, "positions": [1, 2]},
-            {"box": 1, "positions": [3, 4]},
+            {"box": 1, "position": 1},
+            {"box": 1, "position": 2},
         ]
         self.assertEqual([], check_position_conflicts(records))
 
     def test_conflict_same_box_same_position(self):
         records = [
-            {"box": 1, "positions": [1]},
-            {"box": 1, "positions": [1]},
+            {"box": 1, "position": 1},
+            {"box": 1, "position": 1},
         ]
         errors = check_position_conflicts(records)
         self.assertEqual(1, len(errors))
@@ -204,15 +204,15 @@ class CheckPositionConflictsTests(unittest.TestCase):
 
     def test_same_position_different_box_ok(self):
         records = [
-            {"box": 1, "positions": [1]},
-            {"box": 2, "positions": [1]},
+            {"box": 1, "position": 1},
+            {"box": 2, "position": 1},
         ]
         self.assertEqual([], check_position_conflicts(records))
 
-    def test_empty_positions_no_conflict(self):
+    def test_empty_position_no_conflict(self):
         records = [
-            {"box": 1, "positions": []},
-            {"box": 1, "positions": []},
+            {"box": 1, "position": None},
+            {"box": 1, "position": None},
         ]
         self.assertEqual([], check_position_conflicts(records))
 
@@ -224,7 +224,7 @@ class ValidateRecordTests(unittest.TestCase):
             "parent_cell_line": "NCCIT",
             "short_name": "test-1",
             "box": 1,
-            "positions": [1],
+            "position": 1,
             "frozen_at": "2025-01-01",
         }
         base.update(overrides)
@@ -234,11 +234,11 @@ class ValidateRecordTests(unittest.TestCase):
         errors, warnings = validate_record(self._valid_record())
         self.assertEqual([], errors)
 
-    def test_missing_required_field(self):
+    def test_missing_required_structural_field(self):
         rec = self._valid_record()
-        del rec["short_name"]
+        del rec["frozen_at"]
         errors, _ = validate_record(rec)
-        self.assertTrue(any("short_name" in e for e in errors))
+        self.assertTrue(any("frozen_at" in e for e in errors))
 
     def test_id_must_be_positive_int(self):
         errors, _ = validate_record(self._valid_record(id=0))
@@ -258,30 +258,26 @@ class ValidateRecordTests(unittest.TestCase):
         errors, _ = validate_record(self._valid_record(box="abc"))
         self.assertTrue(any("box" in e for e in errors))
 
-    def test_positions_must_be_list(self):
-        errors, _ = validate_record(self._valid_record(positions="1,2"))
-        self.assertTrue(any("positions" in e and "列表" in e for e in errors))
-
-    def test_duplicate_positions_detected(self):
-        errors, _ = validate_record(self._valid_record(positions=[1, 1, 2]))
-        self.assertTrue(any("重复" in e for e in errors))
+    def test_position_must_be_int(self):
+        errors, _ = validate_record(self._valid_record(position="abc"))
+        self.assertTrue(any("position" in e and "整数" in e for e in errors))
 
     def test_position_out_of_range(self):
-        errors, _ = validate_record(self._valid_record(positions=[0]))
+        errors, _ = validate_record(self._valid_record(position=0))
         self.assertTrue(any("超出范围" in e for e in errors))
-        errors, _ = validate_record(self._valid_record(positions=[82]))
+        errors, _ = validate_record(self._valid_record(position=82))
         self.assertTrue(any("超出范围" in e for e in errors))
 
-    def test_empty_positions_with_depletion_history_ok(self):
-        rec = self._valid_record(positions=[])
+    def test_empty_position_with_depletion_history_ok(self):
+        rec = self._valid_record(position=None)
         rec["thaw_events"] = [
             {"date": "2025-06-01", "action": "takeout", "positions": [1]}
         ]
         errors, _ = validate_record(rec)
         self.assertEqual([], errors)
 
-    def test_empty_positions_without_history_errors(self):
-        errors, _ = validate_record(self._valid_record(positions=[]))
+    def test_empty_position_without_history_errors(self):
+        errors, _ = validate_record(self._valid_record(position=None))
         self.assertTrue(any("为空" in e for e in errors))
 
     def test_frozen_at_invalid_format(self):
@@ -357,7 +353,7 @@ class ValidateInventoryTests(unittest.TestCase):
                 "parent_cell_line": "A",
                 "short_name": "a",
                 "box": 1,
-                "positions": [1],
+                "position": 1,
                 "frozen_at": "2025-01-01",
             },
             {
@@ -365,7 +361,7 @@ class ValidateInventoryTests(unittest.TestCase):
                 "parent_cell_line": "B",
                 "short_name": "b",
                 "box": 1,
-                "positions": [1],
+                "position": 1,
                 "frozen_at": "2025-01-01",
             },
         ]

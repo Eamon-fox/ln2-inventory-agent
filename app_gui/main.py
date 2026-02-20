@@ -3,7 +3,7 @@
 import os
 import sys
 import yaml
-from PySide6.QtCore import Qt, QSettings, Slot, QTimer
+from PySide6.QtCore import Qt, QSettings, Slot, QTimer, QSize
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
@@ -33,15 +33,23 @@ from lib.config import YAML_PATH
 from lib.plan_store import PlanStore
 from lib.position_fmt import get_box_numbers
 from lib.yaml_ops import load_yaml
-from app_gui.ui.theme import apply_dark_theme, apply_light_theme
+from app_gui.ui.theme import (
+    apply_dark_theme, apply_light_theme,
+    FONT_SIZE_XS, FONT_SIZE_SM, FONT_SIZE_MONO,
+    LAYOUT_OVERVIEW_MIN_WIDTH,
+    LAYOUT_OPS_MIN_WIDTH, LAYOUT_OPS_MAX_WIDTH, LAYOUT_OPS_DEFAULT_WIDTH,
+    LAYOUT_AI_MIN_WIDTH, LAYOUT_AI_MAX_WIDTH, LAYOUT_AI_DEFAULT_WIDTH,
+    LAYOUT_SPLITTER_HANDLE_WIDTH,
+)
 from app_gui.ui.overview_panel import OverviewPanel
 from app_gui.ui.operations_panel import OperationsPanel
 from app_gui.ui.ai_panel import AIPanel
+from app_gui.ui.icons import get_icon, Icons, set_icon_color
+from app_gui.system_notice import build_system_notice
 
 APP_VERSION = "1.0.1"
 APP_RELEASE_URL = "https://github.com/Eamon-fox/snowfox/releases"
 _GITHUB_API_LATEST = "https://api.github.com/repos/Eamon-fox/snowfox/releases/latest"
-INVENTORY_FILE_NAME = "ln2_inventory.yaml"
 
 
 def _parse_version(v: str) -> tuple:
@@ -57,12 +65,12 @@ def _is_version_newer(new_version: str, old_version: str) -> bool:
     return _parse_version(new_version) > _parse_version(old_version)
 
 
-def _normalize_inventory_yaml_path(path_text, force_canonical_file=False) -> str:
+def _normalize_inventory_yaml_path(path_text) -> str:
     """Normalize inventory YAML path.
 
     - Empty input -> ""
-    - Directory input -> <dir>/ln2_inventory.yaml
-    - File input -> keep as-is unless force_canonical_file=True
+    - Directory input -> keep as-is
+    - File input -> keep as-is
     - Special case: demo path with .demo. suffix -> keep as-is (don't rename)
     """
     raw = str(path_text or "").strip()
@@ -74,12 +82,6 @@ def _normalize_inventory_yaml_path(path_text, force_canonical_file=False) -> str
     # Preserve demo/default inventory paths that have .demo. suffix
     if ".demo." in os.path.basename(abs_path).lower():
         return abs_path
-
-    if os.path.isdir(abs_path):
-        return os.path.join(abs_path, INVENTORY_FILE_NAME)
-
-    if force_canonical_file:
-        return os.path.join(os.path.dirname(abs_path), INVENTORY_FILE_NAME)
 
     return abs_path
 
@@ -140,10 +142,14 @@ class SettingsDialog(QDialog):
         yaml_row = QHBoxLayout()
         self.yaml_edit = QLineEdit(self._config.get("yaml_path", ""))
         self.yaml_new_btn = QPushButton(tr("main.new"))
-        self.yaml_new_btn.setFixedWidth(80)
+        self.yaml_new_btn.setIcon(get_icon(Icons.FILE_PLUS))
+        self.yaml_new_btn.setIconSize(QSize(14, 14))
+        self.yaml_new_btn.setMinimumWidth(60)
         self.yaml_new_btn.clicked.connect(self._emit_create_new_dataset_request)
         yaml_browse = QPushButton(tr("settings.browse"))
-        yaml_browse.setFixedWidth(80)
+        yaml_browse.setIcon(get_icon(Icons.FOLDER_OPEN))
+        yaml_browse.setIconSize(QSize(14, 14))
+        yaml_browse.setMinimumWidth(60)
         yaml_browse.clicked.connect(self._browse_yaml)
         yaml_row.addWidget(self.yaml_edit, 1)
         yaml_row.addWidget(self.yaml_new_btn)
@@ -151,7 +157,7 @@ class SettingsDialog(QDialog):
         data_layout.addRow(tr("settings.inventoryFile"), yaml_row)
 
         yaml_hint = QLabel(tr("settings.inventoryFileHint"))
-        yaml_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
+        yaml_hint.setProperty("role", "settingsHint")
         yaml_hint.setWordWrap(True)
         data_layout.addRow("", yaml_hint)
 
@@ -187,12 +193,12 @@ class SettingsDialog(QDialog):
             ai_layout.addRow(label, key_edit)
             if cfg.get("help_url"):
                 help_label = QLabel(f'<a href="{cfg["help_url"]}">{cfg["help_url"]}</a>')
-                help_label.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
+                help_label.setProperty("role", "settingsHint")
                 help_label.setOpenExternalLinks(True)
                 ai_layout.addRow("", help_label)
 
         api_hint = QLabel(tr("settings.apiKeyHint"))
-        api_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
+        api_hint.setProperty("role", "settingsHint")
         api_hint.setWordWrap(True)
         ai_layout.addRow("", api_hint)
 
@@ -212,7 +218,7 @@ class SettingsDialog(QDialog):
         self.ai_model_edit = QLineEdit(default_model)
         self.ai_model_edit.setPlaceholderText(provider_cfg["model"])
         self.ai_model_edit.setEnabled(False)
-        self.ai_model_edit.setStyleSheet("color: var(--text-muted);")
+        self.ai_model_edit.setObjectName("settingsModelPreview")
         ai_layout.addRow(tr("settings.aiModel"), self.ai_model_edit)
 
         self.ai_max_steps = _NoWheelSpinBox()
@@ -235,15 +241,24 @@ class SettingsDialog(QDialog):
         ai_layout.addRow(tr("settings.customPrompt"), self.ai_custom_prompt)
 
         custom_prompt_hint = QLabel(tr("settings.customPromptHint"))
-        custom_prompt_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
+        custom_prompt_hint.setProperty("role", "settingsHint")
         custom_prompt_hint.setWordWrap(True)
         ai_layout.addRow("", custom_prompt_hint)
 
         content_layout.addWidget(ai_group)
 
         from app_gui.i18n import SUPPORTED_LANGUAGES
-        lang_group = QGroupBox(tr("settings.language").rstrip("："))
-        lang_layout = QFormLayout(lang_group)
+        preferences_group = QGroupBox(tr("settings.preferences"))
+        preferences_layout = QFormLayout(preferences_group)
+
+        prefs_row = QWidget()
+        row_layout = QHBoxLayout(prefs_row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(12)
+
+        lang_label = QLabel(tr("settings.language"))
+        lang_label.setProperty("role", "inlineFormLabel")
+        row_layout.addWidget(lang_label)
 
         self.lang_combo = _NoWheelComboBox()
         for code, name in SUPPORTED_LANGUAGES.items():
@@ -252,17 +267,11 @@ class SettingsDialog(QDialog):
         idx = self.lang_combo.findData(current_lang)
         if idx >= 0:
             self.lang_combo.setCurrentIndex(idx)
-        lang_layout.addRow(tr("settings.language"), self.lang_combo)
+        row_layout.addWidget(self.lang_combo)
 
-        lang_hint = QLabel(tr("settings.languageHint"))
-        lang_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 100px;")
-        lang_hint.setWordWrap(True)
-        lang_layout.addRow("", lang_hint)
-
-        content_layout.addWidget(lang_group)
-
-        theme_group = QGroupBox(tr("settings.theme"))
-        theme_layout = QFormLayout(theme_group)
+        theme_label = QLabel(tr("settings.theme"))
+        theme_label.setProperty("role", "inlineFormLabel")
+        row_layout.addWidget(theme_label)
 
         self.theme_combo = _NoWheelComboBox()
         self.theme_combo.addItem(tr("settings.themeAuto"), "auto")
@@ -272,14 +281,13 @@ class SettingsDialog(QDialog):
         idx = self.theme_combo.findData(current_theme)
         if idx >= 0:
             self.theme_combo.setCurrentIndex(idx)
-        theme_layout.addRow(tr("settings.theme"), self.theme_combo)
+        row_layout.addWidget(self.theme_combo)
 
-        theme_hint = QLabel(tr("settings.themeHint"))
-        theme_hint.setStyleSheet("color: var(--text-muted); font-size: 11px; margin-left: 100px;")
-        theme_hint.setWordWrap(True)
-        theme_layout.addRow("", theme_hint)
+        row_layout.addStretch()
 
-        content_layout.addWidget(theme_group)
+        preferences_layout.addRow(prefs_row)
+
+        content_layout.addWidget(preferences_group)
 
         about_group = QGroupBox(tr("settings.about"))
         about_layout = QVBoxLayout(about_group)
@@ -291,11 +299,11 @@ class SettingsDialog(QDialog):
         )
         about_label.setOpenExternalLinks(True)
         about_label.setWordWrap(True)
-        about_label.setStyleSheet("color: var(--text-muted); font-size: 12px; padding: 4px;")
+        about_label.setObjectName("settingsAboutLabel")
         about_layout.addWidget(about_label)
 
         self._check_update_btn = QPushButton(tr("settings.checkUpdate"))
-        self._check_update_btn.setFixedWidth(160)
+        self._check_update_btn.setMinimumWidth(140)
         self._check_update_btn.clicked.connect(self._on_check_update)
         about_layout.addWidget(self._check_update_btn)
 
@@ -305,7 +313,7 @@ class SettingsDialog(QDialog):
             donate_vbox = QVBoxLayout()
             donate_vbox.setAlignment(Qt.AlignCenter)
             donate_text = QLabel(tr("settings.supportHint"))
-            donate_text.setStyleSheet("color: var(--text-muted); font-size: 12px; margin-bottom: 4px;")
+            donate_text.setObjectName("settingsSupportLabel")
             donate_text.setAlignment(Qt.AlignCenter)
             donate_pixmap = QPixmap(donate_path)
             donate_img = QLabel()
@@ -324,7 +332,34 @@ class SettingsDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
+        self._ok_button = buttons.button(QDialogButtonBox.Ok)
+        self.yaml_edit.textChanged.connect(self._refresh_yaml_path_validity)
+        self._refresh_yaml_path_validity()
         layout.addWidget(buttons)
+
+    @staticmethod
+    def _is_valid_inventory_file_path(path_text):
+        path = _normalize_inventory_yaml_path(path_text)
+        if not path or os.path.isdir(path):
+            return False
+        suffix = os.path.splitext(path)[1].lower()
+        if suffix not in {".yaml", ".yml"}:
+            return False
+        return os.path.isfile(path)
+
+    def _refresh_yaml_path_validity(self):
+        if not hasattr(self, "_ok_button") or self._ok_button is None:
+            return
+        self._ok_button.setEnabled(self._is_valid_inventory_file_path(self.yaml_edit.text().strip()))
+
+    def _notify_data_changed(self, *, yaml_path=None, meta=None):
+        """Notify parent window after metadata edits (best-effort backward compatible)."""
+        if not callable(self._on_data_changed):
+            return
+        try:
+            self._on_data_changed(yaml_path=yaml_path, meta=meta)
+        except TypeError:
+            self._on_data_changed()
 
     def _browse_yaml(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -339,7 +374,9 @@ class SettingsDialog(QDialog):
     def _emit_create_new_dataset_request(self):
         if not callable(self._on_create_new_dataset):
             return
-        new_path = self._on_create_new_dataset(update_window=False)
+        # Create + switch immediately so users keep the newly created dataset
+        # even if they close Settings without pressing OK.
+        new_path = self._on_create_new_dataset(update_window=True)
         if new_path:
             self.yaml_edit.setText(_normalize_inventory_yaml_path(new_path))
 
@@ -416,9 +453,11 @@ class SettingsDialog(QDialog):
         current_dk = meta.get("display_key")
         current_ck = meta.get("color_key")
         current_clo = meta.get("cell_line_options")
+        current_cl_required = bool(meta.get("cell_line_required", True))
 
         dlg = CustomFieldsDialog(self, custom_fields=existing, display_key=current_dk,
-                                 color_key=current_ck, cell_line_options=current_clo)
+                                 color_key=current_ck, cell_line_options=current_clo,
+                                 cell_line_required=current_cl_required)
         if dlg.exec() != QDialog.Accepted:
             return
 
@@ -426,6 +465,7 @@ class SettingsDialog(QDialog):
         new_dk = dlg.get_display_key()
         new_ck = dlg.get_color_key()
         new_clo = dlg.get_cell_line_options()
+        new_cl_required = dlg.get_cell_line_required()
         inventory = data.get("inventory") or []
 
         # --- Step 1: handle renames (old_key -> new_key) ---
@@ -530,11 +570,11 @@ class SettingsDialog(QDialog):
             meta["cell_line_options"] = new_clo
         elif "cell_line_options" in meta:
             del meta["cell_line_options"]
+        meta["cell_line_required"] = bool(new_cl_required)
         data["meta"] = meta
         with open(yaml_path, "w", encoding="utf-8") as f:
             yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
-        if callable(self._on_data_changed):
-            self._on_data_changed()
+        self._notify_data_changed(yaml_path=yaml_path, meta=meta)
 
     def _open_manage_boxes(self):
         if callable(self._on_manage_boxes):
@@ -594,27 +634,26 @@ meta:
   custom_fields: []
 inventory: []
 3) 数据模型是 tube-level：一条 inventory 记录 = 一支物理冻存管。
-4) 每条记录必填：
-   - id: 正整数，唯一
-   - short_name: 非空字符串
-   - box: 整数
-   - positions: 仅包含 1 个整数的列表（如 [12]）
-   - frozen_at: YYYY-MM-DD
+ 4) 每条记录必填：
+    - id: 正整数，唯一
+    - box: 整数
+    - position: 整数（如 12）
+    - frozen_at: YYYY-MM-DD
 5) 常用可选字段：
-    - cell_line, plasmid_name, plasmid_id, note, thaw_events
+    - cell_line, short_name, plasmid_name, plasmid_id, note, thaw_events
 6) 字段映射：
     - 若原表是 cell_line 列，直接映射
    - 若有 quantity/tube_count>1，拆成多条记录
 7) 若位置是 A1/B3 形式，换算为整数 position：
    position = (row_index-1)*cols + col_index，其中 A=1, B=2...
-8) 空值统一用 null；字符串去首尾空格；日期统一 YYYY-MM-DD。
-9) 如果缺少必填字段（尤其 box/position/frozen_at），先列出"缺失信息清单"，先不要输出 YAML。
+ 8) 空值统一用 null；字符串去首尾空格；日期统一 YYYY-MM-DD。
+ 9) 如果缺少必填字段（尤其 box/position/frozen_at），先列出"缺失信息清单"，先不要输出 YAML。
 
-输出前自检：
-- 顶层只有 meta 和 inventory
-- inventory 是列表
-- 每条 positions 只有一个整数
-- id 无重复
+ 输出前自检：
+ - 顶层只有 meta 和 inventory
+ - inventory 是列表
+ - 每条 position 是单个整数
+ - id 无重复
 
 下面是原始数据：
 <<<DATA
@@ -647,7 +686,7 @@ inventory:
     plasmid_id: p0001
     passage_number: 3
     box: 1
-    positions: [1]
+    position: 1
     frozen_at: "2026-02-01"
     note: baseline control
 
@@ -658,7 +697,7 @@ inventory:
     plasmid_id: null
     passage_number: 5
     box: 1
-    positions: [2]
+    position: 2
     frozen_at: "2026-01-15"
     note: null"""
 
@@ -676,14 +715,14 @@ class ImportPromptDialog(QDialog):
 
         desc = QLabel(tr("main.importPromptDesc"))
         desc.setWordWrap(True)
-        desc.setStyleSheet("color: #64748b; font-size: 12px; margin-bottom: 8px;")
+        desc.setProperty("role", "dialogHint")
         layout.addWidget(desc)
 
         self.prompt_edit = QTextEdit()
         self.prompt_edit.setPlainText(_get_import_prompt())
         self.prompt_edit.setReadOnly(True)
         self.prompt_edit.setFontFamily("monospace")
-        self.prompt_edit.setFontPointSize(10)
+        self.prompt_edit.setFontPointSize(FONT_SIZE_MONO)
         layout.addWidget(self.prompt_edit, 1)
 
         buttons = QDialogButtonBox()
@@ -717,7 +756,7 @@ class ImportPromptDialog(QDialog):
         text_edit.setPlainText(_get_yaml_example())
         text_edit.setReadOnly(True)
         text_edit.setFontFamily("monospace")
-        text_edit.setFontPointSize(10)
+        text_edit.setFontPointSize(FONT_SIZE_MONO)
         layout.addWidget(text_edit)
         close_btn = QDialogButtonBox(QDialogButtonBox.Close)
         close_btn.rejected.connect(dlg.reject)
@@ -799,7 +838,15 @@ _FIELD_TYPES = ["str", "int", "float", "date"]
 class CustomFieldsDialog(QDialog):
     """Visual editor for meta.custom_fields."""
 
-    def __init__(self, parent=None, custom_fields=None, display_key=None, color_key=None, cell_line_options=None):
+    def __init__(
+        self,
+        parent=None,
+        custom_fields=None,
+        display_key=None,
+        color_key=None,
+        cell_line_options=None,
+        cell_line_required=True,
+    ):
         super().__init__(parent)
         self.setWindowTitle(tr("main.customFieldsTitle"))
         self.setMinimumWidth(620)
@@ -809,7 +856,7 @@ class CustomFieldsDialog(QDialog):
 
         desc = QLabel(tr("main.customFieldsDesc"))
         desc.setWordWrap(True)
-        desc.setStyleSheet("color: #64748b; font-size: 12px; margin-bottom: 4px;")
+        desc.setProperty("role", "dialogHint")
         root.addWidget(desc)
 
         # Scrollable area for everything
@@ -823,40 +870,40 @@ class CustomFieldsDialog(QDialog):
         scroll.setWidget(scroll_content)
         root.addWidget(scroll, 1)
 
-        from lib.custom_fields import STRUCTURAL_FIELD_KEYS, DEFAULT_PRESET_FIELDS
+        # Unified fields area (structural + custom)
+        fields_group = QGroupBox(tr("main.cfFields"))
+        fields_layout = QVBoxLayout(fields_group)
+        fields_layout.setContentsMargins(8, 4, 8, 4)
+        fields_layout.setSpacing(6)
 
-        # --- Structural fields (read-only, same row style as user fields) ---
-        struct_group = QGroupBox(tr("main.cfCoreFields"))
-        struct_layout = QVBoxLayout(struct_group)
-        struct_layout.setContentsMargins(8, 4, 8, 4)
-        struct_layout.setSpacing(6)
-
-        # Column header for structural fields
-        s_header = QWidget()
-        s_header_l = QHBoxLayout(s_header)
-        s_header_l.setContentsMargins(0, 0, 0, 0)
-        s_header_l.setSpacing(4)
+        # Column header
+        header = QWidget()
+        header_l = QHBoxLayout(header)
+        header_l.setContentsMargins(0, 0, 0, 0)
+        header_l.setSpacing(4)
         for text, width in [(tr("main.cfKey"), 140), (tr("main.cfLabel"), 120),
                             (tr("main.cfType"), 70), (tr("main.cfDefault"), 100)]:
             lbl = QLabel(text)
             lbl.setFixedWidth(width)
-            lbl.setStyleSheet("font-size: 11px; color: #64748b; font-weight: 600;")
-            s_header_l.addWidget(lbl)
+            lbl.setProperty("role", "cfHeaderLabel")
+            header_l.addWidget(lbl)
         req_lbl = QLabel(tr("main.cfRequired"))
-        req_lbl.setStyleSheet("font-size: 11px; color: #64748b; font-weight: 600;")
-        s_header_l.addWidget(req_lbl)
-        spacer_lbl = QWidget(); spacer_lbl.setFixedWidth(60)
-        s_header_l.addWidget(spacer_lbl)
-        struct_layout.addWidget(s_header)
+        req_lbl.setProperty("role", "cfHeaderLabel")
+        header_l.addWidget(req_lbl)
+        action_lbl = QLabel()
+        action_lbl.setFixedWidth(60)
+        header_l.addWidget(action_lbl)
+        fields_layout.addWidget(header)
 
         _STRUCTURAL_DISPLAY = [
             ("id", "ID", "int"),
             ("box", "Box", "int"),
-            ("positions", "Positions", "str"),
+            ("position", "Position", "int"),
             ("cell_line", "Cell Line", "str"),
             ("frozen_at", "Frozen At", "date"),
             ("thaw_events", "Thaw Events", "str"),
         ]
+        self._cell_line_required_cb = None
         for s_key, s_label, s_type in _STRUCTURAL_DISPLAY:
             row_w = QWidget()
             row_l = QHBoxLayout(row_w)
@@ -870,51 +917,41 @@ class CustomFieldsDialog(QDialog):
             row_l.addWidget(t_combo)
             d_edit = QLineEdit(); d_edit.setFixedWidth(100); d_edit.setEnabled(False)
             row_l.addWidget(d_edit)
-            r_cb = QCheckBox(tr("main.cfRequired")); r_cb.setChecked(True); r_cb.setEnabled(False)
+            r_cb = QCheckBox(tr("main.cfRequired"))
+            if s_key == "cell_line":
+                r_cb.setChecked(bool(cell_line_required))
+                r_cb.setEnabled(True)
+                self._cell_line_required_cb = r_cb
+            else:
+                r_cb.setChecked(True)
+                r_cb.setEnabled(False)
             row_l.addWidget(r_cb)
             spacer = QWidget(); spacer.setFixedWidth(60)
             row_l.addWidget(spacer)
-            struct_layout.addWidget(row_w)
-        scroll_layout.addWidget(struct_group)
+            fields_layout.addWidget(row_w)
 
-        # --- User fields (all editable) ---
-        custom_group = QGroupBox(tr("main.cfCustomFields"))
-        self._rows_layout = QVBoxLayout(custom_group)
-        self._rows_layout.setContentsMargins(8, 4, 8, 4)
+        self._rows_layout = QVBoxLayout()
+        self._rows_layout.setContentsMargins(0, 0, 0, 0)
         self._rows_layout.setSpacing(6)
-
-        # Column header for user fields
-        u_header = QWidget()
-        u_header_l = QHBoxLayout(u_header)
-        u_header_l.setContentsMargins(0, 0, 0, 0)
-        u_header_l.setSpacing(4)
-        for text, width in [(tr("main.cfKey"), 140), (tr("main.cfLabel"), 120),
-                            (tr("main.cfType"), 70), (tr("main.cfDefault"), 100)]:
-            lbl = QLabel(text)
-            lbl.setFixedWidth(width)
-            lbl.setStyleSheet("font-size: 11px; color: #64748b; font-weight: 600;")
-            u_header_l.addWidget(lbl)
-        req_lbl = QLabel(tr("main.cfRequired"))
-        req_lbl.setStyleSheet("font-size: 11px; color: #64748b; font-weight: 600;")
-        u_header_l.addWidget(req_lbl)
-        rm_spacer = QWidget(); rm_spacer.setFixedWidth(60)
-        u_header_l.addWidget(rm_spacer)
-        self._rows_layout.addWidget(u_header)
-
-        scroll_layout.addWidget(custom_group)
-
-        scroll_layout.addStretch()
+        fields_layout.addLayout(self._rows_layout)
 
         self._field_rows = []
 
-        # Populate: use provided fields, or default preset
-        fields_to_show = custom_fields if custom_fields else list(DEFAULT_PRESET_FIELDS)
+        fields_to_show = custom_fields if custom_fields else []
         for f in fields_to_show:
             k = f.get("key", "")
             self._add_row(k, f.get("label", ""),
                           f.get("type", "str"), f.get("default"),
                           required=f.get("required", False),
                           original_key=k)
+
+        add_btn = QPushButton(tr("main.cfAdd"))
+        add_btn.clicked.connect(lambda: self._add_row())
+        fields_layout.addWidget(add_btn)
+
+        scroll_layout.addWidget(fields_group)
+
+        scroll_layout.addStretch()
 
         # Display key selector
         dk_row = QHBoxLayout()
@@ -946,11 +983,6 @@ class CustomFieldsDialog(QDialog):
         root.addLayout(clo_row)
         clo_row.addWidget(self._cell_line_options_edit)
 
-        # Add button
-        add_btn = QPushButton(tr("main.cfAdd"))
-        add_btn.clicked.connect(lambda: self._add_row())
-        root.addWidget(add_btn)
-
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -959,6 +991,8 @@ class CustomFieldsDialog(QDialog):
     def _refresh_display_key_combo(self, current_dk=None):
         combo = self._display_key_combo
         combo.clear()
+        # cell_line is always an option for display_key
+        combo.addItem("cell_line", "cell_line")
         for entry in self._field_rows:
             key = entry["key"].text().strip()
             if key:
@@ -993,6 +1027,11 @@ class CustomFieldsDialog(QDialog):
         if not text:
             return []
         return [line.strip() for line in text.splitlines() if line.strip()]
+
+    def get_cell_line_required(self):
+        if self._cell_line_required_cb is None:
+            return True
+        return bool(self._cell_line_required_cb.isChecked())
 
     def _add_row(self, key="", label="", ftype="str", default=None, *, required=False, original_key=None):
         from lib.custom_fields import STRUCTURAL_FIELD_KEYS
@@ -1164,8 +1203,8 @@ class MainWindow(QMainWindow):
     def setup_ui(self):
         container = QWidget()
         root = QVBoxLayout(container)
-        root.setContentsMargins(8, 8, 8, 8)
-        root.setSpacing(8)
+        root.setContentsMargins(8, 8, 8, 4)
+        root.setSpacing(4)
 
         # Top Bar
         top = QHBoxLayout()
@@ -1174,23 +1213,36 @@ class MainWindow(QMainWindow):
         top.addWidget(self.dataset_label, 1)
 
         new_dataset_btn = QPushButton(tr("main.new"))
+        new_dataset_btn.setIcon(get_icon(Icons.FILE_PLUS))
         new_dataset_btn.clicked.connect(self.on_create_new_dataset)
         top.addWidget(new_dataset_btn)
 
         settings_btn = QPushButton(tr("main.settings"))
+        settings_btn.setIcon(get_icon(Icons.SETTINGS))
         settings_btn.clicked.connect(self.on_open_settings)
         top.addWidget(settings_btn)
+
+        audit_log_btn = QPushButton(tr("main.auditLog"))
+        audit_log_btn.setIcon(get_icon(Icons.FILE_TEXT))
+        audit_log_btn.clicked.connect(self.on_open_audit_log)
+        top.addWidget(audit_log_btn)
 
         root.addLayout(top)
 
         # Panels
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setObjectName("mainSplitter")
         splitter.setChildrenCollapsible(False)
-        splitter.setHandleWidth(6)
+        splitter.setHandleWidth(LAYOUT_SPLITTER_HANDLE_WIDTH)
 
         self.overview_panel = OverviewPanel(self.bridge, lambda: self.current_yaml_path)
         self.plan_store = PlanStore()
-        self.operations_panel = OperationsPanel(self.bridge, lambda: self.current_yaml_path, self.plan_store)
+        self.operations_panel = OperationsPanel(
+            self.bridge,
+            lambda: self.current_yaml_path,
+            self.plan_store,
+            overview_panel=self.overview_panel
+        )
         self.ai_panel = AIPanel(
             self.bridge,
             lambda: self.current_yaml_path,
@@ -1198,22 +1250,36 @@ class MainWindow(QMainWindow):
             manage_boxes_request_handler=self.handle_manage_boxes_request,
         )
 
-        screen = QApplication.primaryScreen()
-        sw = screen.availableGeometry().width() if screen else 1920
-
-        self.overview_panel.setMinimumWidth(int(sw * 0.15))
-        self.operations_panel.setMinimumWidth(int(sw * 0.10))
-        self.ai_panel.setMinimumWidth(int(sw * 0.12))
-        self.ai_panel.setMaximumWidth(int(sw * 0.22))
+        # Apply layout constraints from theme.py
+        self.operations_panel.setMinimumWidth(LAYOUT_OPS_MIN_WIDTH)
+        self.operations_panel.setMaximumWidth(LAYOUT_OPS_MAX_WIDTH)
+        self.ai_panel.setMinimumWidth(LAYOUT_AI_MIN_WIDTH)
+        self.ai_panel.setMaximumWidth(LAYOUT_AI_MAX_WIDTH)
+        self.overview_panel.setMinimumWidth(LAYOUT_OVERVIEW_MIN_WIDTH)
 
         splitter.addWidget(self.overview_panel)
         splitter.addWidget(self.operations_panel)
         splitter.addWidget(self.ai_panel)
 
-        splitter.setStretchFactor(0, 5)
-        splitter.setStretchFactor(1, 3)
-        splitter.setStretchFactor(2, 2)
+        # Set initial sizes: give side panels their preferred widths,
+        # let overview take the remaining space
+        screen = QApplication.primaryScreen()
+        sw = screen.availableGeometry().width() if screen else 1920
+        overview_width = sw - LAYOUT_OPS_DEFAULT_WIDTH - LAYOUT_AI_DEFAULT_WIDTH - 40
+
+        splitter.setSizes([overview_width, LAYOUT_OPS_DEFAULT_WIDTH, LAYOUT_AI_DEFAULT_WIDTH])
+
+        # Stretch factor: overview grows, side panels stay fixed
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        splitter.setStretchFactor(2, 0)
         root.addWidget(splitter, 1)
+
+        # Status bar for statistics (Excel-like bottom bar)
+        self.stats_bar = QLabel()
+        self.stats_bar.setObjectName("mainStatsBar")
+        self.stats_bar.setMinimumHeight(16)  # Compact height
+        root.addWidget(self.stats_bar)
 
         self.setCentralWidget(container)
 
@@ -1228,15 +1294,7 @@ class MainWindow(QMainWindow):
         self.overview_panel.request_add_prefill.connect(self.operations_panel.set_add_prefill)
         self.overview_panel.request_add_prefill_background.connect(self.operations_panel.set_add_prefill_background)
         self.overview_panel.request_move_prefill.connect(self.operations_panel.set_move_prefill)
-        self.overview_panel.request_query_prefill.connect(self.operations_panel.set_query_prefill)
         self.overview_panel.data_loaded.connect(self.operations_panel.update_records_cache)
-
-        # Operations -> Overview (plan preview)
-        self.operations_panel.plan_preview_updated.connect(
-            self.overview_panel.update_plan_preview)
-        self.operations_panel.plan_hover_item_changed.connect(
-            self.overview_panel.on_plan_item_hovered
-        )
 
         # Operations -> Overview (refresh after execution)
         self.operations_panel.operation_completed.connect(self.on_operation_completed)
@@ -1256,8 +1314,34 @@ class MainWindow(QMainWindow):
         self.operations_panel.status_message.connect(self.show_status)
         self.ai_panel.status_message.connect(self.show_status)
 
+        # Overview stats -> status bar
+        self.overview_panel.stats_changed.connect(self._update_stats_bar)
+        self.overview_panel.hover_stats_changed.connect(self._update_hover_stats)
+
+        # Hide summary cards (stats shown in status bar instead)
+        self.overview_panel.set_summary_cards_visible(False)
+
     def show_status(self, msg, timeout=2000, level="info"):
         self.statusBar().showMessage(msg, timeout)
+
+    def _update_stats_bar(self, stats):
+        """Update the stats bar with overview statistics."""
+        if not isinstance(stats, dict):
+            return
+        total = stats.get("total", 0)
+        occupied = stats.get("occupied", 0)
+        empty = stats.get("empty", 0)
+        rate = stats.get("rate", 0)
+        text = f"{tr('overview.totalRecords')}: {total}  |  {tr('overview.occupied')}: {occupied}  |  {tr('overview.empty')}: {empty}  |  {tr('overview.occupancyRate')}: {rate:.1f}%"
+        self.stats_bar.setText(text)
+
+    def _update_hover_stats(self, hover_text):
+        """Update the stats bar with hover information."""
+        if hover_text:
+            self.stats_bar.setText(hover_text)
+        else:
+            # Reset to overall stats (will be updated on next refresh)
+            self.stats_bar.setText("")
 
     def _show_nonblocking_dialog(self, dialog):
         """Show dialog without modal lock and keep Python reference alive."""
@@ -1442,7 +1526,7 @@ class MainWindow(QMainWindow):
             },
             on_create_new_dataset=self.on_create_new_dataset,
             on_manage_boxes=self.on_manage_boxes,
-            on_data_changed=lambda: self.overview_panel.refresh(),
+            on_data_changed=self._on_settings_data_changed,
         )
         if dialog.exec() != QDialog.Accepted:
             return
@@ -1484,6 +1568,7 @@ class MainWindow(QMainWindow):
 
         self._update_dataset_label()
         self.overview_panel.refresh()
+        self.operations_panel.apply_meta_update()
         if not os.path.isfile(self.current_yaml_path):
             self.statusBar().showMessage(
                 t("main.fileNotFound", path=self.current_yaml_path),
@@ -1491,6 +1576,20 @@ class MainWindow(QMainWindow):
             )
         self.gui_config["yaml_path"] = self.current_yaml_path
         save_gui_config(self.gui_config)
+
+    def _on_settings_data_changed(self, *, yaml_path=None, meta=None):
+        """Apply settings metadata updates immediately for the active dataset."""
+        target_yaml = _normalize_inventory_yaml_path(yaml_path or self.current_yaml_path)
+        current_yaml = _normalize_inventory_yaml_path(self.current_yaml_path)
+        if target_yaml and current_yaml:
+            try:
+                if os.path.abspath(str(target_yaml)) != os.path.abspath(str(current_yaml)):
+                    return
+            except Exception:
+                return
+
+        self.operations_panel.apply_meta_update(meta if isinstance(meta, dict) else None)
+        self.overview_panel.refresh()
 
     def _ask_restart(self, message):
         box = QMessageBox(self)
@@ -1506,6 +1605,17 @@ class MainWindow(QMainWindow):
         save_gui_config(self.gui_config)
         QApplication.quit()
         os.execv(sys.executable, [sys.executable] + sys.argv)
+
+    def on_open_audit_log(self):
+        """Open audit log dialog."""
+        from app_gui.ui.audit_dialog import AuditLogDialog
+
+        dialog = AuditLogDialog(
+            self,
+            yaml_path_getter=lambda: self.current_yaml_path,
+            bridge=self.bridge
+        )
+        dialog.exec()  # Modal dialog
 
     def on_manage_boxes(self, yaml_path_override=None):
         request = self._prompt_manage_boxes_request(yaml_path_override=yaml_path_override)
@@ -1732,22 +1842,35 @@ class MainWindow(QMainWindow):
                     "message": tr("main.boxCancelled"),
                 }
 
-        response = self.bridge.adjust_box_count(yaml_path=yaml_path, **payload)
+        response = self.bridge.adjust_box_count(
+            yaml_path=yaml_path,
+            execution_mode="execute",
+            **payload,
+        )
 
         if response.get("ok"):
             self.overview_panel.refresh()
             self.on_operation_completed(True)
-        self.operations_panel.emit_external_operation_event(
-            {
-                "type": "box_layout_adjusted",
-                "source": "ai" if from_ai else "settings",
+        notice_level = "success" if response.get("ok") else "error"
+        notice_text = str(
+            response.get("message")
+            or (tr("main.boxAdjustSuccess") if response.get("ok") else tr("main.boxAdjustFailed"))
+        )
+        notice = build_system_notice(
+            code="box.layout.adjusted",
+            text=notice_text,
+            level=notice_level,
+            source="ai" if from_ai else "settings",
+            timeout_ms=3000,
+            data={
                 "operation": op,
                 "ok": bool(response.get("ok")),
                 "preview": response.get("preview") or response.get("result") or {},
                 "error_code": response.get("error_code"),
-                "message": response.get("message"),
-            }
+            },
         )
+        self.show_status(notice_text, 3000, notice_level)
+        self.operations_panel.emit_external_operation_event(notice)
 
         return response
 
@@ -1758,9 +1881,9 @@ class MainWindow(QMainWindow):
             return
         box_layout = layout_dlg.get_layout()
 
-        default_path = self.current_yaml_path
-        if not default_path or os.path.isdir(default_path):
-            default_path = os.path.join(os.getcwd(), INVENTORY_FILE_NAME)
+        default_path = str(self.current_yaml_path or "").strip()
+        if not default_path:
+            default_path = os.getcwd()
         target_path, _ = QFileDialog.getSaveFileName(
             self,
             tr("main.new"),
@@ -1770,7 +1893,7 @@ class MainWindow(QMainWindow):
         if not target_path:
             return
 
-        target_path = _normalize_inventory_yaml_path(target_path, force_canonical_file=True)
+        target_path = _normalize_inventory_yaml_path(target_path)
 
         target_dir = os.path.dirname(target_path)
         if target_dir and not os.path.isdir(target_dir):
@@ -1782,14 +1905,19 @@ class MainWindow(QMainWindow):
             return
         custom_fields = cf_dlg.get_custom_fields()
         display_key = cf_dlg.get_display_key()
+        cell_line_required = cf_dlg.get_cell_line_required()
+        cell_line_options = cf_dlg.get_cell_line_options()
 
         meta = {
             "version": "1.0",
             "box_layout": box_layout,
             "custom_fields": custom_fields,
+            "cell_line_required": bool(cell_line_required),
         }
         if display_key:
             meta["display_key"] = display_key
+        if cell_line_options:
+            meta["cell_line_options"] = cell_line_options
 
         new_payload = {
             "meta": meta,
@@ -1864,6 +1992,7 @@ def main():
 
     # Set application icon (taskbar, window title bar, etc.)
     icon_candidates = [
+        os.path.join(ROOT, "app_gui", "assets", "snowfox-icon-v3.png"),
         os.path.join(ROOT, "app_gui", "assets", "snowfox-icon-v2.png"),
         os.path.join(ROOT, "app_gui", "assets", "snowfox-icon-v1.png"),
         os.path.join(ROOT, "app_gui", "assets", "icon.png"),
@@ -1876,9 +2005,13 @@ def main():
 
     gui_config = load_gui_config()
     theme = gui_config.get("theme", "dark")
+
+    # Set icon color based on theme
     if theme == "light":
+        set_icon_color("#000000")  # Black icons for light theme
         apply_light_theme(app)
     else:
+        set_icon_color("#ffffff")  # White icons for dark theme
         apply_dark_theme(app)
 
     window = MainWindow()

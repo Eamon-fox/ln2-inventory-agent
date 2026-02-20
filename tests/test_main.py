@@ -28,12 +28,31 @@ def test_main_keeps_settings_entry_and_missing_file_hint():
     assert "main.fileNotFound" in text
 
 
-def test_main_enforces_canonical_inventory_filename():
+def test_main_preserves_user_selected_inventory_filename_on_create():
     text = _source_text()
 
-    assert 'INVENTORY_FILE_NAME = "ln2_inventory.yaml"' in text
-    assert "def _normalize_inventory_yaml_path(" in text
-    assert "force_canonical_file=False" in text
+    assert 'INVENTORY_FILE_NAME = "ln2_inventory.yaml"' not in text
+    assert "target_path = _normalize_inventory_yaml_path(target_path)" in text
+    assert "default_path = os.getcwd()" in text
+    assert "_normalize_inventory_yaml_path(target_path, force_canonical_file=True)" not in text
+    assert "return os.path.join(abs_path, INVENTORY_FILE_NAME)" not in text
+
+
+def test_settings_new_dataset_switches_immediately():
+    text = _source_text()
+
+    assert "self._on_create_new_dataset(update_window=True)" in text
+
+
+def test_settings_dialog_enforces_existing_yaml_file_before_ok():
+    text = _source_text()
+
+    assert "def _is_valid_inventory_file_path(path_text):" in text
+    assert "suffix not in {\".yaml\", \".yml\"}" in text
+    assert "return os.path.isfile(path)" in text
+    assert "self._ok_button = buttons.button(QDialogButtonBox.Ok)" in text
+    assert "self.yaml_edit.textChanged.connect(self._refresh_yaml_path_validity)" in text
+    assert "self._ok_button.setEnabled(self._is_valid_inventory_file_path(self.yaml_edit.text().strip()))" in text
 
 
 def test_dataset_switch_resets_plan_and_undo_state():

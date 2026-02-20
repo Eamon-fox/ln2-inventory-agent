@@ -19,7 +19,7 @@ def make_record(rec_id=1, box=1, pos=1, **extra):
         "parent_cell_line": "K562",
         "short_name": f"rec-{rec_id}",
         "box": box,
-        "positions": [pos],
+        "position": pos,
         "frozen_at": "2026-02-10",
     }
     base.update(extra)
