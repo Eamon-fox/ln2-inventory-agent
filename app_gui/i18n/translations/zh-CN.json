@@ -226,6 +226,8 @@
     "position": "位置",
     "frozenDate": "存入日期",
     "cellLine": "Cell Line",
+    "cellLineOptionsHintLine1": "仅支持候选列表中的值",
+    "cellLineOptionsHintLine2": "路径：设置 -> 管理字段",
     "plasmidName": "质粒名称",
     "plasmid": "质粒",
     "plasmidId": "质粒 ID",

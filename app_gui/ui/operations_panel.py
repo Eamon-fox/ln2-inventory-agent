@@ -2,8 +2,8 @@ import json
 import os
 import tempfile
 from datetime import date, datetime
-from PySide6.QtCore import Qt, Signal, Slot, QDate, QEvent, QTimer, QUrl, QSize, QStringListModel
-from PySide6.QtGui import QDesktopServices, QValidator
+from PySide6.QtCore import Qt, Signal, Slot, QDate, QEvent, QTimer, QUrl, QSize, QSortFilterProxyModel
+from PySide6.QtGui import QDesktopServices, QValidator, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QLineEdit, QComboBox, QCompleter,
@@ -93,6 +93,36 @@ class _PrefixListValidator(QValidator):
                 return (QValidator.Intermediate, input_text, pos)
 
         return (QValidator.Invalid, input_text, pos)
+
+
+_CHOICE_HINT_ROLE = int(Qt.UserRole) + 101
+
+
+class _ChoiceHintProxyModel(QSortFilterProxyModel):
+    """Filter normal options by prefix while always keeping hint rows visible."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._prefix = ""
+
+    def set_prefix(self, prefix_text):
+        prefix = str(prefix_text or "").strip().casefold()
+        if prefix == self._prefix:
+            return
+        self._prefix = prefix
+        self.invalidateFilter()
+
+    def filterAcceptsRow(self, source_row, source_parent):
+        model = self.sourceModel()
+        if model is None:
+            return False
+        index = model.index(source_row, 0, source_parent)
+        if bool(index.data(_CHOICE_HINT_ROLE)):
+            return True
+        text = str(index.data(Qt.DisplayRole) or "")
+        if not self._prefix:
+            return True
+        return text.casefold().startswith(self._prefix)
 
 
 class OperationsPanel(QWidget):
@@ -393,37 +423,116 @@ class OperationsPanel(QWidget):
             return
 
         required = is_cell_line_required(meta)
-        options = get_cell_line_options(meta)
+        options = []
+        seen = set()
+        for raw in get_cell_line_options(meta):
+            text = str(raw or "").strip()
+            if not text:
+                continue
+            key = text.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            options.append(text)
+        hint_lines = self._cell_line_hint_lines()
         prev = combo.currentText()
 
         combo.blockSignals(True)
-        combo.clear()
+
+        display_options = []
         if not required:
-            combo.addItem("")
-        for opt in options:
-            combo.addItem(opt)
-        combo.setMaxVisibleItems(10)
+            display_options.append("")
+        display_options.extend(options)
+
+        combo_model = self._build_choice_display_model(
+            display_options,
+            hint_lines=hint_lines,
+            parent=combo,
+        )
+        combo.setModel(combo_model)
+        combo.setEditable(True)
+        combo.setInsertPolicy(QComboBox.NoInsert)
+        combo_row_count = combo_model.rowCount()
+        combo.setMaxVisibleItems(max(1, combo_row_count))
         try:
             view = combo.view()
             if view is not None:
-                view.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-                view.setMaximumHeight(240)
+                view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                popup_height = self._popup_height_for_rows(view, combo_row_count)
+                if popup_height > 0:
+                    view.setMinimumHeight(popup_height)
+                    view.setMaximumHeight(popup_height)
         except Exception:
             pass
 
+        target_index = -1
         if prev:
-            idx = combo.findText(prev)
+            idx = combo.findText(prev, Qt.MatchFixedString)
             if idx >= 0:
-                combo.setCurrentIndex(idx)
-        elif not required and combo.count() > 0:
-            combo.setCurrentIndex(0)
+                model_item = combo_model.item(idx, 0)
+                if model_item is not None and not bool(model_item.data(_CHOICE_HINT_ROLE)):
+                    target_index = idx
 
-        if required and combo.currentText() == "" and combo.count() > 0:
-            combo.setCurrentIndex(0)
+        if target_index < 0 and not required and combo.count() > 0:
+            target_index = 0
+
+        if target_index < 0 and required and options:
+            target_index = 0
+
+        if target_index >= 0:
+            combo.setCurrentIndex(target_index)
 
         combo.blockSignals(False)
-        combo.setEditable(False)
+
+        combo_line = combo.lineEdit()
+        if combo_line is not None:
+            self._configure_choice_line_edit(
+                combo_line,
+                options=options,
+                allow_empty=(not required),
+                hint_lines=hint_lines,
+                show_all_popup=True,
+            )
+
         self._refresh_context_cell_line_constraints()
+
+    @staticmethod
+    def _build_choice_display_model(options, *, hint_lines=None, parent=None):
+        model = QStandardItemModel(parent)
+
+        for raw in options or []:
+            text = str(raw or "")
+            item = QStandardItem(text)
+            item.setEditable(False)
+            item.setData(False, _CHOICE_HINT_ROLE)
+            item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            model.appendRow(item)
+
+        for raw_hint in hint_lines or []:
+            hint_text = str(raw_hint or "").strip()
+            if not hint_text:
+                continue
+            hint_item = QStandardItem(hint_text)
+            hint_item.setEditable(False)
+            hint_item.setData(True, _CHOICE_HINT_ROLE)
+            # Show as read-only guidance row in dropdown/completer popup.
+            hint_item.setFlags(Qt.ItemIsEnabled)
+            model.appendRow(hint_item)
+
+        return model
+
+    @staticmethod
+    def _cell_line_hint_lines():
+        lines = []
+        for key in (
+            "operations.cellLineOptionsHintLine1",
+            "operations.cellLineOptionsHintLine2",
+        ):
+            text = str(tr(key) or "").strip()
+            if text and text not in lines:
+                lines.append(text)
+        return lines
 
     def _cell_line_choice_config(self):
         from lib.custom_fields import get_cell_line_options, is_cell_line_required
@@ -457,7 +566,15 @@ class OperationsPanel(QWidget):
                 return opt
         return None
 
-    def _configure_choice_line_edit(self, line_edit, *, options, allow_empty):
+    def _configure_choice_line_edit(
+        self,
+        line_edit,
+        *,
+        options,
+        allow_empty,
+        hint_lines=None,
+        show_all_popup=False,
+    ):
         if not isinstance(line_edit, QLineEdit):
             return
 
@@ -474,22 +591,77 @@ class OperationsPanel(QWidget):
             completer = QCompleter(line_edit)
             line_edit.setCompleter(completer)
 
-        completer.setModel(QStringListModel(list(options), completer))
+        hint_lines = list(hint_lines or self._cell_line_hint_lines())
+        source_model = self._build_choice_display_model(options, hint_lines=hint_lines, parent=completer)
+
+        proxy_model = getattr(line_edit, "_choice_proxy_model", None)
+        if not isinstance(proxy_model, _ChoiceHintProxyModel):
+            proxy_model = _ChoiceHintProxyModel(line_edit)
+            line_edit._choice_proxy_model = proxy_model
+
+        proxy_model.setSourceModel(source_model)
+        proxy_model.set_prefix(line_edit.text())
+
+        if not getattr(line_edit, "_choice_prefix_hooked", False):
+            def _on_choice_text_changed(text, edit=line_edit):
+                proxy = getattr(edit, "_choice_proxy_model", None)
+                if isinstance(proxy, _ChoiceHintProxyModel):
+                    proxy.set_prefix(text)
+
+            line_edit.textChanged.connect(_on_choice_text_changed)
+            line_edit._choice_prefix_hooked = True
+
+        completer.setModel(proxy_model)
         completer.setCaseSensitivity(Qt.CaseInsensitive)
-        completer.setFilterMode(Qt.MatchStartsWith)
-        completer.setCompletionMode(QCompleter.PopupCompletion)
-        completer.setMaxVisibleItems(10)
+        completer.setCompletionMode(QCompleter.UnfilteredPopupCompletion)
+        if show_all_popup:
+            completer.setMaxVisibleItems(max(1, proxy_model.rowCount()))
+        else:
+            completer.setMaxVisibleItems(10)
 
         popup = completer.popup()
         if popup is not None:
-            popup.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-            popup.setMaximumHeight(240)
+            if show_all_popup:
+                popup.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                popup.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                popup_height = self._popup_height_for_rows(popup, proxy_model.rowCount())
+                if popup_height > 0:
+                    popup.setMinimumHeight(popup_height)
+                    popup.setMaximumHeight(popup_height)
+            else:
+                popup.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+                popup.setMaximumHeight(240)
+
+    @staticmethod
+    def _popup_height_for_rows(view, row_count):
+        count = int(row_count or 0)
+        if view is None or count <= 0:
+            return 0
+
+        try:
+            row_height = int(view.sizeHintForRow(0))
+        except Exception:
+            row_height = 0
+        if row_height <= 0:
+            row_height = max(18, int(view.fontMetrics().height()) + 6)
+
+        try:
+            frame = int(view.frameWidth()) * 2
+        except Exception:
+            frame = 0
+
+        return max(1, count * row_height + frame)
 
     def _refresh_context_cell_line_constraints(self):
         options, allow_empty = self._cell_line_choice_config()
         for field in (getattr(self, "t_ctx_cell_line", None), getattr(self, "m_ctx_cell_line", None)):
             if isinstance(field, QLineEdit):
-                self._configure_choice_line_edit(field, options=options, allow_empty=allow_empty)
+                self._configure_choice_line_edit(
+                    field,
+                    options=options,
+                    allow_empty=allow_empty,
+                    show_all_popup=True,
+                )
 
     def _rebuild_ctx_user_fields(self, prefix, custom_fields):
         """Rebuild user field context rows in thaw/move form."""
@@ -715,7 +887,12 @@ class OperationsPanel(QWidget):
                 seen.add(key)
                 options.append(text)
 
-            self._configure_choice_line_edit(field, options=options, allow_empty=bool(allow_empty))
+            self._configure_choice_line_edit(
+                field,
+                options=options,
+                allow_empty=bool(allow_empty),
+                show_all_popup=(field_name == "cell_line"),
+            )
             return options, bool(allow_empty)
 
         def on_lock_toggle():

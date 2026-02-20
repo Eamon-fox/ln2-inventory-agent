@@ -226,6 +226,8 @@
     "position": "Position",
     "frozenDate": "Deposited Date",
     "cellLine": "Cell Line",
+    "cellLineOptionsHintLine1": "Only listed options are accepted",
+    "cellLineOptionsHintLine2": "Path: Settings -> Manage Fields",
     "plasmidName": "Plasmid Name",
     "plasmid": "Plasmid",
     "plasmidId": "Plasmid ID",
