@@ -378,7 +378,6 @@
     "printLastResult": "打印上次执行",
     "printGuide": "打印指南",
     "guideOpened": "操作指南已在浏览器中打开",
-    "planExecutionSuccess": "✓ 计划执行成功",
     "planCleared": "已清空计划。",
     "rollbackUnknown": "回滚失败。",
     "exportedTo": "已导出到 {path}",

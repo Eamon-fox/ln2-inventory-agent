@@ -236,8 +236,14 @@ def _coerce_batch_entry(entry, layout=None):
     raise ValueError("每个条目必须是 tuple/list/dict")
 
 
-def _build_move_event(date_str, from_position, to_position, note=None,
-                      paired_record_id=None, from_box=None, to_box=None):
+def _build_move_event(
+    date_str,
+    from_position,
+    to_position,
+    paired_record_id=None,
+    from_box=None,
+    to_box=None,
+):
     """Build normalized move event payload."""
     event = {
         "date": date_str,
@@ -252,8 +258,6 @@ def _build_move_event(date_str, from_position, to_position, note=None,
         event["to_box"] = to_box
     if paired_record_id is not None:
         event["paired_record_id"] = paired_record_id
-    if note:
-        event["note"] = note
     return event
 
 
@@ -817,11 +821,17 @@ def tool_add_entry(
     new_records = []
     created = []
     cell_line = fields.pop("cell_line", None)
+    raw_note = fields.pop("note", None)
+    note_value = None
+    if raw_note is not None:
+        note_text = str(raw_note).strip()
+        note_value = note_text or None
     for offset, pos in enumerate(list(positions)):
         tube_id = next_id + offset
         rec = {
             "id": tube_id,
             "cell_line": cell_line or "",
+            "note": note_value,
             "box": box,
             "position": int(pos),
             "frozen_at": frozen_at,
@@ -839,6 +849,7 @@ def tool_add_entry(
         "box": box,
         "positions": list(int(p) for p in positions),
         "frozen_at": frozen_at,
+        "note": note_value,
         "fields": fields,
         "created": created,
     }
@@ -962,11 +973,11 @@ def tool_add_entry(
     }
 
 
-_EDITABLE_FIELDS = {"frozen_at", "cell_line"}
+_EDITABLE_FIELDS = {"frozen_at", "cell_line", "note"}
 
 
 def _get_editable_fields(yaml_path):
-    """Return editable field set: frozen_at + cell_line + all user-configurable fields from meta."""
+    """Return editable field set: frozen_at + cell_line + note + user fields from meta."""
     try:
         data = load_yaml(yaml_path)
         meta = data.get("meta", {})
@@ -1159,7 +1170,6 @@ def tool_record_thaw(
     position=None,
     date_str=None,
     action="取出",
-    note=None,
     to_position=None,
     to_box=None,
     dry_run=False,
@@ -1178,7 +1188,6 @@ def tool_record_thaw(
         "to_box": to_box,
         "date": date_str,
         "action": action,
-        "note": note,
         "dry_run": bool(dry_run),
         "execution_mode": execution_mode,
     }
@@ -1424,7 +1433,6 @@ def tool_record_thaw(
             date_str=date_str,
             from_position=position,
             to_position=move_to_position,
-            note=note,
             paired_record_id=swap_target["record"].get("id") if swap_target else None,
             from_box=box if cross_box else None,
             to_box=to_box if cross_box else None,
@@ -1434,14 +1442,11 @@ def tool_record_thaw(
                 date_str=date_str,
                 from_position=move_to_position,
                 to_position=position,
-                note=note,
                 paired_record_id=record_id,
             )
     else:
         new_position = None
         new_event = {"date": date_str, "action": action_en, "positions": [position]}
-        if note:
-            new_event["note"] = note
 
     preview = {
         "record_id": record_id,
@@ -1453,7 +1458,6 @@ def tool_record_thaw(
         "position": position,
         "to_position": move_to_position,
         "to_box": to_box,
-        "note": note,
         "date": date_str,
         "position_before": current_position,
         "position_after": new_position,
@@ -1600,7 +1604,6 @@ def tool_record_thaw(
                     "to_position": move_to_position,
                     "date": date_str,
                     "action": action,
-                    "note": note,
                 },
             ),
         )
@@ -1646,7 +1649,6 @@ def tool_batch_thaw(
     entries,
     date_str,
     action="取出",
-    note=None,
     dry_run=False,
     execution_mode=None,
     actor_context=None,
@@ -1660,7 +1662,6 @@ def tool_batch_thaw(
         "entries": list(entries) if isinstance(entries, (list, tuple)) else entries,
         "date": date_str,
         "action": action,
-        "note": note,
         "dry_run": bool(dry_run),
         "execution_mode": execution_mode,
     }
@@ -1851,7 +1852,6 @@ def tool_batch_thaw(
                 date_str=date_str,
                 from_position=from_pos,
                 to_position=to_pos,
-                note=note,
                 paired_record_id=dest_record.get("id") if dest_record else None,
                 from_box=current_box if cross_box else None,
                 to_box=entry_to_box if cross_box else None,
@@ -1864,7 +1864,6 @@ def tool_batch_thaw(
                         date_str=date_str,
                         from_position=to_pos,
                         to_position=from_pos,
-                        note=note,
                         paired_record_id=record_id,
                     )
                 )
@@ -1907,7 +1906,6 @@ def tool_batch_thaw(
             "date": date_str,
             "action_en": action_en,
             "action_cn": ACTION_LABEL.get(action_en, action),
-            "note": note,
             "count": len(operations),
             "operations": [
                 {
@@ -2029,7 +2027,6 @@ def tool_batch_thaw(
                         "entries": list(normalized_entries),
                         "date": date_str,
                         "action": action,
-                        "note": note,
                     },
                 ),
             )
@@ -2134,7 +2131,6 @@ def tool_batch_thaw(
         "date": date_str,
         "action_en": action_en,
         "action_cn": ACTION_LABEL.get(action_en, action),
-        "note": note,
         "count": len(operations),
         "operations": [
             {
@@ -2189,8 +2185,6 @@ def tool_batch_thaw(
                 "action": action_en,
                 "positions": [position],
             }
-            if note:
-                new_event["note"] = note
             thaw_events = candidate_records[idx].get("thaw_events")
             if thaw_events is None:
                 candidate_records[idx]["thaw_events"] = []
@@ -2255,7 +2249,6 @@ def tool_batch_thaw(
                     "entries": list(normalized_entries),
                     "date": date_str,
                     "action": action,
-                    "note": note,
                 },
             ),
         )

@@ -564,6 +564,7 @@ class OverviewPanel(QWidget):
             "frozen_at": 100,
             "thaw_events": 200,
             "cell_line": 100,
+            "note": 180,
             "short_name": 150,
         }
         for idx, col_name in enumerate(headers):
@@ -1183,6 +1184,9 @@ class OverviewPanel(QWidget):
             ]
             if cl:
                 tt.append(f"{tr('overview.tooltipCellLine')}: {cl}")
+            note_value = record.get("note")
+            if note_value is not None and str(note_value).strip():
+                tt.append(f"{tr('operations.note')}: {note_value}")
             for fdef in get_effective_fields(meta):
                 fk = fdef["key"]
                 fv = record.get(fk)
@@ -1195,6 +1199,7 @@ class OverviewPanel(QWidget):
             # Dynamic search text — include cell_line + all user fields
             parts = [str(record.get("id", "")), str(box_num), str(position),
                      str(record.get("cell_line") or ""),
+                     str(record.get("note") or ""),
                      str(record.get("frozen_at") or "")]
             for k, v in record.items():
                 if k not in STRUCTURAL_FIELD_KEYS and k != "id":
@@ -1516,7 +1521,6 @@ class OverviewPanel(QWidget):
             position=position,
             box=resolve_record_box(record, fallback_box=box_num),
             date_str=date.today().isoformat(),
-            note=None,
             source="context_menu",  # 标记来源
             payload_action="Takeout",
         )

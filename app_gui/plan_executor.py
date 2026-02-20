@@ -391,7 +391,6 @@ def _preflight_batch_thaw(bridge: object, yaml_path: str, payload: Dict[str, obj
         entries=payload.get("entries", []),
         date_str=payload.get("date_str"),
         action=payload.get("action", "Takeout"),
-        note=payload.get("note"),
     )
 
 
@@ -419,7 +418,6 @@ def _execute_moves_batch(
         "entries": entries,
         "date_str": first_payload.get("date_str", date_str),
         "action": "Move",
-        "note": first_payload.get("note"),
     }
 
     if mode == "preflight":
@@ -468,7 +466,6 @@ def _execute_thaw_batch(
                 "position": p.get("position"),
                 "date_str": p.get("date_str", date_str),
                 "action": action_name,
-                "note": p.get("note"),
             }
             response = _run_preflight_tool(
                 bridge=bridge,
@@ -500,7 +497,6 @@ def _execute_thaw_batch(
         "entries": entries,
         "date_str": first_payload.get("date_str", date_str),
         "action": action_name,
-        "note": first_payload.get("note"),
     }
 
     response = bridge.batch_thaw(yaml_path=yaml_path, execution_mode="execute", **batch_payload)

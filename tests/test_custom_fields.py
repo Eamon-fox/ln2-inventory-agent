@@ -93,7 +93,7 @@ class TestParseCustomFields(unittest.TestCase):
         self.assertEqual("10% DMSO", result[0]["default"])
 
     def test_core_field_key_rejected(self):
-        for core_key in ("id", "box", "position", "frozen_at", "thaw_events"):
+        for core_key in ("id", "box", "position", "frozen_at", "thaw_events", "note"):
             meta = {"custom_fields": [{"key": core_key, "label": "X"}]}
             result = parse_custom_fields(meta)
             self.assertEqual([], result, f"structural key {core_key!r} should be rejected")
@@ -145,7 +145,7 @@ class TestParseCustomFields(unittest.TestCase):
                          [f["key"] for f in result])
 
     def test_all_structural_keys_in_blacklist(self):
-        expected = {"id", "box", "position", "frozen_at", "thaw_events", "cell_line"}
+        expected = {"id", "box", "position", "frozen_at", "thaw_events", "cell_line", "note"}
         self.assertEqual(expected, STRUCTURAL_FIELD_KEYS)
 
 
@@ -357,7 +357,6 @@ class TestToolEditEntryCustomFields(unittest.TestCase):
                     custom_fields=[
                         {"key": "parent_cell_line", "label": "Cell", "type": "str", "required": True},
                         {"key": "short_name", "label": "Short", "type": "str", "required": True},
-                        {"key": "note", "label": "Note", "type": "str"},
                         {"key": "passage_number", "label": "Passage #", "type": "int"},
                     ],
                 ),
@@ -448,7 +447,7 @@ class TestGetEditableFields(unittest.TestCase):
             write_raw_yaml(str(yaml_path), make_data([make_record()]))
             result = _get_editable_fields(str(yaml_path))
             self.assertEqual(_EDITABLE_FIELDS, result)
-            self.assertEqual({"frozen_at", "cell_line"}, result)
+            self.assertEqual({"frozen_at", "cell_line", "note"}, result)
 
     def test_custom_fields_extend_editable_set(self):
         from lib.tool_api import _get_editable_fields
@@ -478,7 +477,7 @@ class TestGetEditableFields(unittest.TestCase):
 
         result = _get_editable_fields("/nonexistent/path.yaml")
         self.assertEqual(_EDITABLE_FIELDS, result)
-        self.assertEqual({"frozen_at", "cell_line"}, result)
+        self.assertEqual({"frozen_at", "cell_line", "note"}, result)
 
 
 # ===========================================================================

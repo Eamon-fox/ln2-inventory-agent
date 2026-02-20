@@ -332,7 +332,25 @@ class SettingsDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
+        self._ok_button = buttons.button(QDialogButtonBox.Ok)
+        self.yaml_edit.textChanged.connect(self._refresh_yaml_path_validity)
+        self._refresh_yaml_path_validity()
         layout.addWidget(buttons)
+
+    @staticmethod
+    def _is_valid_inventory_file_path(path_text):
+        path = _normalize_inventory_yaml_path(path_text)
+        if not path or os.path.isdir(path):
+            return False
+        suffix = os.path.splitext(path)[1].lower()
+        if suffix not in {".yaml", ".yml"}:
+            return False
+        return os.path.isfile(path)
+
+    def _refresh_yaml_path_validity(self):
+        if not hasattr(self, "_ok_button") or self._ok_button is None:
+            return
+        self._ok_button.setEnabled(self._is_valid_inventory_file_path(self.yaml_edit.text().strip()))
 
     def _notify_data_changed(self, *, yaml_path=None, meta=None):
         """Notify parent window after metadata edits (best-effort backward compatible)."""

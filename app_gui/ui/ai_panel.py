@@ -1040,6 +1040,144 @@ class AIPanel(QWidget):
             lines.append(f"- ... and {count - 3} more")
         return "\n".join(lines)
 
+    @staticmethod
+    def _single_line_text(value, limit=180):
+        text = str(value or "").strip()
+        text = " | ".join(part.strip() for part in text.splitlines() if part.strip())
+        if len(text) > limit:
+            return text[: max(0, limit - 3)] + "..."
+        return text
+
+    def _format_notice_operation(self, item, row=None):
+        payload = item.get("payload") if isinstance(item, dict) else {}
+        payload = payload if isinstance(payload, dict) else {}
+        fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
+
+        desc = self._format_blocked_item(item if isinstance(item, dict) else {})
+        cell_line = item.get("cell_line") if isinstance(item, dict) else None
+        short_name = item.get("short_name") if isinstance(item, dict) else None
+        if cell_line in (None, ""):
+            cell_line = fields.get("cell_line")
+        if short_name in (None, ""):
+            short_name = fields.get("short_name")
+
+        if isinstance(row, dict):
+            response = row.get("response") if isinstance(row.get("response"), dict) else {}
+            preview = response.get("preview") if isinstance(response.get("preview"), dict) else {}
+            operations = preview.get("operations") if isinstance(preview.get("operations"), list) else []
+            if operations and isinstance(operations[0], dict):
+                op0 = operations[0]
+                if cell_line in (None, ""):
+                    cell_line = op0.get("cell_line")
+                if short_name in (None, ""):
+                    short_name = op0.get("short_name")
+
+        tags = []
+        if cell_line not in (None, ""):
+            tags.append(f"cell_line={cell_line}")
+        if short_name not in (None, ""):
+            tags.append(f"short_name={short_name}")
+        if tags:
+            desc += " | " + ", ".join(tags)
+        return desc
+
+    def _extract_notice_operation_lines(self, code, data):
+        sample = data.get("sample") if isinstance(data.get("sample"), list) else []
+        sample_lines = [self._single_line_text(v, limit=180) for v in sample if str(v or "").strip()]
+        if sample_lines:
+            return sample_lines
+
+        if code == "plan.stage.blocked":
+            blocked_items = data.get("blocked_items") if isinstance(data.get("blocked_items"), list) else []
+            lines = []
+            for blocked in blocked_items[:8]:
+                payload = blocked if isinstance(blocked, dict) else {}
+                desc = self._format_notice_operation(payload)
+                message = payload.get("message") or payload.get("error_code")
+                if message:
+                    desc += f" | {self._single_line_text(message, limit=140)}"
+                lines.append(desc)
+            return lines
+
+        if code == "plan.execute.result":
+            report = data.get("report") if isinstance(data.get("report"), dict) else {}
+            report_items = report.get("items") if isinstance(report.get("items"), list) else []
+            lines = []
+            for row in report_items[:8]:
+                row_data = row if isinstance(row, dict) else {}
+                item = row_data.get("item") if isinstance(row_data.get("item"), dict) else {}
+                if not item:
+                    continue
+                status = "OK" if row_data.get("ok") else ("BLOCKED" if row_data.get("blocked") else "FAIL")
+                line = f"{status}: {self._format_notice_operation(item, row=row_data)}"
+                if status != "OK":
+                    message = row_data.get("message") or row_data.get("error_code")
+                    if not message:
+                        response = row_data.get("response") if isinstance(row_data.get("response"), dict) else {}
+                        message = response.get("message")
+                    if message:
+                        line += f" | {self._single_line_text(message, limit=140)}"
+                lines.append(line)
+            return lines
+
+        items = data.get("items") if isinstance(data.get("items"), list) else []
+        lines = []
+        for item in items[:8]:
+            if isinstance(item, dict):
+                lines.append(self._format_notice_operation(item))
+        return lines
+
+    def _extract_notice_meta_lines(self, code, data):
+        lines = []
+        if code == "plan.stage.accepted":
+            lines.append(
+                f"Counts: added={int(data.get('added_count') or 0)}, total={int(data.get('total_count') or 0)}"
+            )
+        elif code == "plan.removed":
+            lines.append(
+                f"Counts: removed={int(data.get('removed_count') or 0)}, total={int(data.get('total_count') or 0)}"
+            )
+        elif code == "plan.cleared":
+            lines.append(f"Counts: cleared={int(data.get('cleared_count') or 0)}")
+        elif code == "plan.restored":
+            lines.append(f"Counts: restored={int(data.get('restored_count') or 0)}")
+        elif code == "plan.stage.blocked":
+            blocked_items = data.get("blocked_items") if isinstance(data.get("blocked_items"), list) else []
+            stats = data.get("stats") if isinstance(data.get("stats"), dict) else {}
+            lines.append(
+                f"Counts: blocked={len(blocked_items)}, total={int(stats.get('total') or 0)}"
+            )
+        elif code == "plan.execute.result":
+            stats = data.get("stats") if isinstance(data.get("stats"), dict) else {}
+            lines.append(
+                "Stats: "
+                f"applied={int(stats.get('applied') or 0)}, "
+                f"failed={int(stats.get('failed') or 0)}, "
+                f"blocked={int(stats.get('blocked') or 0)}, "
+                f"remaining={int(stats.get('remaining') or 0)}, "
+                f"total={int(stats.get('total') or 0)}"
+            )
+
+            rollback = data.get("rollback") if isinstance(data.get("rollback"), dict) else {}
+            if rollback:
+                if rollback.get("ok"):
+                    lines.append("Rollback: succeeded")
+                elif rollback.get("attempted"):
+                    lines.append(
+                        f"Rollback: failed | {self._single_line_text(rollback.get('message') or rollback.get('error_code'))}"
+                    )
+                else:
+                    lines.append(
+                        f"Rollback: unavailable | {self._single_line_text(rollback.get('message') or rollback.get('error_code'))}"
+                    )
+
+            report = data.get("report") if isinstance(data.get("report"), dict) else {}
+            backup_path = report.get("backup_path")
+            if backup_path:
+                lines.append(f"Backup: {backup_path}")
+
+        return lines
+
     def _append_history(self, role, text):
         self.ai_history.append({"role": role, "content": text})
         if len(self.ai_history) > 20:
@@ -1048,8 +1186,7 @@ class AIPanel(QWidget):
     def _render_system_notice(self, notice):
         """Render one normalized notice to chat with expandable raw payload."""
         summary_text = str(notice.get("text") or notice.get("code") or "System notice")
-        details_json = json.dumps(notice, ensure_ascii=False, indent=2)
-        self._append_chat_with_collapsible("System", summary_text, details_json)
+        self._append_chat_with_collapsible("System", summary_text, notice)
 
     def on_operation_event(self, event):
         """Receive operation events and normalize them to one notice shape."""
@@ -1098,22 +1235,46 @@ class AIPanel(QWidget):
             lines.append(f"{tr('eventDetails.time')}: {ts}")
 
         if event_type == "system_notice":
-            lines.append(f"Code: {event.get('code', 'notice')}")
+            code = str(event.get("code") or "notice")
+            lines.append(f"Code: {code}")
             lines.append(f"Level: {event.get('level', 'info')}")
             lines.append(f"Text: {event.get('text', '')}")
 
             details = event.get("details")
-            if details:
+            if details and str(details).strip() and str(details).strip() != str(event.get("text") or "").strip():
                 lines.append("\nDetails:")
-                lines.append(str(details))
+                lines.append(self._single_line_text(details, limit=360))
 
             data = event.get("data")
             if isinstance(data, dict) and data:
-                lines.append("\nData:")
-                try:
-                    lines.append(json.dumps(data, ensure_ascii=False, indent=2))
-                except Exception:
-                    lines.append(str(data))
+                op_lines = self._extract_notice_operation_lines(code, data)
+                meta_lines = self._extract_notice_meta_lines(code, data)
+
+                if op_lines:
+                    lines.append(f"\nOperations ({len(op_lines)}):")
+                    for op in op_lines[:8]:
+                        lines.append(f"- {op}")
+                    if len(op_lines) > 8:
+                        lines.append(f"- ... and {len(op_lines) - 8} more")
+
+                if meta_lines:
+                    lines.append("")
+                    lines.extend(meta_lines)
+
+                if not op_lines and not meta_lines:
+                    scalar_lines = []
+                    for key, value in sorted(data.items()):
+                        if key == "legacy_event":
+                            continue
+                        if isinstance(value, (str, int, float, bool)):
+                            scalar_lines.append(f"{key}: {value}")
+                        elif isinstance(value, list):
+                            scalar_lines.append(f"{key}: <list {len(value)}>")
+                        elif isinstance(value, dict):
+                            scalar_lines.append(f"{key}: <object {len(value)} keys>")
+                    if scalar_lines:
+                        lines.append("\nData:")
+                        lines.extend(scalar_lines[:8])
             return "\n".join(lines)
 
         # Type-specific formatting

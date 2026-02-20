@@ -2,11 +2,11 @@ import json
 import os
 import tempfile
 from datetime import date, datetime
-from PySide6.QtCore import Qt, Signal, Slot, QDate, QEvent, QTimer, QUrl, QSize
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import Qt, Signal, Slot, QDate, QEvent, QTimer, QUrl, QSize, QStringListModel
+from PySide6.QtGui import QDesktopServices, QValidator
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QLineEdit, QComboBox,
+    QPushButton, QLineEdit, QComboBox, QCompleter,
     QStackedWidget, QTableWidget, QTableWidgetItem,
     QHeaderView, QFileDialog, QMessageBox, QGroupBox,
     QAbstractItemView, QSizePolicy,
@@ -49,6 +49,50 @@ def _localized_action(action: str) -> str:
     """Return localized display text for a canonical action name."""
     key = _ACTION_I18N_KEY.get(action.lower())
     return tr(key) if key else action.capitalize()
+
+
+class _PrefixListValidator(QValidator):
+    """Allow only prefixes/exact values from a finite option list."""
+
+    def __init__(self, options=None, allow_empty=True, parent=None):
+        super().__init__(parent)
+        self._options = []
+        self._lower_options = []
+        self._allow_empty = bool(allow_empty)
+        self.set_rules(options or [], allow_empty=allow_empty)
+
+    def set_rules(self, options, allow_empty=True):
+        normalized = []
+        seen = set()
+        for raw in options or []:
+            text = str(raw or "").strip()
+            if not text:
+                continue
+            key = text.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(text)
+        self._options = normalized
+        self._lower_options = [item.casefold() for item in normalized]
+        self._allow_empty = bool(allow_empty)
+
+    def validate(self, input_text, pos):
+        text = str(input_text or "")
+        if not text:
+            if self._allow_empty:
+                return (QValidator.Acceptable, input_text, pos)
+            return (QValidator.Intermediate, input_text, pos)
+
+        lowered = text.casefold()
+        if lowered in self._lower_options:
+            return (QValidator.Acceptable, input_text, pos)
+
+        for opt in self._lower_options:
+            if opt.startswith(lowered):
+                return (QValidator.Intermediate, input_text, pos)
+
+        return (QValidator.Invalid, input_text, pos)
 
 
 class OperationsPanel(QWidget):
@@ -358,6 +402,14 @@ class OperationsPanel(QWidget):
             combo.addItem("")
         for opt in options:
             combo.addItem(opt)
+        combo.setMaxVisibleItems(10)
+        try:
+            view = combo.view()
+            if view is not None:
+                view.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+                view.setMaximumHeight(240)
+        except Exception:
+            pass
 
         if prev:
             idx = combo.findText(prev)
@@ -371,6 +423,73 @@ class OperationsPanel(QWidget):
 
         combo.blockSignals(False)
         combo.setEditable(False)
+        self._refresh_context_cell_line_constraints()
+
+    def _cell_line_choice_config(self):
+        from lib.custom_fields import get_cell_line_options, is_cell_line_required
+
+        meta = self._current_meta if isinstance(self._current_meta, dict) else {}
+        required = is_cell_line_required(meta)
+        options = []
+        seen = set()
+        for raw in get_cell_line_options(meta):
+            text = str(raw or "").strip()
+            if not text:
+                continue
+            key = text.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            options.append(text)
+        return options, (not required)
+
+    @staticmethod
+    def _canonicalize_choice(value, options):
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        for opt in options:
+            if opt == text:
+                return opt
+        lower = text.casefold()
+        for opt in options:
+            if opt.casefold() == lower:
+                return opt
+        return None
+
+    def _configure_choice_line_edit(self, line_edit, *, options, allow_empty):
+        if not isinstance(line_edit, QLineEdit):
+            return
+
+        validator = getattr(line_edit, "_choice_validator", None)
+        if not isinstance(validator, _PrefixListValidator):
+            validator = _PrefixListValidator(options, allow_empty=allow_empty, parent=line_edit)
+            line_edit._choice_validator = validator
+        else:
+            validator.set_rules(options, allow_empty=allow_empty)
+        line_edit.setValidator(validator)
+
+        completer = line_edit.completer()
+        if not isinstance(completer, QCompleter):
+            completer = QCompleter(line_edit)
+            line_edit.setCompleter(completer)
+
+        completer.setModel(QStringListModel(list(options), completer))
+        completer.setCaseSensitivity(Qt.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchStartsWith)
+        completer.setCompletionMode(QCompleter.PopupCompletion)
+        completer.setMaxVisibleItems(10)
+
+        popup = completer.popup()
+        if popup is not None:
+            popup.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            popup.setMaximumHeight(240)
+
+    def _refresh_context_cell_line_constraints(self):
+        options, allow_empty = self._cell_line_choice_config()
+        for field in (getattr(self, "t_ctx_cell_line", None), getattr(self, "m_ctx_cell_line", None)):
+            if isinstance(field, QLineEdit):
+                self._configure_choice_line_edit(field, options=options, allow_empty=allow_empty)
 
     def _rebuild_ctx_user_fields(self, prefix, custom_fields):
         """Rebuild user field context rows in thaw/move form."""
@@ -537,7 +656,7 @@ class OperationsPanel(QWidget):
         label.setProperty("role", "readonlyField")
         return label
 
-    def _make_editable_field(self, field_name, record_id_getter, refresh_callback=None):
+    def _make_editable_field(self, field_name, record_id_getter, refresh_callback=None, choices_provider=None):
         """Create a read-only field with lock/unlock/confirm inline edit controls.
 
         Args:
@@ -569,9 +688,40 @@ class OperationsPanel(QWidget):
         confirm_btn.setVisible(False)
         row.addWidget(confirm_btn)
 
+        def _apply_choices():
+            if not callable(choices_provider):
+                return [], True
+            try:
+                payload = choices_provider()
+            except Exception:
+                return [], True
+
+            raw_options = []
+            allow_empty = True
+            if isinstance(payload, tuple) and len(payload) == 2:
+                raw_options, allow_empty = payload
+            elif isinstance(payload, list):
+                raw_options = payload
+
+            options = []
+            seen = set()
+            for raw in raw_options or []:
+                text = str(raw or "").strip()
+                if not text:
+                    continue
+                key = text.casefold()
+                if key in seen:
+                    continue
+                seen.add(key)
+                options.append(text)
+
+            self._configure_choice_line_edit(field, options=options, allow_empty=bool(allow_empty))
+            return options, bool(allow_empty)
+
         def on_lock_toggle():
             if field.isReadOnly():
                 # Unlock
+                _apply_choices()
                 field.setReadOnly(False)
                 lock_btn.setText("\U0001F513")  # 🔓
                 confirm_btn.setVisible(True)
@@ -589,6 +739,11 @@ class OperationsPanel(QWidget):
         def on_confirm():
             rid = record_id_getter()
             new_value = field.text().strip() or None
+            options, _allow_empty = _apply_choices()
+            if options and new_value:
+                canonical = self._canonicalize_choice(new_value, options)
+                if canonical is not None:
+                    new_value = canonical
             record = self._lookup_record(rid)
             if not record:
                 self.status_message.emit(tr("operations.recordNotFound"), 3000, "error")
@@ -686,9 +841,11 @@ class OperationsPanel(QWidget):
         self.a_cell_line = QComboBox()
         self.a_cell_line.setEditable(True)
         self.a_cell_line.addItem("")  # allow empty
+        self.a_note = QLineEdit()
 
         form.addRow(tr("operations.frozenDate"), self.a_date)
         form.addRow(tr("operations.cellLine"), self.a_cell_line)
+        form.addRow(tr("operations.note"), self.a_note)
 
         # User fields placeholder — populated by _rebuild_custom_add_fields()
         self._add_custom_form = form
@@ -796,8 +953,15 @@ class OperationsPanel(QWidget):
         _t_rid = lambda: self.t_id.value()
         _t_refresh = lambda: self._refresh_thaw_record_context()
 
-        # Editable context fields — frozen_at is always present
+        # Editable context fields — frozen_at/note are core fields.
         t_frozen_w, self.t_ctx_frozen = self._make_editable_field("frozen_at", _t_rid, _t_refresh)
+        t_note_w, self.t_ctx_note = self._make_editable_field("note", _t_rid, _t_refresh)
+        t_cell_line_w, self.t_ctx_cell_line = self._make_editable_field(
+            "cell_line",
+            _t_rid,
+            _t_refresh,
+            choices_provider=self._cell_line_choice_config,
+        )
 
         # Dynamic user field context widgets (populated by _rebuild_thaw_ctx_fields)
         self._thaw_ctx_form = form
@@ -806,7 +970,6 @@ class OperationsPanel(QWidget):
         # Read-only context fields (not editable via inline edit) - kept for compatibility
         self.t_ctx_box = self._make_readonly_field()
         self.t_ctx_position = self._make_readonly_field()
-        self.t_ctx_cell_line = self._make_readonly_field()
         self.t_ctx_events = self._make_readonly_history_label()
         self.t_ctx_source = self._make_readonly_field()
 
@@ -814,7 +977,8 @@ class OperationsPanel(QWidget):
         self._thaw_ctx_insert_row = form.rowCount()
 
         form.addRow(tr("overview.ctxFrozen"), t_frozen_w)
-        form.addRow(tr("operations.cellLine"), self.t_ctx_cell_line)
+        form.addRow(tr("operations.note"), t_note_w)
+        form.addRow(tr("operations.cellLine"), t_cell_line_w)
         form.addRow(tr("overview.ctxHistory"), self.t_ctx_events)
 
         # Editable: target position (hidden, kept for compat - single value now)
@@ -826,10 +990,8 @@ class OperationsPanel(QWidget):
         self.t_date.setCalendarPopup(True)
         self.t_date.setDisplayFormat("yyyy-MM-dd")
         self.t_date.setDate(QDate.currentDate())
-        self.t_note = QLineEdit()
 
         form.addRow(tr("operations.date"), self.t_date)
-        form.addRow(tr("operations.note"), self.t_note)
 
         # Status
         self.t_ctx_status = QLabel(tr("operations.noPrefill"))
@@ -926,8 +1088,15 @@ class OperationsPanel(QWidget):
         _m_rid = lambda: self.m_id.value()
         _m_refresh = lambda: self._refresh_move_record_context()
 
-        # Editable context fields — frozen_at is always present
+        # Editable context fields — frozen_at/note are core fields.
         m_frozen_w, self.m_ctx_frozen = self._make_editable_field("frozen_at", _m_rid, _m_refresh)
+        m_note_w, self.m_ctx_note = self._make_editable_field("note", _m_rid, _m_refresh)
+        m_cell_line_w, self.m_ctx_cell_line = self._make_editable_field(
+            "cell_line",
+            _m_rid,
+            _m_refresh,
+            choices_provider=self._cell_line_choice_config,
+        )
 
         # Dynamic user field context widgets (populated by _rebuild_move_ctx_fields)
         self._move_ctx_form = form
@@ -936,14 +1105,14 @@ class OperationsPanel(QWidget):
         # Read-only context fields (not editable via inline edit) - kept for compat
         self.m_ctx_box = self._make_readonly_field()
         self.m_ctx_position = self._make_readonly_field()
-        self.m_ctx_cell_line = self._make_readonly_field()
         self.m_ctx_events = self._make_readonly_history_label()
 
         # User fields placeholder — will be rebuilt dynamically
         self._move_ctx_insert_row = form.rowCount()
 
         form.addRow(tr("overview.ctxFrozen"), m_frozen_w)
-        form.addRow(tr("operations.cellLine"), self.m_ctx_cell_line)
+        form.addRow(tr("operations.note"), m_note_w)
+        form.addRow(tr("operations.cellLine"), m_cell_line_w)
         form.addRow(tr("overview.ctxHistory"), self.m_ctx_events)
 
         # Editable fields
@@ -951,10 +1120,8 @@ class OperationsPanel(QWidget):
         self.m_date.setCalendarPopup(True)
         self.m_date.setDisplayFormat("yyyy-MM-dd")
         self.m_date.setDate(QDate.currentDate())
-        self.m_note = QLineEdit()
 
         form.addRow(tr("operations.date"), self.m_date)
-        form.addRow(tr("operations.note"), self.m_note)
 
         # Status
         self.m_ctx_status = QLabel(tr("operations.noPrefill"))
@@ -998,7 +1165,6 @@ class OperationsPanel(QWidget):
         self.b_date.setDate(QDate.currentDate())
         self.b_action = QComboBox(self.t_batch_group)
         self.b_action.addItems([tr("overview.takeout")])
-        self.b_note = QLineEdit(self.t_batch_group)
         self.b_table = QTableWidget(self.t_batch_group)
         self.b_table.setColumnCount(2)
         self.b_table.setHorizontalHeaderLabels([tr("operations.recordId"), tr("operations.position")])
@@ -1011,7 +1177,6 @@ class OperationsPanel(QWidget):
         batch_form.addRow(tr("operations.orUseTable"), self.b_table)
         batch_form.addRow(tr("operations.date"), self.b_date)
         batch_form.addRow(tr("operations.action"), self.b_action)
-        batch_form.addRow(tr("operations.note"), self.b_note)
         batch_form.addRow("", self.b_apply_btn)
 
     def _init_hidden_batch_move_controls(self, parent):
@@ -1029,7 +1194,6 @@ class OperationsPanel(QWidget):
         self.bm_date.setCalendarPopup(True)
         self.bm_date.setDisplayFormat("yyyy-MM-dd")
         self.bm_date.setDate(QDate.currentDate())
-        self.bm_note = QLineEdit(self.m_batch_group)
         self.bm_table = QTableWidget(self.m_batch_group)
         self.bm_table.setColumnCount(4)
         self.bm_table.setHorizontalHeaderLabels([tr("operations.recordId"), tr("operations.from"), tr("operations.to"), tr("operations.toBox")])
@@ -1041,7 +1205,6 @@ class OperationsPanel(QWidget):
         batch_form.addRow(tr("operations.entriesText"), self.bm_entries)
         batch_form.addRow(tr("operations.orUseTable"), self.bm_table)
         batch_form.addRow(tr("operations.date"), self.bm_date)
-        batch_form.addRow(tr("operations.note"), self.bm_note)
         batch_form.addRow("", self.bm_apply_btn)
 
     # --- PLAN TAB ---
@@ -1222,7 +1385,7 @@ class OperationsPanel(QWidget):
             self.t_ctx_status.setProperty("role", "statusWarning")
             self.t_ctx_status.setVisible(True)
             self.t_position.clear()
-            for lbl in [self.t_ctx_box, self.t_ctx_position, self.t_ctx_frozen,
+            for lbl in [self.t_ctx_box, self.t_ctx_position, self.t_ctx_frozen, self.t_ctx_note,
                         self.t_ctx_cell_line, self.t_ctx_events]:
                 lbl.setText("-")
             for key, (container, lbl) in self._thaw_ctx_widgets.items():
@@ -1237,6 +1400,7 @@ class OperationsPanel(QWidget):
         self.t_ctx_box.setText(box)
         self.t_ctx_position.setText(self._position_to_display(position) if position is not None else "-")
         self.t_ctx_frozen.setText(str(record.get("frozen_at") or "-"))
+        self.t_ctx_note.setText(str(record.get("note") or "-"))
         self.t_ctx_cell_line.setText(str(record.get("cell_line") or "-"))
         # Populate dynamic user field context
         for key, (container, lbl) in self._thaw_ctx_widgets.items():
@@ -1355,6 +1519,9 @@ class OperationsPanel(QWidget):
         cl = self.a_cell_line.currentText().strip()
         if cl:
             fields["cell_line"] = cl
+        note = self.a_note.text().strip()
+        if note:
+            fields["note"] = note
 
         item = build_add_plan_item(
             box=self.a_box.value(),
@@ -1388,7 +1555,6 @@ class OperationsPanel(QWidget):
             position=self.t_position.currentData(),
             box=box,
             date_str=self.t_date.date().toString("yyyy-MM-dd"),
-            note=self.t_note.text().strip() or None,
             source="human",
             payload_action=action_text,
         )
@@ -1425,7 +1591,6 @@ class OperationsPanel(QWidget):
             position=from_pos,
             box=from_box,
             date_str=self.m_date.date().toString("yyyy-MM-dd"),
-            note=self.m_note.text().strip() or None,
             to_position=to_pos,
             to_box=to_box_param,
             source="human",
@@ -1488,7 +1653,6 @@ class OperationsPanel(QWidget):
                 return
 
         date_str = self.bm_date.date().toString("yyyy-MM-dd")
-        note = self.bm_note.text().strip() or None
 
         items = []
         for normalized in iter_batch_entries(entries):
@@ -1508,7 +1672,6 @@ class OperationsPanel(QWidget):
                     position=from_pos,
                     box=box,
                     date_str=date_str,
-                    note=note,
                     to_position=to_pos,
                     to_box=to_box,
                     source="human",
@@ -1552,7 +1715,7 @@ class OperationsPanel(QWidget):
             self.m_ctx_status.setText(tr("operations.recordNotFound"))
             self.m_ctx_status.setProperty("role", "statusWarning")
             self.m_ctx_status.setVisible(True)
-            for lbl in [self.m_ctx_box, self.m_ctx_position, self.m_ctx_frozen,
+            for lbl in [self.m_ctx_box, self.m_ctx_position, self.m_ctx_frozen, self.m_ctx_note,
                         self.m_ctx_cell_line, self.m_ctx_events]:
                 lbl.setText("-")
             for key, (container, lbl) in self._move_ctx_widgets.items():
@@ -1577,6 +1740,7 @@ class OperationsPanel(QWidget):
         self.m_ctx_box.setText(box)
         self.m_ctx_position.setText(self._position_to_display(position) if position is not None else "-")
         self.m_ctx_frozen.setText(str(record.get("frozen_at") or "-"))
+        self.m_ctx_note.setText(str(record.get("note") or "-"))
         self.m_ctx_cell_line.setText(str(record.get("cell_line") or "-"))
         # Populate dynamic user field context
         for key, (container, lbl) in self._move_ctx_widgets.items():
@@ -1645,7 +1809,6 @@ class OperationsPanel(QWidget):
 
         action_text = self.b_action.currentText()
         date_str = self.b_date.date().toString("yyyy-MM-dd")
-        note = self.b_note.text().strip() or None
 
         items = []
         for normalized in iter_batch_entries(entries):
@@ -1660,7 +1823,6 @@ class OperationsPanel(QWidget):
                     position=pos,
                     box=box,
                     date_str=date_str,
-                    note=note,
                     source="human",
                     payload_action=action_text,
                 )
@@ -1894,19 +2056,7 @@ class OperationsPanel(QWidget):
             self.status_message.emit(tr("operations.planNoRemoved"), 2000, "warning")
             return
 
-        action_counts = {}
-        sample = []
-        for item in removed_items:
-            action = str(item.get("action") or "?")
-            action_counts[action] = action_counts.get(action, 0) + 1
-            if len(sample) < 8:
-                label = item.get("label") or item.get("record_id") or "-"
-                box = item.get("box")
-                pos = item.get("position")
-                desc = f"{action} {label}"
-                if box not in (None, "") and pos not in (None, ""):
-                    desc += f" @ Box {box}:{self._position_to_display(pos)}"
-                sample.append(desc)
+        action_counts, sample = self._collect_notice_action_counts_and_sample(removed_items)
 
         self._publish_system_notice(
             code="plan.removed",
@@ -1931,6 +2081,52 @@ class OperationsPanel(QWidget):
     def _plan_item_key(self, item):
         """Generate a unique key for plan item deduplication."""
         return PlanStore.item_key(item)
+
+    def _build_notice_plan_item_desc(self, item):
+        """Build a compact action/target summary for notices."""
+        payload = item.get("payload") if isinstance(item, dict) else {}
+        payload = payload if isinstance(payload, dict) else {}
+
+        action = str((item or {}).get("action") or "?")
+        label = (item or {}).get("label")
+        record_id = (item or {}).get("record_id")
+        subject = "-"
+        if label not in (None, ""):
+            subject = str(label)
+        elif record_id not in (None, ""):
+            subject = str(record_id)
+
+        desc = f"{action} {subject}"
+        box = (item or {}).get("box")
+        pos = (item or {}).get("position")
+        positions = payload.get("positions") if isinstance(payload.get("positions"), list) else []
+        if box not in (None, "") and pos not in (None, ""):
+            desc += f" @ Box {box}:{self._position_to_display(pos)}"
+        elif box not in (None, "") and positions:
+            preview = ",".join(self._position_to_display(p) for p in positions[:4])
+            if len(positions) > 4:
+                preview += f",+{len(positions) - 4}"
+            desc += f" @ Box {box}:{preview}"
+
+        to_pos = (item or {}).get("to_position")
+        to_box = (item or {}).get("to_box")
+        if to_pos not in (None, ""):
+            if to_box not in (None, ""):
+                desc += f" -> Box {to_box}:{self._position_to_display(to_pos)}"
+            else:
+                desc += f" -> {self._position_to_display(to_pos)}"
+        return desc
+
+    def _collect_notice_action_counts_and_sample(self, items, max_sample=8):
+        """Return (action_counts, sample_lines) for notice payloads."""
+        action_counts = {}
+        sample = []
+        for item in items or []:
+            action = str(item.get("action") or "?")
+            action_counts[action] = action_counts.get(action, 0) + 1
+            if len(sample) < max_sample:
+                sample.append(self._build_notice_plan_item_desc(item))
+        return action_counts, sample
 
     def add_plan_items(self, items):
         """Validate and add items to the plan staging area atomically."""
@@ -2003,26 +2199,7 @@ class OperationsPanel(QWidget):
             self._refresh_after_plan_items_changed(emit_preview=False)
             self._set_plan_feedback("")
 
-            action_counts = {}
-            sample = []
-            for item in accepted:
-                action = str(item.get("action") or "?")
-                action_counts[action] = action_counts.get(action, 0) + 1
-                if len(sample) < 8:
-                    label = item.get("label") or item.get("record_id") or "-"
-                    box = item.get("box")
-                    pos = item.get("position")
-                    desc = f"{action} {label}"
-                    if box not in (None, "") and pos not in (None, ""):
-                        desc += f" @ Box {box}:{self._position_to_display(pos)}"
-                    to_pos = item.get("to_position")
-                    to_box = item.get("to_box")
-                    if to_pos not in (None, ""):
-                        if to_box not in (None, ""):
-                            desc += f" -> Box {to_box}:{self._position_to_display(to_pos)}"
-                        else:
-                            desc += f" -> {self._position_to_display(to_pos)}"
-                    sample.append(desc)
+            action_counts, sample = self._collect_notice_action_counts_and_sample(accepted)
 
             self._publish_system_notice(
                 code="plan.stage.accepted",
@@ -2192,8 +2369,6 @@ class OperationsPanel(QWidget):
         elif action_norm == "add":
             fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
             for key, value in fields.items():
-                if str(key) == "note":
-                    continue
                 value_text = self._plan_value_text(value)
                 if not value_text:
                     continue
@@ -2230,11 +2405,7 @@ class OperationsPanel(QWidget):
 
     def _build_plan_note(self, action_norm, payload, yaml_path_for_rollback):
         if action_norm != "rollback":
-            note = payload.get("note", "") if isinstance(payload, dict) else ""
-            if not note:
-                fields = payload.get("fields") if isinstance(payload, dict) and isinstance(payload.get("fields"), dict) else {}
-                note = fields.get("note", "")
-            return str(note or ""), ""
+            return "", ""
 
         backup_path = payload.get("backup_path") if isinstance(payload, dict) else None
         source_event = payload.get("source_event") if isinstance(payload, dict) else None
@@ -2477,6 +2648,18 @@ class OperationsPanel(QWidget):
         stats_payload["applied"] = execution_stats.get("applied_count", 0)
         stats_payload["failed"] = execution_stats.get("fail_count", 0)
         stats_payload["rolled_back"] = bool(execution_stats.get("rollback_ok"))
+        result_sample = []
+        for status, plan_item, info in results:
+            if not isinstance(plan_item, dict):
+                continue
+            line = f"{status}: {self._build_notice_plan_item_desc(plan_item)}"
+            if status != "OK" and isinstance(info, dict):
+                msg = info.get("message") or info.get("error_code")
+                if msg:
+                    line += f" | {str(msg)}"
+            result_sample.append(line)
+            if len(result_sample) >= 8:
+                break
         self._publish_system_notice(
             code="plan.execute.result",
             text=summary_text,
@@ -2488,6 +2671,7 @@ class OperationsPanel(QWidget):
                 "stats": stats_payload,
                 "report": report,
                 "rollback": rollback_info,
+                "sample": result_sample,
             },
         )
 
@@ -2743,29 +2927,7 @@ class OperationsPanel(QWidget):
         self._plan_preflight_report = None
         self._refresh_plan_table()
         self._update_execute_button_state()
-        action_counts = {}
-        sample = []
-
-        if cleared_items:
-            for item in cleared_items:
-                action = str(item.get("action") or "?")
-                action_counts[action] = action_counts.get(action, 0) + 1
-
-                if len(sample) < 8:
-                    label = item.get("label") or item.get("record_id") or "-"
-                    box = item.get("box")
-                    pos = item.get("position")
-                    desc = f"{action} {label}"
-                    if box not in (None, "") and pos not in (None, ""):
-                        desc += f" @ Box {box}:{self._position_to_display(pos)}"
-                    to_pos = item.get("to_position")
-                    to_box = item.get("to_box")
-                    if to_pos not in (None, ""):
-                        if to_box not in (None, ""):
-                            desc += f" -> Box {to_box}:{self._position_to_display(to_pos)}"
-                        else:
-                            desc += f" -> {self._position_to_display(to_pos)}"
-                    sample.append(desc)
+        action_counts, sample = self._collect_notice_action_counts_and_sample(cleared_items)
 
         self._publish_system_notice(
             code="plan.cleared",
@@ -2936,13 +3098,11 @@ class OperationsPanel(QWidget):
 
         restored_data = None
         if response.get("ok") and executed_plan_backup:
-            action_counts = {}
-            for item in executed_plan_backup:
-                action = str(item.get("action") or "?")
-                action_counts[action] = action_counts.get(action, 0) + 1
+            action_counts, sample = self._collect_notice_action_counts_and_sample(executed_plan_backup)
             restored_data = {
                 "restored_count": len(executed_plan_backup),
                 "action_counts": action_counts,
+                "sample": sample,
             }
 
         self._handle_response(

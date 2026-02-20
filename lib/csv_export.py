@@ -47,7 +47,7 @@ def build_export_columns(meta=None):
     """
     from .custom_fields import STRUCTURAL_FIELD_KEYS
 
-    STRUCTURAL_COLUMNS = ["id", "location", "frozen_at", "thaw_events", "cell_line"]
+    STRUCTURAL_COLUMNS = ["id", "location", "frozen_at", "cell_line", "note", "thaw_events"]
 
     columns = list(STRUCTURAL_COLUMNS)
 

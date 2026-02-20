@@ -246,8 +246,8 @@ class RenderOperationSheetTests(unittest.TestCase):
         html = render_operation_sheet([_add_item()])
         self.assertIn("NEW", html)
 
-    def test_note_from_payload(self):
-        item = _base_item(payload={"note": "my special note"})
+    def test_note_from_fields(self):
+        item = _base_item(payload={"fields": {"note": "my special note"}})
         html = render_operation_sheet([item])
         self.assertIn("my special note", html)
 

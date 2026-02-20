@@ -3,7 +3,7 @@
 import sys
 
 STRUCTURAL_FIELD_KEYS = frozenset({
-    "id", "box", "position", "frozen_at", "thaw_events", "cell_line",
+    "id", "box", "position", "frozen_at", "thaw_events", "cell_line", "note",
 })
 
 _VALID_TYPES = {"str", "int", "float", "date"}

@@ -78,7 +78,6 @@ def build_record_plan_item(
     position: int,
     box: int,
     date_str: Optional[str],
-    note: Optional[str] = None,
     to_position: Optional[int] = None,
     to_box: Optional[int] = None,
     source: str = "human",
@@ -94,7 +93,6 @@ def build_record_plan_item(
         "position": int(position),
         "date_str": date_str,
         "action": payload_action if payload_action is not None else str(action or ""),
-        "note": note,
     }
     item = {
         "action": action_norm,

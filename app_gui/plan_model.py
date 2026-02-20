@@ -153,7 +153,7 @@ def render_operation_sheet(items):
             
             _payload = item.get("payload") or {}
             _fields = _payload.get("fields") or {}
-            note = _fields.get("note", "") or _payload.get("note", "") or ""
+            note = _fields.get("note", "") or ""
             
             action_rows.append(f"""
             <tr class="op-row">
@@ -688,7 +688,7 @@ def render_operation_sheet_with_grid(items, grid_state=None):
 
             _payload = item.get("payload") or {}
             _fields = _payload.get("fields") or {}
-            note = _fields.get("note", "") or _payload.get("note", "") or ""
+            note = _fields.get("note", "") or ""
 
             action_rows.append(f"""
             <tr class="op-row">

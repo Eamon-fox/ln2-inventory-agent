@@ -13,9 +13,6 @@ meta:
   - key: plasmid_id
     label: Plasmid ID
     type: str
-  - key: note
-    label: Note
-    type: str
   display_key: cell_line
   color_key: cell_line
   cell_line_options:
@@ -239,7 +236,7 @@ inventory:
     - 17
   position: null
 - id: 18
-  cell_line: U2OS
+  cell_line: NCCIT
   short_name: U2OS_backup_stock
   plasmid_name: null
   plasmid_id: null

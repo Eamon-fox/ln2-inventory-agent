@@ -282,7 +282,6 @@ class ToolApiTests(unittest.TestCase):
                 to_position=3,
                 date_str="2026-02-10",
                 action="move",
-                note="reorg",
             )
 
             self.assertTrue(result["ok"])
@@ -299,6 +298,7 @@ class ToolApiTests(unittest.TestCase):
             self.assertEqual([1], events[-1].get("positions"))
             self.assertEqual(1, events[-1].get("from_position"))
             self.assertEqual(3, events[-1].get("to_position"))
+            self.assertNotIn("note", events[-1])
 
     def test_tool_record_thaw_move_swaps_with_occupied_position(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_move_swap_single_") as temp_dir:

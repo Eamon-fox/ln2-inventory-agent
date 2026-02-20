@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 
 try:
     from PySide6.QtCore import QDate, Qt
+    from PySide6.QtGui import QValidator
     from PySide6.QtWidgets import QApplication, QMessageBox
 
     from app_gui.ui.ai_panel import AIPanel
@@ -24,6 +25,7 @@ try:
 except Exception:
     QDate = None
     Qt = None
+    QValidator = None
     QApplication = None
     QMessageBox = None
     AIPanel = None
@@ -2410,6 +2412,31 @@ class OperationEventFeedTests(unittest.TestCase):
         self.assertIn("record 2 failed", details_text)
         self.assertIn("rollback", details_text)
 
+    def test_ai_panel_system_notice_prefers_compact_operation_details(self):
+        """System notices should show concise operation lines, not raw JSON dumps."""
+        panel = self._new_ai_panel()
+
+        panel.on_operation_event({
+            "type": "system_notice",
+            "code": "plan.execute.result",
+            "level": "success",
+            "text": "已应用：1/1 个操作。",
+            "data": {
+                "stats": {"total": 1, "applied": 1, "failed": 0, "blocked": 0, "remaining": 0},
+                "sample": ["OK: takeout 18 @ Box 1:18 | cell_line=U2OS, short_name=U2OS_backup_stock"],
+                "report": {
+                    "backup_path": "/tmp/demo.bak",
+                    "items": [{"ok": True, "item": {"action": "takeout", "record_id": 18, "box": 1, "position": 18}}],
+                },
+            },
+        })
+
+        self.assertTrue(panel.ai_collapsible_blocks)
+        details_text = str(panel.ai_collapsible_blocks[-1].get("content", ""))
+        self.assertIn("Operations (1)", details_text)
+        self.assertIn("takeout 18", details_text.lower())
+        self.assertNotIn('"report"', details_text)
+
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
 class ExecuteFailurePreservesPlanTests(unittest.TestCase):
@@ -2584,6 +2611,54 @@ class CellLineDropdownTests(unittest.TestCase):
         self.assertEqual(3, panel.a_cell_line.count())
         self.assertEqual("", panel.a_cell_line.itemText(0))
         self.assertEqual("K562", panel.a_cell_line.itemText(1))
+
+    def test_context_cell_line_uses_lockable_edit_fields(self):
+        """Thaw/move cell_line context should support lock-based inline editing."""
+        from PySide6.QtWidgets import QLineEdit
+
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        self.assertIsInstance(panel.t_ctx_cell_line, QLineEdit)
+        self.assertIsInstance(panel.m_ctx_cell_line, QLineEdit)
+        self.assertTrue(panel.t_ctx_cell_line.isReadOnly())
+        self.assertTrue(panel.m_ctx_cell_line.isReadOnly())
+
+    def test_context_cell_line_prefix_validator_and_completer(self):
+        """Cell line edit should allow only option prefixes and exact option values."""
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        panel.apply_meta_update({
+            "cell_line_required": True,
+            "cell_line_options": ["K562", "HeLa", "NCCIT"],
+            "custom_fields": [],
+        })
+
+        validator = panel.t_ctx_cell_line.validator()
+        self.assertIsInstance(validator, QValidator)
+
+        state, _, _ = validator.validate("K", 1)
+        self.assertIn(state, (QValidator.Intermediate, QValidator.Acceptable))
+
+        state, _, _ = validator.validate("X", 1)
+        self.assertEqual(QValidator.Invalid, state)
+
+        state, _, _ = validator.validate("hela", 4)
+        self.assertEqual(QValidator.Acceptable, state)
+
+        completer = panel.t_ctx_cell_line.completer()
+        self.assertIsNotNone(completer)
+        self.assertEqual(Qt.MatchStartsWith, completer.filterMode())
+
+    def test_add_cell_line_combo_limits_popup_height(self):
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        opts = [f"Cell-{i:02d}" for i in range(30)]
+        panel._refresh_cell_line_options({
+            "cell_line_required": True,
+            "cell_line_options": opts,
+        })
+
+        self.assertEqual(10, panel.a_cell_line.maxVisibleItems())
+        view = panel.a_cell_line.view()
+        self.assertIsNotNone(view)
+        self.assertEqual(240, view.maximumHeight())
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 not available")

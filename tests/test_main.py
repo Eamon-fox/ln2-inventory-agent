@@ -44,6 +44,17 @@ def test_settings_new_dataset_switches_immediately():
     assert "self._on_create_new_dataset(update_window=True)" in text
 
 
+def test_settings_dialog_enforces_existing_yaml_file_before_ok():
+    text = _source_text()
+
+    assert "def _is_valid_inventory_file_path(path_text):" in text
+    assert "suffix not in {\".yaml\", \".yml\"}" in text
+    assert "return os.path.isfile(path)" in text
+    assert "self._ok_button = buttons.button(QDialogButtonBox.Ok)" in text
+    assert "self.yaml_edit.textChanged.connect(self._refresh_yaml_path_validity)" in text
+    assert "self._ok_button.setEnabled(self._is_valid_inventory_file_path(self.yaml_edit.text().strip()))" in text
+
+
 def test_dataset_switch_resets_plan_and_undo_state():
     text = _source_text()
 

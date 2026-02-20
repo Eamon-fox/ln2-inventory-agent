@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import os
@@ -22,7 +22,6 @@ class _ParsedStep:
     source_loc: Optional[Tuple[int, int]]
     target_loc: Optional[Tuple[int, int]]
     timestamp: str
-    note: Optional[str]
 
 
 @dataclass
@@ -32,7 +31,6 @@ class _Flow:
     start_loc: Optional[Tuple[int, int]]
     end_loc: Optional[Tuple[int, int]]
     last_action: str
-    notes: List[str] = field(default_factory=list)
 
 
 def build_operation_guide_from_audit_events(events: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
@@ -156,7 +154,6 @@ def _parse_record_thaw(
             source_loc=(src_box, src_pos),
             target_loc=target_loc,
             timestamp=timestamp,
-            note=_clean_note(tool_input.get("note")),
         )
     ]
 
@@ -179,7 +176,6 @@ def _parse_batch_thaw(
         warnings.append(f"{timestamp} batch_thaw: missing entries, skipped")
         return []
 
-    note = _clean_note(tool_input.get("note"))
     steps: List[_ParsedStep] = []
     for idx, entry in enumerate(entries, 1):
         parsed = _parse_batch_entry(entry)
@@ -212,7 +208,6 @@ def _parse_batch_thaw(
                 source_loc=(src_box, src_pos),
                 target_loc=target_loc,
                 timestamp=timestamp,
-                note=note,
             )
         )
 
@@ -276,7 +271,6 @@ def _parse_add_entry(
         or (f"ID {record_id}" if record_id is not None else "new")
     )
 
-    note = _clean_note(input_fields.get("note") or tool_input.get("note"))
     steps = []
     sorted_positions = sorted(set(positions))
     if record_ids and len(record_ids) == len(sorted_positions):
@@ -289,7 +283,6 @@ def _parse_add_entry(
                     source_loc=None,
                     target_loc=(box, position),
                     timestamp=timestamp,
-                    note=note,
                 )
             )
     else:
@@ -302,7 +295,6 @@ def _parse_add_entry(
                     source_loc=None,
                     target_loc=(box, position),
                     timestamp=timestamp,
-                    note=note,
                 )
             )
     return steps
@@ -363,7 +355,6 @@ def _collapse_steps_to_items(steps: List[_ParsedStep], warnings: List[str]) -> L
                     start_loc=None,
                     end_loc=step.target_loc,
                     last_action="add",
-                    notes=[step.note] if step.note else [],
                 )
             )
             continue
@@ -388,8 +379,6 @@ def _collapse_steps_to_items(steps: List[_ParsedStep], warnings: List[str]) -> L
         flow = flows[flow_idx]
         if (flow.label.startswith("ID ") or flow.label == "-") and step.label:
             flow.label = step.label
-        if step.note:
-            flow.notes.append(step.note)
         flow.end_loc = step.target_loc
         flow.last_action = step.action
 
@@ -426,7 +415,6 @@ def _find_flow_for_step(
 
 
 def _flow_to_item(flow: _Flow) -> Optional[Dict[str, Any]]:
-    note = flow.notes[-1] if flow.notes else None
     label = flow.label or (f"ID {flow.record_id}" if flow.record_id is not None else "-")
 
     if flow.start_loc is None and flow.end_loc is None:
@@ -441,7 +429,7 @@ def _flow_to_item(flow: _Flow) -> Optional[Dict[str, Any]]:
             "position": int(position),
             "record_id": flow.record_id,
             "label": label,
-            "payload": {"note": note},
+            "payload": {},
         }
         return item
 
@@ -455,7 +443,7 @@ def _flow_to_item(flow: _Flow) -> Optional[Dict[str, Any]]:
             "position": int(position),
             "record_id": flow.record_id,
             "label": label,
-            "payload": {"note": note},
+            "payload": {},
         }
         return item
 
@@ -473,7 +461,7 @@ def _flow_to_item(flow: _Flow) -> Optional[Dict[str, Any]]:
             "to_position": int(dst_pos),
             "record_id": flow.record_id,
             "label": label,
-            "payload": {"note": note},
+            "payload": {},
         }
         if dst_box != src_box:
             item["to_box"] = int(dst_box)
@@ -617,8 +605,3 @@ def _as_int(value: Any) -> Optional[int]:
         return int(value)
     except (TypeError, ValueError):
         return None
-
-
-def _clean_note(value: Any) -> Optional[str]:
-    text = str(value or "").strip()
-    return text or None

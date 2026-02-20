@@ -191,7 +191,6 @@ _TOOL_CONTRACTS = {
                     ]
                 },
                 "to_box": {"type": "integer", "minimum": 1},
-                "note": {"type": "string"},
                 "dry_run": {"type": "boolean"},
             },
             "required": ["record_id", "date"],
@@ -259,7 +258,6 @@ _TOOL_CONTRACTS = {
                 "date": {"type": "string"},
                 "action": {"type": "string", "enum": ["取出", "移动", "takeout", "move", "Takeout", "Move"]},
                 "to_box": {"type": "integer", "minimum": 1},
-                "note": {"type": "string"},
                 "dry_run": {"type": "boolean"},
             },
             "required": ["entries"],
@@ -1033,7 +1031,6 @@ class AgentToolRunner:
                     position=pos,
                     box=box,
                     date_str=payload.get("date"),
-                    note=payload.get("note"),
                     to_position=to_pos,
                     to_box=to_box,
                     source="ai",
@@ -1128,7 +1125,6 @@ class AgentToolRunner:
                         position=pos,
                         box=box,
                         date_str=payload.get("date"),
-                        note=payload.get("note"),
                         to_position=to_pos,
                         to_box=to_box,
                         source="ai",
@@ -1518,7 +1514,6 @@ class AgentToolRunner:
                         if payload.get("to_box") not in (None, "")
                         else None
                     ),
-                    note=payload.get("note"),
                     dry_run=self._as_bool(payload.get("dry_run", False), default=False),
                     actor_context=self._actor_context(trace_id=trace_id),
                     source="agent.react",
@@ -1560,7 +1555,6 @@ class AgentToolRunner:
                     entries=entries,
                     date_str=payload.get("date"),
                     action=payload.get("action", "取出"),
-                    note=payload.get("note"),
                     dry_run=self._as_bool(payload.get("dry_run", False), default=False),
                     actor_context=self._actor_context(trace_id=trace_id),
                     source="agent.react",
