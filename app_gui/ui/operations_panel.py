@@ -2,7 +2,7 @@ import json
 import os
 import tempfile
 from datetime import date, datetime
-from PySide6.QtCore import Qt, Signal, Slot, QDate, QEvent, QTimer, QUrl
+from PySide6.QtCore import Qt, Signal, Slot, QDate, QEvent, QTimer, QUrl, QSize
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 from app_gui.ui.utils import positions_to_text, cell_color
 from app_gui.ui.theme import get_theme_color, FONT_SIZE_XS, FONT_SIZE_SM, FONT_SIZE_MD, FONT_SIZE_LG
+from app_gui.ui.icons import get_icon, Icons
 from app_gui.gui_config import load_gui_config
 from app_gui.i18n import tr
 from app_gui.plan_model import render_operation_sheet
@@ -104,10 +105,14 @@ class OperationsPanel(QWidget):
         mode_row.setContentsMargins(9, 0, 9, 0)
 
         self.quick_add_btn = QPushButton(tr("overview.quickAdd"))
+        self.quick_add_btn.setIcon(get_icon(Icons.PLUS))
+        self.quick_add_btn.setIconSize(QSize(16, 16))
         self.quick_add_btn.clicked.connect(lambda: self.set_mode("add"))
         mode_row.addWidget(self.quick_add_btn)
 
         self.export_full_csv_btn = QPushButton(tr("operations.exportFullCsv"))
+        self.export_full_csv_btn.setIcon(get_icon(Icons.DOWNLOAD))
+        self.export_full_csv_btn.setIconSize(QSize(16, 16))
         self.export_full_csv_btn.setToolTip(tr("operations.exportFullCsvHint"))
         self.export_full_csv_btn.clicked.connect(self.on_export_inventory_csv)
         mode_row.addWidget(self.export_full_csv_btn)
@@ -406,7 +411,14 @@ class OperationsPanel(QWidget):
     def _apply_thaw_prefill(self, source_info, switch_mode=True):
         payload = dict(source_info or {})
         self.t_prefill_source = payload
-        # Fill source box + position (will auto-lookup record ID)
+
+        # If record_id is provided directly, set it
+        if "record_id" in payload:
+            self.t_id.blockSignals(True)
+            self.t_id.setValue(int(payload["record_id"]))
+            self.t_id.blockSignals(False)
+
+        # Fill source box + position (will auto-lookup record ID if not provided)
         if "box" in payload:
             self.t_from_box.setValue(int(payload["box"]))
         if "position" in payload:
@@ -468,17 +480,30 @@ class OperationsPanel(QWidget):
         table.setSortingEnabled(bool(sortable))
 
     def _make_readonly_field(self):
-        field = QLineEdit()
-        field.setReadOnly(True)
-        field.setStyleSheet(
-            "QLineEdit[readOnly=\"true\"] {"
+        label = QLabel("-")
+        label.setWordWrap(False)
+        label.setStyleSheet(
+            "QLabel {"
             " background: var(--background-inset);"
             " border: none;"
             " color: var(--text-strong);"
             " padding: 2px 4px;"
             "}"
         )
-        return field
+        return label
+
+    def _make_readonly_history_label(self):
+        label = QLabel("-")
+        label.setWordWrap(False)
+        label.setStyleSheet(
+            "QLabel {"
+            " background: var(--background-inset);"
+            " border: none;"
+            " color: var(--text-strong);"
+            " padding: 2px 4px;"
+            "}"
+        )
+        return label
 
     _READONLY_STYLE = (
         "QLineEdit[readOnly=\"true\"] {"
@@ -757,6 +782,8 @@ class OperationsPanel(QWidget):
         self.t_id = QSpinBox()
         self.t_id.setRange(1, 999999)
         self.t_id.setVisible(False)
+        # Connect signal to refresh context when ID is changed (for reverse lookup)
+        self.t_id.valueChanged.connect(self._refresh_thaw_record_context)
 
         _t_rid = lambda: self.t_id.value()
         _t_refresh = lambda: self._refresh_thaw_record_context()
@@ -772,7 +799,7 @@ class OperationsPanel(QWidget):
         self.t_ctx_box = self._make_readonly_field()
         self.t_ctx_position = self._make_readonly_field()
         self.t_ctx_cell_line = self._make_readonly_field()
-        self.t_ctx_events = self._make_readonly_field()
+        self.t_ctx_events = self._make_readonly_history_label()
         self.t_ctx_source = self._make_readonly_field()
 
         # User fields placeholder — will be rebuilt dynamically
@@ -799,6 +826,7 @@ class OperationsPanel(QWidget):
         # Status
         self.t_ctx_status = QLabel(tr("operations.noPrefill"))
         self.t_ctx_status.setWordWrap(True)
+        self.t_ctx_status.setVisible(False)
         form.addRow(tr("overview.ctxStatus"), self.t_ctx_status)
 
         # Kept for compatibility
@@ -903,7 +931,7 @@ class OperationsPanel(QWidget):
         self.m_ctx_box = self._make_readonly_field()
         self.m_ctx_position = self._make_readonly_field()
         self.m_ctx_cell_line = self._make_readonly_field()
-        self.m_ctx_events = self._make_readonly_field()
+        self.m_ctx_events = self._make_readonly_history_label()
 
         # User fields placeholder — will be rebuilt dynamically
         self._move_ctx_insert_row = form.rowCount()
@@ -925,6 +953,7 @@ class OperationsPanel(QWidget):
         # Status
         self.m_ctx_status = QLabel(tr("operations.noPrefill"))
         self.m_ctx_status.setWordWrap(True)
+        self.m_ctx_status.setVisible(False)
         form.addRow(tr("overview.ctxStatus"), self.m_ctx_status)
 
         # Kept for compatibility
@@ -1047,11 +1076,15 @@ class OperationsPanel(QWidget):
 
         toolbar = QHBoxLayout()
         self.plan_remove_selected_btn = QPushButton(tr("operations.removeSelected"))
+        self.plan_remove_selected_btn.setIcon(get_icon(Icons.TRASH))
+        self.plan_remove_selected_btn.setIconSize(QSize(16, 16))
         self.plan_remove_selected_btn.setEnabled(False)
         self.plan_remove_selected_btn.clicked.connect(self.remove_selected_plan_items)
         toolbar.addWidget(self.plan_remove_selected_btn)
 
         self.plan_exec_btn = QPushButton(tr("operations.executeAll"))
+        self.plan_exec_btn.setIcon(get_icon(Icons.PLAY, color="#ffffff"))  # White icon for danger variant
+        self.plan_exec_btn.setIconSize(QSize(16, 16))
         self._style_execute_button(self.plan_exec_btn)
         self.plan_exec_btn.clicked.connect(self.execute_plan)
         self.plan_exec_btn.setEnabled(False)
@@ -1062,6 +1095,8 @@ class OperationsPanel(QWidget):
         toolbar.addWidget(self.plan_print_btn)
 
         self.plan_clear_btn = QPushButton(tr("operations.clear"))
+        self.plan_clear_btn.setIcon(get_icon(Icons.X))
+        self.plan_clear_btn.setIconSize(QSize(16, 16))
         self.plan_clear_btn.setEnabled(False)
         self.plan_clear_btn.clicked.connect(self.clear_plan)
         toolbar.addWidget(self.plan_clear_btn)
@@ -1132,18 +1167,38 @@ class OperationsPanel(QWidget):
             return None
 
     def _refresh_thaw_record_context(self):
-        # Lookup record by box + position
+        # Lookup record by box + position, or by ID if box/position not set
         from_box = self.t_from_box.value()
         from_pos = self.t_from_position.value()
 
         # Find record at this position
         record = None
         record_id = None
-        for rid, rec in self.records_cache.items():
-            if rec.get("box") == from_box and rec.get("position") == from_pos:
-                record = rec
-                record_id = rid
-                break
+
+        # First try lookup by box + position
+        if from_box > 0 and from_pos > 0:
+            for rid, rec in self.records_cache.items():
+                if rec.get("box") == from_box and rec.get("position") == from_pos:
+                    record = rec
+                    record_id = rid
+                    break
+
+        # If not found and ID is set, try reverse lookup by ID
+        if not record and self.t_id.value() > 0:
+            record_id = self.t_id.value()
+            record = self.records_cache.get(record_id)
+            if record:
+                # Update box/position fields from record
+                rec_box = record.get("box")
+                rec_pos = record.get("position")
+                if rec_box is not None:
+                    self.t_from_box.blockSignals(True)
+                    self.t_from_box.setValue(int(rec_box))
+                    self.t_from_box.blockSignals(False)
+                if rec_pos is not None:
+                    self.t_from_position.blockSignals(True)
+                    self.t_from_position.setValue(int(rec_pos))
+                    self.t_from_position.blockSignals(False)
 
         # Update internal ID
         if record_id:
@@ -1162,6 +1217,7 @@ class OperationsPanel(QWidget):
         if not record:
             self.t_ctx_status.setText(tr("operations.recordNotFound"))
             self.t_ctx_status.setStyleSheet("color: var(--status-warning);")
+            self.t_ctx_status.setVisible(True)
             self.t_position.clear()
             for lbl in [self.t_ctx_box, self.t_ctx_position, self.t_ctx_frozen,
                         self.t_ctx_cell_line, self.t_ctx_events]:
@@ -1170,11 +1226,7 @@ class OperationsPanel(QWidget):
                 lbl.setText("-")
             return
 
-        if self.t_prefill_source:
-            self.t_ctx_status.setText(tr("operations.recordLoaded"))
-        else:
-            self.t_ctx_status.setText(tr("operations.recordContextLoaded"))
-        self.t_ctx_status.setStyleSheet("color: var(--status-success);")
+        self.t_ctx_status.setVisible(False)
 
         box = str(record.get("box") or "-")
         position = record.get("position")
@@ -1487,6 +1539,7 @@ class OperationsPanel(QWidget):
         if not record:
             self.m_ctx_status.setText(tr("operations.recordNotFound"))
             self.m_ctx_status.setStyleSheet("color: var(--status-warning);")
+            self.m_ctx_status.setVisible(True)
             for lbl in [self.m_ctx_box, self.m_ctx_position, self.m_ctx_frozen,
                         self.m_ctx_cell_line, self.m_ctx_events]:
                 lbl.setText("-")
@@ -1494,8 +1547,7 @@ class OperationsPanel(QWidget):
                 lbl.setText("-")
             return
 
-        self.m_ctx_status.setText(tr("operations.recordContextLoaded"))
-        self.m_ctx_status.setStyleSheet("color: var(--status-success);")
+        self.m_ctx_status.setVisible(False)
 
         box = str(record.get("box") or "-")
         position = record.get("position")

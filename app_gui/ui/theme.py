@@ -244,7 +244,7 @@ def _get_theme_vars(mode):
             --tooltip-bg: #e8e8e8;
             --tooltip-color: #1a1a1a;
             --input-focus-bg: var(--background-base);
-            --primary-btn-text: #000000;
+            --primary-btn-text: #ffffff;
             --toggle-checked-text: #000000;
             --quick-prompt-bg: rgba(99,179,255,0.16);
             --quick-prompt-color: #a9c6e3;
@@ -303,7 +303,7 @@ def _get_common_qss():
         QPushButton:focus {{ border: var(--border-thin) solid var(--accent); outline: none; }}
         QPushButton:pressed {{ background-color: var(--button-pressed); }}
         QPushButton:disabled {{ background-color: var(--background-strong); color: var(--text-muted); border-color: transparent; opacity: 0.6; }}
-        QWidget#overviewViewToggle {{ background-color: var(--button-background); border: var(--border-thin) solid var(--button-border); border-radius: var(--radius-xs); padding: 0; }}
+        QWidget#overviewViewToggle {{ background-color: transparent; border: none; border-radius: 0; padding: 0; }}
         QWidget#overviewViewToggle QPushButton[segmented] {{ background-color: transparent; border: none; border-radius: 0; color: var(--text-strong); padding: var(--space-1) var(--space-2); margin: 0; }}
         QWidget#overviewViewToggle QPushButton[segmented]:hover:!checked {{ background-color: var(--button-hover); }}
         QWidget#overviewViewToggle QPushButton[segmented]:checked {{ background-color: var(--accent); color: var(--toggle-checked-text); }}

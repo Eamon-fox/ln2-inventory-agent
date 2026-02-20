@@ -26,38 +26,31 @@ def _safe_int(value, default):
         return default
 
 
-def _position_text(record):
-    positions = record.get("positions") or []
-    if not positions:
-        return ""
-    if len(positions) == 1:
-        return str(positions[0])
-    return ",".join(str(pos) for pos in positions)
-
-
 def _record_sort_key(record):
-    positions = record.get("positions") or []
-    first_pos = positions[0] if positions else 10 ** 9
+    # Tube-level model: each record has a single position field
+    position = record.get("position")
     return (
         _safe_int(record.get("box"), 10 ** 9),
-        _safe_int(first_pos, 10 ** 9),
+        _safe_int(position, 10 ** 9),
         _safe_int(record.get("id"), 10 ** 9),
     )
 
 
 def build_export_columns(meta=None):
     """Build stable CSV column order for full inventory export.
-    
+
     Columns are dynamically generated from:
-    - Structural fields (id, box, position, frozen_at, thaw_events, cell_line)
+    - Structural fields (id, location, frozen_at, thaw_events, cell_line)
     - User-defined custom fields (from meta.custom_fields)
+
+    Note: location column shows "box:position" format
     """
     from .custom_fields import STRUCTURAL_FIELD_KEYS
-    
-    STRUCTURAL_COLUMNS = ["id", "box", "position", "frozen_at", "thaw_events", "cell_line"]
-    
+
+    STRUCTURAL_COLUMNS = ["id", "location", "frozen_at", "thaw_events", "cell_line"]
+
     columns = list(STRUCTURAL_COLUMNS)
-    
+
     for field_def in get_effective_fields(meta or {}):
         key = str(field_def.get("key") or "").strip()
         if not key:
@@ -65,24 +58,57 @@ def build_export_columns(meta=None):
         if key in columns:
             continue
         columns.append(key)
-    
+
     return columns
 
 
 def _row_value(record, column):
-    if column == "position":
-        return _position_text(record)
+    if column == "location":
+        # Merge box:position format
+        box = record.get("box")
+        position = record.get("position")
+        if box is not None and position is not None:
+            return f"{box}:{position}"
+        return ""
+    if column == "thaw_events":
+        # Convert thaw_events to human-readable format
+        events = record.get("thaw_events")
+        if not events or not isinstance(events, list):
+            return ""
+        # Format: "2026-02-16 move 15→20; 2026-02-17 takeout"
+        parts = []
+        for ev in events:
+            if not isinstance(ev, dict):
+                continue
+            date = ev.get("date", "")
+            action = ev.get("action", "")
+            from_pos = ev.get("from_position")
+            to_pos = ev.get("to_position")
+            if action == "move" and from_pos and to_pos:
+                parts.append(f"{date} {action} {from_pos}→{to_pos}")
+            else:
+                parts.append(f"{date} {action}")
+        return "; ".join(parts) if parts else ""
     if column == "cell_line":
         value = record.get("cell_line")
     else:
         value = record.get(column)
     if value is None:
         return ""
+    # Serialize complex types (list, dict) to JSON for display
+    if isinstance(value, (list, dict)):
+        import json
+        return json.dumps(value, ensure_ascii=False)
     return value
 
 
 def build_export_rows(records, meta=None):
-    """Build normalized rows for inventory export/display reuse."""
+    """Build normalized rows for inventory export/display reuse.
+
+    Args:
+        records: List of inventory records
+        meta: Metadata dict with custom_fields
+    """
     normalized_records = [record for record in (records or []) if isinstance(record, dict)]
     normalized_records.sort(key=_record_sort_key)
 

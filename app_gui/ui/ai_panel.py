@@ -2,7 +2,7 @@ from datetime import datetime
 import time
 import re
 import random
-from PySide6.QtCore import Qt, Signal, QThread, QEvent
+from PySide6.QtCore import Qt, Signal, QThread, QEvent, QSize
 from PySide6.QtGui import QTextCursor, QPalette, QMouseEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 from app_gui.ui.workers import AgentRunWorker
 from app_gui.ui.utils import compact_json
 from app_gui.ui.theme import FONT_SIZE_XS, FONT_SIZE_SM
+from app_gui.ui.icons import get_icon, Icons
 from app_gui.event_compactor import compact_operation_event_for_context
 from app_gui.system_notice import build_system_notice, coerce_system_notice
 from app_gui.i18n import tr
@@ -178,18 +179,24 @@ class AIPanel(QWidget):
         action_bar.setSpacing(4)
 
         self.ai_run_btn = QPushButton(tr("ai.runAgent"))
+        self.ai_run_btn.setIcon(get_icon(Icons.PLAY, color="#ffffff"))  # White icon for primary variant
+        self.ai_run_btn.setIconSize(QSize(16, 16))
         self.ai_run_btn.setProperty("variant", "primary")
         self.ai_run_btn.setMinimumWidth(60)
         self.ai_run_btn.clicked.connect(self.on_run_ai_agent)
         action_bar.addWidget(self.ai_run_btn)
 
         self.ai_stop_btn = QPushButton(tr("ai.stop"))
+        self.ai_stop_btn.setIcon(get_icon(Icons.SQUARE))
+        self.ai_stop_btn.setIconSize(QSize(16, 16))
         self.ai_stop_btn.setMinimumWidth(60)
         self.ai_stop_btn.setEnabled(False)
         self.ai_stop_btn.clicked.connect(self.on_stop_ai_agent)
         action_bar.addWidget(self.ai_stop_btn)
 
         ai_clear_btn = QPushButton(tr("ai.clear"))
+        ai_clear_btn.setIcon(get_icon(Icons.X))
+        ai_clear_btn.setIconSize(QSize(16, 16))
         ai_clear_btn.setMinimumWidth(60)
         ai_clear_btn.setProperty("variant", "ghost")
         ai_clear_btn.clicked.connect(self.on_clear)

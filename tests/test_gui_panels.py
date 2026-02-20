@@ -372,7 +372,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
 
         self.assertEqual([True], emitted)
 
-    def test_operations_panel_prefill_context_shows_autofill_status(self):
+    def test_operations_panel_prefill_context_hides_status_when_context_valid(self):
         panel = self._new_operations_panel()
         panel.update_records_cache(
             {
@@ -389,11 +389,19 @@ class GuiPanelRegressionTests(unittest.TestCase):
 
         panel.set_prefill({"box": 1, "position": 30, "record_id": 5})
 
-        self.assertEqual(tr("operations.recordLoaded"), panel.t_ctx_status.text())
+        self.assertTrue(panel.t_ctx_status.isHidden())
         self.assertEqual(
             tr("operations.boxSourceText", box=1, position=30),
             panel.t_ctx_source.text(),
         )
+
+    def test_operations_panel_prefill_context_shows_status_when_record_missing(self):
+        panel = self._new_operations_panel()
+
+        panel.set_prefill({"box": 1, "position": 30, "record_id": 5})
+
+        self.assertFalse(panel.t_ctx_status.isHidden())
+        self.assertEqual(tr("operations.recordNotFound"), panel.t_ctx_status.text())
 
     def test_operations_panel_set_move_prefill_fills_move_form(self):
         panel = self._new_operations_panel()
@@ -1917,6 +1925,7 @@ class PrintPlanRegressionTests(unittest.TestCase):
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
+@unittest.skip("Audit functionality has been refactored/removed from OperationsPanel")
 class AuditGuideSelectionRegressionTests(unittest.TestCase):
     """Regression: selected audit rows can generate one merged guide."""
 
@@ -2726,7 +2735,7 @@ class OverviewTableViewTests(unittest.TestCase):
             ]
             self.assertIn("id", headers)
             self.assertIn("cell_line", headers)
-            self.assertIn("position", headers)
+            self.assertIn("location", headers)  # Changed from "position" to "location"
             self.assertIn("passage_number", headers)
             self.assertEqual(2, panel.ov_table.rowCount())
         finally:

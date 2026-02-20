@@ -3,7 +3,7 @@
 import os
 import sys
 import yaml
-from PySide6.QtCore import Qt, QSettings, Slot, QTimer
+from PySide6.QtCore import Qt, QSettings, Slot, QTimer, QSize
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
@@ -44,6 +44,7 @@ from app_gui.ui.theme import (
 from app_gui.ui.overview_panel import OverviewPanel
 from app_gui.ui.operations_panel import OperationsPanel
 from app_gui.ui.ai_panel import AIPanel
+from app_gui.ui.icons import get_icon, Icons, set_icon_color
 from app_gui.system_notice import build_system_notice
 
 APP_VERSION = "1.0.1"
@@ -148,9 +149,13 @@ class SettingsDialog(QDialog):
         yaml_row = QHBoxLayout()
         self.yaml_edit = QLineEdit(self._config.get("yaml_path", ""))
         self.yaml_new_btn = QPushButton(tr("main.new"))
+        self.yaml_new_btn.setIcon(get_icon(Icons.FILE_PLUS))
+        self.yaml_new_btn.setIconSize(QSize(14, 14))
         self.yaml_new_btn.setFixedWidth(80)
         self.yaml_new_btn.clicked.connect(self._emit_create_new_dataset_request)
         yaml_browse = QPushButton(tr("settings.browse"))
+        yaml_browse.setIcon(get_icon(Icons.FOLDER_OPEN))
+        yaml_browse.setIconSize(QSize(14, 14))
         yaml_browse.setFixedWidth(80)
         yaml_browse.clicked.connect(self._browse_yaml)
         yaml_row.addWidget(self.yaml_edit, 1)
@@ -1215,14 +1220,17 @@ class MainWindow(QMainWindow):
         top.addWidget(self.dataset_label, 1)
 
         new_dataset_btn = QPushButton(tr("main.new"))
+        new_dataset_btn.setIcon(get_icon(Icons.FILE_PLUS))
         new_dataset_btn.clicked.connect(self.on_create_new_dataset)
         top.addWidget(new_dataset_btn)
 
         settings_btn = QPushButton(tr("main.settings"))
+        settings_btn.setIcon(get_icon(Icons.SETTINGS))
         settings_btn.clicked.connect(self.on_open_settings)
         top.addWidget(settings_btn)
 
         audit_log_btn = QPushButton(tr("main.auditLog"))
+        audit_log_btn.setIcon(get_icon(Icons.FILE_TEXT))
         audit_log_btn.clicked.connect(self.on_open_audit_log)
         top.addWidget(audit_log_btn)
 
@@ -2006,9 +2014,13 @@ def main():
 
     gui_config = load_gui_config()
     theme = gui_config.get("theme", "dark")
+
+    # Set icon color based on theme
     if theme == "light":
+        set_icon_color("#000000")  # Black icons for light theme
         apply_light_theme(app)
     else:
+        set_icon_color("#ffffff")  # White icons for dark theme
         apply_dark_theme(app)
 
     window = MainWindow()

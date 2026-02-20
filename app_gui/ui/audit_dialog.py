@@ -2,7 +2,7 @@ import json
 import os
 import tempfile
 from datetime import datetime
-from PySide6.QtCore import Qt, QDate
+from PySide6.QtCore import Qt, QDate, QSize
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QComboBox, QTableWidget, QTableWidgetItem,
@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QFormLayout, QDateEdit, QLineEdit
 )
 from app_gui.i18n import tr
+from app_gui.ui.icons import get_icon, Icons
 from app_gui.audit_guide import build_operation_guide_from_audit_events
 from app_gui.plan_model import render_operation_sheet
 from lib.yaml_ops import get_audit_log_path, get_legacy_audit_log_path
@@ -65,6 +66,8 @@ class AuditLogDialog(QDialog):
         # Action buttons
         btn_row = QHBoxLayout()
         load_btn = QPushButton(tr("operations.loadAuditLog"))
+        load_btn.setIcon(get_icon(Icons.FOLDER_OPEN))
+        load_btn.setIconSize(QSize(16, 16))
         load_btn.clicked.connect(self.on_load_audit)
         btn_row.addWidget(load_btn)
 
@@ -77,6 +80,8 @@ class AuditLogDialog(QDialog):
         btn_row.addWidget(self.audit_print_selected_btn)
 
         self.audit_rollback_selected_btn = QPushButton(tr("operations.auditRollbackFromSelected"))
+        self.audit_rollback_selected_btn.setIcon(get_icon(Icons.ROTATE_CCW))
+        self.audit_rollback_selected_btn.setIconSize(QSize(16, 16))
         self.audit_rollback_selected_btn.clicked.connect(self.on_stage_rollback_from_selected_audit)
         btn_row.addWidget(self.audit_rollback_selected_btn)
 
@@ -134,6 +139,8 @@ class AuditLogDialog(QDialog):
 
         btn_row = QHBoxLayout()
         refresh_btn = QPushButton(tr("operations.refreshBackups"))
+        refresh_btn.setIcon(get_icon(Icons.REFRESH_CW))
+        refresh_btn.setIconSize(QSize(16, 16))
         refresh_btn.clicked.connect(self.on_refresh_backups)
         btn_row.addWidget(refresh_btn)
 
@@ -142,10 +149,14 @@ class AuditLogDialog(QDialog):
         btn_row.addWidget(select_btn)
 
         rollback_latest_btn = QPushButton(tr("operations.rollbackLatest"))
+        rollback_latest_btn.setIcon(get_icon(Icons.ROTATE_CCW))
+        rollback_latest_btn.setIconSize(QSize(16, 16))
         rollback_latest_btn.clicked.connect(self.on_rollback_latest)
         btn_row.addWidget(rollback_latest_btn)
 
         rollback_selected_btn = QPushButton(tr("operations.rollbackSelected"))
+        rollback_selected_btn.setIcon(get_icon(Icons.ROTATE_CCW))
+        rollback_selected_btn.setIconSize(QSize(16, 16))
         rollback_selected_btn.clicked.connect(self.on_rollback_selected)
         btn_row.addWidget(rollback_selected_btn)
         layout.addLayout(btn_row)
