@@ -46,6 +46,7 @@ from app_gui.ui.operations_panel import OperationsPanel
 from app_gui.ui.ai_panel import AIPanel
 from app_gui.ui.icons import get_icon, Icons, set_icon_color
 from app_gui.system_notice import build_system_notice
+from app_gui.auto_updater import AutoUpdater
 
 APP_VERSION = "1.1.1"
 APP_RELEASE_URL = "https://github.com/Eamon-fox/snowfox/releases"
@@ -1407,11 +1408,13 @@ class MainWindow(QMainWindow):
             msg_box.setText(message)
             msg_box.setIcon(QMessageBox.Information)
 
+            # Add automatic update button
+            update_btn = msg_box.addButton(tr("main.newReleaseUpdate"), QMessageBox.ActionRole)
             copy_btn = msg_box.addButton(tr("main.newReleaseCopy"), QMessageBox.ActionRole)
             open_btn = msg_box.addButton(tr("main.newReleaseOpen"), QMessageBox.ActionRole)
             later_btn = msg_box.addButton(tr("main.newReleaseLater"), QMessageBox.RejectRole)
 
-            msg_box.setDefaultButton(later_btn)
+            msg_box.setDefaultButton(update_btn)
 
             def _mark_notified_once():
                 if self.gui_config.get("last_notified_release") == latest_tag:
@@ -1420,7 +1423,10 @@ class MainWindow(QMainWindow):
                 save_gui_config(self.gui_config)
 
             def _handle_button(clicked):
-                if clicked == copy_btn:
+                if clicked == update_btn:
+                    # Start automatic update
+                    self._start_automatic_update(latest_tag, release_notes)
+                elif clicked == copy_btn:
                     try:
                         QApplication.clipboard().setText(APP_RELEASE_URL)
                     except Exception as e:
@@ -1439,6 +1445,64 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             print(f"[VersionCheck] Dialog failed: {e}")
+
+    def _start_automatic_update(self, latest_tag, release_notes):
+        """Start automatic update process with progress dialog."""
+        from PySide6.QtWidgets import QProgressDialog, QApplication
+        from PySide6.QtCore import Qt
+
+        # Create progress dialog
+        progress = QProgressDialog(self)
+        progress.setWindowTitle(tr("main.updatingTitle"))
+        progress.setLabelText("Initializing...")
+        progress.setRange(0, 100)
+        progress.setWindowModality(Qt.ApplicationModal)
+        progress.setCancelButton(None)  # Can't cancel during update
+        progress.show()
+
+        updater = AutoUpdater(
+            latest_tag=latest_tag,
+            release_notes=release_notes,
+            on_progress=lambda p, msg: _on_progress(p, msg),
+            on_complete=lambda success, msg: _on_complete(success, msg),
+            on_error=lambda err: _on_error(err)
+        )
+
+        def _on_progress(progress_value, message):
+            # Update progress dialog from main thread
+            progress.setValue(progress_value)
+            progress.setLabelText(message)
+            QApplication.processEvents()
+
+        def _on_complete(success, message):
+            # Close progress dialog
+            progress.close()
+            if success:
+                # Show success message
+                success_box = QMessageBox(self)
+                success_box.setWindowTitle(tr("main.updateComplete"))
+                success_box.setText(message)
+                success_box.setIcon(QMessageBox.Information)
+                success_box.exec()
+            else:
+                # Show error message
+                error_box = QMessageBox(self)
+                error_box.setWindowTitle(tr("main.updateFailed"))
+                error_box.setText(f"Update failed: {message}")
+                error_box.setIcon(QMessageBox.Warning)
+                error_box.exec()
+
+        def _on_error(error_message):
+            # Close progress dialog and show error
+            progress.close()
+            error_box = QMessageBox(self)
+            error_box.setWindowTitle(tr("main.updateFailed"))
+            error_box.setText(error_message)
+            error_box.setIcon(QMessageBox.Warning)
+            error_box.exec()
+
+        # Start the update
+        updater.start_update()
 
     def _check_empty_inventory_prompt(self):
         """Show import prompt if inventory is empty and user hasn't seen the prompt."""
