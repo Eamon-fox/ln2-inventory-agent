@@ -1087,6 +1087,14 @@ class AIPanel(QWidget):
         if sample_lines:
             return sample_lines
 
+        if code == "record.edit.saved":
+            rid = data.get("record_id")
+            rid_text = f"ID {rid}" if rid not in (None, "") else "ID ?"
+            field = str(data.get("field") or "field")
+            before = self._single_line_text(data.get("before"), limit=80)
+            after = self._single_line_text(data.get("after"), limit=80)
+            return [f"edit ({rid_text}) | {field}: {before} -> {after}"]
+
         if code == "plan.stage.blocked":
             blocked_items = data.get("blocked_items") if isinstance(data.get("blocked_items"), list) else []
             lines = []
@@ -1126,6 +1134,67 @@ class AIPanel(QWidget):
             if isinstance(item, dict):
                 lines.append(self._format_notice_operation(item))
         return lines
+
+    def _format_system_notice_details(self, event):
+        """Render system_notice details with operations first and meta last."""
+        code = str(event.get("code") or "notice")
+        level = str(event.get("level") or "info")
+        text = str(event.get("text") or "").strip()
+        timestamp = event.get("timestamp")
+
+        lines = []
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        op_lines = self._extract_notice_operation_lines(code, data) if data else []
+        meta_lines = self._extract_notice_meta_lines(code, data) if data else []
+
+        details = event.get("details")
+        details_text = ""
+        if details and str(details).strip() and str(details).strip() != text:
+            details_text = self._single_line_text(details, limit=360)
+
+        if op_lines:
+            lines.append(f"Operations ({len(op_lines)}):")
+            for op in op_lines[:8]:
+                lines.append(f"- {op}")
+            if len(op_lines) > 8:
+                lines.append(f"- ... and {len(op_lines) - 8} more")
+
+        if details_text:
+            if lines:
+                lines.append("")
+            lines.append(f"Details: {details_text}")
+
+        if meta_lines:
+            if lines:
+                lines.append("")
+            lines.extend(meta_lines)
+
+        if not op_lines and not meta_lines and data:
+            scalar_lines = []
+            for key, value in sorted(data.items()):
+                if key == "legacy_event":
+                    continue
+                if isinstance(value, (str, int, float, bool)):
+                    scalar_lines.append(f"{key}: {value}")
+                elif isinstance(value, list):
+                    scalar_lines.append(f"{key}: <list {len(value)}>")
+                elif isinstance(value, dict):
+                    scalar_lines.append(f"{key}: <object {len(value)} keys>")
+            if scalar_lines:
+                if lines:
+                    lines.append("")
+                lines.append("Data:")
+                lines.extend(scalar_lines[:8])
+
+        if not lines:
+            lines.append(text or code)
+
+        meta = [f"code={code}", f"level={level}"]
+        if timestamp:
+            meta.append(f"time={timestamp}")
+        lines.append("")
+        lines.append("Meta: " + ", ".join(meta))
+        return "\n".join(lines)
 
     def _extract_notice_meta_lines(self, code, data):
         lines = []
@@ -1186,7 +1255,13 @@ class AIPanel(QWidget):
     def _render_system_notice(self, notice):
         """Render one normalized notice to chat with expandable raw payload."""
         summary_text = str(notice.get("text") or notice.get("code") or "System notice")
-        self._append_chat_with_collapsible("System", summary_text, notice)
+        # Keep system notice details fully collapsed by default; show only summary sentence.
+        self._append_chat_with_collapsible(
+            "System",
+            summary_text,
+            notice,
+            collapsed_preview_lines=0,
+        )
 
     def on_operation_event(self, event):
         """Receive operation events and normalize them to one notice shape."""
@@ -1223,6 +1298,9 @@ class AIPanel(QWidget):
         event_type = str(event.get("type", "unknown"))
         lines = []
 
+        if event_type == "system_notice":
+            return self._format_system_notice_details(event)
+
         # Translate event type
         type_key = f"eventDetails.eventType.{event_type}" if event_type.startswith("plan_") or event_type == "box_layout_adjusted" else None
         if type_key:
@@ -1233,49 +1311,6 @@ class AIPanel(QWidget):
         ts = event.get("timestamp")
         if ts:
             lines.append(f"{tr('eventDetails.time')}: {ts}")
-
-        if event_type == "system_notice":
-            code = str(event.get("code") or "notice")
-            lines.append(f"Code: {code}")
-            lines.append(f"Level: {event.get('level', 'info')}")
-            lines.append(f"Text: {event.get('text', '')}")
-
-            details = event.get("details")
-            if details and str(details).strip() and str(details).strip() != str(event.get("text") or "").strip():
-                lines.append("\nDetails:")
-                lines.append(self._single_line_text(details, limit=360))
-
-            data = event.get("data")
-            if isinstance(data, dict) and data:
-                op_lines = self._extract_notice_operation_lines(code, data)
-                meta_lines = self._extract_notice_meta_lines(code, data)
-
-                if op_lines:
-                    lines.append(f"\nOperations ({len(op_lines)}):")
-                    for op in op_lines[:8]:
-                        lines.append(f"- {op}")
-                    if len(op_lines) > 8:
-                        lines.append(f"- ... and {len(op_lines) - 8} more")
-
-                if meta_lines:
-                    lines.append("")
-                    lines.extend(meta_lines)
-
-                if not op_lines and not meta_lines:
-                    scalar_lines = []
-                    for key, value in sorted(data.items()):
-                        if key == "legacy_event":
-                            continue
-                        if isinstance(value, (str, int, float, bool)):
-                            scalar_lines.append(f"{key}: {value}")
-                        elif isinstance(value, list):
-                            scalar_lines.append(f"{key}: <list {len(value)}>")
-                        elif isinstance(value, dict):
-                            scalar_lines.append(f"{key}: <object {len(value)} keys>")
-                    if scalar_lines:
-                        lines.append("\nData:")
-                        lines.extend(scalar_lines[:8])
-            return "\n".join(lines)
 
         # Type-specific formatting
         if event_type == "plan_staged":
@@ -1401,7 +1436,7 @@ class AIPanel(QWidget):
         self.ai_chat.append(body_html)
         self.ai_chat.append("")  # Empty line for spacing
 
-    def _append_chat_with_collapsible(self, role, summary, details_json):
+    def _append_chat_with_collapsible(self, role, summary, details_json, collapsed_preview_lines=3):
         is_dark = _is_dark_mode(self)
         header_html = self._build_header_html(role, is_dark=is_dark)
         body_html = _md_to_html(str(summary or ""), is_dark)
@@ -1412,7 +1447,13 @@ class AIPanel(QWidget):
         # Format details as human-readable text instead of raw JSON
         details_text = self._format_event_details(details_json)
         block_id = f"toggle_details_{len(self.ai_collapsible_blocks)}"
-        collapsed_html = self._render_collapsible_details(block_id, details_text, collapsed=True, is_dark=is_dark)
+        collapsed_html = self._render_collapsible_details(
+            block_id,
+            details_text,
+            collapsed=True,
+            is_dark=is_dark,
+            preview_lines=collapsed_preview_lines,
+        )
 
         self._move_chat_cursor_to_end()
         if not hasattr(self.ai_chat, "textCursor"):
@@ -1430,11 +1471,12 @@ class AIPanel(QWidget):
             "end": end,
             "content": details_text,
             "collapsed": True,
+            "preview_lines": max(0, int(collapsed_preview_lines or 0)),
         })
         self.ai_chat.append("")
 
-    def _render_collapsible_details(self, block_id, content, collapsed=True, is_dark=True):
-        """Render details as a collapsible code block — 3 lines collapsed, scrollable expanded."""
+    def _render_collapsible_details(self, block_id, content, collapsed=True, is_dark=True, preview_lines=3):
+        """Render details as a collapsible code block with configurable collapsed preview."""
         if is_dark:
             bg = "#1f1f1f"
             border = "rgba(255,255,255,0.08)"
@@ -1450,19 +1492,23 @@ class AIPanel(QWidget):
 
         if collapsed:
             lines = content.split('\n')
-            preview_lines = lines[:3]
+            preview_limit = max(0, int(preview_lines or 0))
+            preview_lines = lines[:preview_limit] if preview_limit > 0 else []
             preview = '\n'.join(preview_lines)
             preview_escaped = preview.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-            has_more = len(lines) > 3
+            has_more = len(lines) > preview_limit
             html = (
                 f'<div style="margin: 4px 0; border: 1px solid {border}; border-radius: 4px; '
                 f'background: {bg}; padding: 6px 8px; font-family: monospace; font-size: {FONT_SIZE_SM}px; '
                 f'color: {text_color}; white-space: pre-wrap; overflow: hidden;">'
-                f'{preview_escaped}'
             )
+            if preview:
+                html += f'{preview_escaped}'
             if has_more:
+                if preview:
+                    html += '<br/>'
                 html += (
-                    f'<br/><a href="{block_id}" style="color: {link_color}; font-size: {FONT_SIZE_XS}px; '
+                    f'<a href="{block_id}" style="color: {link_color}; font-size: {FONT_SIZE_XS}px; '
                     f'text-decoration: none;">&#9660; Expand ({len(lines)} lines)</a>'
                 )
             html += '</div>'
@@ -1471,9 +1517,9 @@ class AIPanel(QWidget):
                 f'<div style="margin: 4px 0; border: 1px solid {border}; border-radius: 4px; '
                 f'background: {bg}; padding: 6px 8px; font-family: monospace; font-size: {FONT_SIZE_SM}px; '
                 f'color: {text_color}; white-space: pre-wrap; max-height: 300px; overflow-y: auto;">'
-                f'{escaped}'
-                f'<br/><a href="{block_id}" style="color: {link_color}; font-size: {FONT_SIZE_XS}px; '
+                f'<a href="{block_id}" style="color: {link_color}; font-size: {FONT_SIZE_XS}px; '
                 f'text-decoration: none;">&#9650; Collapse</a>'
+                f'<br/>{escaped}'
                 f'</div>'
             )
         return html
@@ -1491,7 +1537,11 @@ class AIPanel(QWidget):
         block["collapsed"] = not block["collapsed"]
         is_dark = _is_dark_mode(self)
         new_html = self._render_collapsible_details(
-            block_id, block["content"], collapsed=block["collapsed"], is_dark=is_dark
+            block_id,
+            block["content"],
+            collapsed=block["collapsed"],
+            is_dark=is_dark,
+            preview_lines=block.get("preview_lines", 3),
         )
 
         start = block["start"]

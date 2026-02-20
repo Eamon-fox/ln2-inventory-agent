@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
 try:
     from PySide6.QtCore import QDate, Qt
     from PySide6.QtGui import QValidator
-    from PySide6.QtWidgets import QApplication, QMessageBox
+    from PySide6.QtWidgets import QApplication, QMessageBox, QCompleter
 
     from app_gui.ui.ai_panel import AIPanel
     from app_gui.ui.overview_panel import OverviewPanel, TABLE_ROW_TINT_ROLE
@@ -28,6 +28,7 @@ except Exception:
     QValidator = None
     QApplication = None
     QMessageBox = None
+    QCompleter = None
     AIPanel = None
     OverviewPanel = None
     TABLE_ROW_TINT_ROLE = None
@@ -2350,9 +2351,10 @@ class OperationEventFeedTests(unittest.TestCase):
 
         self.assertEqual(1, len(panel.ai_operation_events))
         self.assertEqual("system_notice", panel.ai_operation_events[0].get("type"))
+        self.assertEqual("plan.execute.result", panel.ai_operation_events[0].get("code"))
         chat_text = panel.ai_chat.toPlainText().lower()
         self.assertIn("succeeded", chat_text)
-        self.assertIn("plan.execute.result", chat_text)
+        self.assertNotIn("plan.execute.result", chat_text)
 
     def test_ai_panel_limits_operation_events(self):
         """AI panel should limit stored operation events to prevent memory growth."""
@@ -2436,6 +2438,64 @@ class OperationEventFeedTests(unittest.TestCase):
         self.assertIn("Operations (1)", details_text)
         self.assertIn("takeout 18", details_text.lower())
         self.assertNotIn('"report"', details_text)
+
+    def test_ai_panel_system_notice_hides_all_details_in_collapsed_preview(self):
+        """Collapsed system notice should only show summary; details remain behind expand."""
+        panel = self._new_ai_panel()
+
+        panel.on_operation_event({
+            "type": "system_notice",
+            "timestamp": "2026-02-20T15:05:55.645887",
+            "code": "record.edit.saved",
+            "level": "success",
+            "text": "字段 'cell_line' 已更新：U2OS → NCCIT",
+            "data": {
+                "record_id": 18,
+                "field": "cell_line",
+                "before": "U2OS",
+                "after": "NCCIT",
+            },
+        })
+
+        self.assertTrue(panel.ai_collapsible_blocks)
+        chat_text = panel.ai_chat.toPlainText()
+        self.assertIn("字段 'cell_line' 已更新", chat_text)
+        self.assertIn("Expand", chat_text)
+        self.assertNotIn("Operations (1)", chat_text)
+        self.assertNotIn("code=record.edit.saved", chat_text)
+        self.assertNotIn("2026-02-20T15:05:55.645887", chat_text)
+
+        details_text = str(panel.ai_collapsible_blocks[-1].get("content", ""))
+        first_line = details_text.splitlines()[0] if details_text.splitlines() else ""
+        self.assertIn("Operations", first_line)
+        self.assertNotIn("Type:", first_line)
+        self.assertNotIn("Time:", first_line)
+
+    def test_ai_panel_collapsible_uses_single_toggle_link(self):
+        """Expanded details should use a single toggle link, not an extra bottom control."""
+        panel = self._new_ai_panel()
+
+        collapsed_html = panel._render_collapsible_details(
+            "toggle_test",
+            "line1\nline2",
+            collapsed=True,
+            is_dark=True,
+            preview_lines=0,
+        )
+        expanded_html = panel._render_collapsible_details(
+            "toggle_test",
+            "line1\nline2",
+            collapsed=False,
+            is_dark=True,
+            preview_lines=0,
+        )
+
+        self.assertEqual(1, collapsed_html.count("Expand"))
+        self.assertNotIn("Collapse", collapsed_html)
+
+        self.assertEqual(1, expanded_html.count("Collapse"))
+        self.assertNotIn("Expand", expanded_html)
+        self.assertLess(expanded_html.find("Collapse"), expanded_html.find("line1"))
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
@@ -2548,6 +2608,13 @@ class CellLineDropdownTests(unittest.TestCase):
     def setUpClass(cls):
         cls._app = QApplication.instance() or QApplication([])
 
+    @staticmethod
+    def _hint_lines():
+        return [
+            tr("operations.cellLineOptionsHintLine1"),
+            tr("operations.cellLineOptionsHintLine2"),
+        ]
+
     def test_cell_line_combo_exists(self):
         """Operations panel should have a cell_line combo box."""
         panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
@@ -2565,11 +2632,19 @@ class CellLineDropdownTests(unittest.TestCase):
         panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
         meta = {"cell_line_options": ["K562", "HeLa", "NCCIT"]}
         panel._refresh_cell_line_options(meta)
-        # 1 empty + 3 options
-        self.assertEqual(4, panel.a_cell_line.count())
+        hints = self._hint_lines()
+        # 1 empty + 3 options + hint lines
+        self.assertEqual(4 + len(hints), panel.a_cell_line.count())
         self.assertEqual("K562", panel.a_cell_line.itemText(1))
         self.assertEqual("HeLa", panel.a_cell_line.itemText(2))
         self.assertEqual("NCCIT", panel.a_cell_line.itemText(3))
+
+        model = panel.a_cell_line.model()
+        for i, hint in enumerate(hints):
+            row = panel.a_cell_line.count() - len(hints) + i
+            self.assertEqual(hint, panel.a_cell_line.itemText(row))
+            flags = model.flags(model.index(row, 0))
+            self.assertFalse(bool(flags & Qt.ItemIsSelectable))
 
     def test_refresh_cell_line_options_preserves_selection(self):
         """Refreshing options should preserve the current selection."""
@@ -2588,8 +2663,9 @@ class CellLineDropdownTests(unittest.TestCase):
         from lib.custom_fields import DEFAULT_CELL_LINE_OPTIONS
         panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
         panel._refresh_cell_line_options({})
-        # 1 empty + len(defaults)
-        self.assertEqual(1 + len(DEFAULT_CELL_LINE_OPTIONS), panel.a_cell_line.count())
+        hints = self._hint_lines()
+        # 1 empty + len(defaults) + hint lines
+        self.assertEqual(1 + len(DEFAULT_CELL_LINE_OPTIONS) + len(hints), panel.a_cell_line.count())
 
     def test_apply_meta_update_switches_required_mode_immediately(self):
         """Changing cell_line_required should update add-form combo immediately."""
@@ -2600,7 +2676,7 @@ class CellLineDropdownTests(unittest.TestCase):
             "cell_line_options": ["K562", "HeLa"],
             "custom_fields": [],
         })
-        self.assertEqual(2, panel.a_cell_line.count())
+        self.assertEqual(2 + len(self._hint_lines()), panel.a_cell_line.count())
         self.assertEqual("K562", panel.a_cell_line.itemText(0))
 
         panel.apply_meta_update({
@@ -2608,7 +2684,7 @@ class CellLineDropdownTests(unittest.TestCase):
             "cell_line_options": ["K562", "HeLa"],
             "custom_fields": [],
         })
-        self.assertEqual(3, panel.a_cell_line.count())
+        self.assertEqual(3 + len(self._hint_lines()), panel.a_cell_line.count())
         self.assertEqual("", panel.a_cell_line.itemText(0))
         self.assertEqual("K562", panel.a_cell_line.itemText(1))
 
@@ -2643,11 +2719,34 @@ class CellLineDropdownTests(unittest.TestCase):
         state, _, _ = validator.validate("hela", 4)
         self.assertEqual(QValidator.Acceptable, state)
 
+        panel.t_ctx_cell_line.setText("")
         completer = panel.t_ctx_cell_line.completer()
         self.assertIsNotNone(completer)
-        self.assertEqual(Qt.MatchStartsWith, completer.filterMode())
+        self.assertEqual(QCompleter.UnfilteredPopupCompletion, completer.completionMode())
+        model = completer.model()
+        self.assertIsNotNone(model)
+        hints = self._hint_lines()
+        self.assertEqual(3 + len(hints), model.rowCount())
+        self.assertEqual(model.rowCount(), completer.maxVisibleItems())
+        popup = completer.popup()
+        self.assertIsNotNone(popup)
+        self.assertEqual(Qt.ScrollBarAlwaysOff, popup.verticalScrollBarPolicy())
+        self.assertEqual(Qt.ScrollBarAlwaysOff, popup.horizontalScrollBarPolicy())
+        self.assertEqual(popup.minimumHeight(), popup.maximumHeight())
+        self.assertGreater(popup.maximumHeight(), 0)
 
-    def test_add_cell_line_combo_limits_popup_height(self):
+        move_completer = panel.m_ctx_cell_line.completer()
+        self.assertIsNotNone(move_completer)
+        self.assertEqual(model.rowCount(), move_completer.maxVisibleItems())
+
+        for i, hint in enumerate(hints):
+            row = model.rowCount() - len(hints) + i
+            idx = model.index(row, 0)
+            self.assertEqual(hint, model.data(idx))
+            flags = model.flags(idx)
+            self.assertFalse(bool(flags & Qt.ItemIsSelectable))
+
+    def test_add_cell_line_combo_expands_without_scrollbar(self):
         panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
         opts = [f"Cell-{i:02d}" for i in range(30)]
         panel._refresh_cell_line_options({
@@ -2655,10 +2754,21 @@ class CellLineDropdownTests(unittest.TestCase):
             "cell_line_options": opts,
         })
 
-        self.assertEqual(10, panel.a_cell_line.maxVisibleItems())
+        hints = self._hint_lines()
+        expected_rows = len(opts) + len(hints)
+        self.assertEqual(expected_rows, panel.a_cell_line.maxVisibleItems())
         view = panel.a_cell_line.view()
         self.assertIsNotNone(view)
-        self.assertEqual(240, view.maximumHeight())
+        self.assertEqual(Qt.ScrollBarAlwaysOff, view.verticalScrollBarPolicy())
+        self.assertEqual(view.minimumHeight(), view.maximumHeight())
+        self.assertGreater(view.maximumHeight(), 0)
+
+        model = panel.a_cell_line.model()
+        self.assertEqual(expected_rows, panel.a_cell_line.count())
+        for i, hint in enumerate(hints):
+            row = panel.a_cell_line.count() - len(hints) + i
+            self.assertEqual(hint, panel.a_cell_line.itemText(row))
+            self.assertFalse(bool(model.flags(model.index(row, 0)) & Qt.ItemIsSelectable))
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 not available")

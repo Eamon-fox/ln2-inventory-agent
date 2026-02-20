@@ -236,7 +236,7 @@ inventory:
     - 17
   position: null
 - id: 18
-  cell_line: NCCIT
+  cell_line: U2OS
   short_name: U2OS_backup_stock
   plasmid_name: null
   plasmid_id: null
