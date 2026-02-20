@@ -47,7 +47,7 @@ from app_gui.ui.ai_panel import AIPanel
 from app_gui.ui.icons import get_icon, Icons, set_icon_color
 from app_gui.system_notice import build_system_notice
 
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.1.1"
 APP_RELEASE_URL = "https://github.com/Eamon-fox/snowfox/releases"
 _GITHUB_API_LATEST = "https://api.github.com/repos/Eamon-fox/snowfox/releases/latest"
 
