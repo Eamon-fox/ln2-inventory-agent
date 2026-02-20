@@ -2527,6 +2527,7 @@ class OperationsPanel(QWidget):
         label_map.setdefault("note", tr("operations.note"))
 
         parts = []
+        detail_parts = []  # For tooltip
 
         if action_norm == "rollback":
             source_event = payload.get("source_event") if isinstance(payload, dict) else None
@@ -2542,6 +2543,15 @@ class OperationsPanel(QWidget):
             backup_path = payload.get("backup_path") if isinstance(payload, dict) else None
             if backup_path:
                 parts.append(tr("operations.planRollbackBackupPath", path=os.path.basename(str(backup_path))))
+                # Add backup file metadata to tooltip
+                backup_abs = os.path.abspath(str(backup_path))
+                try:
+                    stat = os.stat(backup_abs)
+                    mtime = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+                    size = self._format_size_bytes(stat.st_size)
+                    detail_parts.append(tr("operations.planRollbackBackupMeta", mtime=mtime, size=size))
+                except Exception:
+                    detail_parts.append(tr("operations.planRollbackBackupMissing", path=backup_abs))
 
         elif action_norm == "add":
             fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
@@ -2578,7 +2588,12 @@ class OperationsPanel(QWidget):
                         label = str((fdef or {}).get("label") or key)
                         parts.append(f"{label}={value_text}")
 
-        return self._summarize_change_parts(parts, max_parts=3)
+        summary, base_detail = self._summarize_change_parts(parts, max_parts=3)
+        # Combine base detail with additional detail parts
+        if detail_parts:
+            combined_detail = base_detail + "\n" + "\n".join(detail_parts) if base_detail else "\n".join(detail_parts)
+            return summary, combined_detail
+        return summary, base_detail
 
     def _build_plan_note(self, action_norm, payload, yaml_path_for_rollback):
         if action_norm != "rollback":
@@ -2639,7 +2654,6 @@ class OperationsPanel(QWidget):
             tr("operations.colPosition"),
             tr("operations.date"),
             tr("operations.colChanges"),
-            tr("operations.colNote"),
             tr("operations.colStatus"),
         ]
 
@@ -2650,9 +2664,14 @@ class OperationsPanel(QWidget):
         )
 
         header = self.plan_table.horizontalHeader()
+        # Enable interactive column resizing (like Overview table)
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        # Set initial column widths
         for idx in range(len(headers)):
-            mode = QHeaderView.Stretch if idx in (3, 4) else QHeaderView.ResizeToContents
-            header.setSectionResizeMode(idx, mode)
+            if idx == 3:  # Changes column - wider (includes rollback details)
+                self.plan_table.setColumnWidth(idx, 250)
+            else:
+                self.plan_table.setColumnWidth(idx, 120)
 
         plan_items = self._plan_store.list_items()
         yaml_path_for_rollback = os.path.abspath(str(self.yaml_path_getter()))
@@ -2677,17 +2696,11 @@ class OperationsPanel(QWidget):
                 changes_item.setToolTip(changes_detail)
             self.plan_table.setItem(row, 3, changes_item)
 
-            note_text, note_tooltip = self._build_plan_note(action_norm, payload, yaml_path_for_rollback)
-            note_item = QTableWidgetItem(note_text)
-            if note_tooltip:
-                note_item.setToolTip(note_tooltip)
-            self.plan_table.setItem(row, 4, note_item)
-
             status_text, status_detail = self._build_plan_status(item)
             status_item = QTableWidgetItem(status_text)
             if status_detail:
                 status_item.setToolTip(status_detail)
-            self.plan_table.setItem(row, 5, status_item)
+            self.plan_table.setItem(row, 4, status_item)
 
             # Set row background color based on color_key field (same as overview grid)
             record_id = item.get("record_id")
