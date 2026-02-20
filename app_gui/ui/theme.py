@@ -102,20 +102,19 @@ def _setup_cjk_font(app):
             loaded_family = families[0]
             break
 
-    font = QFont("Consolas")  # Use monospace font for entire UI
+    # Use Inter for English, Microsoft YaHei for Chinese
+    font = QFont("Inter")
     font.setPointSize(FONT_POINT_SIZE)
-    font.setWeight(QFont.Bold)  # Use bold weight for thicker strokes
     fallbacks = [
-        "Cascadia Mono",
-        "Cascadia Code",
-        "Courier New",
-        "Monaco",
-        "Menlo",
+        "Segoe UI",
+        "Roboto",
+        "Cantarell",
+        "DejaVu Sans",
     ]
     if loaded_family:
         fallbacks.append(loaded_family)
-    # Prioritize fonts with thicker strokes for Chinese
-    fallbacks.extend(["SimHei", "Microsoft YaHei Bold", "Microsoft YaHei", "Noto Sans CJK SC Bold", "Noto Sans CJK SC", "WenQuanYi Micro Hei", "Droid Sans", "monospace"])
+    # Microsoft YaHei as primary Chinese font
+    fallbacks.extend(["Microsoft YaHei", "Microsoft YaHei UI", "SimHei", "SimSun", "sans-serif"])
     font.setFamilies([font.family()] + fallbacks)
     app.setFont(font)
 
@@ -229,6 +228,7 @@ def _get_theme_vars(mode):
             --input-focus-bg: var(--background-raised);
             --primary-btn-text: #ffffff;
             --toggle-checked-text: #ffffff;
+            --toggle-unchecked-text: #ffffff;
             --quick-prompt-bg: rgba(43,127,229,0.10);
             --quick-prompt-color: #34506d;
             --quick-prompt-hover-bg: rgba(43,127,229,0.18);
@@ -298,6 +298,7 @@ def _get_theme_vars(mode):
             --input-focus-bg: var(--background-base);
             --primary-btn-text: #ffffff;
             --toggle-checked-text: #000000;
+            --toggle-unchecked-text: #ffffff;
             --quick-prompt-bg: rgba(99,179,255,0.16);
             --quick-prompt-color: #a9c6e3;
             --quick-prompt-hover-bg: rgba(99,179,255,0.24);
@@ -361,7 +362,7 @@ def _get_common_qss():
         QPushButton:pressed {{ background-color: var(--button-pressed); }}
         QPushButton:disabled {{ background-color: var(--background-strong); color: var(--text-muted); border-color: transparent; opacity: 0.6; }}
         QWidget#overviewViewToggle {{ background-color: transparent; border: none; border-radius: 0; padding: 0; }}
-        QWidget#overviewViewToggle QPushButton[segmented] {{ background-color: transparent; border: none; border-radius: 0; color: var(--text-strong); padding: var(--space-1) var(--space-2); margin: 0; }}
+        QWidget#overviewViewToggle QPushButton[segmented] {{ background-color: transparent; border: none; border-radius: 0; color: var(--toggle-unchecked-text); padding: var(--space-1) var(--space-2); margin: 0; }}
         QWidget#overviewViewToggle QPushButton[segmented]:hover:!checked {{ background-color: var(--button-hover); }}
         QWidget#overviewViewToggle QPushButton[segmented]:checked {{ background-color: var(--accent); color: var(--toggle-checked-text); }}
         QWidget#overviewViewToggle QPushButton[segmented="left"] {{ border-top-left-radius: var(--radius-xs); border-bottom-left-radius: var(--radius-xs); }}

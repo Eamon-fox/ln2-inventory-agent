@@ -1,12 +1,12 @@
 from datetime import date, datetime
 import os
 from PySide6.QtCore import Qt, Signal, QEvent, QMimeData, QPoint, QRect, QEasingCurve, QPropertyAnimation, QTimer, QSize
-from PySide6.QtGui import QColor, QDrag, QDropEvent, QDragEnterEvent, QDragMoveEvent, QIcon
+from PySide6.QtGui import QColor, QDrag, QDropEvent, QDragEnterEvent, QDragMoveEvent, QIcon, QPalette
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QPushButton, QLineEdit, QComboBox, QCheckBox, QScrollArea,
     QSizePolicy, QGroupBox, QMenu, QStackedWidget, QButtonGroup,
-    QTableWidget, QTableWidgetItem, QHeaderView, QStyledItemDelegate, QStyle
+    QTableWidget, QTableWidgetItem, QHeaderView, QStyledItemDelegate, QStyle, QApplication
 )
 from app_gui.ui.utils import cell_color, build_color_palette
 from lib.position_fmt import pos_to_display, box_to_display, get_box_count
@@ -382,7 +382,6 @@ class OverviewPanel(QWidget):
 
         # Grid view button with icon only (no text)
         self.ov_view_grid_btn = QPushButton()
-        self.ov_view_grid_btn.setIcon(get_icon(Icons.GRID_3X3))
         self.ov_view_grid_btn.setIconSize(QSize(18, 18))
         self.ov_view_grid_btn.setToolTip(tr("overview.viewGrid"))
         self.ov_view_grid_btn.setCheckable(True)
@@ -391,11 +390,11 @@ class OverviewPanel(QWidget):
         self.ov_view_grid_btn.setFocusPolicy(Qt.NoFocus)
         self._view_mode_group.addButton(self.ov_view_grid_btn)
         self.ov_view_grid_btn.clicked.connect(lambda: self._on_view_mode_changed("grid"))
+        self.ov_view_grid_btn.toggled.connect(lambda: self._update_view_toggle_icons())
         view_toggle_layout.addWidget(self.ov_view_grid_btn)
 
         # Table view button with icon only (no text)
         self.ov_view_table_btn = QPushButton()
-        self.ov_view_table_btn.setIcon(get_icon(Icons.TABLE))
         self.ov_view_table_btn.setIconSize(QSize(18, 18))
         self.ov_view_table_btn.setToolTip(tr("overview.viewTable"))
         self.ov_view_table_btn.setCheckable(True)
@@ -403,7 +402,11 @@ class OverviewPanel(QWidget):
         self.ov_view_table_btn.setFocusPolicy(Qt.NoFocus)
         self._view_mode_group.addButton(self.ov_view_table_btn)
         self.ov_view_table_btn.clicked.connect(lambda: self._on_view_mode_changed("table"))
+        self.ov_view_table_btn.toggled.connect(lambda: self._update_view_toggle_icons())
         view_toggle_layout.addWidget(self.ov_view_table_btn)
+
+        # Set initial icons
+        self._update_view_toggle_icons()
 
         action_row.addWidget(view_toggle_container)
 
@@ -518,6 +521,31 @@ class OverviewPanel(QWidget):
         layout.addWidget(card)
         return value_label
 
+    def _is_dark_theme(self):
+        """Detect if current theme is dark based on palette."""
+        app = QApplication.instance()
+        if app is None:
+            return True
+        window = app.palette().color(QPalette.Window)
+        return window.lightness() < 128
+
+    def _update_view_toggle_icons(self):
+        """Update view toggle button icons based on checked state and theme."""
+        is_dark = self._is_dark_theme()
+
+        # Unchecked buttons use theme color (black for light, white for dark)
+        # Checked buttons always use white (because of blue background)
+        unchecked_color = "#ffffff" if is_dark else "#000000"
+        checked_color = "#ffffff"
+
+        # Update grid button icon
+        grid_color = checked_color if self.ov_view_grid_btn.isChecked() else unchecked_color
+        self.ov_view_grid_btn.setIcon(get_icon(Icons.GRID_3X3, size=18, color=grid_color))
+
+        # Update table button icon
+        table_color = checked_color if self.ov_view_table_btn.isChecked() else unchecked_color
+        self.ov_view_table_btn.setIcon(get_icon(Icons.TABLE, size=18, color=table_color))
+
     def _on_view_mode_changed(self, mode):
         if mode not in {"grid", "table"}:
             mode = "grid"
@@ -525,6 +553,9 @@ class OverviewPanel(QWidget):
         # Update button states
         self.ov_view_grid_btn.setChecked(mode == "grid")
         self.ov_view_table_btn.setChecked(mode == "table")
+
+        # Update icons based on checked state
+        self._update_view_toggle_icons()
 
         self._overview_view_mode = mode
         self.ov_view_stack.setCurrentIndex(0 if mode == "grid" else 1)
@@ -723,7 +754,7 @@ class OverviewPanel(QWidget):
 
     def _set_zoom(self, level, animated=False):
         """Set zoom level with optional animation."""
-        target_level = max(0.5, min(3.0, round(level, 1)))
+        target_level = max(0.2, min(3.0, round(level, 1)))
 
         if not animated or abs(target_level - self._zoom_level) < 0.05:
             # Direct set without animation for small changes or when animation disabled

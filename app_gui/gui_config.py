@@ -39,6 +39,7 @@ DEFAULT_GUI_CONFIG = {
     "api_keys": {},
     "language": "zh-CN",
     "theme": "light",
+    "ui_scale": 1.0,
     "last_notified_release": "0.0.0",
     "release_notes_preview": "",
     "import_prompt_seen": False,
@@ -77,7 +78,7 @@ def load_gui_config(path=DEFAULT_CONFIG_FILE):
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         merged = copy.deepcopy(DEFAULT_GUI_CONFIG)
-        for key in ("yaml_path", "api_keys", "language", "theme", "last_notified_release", "release_notes_preview", "import_prompt_seen"):
+        for key in ("yaml_path", "api_keys", "language", "theme", "ui_scale", "last_notified_release", "release_notes_preview", "import_prompt_seen"):
             if key in data:
                 merged[key] = data[key]
         if "ai" in data and isinstance(data["ai"], dict):
@@ -96,3 +97,5 @@ def save_gui_config(config, path=DEFAULT_CONFIG_FILE):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         yaml.safe_dump(config, f, allow_unicode=True, sort_keys=False)
+        f.flush()  # Ensure data is written to disk
+        os.fsync(f.fileno())  # Force write to disk

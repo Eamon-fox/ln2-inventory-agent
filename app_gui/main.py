@@ -284,6 +284,24 @@ class SettingsDialog(QDialog):
             self.theme_combo.setCurrentIndex(idx)
         row_layout.addWidget(self.theme_combo)
 
+        scale_label = QLabel(tr("settings.uiScale"))
+        scale_label.setProperty("role", "inlineFormLabel")
+        row_layout.addWidget(scale_label)
+
+        self.scale_combo = _NoWheelComboBox()
+        self.scale_combo.addItem("100%", 1.0)
+        self.scale_combo.addItem("125%", 1.25)
+        self.scale_combo.addItem("150%", 1.5)
+        # Removed 175% and 200% - too extreme, causes display issues
+        current_scale = self._config.get("ui_scale", 1.0)
+        # Cap scale at 1.5 if config has higher value
+        if current_scale > 1.5:
+            current_scale = 1.5
+        idx = self.scale_combo.findData(current_scale)
+        if idx >= 0:
+            self.scale_combo.setCurrentIndex(idx)
+        row_layout.addWidget(self.scale_combo)
+
         row_layout.addStretch()
 
         preferences_layout.addRow(prefs_row)
@@ -604,6 +622,7 @@ class SettingsDialog(QDialog):
             "api_keys": api_keys,
             "language": self.lang_combo.currentData(),
             "theme": self.theme_combo.currentData(),
+            "ui_scale": self.scale_combo.currentData(),
             "ai_provider": provider,
             "ai_model": self.ai_model_edit.text().strip() or provider_cfg["model"],
             "ai_max_steps": self.ai_max_steps.value(),
@@ -1218,15 +1237,15 @@ class MainWindow(QMainWindow):
         new_dataset_btn.clicked.connect(self.on_create_new_dataset)
         top.addWidget(new_dataset_btn)
 
-        settings_btn = QPushButton(tr("main.settings"))
-        settings_btn.setIcon(get_icon(Icons.SETTINGS))
-        settings_btn.clicked.connect(self.on_open_settings)
-        top.addWidget(settings_btn)
-
         audit_log_btn = QPushButton(tr("main.auditLog"))
         audit_log_btn.setIcon(get_icon(Icons.FILE_TEXT))
         audit_log_btn.clicked.connect(self.on_open_audit_log)
         top.addWidget(audit_log_btn)
+
+        settings_btn = QPushButton(tr("main.settings"))
+        settings_btn.setIcon(get_icon(Icons.SETTINGS))
+        settings_btn.clicked.connect(self.on_open_settings)
+        top.addWidget(settings_btn)
 
         root.addLayout(top)
 
@@ -1587,6 +1606,7 @@ class MainWindow(QMainWindow):
                 "ai": self.gui_config.get("ai", {}),
                 "language": self.gui_config.get("language", "en"),
                 "theme": self.gui_config.get("theme", "dark"),
+                "ui_scale": self.gui_config.get("ui_scale", 1.0),
             },
             on_create_new_dataset=self.on_create_new_dataset,
             on_manage_boxes=self.on_manage_boxes,
@@ -1609,6 +1629,16 @@ class MainWindow(QMainWindow):
         if new_theme != self.gui_config.get("theme"):
             self.gui_config["theme"] = new_theme
             self._ask_restart(tr("main.themeChangedRestart"))
+
+        new_scale = values.get("ui_scale", 1.0)
+        if new_scale != self.gui_config.get("ui_scale"):
+            self.gui_config["ui_scale"] = new_scale
+            # For UI scale, show manual restart message (auto-restart has timing issues)
+            QMessageBox.information(
+                self,
+                tr("common.info"),
+                tr("main.scaleChangedManualRestart")
+            )
 
         self.gui_config["ai"] = {
             "provider": values.get("ai_provider", "deepseek"),
@@ -1667,8 +1697,21 @@ class MainWindow(QMainWindow):
 
     def _restart_app(self):
         save_gui_config(self.gui_config)
-        QApplication.quit()
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+        # Use QTimer to delay the restart, ensuring current app quits first
+        from PySide6.QtCore import QTimer
+        import subprocess
+
+        def delayed_restart():
+            # Start new instance after current app has begun quitting
+            if getattr(sys, 'frozen', False):
+                subprocess.Popen([sys.executable] + sys.argv[1:])
+            else:
+                subprocess.Popen([sys.executable] + sys.argv)
+
+        # Schedule restart after a short delay to ensure clean quit
+        QTimer.singleShot(100, delayed_restart)
+        # Quit current instance
+        QTimer.singleShot(150, QApplication.quit)
 
     def on_open_audit_log(self):
         """Open audit log dialog."""
@@ -2052,6 +2095,21 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 def main():
+    # Load GUI config BEFORE creating QApplication to set scale factor
+    gui_config = load_gui_config()
+    ui_scale = gui_config.get("ui_scale", 1.0)
+
+    # Set scale factor BEFORE creating QApplication (Qt 6 method)
+    if ui_scale != 1.0:
+        os.environ["QT_SCALE_FACTOR"] = str(ui_scale)
+        # Also set Qt 6 specific environment variables
+        os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
+        os.environ["QT_SCALE_FACTOR_ROUNDING_POLICY"] = "PassThrough"
+
+    # Enable high DPI scaling for Qt 6
+    from PySide6.QtCore import Qt
+    QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+
     app = QApplication(sys.argv)
 
     # Set application icon (taskbar, window title bar, etc.)
@@ -2067,7 +2125,6 @@ def main():
             app.setWindowIcon(QIcon(icon_path))
             break
 
-    gui_config = load_gui_config()
     theme = gui_config.get("theme", "dark")
 
     # Set icon color based on theme
