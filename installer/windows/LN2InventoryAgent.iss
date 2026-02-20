@@ -1,24 +1,24 @@
-; Inno Setup script for LN2 Inventory Agent.
+; Inno Setup script for SnowFox.
 ; Build prerequisite: pyinstaller ln2_inventory.spec
 
-#define MyAppName "LN2 Inventory Agent"
+#define MyAppName "SnowFox"
 #define MyAppPublisher "EamonFox"
 
 #define MyAppVersion GetEnv("LN2_AGENT_VERSION")
 #if MyAppVersion == ""
-  #define MyAppVersion "1.0.1"
+  #define MyAppVersion "1.1.1"
 #endif
 
-#define MyAppExeName "LN2InventoryAgent-" + MyAppVersion + ".exe"
+#define MyAppExeName "SnowFox-" + MyAppVersion + ".exe"
 
-#define SourceDir "..\\..\\dist\\LN2InventoryAgent"
+#define SourceDir "..\\..\\dist\\SnowFox"
 
 #if !DirExists(SourceDir)
-  #error "Missing dist/LN2InventoryAgent. Build it first with: pyinstaller ln2_inventory.spec"
+  #error "Missing dist/SnowFox. Build it first with: pyinstaller ln2_inventory.spec"
 #endif
 
 #if !FileExists(SourceDir + "\\" + MyAppExeName)
-  #error "Missing {#MyAppExeName} under dist/LN2InventoryAgent."
+  #error "Missing {#MyAppExeName} under dist/SnowFox."
 #endif
 
 [Setup]
