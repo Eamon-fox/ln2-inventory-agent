@@ -74,9 +74,13 @@ LAYOUT_AI_DEFAULT_WIDTH = 320          # AI panel preferred width
 LAYOUT_SPLITTER_HANDLE_WIDTH = 6       # Width of draggable splitter handles
 
 _CJK_FONT_CANDIDATES = [
-    os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "msyh.ttc"),
-    os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "msyhbd.ttc"),
-    os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "simsun.ttc"),
+    # Prioritize fonts with thicker strokes for better readability
+    os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "simhei.ttf"),      # SimHei (黑体) - thick strokes
+    os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "msyhbd.ttc"),      # Microsoft YaHei Bold
+    os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "msyh.ttc"),        # Microsoft YaHei Regular
+    os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "simsun.ttc"),      # SimSun
+    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Bold.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc",
     "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/google-droid/DroidSansFallback.ttf",
@@ -98,17 +102,20 @@ def _setup_cjk_font(app):
             loaded_family = families[0]
             break
 
-    font = QFont("Inter")
+    font = QFont("Consolas")  # Use monospace font for entire UI
     font.setPointSize(FONT_POINT_SIZE)
+    font.setWeight(QFont.Bold)  # Use bold weight for thicker strokes
     fallbacks = [
-        "Segoe UI",
-        "Roboto",
-        "Cantarell",
-        "DejaVu Sans",
+        "Cascadia Mono",
+        "Cascadia Code",
+        "Courier New",
+        "Monaco",
+        "Menlo",
     ]
     if loaded_family:
         fallbacks.append(loaded_family)
-    fallbacks.extend(["Microsoft YaHei", "Noto Sans CJK SC", "WenQuanYi Micro Hei", "Droid Sans", "sans-serif"])
+    # Prioritize fonts with thicker strokes for Chinese
+    fallbacks.extend(["SimHei", "Microsoft YaHei Bold", "Microsoft YaHei", "Noto Sans CJK SC Bold", "Noto Sans CJK SC", "WenQuanYi Micro Hei", "Droid Sans", "monospace"])
     font.setFamilies([font.family()] + fallbacks)
     app.setFont(font)
 

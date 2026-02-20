@@ -2452,16 +2452,18 @@ class OperationsPanel(QWidget):
         return str(value)
 
     @staticmethod
-    def _summarize_change_parts(parts, max_parts=3):
-        """Build short summary + full detail for the Changes column."""
+    def _summarize_change_parts(parts, max_parts=None):
+        """Build summary + full detail for the Changes column.
+
+        With interactive column resizing, we no longer need to truncate the summary.
+        All parts are shown in the cell, with full detail in tooltip.
+        """
         cleaned = [str(part).strip() for part in parts if str(part).strip()]
         if not cleaned:
             return "-", ""
 
-        shown = cleaned[:max_parts]
-        summary = "; ".join(shown)
-        if len(cleaned) > max_parts:
-            summary += f"; ... +{len(cleaned) - max_parts}"
+        # Show all parts (no truncation) since users can resize columns
+        summary = "; ".join(cleaned)
         return summary, "\n".join(cleaned)
 
     def _build_plan_action_text(self, action_norm, item):
@@ -2588,7 +2590,7 @@ class OperationsPanel(QWidget):
                         label = str((fdef or {}).get("label") or key)
                         parts.append(f"{label}={value_text}")
 
-        summary, base_detail = self._summarize_change_parts(parts, max_parts=3)
+        summary, base_detail = self._summarize_change_parts(parts)
         # Combine base detail with additional detail parts
         if detail_parts:
             combined_detail = base_detail + "\n" + "\n".join(detail_parts) if base_detail else "\n".join(detail_parts)
@@ -2664,14 +2666,9 @@ class OperationsPanel(QWidget):
         )
 
         header = self.plan_table.horizontalHeader()
-        # Enable interactive column resizing (like Overview table)
-        header.setSectionResizeMode(QHeaderView.Interactive)
-        # Set initial column widths
-        for idx in range(len(headers)):
-            if idx == 3:  # Changes column - wider (includes rollback details)
-                self.plan_table.setColumnWidth(idx, 250)
-            else:
-                self.plan_table.setColumnWidth(idx, 120)
+        # Set header alignment to left
+        header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        # Will set to Interactive after auto-sizing columns based on content
 
         plan_items = self._plan_store.list_items()
         yaml_path_for_rollback = os.path.abspath(str(self.yaml_path_getter()))
@@ -2714,6 +2711,12 @@ class OperationsPanel(QWidget):
                         cell_item = self.plan_table.item(row, col)
                         if cell_item:
                             cell_item.setBackground(qcolor)
+
+        # Auto-resize columns based on content, then enable interactive resizing
+        for col in range(self.plan_table.columnCount()):
+            self.plan_table.resizeColumnToContents(col)
+        # Enable interactive column resizing after auto-sizing
+        header.setSectionResizeMode(QHeaderView.Interactive)
 
         self._refresh_plan_toolbar_state()
 
