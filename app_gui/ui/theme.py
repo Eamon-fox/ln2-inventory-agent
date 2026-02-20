@@ -3,6 +3,7 @@ import re
 
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication
 
 
 # =============================================================================
@@ -140,6 +141,22 @@ def _resolve_qss_vars(stylesheet):
     return resolved
 
 
+def _current_theme_mode():
+    """Best-effort theme mode inference from current app palette."""
+    app = QApplication.instance()
+    if app is None:
+        return "dark"
+    window = app.palette().color(QPalette.Window)
+    return "dark" if window.lightness() < 128 else "light"
+
+
+def _resolve_inline_qss(fragment, mode=None):
+    """Resolve var(--token) in runtime inline QSS fragments."""
+    active_mode = mode or _current_theme_mode()
+    wrapped = f":root {{ {_get_theme_vars(active_mode)} }}\n{fragment}"
+    return _resolve_qss_vars(wrapped)
+
+
 def _get_theme_vars(mode):
     """Return CSS variables for the given theme mode."""
     if mode == "light":
@@ -147,22 +164,35 @@ def _get_theme_vars(mode):
             --background-base: #f7fafc;
             --background-strong: #eef3f8;
             --background-raised: #ffffff;
+            --background-default: #ffffff;
             --background-inset: #f1f6fb;
+            --background-hover: #f2f6fb;
             --text-strong: #0f172a;
             --text-weak: #334155;
             --text-muted: #64748b;
+            --text-primary: #0f172a;
+            --text-secondary: #64748b;
             --border-weak: rgba(15,23,42,0.10);
             --border-subtle: rgba(15,23,42,0.18);
+            --border-strong: rgba(15,23,42,0.28);
             --accent: #2b7fe5;
             --accent-hover: #1f6ed0;
             --accent-muted: rgba(43,127,229,0.14);
             --success: #16a34a;
             --warning: #d97706;
             --error: #dc2626;
+            --status-success-bg: rgba(22,163,74,0.12);
             --button-background: #ffffff;
             --button-border: #cbd5e1;
             --button-hover: #f2f6fb;
             --button-pressed: #e6eef7;
+            --input-bg: #ffffff;
+            --input-border: rgba(15,23,42,0.16);
+            --input-border-focus: #2b7fe5;
+            --input-text: #0f172a;
+            --input-placeholder: #64748b;
+            --display-bg: #f1f6fb;
+            --display-text: #0f172a;
             --btn-danger: #dc2626;
             --btn-danger-hover: #b91c1c;
             --btn-danger-border: #7f1d1d;
@@ -176,7 +206,8 @@ def _get_theme_vars(mode):
             --status-warning: #b45309;
             --status-error: #b91c1c;
             --status-muted: #64748b;
-            --cell-border-default: #c6d3e3;
+            --table-gridline: rgba(15,23,42,0.10);
+            --cell-border-default: #95adc6;
             --cell-empty-bg: #eef3f8;
             --cell-empty-selected-bg: #deebf8;
             --cell-empty-text: #6b7f95;
@@ -202,22 +233,35 @@ def _get_theme_vars(mode):
             --background-base: #0f1724;
             --background-strong: #152235;
             --background-raised: #1b2a3f;
+            --background-default: #1b2a3f;
             --background-inset: #132033;
+            --background-hover: #24364d;
             --text-strong: #e6f1ff;
             --text-weak: #9fb3c8;
             --text-muted: #6d8298;
-            --border-weak: rgba(159,179,200,0.15);
-            --border-subtle: rgba(159,179,200,0.24);
+            --text-primary: #e6f1ff;
+            --text-secondary: #9fb3c8;
+            --border-weak: #6b8aaa;
+            --border-subtle: #7a9aba;
+            --border-strong: #9fb3c8;
             --accent: #63b3ff;
             --accent-hover: #8bc7ff;
             --accent-muted: rgba(99,179,255,0.22);
             --success: #22c55e;
             --warning: #f59e0b;
             --error: #ef4444;
+            --status-success-bg: rgba(34,197,94,0.14);
             --button-background: #1e2a3a;
             --button-border: #475569;
             --button-hover: #24364d;
             --button-pressed: #1e3047;
+            --input-bg: #1b2a3f;
+            --input-border: #5b728a;
+            --input-border-focus: #63b3ff;
+            --input-text: #e6f1ff;
+            --input-placeholder: #86a0bb;
+            --display-bg: #132033;
+            --display-text: #e6f1ff;
             --btn-danger: #ef4444;
             --btn-danger-hover: #dc2626;
             --btn-danger-border: #991b1b;
@@ -231,7 +275,8 @@ def _get_theme_vars(mode):
             --status-warning: #f59e0b;
             --status-error: #ef4444;
             --status-muted: #94a3b8;
-            --cell-border-default: #36506d;
+            --table-gridline: rgba(159,179,200,0.20);
+            --cell-border-default: #4e6a88;
             --cell-empty-bg: #1a2a40;
             --cell-empty-selected-bg: #223956;
             --cell-empty-text: #86a0bb;
@@ -279,7 +324,7 @@ def _get_common_qss():
             --border-thick: 3px;
 
             /* Sizes */
-            --input-height: 16px;
+            --input-height: 20px;
             --indicator-sm: 16px;
             --indicator-md: 18px;
             --input-icon-size: 16px;
@@ -293,12 +338,17 @@ def _get_common_qss():
         QToolTip { color: var(--tooltip-color); background-color: var(--tooltip-bg); border: 1px solid rgba(0,0,0,0.1); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); font-size: {FONT_SIZE_SM}px; }
         QGroupBox {{ border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-lg); margin-top: var(--space-3); font-weight: {FONT_WEIGHT_MEDIUM}; color: var(--text-weak); padding-top: var(--space-2); }}
         QGroupBox::title {{ subcontrol-origin: margin; subcontrol-position: top left; padding: 0 var(--space-2); left: var(--space-2); color: var(--text-weak); font-size: {FONT_SIZE_MD}px; }}
-        QTableWidget {{ gridline-color: rgba(255,255,255,0.06); background-color: var(--background-inset); selection-background-color: var(--accent-muted); border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-md); }}
+        QTableWidget {{ gridline-color: var(--table-gridline); background-color: var(--background-inset); selection-background-color: var(--accent-muted); border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-md); }}
         QTableWidget::item {{ padding: var(--space-1) var(--space-2); border: none; }}
         QTableWidget::item:selected {{ background-color: var(--accent-muted); color: var(--text-strong); }}
         QHeaderView::section {{ background-color: var(--background-strong); color: var(--text-weak); padding: 6px var(--space-2); border: none; border-bottom: var(--border-thin) solid var(--border-weak); border-right: var(--border-thin) solid var(--border-weak); font-weight: 500; font-size: {FONT_SIZE_SM}px; }}
-        QPushButton, QLineEdit, QLabel, QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit {{ height: var(--input-height); padding: var(--space-1) var(--space-2); }}
-        QPushButton {{ background-color: var(--button-background); border: var(--border-thin) solid var(--button-border); border-radius: var(--radius-xs); color: var(--text-strong); padding: var(--space-1) var(--space-2); font-weight: {FONT_WEIGHT_MEDIUM}; font-size: {FONT_SIZE_MD}px; }}
+        QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit {{ min-height: var(--input-height); max-height: var(--input-height); }}
+        QLineEdit, QComboBox {{ padding: 0 var(--space-2); }}
+        QSpinBox, QDoubleSpinBox, QDateEdit {{ padding: 0; margin: 0; }}
+        QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit, QTextEdit, QTextBrowser, QPlainTextEdit {{ background-color: var(--input-bg); border: var(--border-thin) solid var(--input-border); border-radius: var(--radius-sm); color: var(--input-text); selection-background-color: var(--accent-muted); selection-color: var(--text-strong); }}
+        QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QDateEdit:focus, QTextEdit:focus, QTextBrowser:focus, QPlainTextEdit:focus {{ border-color: var(--input-border-focus); background-color: var(--input-focus-bg); }}
+        QLineEdit[readOnly="true"], QTextEdit[readOnly="true"], QTextBrowser[readOnly="true"], QPlainTextEdit[readOnly="true"] {{ background-color: var(--display-bg); border-color: transparent; color: var(--display-text); }}
+        QPushButton {{ background-color: var(--button-background); border: var(--border-thin) solid var(--button-border); border-radius: var(--radius-xs); color: var(--text-strong); padding: 1px var(--space-2); font-weight: {FONT_WEIGHT_MEDIUM}; font-size: {FONT_SIZE_MD}px; }}
         QPushButton:hover {{ background-color: var(--button-hover); border-color: var(--button-border); }}
         QPushButton:focus {{ border: var(--border-thin) solid var(--accent); outline: none; }}
         QPushButton:pressed {{ background-color: var(--button-pressed); }}
@@ -310,6 +360,52 @@ def _get_common_qss():
         QWidget#overviewViewToggle QPushButton[segmented="left"] {{ border-top-left-radius: var(--radius-xs); border-bottom-left-radius: var(--radius-xs); }}
         QWidget#overviewViewToggle QPushButton[segmented="right"] {{ border-left: var(--border-thin) solid var(--button-border); border-top-right-radius: var(--radius-xs); border-bottom-right-radius: var(--radius-xs); }}
         QWidget#overviewViewToggle QPushButton[segmented="right"]:checked {{ border-left-color: var(--accent); }}
+        QPushButton#overviewBoxNavButton {{ border: var(--border-thin) solid var(--border-weak); background: transparent; border-radius: var(--radius-xs); font-size: {FONT_SIZE_XS}px; padding: 0; }}
+        QPushButton#overviewBoxNavButton:hover {{ background: var(--background-hover); border-color: var(--border-strong); }}
+        QLabel#operationsPlanEmptyLabel {{ color: var(--warning); padding: 16px; font-weight: 500; background-color: var(--background-inset); border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-md); }}
+        QTableWidget#operationsPlanTable {{ border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-md); }}
+        QWidget#resultCard {{ background-color: var(--background-inset); border: 1px solid var(--border-weak); border-radius: var(--radius-md); }}
+        QWidget#resultCard[state="success"] {{ border-color: var(--success); }}
+        QWidget#resultCard[state="warning"] {{ border-color: var(--warning); }}
+        QWidget#resultCard[state="error"] {{ border-color: var(--error); }}
+        QLabel#operationsResultTitle {{ color: var(--text-weak); font-size: {FONT_SIZE_MD}px; font-weight: {FONT_WEIGHT_BOLD}; border: none; }}
+        QTextBrowser#operationsResultSummary {{ color: var(--text-strong); border: none; background: transparent; }}
+        QLabel#operationsPlanFeedback {{ border: 1px solid var(--border-weak); border-radius: var(--radius-sm); padding: 8px 10px; }}
+        QLabel#operationsPlanFeedback[level="info"] {{ color: var(--text-muted); background: var(--background-inset); }}
+        QLabel#operationsPlanFeedback[level="warning"] {{ color: var(--status-warning); background: rgba(255, 193, 7, 0.12); }}
+        QLabel#operationsPlanFeedback[level="error"] {{ color: var(--status-error); background: rgba(220, 53, 69, 0.12); }}
+        QLabel[role="statusWarning"] {{ color: var(--status-warning); }}
+        QLabel[role="readonlyField"] {{ background: var(--display-bg); border: none; color: var(--display-text); padding: 2px 4px; }}
+        QLineEdit[role="contextEditable"][readOnly="true"] {{ background: var(--display-bg); border: none; color: var(--display-text); padding: 2px 4px; }}
+        QLineEdit[role="contextEditable"][readOnly="false"] {{ background: var(--input-bg); border: var(--border-thin) solid var(--input-border-focus); color: var(--input-text); padding: 2px 4px; }}
+        QPushButton#inlineLockBtn {{ border: none; padding: 0; font-size: {FONT_SIZE_SM}px; background: transparent; }}
+        QPushButton#inlineConfirmBtn {{ border: none; padding: 0; font-size: {FONT_SIZE_LG}px; font-weight: {FONT_WEIGHT_BOLD}; color: var(--status-success); background: transparent; }}
+        QLabel[role="mutedInline"] {{ color: var(--text-muted); }}
+        QFrame#undoPrintContainer {{ background-color: var(--status-success-bg); border: 1px solid var(--status-success); border-radius: var(--radius-sm); padding: 8px; }}
+        QLabel#undoSuccessLabel {{ color: var(--status-success); font-weight: {FONT_WEIGHT_MEDIUM}; }}
+        QPushButton#undoCloseBtn {{ background: transparent; border: none; font-size: {FONT_SIZE_XXL}px; font-weight: {FONT_WEIGHT_BOLD}; color: var(--text-secondary); }}
+        QPushButton#undoCloseBtn:hover {{ color: var(--text-primary); }}
+        QWidget#overviewStatCard {{ background-color: var(--background-inset); border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-md); margin-top: 8px; padding-top: 8px; }}
+        QWidget#overviewStatCard QLabel#overviewStatValue {{ color: var(--text-strong); font-weight: {FONT_WEIGHT_MEDIUM}; font-size: {FONT_SIZE_XL}px; }}
+        QPushButton#overviewIconButton {{ border: none; background: transparent; }}
+        QLabel#overviewZoomLabel {{ font-size: {FONT_SIZE_XS}px; }}
+        QLabel#overviewZoomSeparator {{ color: var(--border-weak); margin: 0 4px; }}
+        QLabel#overviewHoverHint {{ color: var(--text-weak); font-weight: {FONT_WEIGHT_MEDIUM}; }}
+        QLabel#overviewHoverHint[state="warning"] {{ color: var(--warning); padding: 8px; background-color: rgba(245,158,11,0.1); border-radius: var(--radius-xs); }}
+        QLabel[role="settingsHint"], QLabel[role="dialogHint"] {{ color: var(--text-muted); font-size: {FONT_SIZE_XS}px; margin-left: 100px; }}
+        QLabel[role="dialogHint"] {{ margin-left: 0; margin-bottom: 4px; }}
+        QLabel[role="cfHeaderLabel"] {{ font-size: {FONT_SIZE_XS}px; color: var(--text-muted); font-weight: {FONT_WEIGHT_SEMIBOLD}; }}
+        QLabel[role="inlineFormLabel"] {{ font-size: {FONT_SIZE_SM}px; }}
+        QLineEdit#settingsModelPreview {{ color: var(--text-muted); }}
+        QLabel#settingsAboutLabel, QLabel#settingsSupportLabel {{ color: var(--text-muted); font-size: {FONT_SIZE_SM}px; }}
+        QLabel#settingsAboutLabel {{ padding: 4px; }}
+        QLabel#settingsSupportLabel {{ margin-bottom: 4px; }}
+        QLabel#mainStatsBar {{ color: var(--text-muted); font-size: {FONT_SIZE_XS}px; padding: 1px 6px; }}
+        QLabel#auditEventDetail {{ background-color: var(--background-inset); border: 1px solid var(--border-weak); border-radius: var(--radius-sm); padding: 8px; }}
+        QLabel#auditEventDetail[state="success"] {{ border-color: var(--success); }}
+        QLabel#auditEventDetail[state="error"] {{ border-color: var(--error); }}
+        QLabel#auditEventDetail[state="default"] {{ border-color: var(--border-weak); }}
+        QLabel#aiInputHint {{ font-size: {FONT_SIZE_XS}px; padding-right: 2px; }}
         QPushButton[variant="primary"] {{ background-color: var(--accent); color: var(--primary-btn-text); border-color: var(--accent); font-weight: {FONT_WEIGHT_MEDIUM}; }}
         QPushButton[variant="primary"]:hover {{ background-color: var(--accent-hover); border-color: var(--accent-hover); }}
         QPushButton[variant="primary"]:focus {{ border: var(--border-thin) solid var(--accent-hover); outline: none; }}
@@ -400,19 +496,19 @@ def _apply_theme(app, mode):
 
 
 def input_style():
-    return f"""
+    return _resolve_inline_qss(f"""
         background-color: var(--background-inset);
         border: 1px solid var(--border-weak);
         border-radius: var(--radius-sm);
         color: var(--text-strong);
         padding: 6px 10px;
         font-size: {FONT_SIZE_MD}px;
-    """
+    """)
 
 
 def cell_occupied_style(color="#22c55e", is_selected=False, font_size=9):
     if is_selected:
-        return f"""
+        return _resolve_inline_qss(f"""
             QPushButton {{
                 background-color: {color};
                 color: white;
@@ -426,9 +522,9 @@ def cell_occupied_style(color="#22c55e", is_selected=False, font_size=9):
             QPushButton:hover {{
                 border: 2px solid var(--accent);
             }}
-        """
+        """)
     else:
-        return f"""
+        return _resolve_inline_qss(f"""
             QPushButton {{
                 background-color: {color};
                 color: white;
@@ -442,12 +538,12 @@ def cell_occupied_style(color="#22c55e", is_selected=False, font_size=9):
             QPushButton:hover {{
                 border: 2px solid var(--accent);
             }}
-        """
+        """)
 
 
 def cell_empty_style(is_selected=False, font_size=8):
     if is_selected:
-        return f"""
+        return _resolve_inline_qss(f"""
             QPushButton {{
                 background-color: var(--cell-empty-selected-bg);
                 color: var(--cell-empty-selected-text);
@@ -462,9 +558,9 @@ def cell_empty_style(is_selected=False, font_size=8):
                 background-color: var(--background-raised);
                 color: var(--text-weak);
             }}
-        """
+        """)
     else:
-        return f"""
+        return _resolve_inline_qss(f"""
             QPushButton {{
                 background-color: var(--cell-empty-bg);
                 color: var(--cell-empty-text);
@@ -479,11 +575,11 @@ def cell_empty_style(is_selected=False, font_size=8):
                 background-color: var(--background-raised);
                 color: var(--text-weak);
             }}
-        """
+        """)
 
 
 def cell_preview_add_style():
-    return f"""
+    return _resolve_inline_qss(f"""
         QPushButton {{
             background-color: rgba(34, 197, 94, 0.25);
             color: var(--text-strong);
@@ -493,11 +589,11 @@ def cell_preview_add_style():
             font-weight: 500;
             padding: 1px;
         }}
-    """
+    """)
 
 
 def cell_preview_takeout_style():
-    return f"""
+    return _resolve_inline_qss(f"""
         QPushButton {{
             background-color: rgba(239, 68, 68, 0.25);
             color: var(--text-strong);
@@ -507,11 +603,11 @@ def cell_preview_takeout_style():
             font-weight: 500;
             padding: 1px;
         }}
-    """
+    """)
 
 
 def cell_preview_move_source_style():
-    return f"""
+    return _resolve_inline_qss(f"""
         QPushButton {{
             background-color: rgba(56, 189, 248, 0.2);
             color: var(--text-strong);
@@ -521,11 +617,11 @@ def cell_preview_move_source_style():
             font-weight: 500;
             padding: 1px;
         }}
-    """
+    """)
 
 
 def cell_preview_move_target_style():
-    return f"""
+    return _resolve_inline_qss(f"""
         QPushButton {{
             background-color: rgba(56, 189, 248, 0.35);
             color: var(--text-strong);
@@ -535,7 +631,7 @@ def cell_preview_move_target_style():
             font-weight: 500;
             padding: 1px;
         }}
-    """
+    """)
 
 
 def chat_code_block_style(is_dark=True):

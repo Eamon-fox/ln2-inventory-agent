@@ -1,5 +1,6 @@
 """Tool dispatcher for agent runtime, built on unified Tool API."""
 
+from copy import deepcopy
 import os
 import re
 import threading
@@ -16,7 +17,6 @@ from lib.tool_api import (
     tool_generate_stats,
     tool_get_raw_entries,
     tool_list_empty_positions,
-    tool_list_backups,
     tool_query_thaw_events,
     tool_recent_frozen,
     tool_recommend_positions,
@@ -26,10 +26,355 @@ from lib.tool_api import (
 )
 from app_gui.plan_gate import validate_stage_request
 from lib.plan_item_factory import build_add_plan_item, build_edit_plan_item, build_record_plan_item, build_rollback_plan_item
+from lib.position_fmt import display_to_pos
 from lib.validators import parse_positions
 from lib.yaml_ops import load_yaml
 
 _WRITE_TOOLS = {"add_entry", "record_thaw", "batch_thaw", "rollback", "edit_entry"}
+
+
+_TOOL_CONTRACTS = {
+    "list_empty_positions": {
+        "description": "List empty positions, optionally within one box.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "box": {"type": "integer", "minimum": 1},
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+    "search_records": {
+        "description": "Search inventory records by text and/or structured filters.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search text (cell line, short name, notes, etc).",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["fuzzy", "exact", "keywords"],
+                    "description": "Search strategy.",
+                },
+                "max_results": {"type": "integer", "minimum": 1},
+                "case_sensitive": {"type": "boolean"},
+                "box": {"type": "integer", "minimum": 1},
+                "position": {"type": "integer", "minimum": 1},
+                "record_id": {"type": "integer", "minimum": 1},
+                "active_only": {"type": "boolean"},
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+    "recent_frozen": {
+        "description": "List recently frozen records.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "days": {"type": "integer", "minimum": 1},
+                "count": {"type": "integer", "minimum": 1},
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+    "query_thaw_events": {
+        "description": "Query thaw/takeout/move events by date range and action.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "date": {"type": "string"},
+                "days": {"type": "integer", "minimum": 1},
+                "start_date": {"type": "string"},
+                "end_date": {"type": "string"},
+                "action": {"type": "string"},
+                "max_records": {"type": "integer", "minimum": 0},
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+    "collect_timeline": {
+        "description": "Collect inventory timeline summary.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "days": {"type": "integer", "minimum": 1},
+                "all_history": {"type": "boolean"},
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+    "recommend_positions": {
+        "description": "Recommend empty positions for new tubes.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "count": {"type": "integer", "minimum": 1},
+                "box_preference": {"type": "integer", "minimum": 1},
+                "strategy": {
+                    "type": "string",
+                    "enum": ["consecutive", "same_row", "any"],
+                },
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+    "generate_stats": {
+        "description": "Generate inventory statistics.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+    "get_raw_entries": {
+        "description": "Fetch raw inventory records by ID list.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ids": {
+                    "type": "array",
+                    "items": {"type": "integer", "minimum": 1},
+                    "minItems": 1,
+                },
+            },
+            "required": ["ids"],
+            "additionalProperties": False,
+        },
+    },
+    "add_entry": {
+        "description": "Add new frozen tube records.",
+        "notes": "Provide all sample metadata through fields object (e.g. fields.short_name, fields.cell_line).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "box": {"type": "integer", "minimum": 1},
+                "positions": {
+                    "oneOf": [
+                        {
+                            "type": "array",
+                            "items": {"type": "integer", "minimum": 1},
+                            "minItems": 1,
+                        },
+                        {"type": "string"},
+                    ]
+                },
+                "frozen_at": {"type": "string"},
+                "fields": {"type": "object"},
+                "dry_run": {"type": "boolean"},
+            },
+            "required": ["box", "positions", "frozen_at"],
+            "additionalProperties": False,
+        },
+    },
+    "edit_entry": {
+        "description": "Edit metadata fields of an existing record.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "record_id": {"type": "integer", "minimum": 1},
+                "fields": {"type": "object", "minProperties": 1},
+            },
+            "required": ["record_id", "fields"],
+            "additionalProperties": False,
+        },
+    },
+    "record_thaw": {
+        "description": "Record takeout or move for one tube.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "record_id": {"type": "integer", "minimum": 1},
+                "position": {
+                    "oneOf": [
+                        {"type": "integer", "minimum": 1},
+                        {"type": "string"},
+                    ]
+                },
+                "date": {"type": "string"},
+                "action": {"type": "string", "enum": ["取出", "移动", "takeout", "move", "Takeout", "Move"]},
+                "to_position": {
+                    "oneOf": [
+                        {"type": "integer", "minimum": 1},
+                        {"type": "string"},
+                    ]
+                },
+                "to_box": {"type": "integer", "minimum": 1},
+                "note": {"type": "string"},
+                "dry_run": {"type": "boolean"},
+            },
+            "required": ["record_id", "date"],
+            "additionalProperties": False,
+        },
+    },
+    "batch_thaw": {
+        "description": "Record takeout or move for multiple tubes.",
+        "notes": "entries supports parsed string formats from parse_batch_entries and structured array rows.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "entries": {
+                    "oneOf": [
+                        {"type": "string"},
+                        {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {
+                                "oneOf": [
+                                    {
+                                        "type": "array",
+                                        "items": {
+                                            "oneOf": [
+                                                {"type": "integer"},
+                                                {"type": "string"},
+                                            ]
+                                        },
+                                        "minItems": 1,
+                                        "maxItems": 4,
+                                    },
+                                    {
+                                        "type": "object",
+                                        "properties": {
+                                            "record_id": {"type": "integer", "minimum": 1},
+                                            "id": {"type": "integer", "minimum": 1},
+                                            "position": {
+                                                "oneOf": [
+                                                    {"type": "integer", "minimum": 1},
+                                                    {"type": "string"},
+                                                ]
+                                            },
+                                            "from_position": {
+                                                "oneOf": [
+                                                    {"type": "integer", "minimum": 1},
+                                                    {"type": "string"},
+                                                ]
+                                            },
+                                            "to_position": {
+                                                "oneOf": [
+                                                    {"type": "integer", "minimum": 1},
+                                                    {"type": "string"},
+                                                ]
+                                            },
+                                            "to_box": {"type": "integer", "minimum": 1},
+                                        },
+                                        "required": [],
+                                        "additionalProperties": False,
+                                    },
+                                ]
+                            },
+                        },
+                    ]
+                },
+                "date": {"type": "string"},
+                "action": {"type": "string", "enum": ["取出", "移动", "takeout", "move", "Takeout", "Move"]},
+                "to_box": {"type": "integer", "minimum": 1},
+                "note": {"type": "string"},
+                "dry_run": {"type": "boolean"},
+            },
+            "required": ["entries"],
+            "additionalProperties": False,
+        },
+    },
+    "rollback": {
+        "description": "Rollback inventory YAML to a backup snapshot using explicit backup_path.",
+        "notes": "Always provide explicit backup_path.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "backup_path": {"type": "string"},
+            },
+            "required": ["backup_path"],
+            "additionalProperties": False,
+        },
+    },
+    "manage_boxes": {
+        "description": "Safely add or remove inventory boxes.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "operation": {"type": "string", "enum": ["add", "remove"]},
+                "count": {"type": "integer", "minimum": 1},
+                "box": {"type": "integer", "minimum": 1},
+                "renumber_mode": {
+                    "type": "string",
+                    "enum": ["keep_gaps", "renumber_contiguous"],
+                },
+                "dry_run": {"type": "boolean"},
+            },
+            "required": ["operation"],
+            "additionalProperties": False,
+        },
+    },
+    "question": {
+        "description": "Ask user clarifying questions when required values are unknown.",
+        "notes": "question tool is not a write tool and must run alone.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "questions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "header": {"type": "string"},
+                            "question": {"type": "string"},
+                            "options": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                            "multiple": {"type": "boolean"},
+                        },
+                        "required": ["header", "question"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["questions"],
+            "additionalProperties": False,
+        },
+    },
+    "list_staged": {
+        "description": "List staged plan items awaiting human approval.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+    "remove_staged": {
+        "description": "Remove a staged plan item by index or key fields.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "index": {"type": "integer", "minimum": 0},
+                "action": {"type": "string"},
+                "record_id": {"type": "integer", "minimum": 1},
+                "position": {"type": "integer", "minimum": 1},
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+    "clear_staged": {
+        "description": "Clear all staged plan items.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+}
 
 
 class AgentToolRunner:
@@ -69,6 +414,8 @@ class AgentToolRunner:
         value = payload.get(key)
         if value in (None, ""):
             raise ValueError(f"Missing required integer field: {key}")
+        if not AgentToolRunner._is_integer(value):
+            raise ValueError(f"{key} must be an integer")
         return int(value)
 
     @staticmethod
@@ -76,15 +423,9 @@ class AgentToolRunner:
         value = payload.get(key)
         if value in (None, ""):
             return default
+        if not AgentToolRunner._is_integer(value):
+            raise ValueError(f"{key} must be an integer")
         return int(value)
-
-    @staticmethod
-    def _first_value(payload, *keys):
-        for key in keys:
-            value = payload.get(key)
-            if value not in (None, ""):
-                return value
-        return None
 
     @staticmethod
     def _as_bool(value, default=False):
@@ -132,18 +473,33 @@ class AgentToolRunner:
                         pass
         return sorted(ids)
 
+    def _load_layout(self):
+        try:
+            data = load_yaml(self._yaml_path)
+        except Exception:
+            return {}
+        return (data or {}).get("meta", {}).get("box_layout", {})
+
     @staticmethod
-    def _normalize_positions(value):
+    def _parse_position(value, layout=None, field_name="position"):
+        if value in (None, ""):
+            return None
+        try:
+            return int(display_to_pos(value, layout))
+        except Exception as exc:
+            raise ValueError(f"{field_name} is invalid: {value}") from exc
+
+    def _normalize_positions(self, value, layout=None):
         if value in (None, ""):
             return None
         if isinstance(value, list):
-            return [int(item) for item in value]
+            return [self._parse_position(item, layout=layout) for item in value]
         if isinstance(value, tuple):
-            return [int(item) for item in value]
+            return [self._parse_position(item, layout=layout) for item in value]
         if isinstance(value, (int, float)):
             return [int(value)]
         if isinstance(value, str):
-            return parse_positions(value)
+            return parse_positions(value, layout=layout)
         return value
 
     @staticmethod
@@ -154,349 +510,195 @@ class AgentToolRunner:
         text = str(value).strip().lower()
         if text in {"fuzzy", "exact", "keywords"}:
             return text
-
-        aliases = {
-            "keyword": "keywords",
-            "kw": "keywords",
-            "contains": "fuzzy",
-            "substring": "fuzzy",
-            "strict": "exact",
-        }
-        return aliases.get(text, "fuzzy")
-
-    @staticmethod
-    def _default_param_schema(field_name):
-        integer_fields = {
-            "box",
-            "position",
-            "days",
-            "count",
-            "max_results",
-            "max_records",
-            "record_id",
-            "box_preference",
-            "to_position",
-        }
-        boolean_fields = {
-            "case_sensitive",
-            "all_history",
-            "dry_run",
-        }
-        if field_name in integer_fields:
-            return {"type": "integer"}
-        if field_name in boolean_fields:
-            return {"type": "boolean"}
-        if field_name == "positions":
-            return {
-                "oneOf": [
-                    {"type": "array", "items": {"type": "integer"}},
-                    {"type": "string"},
-                ]
-            }
-        if field_name in {"entries", "ids"}:
-            return {
-                "oneOf": [
-                    {"type": "array"},
-                    {"type": "string"},
-                ]
-            }
-        return {"type": "string"}
+        raise ValueError("mode must be one of: fuzzy, exact, keywords")
 
     def list_tools(self):
-        return [
-            "list_empty_positions",
-            "search_records",
-            "recent_frozen",
-            "query_thaw_events",
-            "collect_timeline",
-            "recommend_positions",
-            "generate_stats",
-            "get_raw_entries",
-            "add_entry",
-            "edit_entry",
-            "record_thaw",
-            "batch_thaw",
-            "rollback",
-            "manage_boxes",
-            "question",
-            "list_staged",
-            "remove_staged",
-            "clear_staged",
-        ]
+        return list(_TOOL_CONTRACTS.keys())
 
     def tool_specs(self):
-        """Compact tool schemas for LLM prompt grounding."""
-        return {
-            "list_empty_positions": {
-                "required": [],
-                "optional": ["box"],
-            },
-            "search_records": {
-                "required": ["query"],
-                "optional": ["mode", "max_results", "case_sensitive"],
-                "description": "Search inventory records by text.",
-                "params": {
-                    "query": {
-                        "type": "string",
-                        "description": "Search text (cell line, short name, notes, etc).",
-                    },
-                    "mode": {
-                        "type": "string",
-                        "enum": ["fuzzy", "exact", "keywords"],
-                        "default": "fuzzy",
-                        "description": "Search strategy: fuzzy substring, exact substring, or keywords AND search.",
-                    },
-                    "max_results": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "description": "Optional max number of records to return.",
-                    },
-                    "case_sensitive": {
-                        "type": "boolean",
-                        "default": False,
-                        "description": "Whether matching is case-sensitive.",
-                    },
-                },
-            },
-            "recent_frozen": {
-                "required": [],
-                "optional": ["days", "count"],
-            },
-            "query_thaw_events": {
-                "required": [],
-                "optional": ["date", "days", "start_date", "end_date", "action", "max_records"],
-                "params": {
-                    "action": {
-                        "type": "string",
-                        "description": "Action filter. Recommended: 取出/移动 or takeout/move. Legacy thaw/discard filters remain supported.",
-                    },
-                },
-            },
-            "collect_timeline": {
-                "required": [],
-                "optional": ["days", "all_history"],
-            },
-            "recommend_positions": {
-                "required": [],
-                "optional": ["count", "box_preference", "strategy"],
-            },
-            "generate_stats": {
-                "required": [],
-                "optional": [],
-            },
-            "get_raw_entries": {
-                "required": ["ids"],
-                "optional": [],
-            },
-            "edit_entry": {
-                "required": ["record_id", "fields"],
-                "optional": [],
-                "description": "Edit metadata fields of an existing record. "
-                               "Allowed fields: `cell_line`, `frozen_at`, plus any user-defined fields from meta.custom_fields. "
-                               "Structural fields (id, box, positions) cannot be changed.",
-                "params": {
-                    "record_id": {
-                        "type": "integer",
-                        "description": "ID of the record to edit.",
-                    },
-                    "fields": {
-                        "type": "object",
-                        "description": "Key-value pairs of fields to update.",
-                    },
-                },
-            },
-            "add_entry": {
-                "required": ["box", "positions", "frozen_at"],
-                "optional": ["fields", "cell_line", "dry_run"],
-                "aliases": {
-                    "positions": ["position", "slot"],
-                    "frozen_at": ["date"],
-                    "cell_line": ["cell", "cell_line"],
-                },
-                "description": "Add a new frozen entry. Pass cell_line as a top-level param (value from cell_line_options). Pass other user fields in the 'fields' dict (e.g. short_name).",
-                "notes": "positions accepts list[int] or comma string like '1,2,3'. fields is a dict of user field values.",
-            },
-            "record_thaw": {
-                "required": ["record_id", "date"],
-                "optional": ["position", "action", "to_position", "to_box", "note", "dry_run"],
-                "aliases": {
-                    "record_id": ["id"],
-                    "position": ["pos", "slot"],
-                    "to_position": ["to_pos", "target_position"],
-                    "to_box": ["target_box", "new_box", "dest_box"],
-                    "note": ["notes", "memo"],
-                },
-                "notes": "If position is omitted, the tool will infer the tube's current active position by record_id (tube-level model).",
-                "params": {
-                    "action": {
-                        "type": "string",
-                        "description": "Use one of: 取出/移动 or takeout/move. Legacy 复苏/扔掉 are accepted and normalized to 取出.",
-                    },
-                    "to_position": {
-                        "type": "integer",
-                        "description": "Target position for move action. Required when action is 移动/move.",
-                    },
-                    "to_box": {
-                        "type": "integer",
-                        "description": "Target box for cross-box move. If provided, the record's box field is updated.",
-                    },
-                },
-            },
-            "batch_thaw": {
-                "required": ["entries"],
-                "optional": ["date", "action", "to_box", "note", "dry_run"],
-                "notes": "entries can be list[[record_id, position], ...] or '182,183' or '182:23,183:41'; for move use '182:23->31,183:41->42'; for cross-box move use '4:5->4:1' (id:from->to:target_box) or set to_box for all entries.",
-                "params": {
-                    "action": {
-                        "type": "string",
-                        "description": "Use one of: 取出/移动 or takeout/move. Legacy 复苏/扔掉 are accepted and normalized to 取出.",
-                    },
-                    "to_box": {
-                        "type": "integer",
-                        "description": "Target box for ALL entries in this batch (cross-box move). Each entry moves to this box.",
-                    },
-                },
-            },
-            "rollback": {
-                "required": [],
-                "optional": ["backup_path"],
-                "description": "Rollback inventory YAML to a backup snapshot. Prefer explicit backup_path after audit/timeline checks.",
-                "notes": "If backup selection is ambiguous, ask the user with question tool first, then stage rollback and wait for human Execute confirmation.",
-            },
-            "manage_boxes": {
-                "required": ["operation"],
-                "optional": ["count", "box", "renumber_mode", "dry_run"],
-                "description": "Safely add/remove inventory boxes. Removing a middle box requires choosing keep_gaps or renumber_contiguous.",
-                "params": {
-                    "operation": {
-                        "type": "string",
-                        "enum": ["add", "remove"],
-                        "description": "add = append new box IDs; remove = delete a box ID when empty.",
-                    },
-                    "count": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "description": "How many boxes to add when operation=add.",
-                    },
-                    "box": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "description": "Target box ID to remove when operation=remove.",
-                    },
-                    "renumber_mode": {
-                        "type": "string",
-                        "enum": ["keep_gaps", "renumber_contiguous"],
-                        "description": "Required when removing a middle box.",
-                    },
-                    "dry_run": {
-                        "type": "boolean",
-                        "description": "Validate and preview only; do not write YAML.",
-                    },
-                },
-            },
-            "question": {
-                "required": ["questions"],
-                "optional": [],
-                "description": "Ask the user clarifying questions before proceeding. "
-                               "Use ONLY when you cannot infer the answer from inventory data. "
-                               "Do NOT use for greetings or when the answer is obvious.",
-                "params": {
-                    "questions": {
-                        "type": "array",
-                        "description": "List of question objects.",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "header": {
-                                    "type": "string",
-                                    "description": "Short label (max 30 chars). E.g. 'Cell Line', 'Box Number'.",
-                                },
-                                "question": {
-                                    "type": "string",
-                                    "description": "The question text.",
-                                },
-                                "options": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                    "description": "If provided, user picks from these choices.",
-                                },
-                                "multiple": {
-                                    "type": "boolean",
-                                    "description": "Allow multiple selections. Default false.",
-                                },
-                            },
-                            "required": ["header", "question"],
-                        },
-                    }
-                },
-                "notes": "question tool is NOT a write tool. It blocks the worker thread until user answers. "
-                         "Do not call question in parallel with other tools.",
-            },
-            "list_staged": {
-                "required": [],
-                "optional": [],
-                "description": "List all currently staged plan items awaiting human approval.",
-            },
-            "remove_staged": {
-                "required": [],
-                "optional": ["index", "action", "record_id", "position"],
-                "description": "Remove a staged plan item by 0-based index OR by key (action + record_id + position). Provide either index OR the key fields.",
-                "params": {
-                    "index": {"type": "integer", "description": "0-based index of the item to remove."},
-                    "action": {"type": "string", "description": "Action of the item to remove (used with record_id + position)."},
-                    "record_id": {"type": "integer", "description": "Record ID of the item to remove."},
-                    "position": {"type": "integer", "description": "Position of the item to remove."},
-                },
-            },
-            "clear_staged": {
-                "required": [],
-                "optional": [],
-                "description": "Clear all staged plan items.",
-            },
-        }
+        """Compact tool schemas for runtime grounding (single source of truth)."""
+        specs = {}
+        for name, contract in _TOOL_CONTRACTS.items():
+            schema = deepcopy(contract.get("parameters") or {})
+            properties = dict(schema.get("properties") or {})
+            required = list(schema.get("required") or [])
+            optional = [key for key in properties.keys() if key not in required]
+            item = {
+                "required": required,
+                "optional": optional,
+                "params": properties,
+                "description": contract.get("description") or f"LN2 inventory tool: {name}",
+            }
+            notes = contract.get("notes")
+            if notes:
+                item["notes"] = notes
+            specs[name] = item
+        return specs
 
     def tool_schemas(self):
         """OpenAI-compatible function tool schemas for native tool calling."""
-        specs = self.tool_specs()
         schemas = []
 
-        for name in self.list_tools():
-            spec = specs.get(name, {})
-            required_fields = list(spec.get("required") or [])
-            optional_fields = list(spec.get("optional") or [])
-            param_specs = spec.get("params") if isinstance(spec.get("params"), dict) else {}
-
-            properties = {}
-            for field_name in required_fields + optional_fields:
-                field_schema = param_specs.get(field_name)
-                if isinstance(field_schema, dict):
-                    properties[field_name] = dict(field_schema)
-                else:
-                    properties[field_name] = self._default_param_schema(field_name)
-
-            for field_name, field_schema in param_specs.items():
-                if field_name not in properties and isinstance(field_schema, dict):
-                    properties[field_name] = dict(field_schema)
-
-            parameters = {
-                "type": "object",
-                "properties": properties,
-                "required": required_fields,
-                "additionalProperties": False,
-            }
-
+        for name, contract in _TOOL_CONTRACTS.items():
             schemas.append(
                 {
                     "type": "function",
                     "function": {
                         "name": name,
-                        "description": spec.get("description") or f"LN2 inventory tool: {name}",
-                        "parameters": parameters,
+                        "description": contract.get("description") or f"LN2 inventory tool: {name}",
+                        "parameters": deepcopy(contract.get("parameters") or {}),
                     },
                 }
             )
 
         return schemas
+
+    @staticmethod
+    def _is_integer(value):
+        return isinstance(value, int) and not isinstance(value, bool)
+
+    def _validate_schema_value(self, value, schema, path):
+        if not isinstance(schema, dict):
+            return None
+
+        if "oneOf" in schema:
+            options = schema.get("oneOf") or []
+            for option in options:
+                if self._validate_schema_value(value, option, path) is None:
+                    return None
+            label = path or "value"
+            return f"{label} does not match any allowed schema"
+
+        expected_type = schema.get("type")
+
+        if expected_type == "object":
+            if not isinstance(value, dict):
+                label = path or "payload"
+                return f"{label} must be an object"
+
+            properties = schema.get("properties") or {}
+            required = schema.get("required") or []
+
+            for field in required:
+                if field not in value:
+                    return f"Missing required field: {field}"
+
+            if schema.get("additionalProperties") is False:
+                extras = sorted(set(value.keys()) - set(properties.keys()))
+                if extras:
+                    return f"Unexpected field(s): {', '.join(extras)}"
+
+            min_props = schema.get("minProperties")
+            if isinstance(min_props, int) and len(value) < min_props:
+                label = path or "payload"
+                return f"{label} must contain at least {min_props} field(s)"
+
+            for key, val in value.items():
+                child_schema = properties.get(key)
+                if isinstance(child_schema, dict):
+                    child_path = f"{path}.{key}" if path else key
+                    err = self._validate_schema_value(val, child_schema, child_path)
+                    if err:
+                        return err
+
+            return None
+
+        if expected_type == "array":
+            if not isinstance(value, list):
+                label = path or "value"
+                return f"{label} must be an array"
+
+            min_items = schema.get("minItems")
+            if isinstance(min_items, int) and len(value) < min_items:
+                label = path or "value"
+                return f"{label} must contain at least {min_items} item(s)"
+
+            max_items = schema.get("maxItems")
+            if isinstance(max_items, int) and len(value) > max_items:
+                label = path or "value"
+                return f"{label} must contain at most {max_items} item(s)"
+
+            item_schema = schema.get("items")
+            if isinstance(item_schema, dict):
+                for idx, item in enumerate(value):
+                    item_path = f"{path}[{idx}]" if path else f"[{idx}]"
+                    err = self._validate_schema_value(item, item_schema, item_path)
+                    if err:
+                        return err
+            return None
+
+        if expected_type == "integer":
+            if not self._is_integer(value):
+                label = path or "value"
+                return f"{label} must be an integer"
+            minimum = schema.get("minimum")
+            if isinstance(minimum, int) and value < minimum:
+                label = path or "value"
+                return f"{label} must be >= {minimum}"
+
+        elif expected_type == "boolean":
+            if not isinstance(value, bool):
+                label = path or "value"
+                return f"{label} must be a boolean"
+
+        elif expected_type == "string":
+            if not isinstance(value, str):
+                label = path or "value"
+                return f"{label} must be a string"
+
+        enum_values = schema.get("enum")
+        if isinstance(enum_values, list) and enum_values and value not in enum_values:
+            label = path or "value"
+            return f"{label} must be one of: {', '.join(str(v) for v in enum_values)}"
+
+        return None
+
+    def _validate_tool_input(self, tool_name, payload):
+        contract = _TOOL_CONTRACTS.get(tool_name)
+        if not contract:
+            return None
+        schema = contract.get("parameters") or {}
+        schema_error = self._validate_schema_value(payload, schema, "")
+        if schema_error:
+            return schema_error
+
+        if tool_name == "manage_boxes":
+            operation = payload.get("operation")
+            if operation == "add":
+                if "count" not in payload:
+                    return "count is required when operation=add"
+                if "box" in payload:
+                    return "box is not allowed when operation=add"
+                if "renumber_mode" in payload:
+                    return "renumber_mode is only valid when operation=remove"
+            elif operation == "remove":
+                if "box" not in payload:
+                    return "box is required when operation=remove"
+                if "count" in payload:
+                    return "count is not allowed when operation=remove"
+
+        if tool_name == "remove_staged":
+            has_index = "index" in payload
+            has_key_fields = any(k in payload for k in ("action", "record_id", "position"))
+            if has_index and has_key_fields:
+                return "Provide either index OR action+record_id+position, not both"
+            if not has_index and not has_key_fields:
+                return "Provide either index OR action+record_id+position"
+            if has_key_fields and not all(k in payload for k in ("action", "record_id", "position")):
+                return "action, record_id, and position are required when removing by key"
+
+        if tool_name == "record_thaw":
+            action = str(payload.get("action") or "取出").lower()
+            if action in {"move", "移动"}:
+                if "to_position" not in payload:
+                    return "to_position is required when action=move"
+
+        if tool_name == "rollback":
+            backup_path = str(payload.get("backup_path") or "").strip()
+            if not backup_path:
+                return "backup_path must be a non-empty string"
+
+        return None
 
     def _hint_for_error(self, tool_name, payload):
         error_code = str(payload.get("error_code") or "").strip()
@@ -556,11 +758,11 @@ class AgentToolRunner:
         if error_code in {"invalid_date"}:
             return "Use date format `YYYY-MM-DD` (for example: 2026-02-10)."
 
-        if error_code in {"invalid_box", "invalid_position"}:
-            return "Provide integer values in the configured inventory range."
+        if error_code in {"invalid_box", "invalid_position", "invalid_record_id"}:
+            return "Provide valid box IDs and valid positions in the current layout (e.g. 12 or A1)."
 
         if error_code == "invalid_action":
-            return "Use a supported action value such as 取出 / 移动 (legacy 复苏 / 扔掉 are accepted and normalized to 取出)."
+            return "Use a supported action value: 取出 / 移动 (or takeout / move)."
 
         if error_code in {"empty_positions", "empty_entries"}:
             return "Provide at least one target position or entry before retrying."
@@ -715,15 +917,25 @@ class AgentToolRunner:
     def _stage_to_plan(self, tool_name, payload, trace_id=None):
         """Intercept write ops and stage as PlanItems for human approval."""
 
+        input_error = self._validate_tool_input(tool_name, payload)
+        if input_error:
+            return self._with_hint(
+                tool_name,
+                {
+                    "ok": False,
+                    "error_code": "invalid_tool_input",
+                    "message": input_error,
+                },
+            )
+
         items = []
+        layout = self._load_layout()
 
         if tool_name == "add_entry":
-            box_raw = self._first_value(payload, "box", "box_num")
+            box_raw = payload.get("box")
             positions_raw = payload.get("positions")
-            if positions_raw in (None, ""):
-                positions_raw = self._first_value(payload, "position", "slot")
             try:
-                positions = self._normalize_positions(positions_raw) or []
+                positions = self._normalize_positions(positions_raw, layout=layout) or []
                 box = int(box_raw) if box_raw is not None else 0
             except (ValueError, TypeError) as exc:
                 return self._with_hint(tool_name, {
@@ -731,35 +943,20 @@ class AgentToolRunner:
                     "message": str(exc),
                 })
 
-            # Collect user fields from payload
-            fields = payload.get("fields")
-            if not isinstance(fields, dict):
-                fields = {}
-            # Also pick up common aliases at top level for LLM convenience
-            for alias_key, canonical in [
-                ("cell_line", "cell_line"), ("cell", "cell_line"),
-                ("short_name", "short_name"), ("short", "short_name"), ("name", "short_name"),
-                ("note", "note"), ("notes", "note"), ("memo", "note"),
-                ("plasmid_name", "plasmid_name"), ("plasmid", "plasmid_name"),
-                ("plasmid_id", "plasmid_id"),
-            ]:
-                if alias_key in payload and canonical not in fields:
-                    val = payload[alias_key]
-                    if val not in (None, ""):
-                        fields[canonical] = val
+            fields = dict(payload.get("fields") or {})
 
             items.append(
                 build_add_plan_item(
                     box=box,
                     positions=positions,
-                    frozen_at=self._first_value(payload, "frozen_at", "date"),
+                    frozen_at=payload.get("frozen_at"),
                     fields=fields,
                     source="ai",
                 )
             )
 
         elif tool_name == "record_thaw":
-            rid_raw = self._first_value(payload, "record_id", "id")
+            rid_raw = payload.get("record_id")
             if rid_raw in (None, ""):
                 return self._with_hint(
                     tool_name,
@@ -782,28 +979,38 @@ class AgentToolRunner:
                     },
                 )
 
-            pos_raw = self._first_value(payload, "position", "pos", "slot")
+            pos_raw = payload.get("position")
             pos = None
             if pos_raw not in (None, ""):
                 try:
-                    pos = int(pos_raw)
+                    pos = self._parse_position(pos_raw, layout=layout, field_name="position")
                 except (ValueError, TypeError) as exc:
                     return self._with_hint(
                         tool_name,
                         {
                             "ok": False,
                             "error_code": "invalid_tool_input",
-                            "message": f"position must be an integer when provided: {exc}",
+                            "message": str(exc),
                         },
                     )
 
-            action_raw = payload.get("action", "Takeout")
-            to_pos_raw = self._first_value(payload, "to_position", "to_pos", "target_position")
+            action_raw = payload.get("action", "取出")
+            to_pos_raw = payload.get("to_position")
             to_pos = None
             if to_pos_raw not in (None, ""):
-                to_pos = int(to_pos_raw)
+                try:
+                    to_pos = self._parse_position(to_pos_raw, layout=layout, field_name="to_position")
+                except ValueError as exc:
+                    return self._with_hint(
+                        tool_name,
+                        {
+                            "ok": False,
+                            "error_code": "invalid_tool_input",
+                            "message": str(exc),
+                        },
+                    )
 
-            to_box_raw = self._first_value(payload, "to_box", "target_box", "new_box", "dest_box")
+            to_box_raw = payload.get("to_box")
             to_box = int(to_box_raw) if to_box_raw not in (None, "") else None
 
             box, position = self._lookup_record_info(rid)
@@ -829,8 +1036,8 @@ class AgentToolRunner:
                     record_id=rid,
                     position=pos,
                     box=box,
-                    date_str=self._first_value(payload, "date", "thaw_date"),
-                    note=self._first_value(payload, "note", "notes", "memo"),
+                    date_str=payload.get("date"),
+                    note=payload.get("note"),
                     to_position=to_pos,
                     to_box=to_box,
                     source="ai",
@@ -842,7 +1049,7 @@ class AgentToolRunner:
             entries = payload.get("entries")
             if isinstance(entries, str):
                 try:
-                    entries = parse_batch_entries(entries)
+                    entries = parse_batch_entries(entries, layout=layout)
                 except ValueError as exc:
                     return self._with_hint(tool_name, {
                         "ok": False, "error_code": "invalid_tool_input",
@@ -855,10 +1062,10 @@ class AgentToolRunner:
                     "message": "entries is required and cannot be empty",
                 })
 
-            action_raw = payload.get("action", "Takeout")
+            action_raw = payload.get("action", "取出")
 
             # batch-level to_box (applies to all entries unless overridden)
-            batch_to_box_raw = self._first_value(payload, "to_box", "target_box", "new_box", "dest_box")
+            batch_to_box_raw = payload.get("to_box")
             batch_to_box = int(batch_to_box_raw) if batch_to_box_raw not in (None, "") else None
 
             for entry in entries:
@@ -870,16 +1077,16 @@ class AgentToolRunner:
                 if isinstance(entry, (list, tuple)):
                     if len(entry) >= 4:
                         rid = int(entry[0])
-                        pos = int(entry[1])
-                        to_pos = int(entry[2])
+                        pos = self._parse_position(entry[1], layout=layout, field_name="from_position")
+                        to_pos = self._parse_position(entry[2], layout=layout, field_name="to_position")
                         to_box = int(entry[3])
                     elif len(entry) == 3:
                         rid = int(entry[0])
-                        pos = int(entry[1])
-                        to_pos = int(entry[2])
+                        pos = self._parse_position(entry[1], layout=layout, field_name="from_position")
+                        to_pos = self._parse_position(entry[2], layout=layout, field_name="to_position")
                     elif len(entry) == 2:
                         rid = int(entry[0])
-                        pos = int(entry[1])
+                        pos = self._parse_position(entry[1], layout=layout, field_name="position")
                     elif len(entry) == 1:
                         rid = int(entry[0])
                     else:
@@ -890,10 +1097,10 @@ class AgentToolRunner:
                     if raw_pos is None:
                         raw_pos = entry.get("from_position")
                     if raw_pos not in (None, ""):
-                        pos = int(raw_pos)
+                        pos = self._parse_position(raw_pos, layout=layout, field_name="position")
                     raw_to_pos = entry.get("to_position")
                     if raw_to_pos not in (None, ""):
-                        to_pos = int(raw_to_pos)
+                        to_pos = self._parse_position(raw_to_pos, layout=layout, field_name="to_position")
                     raw_to_box = entry.get("to_box")
                     if raw_to_box not in (None, ""):
                         to_box = int(raw_to_box)
@@ -934,7 +1141,7 @@ class AgentToolRunner:
                 )
 
         elif tool_name == "edit_entry":
-            rid_raw = self._first_value(payload, "record_id", "id")
+            rid_raw = payload.get("record_id")
             if rid_raw in (None, ""):
                 return self._with_hint(tool_name, {
                     "ok": False, "error_code": "invalid_tool_input",
@@ -967,18 +1174,6 @@ class AgentToolRunner:
 
         elif tool_name == "rollback":
             backup_path = payload.get("backup_path")
-            if backup_path in (None, ""):
-                backups = tool_list_backups(self._yaml_path)
-                if not backups:
-                    return self._with_hint(
-                        tool_name,
-                        {
-                            "ok": False,
-                            "error_code": "no_backups",
-                            "message": "No backups exist yet; provide `backup_path` or create backups before rollback.",
-                        },
-                    )
-                backup_path = backups[0]
 
             items.append(
                 build_rollback_plan_item(
@@ -1057,11 +1252,33 @@ class AgentToolRunner:
         }
 
     def run(self, tool_name, tool_input, trace_id=None):
-        payload = dict(tool_input or {})
+        payload = dict(tool_input) if isinstance(tool_input, dict) else {}
 
-        # Question tool — returns marker for _run_tool_call to handle blocking
+        if tool_name not in _TOOL_CONTRACTS:
+            return self._with_hint(
+                tool_name,
+                {
+                    "ok": False,
+                    "error_code": "unknown_tool",
+                    "message": f"Unknown tool: {tool_name}",
+                    "available_tools": self.list_tools(),
+                },
+            )
+
+        # Question tool keeps its own detailed validation/error codes.
         if tool_name == "question":
             return self._run_question_tool(payload)
+
+        input_error = self._validate_tool_input(tool_name, payload)
+        if input_error:
+            return self._with_hint(
+                tool_name,
+                {
+                    "ok": False,
+                    "error_code": "invalid_tool_input",
+                    "message": input_error,
+                },
+            )
 
         # Intercept write operations when plan_store is set
         if tool_name in _WRITE_TOOLS and self._plan_store is not None:
@@ -1069,54 +1286,29 @@ class AgentToolRunner:
 
         if tool_name == "manage_boxes":
             def _call_manage_boxes():
-                op_raw = self._first_value(payload, "operation", "action")
-                if op_raw in (None, ""):
-                    raise ValueError("operation is required")
-
-                op_text = str(op_raw).strip().lower()
-                op_alias = {
-                    "add": "add",
-                    "add_boxes": "add",
-                    "increase": "add",
-                    "remove": "remove",
-                    "remove_box": "remove",
-                    "delete": "remove",
-                    "删除": "remove",
-                    "增加": "add",
-                }
-                op = op_alias.get(op_text)
+                op = str(payload.get("operation") or "").strip().lower()
                 if op not in {"add", "remove"}:
                     raise ValueError("operation must be add or remove")
 
-                normalized_mode = None
-                mode_raw = self._first_value(
-                    payload,
-                    "renumber_mode",
-                    "remove_mode",
-                    "remove_strategy",
-                )
-                if mode_raw not in (None, ""):
-                    mode_text = str(mode_raw).strip().lower()
-                    mode_alias = {
-                        "keep_gaps": "keep_gaps",
-                        "keep": "keep_gaps",
-                        "gaps": "keep_gaps",
-                        "renumber_contiguous": "renumber_contiguous",
-                        "renumber": "renumber_contiguous",
-                        "compact": "renumber_contiguous",
-                    }
-                    normalized_mode = mode_alias.get(mode_text, mode_text)
+                normalized_mode = payload.get("renumber_mode")
 
                 add_count = None
                 target_box = None
 
                 if op == "add":
-                    add_count = self._optional_int(payload, "count", default=1) or 1
+                    if "count" not in payload:
+                        raise ValueError("count is required when operation=add")
+                    if "box" in payload:
+                        raise ValueError("box is not allowed when operation=add")
+                    if normalized_mode not in (None, ""):
+                        raise ValueError("renumber_mode is only valid when operation=remove")
+                    add_count = self._required_int(payload, "count")
                 else:
-                    box_raw = self._first_value(payload, "box", "target_box", "remove_box", "box_id")
-                    if box_raw in (None, ""):
+                    if "box" not in payload:
                         raise ValueError("box is required when operation=remove")
-                    target_box = int(box_raw)
+                    if "count" in payload:
+                        raise ValueError("count is not allowed when operation=remove")
+                    target_box = self._required_int(payload, "box")
 
                 request = {
                     "operation": op,
@@ -1171,10 +1363,14 @@ class AgentToolRunner:
                 tool_name,
                 lambda: tool_search_records(
                     yaml_path=self._yaml_path,
-                    query=payload.get("query", ""),
+                    query=payload.get("query"),
                     mode=mode,
                     max_results=self._optional_int(payload, "max_results"),
                     case_sensitive=self._as_bool(payload.get("case_sensitive", False), default=False),
+                    box=payload.get("box"),
+                    position=payload.get("position"),
+                    record_id=payload.get("record_id"),
+                    active_only=(payload.get("active_only") if "active_only" in payload else None),
                 ),
             )
 
@@ -1240,10 +1436,7 @@ class AgentToolRunner:
 
         if tool_name == "get_raw_entries":
             def _call_get_raw_entries():
-                ids = payload.get("ids", [])
-                if isinstance(ids, str):
-                    ids = [part.strip() for part in ids.split(",") if part.strip()]
-                ids = [int(item) for item in ids]
+                ids = list(payload.get("ids") or [])
                 return tool_get_raw_entries(
                     yaml_path=self._yaml_path,
                     ids=ids,
@@ -1277,30 +1470,11 @@ class AgentToolRunner:
 
         if tool_name == "add_entry":
             def _call_add_entry():
-                box_raw = self._first_value(payload, "box", "box_num")
-                box_val = int(box_raw) if box_raw is not None else 0
-                frozen_at = self._first_value(payload, "frozen_at", "date")
-
-                positions_raw = payload.get("positions")
-                if positions_raw in (None, ""):
-                    positions_raw = self._first_value(payload, "position", "slot")
-                positions = self._normalize_positions(positions_raw)
-
-                # Collect user fields
-                fields = payload.get("fields")
-                if not isinstance(fields, dict):
-                    fields = {}
-                for alias_key, canonical in [
-                    ("cell_line", "cell_line"), ("cell", "cell_line"),
-                    ("short_name", "short_name"), ("short", "short_name"), ("name", "short_name"),
-                    ("note", "note"), ("notes", "note"), ("memo", "note"),
-                    ("plasmid_name", "plasmid_name"), ("plasmid", "plasmid_name"),
-                    ("plasmid_id", "plasmid_id"),
-                ]:
-                    if alias_key in payload and canonical not in fields:
-                        val = payload[alias_key]
-                        if val not in (None, ""):
-                            fields[canonical] = val
+                layout = self._load_layout()
+                box_val = self._required_int(payload, "box")
+                frozen_at = payload.get("frozen_at")
+                positions = self._normalize_positions(payload.get("positions"), layout=layout)
+                fields = dict(payload.get("fields") or {})
 
                 return tool_add_entry(
                     yaml_path=self._yaml_path,
@@ -1321,30 +1495,32 @@ class AgentToolRunner:
 
         if tool_name == "record_thaw":
             def _call_record_thaw():
-                normalized = dict(payload)
-                normalized["record_id"] = self._first_value(payload, "record_id", "id")
-                normalized["position"] = self._first_value(payload, "position", "pos", "slot")
-                normalized["date"] = self._first_value(payload, "date", "thaw_date")
-                normalized["to_position"] = self._first_value(payload, "to_position", "to_pos", "target_position")
-                normalized["to_box"] = self._first_value(payload, "to_box", "target_box", "new_box", "dest_box")
-                normalized["note"] = self._first_value(payload, "note", "notes", "memo")
+                layout = self._load_layout()
+                position = None
+                if payload.get("position") not in (None, ""):
+                    position = self._parse_position(payload.get("position"), layout=layout, field_name="position")
+
+                to_position = None
+                if payload.get("to_position") not in (None, ""):
+                    to_position = self._parse_position(
+                        payload.get("to_position"),
+                        layout=layout,
+                        field_name="to_position",
+                    )
+
                 return tool_record_thaw(
                     yaml_path=self._yaml_path,
-                    record_id=self._required_int(normalized, "record_id"),
-                    position=self._optional_int(normalized, "position"),
-                    date_str=normalized.get("date"),
+                    record_id=self._required_int(payload, "record_id"),
+                    position=position,
+                    date_str=payload.get("date"),
                     action=payload.get("action", "取出"),
-                    to_position=(
-                        self._optional_int(normalized, "to_position")
-                        if normalized.get("to_position") not in (None, "")
-                        else None
-                    ),
+                    to_position=to_position,
                     to_box=(
-                        self._optional_int(normalized, "to_box")
-                        if normalized.get("to_box") not in (None, "")
+                        self._optional_int(payload, "to_box")
+                        if payload.get("to_box") not in (None, "")
                         else None
                     ),
-                    note=normalized.get("note"),
+                    note=payload.get("note"),
                     dry_run=self._as_bool(payload.get("dry_run", False), default=False),
                     actor_context=self._actor_context(trace_id=trace_id),
                     source="agent.react",
@@ -1358,10 +1534,11 @@ class AgentToolRunner:
 
         if tool_name == "batch_thaw":
             def _call_batch_thaw():
+                layout = self._load_layout()
                 entries = payload.get("entries")
                 if isinstance(entries, str):
-                    entries = parse_batch_entries(entries)
-                to_box_raw = self._first_value(payload, "to_box", "target_box", "new_box", "dest_box")
+                    entries = parse_batch_entries(entries, layout=layout)
+                to_box_raw = payload.get("to_box")
                 to_box = (
                     self._optional_int({"to_box": to_box_raw}, "to_box")
                     if to_box_raw not in (None, "")

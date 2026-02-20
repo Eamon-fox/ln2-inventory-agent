@@ -12,19 +12,14 @@ from app_gui.ui.utils import cell_color, build_color_palette
 from lib.position_fmt import pos_to_display, box_to_display, get_box_count
 from lib.csv_export import build_export_rows
 from app_gui.ui.theme import (
-    cell_occupied_style, 
+    cell_occupied_style,
     cell_empty_style,
-    cell_preview_add_style,
-    cell_preview_takeout_style,
-    cell_preview_move_source_style,
-    cell_preview_move_target_style,
     FONT_SIZE_CELL,
     FONT_SIZE_XS,
     FONT_SIZE_MD,
     FONT_SIZE_XL,
 )
 from app_gui.i18n import tr, t
-from app_gui.plan_preview import simulate_plan_pos_map
 from app_gui.ui.icons import get_icon, Icons
 
 MIME_TYPE_MOVE = "application/x-ln2-move"
@@ -267,12 +262,8 @@ class OverviewPanel(QWidget):
         self.overview_selected_key = None
         self.overview_hover_key = None
         self.overview_records_by_id = {}
-        self._plan_items = []
         self._current_records = []
         self._current_font_sizes = (9, 8)
-        self._plan_simulation = None
-        self._hover_exec_preview_active = False
-        self._status_before_hover = None
         self._overview_view_mode = "grid"
         self._table_rows = []
         self._table_columns = []
@@ -361,7 +352,8 @@ class OverviewPanel(QWidget):
         layout.addWidget(self.ov_status)
 
         self.ov_hover_hint = QLabel(tr("overview.hoverHint"))
-        self.ov_hover_hint.setStyleSheet("color: var(--text-weak); font-weight: 500;")
+        self.ov_hover_hint.setObjectName("overviewHoverHint")
+        self.ov_hover_hint.setProperty("state", "default")
         self.ov_hover_hint.setWordWrap(True)
         layout.addWidget(self.ov_hover_hint)
 
@@ -439,29 +431,29 @@ class OverviewPanel(QWidget):
         zoom_out_btn.setIcon(get_icon(Icons.ZOOM_OUT))
         zoom_out_btn.setIconSize(QSize(16, 16))
         zoom_out_btn.setFixedSize(28, 28)
-        zoom_out_btn.setStyleSheet("border: none; background: transparent;")
+        zoom_out_btn.setObjectName("overviewIconButton")
         zoom_out_btn.setToolTip(tr("overview.zoomOut"))
         zoom_out_btn.clicked.connect(lambda: self._set_zoom(self._zoom_level - 0.1))
         zoom_layout.addWidget(zoom_out_btn)
 
         self._zoom_label = QLabel("100%")
+        self._zoom_label.setObjectName("overviewZoomLabel")
         self._zoom_label.setFixedWidth(42)
         self._zoom_label.setAlignment(Qt.AlignCenter)
-        self._zoom_label.setStyleSheet(f"font-size: {FONT_SIZE_XS}px;")
         zoom_layout.addWidget(self._zoom_label)
 
         zoom_in_btn = QPushButton()
         zoom_in_btn.setIcon(get_icon(Icons.ZOOM_IN))
         zoom_in_btn.setIconSize(QSize(16, 16))
         zoom_in_btn.setFixedSize(28, 28)
-        zoom_in_btn.setStyleSheet("border: none; background: transparent;")
+        zoom_in_btn.setObjectName("overviewIconButton")
         zoom_in_btn.setToolTip(tr("overview.zoomIn"))
         zoom_in_btn.clicked.connect(lambda: self._set_zoom(self._zoom_level + 0.1))
         zoom_layout.addWidget(zoom_in_btn)
 
         # Separator
         separator = QLabel("|")
-        separator.setStyleSheet("color: var(--border-weak); margin: 0 4px;")
+        separator.setObjectName("overviewZoomSeparator")
         zoom_layout.addWidget(separator)
 
         # Smart zoom: Fit One Box (expand/maximize single box to 90% viewport)
@@ -469,7 +461,7 @@ class OverviewPanel(QWidget):
         fit_one_btn.setIcon(get_icon(Icons.MAXIMIZE))
         fit_one_btn.setIconSize(QSize(16, 16))
         fit_one_btn.setFixedSize(28, 28)
-        fit_one_btn.setStyleSheet("border: none; background: transparent;")
+        fit_one_btn.setObjectName("overviewIconButton")
         fit_one_btn.setToolTip(tr("overview.fitOneBox"))
         fit_one_btn.clicked.connect(self._fit_one_box)
         zoom_layout.addWidget(fit_one_btn)
@@ -479,7 +471,7 @@ class OverviewPanel(QWidget):
         fit_all_btn.setIcon(get_icon(Icons.MINIMIZE))
         fit_all_btn.setIconSize(QSize(16, 16))
         fit_all_btn.setFixedSize(28, 28)
-        fit_all_btn.setStyleSheet("border: none; background: transparent;")
+        fit_all_btn.setObjectName("overviewIconButton")
         fit_all_btn.setToolTip(tr("overview.fitAllBoxes"))
         fit_all_btn.clicked.connect(self._fit_all_boxes)
         zoom_layout.addWidget(fit_all_btn)
@@ -516,24 +508,12 @@ class OverviewPanel(QWidget):
 
     def _build_card(self, layout, title):
         card = QGroupBox(title)
-        card.setStyleSheet(f"""
-            QGroupBox {{
-                background-color: var(--background-inset);
-                border: 1px solid var(--border-weak);
-                border-radius: var(--radius-md);
-                margin-top: 8px;
-                padding-top: 8px;
-            }}
-            QGroupBox::title {{
-                color: var(--text-weak);
-                font-size: {FONT_SIZE_XS}px;
-            }}
-        """)
+        card.setObjectName("overviewStatCard")
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(8, 6, 8, 6)
         value_label = QLabel("-")
+        value_label.setObjectName("overviewStatValue")
         value_label.setAlignment(Qt.AlignCenter)
-        value_label.setStyleSheet(f"font-size: {FONT_SIZE_XL}px; font-weight: 500; color: var(--text-strong);")
         card_layout.addWidget(value_label)
         layout.addWidget(card)
         return value_label
@@ -901,19 +881,7 @@ class OverviewPanel(QWidget):
         for box_num in box_numbers:
             btn = QPushButton(str(box_num))
             btn.setFixedSize(24, 24)
-            btn.setStyleSheet("""
-                QPushButton {
-                    border: 1px solid var(--border-weak);
-                    background: transparent;
-                    border-radius: 3px;
-                    font-size: 11px;
-                    padding: 0;
-                }
-                QPushButton:hover {
-                    background: var(--background-hover);
-                    border-color: var(--border-strong);
-                }
-            """)
+            btn.setObjectName("overviewBoxNavButton")
             btn.setToolTip(t("overview.jumpToBox", box=box_num))
             btn.clicked.connect(lambda checked=False, b=box_num: self._jump_to_box(b))
             self._box_nav_layout.addWidget(btn)
@@ -1079,10 +1047,14 @@ class OverviewPanel(QWidget):
 
         if len(records) == 0:
             self.ov_hover_hint.setText(tr("overview.emptyHint"))
-            self.ov_hover_hint.setStyleSheet("color: var(--warning); font-weight: 500; padding: 8px; background-color: rgba(245,158,11,0.1); border-radius: 4px;")
+            self.ov_hover_hint.setProperty("state", "warning")
+            self.ov_hover_hint.style().unpolish(self.ov_hover_hint)
+            self.ov_hover_hint.style().polish(self.ov_hover_hint)
         else:
             self.ov_hover_hint.setText(tr("overview.hoverHint"))
-            self.ov_hover_hint.setStyleSheet("color: var(--text-weak); font-weight: 500;")
+            self.ov_hover_hint.setProperty("state", "default")
+            self.ov_hover_hint.style().unpolish(self.ov_hover_hint)
+            self.ov_hover_hint.style().polish(self.ov_hover_hint)
 
         for box_num in box_numbers:
             stats_item = box_stats.get(str(box_num), {})
@@ -1181,182 +1153,8 @@ class OverviewPanel(QWidget):
             self.ov_boxes_layout.addWidget(group, idx // columns, idx % columns)
             self.overview_box_groups[box_num] = group
 
+
         self.overview_shape = (rows, cols, tuple(box_numbers))
-
-    def update_plan_preview(self, plan_items):
-        """Update overview cells to show plan preview effects."""
-        self._plan_items = list(plan_items or [])
-        self._plan_simulation = None
-        if self._plan_items:
-            try:
-                self._plan_simulation = simulate_plan_pos_map(
-                    base_records_by_id=self.overview_records_by_id,
-                    plan_items=self._plan_items,
-                )
-            except Exception:
-                self._plan_simulation = None
-        # Plan changed while hover preview is active: cancel preview and repaint
-        # the normal overlay to avoid showing stale simulated state.
-        if self._hover_exec_preview_active:
-            self._hover_exec_preview_active = False
-            if self._status_before_hover is not None:
-                self.ov_status.setText(self._status_before_hover)
-                self._status_before_hover = None
-
-        if not plan_items:
-            for (box_num, position), button in self.overview_cells.items():
-                key = (box_num, position)
-                record = self.overview_pos_map.get(key)
-                self._paint_cell(button, box_num, position, record)
-            return
-            
-        preview_positions = {
-            "add": set(),
-            "takeout": set(),
-            "move_source": set(),
-            "move_target": set(),
-        }
-        
-        for item in plan_items:
-            action = item.get("action", "").lower()
-            box = item.get("box")
-            position = item.get("position")
-            to_box = item.get("to_box")
-            to_position = item.get("to_position")
-            
-            if action == "add" and box and position:
-                preview_positions["add"].add((int(box), int(position)))
-            
-            elif action in ("takeout", "thaw", "discard") and box and position:
-                preview_positions["takeout"].add((int(box), int(position)))
-            
-            elif action == "move" and box and position:
-                preview_positions["move_source"].add((int(box), int(position)))
-                if to_position:
-                    target_box = int(to_box) if to_box else int(box)
-                    preview_positions["move_target"].add((target_box, int(to_position)))
-        
-        for (box_num, position), button in self.overview_cells.items():
-            key = (box_num, position)
-            record = self.overview_pos_map.get(key)
-            is_selected = self.overview_selected_key == key
-            
-            if key in preview_positions["add"]:
-                button.setText(tr("overview.previewAdd"))
-                button.setStyleSheet(cell_preview_add_style())
-            elif key in preview_positions["takeout"]:
-                button.setText(tr("overview.previewOut"))
-                button.setStyleSheet(cell_preview_takeout_style())
-            elif key in preview_positions["move_source"]:
-                orig_record = self.overview_pos_map.get(key)
-                label = ""
-                if orig_record:
-                    from lib.custom_fields import get_display_key
-                    _dk = get_display_key(getattr(self, "_current_meta", {}))
-                    label = str(orig_record.get(_dk) or "")[:4]
-                button.setText(f"{label}→" if label else "→")
-                button.setStyleSheet(cell_preview_move_source_style())
-            elif key in preview_positions["move_target"]:
-                button.setText("←")
-                button.setStyleSheet(cell_preview_move_target_style())
-            else:
-                self._paint_cell(button, box_num, position, record)
-
-    def _focus_style(self, base_style: str) -> str:
-        """Overlay a stronger border to highlight a cell in preview mode."""
-        return (
-            (base_style or "")
-            + """
-            QPushButton { border: 3px solid var(--warning); }
-            QPushButton:hover { border: 3px solid var(--warning); }
-            """
-        )
-
-    def on_plan_item_hovered(self, item):
-        """Show a simulated post-execution overview when hovering a plan item."""
-        if not item:
-            self._hover_exec_preview_active = False
-            if self._status_before_hover is not None:
-                self.ov_status.setText(self._status_before_hover)
-                self._status_before_hover = None
-            self.update_plan_preview(self._plan_items)
-            return
-
-        if not self._plan_items:
-            return
-
-        sim = self._plan_simulation
-        if not isinstance(sim, dict):
-            try:
-                sim = simulate_plan_pos_map(
-                    base_records_by_id=self.overview_records_by_id,
-                    plan_items=self._plan_items,
-                )
-            except Exception:
-                sim = None
-        if not isinstance(sim, dict):
-            return
-
-        pos_map = sim.get("pos_map") if isinstance(sim.get("pos_map"), dict) else {}
-        preview_errors = sim.get("errors") if isinstance(sim.get("errors"), list) else []
-
-        if self._status_before_hover is None:
-            self._status_before_hover = self.ov_status.text()
-
-        action = str(item.get("action") or "").lower()
-        label = str(item.get("label") or "")
-        suffix = f" | issues: {len(preview_errors)}" if preview_errors else ""
-        self.ov_status.setText(f"[PREVIEW] After executing plan: focus {action} {label}{suffix}".strip())
-
-        self._hover_exec_preview_active = True
-
-        # Render the simulated final occupancy map.
-        for (box_num, position), button in self.overview_cells.items():
-            key = (box_num, position)
-            record = pos_map.get(key)
-            self._paint_cell(button, box_num, position, record)
-
-        # Highlight the focused operation's affected cells (best-effort).
-        focus_keys = set()
-        payload = item.get("payload") or {}
-
-        if action == "add":
-            box = payload.get("box", item.get("box"))
-            box = int(box) if box not in (None, "") else None
-            positions = payload.get("positions") or []
-            if box is not None:
-                for p in positions:
-                    try:
-                        focus_keys.add((box, int(p)))
-                    except Exception:
-                        pass
-        elif action in ("takeout", "thaw", "discard"):
-            box = item.get("box")
-            pos = item.get("position")
-            try:
-                focus_keys.add((int(box), int(pos)))
-            except Exception:
-                pass
-        elif action == "move":
-            box = item.get("box")
-            pos = item.get("position")
-            to_pos = item.get("to_position")
-            to_box = item.get("to_box")
-            try:
-                focus_keys.add((int(box), int(pos)))
-            except Exception:
-                pass
-            if to_pos not in (None, ""):
-                try:
-                    target_box = int(to_box) if to_box else int(box)
-                    focus_keys.add((target_box, int(to_pos)))
-                except Exception:
-                    pass
-
-        for key in focus_keys:
-            btn = self.overview_cells.get(key)
-            if btn is not None:
-                btn.setStyleSheet(self._focus_style(btn.styleSheet()))
 
     def _paint_cell(self, button, box_num, position, record):
         from lib.custom_fields import get_display_key, get_color_key, get_effective_fields, STRUCTURAL_FIELD_KEYS

@@ -207,7 +207,7 @@ class AIPanel(QWidget):
         # Shortcut hint (subtle, right-aligned)
         hint = QLabel("Enter ↵  Shift+Enter ⏎")
         hint.setProperty("muted", True)
-        hint.setStyleSheet(f"font-size: {FONT_SIZE_XS}px; padding-right: 2px;")
+        hint.setObjectName("aiInputHint")
         action_bar.addWidget(hint)
 
         ic_layout.addLayout(action_bar)

@@ -2,6 +2,7 @@
 
 import getpass
 import os
+import re
 import uuid
 from copy import deepcopy
 from collections import defaultdict
@@ -15,12 +16,19 @@ from .custom_fields import (
     get_required_field_keys,
     is_cell_line_required,
 )
-from .position_fmt import get_box_numbers, get_position_range, get_total_slots
+from .position_fmt import (
+    display_to_box,
+    display_to_pos,
+    get_box_numbers,
+    get_position_range,
+    get_total_slots,
+)
 from .operations import check_position_conflicts, find_record_by_id, get_next_id
 from .thaw_parser import ACTION_LABEL, canonicalize_non_move_action, extract_events, normalize_action
 from .validators import (
     format_validation_errors,
     normalize_date_arg,
+    parse_positions,
     parse_date,
     validate_box,
     validate_date,
@@ -80,7 +88,31 @@ def build_actor_context(
     }
 
 
-def parse_batch_entries(entries_str):
+def _coerce_position_value(raw_value, layout=None, field_name="position"):
+    """Convert a display/internal position value to internal integer position."""
+    if raw_value in (None, ""):
+        raise ValueError(f"{field_name} 不能为空")
+    try:
+        return int(display_to_pos(raw_value, layout))
+    except Exception as exc:
+        raise ValueError(f"{field_name} 无效: {raw_value}") from exc
+
+
+def _normalize_positions_input(positions, layout=None):
+    """Normalize add-entry positions input into a list of internal integers."""
+    if isinstance(positions, str):
+        return parse_positions(positions, layout=layout)
+
+    if isinstance(positions, (list, tuple, set)):
+        return [_coerce_position_value(value, layout=layout, field_name="position") for value in positions]
+
+    if positions in (None, ""):
+        return []
+
+    return [_coerce_position_value(positions, layout=layout, field_name="position")]
+
+
+def parse_batch_entries(entries_str, layout=None):
     """Parse batch input format.
 
     Supports:
@@ -88,6 +120,8 @@ def parse_batch_entries(entries_str):
     - ``id1:pos1,id2:pos2,...`` (takeout/thaw/discard)
     - ``id1:from1->to1,id2:from2->to2,...`` (move within same box)
     - ``id1:from1->to1:box,id2:from2->to2:box,...`` (cross-box move)
+
+    ``pos/from/to`` accepts display values under current layout (e.g. ``A1``).
     """
     result = []
     try:
@@ -109,18 +143,26 @@ def parse_batch_entries(entries_str):
             to_box = int(parts[2]) if len(parts) >= 3 else None
             if "->" in pos_text:
                 from_pos_text, to_pos_text = pos_text.split("->", 1)
-                tup = (record_id, int(from_pos_text), int(to_pos_text))
+                tup = (
+                    record_id,
+                    _coerce_position_value(from_pos_text, layout=layout, field_name="from_position"),
+                    _coerce_position_value(to_pos_text, layout=layout, field_name="to_position"),
+                )
                 if to_box is not None:
                     tup = tup + (to_box,)
                 result.append(tup)
             elif ">" in pos_text:
                 from_pos_text, to_pos_text = pos_text.split(">", 1)
-                tup = (record_id, int(from_pos_text), int(to_pos_text))
+                tup = (
+                    record_id,
+                    _coerce_position_value(from_pos_text, layout=layout, field_name="from_position"),
+                    _coerce_position_value(to_pos_text, layout=layout, field_name="to_position"),
+                )
                 if to_box is not None:
                     tup = tup + (to_box,)
                 result.append(tup)
             else:
-                result.append((record_id, int(pos_text)))
+                result.append((record_id, _coerce_position_value(pos_text, layout=layout, field_name="position")))
     except Exception as exc:
         raise ValueError(
             "输入格式错误: "
@@ -129,7 +171,7 @@ def parse_batch_entries(entries_str):
     return result
 
 
-def _coerce_batch_entry(entry):
+def _coerce_batch_entry(entry, layout=None):
     """Normalize one batch entry to a tuple of ints.
 
     Accepts tuple/list forms ``(record_id, position)`` or ``(record_id, from_pos, to_pos)``
@@ -152,20 +194,41 @@ def _coerce_batch_entry(entry):
                 return (int(record_id),)
             raise ValueError("每个条目必须包含 position/from_position")
         if to_pos is None:
-            return (int(record_id), int(from_pos))
+            return (int(record_id), _coerce_position_value(from_pos, layout=layout, field_name="position"))
         if to_box is not None:
-            return (int(record_id), int(from_pos), int(to_pos), int(to_box))
-        return (int(record_id), int(from_pos), int(to_pos))
+            return (
+                int(record_id),
+                _coerce_position_value(from_pos, layout=layout, field_name="from_position"),
+                _coerce_position_value(to_pos, layout=layout, field_name="to_position"),
+                int(to_box),
+            )
+        return (
+            int(record_id),
+            _coerce_position_value(from_pos, layout=layout, field_name="from_position"),
+            _coerce_position_value(to_pos, layout=layout, field_name="to_position"),
+        )
 
     if isinstance(entry, (list, tuple)):
         if len(entry) == 1:
             return (int(entry[0]),)
         if len(entry) == 2:
-            return (int(entry[0]), int(entry[1]))
+            return (
+                int(entry[0]),
+                _coerce_position_value(entry[1], layout=layout, field_name="position"),
+            )
         if len(entry) == 3:
-            return (int(entry[0]), int(entry[1]), int(entry[2]))
+            return (
+                int(entry[0]),
+                _coerce_position_value(entry[1], layout=layout, field_name="from_position"),
+                _coerce_position_value(entry[2], layout=layout, field_name="to_position"),
+            )
         if len(entry) == 4:
-            return (int(entry[0]), int(entry[1]), int(entry[2]), int(entry[3]))
+            return (
+                int(entry[0]),
+                _coerce_position_value(entry[1], layout=layout, field_name="from_position"),
+                _coerce_position_value(entry[2], layout=layout, field_name="to_position"),
+                int(entry[3]),
+            )
         raise ValueError(
             "每个条目必须是 (record_id) 或 (record_id, position) 或 (record_id, from_position, to_position[, to_box])"
         )
@@ -419,21 +482,7 @@ def _validate_record_thaw_request(payload):
                 "error_code": "invalid_move_target",
                 "message": "移动操作必须提供 to_position（目标位置）",
             }, normalized
-        try:
-            move_to_position = int(to_position)
-        except (TypeError, ValueError):
-            return {
-                "error_code": "invalid_move_target",
-                "message": f"目标位置必须是整数: {to_position}",
-                "details": {"to_position": to_position},
-            }, normalized
-        if move_to_position < 1:
-            return {
-                "error_code": "invalid_position",
-                "message": "目标位置编号必须 >= 1",
-                "details": {"to_position": move_to_position},
-            }, normalized
-        normalized["move_to_position"] = move_to_position
+        normalized["move_to_position"] = to_position
 
     return None, normalized
 
@@ -634,6 +683,50 @@ def tool_add_entry(
 
     layout = _get_layout(data)
     _pos_lo, _pos_hi = get_position_range(layout)
+
+    try:
+        positions = _normalize_positions_input(positions, layout=layout)
+    except ValueError as exc:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=action,
+            source=source,
+            tool_name=tool_name,
+            error_code="invalid_position",
+            message=str(exc),
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+            details={"positions": positions},
+        )
+
+    if not positions:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=action,
+            source=source,
+            tool_name=tool_name,
+            error_code="empty_positions",
+            message="必须指定至少一个位置",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+        )
+
+    for pos in positions:
+        if not validate_position(pos, layout):
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=action,
+                source=source,
+                tool_name=tool_name,
+                error_code="invalid_position",
+                message=f"位置编号必须在 {_pos_lo}-{_pos_hi} 之间",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"position": pos},
+            )
 
     if not validate_box(box, layout):
         return _failure_result(
@@ -1127,7 +1220,28 @@ def tool_record_thaw(
     layout = _get_layout(data)
     _pos_lo, _pos_hi = get_position_range(layout)
 
-    if move_to_position is not None and move_to_position > _pos_hi:
+    if move_to_position is not None:
+        try:
+            move_to_position = _coerce_position_value(
+                move_to_position,
+                layout=layout,
+                field_name="to_position",
+            )
+        except ValueError:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="invalid_move_target",
+                message=f"目标位置无效: {move_to_position}",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"to_position": move_to_position},
+            )
+
+    if move_to_position is not None and (move_to_position < _pos_lo or move_to_position > _pos_hi):
         return _failure_result(
             yaml_path=yaml_path,
             action=audit_action,
@@ -1178,15 +1292,15 @@ def tool_record_thaw(
         position = current_position
 
     try:
-        position = int(position)
-    except (TypeError, ValueError):
+        position = _coerce_position_value(position, layout=layout, field_name="position")
+    except ValueError:
         return _failure_result(
             yaml_path=yaml_path,
             action=audit_action,
             source=source,
             tool_name=tool_name,
             error_code="invalid_position",
-            message=f"位置必须是整数: {position}",
+            message=f"位置无效: {position}",
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=data,
@@ -1567,43 +1681,6 @@ def tool_batch_thaw(
 
     action_en = (validation.get("normalized") or {}).get("action_en") or normalize_action(action) or ""
 
-    if isinstance(entries, str):
-        try:
-            entries = parse_batch_entries(entries)
-        except ValueError as exc:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="validation_failed",
-                message="批量操作参数校验失败",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                errors=[str(exc)],
-            )
-
-    normalized_entries = []
-    normalize_errors = []
-    for idx, entry in enumerate(entries, 1):
-        try:
-            normalized_entries.append(_coerce_batch_entry(entry))
-        except Exception as exc:
-            normalize_errors.append(f"第{idx}条: {exc}")
-
-    if normalize_errors:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="validation_failed",
-            message="批量操作参数校验失败",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            errors=normalize_errors,
-        )
-
     try:
         data = load_yaml(yaml_path)
     except Exception as exc:
@@ -1622,6 +1699,44 @@ def tool_batch_thaw(
     records = data.get("inventory", [])
     layout = _get_layout(data)
     _pos_lo, _pos_hi = get_position_range(layout)
+
+    if isinstance(entries, str):
+        try:
+            entries = parse_batch_entries(entries, layout=layout)
+        except ValueError as exc:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="validation_failed",
+                message="批量操作参数校验失败",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                errors=[str(exc)],
+            )
+
+    normalized_entries = []
+    normalize_errors = []
+    for idx, entry in enumerate(entries, 1):
+        try:
+            normalized_entries.append(_coerce_batch_entry(entry, layout=layout))
+        except Exception as exc:
+            normalize_errors.append(f"第{idx}条: {exc}")
+
+    if normalize_errors:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="validation_failed",
+            message="批量操作参数校验失败",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            errors=normalize_errors,
+        )
+
     operations = []
     errors = []
 
@@ -2807,14 +2922,42 @@ def _record_search_blob(record, case_sensitive=False):
     return blob if case_sensitive else blob.lower()
 
 
+def _parse_search_location_shortcut(query_text, layout):
+    """Parse compact location query like ``2:15`` into (box, position)."""
+    text = str(query_text or "").strip()
+    if not text:
+        return None
+
+    match = re.match(r"^(?:box\s*)?([^:：\s]+)\s*[:：]\s*([^:：\s]+)$", text, flags=re.IGNORECASE)
+    if not match:
+        return None
+
+    raw_box, raw_position = match.group(1), match.group(2)
+    try:
+        box_num = int(display_to_box(raw_box, layout))
+        pos_num = int(display_to_pos(raw_position, layout))
+    except Exception:
+        return None
+
+    if not validate_box(box_num, layout):
+        return None
+    if not validate_position(pos_num, layout):
+        return None
+    return box_num, pos_num
+
+
 def tool_search_records(
     yaml_path,
-    query,
+    query=None,
     mode="fuzzy",
     max_results=None,
     case_sensitive=False,
+    box=None,
+    position=None,
+    record_id=None,
+    active_only=None,
 ):
-    """Search records by fuzzy/exact/keywords mode."""
+    """Search records by text and/or structured filters."""
     try:
         data = load_yaml(yaml_path)
     except Exception as exc:
@@ -2825,9 +2968,7 @@ def tool_search_records(
         }
 
     records = data.get("inventory", [])
-    normalized_query = " ".join(str(query).split())
-    keywords = normalized_query.split() if normalized_query else []
-    q = normalized_query if case_sensitive else normalized_query.lower()
+    layout = _get_layout(data)
 
     if mode not in {"fuzzy", "exact", "keywords"}:
         return {
@@ -2836,51 +2977,230 @@ def tool_search_records(
             "message": "mode 必须是 fuzzy/exact/keywords",
         }
 
-    matches = []
+    normalized_record_id = None
+    if record_id not in (None, ""):
+        try:
+            normalized_record_id = int(record_id)
+        except (TypeError, ValueError):
+            return {
+                "ok": False,
+                "error_code": "invalid_record_id",
+                "message": f"record_id 必须是整数: {record_id}",
+            }
+
+    normalized_box = None
+    if box not in (None, ""):
+        try:
+            normalized_box = int(display_to_box(box, layout))
+        except Exception:
+            return {
+                "ok": False,
+                "error_code": "invalid_box",
+                "message": f"盒子编号必须是有效值: {box}",
+            }
+        if not validate_box(normalized_box, layout):
+            return {
+                "ok": False,
+                "error_code": "invalid_box",
+                "message": f"盒子编号必须在 {_format_box_constraint(layout)} 范围内",
+            }
+
+    normalized_position = None
+    if position not in (None, ""):
+        try:
+            normalized_position = int(display_to_pos(position, layout))
+        except Exception:
+            return {
+                "ok": False,
+                "error_code": "invalid_position",
+                "message": f"位置编号必须是有效值: {position}",
+            }
+        if not validate_position(normalized_position, layout):
+            pos_lo, pos_hi = get_position_range(layout)
+            return {
+                "ok": False,
+                "error_code": "invalid_position",
+                "message": f"位置编号必须在 {pos_lo}-{pos_hi} 之间",
+            }
+
+    normalized_active_only = None
+    if active_only not in (None, ""):
+        if isinstance(active_only, bool):
+            normalized_active_only = active_only
+        elif isinstance(active_only, (int, float)):
+            normalized_active_only = bool(active_only)
+        else:
+            flag = str(active_only).strip().lower()
+            if flag in {"1", "true", "yes", "y", "on"}:
+                normalized_active_only = True
+            elif flag in {"0", "false", "no", "n", "off"}:
+                normalized_active_only = False
+            else:
+                return {
+                    "ok": False,
+                    "error_code": "invalid_tool_input",
+                    "message": "active_only 必须是布尔值",
+                }
+
+    normalized_query = " ".join(str(query or "").split())
+    query_shortcut = None
+    if normalized_query and normalized_box is None and normalized_position is None:
+        parsed = _parse_search_location_shortcut(normalized_query, layout)
+        if parsed is not None:
+            normalized_box, normalized_position = parsed
+            query_shortcut = normalized_query
+            normalized_query = ""
+
+    keywords = normalized_query.split() if normalized_query else []
+    q = normalized_query if case_sensitive else normalized_query.lower()
+
+    scoped_records = []
     for rec in records:
-        blob = _record_search_blob(rec, case_sensitive=case_sensitive)
-        if mode in {"fuzzy", "exact"}:
-            if q and q in blob:
-                matches.append(rec)
+        if normalized_record_id is not None:
+            try:
+                if int(rec.get("id")) != normalized_record_id:
+                    continue
+            except (TypeError, ValueError):
+                continue
+
+        if normalized_box is not None:
+            try:
+                if int(rec.get("box")) != normalized_box:
+                    continue
+            except (TypeError, ValueError):
+                continue
+
+        if normalized_position is not None:
+            rec_position = rec.get("position")
+            if rec_position is None:
+                continue
+            try:
+                if int(rec_position) != normalized_position:
+                    continue
+            except (TypeError, ValueError):
+                continue
+
+        if normalized_active_only is True and rec.get("position") is None:
+            continue
+        if normalized_active_only is False and rec.get("position") is not None:
             continue
 
-        # keywords (AND)
-        ok = True
-        for kw in keywords:
-            kw_cmp = kw if case_sensitive else kw.lower()
-            if kw_cmp not in blob:
-                ok = False
-                break
-        if ok and keywords:
-            matches.append(rec)
+        scoped_records.append(rec)
+
+    has_structured_filter = any(
+        value is not None
+        for value in (
+            normalized_record_id,
+            normalized_box,
+            normalized_position,
+            normalized_active_only,
+        )
+    )
+
+    matches = []
+    if q:
+        for rec in scoped_records:
+            blob = _record_search_blob(rec, case_sensitive=case_sensitive)
+            if mode in {"fuzzy", "exact"}:
+                if q in blob:
+                    matches.append(rec)
+                continue
+
+            # keywords (AND)
+            ok = True
+            for kw in keywords:
+                kw_cmp = kw if case_sensitive else kw.lower()
+                if kw_cmp not in blob:
+                    ok = False
+                    break
+            if ok and keywords:
+                matches.append(rec)
+    elif has_structured_filter:
+        matches = list(scoped_records)
 
     total_count = len(matches)
     display_matches = matches[:max_results] if (max_results and max_results > 0) else matches
 
     suggestions = []
     if total_count == 0:
-        suggestions.extend(
-            [
-                "尝试使用更短的关键词，如 'reporter' 或 '36'",
-                "检查是否有拼写错误",
-                "使用 keywords 模式尝试分词搜索",
-            ]
-        )
+        if normalized_box is not None and normalized_position is not None:
+            suggestions.append("指定位置当前没有匹配记录，可改查其他盒子/位置")
+        elif has_structured_filter:
+            suggestions.append("检查结构化筛选条件（record_id/box/position/active_only）")
+        else:
+            suggestions.extend(
+                [
+                    "尝试使用更短的关键词，如 'reporter' 或 '36'",
+                    "检查是否有拼写错误",
+                    "使用 keywords 模式尝试分词搜索",
+                ]
+            )
     elif total_count > 50:
         suggestions.extend(["结果较多，建议添加关键词进一步缩小范围"])
 
+    slot_lookup = None
+    if normalized_box is not None and normalized_position is not None:
+        slot_matches = []
+        for rec in records:
+            try:
+                rec_box = int(rec.get("box"))
+                rec_pos_raw = rec.get("position")
+                if rec_pos_raw is None:
+                    continue
+                rec_pos = int(rec_pos_raw)
+            except (TypeError, ValueError):
+                continue
+
+            if rec_box == normalized_box and rec_pos == normalized_position:
+                slot_matches.append(rec)
+
+        status = "empty"
+        if len(slot_matches) == 1:
+            status = "occupied"
+        elif len(slot_matches) > 1:
+            status = "conflict"
+
+        slot_record_ids = []
+        for rec in slot_matches:
+            raw_id = rec.get("id")
+            if raw_id is None:
+                continue
+            try:
+                slot_record_ids.append(int(raw_id))
+            except (TypeError, ValueError):
+                continue
+
+        slot_lookup = {
+            "box": normalized_box,
+            "position": normalized_position,
+            "status": status,
+            "record_count": len(slot_matches),
+            "record_ids": slot_record_ids,
+        }
+
+    result = {
+        "query": query,
+        "normalized_query": normalized_query,
+        "keywords": keywords,
+        "mode": mode,
+        "records": display_matches,
+        "total_count": total_count,
+        "display_count": len(display_matches),
+        "suggestions": suggestions,
+        "applied_filters": {
+            "record_id": normalized_record_id,
+            "box": normalized_box,
+            "position": normalized_position,
+            "active_only": normalized_active_only,
+            "query_shortcut": query_shortcut,
+        },
+    }
+    if slot_lookup is not None:
+        result["slot_lookup"] = slot_lookup
+
     return {
         "ok": True,
-        "result": {
-            "query": query,
-            "normalized_query": normalized_query,
-            "keywords": keywords,
-            "mode": mode,
-            "records": display_matches,
-            "total_count": total_count,
-            "display_count": len(display_matches),
-            "suggestions": suggestions,
-        },
+        "result": result,
     }
 
 

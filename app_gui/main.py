@@ -151,12 +151,12 @@ class SettingsDialog(QDialog):
         self.yaml_new_btn = QPushButton(tr("main.new"))
         self.yaml_new_btn.setIcon(get_icon(Icons.FILE_PLUS))
         self.yaml_new_btn.setIconSize(QSize(14, 14))
-        self.yaml_new_btn.setFixedWidth(80)
+        self.yaml_new_btn.setMinimumWidth(60)
         self.yaml_new_btn.clicked.connect(self._emit_create_new_dataset_request)
         yaml_browse = QPushButton(tr("settings.browse"))
         yaml_browse.setIcon(get_icon(Icons.FOLDER_OPEN))
         yaml_browse.setIconSize(QSize(14, 14))
-        yaml_browse.setFixedWidth(80)
+        yaml_browse.setMinimumWidth(60)
         yaml_browse.clicked.connect(self._browse_yaml)
         yaml_row.addWidget(self.yaml_edit, 1)
         yaml_row.addWidget(self.yaml_new_btn)
@@ -164,7 +164,7 @@ class SettingsDialog(QDialog):
         data_layout.addRow(tr("settings.inventoryFile"), yaml_row)
 
         yaml_hint = QLabel(tr("settings.inventoryFileHint"))
-        yaml_hint.setStyleSheet(f"color: #64748b; font-size: {FONT_SIZE_XS}px; margin-left: 100px;")
+        yaml_hint.setProperty("role", "settingsHint")
         yaml_hint.setWordWrap(True)
         data_layout.addRow("", yaml_hint)
 
@@ -200,12 +200,12 @@ class SettingsDialog(QDialog):
             ai_layout.addRow(label, key_edit)
             if cfg.get("help_url"):
                 help_label = QLabel(f'<a href="{cfg["help_url"]}">{cfg["help_url"]}</a>')
-                help_label.setStyleSheet(f"color: #64748b; font-size: {FONT_SIZE_XS}px; margin-left: 100px;")
+                help_label.setProperty("role", "settingsHint")
                 help_label.setOpenExternalLinks(True)
                 ai_layout.addRow("", help_label)
 
         api_hint = QLabel(tr("settings.apiKeyHint"))
-        api_hint.setStyleSheet(f"color: #64748b; font-size: {FONT_SIZE_XS}px; margin-left: 100px;")
+        api_hint.setProperty("role", "settingsHint")
         api_hint.setWordWrap(True)
         ai_layout.addRow("", api_hint)
 
@@ -225,7 +225,7 @@ class SettingsDialog(QDialog):
         self.ai_model_edit = QLineEdit(default_model)
         self.ai_model_edit.setPlaceholderText(provider_cfg["model"])
         self.ai_model_edit.setEnabled(False)
-        self.ai_model_edit.setStyleSheet("color: var(--text-muted);")
+        self.ai_model_edit.setObjectName("settingsModelPreview")
         ai_layout.addRow(tr("settings.aiModel"), self.ai_model_edit)
 
         self.ai_max_steps = _NoWheelSpinBox()
@@ -248,15 +248,24 @@ class SettingsDialog(QDialog):
         ai_layout.addRow(tr("settings.customPrompt"), self.ai_custom_prompt)
 
         custom_prompt_hint = QLabel(tr("settings.customPromptHint"))
-        custom_prompt_hint.setStyleSheet(f"color: #64748b; font-size: {FONT_SIZE_XS}px; margin-left: 100px;")
+        custom_prompt_hint.setProperty("role", "settingsHint")
         custom_prompt_hint.setWordWrap(True)
         ai_layout.addRow("", custom_prompt_hint)
 
         content_layout.addWidget(ai_group)
 
         from app_gui.i18n import SUPPORTED_LANGUAGES
-        lang_group = QGroupBox()
-        lang_layout = QFormLayout(lang_group)
+        preferences_group = QGroupBox(tr("settings.preferences"))
+        preferences_layout = QFormLayout(preferences_group)
+
+        prefs_row = QWidget()
+        row_layout = QHBoxLayout(prefs_row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(12)
+
+        lang_label = QLabel(tr("settings.language"))
+        lang_label.setProperty("role", "inlineFormLabel")
+        row_layout.addWidget(lang_label)
 
         self.lang_combo = _NoWheelComboBox()
         for code, name in SUPPORTED_LANGUAGES.items():
@@ -265,17 +274,11 @@ class SettingsDialog(QDialog):
         idx = self.lang_combo.findData(current_lang)
         if idx >= 0:
             self.lang_combo.setCurrentIndex(idx)
-        lang_layout.addRow(tr("settings.language"), self.lang_combo)
+        row_layout.addWidget(self.lang_combo)
 
-        lang_hint = QLabel(tr("settings.languageHint"))
-        lang_hint.setStyleSheet(f"color: #64748b; font-size: {FONT_SIZE_XS}px; margin-left: 100px;")
-        lang_hint.setWordWrap(True)
-        lang_layout.addRow("", lang_hint)
-
-        content_layout.addWidget(lang_group)
-
-        theme_group = QGroupBox()
-        theme_layout = QFormLayout(theme_group)
+        theme_label = QLabel(tr("settings.theme"))
+        theme_label.setProperty("role", "inlineFormLabel")
+        row_layout.addWidget(theme_label)
 
         self.theme_combo = _NoWheelComboBox()
         self.theme_combo.addItem(tr("settings.themeAuto"), "auto")
@@ -285,14 +288,13 @@ class SettingsDialog(QDialog):
         idx = self.theme_combo.findData(current_theme)
         if idx >= 0:
             self.theme_combo.setCurrentIndex(idx)
-        theme_layout.addRow(tr("settings.theme"), self.theme_combo)
+        row_layout.addWidget(self.theme_combo)
 
-        theme_hint = QLabel(tr("settings.themeHint"))
-        theme_hint.setStyleSheet(f"color: var(--text-muted); font-size: {FONT_SIZE_XS}px; margin-left: 100px;")
-        theme_hint.setWordWrap(True)
-        theme_layout.addRow("", theme_hint)
+        row_layout.addStretch()
 
-        content_layout.addWidget(theme_group)
+        preferences_layout.addRow(prefs_row)
+
+        content_layout.addWidget(preferences_group)
 
         about_group = QGroupBox(tr("settings.about"))
         about_layout = QVBoxLayout(about_group)
@@ -304,11 +306,11 @@ class SettingsDialog(QDialog):
         )
         about_label.setOpenExternalLinks(True)
         about_label.setWordWrap(True)
-        about_label.setStyleSheet(f"color: var(--text-muted); font-size: {FONT_SIZE_SM}px; padding: 4px;")
+        about_label.setObjectName("settingsAboutLabel")
         about_layout.addWidget(about_label)
 
         self._check_update_btn = QPushButton(tr("settings.checkUpdate"))
-        self._check_update_btn.setFixedWidth(160)
+        self._check_update_btn.setMinimumWidth(140)
         self._check_update_btn.clicked.connect(self._on_check_update)
         about_layout.addWidget(self._check_update_btn)
 
@@ -318,7 +320,7 @@ class SettingsDialog(QDialog):
             donate_vbox = QVBoxLayout()
             donate_vbox.setAlignment(Qt.AlignCenter)
             donate_text = QLabel(tr("settings.supportHint"))
-            donate_text.setStyleSheet(f"color: var(--text-muted); font-size: {FONT_SIZE_SM}px; margin-bottom: 4px;")
+            donate_text.setObjectName("settingsSupportLabel")
             donate_text.setAlignment(Qt.AlignCenter)
             donate_pixmap = QPixmap(donate_path)
             donate_img = QLabel()
@@ -701,7 +703,7 @@ class ImportPromptDialog(QDialog):
 
         desc = QLabel(tr("main.importPromptDesc"))
         desc.setWordWrap(True)
-        desc.setStyleSheet(f"color: #64748b; font-size: {FONT_SIZE_SM}px; margin-bottom: 8px;")
+        desc.setProperty("role", "dialogHint")
         layout.addWidget(desc)
 
         self.prompt_edit = QTextEdit()
@@ -842,7 +844,7 @@ class CustomFieldsDialog(QDialog):
 
         desc = QLabel(tr("main.customFieldsDesc"))
         desc.setWordWrap(True)
-        desc.setStyleSheet(f"color: #64748b; font-size: {FONT_SIZE_SM}px; margin-bottom: 4px;")
+        desc.setProperty("role", "dialogHint")
         root.addWidget(desc)
 
         # Scrollable area for everything
@@ -873,10 +875,10 @@ class CustomFieldsDialog(QDialog):
                             (tr("main.cfType"), 70), (tr("main.cfDefault"), 100)]:
             lbl = QLabel(text)
             lbl.setFixedWidth(width)
-            lbl.setStyleSheet(f"font-size: {FONT_SIZE_XS}px; color: #64748b; font-weight: 600;")
+            lbl.setProperty("role", "cfHeaderLabel")
             s_header_l.addWidget(lbl)
         req_lbl = QLabel(tr("main.cfRequired"))
-        req_lbl.setStyleSheet(f"font-size: {FONT_SIZE_XS}px; color: #64748b; font-weight: 600;")
+        req_lbl.setProperty("role", "cfHeaderLabel")
         s_header_l.addWidget(req_lbl)
         spacer_lbl = QWidget(); spacer_lbl.setFixedWidth(60)
         s_header_l.addWidget(spacer_lbl)
@@ -933,10 +935,10 @@ class CustomFieldsDialog(QDialog):
                             (tr("main.cfType"), 70), (tr("main.cfDefault"), 100)]:
             lbl = QLabel(text)
             lbl.setFixedWidth(width)
-            lbl.setStyleSheet(f"font-size: {FONT_SIZE_XS}px; color: #64748b; font-weight: 600;")
+            lbl.setProperty("role", "cfHeaderLabel")
             u_header_l.addWidget(lbl)
         req_lbl = QLabel(tr("main.cfRequired"))
-        req_lbl.setStyleSheet(f"font-size: {FONT_SIZE_XS}px; color: #64748b; font-weight: 600;")
+        req_lbl.setProperty("role", "cfHeaderLabel")
         u_header_l.addWidget(req_lbl)
         rm_spacer = QWidget(); rm_spacer.setFixedWidth(60)
         u_header_l.addWidget(rm_spacer)
@@ -1000,6 +1002,8 @@ class CustomFieldsDialog(QDialog):
     def _refresh_display_key_combo(self, current_dk=None):
         combo = self._display_key_combo
         combo.clear()
+        # cell_line is always an option for display_key
+        combo.addItem("cell_line", "cell_line")
         for entry in self._field_rows:
             key = entry["key"].text().strip()
             if key:
@@ -1244,7 +1248,12 @@ class MainWindow(QMainWindow):
 
         self.overview_panel = OverviewPanel(self.bridge, lambda: self.current_yaml_path)
         self.plan_store = PlanStore()
-        self.operations_panel = OperationsPanel(self.bridge, lambda: self.current_yaml_path, self.plan_store)
+        self.operations_panel = OperationsPanel(
+            self.bridge,
+            lambda: self.current_yaml_path,
+            self.plan_store,
+            overview_panel=self.overview_panel
+        )
         self.ai_panel = AIPanel(
             self.bridge,
             lambda: self.current_yaml_path,
@@ -1279,7 +1288,7 @@ class MainWindow(QMainWindow):
 
         # Status bar for statistics (Excel-like bottom bar)
         self.stats_bar = QLabel()
-        self.stats_bar.setStyleSheet(f"color: var(--text-muted); font-size: {FONT_SIZE_XS}px; padding: 1px 6px;")
+        self.stats_bar.setObjectName("mainStatsBar")
         self.stats_bar.setMinimumHeight(16)  # Compact height
         root.addWidget(self.stats_bar)
 
@@ -1297,13 +1306,6 @@ class MainWindow(QMainWindow):
         self.overview_panel.request_add_prefill_background.connect(self.operations_panel.set_add_prefill_background)
         self.overview_panel.request_move_prefill.connect(self.operations_panel.set_move_prefill)
         self.overview_panel.data_loaded.connect(self.operations_panel.update_records_cache)
-
-        # Operations -> Overview (plan preview)
-        self.operations_panel.plan_preview_updated.connect(
-            self.overview_panel.update_plan_preview)
-        self.operations_panel.plan_hover_item_changed.connect(
-            self.overview_panel.on_plan_item_hovered
-        )
 
         # Operations -> Overview (refresh after execution)
         self.operations_panel.operation_completed.connect(self.on_operation_completed)

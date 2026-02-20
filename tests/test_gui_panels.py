@@ -250,24 +250,24 @@ class GuiPanelRegressionTests(unittest.TestCase):
         panel = self._new_operations_panel()
 
         self.assertEqual(-1, panel.op_mode_combo.findData("rollback"))
-        self.assertTrue(hasattr(panel, "audit_backup_toggle_btn"))
-        self.assertTrue(hasattr(panel, "audit_backup_panel"))
-        self.assertFalse(panel.audit_backup_panel.isVisible())
-        self.assertTrue(hasattr(panel, "rb_backup_path"))
-        self.assertTrue(hasattr(panel, "backup_table"))
+        self.assertFalse(hasattr(panel, "audit_backup_toggle_btn"))
+        self.assertFalse(hasattr(panel, "audit_backup_panel"))
+        self.assertFalse(hasattr(panel, "rb_backup_path"))
+        self.assertFalse(hasattr(panel, "backup_table"))
 
-    def test_second_rollback_stage_is_rejected_instead_of_replaced(self):
+    def test_rollback_staging_is_rejected_when_plan_has_other_items(self):
         panel = self._new_operations_panel()
         messages = []
         panel.status_message.connect(lambda msg, _timeout, _level: messages.append(msg))
 
-        panel._stage_rollback("/tmp/backup_a.bak")
-        panel._stage_rollback("/tmp/backup_b.bak")
+        from lib.plan_item_factory import build_rollback_plan_item
+
+        panel.add_plan_items([_make_takeout_item(record_id=1, position=1)])
+        panel.add_plan_items([build_rollback_plan_item(backup_path="/tmp/backup_a.bak", source="tests")])
 
         self.assertEqual(1, len(panel.plan_items))
-        payload = panel.plan_items[0].get("payload") or {}
-        self.assertEqual("/tmp/backup_a.bak", payload.get("backup_path"))
-        self.assertTrue(any(tr("operations.planRejectedRollbackDuplicate") in msg for msg in messages))
+        self.assertEqual("takeout", panel.plan_items[0].get("action"))
+        self.assertTrue(any(tr("operations.planRejected") in msg for msg in messages))
 
     def test_plan_store_queued_refresh_keeps_ui_consistent_after_external_clear(self):
         from PySide6.QtCore import QMetaObject, Qt
@@ -322,7 +322,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
 
         panel.m_id.setValue(11)
         # Source position comes from record, just set target
-        panel.m_to_position.setValue(8)
+        panel.m_to_position.setText("8")
         panel.on_record_move()
 
         self.assertEqual(1, len(panel.plan_items))
@@ -673,7 +673,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
         button.stop_hover_visual()
         self.assertFalse(proxy.isVisible())
 
-    def test_overview_context_menu_record_emits_thaw_prefill(self):
+    def test_overview_context_menu_record_stages_takeout_item(self):
         panel = self._new_overview_panel()
         panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
 
@@ -688,24 +688,24 @@ class GuiPanelRegressionTests(unittest.TestCase):
         button = panel.overview_cells[(1, 1)]
         panel._paint_cell(button, 1, 1, record)
 
-        emitted_thaw = []
-        panel.request_prefill.connect(lambda payload: emitted_thaw.append(payload))
+        staged_items = []
+        panel.plan_items_requested.connect(lambda payload: staged_items.extend(payload))
 
         from unittest.mock import patch, MagicMock
         with patch("app_gui.ui.overview_panel.QMenu") as MockMenu:
             mock_menu = MagicMock()
             MockMenu.return_value = mock_menu
-            mock_act_thaw = MagicMock()
-            mock_act_move = MagicMock()
-            mock_act_query = MagicMock()
-            mock_menu.addAction.side_effect = [mock_act_thaw, mock_act_move, mock_act_query]
-            mock_menu.exec.return_value = mock_act_thaw
+            mock_act_takeout = MagicMock()
+            mock_menu.addAction.side_effect = [mock_act_takeout]
+            mock_menu.exec.return_value = mock_act_takeout
             panel.on_cell_context_menu(1, 1, button.mapToGlobal(button.rect().center()))
 
         self.assertEqual((1, 1), panel.overview_selected_key)
-        self.assertEqual([{"box": 1, "position": 1, "record_id": 5}], emitted_thaw)
+        self.assertEqual(1, len(staged_items))
+        self.assertEqual("takeout", staged_items[0].get("action"))
+        self.assertEqual(5, staged_items[0].get("record_id"))
 
-    def test_overview_context_menu_record_emits_move_prefill(self):
+    def test_overview_context_menu_record_does_not_emit_move_prefill(self):
         panel = self._new_overview_panel()
         panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
 
@@ -727,15 +727,13 @@ class GuiPanelRegressionTests(unittest.TestCase):
         with patch("app_gui.ui.overview_panel.QMenu") as MockMenu:
             mock_menu = MagicMock()
             MockMenu.return_value = mock_menu
-            mock_act_thaw = MagicMock()
-            mock_act_move = MagicMock()
-            mock_act_query = MagicMock()
-            mock_menu.addAction.side_effect = [mock_act_thaw, mock_act_move, mock_act_query]
-            mock_menu.exec.return_value = mock_act_move
+            mock_act_takeout = MagicMock()
+            mock_menu.addAction.side_effect = [mock_act_takeout]
+            mock_menu.exec.return_value = mock_act_takeout
             panel.on_cell_context_menu(1, 1, button.mapToGlobal(button.rect().center()))
 
         self.assertEqual((1, 1), panel.overview_selected_key)
-        self.assertEqual([{"box": 1, "position": 1, "record_id": 5}], emitted_move)
+        self.assertEqual([], emitted_move)
 
     def test_overview_context_menu_empty_slot_emits_add_prefill(self):
         panel = self._new_overview_panel()
@@ -1196,10 +1194,13 @@ class ToolRunnerPlanSinkTests(unittest.TestCase):
     def test_add_entry_staged(self):
         runner = self._make_runner()
         result = runner.run("add_entry", {
-            "parent_cell_line": "K562",
-            "short_name": "K562_test",
             "box": 1,
-            "position": 30,
+            "positions": [30],
+            "frozen_at": "2026-02-10",
+            "fields": {
+                "cell_line": "K562",
+                "short_name": "K562_test",
+            },
         })
         self.assertTrue(result.get("staged"))
         self.assertEqual(1, self.store.count())
@@ -1213,6 +1214,7 @@ class ToolRunnerPlanSinkTests(unittest.TestCase):
         result = runner.run("record_thaw", {
             "record_id": 5,
             "position": 10,
+            "date": "2026-02-10",
             "action": "Takeout",
         })
         self.assertTrue(result.get("staged"))
@@ -1229,10 +1231,13 @@ class ToolRunnerPlanSinkTests(unittest.TestCase):
         )
         # Without plan_store, add_entry should attempt execution (may error but not stage)
         result = runner.run("add_entry", {
-            "parent_cell_line": "K562",
-            "short_name": "test",
             "box": 1,
-            "position": 1,
+            "positions": [1],
+            "frozen_at": "2026-02-10",
+            "fields": {
+                "cell_line": "K562",
+                "short_name": "test",
+            },
         })
         self.assertFalse(result.get("staged", False))
         self.assertEqual(0, self.store.count())

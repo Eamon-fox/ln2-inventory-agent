@@ -48,19 +48,18 @@ def make_data(records):
 class ToolRunnerNormalizationTests(unittest.TestCase):
     """Test normalization functions in AgentToolRunner."""
 
-    def test_first_value_fallback_chain(self):
-        """Test _first_value tries keys in order."""
+    def test_required_int_accepts_integer(self):
+        """Test _required_int accepts strict integers."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
-        payload = {"key1": None, "key2": "found", "key3": "ignored"}
-        result = runner._first_value(payload, "key1", "key2", "key3")
-        self.assertEqual("found", result)
+        payload = {"count": 3}
+        self.assertEqual(3, runner._required_int(payload, "count"))
 
-    def test_first_value_all_none(self):
-        """Test _first_value returns None when all keys missing."""
+    def test_required_int_rejects_string(self):
+        """Test _required_int rejects string values in strict mode."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
-        payload = {}
-        result = runner._first_value(payload, "key1", "key2")
-        self.assertIsNone(result)
+        payload = {"count": "3"}
+        with self.assertRaises(ValueError):
+            runner._required_int(payload, "count")
 
     def test_as_bool_various_true(self):
         """Test _as_bool recognizes various True representations."""
@@ -139,8 +138,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         result = runner._stage_to_plan(
             "add_entry",
             {
-                "parent_cell_line": "K562",
-                "short_name": "clone-new",
+                "fields": {"cell_line": "K562", "short_name": "clone-new"},
                 "box": 1,
                 "positions": [2, 3],
                 "frozen_at": "2026-02-10",
@@ -170,8 +168,8 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertEqual("takeout", self.plan_store.list_items()[0]["action"])
         self.assertEqual(5, self.plan_store.list_items()[0]["position"])
 
-    def test_stage_to_plan_record_thaw_supports_legacy_action_alias(self):
-        """Legacy alias 解冻 should normalize to takeout."""
+    def test_stage_to_plan_record_thaw_rejects_legacy_action_alias(self):
+        """Legacy alias 解冻 should be rejected by strict schema."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "record_thaw",
@@ -182,9 +180,9 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
                 "action": "解冻",
             },
         )
-        self.assertTrue(result["ok"])
-        self.assertEqual(1, len(self.plan_store.list_items()))
-        self.assertEqual("takeout", self.plan_store.list_items()[0]["action"])
+        self.assertFalse(result["ok"])
+        self.assertEqual("invalid_tool_input", result["error_code"])
+        self.assertEqual(0, len(self.plan_store.list_items()))
 
     def test_stage_to_plan_record_thaw_move(self):
         """Test staging record_thaw with move action."""
@@ -210,7 +208,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         result = runner._stage_to_plan(
             "batch_thaw",
             {
-                "entries": [(1, 5), (2, 10)],
+                "entries": [[1, 5], [2, 10]],
                 "date": "2026-02-10",
                 "action": "取出",
             },
@@ -225,7 +223,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         result = runner._stage_to_plan(
             "batch_thaw",
             {
-                "entries": [(1, 5, 10)],
+                "entries": [[1, 5, 10]],
                 "date": "2026-02-10",
                 "action": "move",
             },
@@ -236,7 +234,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertEqual(10, self.plan_store.list_items()[0]["to_position"])
 
     def test_stage_to_plan_validation_failure(self):
-        """Test plan validation failure with invalid box."""
+        """Strict input schema should reject invalid box before staging."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "add_entry",
@@ -248,7 +246,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
             },
         )
         self.assertFalse(result["ok"])
-        self.assertEqual("plan_validation_failed", result["error_code"])
+        self.assertEqual("invalid_tool_input", result["error_code"])
         self.assertEqual(0, len(self.plan_store.list_items()))
 
     def test_stage_to_plan_preflight_blocked_returns_tool_error(self):
@@ -261,7 +259,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
                 "record_id": 999,
                 "position": 5,
                 "date": "2026-02-10",
-                "action": "Takeout",
+                "action": "takeout",
             },
         )
 
@@ -283,9 +281,9 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         result = runner._stage_to_plan(
             "batch_thaw",
             {
-                "entries": [(1, 5), (999, 5)],
+                "entries": [[1, 5], [999, 5]],
                 "date": "2026-02-10",
-                "action": "Takeout",
+                "action": "takeout",
             },
         )
 
@@ -305,11 +303,11 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
             "batch_thaw",
             {
                 "entries": [
-                    (1, 5),
+                    [1, 5],
                     {"record_id": 2},  # Missing position -> normalized to 0 -> schema invalid
                 ],
                 "date": "2026-02-10",
-                "action": "Takeout",
+                "action": "takeout",
             },
         )
 
@@ -351,13 +349,13 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertEqual("plan_preflight_failed", second["error_code"])
         self.assertEqual(1, len(self.plan_store.list_items()))
 
-    def test_stage_to_plan_rollback_resolves_latest_backup(self):
+    def test_stage_to_plan_rollback_requires_explicit_backup_path(self):
         yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=5)])
         backup_path = create_yaml_backup(yaml_path)
         self.assertTrue(os.path.exists(str(backup_path)))
 
         runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
-        result = runner._stage_to_plan("rollback", {})
+        result = runner._stage_to_plan("rollback", {"backup_path": str(backup_path)})
 
         self.assertTrue(result["ok"])
         self.assertTrue(result.get("staged"))
@@ -476,7 +474,8 @@ class ToolRunnerHintTests(unittest.TestCase):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
         payload = {"error_code": "invalid_box"}
         hint = runner._hint_for_error("add_entry", payload)
-        self.assertIn("range", hint)
+        self.assertIn("valid", hint.lower())
+        self.assertIn("A1", hint)
 
     def test_hint_for_error_plan_preflight_failed(self):
         """Test hint for plan_preflight_failed."""

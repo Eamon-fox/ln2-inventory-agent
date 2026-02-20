@@ -99,8 +99,8 @@ class PlanModelValidationTests(unittest.TestCase):
         error = validate_plan_item(item)
         self.assertIsNone(error)
 
-    def test_validate_plan_item_invalid_box(self):
-        """Test invalid box number."""
+    def test_validate_plan_item_box_is_not_hard_limited(self):
+        """Box value is schema-valid; layout-specific limits are checked later."""
         item = {
             "action": "add",
             "box": 99,
@@ -112,10 +112,10 @@ class PlanModelValidationTests(unittest.TestCase):
             "frozen_at": "2026-02-10",
         }
         error = validate_plan_item(item)
-        self.assertIsNotNone(error)
+        self.assertIsNone(error)
 
-    def test_validate_plan_item_invalid_position(self):
-        """Test invalid position number."""
+    def test_validate_plan_item_position_is_not_hard_limited(self):
+        """Position value is schema-valid; layout-specific limits are checked later."""
         item = {
             "action": "add",
             "box": 1,
@@ -127,7 +127,7 @@ class PlanModelValidationTests(unittest.TestCase):
             "frozen_at": "2026-02-10",
         }
         error = validate_plan_item(item)
-        self.assertIsNotNone(error)
+        self.assertIsNone(error)
 
     def test_validate_plan_item_invalid_action(self):
         """Test invalid action type."""

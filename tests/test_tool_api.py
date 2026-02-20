@@ -738,6 +738,92 @@ class ToolApiTests(unittest.TestCase):
             self.assertEqual(1, response["result"]["total_count"])
             self.assertEqual(2, response["result"]["records"][0]["id"])
 
+    def test_tool_search_records_by_box_and_position(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_search_slot_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        make_record(1, box=2, position=15),
+                        make_record(2, box=2, position=14),
+                    ]
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            response = tool_search_records(
+                yaml_path=str(yaml_path),
+                box=2,
+                position=15,
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(1, response["result"]["total_count"])
+            self.assertEqual(1, response["result"]["records"][0]["id"])
+            self.assertEqual("occupied", response["result"]["slot_lookup"]["status"])
+            self.assertEqual([1], response["result"]["slot_lookup"]["record_ids"])
+
+    def test_tool_search_records_supports_location_shortcut_query(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_search_shortcut_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=2, position=15)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            response = tool_search_records(
+                yaml_path=str(yaml_path),
+                query="2:15",
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(1, response["result"]["total_count"])
+            self.assertEqual(1, response["result"]["records"][0]["id"])
+            self.assertEqual("2:15", response["result"]["applied_filters"]["query_shortcut"])
+            self.assertEqual(2, response["result"]["applied_filters"]["box"])
+            self.assertEqual(15, response["result"]["applied_filters"]["position"])
+
+    def test_tool_search_records_record_id_with_query_filter(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_search_rid_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        {
+                            "id": 7,
+                            "parent_cell_line": "K562",
+                            "short_name": "K562_main",
+                            "box": 1,
+                            "position": 1,
+                            "frozen_at": "2026-02-10",
+                        },
+                        {
+                            "id": 8,
+                            "parent_cell_line": "NCCIT",
+                            "short_name": "NCCIT_main",
+                            "box": 1,
+                            "position": 2,
+                            "frozen_at": "2026-02-10",
+                        },
+                    ]
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            response = tool_search_records(
+                yaml_path=str(yaml_path),
+                record_id=7,
+                query="K562",
+                mode="keywords",
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(1, response["result"]["total_count"])
+            self.assertEqual(7, response["result"]["records"][0]["id"])
+
     def test_tool_query_thaw_events_single_date_and_action(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_thaw_query_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"

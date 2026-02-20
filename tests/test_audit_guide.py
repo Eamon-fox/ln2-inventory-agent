@@ -136,7 +136,7 @@ class AuditGuideBuilderTests(unittest.TestCase):
         items = guide["items"]
 
         self.assertEqual(2, len(items))
-        self.assertEqual("discard", items[0]["action"])
+        self.assertEqual("takeout", items[0]["action"])
         self.assertEqual(2, items[0]["position"])
         self.assertEqual("add", items[1]["action"])
         self.assertEqual(35, items[1]["position"])

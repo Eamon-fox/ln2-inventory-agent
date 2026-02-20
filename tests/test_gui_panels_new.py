@@ -52,7 +52,7 @@ class BoxPositionLookupTests(unittest.TestCase):
 
         # User enters box 2, position 15
         panel.m_from_box.setValue(2)
-        panel.m_from_position.setValue(15)
+        panel.m_from_position.setText("15")
 
         # Internal ID should be auto-filled
         self.assertEqual(42, panel.m_id.value())
@@ -69,7 +69,7 @@ class BoxPositionLookupTests(unittest.TestCase):
 
         # User enters box 3, position 7
         panel.t_from_box.setValue(3)
-        panel.t_from_position.setValue(7)
+        panel.t_from_position.setText("7")
 
         # Internal ID should be auto-filled
         self.assertEqual(99, panel.t_id.value())
@@ -91,9 +91,9 @@ class BoxPositionLookupTests(unittest.TestCase):
         })
 
         self.assertEqual(1, panel.m_from_box.value())
-        self.assertEqual(5, panel.m_from_position.value())
+        self.assertEqual("5", panel.m_from_position.text())
         self.assertEqual(2, panel.m_to_box.value())
-        self.assertEqual(8, panel.m_to_position.value())
+        self.assertEqual("8", panel.m_to_position.text())
 
     def test_move_drag_target_box_not_overwritten(self):
         """Dragging to different box should preserve target box."""
@@ -112,7 +112,7 @@ class BoxPositionLookupTests(unittest.TestCase):
 
         # Target box should remain 1, not be overwritten to 2
         self.assertEqual(1, panel.m_to_box.value())
-        self.assertEqual(15, panel.m_to_position.value())
+        self.assertEqual("15", panel.m_to_position.text())
 
     def test_move_manual_source_change_resets_target_box(self):
         """Manually changing source should allow target box auto-fill."""
@@ -132,7 +132,7 @@ class BoxPositionLookupTests(unittest.TestCase):
 
         # Then user manually changes source
         panel.m_from_box.setValue(3)
-        panel.m_from_position.setValue(5)
+        panel.m_from_position.setText("5")
 
         # Target box should auto-fill to source box (3)
         self.assertEqual(3, panel.m_to_box.value())

@@ -74,12 +74,14 @@ class AgentToolRunnerTests(unittest.TestCase):
             response = runner.run(
                 "add_entry",
                 {
-                    "parent_cell_line": "K562",
-                    "short_name": "clone-2",
                     "box": 1,
                     "positions": "2,3",
                     "frozen_at": "2026-02-10",
-                    "note": "via runner",
+                    "fields": {
+                        "cell_line": "K562",
+                        "short_name": "clone-2",
+                        "note": "via runner",
+                    },
                 },
                 trace_id="trace-agent-test",
             )
@@ -119,7 +121,7 @@ class AgentToolRunnerTests(unittest.TestCase):
         self.assertTrue(response.get("_hint"))
         self.assertIn("available tools", response.get("_hint", "").lower())
 
-    def test_search_records_normalizes_keyword_mode_alias(self):
+    def test_search_records_rejects_keyword_mode_alias(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_search_alias_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -140,11 +142,10 @@ class AgentToolRunnerTests(unittest.TestCase):
             runner = AgentToolRunner(yaml_path=str(yaml_path))
             response = runner.run("search_records", {"query": "K562", "mode": "keyword"})
 
-            self.assertTrue(response["ok"])
-            self.assertEqual("keywords", response["result"]["mode"])
-            self.assertEqual(1, response["result"]["total_count"])
+            self.assertFalse(response["ok"])
+            self.assertEqual("invalid_tool_input", response["error_code"])
 
-    def test_search_records_falls_back_to_fuzzy_for_invalid_mode(self):
+    def test_search_records_rejects_invalid_mode(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_search_mode_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -165,11 +166,62 @@ class AgentToolRunnerTests(unittest.TestCase):
             runner = AgentToolRunner(yaml_path=str(yaml_path))
             response = runner.run("search_records", {"query": "NCCIT", "mode": "bad-mode"})
 
-            self.assertTrue(response["ok"])
-            self.assertEqual("fuzzy", response["result"]["mode"])
-            self.assertEqual(1, response["result"]["total_count"])
+            self.assertFalse(response["ok"])
+            self.assertEqual("invalid_tool_input", response["error_code"])
 
-    def test_add_entry_supports_common_alias_fields(self):
+    def test_search_records_supports_structured_slot_filters(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_search_slot_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([
+                    {
+                        "id": 2,
+                        "parent_cell_line": "K562",
+                        "short_name": "k562-a",
+                        "box": 2,
+                        "position": 15,
+                        "frozen_at": "2026-02-10",
+                    },
+                ]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run("search_records", {"box": 2, "position": 15})
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(1, response["result"]["total_count"])
+            self.assertEqual(2, response["result"]["records"][0]["id"])
+            self.assertEqual("occupied", response["result"]["slot_lookup"]["status"])
+
+    def test_search_records_supports_location_shortcut_query(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_search_shortcut_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([
+                    {
+                        "id": 3,
+                        "parent_cell_line": "NCCIT",
+                        "short_name": "nccit-a",
+                        "box": 2,
+                        "position": 15,
+                        "frozen_at": "2026-02-10",
+                    },
+                ]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run("search_records", {"query": "2:15"})
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(1, response["result"]["total_count"])
+            self.assertEqual(3, response["result"]["records"][0]["id"])
+            self.assertEqual("2:15", response["result"]["applied_filters"]["query_shortcut"])
+
+    def test_add_entry_rejects_alias_fields(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_add_alias_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -191,13 +243,13 @@ class AgentToolRunnerTests(unittest.TestCase):
                 },
             )
             self.assertFalse(response["ok"])
-            self.assertEqual("write_requires_execute_mode", response["error_code"])
+            self.assertEqual("invalid_tool_input", response["error_code"])
 
             current = load_yaml(str(yaml_path))
             records = current.get("inventory", [])
             self.assertEqual(1, len(records))
 
-    def test_record_thaw_supports_id_and_pos_alias(self):
+    def test_record_thaw_rejects_id_and_pos_alias(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_thaw_alias_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -217,9 +269,9 @@ class AgentToolRunnerTests(unittest.TestCase):
                 },
             )
             self.assertFalse(response["ok"])
-            self.assertEqual("write_requires_execute_mode", response["error_code"])
+            self.assertEqual("invalid_tool_input", response["error_code"])
 
-    def test_record_thaw_move_supports_target_position_aliases(self):
+    def test_record_thaw_move_rejects_target_position_alias(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_move_alias_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -241,7 +293,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             )
 
             self.assertFalse(response["ok"])
-            self.assertEqual("write_requires_execute_mode", response["error_code"])
+            self.assertEqual("invalid_tool_input", response["error_code"])
             current = load_yaml(str(yaml_path))
             self.assertEqual(1, current["inventory"][0]["position"])
 
@@ -266,8 +318,8 @@ class AgentToolRunnerTests(unittest.TestCase):
             )
 
             self.assertFalse(response["ok"])
-            self.assertEqual("write_requires_execute_mode", response["error_code"])
-            self.assertIn("stage", response.get("_hint", "").lower())
+            self.assertEqual("invalid_tool_input", response["error_code"])
+            self.assertIn("to_position", response.get("message", ""))
 
     def test_plan_preflight_hint_guides_record_repair_flow(self):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
@@ -296,8 +348,13 @@ class AgentToolRunnerTests(unittest.TestCase):
         self.assertIn("positions", specs["add_entry"]["required"])
 
         self.assertIn("search_records", specs)
+        self.assertEqual([], specs["search_records"].get("required"))
+        self.assertIn("box", specs["search_records"].get("optional", []))
+        self.assertIn("position", specs["search_records"].get("optional", []))
         search_params = specs["search_records"].get("params", {})
         self.assertIn("mode", search_params)
+        self.assertIn("record_id", search_params)
+        self.assertIn("active_only", search_params)
         self.assertEqual(
             ["fuzzy", "exact", "keywords"],
             search_params["mode"].get("enum"),
@@ -333,8 +390,7 @@ class AgentToolRunnerTests(unittest.TestCase):
         notes = str(rollback_spec.get("notes") or "").lower()
 
         self.assertIn("backup_path", description)
-        self.assertIn("question", notes)
-        self.assertIn("human", notes)
+        self.assertIn("explicit", notes)
 
 
 class EditEntryToolRunnerTests(unittest.TestCase):

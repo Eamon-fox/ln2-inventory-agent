@@ -116,13 +116,9 @@ class AuditLogDialog(QDialog):
 
         # Event detail display
         self.event_detail = QLabel()
+        self.event_detail.setObjectName("auditEventDetail")
         self.event_detail.setWordWrap(True)
-        self.event_detail.setStyleSheet(
-            "background-color: var(--background-inset); "
-            "border: 1px solid var(--border-weak); "
-            "border-radius: var(--radius-sm); "
-            "padding: 8px;"
-        )
+        self.event_detail.setProperty("state", "default")
         self.event_detail.setVisible(False)
         layout.addWidget(self.event_detail)
 
@@ -319,13 +315,9 @@ class AuditLogDialog(QDialog):
             lines.append(f"<span style='color: var(--status-muted);'>{tr('operations.detailsLabel')}</span> {preview}")
 
         self.event_detail.setText("<br/>".join(lines))
-        border = "var(--success)" if status == "success" else "var(--error)"
-        self.event_detail.setStyleSheet(
-            f"background-color: var(--background-inset); "
-            f"border: 1px solid {border}; "
-            f"border-radius: var(--radius-sm); "
-            f"padding: 8px;"
-        )
+        self.event_detail.setProperty("state", "success" if status == "success" else "error")
+        self.event_detail.style().unpolish(self.event_detail)
+        self.event_detail.style().polish(self.event_detail)
         self.event_detail.setVisible(True)
 
     def _get_selected_audit_events(self):
@@ -381,12 +373,9 @@ class AuditLogDialog(QDialog):
                     f"{tr('operations.warningsLabel')} {len(warnings)}<br/>{preview}{more}"
                 )
             self.event_detail.setText("<br/>".join(lines))
-            self.event_detail.setStyleSheet(
-                "background-color: var(--background-inset); "
-                "border: 1px solid var(--error); "
-                "border-radius: var(--radius-sm); "
-                "padding: 8px;"
-            )
+            self.event_detail.setProperty("state", "error")
+            self.event_detail.style().unpolish(self.event_detail)
+            self.event_detail.style().polish(self.event_detail)
             self.event_detail.setVisible(True)
             return
 
@@ -407,12 +396,9 @@ class AuditLogDialog(QDialog):
                 f"{tr('operations.warningsLabel')} {len(warnings)}<br/>{preview}{more}"
             )
         self.event_detail.setText("<br/>".join(lines))
-        self.event_detail.setStyleSheet(
-            "background-color: var(--background-inset); "
-            "border: 1px solid var(--success); "
-            "border-radius: var(--radius-sm); "
-            "padding: 8px;"
-        )
+        self.event_detail.setProperty("state", "success")
+        self.event_detail.style().unpolish(self.event_detail)
+        self.event_detail.style().polish(self.event_detail)
         self.event_detail.setVisible(True)
 
         if print_now:
@@ -526,4 +512,3 @@ class AuditLogDialog(QDialog):
         # Notify parent to add plan item
         if hasattr(self.parent(), 'operations_panel'):
             self.parent().operations_panel.add_plan_items([item])
-

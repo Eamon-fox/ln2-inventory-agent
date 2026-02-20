@@ -7,7 +7,7 @@ meta:
   - key: short_name
     label: Short Name
     type: str
-  display_key: short_name
+  display_key: cell_line
   color_key: cell_line
   cell_line_options:
   - K562
@@ -238,8 +238,12 @@ inventory:
   frozen_at: '2026-02-04'
   thaw_log: null
   note: long-term backup stock
-  thaw_events: null
-  position: 17
+  thaw_events:
+  - date: '2026-02-20'
+    action: takeout
+    positions:
+    - 17
+  position: null
 - id: 18
   cell_line: U2OS
   parent_cell_line: U2OS
@@ -298,8 +302,12 @@ inventory:
   frozen_at: '2026-01-20'
   thaw_log: null
   note: CRISPR knockout pool (original stock)
-  thaw_events: null
-  position: 16
+  thaw_events:
+  - date: '2026-02-20'
+    action: takeout
+    positions:
+    - 16
+  position: null
 - id: 22
   cell_line: HeLa
   parent_cell_line: HeLa
@@ -372,3 +380,8 @@ inventory:
   note: non-targeting control pool
   thaw_events: null
   position: 65
+- id: 28
+  cell_line: K562
+  box: 2
+  position: 14
+  frozen_at: '2026-01-20'
