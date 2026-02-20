@@ -46,7 +46,7 @@ _TOOL_CONTRACTS = {
         },
     },
     "search_records": {
-        "description": "Search inventory records by text and/or structured filters.",
+        "description": "Search inventory records, or list recently frozen records via recent_* filters.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -65,45 +65,28 @@ _TOOL_CONTRACTS = {
                 "position": {"type": "integer", "minimum": 1},
                 "record_id": {"type": "integer", "minimum": 1},
                 "active_only": {"type": "boolean"},
-            },
-            "required": [],
-            "additionalProperties": False,
-        },
-    },
-    "recent_frozen": {
-        "description": "List recently frozen records.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "days": {"type": "integer", "minimum": 1},
-                "count": {"type": "integer", "minimum": 1},
+                "recent_days": {"type": "integer", "minimum": 1},
+                "recent_count": {"type": "integer", "minimum": 1},
             },
             "required": [],
             "additionalProperties": False,
         },
     },
     "query_thaw_events": {
-        "description": "Query thaw/takeout/move events by date range and action.",
+        "description": "Query thaw/takeout/move events, or timeline summary via view=summary.",
         "parameters": {
             "type": "object",
             "properties": {
+                "view": {
+                    "type": "string",
+                    "enum": ["events", "summary"],
+                },
                 "date": {"type": "string"},
                 "days": {"type": "integer", "minimum": 1},
                 "start_date": {"type": "string"},
                 "end_date": {"type": "string"},
                 "action": {"type": "string"},
                 "max_records": {"type": "integer", "minimum": 0},
-            },
-            "required": [],
-            "additionalProperties": False,
-        },
-    },
-    "collect_timeline": {
-        "description": "Collect inventory timeline summary.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "days": {"type": "integer", "minimum": 1},
                 "all_history": {"type": "boolean"},
             },
             "required": [],
@@ -342,35 +325,21 @@ _TOOL_CONTRACTS = {
             "additionalProperties": False,
         },
     },
-    "list_staged": {
-        "description": "List staged plan items awaiting human approval.",
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": False,
-        },
-    },
-    "remove_staged": {
-        "description": "Remove a staged plan item by index or key fields.",
+    "manage_staged": {
+        "description": "List, remove, or clear staged plan items.",
         "parameters": {
             "type": "object",
             "properties": {
+                "operation": {
+                    "type": "string",
+                    "enum": ["list", "remove", "clear"],
+                },
                 "index": {"type": "integer", "minimum": 0},
                 "action": {"type": "string"},
                 "record_id": {"type": "integer", "minimum": 1},
                 "position": {"type": "integer", "minimum": 1},
             },
-            "required": [],
-            "additionalProperties": False,
-        },
-    },
-    "clear_staged": {
-        "description": "Clear all staged plan items.",
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "required": [],
+            "required": ["operation"],
             "additionalProperties": False,
         },
     },
@@ -677,15 +646,42 @@ class AgentToolRunner:
                 if "count" in payload:
                     return "count is not allowed when operation=remove"
 
-        if tool_name == "remove_staged":
+        if tool_name == "search_records":
+            has_recent = any(k in payload for k in ("recent_days", "recent_count"))
+            if has_recent:
+                if "recent_days" in payload and "recent_count" in payload:
+                    return "Use either recent_days or recent_count, not both"
+                mixed_fields = [
+                    k for k in ("query", "mode", "max_results", "case_sensitive", "box", "position", "record_id", "active_only")
+                    if k in payload
+                ]
+                if mixed_fields:
+                    return "recent_* filters cannot be mixed with text/structured search fields"
+
+        if tool_name == "query_thaw_events":
+            view = payload.get("view", "events")
+            if view == "summary":
+                forbidden = [k for k in ("date", "start_date", "end_date", "action", "max_records") if k in payload]
+                if forbidden:
+                    return "view=summary only supports: view, days, all_history"
+            elif "all_history" in payload:
+                return "all_history is only valid when view=summary"
+
+        if tool_name == "manage_staged":
+            operation = payload.get("operation")
             has_index = "index" in payload
             has_key_fields = any(k in payload for k in ("action", "record_id", "position"))
-            if has_index and has_key_fields:
-                return "Provide either index OR action+record_id+position, not both"
-            if not has_index and not has_key_fields:
-                return "Provide either index OR action+record_id+position"
-            if has_key_fields and not all(k in payload for k in ("action", "record_id", "position")):
-                return "action, record_id, and position are required when removing by key"
+
+            if operation in {"list", "clear"}:
+                if has_index or has_key_fields:
+                    return "index/action/record_id/position are only valid when operation=remove"
+            elif operation == "remove":
+                if has_index and has_key_fields:
+                    return "Provide either index OR action+record_id+position, not both"
+                if not has_index and not has_key_fields:
+                    return "Provide either index OR action+record_id+position"
+                if has_key_fields and not all(k in payload for k in ("action", "record_id", "position")):
+                    return "action, record_id, and position are required when removing by key"
 
         if tool_name == "record_thaw":
             action = str(payload.get("action") or "取出").lower()
@@ -1358,6 +1354,18 @@ class AgentToolRunner:
             )
 
         if tool_name == "search_records":
+            recent_days = self._optional_int(payload, "recent_days")
+            recent_count = self._optional_int(payload, "recent_count")
+            if recent_days is not None or recent_count is not None:
+                return self._safe_call(
+                    tool_name,
+                    lambda: tool_recent_frozen(
+                        yaml_path=self._yaml_path,
+                        days=recent_days,
+                        count=recent_count,
+                    ),
+                )
+
             mode = self._normalize_search_mode(payload.get("mode"))
             return self._safe_call(
                 tool_name,
@@ -1374,17 +1382,20 @@ class AgentToolRunner:
                 ),
             )
 
-        if tool_name == "recent_frozen":
-            return self._safe_call(
-                tool_name,
-                lambda: tool_recent_frozen(
-                    yaml_path=self._yaml_path,
-                    days=self._optional_int(payload, "days"),
-                    count=self._optional_int(payload, "count"),
-                ),
-            )
-
         if tool_name == "query_thaw_events":
+            view = payload.get("view", "events")
+            if view == "summary":
+                timeline_days = self._optional_int(payload, "days", default=30)
+                timeline_days = 30 if timeline_days is None else int(timeline_days)
+                return self._safe_call(
+                    tool_name,
+                    lambda: tool_collect_timeline(
+                        yaml_path=self._yaml_path,
+                        days=timeline_days,
+                        all_history=self._as_bool(payload.get("all_history", False), default=False),
+                    ),
+                )
+
             days_value = self._optional_int(payload, "days")
             if days_value is not None:
                 days_value = int(days_value)
@@ -1401,19 +1412,6 @@ class AgentToolRunner:
                     end_date=payload.get("end_date"),
                     action=payload.get("action"),
                     max_records=max_records_value,
-                ),
-            )
-
-        if tool_name == "collect_timeline":
-            timeline_days = self._optional_int(payload, "days", default=30)
-            timeline_days = 30 if timeline_days is None else int(timeline_days)
-
-            return self._safe_call(
-                tool_name,
-                lambda: tool_collect_timeline(
-                    yaml_path=self._yaml_path,
-                    days=timeline_days,
-                    all_history=self._as_bool(payload.get("all_history", False), default=False),
                 ),
             )
 
@@ -1585,71 +1583,84 @@ class AgentToolRunner:
                 ),
             )
 
-        # --- Plan staging tools (read/modify staging area, not YAML) ---
+        # --- Plan staging management (read/modify staging area, not YAML) ---
 
-        if tool_name == "list_staged":
+        if tool_name == "manage_staged":
+            operation = payload.get("operation")
+
+            if operation == "list":
+                if not self._plan_store:
+                    return {
+                        "ok": True,
+                        "result": {"items": [], "count": 0},
+                        "message": "No plan store available.",
+                    }
+                items = self._plan_store.list_items()
+                summary = []
+                for i, item in enumerate(items):
+                    entry = {
+                        "index": i,
+                        "action": item.get("action"),
+                        "record_id": item.get("record_id"),
+                        "box": item.get("box"),
+                        "position": item.get("position"),
+                        "label": item.get("label"),
+                        "source": item.get("source"),
+                    }
+                    if item.get("to_position") is not None:
+                        entry["to_position"] = item["to_position"]
+                    if item.get("to_box") is not None:
+                        entry["to_box"] = item["to_box"]
+                    summary.append(entry)
+                return {"ok": True, "result": {"items": summary, "count": len(summary)}}
+
             if not self._plan_store:
-                return {"ok": True, "result": {"items": [], "count": 0},
-                        "message": "No plan store available."}
-            items = self._plan_store.list_items()
-            summary = []
-            for i, item in enumerate(items):
-                entry = {
-                    "index": i,
-                    "action": item.get("action"),
-                    "record_id": item.get("record_id"),
-                    "box": item.get("box"),
-                    "position": item.get("position"),
-                    "label": item.get("label"),
-                    "source": item.get("source"),
+                return {
+                    "ok": False,
+                    "error_code": "no_plan_store",
+                    "message": "Plan store not available.",
                 }
-                if item.get("to_position") is not None:
-                    entry["to_position"] = item["to_position"]
-                if item.get("to_box") is not None:
-                    entry["to_box"] = item["to_box"]
-                summary.append(entry)
-            return {"ok": True, "result": {"items": summary, "count": len(summary)}}
 
-        if tool_name == "remove_staged":
-            if not self._plan_store:
-                return {"ok": False, "error_code": "no_plan_store",
-                        "message": "Plan store not available."}
-            idx = self._optional_int(payload, "index")
-            if idx is not None:
-                removed = self._plan_store.remove_by_index(idx)
-                if removed is None:
-                    max_idx = self._plan_store.count() - 1
-                    return self._with_hint(tool_name, {
-                        "ok": False, "error_code": "invalid_index",
-                        "message": f"Index {idx} out of range (0..{max_idx}).",
-                    })
-                return {"ok": True,
+            if operation == "remove":
+                idx = self._optional_int(payload, "index")
+                if idx is not None:
+                    removed = self._plan_store.remove_by_index(idx)
+                    if removed is None:
+                        max_idx = self._plan_store.count() - 1
+                        return self._with_hint(tool_name, {
+                            "ok": False,
+                            "error_code": "invalid_index",
+                            "message": f"Index {idx} out of range (0..{max_idx}).",
+                        })
+                    return {
+                        "ok": True,
                         "message": f"Removed item at index {idx}: {self._item_desc(removed)}",
-                        "result": {"removed": 1}}
-            action = payload.get("action")
-            rid = self._optional_int(payload, "record_id")
-            pos = self._optional_int(payload, "position")
-            if action is None and rid is None and pos is None:
-                return self._with_hint(tool_name, {
-                    "ok": False, "error_code": "invalid_tool_input",
-                    "message": "Provide either 'index' or 'action'+'record_id'+'position'.",
-                })
-            count = self._plan_store.remove_by_key(action, rid, pos)
-            if count == 0:
-                return self._with_hint(tool_name, {
-                    "ok": False, "error_code": "not_found",
-                    "message": "No matching staged item found.",
-                })
-            return {"ok": True, "message": f"Removed {count} matching item(s).",
-                    "result": {"removed": count}}
+                        "result": {"removed": 1},
+                    }
 
-        if tool_name == "clear_staged":
-            if not self._plan_store:
-                return {"ok": False, "error_code": "no_plan_store",
-                        "message": "Plan store not available."}
-            cleared = self._plan_store.clear()
-            return {"ok": True, "message": f"Cleared {len(cleared)} staged item(s).",
-                    "result": {"cleared_count": len(cleared)}}
+                action = payload.get("action")
+                rid = self._optional_int(payload, "record_id")
+                pos = self._optional_int(payload, "position")
+                count = self._plan_store.remove_by_key(action, rid, pos)
+                if count == 0:
+                    return self._with_hint(tool_name, {
+                        "ok": False,
+                        "error_code": "not_found",
+                        "message": "No matching staged item found.",
+                    })
+                return {
+                    "ok": True,
+                    "message": f"Removed {count} matching item(s).",
+                    "result": {"removed": count},
+                }
+
+            if operation == "clear":
+                cleared = self._plan_store.clear()
+                return {
+                    "ok": True,
+                    "message": f"Cleared {len(cleared)} staged item(s).",
+                    "result": {"cleared_count": len(cleared)},
+                }
 
         return self._with_hint(
             tool_name,
