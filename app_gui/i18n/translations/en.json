@@ -491,7 +491,10 @@
   },
   "common": {
     "info": "Info",
-    "na": "N/A"
+    "na": "N/A",
+    "ok": "OK",
+    "cancel": "Cancel",
+    "close": "Close"
   },
   "eventDetails": {
     "type": "Type",

@@ -348,10 +348,14 @@ class SettingsDialog(QDialog):
 
         content_layout.addStretch()
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        self._ok_button = buttons.button(QDialogButtonBox.Ok)
+        buttons = QDialogButtonBox()
+        ok_btn = QPushButton(tr("common.ok"))
+        ok_btn.clicked.connect(self.accept)
+        buttons.addButton(ok_btn, QDialogButtonBox.AcceptRole)
+        cancel_btn = QPushButton(tr("common.cancel"))
+        cancel_btn.clicked.connect(self.reject)
+        buttons.addButton(cancel_btn, QDialogButtonBox.RejectRole)
+        self._ok_button = ok_btn
         self.yaml_edit.textChanged.connect(self._refresh_yaml_path_validity)
         self._refresh_yaml_path_validity()
         layout.addWidget(buttons)
@@ -561,14 +565,17 @@ class SettingsDialog(QDialog):
                 confirm_input = _NoPasteLineEdit()
                 confirm_input.setPlaceholderText(confirm_phrase)
                 confirm_layout.addWidget(confirm_input)
-                confirm_buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-                ok_btn = confirm_buttons.button(QDialogButtonBox.Ok)
+                confirm_buttons = QDialogButtonBox()
+                ok_btn = QPushButton(tr("common.ok"))
                 ok_btn.setEnabled(False)
+                ok_btn.clicked.connect(confirm_dlg.accept)
+                confirm_buttons.addButton(ok_btn, QDialogButtonBox.AcceptRole)
+                cancel_btn = QPushButton(tr("common.cancel"))
+                cancel_btn.clicked.connect(confirm_dlg.reject)
+                confirm_buttons.addButton(cancel_btn, QDialogButtonBox.RejectRole)
                 confirm_input.textChanged.connect(
                     lambda txt: ok_btn.setEnabled(txt.strip() == confirm_phrase)
                 )
-                confirm_buttons.accepted.connect(confirm_dlg.accept)
-                confirm_buttons.rejected.connect(confirm_dlg.reject)
                 confirm_layout.addWidget(confirm_buttons)
 
                 if confirm_dlg.exec() != QDialog.Accepted:
@@ -754,8 +761,9 @@ class ImportPromptDialog(QDialog):
         view_yaml_btn.clicked.connect(self._view_yaml_example)
         buttons.addButton(view_yaml_btn, QDialogButtonBox.ActionRole)
 
-        close_btn = QDialogButtonBox.Close
-        buttons.addButton(close_btn)
+        close_btn = QPushButton(tr("common.close"))
+        close_btn.clicked.connect(self.reject)
+        buttons.addButton(close_btn, QDialogButtonBox.RejectRole)
         layout.addWidget(buttons)
 
     def _copy_prompt(self):
@@ -778,8 +786,10 @@ class ImportPromptDialog(QDialog):
         text_edit.setFontFamily("monospace")
         text_edit.setFontPointSize(FONT_SIZE_MONO)
         layout.addWidget(text_edit)
-        close_btn = QDialogButtonBox(QDialogButtonBox.Close)
-        close_btn.rejected.connect(dlg.reject)
+        close_btn = QDialogButtonBox()
+        close_button = QPushButton(tr("common.close"))
+        close_button.clicked.connect(dlg.reject)
+        close_btn.addButton(close_button, QDialogButtonBox.RejectRole)
         layout.addWidget(close_btn)
         dlg.exec()
 
@@ -826,9 +836,13 @@ class NewDatasetDialog(QDialog):
 
         layout.addLayout(form)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        buttons = QDialogButtonBox()
+        ok_btn = QPushButton(tr("common.ok"))
+        ok_btn.clicked.connect(self.accept)
+        buttons.addButton(ok_btn, QDialogButtonBox.AcceptRole)
+        cancel_btn = QPushButton(tr("common.cancel"))
+        cancel_btn.clicked.connect(self.reject)
+        buttons.addButton(cancel_btn, QDialogButtonBox.RejectRole)
         layout.addWidget(buttons)
 
     def _on_preset_changed(self, index):
@@ -1003,9 +1017,13 @@ class CustomFieldsDialog(QDialog):
         root.addLayout(clo_row)
         clo_row.addWidget(self._cell_line_options_edit)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        buttons = QDialogButtonBox()
+        ok_btn = QPushButton(tr("common.ok"))
+        ok_btn.clicked.connect(self.accept)
+        buttons.addButton(ok_btn, QDialogButtonBox.AcceptRole)
+        cancel_btn = QPushButton(tr("common.cancel"))
+        cancel_btn.clicked.connect(self.reject)
+        buttons.addButton(cancel_btn, QDialogButtonBox.RejectRole)
         root.addWidget(buttons)
 
     def _refresh_display_key_combo(self, current_dk=None):

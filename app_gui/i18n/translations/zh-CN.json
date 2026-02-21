@@ -491,7 +491,10 @@
   },
   "common": {
     "info": "信息",
-    "na": "不适用"
+    "na": "不适用",
+    "ok": "确定",
+    "cancel": "取消",
+    "close": "关闭"
   },
   "eventDetails": {
     "type": "类型",
