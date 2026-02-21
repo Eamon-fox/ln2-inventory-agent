@@ -307,6 +307,9 @@ class RenderOperationSheetWithGridTests(unittest.TestCase):
         html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
         self.assertIn("@page", html)
         self.assertIn("size: A4 portrait", html)
+        self.assertIn("class=\"sheet-preview-shell\"", html)
+        self.assertIn("class=\"sheet-page\"", html)
+        self.assertIn("function fitA4Preview()", html)
 
     def test_default_css_uses_a4_grid_dimensions(self):
         html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())

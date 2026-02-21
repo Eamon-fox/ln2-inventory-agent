@@ -365,6 +365,9 @@ def render_operation_sheet_with_grid(items, grid_state=None):
     <title>LN2 Operation Preview & Guide - {today}</title>
     <style>
         * {{ box-sizing: border-box; }}
+        html, body {{
+            width: 100%;
+        }}
         body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
             margin: 0;
@@ -375,6 +378,19 @@ def render_operation_sheet_with_grid(items, grid_state=None):
             background: #fff;
             print-color-adjust: exact;
             -webkit-print-color-adjust: exact;
+        }}
+
+        .sheet-preview-shell {{
+            width: 100%;
+            max-width: 100%;
+            margin: 0 auto;
+        }}
+
+        .sheet-page {{
+            width: 210mm;
+            min-height: 297mm;
+            margin: 0 auto;
+            background: #fff;
         }}
 
         .header {{
@@ -732,6 +748,36 @@ def render_operation_sheet_with_grid(items, grid_state=None):
             margin: 10mm;
         }}
 
+        @media screen {{
+            body {{
+                background: #e2e8f0;
+                padding: 12px;
+            }}
+
+            .sheet-page {{
+                box-shadow: 0 14px 36px rgba(15, 23, 42, 0.16);
+            }}
+        }}
+
+        @media print {{
+            body {{
+                padding: 0;
+                background: #fff;
+            }}
+
+            .sheet-preview-shell {{
+                width: auto;
+                height: auto !important;
+            }}
+
+            .sheet-page {{
+                width: auto;
+                min-height: auto;
+                box-shadow: none;
+                transform: none !important;
+            }}
+        }}
+
         @media (max-width: 180mm) {{
             .print-grid-container {{
                 grid-template-columns: 1fr;
@@ -740,6 +786,8 @@ def render_operation_sheet_with_grid(items, grid_state=None):
     </style>
 </head>
 <body>
+    <div class="sheet-preview-shell">
+    <div class="sheet-page">
     <div class="header">
         <h1>LN2 Operation Preview & Guide</h1>
         <div class="header-meta">
@@ -769,6 +817,65 @@ def render_operation_sheet_with_grid(items, grid_state=None):
             <span>Notes: <span class="sign-box" style="width: 400px;"></span></span>
         </div>
     </div>
+    </div>
+    </div>
+    <script>
+    (function () {{
+        const shell = document.querySelector('.sheet-preview-shell');
+        const page = document.querySelector('.sheet-page');
+        if (!shell || !page) {{
+            return;
+        }}
+
+        function fitA4Preview() {{
+            if (window.matchMedia && window.matchMedia('print').matches) {{
+                return;
+            }}
+
+            page.style.transform = 'none';
+            page.style.transformOrigin = 'top center';
+            shell.style.height = 'auto';
+
+            const shellWidth = shell.clientWidth;
+            const pageWidth = page.offsetWidth;
+            if (!shellWidth || !pageWidth) {{
+                return;
+            }}
+
+            const scale = Math.min(1, shellWidth / pageWidth);
+            page.style.transform = `scale(${{scale}})`;
+            shell.style.height = `${{Math.ceil(page.offsetHeight * scale)}}px`;
+        }}
+
+        if (document.readyState === 'loading') {{
+            document.addEventListener('DOMContentLoaded', fitA4Preview);
+        }} else {{
+            fitA4Preview();
+        }}
+
+        window.addEventListener('resize', fitA4Preview);
+
+        if (window.matchMedia) {{
+            const mql = window.matchMedia('print');
+            const onAfterPrint = function () {{
+                window.setTimeout(fitA4Preview, 0);
+            }};
+            if (mql.addEventListener) {{
+                mql.addEventListener('change', function (ev) {{
+                    if (!ev.matches) {{
+                        onAfterPrint();
+                    }}
+                }});
+            }} else if (mql.addListener) {{
+                mql.addListener(function (ev) {{
+                    if (!ev.matches) {{
+                        onAfterPrint();
+                    }}
+                }});
+            }}
+        }}
+    }})();
+    </script>
 </body>
 </html>"""
     return _apply_sheet_theme_tokens(html)
