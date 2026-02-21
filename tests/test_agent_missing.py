@@ -156,9 +156,8 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
             "record_takeout",
             {
                 "record_id": 1,
-                "position": 5,
+                "from": {"box": 1, "position": 5},
                 "date": "2026-02-10",
-                "action": "takeout",
             },
         )
         self.assertTrue(result["ok"])
@@ -174,7 +173,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
             "record_takeout",
             {
                 "record_id": 1,
-                "position": 5,
+                "from": {"box": 1, "position": 5},
                 "date": "2026-02-10",
                 "action": "瑙ｅ喕",
             },
@@ -183,17 +182,16 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertEqual("invalid_tool_input", result["error_code"])
         self.assertEqual(0, len(self.plan_store.list_items()))
 
-    def test_stage_to_plan_record_takeout_move(self):
-        """Test staging record_takeout with move action."""
+    def test_stage_to_plan_record_move(self):
+        """Test staging record_move operation."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
-            "record_takeout",
+            "record_move",
             {
                 "record_id": 1,
-                "position": 5,
-                "to_position": 10,
+                "from": {"box": 1, "position": 5},
+                "to": {"box": 1, "position": 10},
                 "date": "2026-02-10",
-                "action": "move",
             },
         )
         self.assertTrue(result["ok"])
@@ -207,24 +205,31 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         result = runner._stage_to_plan(
             "batch_takeout",
             {
-                "entries": [[1, 5], [2, 10]],
+                "entries": [
+                    {"record_id": 1, "from": {"box": 1, "position": 5}},
+                    {"record_id": 2, "from": {"box": 1, "position": 10}},
+                ],
                 "date": "2026-02-10",
-                "action": "takeout",
             },
         )
         self.assertTrue(result["ok"])
         self.assertTrue(result.get("staged"))
         self.assertEqual(2, len(self.plan_store.list_items()))
 
-    def test_stage_to_plan_batch_takeout_move(self):
-        """Test staging batch_takeout with move entries."""
+    def test_stage_to_plan_batch_move(self):
+        """Test staging batch_move operation."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
-            "batch_takeout",
+            "batch_move",
             {
-                "entries": [[1, 5, 10]],
+                "entries": [
+                    {
+                        "record_id": 1,
+                        "from": {"box": 1, "position": 5},
+                        "to": {"box": 1, "position": 10},
+                    }
+                ],
                 "date": "2026-02-10",
-                "action": "move",
             },
         )
         self.assertTrue(result["ok"])
@@ -256,9 +261,8 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
             "record_takeout",
             {
                 "record_id": 999,
-                "position": 5,
+                "from": {"box": 1, "position": 5},
                 "date": "2026-02-10",
-                "action": "takeout",
             },
         )
 
@@ -280,9 +284,11 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         result = runner._stage_to_plan(
             "batch_takeout",
             {
-                "entries": [[1, 5], [999, 5]],
+                "entries": [
+                    {"record_id": 1, "from": {"box": 1, "position": 5}},
+                    {"record_id": 999, "from": {"box": 1, "position": 5}},
+                ],
                 "date": "2026-02-10",
-                "action": "takeout",
             },
         )
 
@@ -302,20 +308,16 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
             "batch_takeout",
             {
                 "entries": [
-                    [1, 5],
-                    {"record_id": 2},  # Missing position -> normalized to 0 -> schema invalid
+                    {"record_id": 1, "from": {"box": 1, "position": 5}},
+                    {"record_id": 2},  # Missing from -> schema invalid
                 ],
                 "date": "2026-02-10",
-                "action": "takeout",
             },
         )
 
         self.assertFalse(result["ok"])
-        self.assertEqual("plan_validation_failed", result["error_code"])
-        self.assertFalse(result.get("staged"))
+        self.assertEqual("invalid_tool_input", result["error_code"])
         self.assertEqual(0, len(self.plan_store.list_items()))
-        self.assertEqual(0, result.get("result", {}).get("staged_count"))
-        self.assertEqual(1, result.get("result", {}).get("blocked_count"))
 
     def test_stage_to_plan_validates_existing_plus_incoming_as_one_batch(self):
         """Second staged add must be rejected if it conflicts with existing staged items."""

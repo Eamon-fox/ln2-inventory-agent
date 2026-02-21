@@ -16,10 +16,12 @@ from lib.tool_api import (
     build_actor_context,
     tool_add_entry,
     tool_adjust_box_count,
+    tool_batch_move,
     tool_batch_takeout,
     tool_collect_timeline,
     tool_edit_entry,
     tool_export_inventory_csv,
+    tool_record_move,
     tool_record_takeout,
     tool_rollback,
 )
@@ -49,6 +51,22 @@ def make_data(records):
     return {
         "meta": {"box_layout": {"rows": 9, "cols": 9}},
         "inventory": records,
+    }
+
+
+def slot(box, position):
+    return {"box": box, "position": position}
+
+
+def takeout_entry(record_id, box, position):
+    return {"record_id": record_id, "from": slot(box, position)}
+
+
+def move_entry(record_id, from_box, from_position, to_box, to_position):
+    return {
+        "record_id": record_id,
+        "from": slot(from_box, from_position),
+        "to": slot(to_box, to_position),
     }
 
 
@@ -127,7 +145,7 @@ class ToolApiTests(unittest.TestCase):
             result = tool_record_takeout(
                 yaml_path=str(yaml_path),
                 record_id=1,
-                position=1,
+                from_slot=slot(1, 1),
                 date_str="2026-02-10",
                 dry_run=True,
                 source="tests/test_tool_api.py",
@@ -155,7 +173,7 @@ class ToolApiTests(unittest.TestCase):
             blocked = tool_record_takeout(
                 yaml_path=str(yaml_path),
                 record_id=1,
-                position=1,
+                from_slot=slot(1, 1),
                 date_str="2026-02-10",
                 source="agent.react",
             )
@@ -169,7 +187,7 @@ class ToolApiTests(unittest.TestCase):
             allowed = tool_record_takeout(
                 yaml_path=str(yaml_path),
                 record_id=1,
-                position=1,
+                from_slot=slot(1, 1),
                 date_str="2026-02-10",
                 source="agent.react",
                 execution_mode="execute",
@@ -192,9 +210,11 @@ class ToolApiTests(unittest.TestCase):
 
             result = tool_batch_takeout(
                 yaml_path=str(yaml_path),
-                entries=[(1, 1), (2, 2)],
+                entries=[
+                    takeout_entry(1, 1, 1),
+                    takeout_entry(2, 1, 2),
+                ],
                 date_str="2026-02-10",
-                action="鍙栧嚭",
                 source="tests/test_tool_api.py",
             )
 
@@ -219,9 +239,11 @@ class ToolApiTests(unittest.TestCase):
 
             result = tool_batch_takeout(
                 yaml_path=str(yaml_path),
-                entries=[(1, 33), (1, 33)],
+                entries=[
+                    takeout_entry(1, 5, 33),
+                    takeout_entry(1, 5, 33),
+                ],
                 date_str="2026-02-10",
-                action="鍙栧嚭",
                 source="tests/test_tool_api.py",
             )
 
@@ -242,26 +264,24 @@ class ToolApiTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
-            single = tool_record_takeout(
-                yaml_path=str(yaml_path),
-                record_id=1,
-                position=1,
-                date_str="2026-02-10",
-                action="Thaw",
-                source="tests/test_tool_api.py",
-            )
-            self.assertFalse(single["ok"])
-            self.assertEqual("invalid_action", single["error_code"])
+            with self.assertRaises(TypeError):
+                tool_record_takeout(
+                    yaml_path=str(yaml_path),
+                    record_id=1,
+                    from_slot=slot(1, 1),
+                    date_str="2026-02-10",
+                    action="Thaw",
+                    source="tests/test_tool_api.py",
+                )
 
-            batch = tool_batch_takeout(
-                yaml_path=str(yaml_path),
-                entries=[(2, 2)],
-                date_str="2026-02-10",
-                action="Discard",
-                source="tests/test_tool_api.py",
-            )
-            self.assertFalse(batch["ok"])
-            self.assertEqual("invalid_action", batch["error_code"])
+            with self.assertRaises(TypeError):
+                tool_batch_takeout(
+                    yaml_path=str(yaml_path),
+                    entries=[takeout_entry(2, 1, 2)],
+                    date_str="2026-02-10",
+                    action="Discard",
+                    source="tests/test_tool_api.py",
+                )
 
             data = load_yaml(str(yaml_path))
             self.assertEqual([], data["inventory"][0].get("thaw_events") or [])
@@ -275,13 +295,12 @@ class ToolApiTests(unittest.TestCase):
                 path=str(yaml_path),
             )
 
-            result = tool_record_takeout(
+            result = tool_record_move(
                 yaml_path=str(yaml_path),
                 record_id=1,
-                position=1,
-                to_position=3,
+                from_slot=slot(1, 1),
+                to_slot=slot(1, 3),
                 date_str="2026-02-10",
-                action="move",
             )
 
             self.assertTrue(result["ok"])
@@ -313,13 +332,12 @@ class ToolApiTests(unittest.TestCase):
                 path=str(yaml_path),
             )
 
-            result = tool_record_takeout(
+            result = tool_record_move(
                 yaml_path=str(yaml_path),
                 record_id=1,
-                position=1,
-                to_position=2,
+                from_slot=slot(1, 1),
+                to_slot=slot(1, 2),
                 date_str="2026-02-10",
-                action="绉诲姩",
             )
 
             self.assertTrue(result["ok"])
@@ -344,16 +362,13 @@ class ToolApiTests(unittest.TestCase):
                 path=str(yaml_path),
             )
 
-            result = tool_record_takeout(
-                yaml_path=str(yaml_path),
-                record_id=1,
-                position=1,
-                date_str="2026-02-10",
-                action="move",
-            )
-
-            self.assertFalse(result["ok"])
-            self.assertEqual("invalid_move_target", result["error_code"])
+            with self.assertRaises(TypeError):
+                tool_record_move(
+                    yaml_path=str(yaml_path),
+                    record_id=1,
+                    from_slot=slot(1, 1),
+                    date_str="2026-02-10",
+                )
 
     def test_tool_batch_takeout_move_updates_positions_and_swaps(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_move_batch_") as temp_dir:
@@ -369,11 +384,13 @@ class ToolApiTests(unittest.TestCase):
                 path=str(yaml_path),
             )
 
-            result = tool_batch_takeout(
+            result = tool_batch_move(
                 yaml_path=str(yaml_path),
-                entries="1:1->2,3:3->4",
+                entries=[
+                    move_entry(1, 1, 1, 1, 2),
+                    move_entry(3, 1, 3, 1, 4),
+                ],
                 date_str="2026-02-10",
-                action="绉诲姩",
             )
 
             self.assertTrue(result["ok"])
@@ -398,11 +415,10 @@ class ToolApiTests(unittest.TestCase):
                 path=str(yaml_path),
             )
 
-            result = tool_batch_takeout(
+            result = tool_batch_move(
                 yaml_path=str(yaml_path),
-                entries=[(1, 1)],
+                entries=[{"record_id": 1, "from": slot(1, 1)}],
                 date_str="2026-02-10",
-                action="move",
             )
 
             self.assertFalse(result["ok"])
@@ -423,11 +439,14 @@ class ToolApiTests(unittest.TestCase):
                 path=str(yaml_path),
             )
 
-            result = tool_batch_takeout(
+            result = tool_batch_move(
                 yaml_path=str(yaml_path),
-                entries="8:3->4,7:2->3,6:1->3",
+                entries=[
+                    move_entry(8, 3, 3, 3, 4),
+                    move_entry(7, 3, 2, 3, 3),
+                    move_entry(6, 3, 1, 3, 3),
+                ],
                 date_str="2026-02-14",
-                action="绉诲姩",
             )
 
             self.assertFalse(result["ok"])
@@ -506,7 +525,7 @@ class ToolApiTests(unittest.TestCase):
             result = tool_record_takeout(
                 yaml_path=str(yaml_path),
                 record_id=1,
-                position=1,
+                from_slot=slot(1, 1),
                 date_str="2026-02-10",
             )
 
@@ -542,10 +561,11 @@ class ToolApiTests(unittest.TestCase):
             self.assertFalse(bad_box["ok"])
             self.assertEqual("invalid_box", bad_box["error_code"])
 
-            bad_pos = tool_record_takeout(
+            bad_pos = tool_record_move(
                 yaml_path=str(yaml_path),
                 record_id=1,
-                position=999,
+                from_slot=slot(1, 1),
+                to_slot=slot(1, 999),
                 date_str="2026-02-10",
             )
             self.assertFalse(bad_pos["ok"])
@@ -1111,9 +1131,13 @@ class TestCustomLayout10x10(unittest.TestCase):
         """Record at position 95 can be moved to position 100."""
         rec = make_record(1, box=1, position=95)
         p, _ = self._seed([rec])
-        result = tool_record_takeout(
-            p, record_id=1, position=95, action="绉诲姩",
-            to_position=100, date_str="2025-06-01", auto_backup=False,
+        result = tool_record_move(
+            p,
+            record_id=1,
+            from_slot=slot(1, 95),
+            to_slot=slot(1, 100),
+            date_str="2025-06-01",
+            auto_backup=False,
         )
         self.assertTrue(result["ok"], result.get("message"))
         data = load_yaml(p)
@@ -1162,8 +1186,10 @@ class TestCustomLayout8x12(unittest.TestCase):
         ]
         p, _ = self._seed(recs)
         result = tool_batch_takeout(
-            p, entries=[{"record_id": 1, "position": 85}, {"record_id": 2, "position": 90}],
-            action="鍙栧嚭", date_str="2025-06-01", auto_backup=False,
+            p,
+            entries=[takeout_entry(1, 1, 85), takeout_entry(2, 1, 90)],
+            date_str="2025-06-01",
+            auto_backup=False,
         )
         self.assertTrue(result["ok"], result.get("message"))
         self.assertEqual(2, result["result"]["count"])
@@ -1274,13 +1300,11 @@ class TestAdjustBoxCount(unittest.TestCase):
             records,
             {"rows": 9, "cols": 9, "box_count": 4, "box_numbers": [1, 2, 4, 5]},
         )
-        result = tool_record_takeout(
+        result = tool_record_move(
             p,
             record_id=1,
-            position=1,
-            action="绉诲姩",
-            to_position=2,
-            to_box=3,
+            from_slot=slot(1, 1),
+            to_slot=slot(3, 2),
             date_str="2025-06-01",
             auto_backup=False,
         )

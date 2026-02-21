@@ -1,12 +1,11 @@
 """Input/schema validation helpers for AgentToolRunner."""
 
 from copy import deepcopy
+from lib.tool_contracts import TOOL_CONTRACTS
 
 
 def _tool_contracts():
-    from . import tool_runner as _runner
-
-    return _runner._TOOL_CONTRACTS
+    return TOOL_CONTRACTS
 
 
 def _normalize_search_mode(value):
@@ -353,14 +352,6 @@ def _validate_tool_input(self, tool_name, payload):
                     "input.manageStagedNeedActionRecordPosition",
                     "action, record_id, and position are required when removing by key",
                 )
-
-    if tool_name == "record_takeout":
-        action = str(payload.get("action") or "takeout").lower()
-        if action == "move" and "to_position" not in payload:
-            return self._msg(
-                "input.toPositionRequiredWhenMove",
-                "to_position is required when action=move",
-            )
 
     if tool_name == "rollback":
         backup_path = str(payload.get("backup_path") or "").strip()

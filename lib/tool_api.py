@@ -22,6 +22,7 @@ from .validators import (
 )
 from .yaml_ops import (
     append_audit_event,
+    load_yaml,
 )
 
 
@@ -214,6 +215,86 @@ def _coerce_batch_entry(entry, layout=None):
         )
 
     raise ValueError("Each item must be tuple/list/dict")
+
+
+def _parse_slot_payload(slot_payload, *, layout, field_name):
+    """Normalize one V2 slot payload into internal ``(box, position)``."""
+    if not isinstance(slot_payload, dict):
+        raise ValueError(f"{field_name} must be an object with box/position")
+    if "box" not in slot_payload:
+        raise ValueError(f"{field_name}.box is required")
+    if "position" not in slot_payload:
+        raise ValueError(f"{field_name}.position is required")
+    try:
+        box = int(display_to_box(slot_payload.get("box"), layout))
+    except Exception as exc:
+        raise ValueError(f"{field_name}.box is invalid: {slot_payload.get('box')}") from exc
+    pos = _coerce_position_value(
+        slot_payload.get("position"),
+        layout=layout,
+        field_name=f"{field_name}.position",
+    )
+    return box, pos
+
+
+def _find_record_by_id_local(records, record_id):
+    """Return record dict by ``id`` from loaded inventory list."""
+    target = int(record_id)
+    for rec in records or []:
+        try:
+            rid = int(rec.get("id"))
+        except Exception:
+            continue
+        if rid == target:
+            return rec
+    return None
+
+
+def _validate_source_slot_match(record, *, record_id, from_box, from_pos):
+    """Return issue payload if source slot does not match active record slot."""
+    if record is None:
+        return {
+            "error_code": "record_not_found",
+            "message": f"Record ID {record_id} not found",
+            "details": {"record_id": record_id},
+        }
+
+    current_box = record.get("box")
+    current_pos = record.get("position")
+    if current_pos is None:
+        return {
+            "error_code": "position_not_found",
+            "message": f"Record ID {record_id} has no active position",
+            "details": {"record_id": record_id},
+        }
+
+    try:
+        current_box_int = int(current_box)
+        current_pos_int = int(current_pos)
+    except Exception:
+        return {
+            "error_code": "validation_failed",
+            "message": f"Record ID {record_id} has invalid box/position fields",
+            "details": {"record_id": record_id},
+        }
+
+    if current_box_int != int(from_box) or current_pos_int != int(from_pos):
+        return {
+            "error_code": "from_mismatch",
+            "message": (
+                f"Record ID {record_id} source mismatch: requested "
+                f"Box {from_box}:{from_pos}, current Box {current_box_int}:{current_pos_int}"
+            ),
+            "details": {
+                "record_id": record_id,
+                "from_box": from_box,
+                "from_position": from_pos,
+                "current_box": current_box_int,
+                "current_position": current_pos_int,
+            },
+        }
+
+    return None
 
 
 def _build_move_event(
@@ -693,24 +774,213 @@ def tool_edit_entry(
 def tool_record_takeout(
     yaml_path,
     record_id,
-    position=None,
+    from_slot,
     date_str=None,
-    action="takeout",
-    to_position=None,
-    to_box=None,
     dry_run=False,
     execution_mode=None,
     actor_context=None,
     source="tool_api",
     auto_backup=True,
 ):
+    """V2 takeout API requiring explicit source slot."""
+    audit_action = "record_takeout"
+    tool_name = "tool_record_takeout_v2"
+    tool_input = {
+        "record_id": record_id,
+        "from": from_slot,
+        "date": date_str,
+        "dry_run": bool(dry_run),
+    }
+    try:
+        data = load_yaml(yaml_path)
+    except Exception as exc:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="load_failed",
+            message=f"Failed to load YAML file: {exc}",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            details={"load_error": str(exc)},
+        )
+
+    layout = _get_layout(data)
+    records = data.get("inventory", [])
+    try:
+        from_box, from_pos = _parse_slot_payload(from_slot, layout=layout, field_name="from")
+    except ValueError as exc:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="validation_failed",
+            message=str(exc),
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+        )
+
+    if not validate_box(from_box, layout):
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="invalid_box",
+            message=f"Source box {from_box} is out of range ({_format_box_constraint(layout)})",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+        )
+
+    record = _find_record_by_id_local(records, record_id)
+    issue = _validate_source_slot_match(
+        record,
+        record_id=record_id,
+        from_box=from_box,
+        from_pos=from_pos,
+    )
+    if issue:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code=issue.get("error_code", "validation_failed"),
+            message=issue.get("message", "Source slot validation failed"),
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+            details=issue.get("details"),
+        )
+
     return _tool_record_takeout_impl(
         yaml_path=yaml_path,
         record_id=record_id,
-        position=position,
+        position=from_pos,
         date_str=date_str,
-        action=action,
-        to_position=to_position,
+        action="takeout",
+        to_position=None,
+        to_box=None,
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+        source=source,
+        auto_backup=auto_backup,
+    )
+
+
+def tool_record_move(
+    yaml_path,
+    record_id,
+    from_slot,
+    to_slot,
+    date_str=None,
+    dry_run=False,
+    execution_mode=None,
+    actor_context=None,
+    source="tool_api",
+    auto_backup=True,
+):
+    """V2 move API requiring explicit source and target slots."""
+    audit_action = "record_takeout"
+    tool_name = "tool_record_move"
+    tool_input = {
+        "record_id": record_id,
+        "from": from_slot,
+        "to": to_slot,
+        "date": date_str,
+        "dry_run": bool(dry_run),
+    }
+    try:
+        data = load_yaml(yaml_path)
+    except Exception as exc:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="load_failed",
+            message=f"Failed to load YAML file: {exc}",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            details={"load_error": str(exc)},
+        )
+
+    layout = _get_layout(data)
+    records = data.get("inventory", [])
+    try:
+        from_box, from_pos = _parse_slot_payload(from_slot, layout=layout, field_name="from")
+        to_box, to_pos = _parse_slot_payload(to_slot, layout=layout, field_name="to")
+    except ValueError as exc:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="validation_failed",
+            message=str(exc),
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+        )
+
+    if not validate_box(from_box, layout):
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="invalid_box",
+            message=f"Source box {from_box} is out of range ({_format_box_constraint(layout)})",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+        )
+    if not validate_box(to_box, layout):
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="invalid_box",
+            message=f"Target box {to_box} is out of range ({_format_box_constraint(layout)})",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+        )
+
+    record = _find_record_by_id_local(records, record_id)
+    issue = _validate_source_slot_match(
+        record,
+        record_id=record_id,
+        from_box=from_box,
+        from_pos=from_pos,
+    )
+    if issue:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code=issue.get("error_code", "validation_failed"),
+            message=issue.get("message", "Source slot validation failed"),
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+            details=issue.get("details"),
+        )
+
+    return _tool_record_takeout_impl(
+        yaml_path=yaml_path,
+        record_id=record_id,
+        position=from_pos,
+        date_str=date_str,
+        action="move",
+        to_position=to_pos,
         to_box=to_box,
         dry_run=dry_run,
         execution_mode=execution_mode,
@@ -755,18 +1025,278 @@ def tool_batch_takeout(
     yaml_path,
     entries,
     date_str,
-    action="takeout",
     dry_run=False,
     execution_mode=None,
     actor_context=None,
     source="tool_api",
     auto_backup=True,
 ):
+    """V2 batch takeout API using explicit source slots."""
+    audit_action = "batch_takeout"
+    tool_name = "tool_batch_takeout_v2"
+    tool_input = {
+        "entries": entries,
+        "date": date_str,
+        "dry_run": bool(dry_run),
+    }
+    try:
+        data = load_yaml(yaml_path)
+    except Exception as exc:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="load_failed",
+            message=f"Failed to load YAML file: {exc}",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            details={"load_error": str(exc)},
+        )
+
+    layout = _get_layout(data)
+    records = data.get("inventory", [])
+    record_map = {}
+    for rec in records:
+        try:
+            record_map[int(rec.get("id"))] = rec
+        except Exception:
+            continue
+
+    normalized_entries = []
+    for idx, entry in enumerate(entries or []):
+        if not isinstance(entry, dict):
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="validation_failed",
+                message=f"entries[{idx}] must be an object",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"entry_index": idx, "field_path": f"entries[{idx}]"},
+            )
+        record_id = entry.get("record_id")
+        if record_id in (None, ""):
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="validation_failed",
+                message=f"entries[{idx}].record_id is required",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"entry_index": idx, "field_path": f"entries[{idx}].record_id"},
+            )
+        rid = int(record_id)
+        try:
+            from_box, from_pos = _parse_slot_payload(entry.get("from"), layout=layout, field_name=f"entries[{idx}].from")
+        except ValueError as exc:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="validation_failed",
+                message=str(exc),
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"entry_index": idx, "field_path": f"entries[{idx}].from"},
+            )
+        if not validate_box(from_box, layout):
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="invalid_box",
+                message=f"entries[{idx}].from.box {from_box} is out of range ({_format_box_constraint(layout)})",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"entry_index": idx, "field_path": f"entries[{idx}].from.box"},
+            )
+
+        issue = _validate_source_slot_match(
+            record_map.get(rid),
+            record_id=rid,
+            from_box=from_box,
+            from_pos=from_pos,
+        )
+        if issue:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code=issue.get("error_code", "validation_failed"),
+                message=issue.get("message", "Source slot validation failed"),
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"entry_index": idx, **(issue.get("details") or {})},
+            )
+        normalized_entries.append((rid, from_pos))
+
     return _tool_batch_takeout_impl(
         yaml_path=yaml_path,
-        entries=entries,
+        entries=normalized_entries,
         date_str=date_str,
-        action=action,
+        action="takeout",
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+        source=source,
+        auto_backup=auto_backup,
+    )
+
+
+def tool_batch_move(
+    yaml_path,
+    entries,
+    date_str,
+    dry_run=False,
+    execution_mode=None,
+    actor_context=None,
+    source="tool_api",
+    auto_backup=True,
+):
+    """V2 batch move API using explicit source and target slots."""
+    audit_action = "batch_takeout"
+    tool_name = "tool_batch_move"
+    tool_input = {
+        "entries": entries,
+        "date": date_str,
+        "dry_run": bool(dry_run),
+    }
+    try:
+        data = load_yaml(yaml_path)
+    except Exception as exc:
+        return _failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code="load_failed",
+            message=f"Failed to load YAML file: {exc}",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            details={"load_error": str(exc)},
+        )
+
+    layout = _get_layout(data)
+    records = data.get("inventory", [])
+    record_map = {}
+    for rec in records:
+        try:
+            record_map[int(rec.get("id"))] = rec
+        except Exception:
+            continue
+
+    normalized_entries = []
+    for idx, entry in enumerate(entries or []):
+        if not isinstance(entry, dict):
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="validation_failed",
+                message=f"entries[{idx}] must be an object",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"entry_index": idx, "field_path": f"entries[{idx}]"},
+            )
+        record_id = entry.get("record_id")
+        if record_id in (None, ""):
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="validation_failed",
+                message=f"entries[{idx}].record_id is required",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"entry_index": idx, "field_path": f"entries[{idx}].record_id"},
+            )
+        rid = int(record_id)
+        try:
+            from_box, from_pos = _parse_slot_payload(entry.get("from"), layout=layout, field_name=f"entries[{idx}].from")
+            to_box, to_pos = _parse_slot_payload(entry.get("to"), layout=layout, field_name=f"entries[{idx}].to")
+        except ValueError as exc:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="validation_failed",
+                message=str(exc),
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"entry_index": idx},
+            )
+        if not validate_box(from_box, layout):
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="invalid_box",
+                message=f"entries[{idx}].from.box {from_box} is out of range ({_format_box_constraint(layout)})",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"entry_index": idx, "field_path": f"entries[{idx}].from.box"},
+            )
+        if not validate_box(to_box, layout):
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code="invalid_box",
+                message=f"entries[{idx}].to.box {to_box} is out of range ({_format_box_constraint(layout)})",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"entry_index": idx, "field_path": f"entries[{idx}].to.box"},
+            )
+
+        issue = _validate_source_slot_match(
+            record_map.get(rid),
+            record_id=rid,
+            from_box=from_box,
+            from_pos=from_pos,
+        )
+        if issue:
+            return _failure_result(
+                yaml_path=yaml_path,
+                action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                error_code=issue.get("error_code", "validation_failed"),
+                message=issue.get("message", "Source slot validation failed"),
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"entry_index": idx, **(issue.get("details") or {})},
+            )
+        normalized_entries.append((rid, from_pos, to_pos, to_box))
+
+    return _tool_batch_takeout_impl(
+        yaml_path=yaml_path,
+        entries=normalized_entries,
+        date_str=date_str,
+        action="move",
         dry_run=dry_run,
         execution_mode=execution_mode,
         actor_context=actor_context,

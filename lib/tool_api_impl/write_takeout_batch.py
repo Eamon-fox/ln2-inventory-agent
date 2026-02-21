@@ -8,6 +8,39 @@ from . import write_takeout_batch_nonmove as _nonmove_ops
 from .write_common import api
 
 
+def _validation_failed_result(
+    *,
+    yaml_path,
+    audit_action,
+    source,
+    tool_name,
+    actor_context,
+    tool_input,
+    errors,
+    before_data=None,
+    operations=None,
+):
+    extra = None
+    details = None
+    if operations is not None:
+        extra = {"operations": operations}
+        details = {"error_count": len(errors)}
+    return api._failure_result(
+        yaml_path=yaml_path,
+        action=audit_action,
+        source=source,
+        tool_name=tool_name,
+        error_code="validation_failed",
+        message="Batch operation parameter validation failed",
+        actor_context=actor_context,
+        tool_input=tool_input,
+        before_data=before_data,
+        errors=errors,
+        extra=extra,
+        details=details,
+    )
+
+
 def _normalize_batch_takeout_entries(
     *,
     entries,
@@ -23,13 +56,11 @@ def _normalize_batch_takeout_entries(
         try:
             entries = api.parse_batch_entries(entries, layout=layout)
         except ValueError as exc:
-            return None, api._failure_result(
+            return None, _validation_failed_result(
                 yaml_path=yaml_path,
-                action=audit_action,
+                audit_action=audit_action,
                 source=source,
                 tool_name=tool_name,
-                error_code="validation_failed",
-                message="Batch operation parameter validation failed",
                 actor_context=actor_context,
                 tool_input=tool_input,
                 errors=[str(exc)],
@@ -44,19 +75,153 @@ def _normalize_batch_takeout_entries(
             normalize_errors.append(f"Row {idx}: {exc}")
 
     if normalize_errors:
-        return None, api._failure_result(
+        return None, _validation_failed_result(
             yaml_path=yaml_path,
-            action=audit_action,
+            audit_action=audit_action,
             source=source,
             tool_name=tool_name,
-            error_code="validation_failed",
-            message="Batch operation parameter validation failed",
             actor_context=actor_context,
             tool_input=tool_input,
             errors=normalize_errors,
         )
 
     return normalized_entries, None
+
+
+def _batch_validation_failed_result(
+    *,
+    yaml_path,
+    audit_action,
+    source,
+    tool_name,
+    actor_context,
+    tool_input,
+    before_data,
+    operations,
+    errors,
+):
+    return _validation_failed_result(
+        yaml_path=yaml_path,
+        audit_action=audit_action,
+        source=source,
+        tool_name=tool_name,
+        actor_context=actor_context,
+        tool_input=tool_input,
+        before_data=before_data,
+        errors=errors,
+        operations=operations,
+    )
+
+
+def _build_batch_operation_preview_item(op, *, include_move_fields):
+    item = {
+        "record_id": op["record_id"],
+        "cell_line": op["record"].get("cell_line"),
+        "short_name": op["record"].get("short_name"),
+        "box": op["record"].get("box"),
+        "position": op["position"],
+        "old_position": op["old_position"],
+        "new_position": op["new_position"],
+    }
+    if include_move_fields:
+        item["to_position"] = op.get("to_position")
+        if op.get("swap_with_record_id") is not None:
+            item["swap_with_record_id"] = op.get("swap_with_record_id")
+    return item
+
+
+def _build_batch_preview(*, date_str, action_en, action, operations, include_move_fields):
+    return {
+        "date": date_str,
+        "action_en": action_en,
+        "action_cn": ACTION_LABEL.get(action_en, action),
+        "count": len(operations),
+        "operations": [
+            _build_batch_operation_preview_item(op, include_move_fields=include_move_fields)
+            for op in operations
+        ],
+    }
+
+
+def _build_batch_success_response(
+    *,
+    preview,
+    operations,
+    backup_path,
+    affected_record_ids=None,
+):
+    result_payload = {
+        "count": len(operations),
+        "record_ids": [op["record_id"] for op in operations],
+    }
+    if affected_record_ids is not None:
+        result_payload["affected_record_ids"] = affected_record_ids
+    return {
+        "ok": True,
+        "dry_run": False,
+        "preview": preview,
+        "result": result_payload,
+        "backup_path": backup_path,
+    }
+
+
+def _process_batch_plan(
+    *,
+    plan,
+    include_move_fields,
+    date_str,
+    action_en,
+    action,
+    dry_run,
+    yaml_path,
+    audit_action,
+    source,
+    tool_name,
+    actor_context,
+    tool_input,
+    before_data,
+    persist_fn,
+    persist_kwargs,
+):
+    operations = plan["operations"]
+    errors = plan["errors"]
+    if errors:
+        return _batch_validation_failed_result(
+            yaml_path=yaml_path,
+            audit_action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=before_data,
+            operations=operations,
+            errors=errors,
+        )
+
+    preview = _build_batch_preview(
+        date_str=date_str,
+        action_en=action_en,
+        action=action,
+        operations=operations,
+        include_move_fields=include_move_fields,
+    )
+    if dry_run:
+        return {
+            "ok": True,
+            "dry_run": True,
+            "preview": preview,
+        }
+
+    backup_path, affected_record_ids, failure = persist_fn(**persist_kwargs)
+    if failure:
+        return failure
+
+    return _build_batch_success_response(
+        preview=preview,
+        operations=operations,
+        backup_path=backup_path,
+        affected_record_ids=affected_record_ids,
+    )
 
 
 def _tool_batch_takeout_impl(
@@ -138,83 +303,38 @@ def _tool_batch_takeout_impl(
             pos_lo=_pos_lo,
             pos_hi=_pos_hi,
         )
-        operations = plan["operations"]
-        errors = plan["errors"]
-
-        if errors:
-            return api._failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="validation_failed",
-                message="Batch operation parameter validation failed",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                errors=errors,
-                extra={"operations": operations},
-                details={"error_count": len(errors)},
-            )
-
-        preview = {
-            "date": date_str,
-            "action_en": action_en,
-            "action_cn": ACTION_LABEL.get(action_en, action),
-            "count": len(operations),
-            "operations": [
-                {
-                    "record_id": op["record_id"],
-                    "cell_line": op["record"].get("cell_line"),
-                    "short_name": op["record"].get("short_name"),
-                    "box": op["record"].get("box"),
-                    "position": op["position"],
-                    "to_position": op.get("to_position"),
-                    "old_position": op["old_position"],
-                    "new_position": op["new_position"],
-                    "swap_with_record_id": op.get("swap_with_record_id"),
-                }
-                for op in operations
-            ],
-        }
-
-        if dry_run:
-            return {
-                "ok": True,
-                "dry_run": True,
-                "preview": preview,
-            }
-
-        _backup_path, affected_ids, failure = _move_ops._persist_batch_move_plan(
-            data=data,
-            records=records,
-            normalized_entries=normalized_entries,
+        return _process_batch_plan(
             plan=plan,
+            include_move_fields=True,
+            date_str=date_str,
+            action_en=action_en,
+            action=action,
             yaml_path=yaml_path,
             audit_action=audit_action,
             source=source,
             tool_name=tool_name,
             actor_context=actor_context,
             tool_input=tool_input,
-            action=action,
-            action_en=action_en,
-            date_str=date_str,
-            auto_backup=auto_backup,
-        )
-        if failure:
-            return failure
-
-        return {
-            "ok": True,
-            "dry_run": False,
-            "preview": preview,
-            "result": {
-                "count": len(operations),
-                "record_ids": [op["record_id"] for op in operations],
-                "affected_record_ids": affected_ids,
+            before_data=data,
+            dry_run=dry_run,
+            persist_fn=_persist_batch_move,
+            persist_kwargs={
+                "data": data,
+                "records": records,
+                "normalized_entries": normalized_entries,
+                "plan": plan,
+                "yaml_path": yaml_path,
+                "audit_action": audit_action,
+                "source": source,
+                "tool_name": tool_name,
+                "actor_context": actor_context,
+                "tool_input": tool_input,
+                "action": action,
+                "action_en": action_en,
+                "date_str": date_str,
+                "auto_backup": auto_backup,
             },
-            "backup_path": _backup_path,
-        }
+        )
 
     nonmove = _nonmove_ops._build_batch_nonmove_plan(
         records=records,
@@ -222,76 +342,43 @@ def _tool_batch_takeout_impl(
         pos_lo=_pos_lo,
         pos_hi=_pos_hi,
     )
-    operations = nonmove["operations"]
-    errors = nonmove["errors"]
-
-    if errors:
-        return api._failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="validation_failed",
-            message="Batch operation parameter validation failed",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            before_data=data,
-            errors=errors,
-            extra={"operations": operations},
-            details={"error_count": len(errors)},
-        )
-
-    preview = {
-        "date": date_str,
-        "action_en": action_en,
-        "action_cn": ACTION_LABEL.get(action_en, action),
-        "count": len(operations),
-        "operations": [
-            {
-                "record_id": op["record_id"],
-                "cell_line": op["record"].get("cell_line"),
-                "short_name": op["record"].get("short_name"),
-                "box": op["record"].get("box"),
-                "position": op["position"],
-                "old_position": op["old_position"],
-                "new_position": op["new_position"],
-            }
-            for op in operations
-        ],
-    }
-
-    if dry_run:
-        return {
-            "ok": True,
-            "dry_run": True,
-            "preview": preview,
-        }
-
-    _backup_path, failure = _nonmove_ops._persist_batch_nonmove_plan(
-        data=data,
-        normalized_entries=normalized_entries,
-        operations=operations,
+    return _process_batch_plan(
+        plan=nonmove,
+        include_move_fields=False,
+        date_str=date_str,
+        action_en=action_en,
+        action=action,
         yaml_path=yaml_path,
         audit_action=audit_action,
         source=source,
         tool_name=tool_name,
         actor_context=actor_context,
         tool_input=tool_input,
-        action=action,
-        action_en=action_en,
-        date_str=date_str,
-        auto_backup=auto_backup,
-    )
-    if failure:
-        return failure
-
-    return {
-        "ok": True,
-        "dry_run": False,
-        "preview": preview,
-        "result": {
-            "count": len(operations),
-            "record_ids": [op["record_id"] for op in operations],
+        before_data=data,
+        dry_run=dry_run,
+        persist_fn=_persist_batch_nonmove,
+        persist_kwargs={
+            "data": data,
+            "normalized_entries": normalized_entries,
+            "operations": nonmove["operations"],
+            "yaml_path": yaml_path,
+            "audit_action": audit_action,
+            "source": source,
+            "tool_name": tool_name,
+            "actor_context": actor_context,
+            "tool_input": tool_input,
+            "action": action,
+            "action_en": action_en,
+            "date_str": date_str,
+            "auto_backup": auto_backup,
         },
-        "backup_path": _backup_path,
-    }
+    )
+
+
+def _persist_batch_move(**kwargs):
+    return _move_ops._persist_batch_move_plan(**kwargs)
+
+
+def _persist_batch_nonmove(**kwargs):
+    backup_path, failure = _nonmove_ops._persist_batch_nonmove_plan(**kwargs)
+    return backup_path, None, failure

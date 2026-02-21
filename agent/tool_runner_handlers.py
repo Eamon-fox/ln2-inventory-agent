@@ -1,9 +1,9 @@
 """Dispatch handlers for AgentToolRunner."""
 
 from lib.tool_api import (
-    parse_batch_entries,
     tool_add_entry,
     tool_adjust_box_count,
+    tool_batch_move,
     tool_batch_takeout,
     tool_collect_timeline,
     tool_edit_entry,
@@ -13,6 +13,7 @@ from lib.tool_api import (
     tool_query_takeout_events,
     tool_recent_frozen,
     tool_recommend_positions,
+    tool_record_move,
     tool_record_takeout,
     tool_rollback,
     tool_search_records,
@@ -253,80 +254,158 @@ def _run_add_entry(self, payload, trace_id=None):
 
     return self._safe_call(tool_name, _call_add_entry, include_expected=True)
 
+
+def _parse_slot_payload(self, slot_payload, *, layout, field_name):
+    if not isinstance(slot_payload, dict):
+        raise ValueError(
+            self._msg(
+                "validation.mustBeObject",
+                "{label} must be an object",
+                label=field_name,
+            )
+        )
+    box = self._required_int(slot_payload, "box")
+    position = self._parse_position(
+        slot_payload.get("position"),
+        layout=layout,
+        field_name=f"{field_name}.position",
+    )
+    return {"box": box, "position": position}
+
+
+def _parse_batch_slot_entries(self, raw_entries, *, layout, include_target):
+    entries = []
+    for idx, entry in enumerate(raw_entries):
+        if not isinstance(entry, dict):
+            raise ValueError(
+                self._msg(
+                    "validation.mustBeObject",
+                    "{label} must be an object",
+                    label=f"entries[{idx}]",
+                )
+            )
+        parsed_entry = {
+            "record_id": self._required_int(entry, "record_id"),
+            "from": _parse_slot_payload(
+                self,
+                entry.get("from"),
+                layout=layout,
+                field_name=f"entries[{idx}].from",
+            ),
+        }
+        if include_target:
+            parsed_entry["to"] = _parse_slot_payload(
+                self,
+                entry.get("to"),
+                layout=layout,
+                field_name=f"entries[{idx}].to",
+            )
+        entries.append(parsed_entry)
+    return entries
+
+
+def _call_record_slot_tool(self, payload, trace_id, *, tool_fn, include_target):
+    layout = self._load_layout()
+    call_kwargs = {
+        "yaml_path": self._yaml_path,
+        "record_id": self._required_int(payload, "record_id"),
+        "from_slot": _parse_slot_payload(
+            self,
+            payload.get("from"),
+            layout=layout,
+            field_name="from",
+        ),
+        "date_str": payload.get("date"),
+        "dry_run": self._as_bool(payload.get("dry_run", False), default=False),
+        "actor_context": self._actor_context(trace_id=trace_id),
+        "source": "agent.react",
+    }
+    if include_target:
+        call_kwargs["to_slot"] = _parse_slot_payload(
+            self,
+            payload.get("to"),
+            layout=layout,
+            field_name="to",
+        )
+    return tool_fn(**call_kwargs)
+
+
+def _call_batch_slot_tool(self, payload, trace_id, *, tool_fn, include_target):
+    layout = self._load_layout()
+    entries = _parse_batch_slot_entries(
+        self,
+        payload.get("entries") or [],
+        layout=layout,
+        include_target=include_target,
+    )
+    return tool_fn(
+        yaml_path=self._yaml_path,
+        entries=entries,
+        date_str=payload.get("date"),
+        dry_run=self._as_bool(payload.get("dry_run", False), default=False),
+        actor_context=self._actor_context(trace_id=trace_id),
+        source="agent.react",
+    )
+
+
 def _run_record_takeout(self, payload, trace_id=None):
     tool_name = "record_takeout"
 
     def _call_record_takeout():
-        layout = self._load_layout()
-        position = None
-        if payload.get("position") not in (None, ""):
-            position = self._parse_position(payload.get("position"), layout=layout, field_name="position")
-
-        to_position = None
-        if payload.get("to_position") not in (None, ""):
-            to_position = self._parse_position(
-                payload.get("to_position"),
-                layout=layout,
-                field_name="to_position",
-            )
-
-        return tool_record_takeout(
-            yaml_path=self._yaml_path,
-            record_id=self._required_int(payload, "record_id"),
-            position=position,
-            date_str=payload.get("date"),
-            action=payload.get("action", "takeout"),
-            to_position=to_position,
-            to_box=(
-                self._optional_int(payload, "to_box")
-                if payload.get("to_box") not in (None, "")
-                else None
-            ),
-            dry_run=self._as_bool(payload.get("dry_run", False), default=False),
-            actor_context=self._actor_context(trace_id=trace_id),
-            source="agent.react",
+        return _call_record_slot_tool(
+            self,
+            payload,
+            trace_id,
+            tool_fn=tool_record_takeout,
+            include_target=False,
         )
 
     return self._safe_call(tool_name, _call_record_takeout, include_expected=True)
+
+
+def _run_record_move(self, payload, trace_id=None):
+    tool_name = "record_move"
+
+    def _call_record_move():
+        return _call_record_slot_tool(
+            self,
+            payload,
+            trace_id,
+            tool_fn=tool_record_move,
+            include_target=True,
+        )
+
+    return self._safe_call(tool_name, _call_record_move, include_expected=True)
+
 
 def _run_batch_takeout(self, payload, trace_id=None):
     tool_name = "batch_takeout"
 
     def _call_batch_takeout():
-        layout = self._load_layout()
-        entries = payload.get("entries")
-        if isinstance(entries, str):
-            entries = parse_batch_entries(entries, layout=layout)
-        to_box_raw = payload.get("to_box")
-        to_box = (
-            self._optional_int({"to_box": to_box_raw}, "to_box")
-            if to_box_raw not in (None, "")
-            else None
-        )
-        if to_box is not None and isinstance(entries, list):
-            expanded = []
-            for entry in entries:
-                if isinstance(entry, (list, tuple)):
-                    if len(entry) == 3:
-                        expanded.append((*entry, to_box))
-                    elif len(entry) == 2:
-                        expanded.append((*entry,))
-                    else:
-                        expanded.append(entry)
-                else:
-                    expanded.append(entry)
-            entries = expanded
-        return tool_batch_takeout(
-            yaml_path=self._yaml_path,
-            entries=entries,
-            date_str=payload.get("date"),
-            action=payload.get("action", "takeout"),
-            dry_run=self._as_bool(payload.get("dry_run", False), default=False),
-            actor_context=self._actor_context(trace_id=trace_id),
-            source="agent.react",
+        return _call_batch_slot_tool(
+            self,
+            payload,
+            trace_id,
+            tool_fn=tool_batch_takeout,
+            include_target=False,
         )
 
     return self._safe_call(tool_name, _call_batch_takeout, include_expected=True)
+
+
+def _run_batch_move(self, payload, trace_id=None):
+    tool_name = "batch_move"
+
+    def _call_batch_move():
+        return _call_batch_slot_tool(
+            self,
+            payload,
+            trace_id,
+            tool_fn=tool_batch_move,
+            include_target=True,
+        )
+
+    return self._safe_call(tool_name, _call_batch_move, include_expected=True)
 
 def _run_rollback(self, payload, trace_id=None):
     tool_name = "rollback"

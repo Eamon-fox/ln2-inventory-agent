@@ -4,7 +4,41 @@ from copy import deepcopy
 
 from ..operations import find_record_by_id
 from ..yaml_ops import write_yaml
-from .write_common import api
+from .write_common import (
+    api,
+    append_record_events_or_failure,
+    build_batch_write_details,
+    build_integrity_failure,
+    build_write_failed_result,
+    get_candidate_inventory_or_failure,
+)
+
+
+def _resolve_nonmove_position_or_error(
+    *,
+    entry,
+    record_id,
+    current_position,
+    pos_lo,
+    pos_hi,
+):
+    if len(entry) == 2:
+        position = entry[1]
+        if position < pos_lo or position > pos_hi:
+            return None, f"ID {record_id}: position {position} must be within {pos_lo}-{pos_hi}"
+        if current_position is not None and position != current_position:
+            return None, (
+                f"ID {record_id}: position {position} does not match current position {current_position}"
+            )
+        return position, None
+
+    if current_position is None:
+        return None, f"ID {record_id}: record has no active position; please use id:position"
+
+    position = current_position
+    if position < pos_lo or position > pos_hi:
+        return None, f"ID {record_id}: position {position} must be within {pos_lo}-{pos_hi}"
+    return position, None
 
 
 def _build_batch_nonmove_plan(
@@ -31,27 +65,16 @@ def _build_batch_nonmove_plan(
             continue
 
         current_position = record.get("position")
-
-        if len(entry) == 2:
-            position = entry[1]
-            if position < pos_lo or position > pos_hi:
-                errors.append(f"ID {record_id}: position {position} must be within {pos_lo}-{pos_hi}")
-                continue
-            if current_position is not None and position != current_position:
-                errors.append(
-                    f"ID {record_id}: position {position} does not match current position {current_position}"
-                )
-                continue
-        else:
-            if current_position is None:
-                errors.append(
-                    f"ID {record_id}: record has no active position; please use id:position"
-                )
-                continue
-            position = current_position
-            if position < pos_lo or position > pos_hi:
-                errors.append(f"ID {record_id}: position {position} must be within {pos_lo}-{pos_hi}")
-                continue
+        position, error = _resolve_nonmove_position_or_error(
+            entry=entry,
+            record_id=record_id,
+            current_position=current_position,
+            pos_lo=pos_lo,
+            pos_hi=pos_hi,
+        )
+        if error:
+            errors.append(error)
+            continue
 
         entry_key = (record_id, position)
         if entry_key in seen_nonmove_entries:
@@ -92,27 +115,21 @@ def _persist_batch_nonmove_plan(
     date_str,
     auto_backup,
 ):
+    details = build_batch_write_details(operations=operations, action_en=action_en, date_str=date_str)
     try:
         candidate_data = deepcopy(data)
-        candidate_records = candidate_data.get("inventory", [])
-        if not isinstance(candidate_records, list):
-            validation_error = api._validate_data_or_error(candidate_data) or {
-                "error_code": "integrity_validation_failed",
-                "message": "Validation failed",
-                "errors": [],
-            }
-            return None, api._failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code=validation_error.get("error_code", "integrity_validation_failed"),
-                message=validation_error.get("message", "Validation failed"),
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                errors=validation_error.get("errors"),
-            )
+        candidate_records, failure = get_candidate_inventory_or_failure(
+            candidate_data=candidate_data,
+            yaml_path=yaml_path,
+            audit_action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+        )
+        if failure:
+            return None, failure
 
         for op in operations:
             idx = op["idx"]
@@ -124,49 +141,33 @@ def _persist_batch_nonmove_plan(
                 "action": action_en,
                 "positions": [position],
             }
-            thaw_events = candidate_records[idx].get("thaw_events")
-            if thaw_events is None:
-                candidate_records[idx]["thaw_events"] = []
-                thaw_events = candidate_records[idx]["thaw_events"]
-            if not isinstance(thaw_events, list):
-                validation_error = api._validate_data_or_error(candidate_data) or {
-                    "error_code": "integrity_validation_failed",
-                    "message": "Validation failed",
-                    "errors": [],
-                }
-                return None, api._failure_result(
-                    yaml_path=yaml_path,
-                    action=audit_action,
-                    source=source,
-                    tool_name=tool_name,
-                    error_code=validation_error.get("error_code", "integrity_validation_failed"),
-                    message=validation_error.get("message", "Validation failed"),
-                    actor_context=actor_context,
-                    tool_input=tool_input,
-                    before_data=data,
-                    errors=validation_error.get("errors"),
-                )
-            thaw_events.append(new_event)
-
-        validation_error = api._validate_data_or_error(candidate_data)
-        if validation_error:
-            validation_error = validation_error or {
-                "error_code": "integrity_validation_failed",
-                "message": "Validation failed",
-                "errors": [],
-            }
-            return None, api._failure_result(
+            failure = append_record_events_or_failure(
+                candidate_data=candidate_data,
+                candidate_records=candidate_records,
+                record_index=idx,
+                new_events=[new_event],
                 yaml_path=yaml_path,
-                action=audit_action,
+                audit_action=audit_action,
                 source=source,
                 tool_name=tool_name,
-                error_code=validation_error.get("error_code", "integrity_validation_failed"),
-                message=validation_error.get("message", "Validation failed"),
                 actor_context=actor_context,
                 tool_input=tool_input,
                 before_data=data,
-                errors=validation_error.get("errors"),
-                details={"count": len(operations), "action": action_en, "date": date_str},
+            )
+            if failure:
+                return None, failure
+
+        if api._validate_data_or_error(candidate_data):
+            return None, build_integrity_failure(
+                candidate_data=candidate_data,
+                yaml_path=yaml_path,
+                audit_action=audit_action,
+                source=source,
+                tool_name=tool_name,
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details=details,
             )
 
         _backup_path = write_yaml(
@@ -179,9 +180,7 @@ def _persist_batch_nonmove_plan(
                 tool_name=tool_name,
                 actor_context=actor_context,
                 details={
-                    "count": len(operations),
-                    "action": action_en,
-                    "date": date_str,
+                    **details,
                     "record_ids": [op["record_id"] for op in operations],
                 },
                 tool_input={
@@ -192,17 +191,17 @@ def _persist_batch_nonmove_plan(
             ),
         )
     except Exception as exc:
-        return None, api._failure_result(
+        return None, build_write_failed_result(
             yaml_path=yaml_path,
-            action=audit_action,
+            audit_action=audit_action,
             source=source,
             tool_name=tool_name,
-            error_code="write_failed",
-            message=f"Batch update failed: {exc}",
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=data,
-            details={"count": len(operations), "action": action_en, "date": date_str},
+            exc=exc,
+            message_prefix="Batch update failed",
+            details=details,
         )
 
     return _backup_path, None

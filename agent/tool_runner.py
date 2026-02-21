@@ -10,6 +10,7 @@ from lib.tool_api import (
     build_actor_context,
     tool_get_raw_entries,
 )
+from lib.tool_contracts import TOOL_CONTRACTS, WRITE_TOOLS
 from lib.position_fmt import display_to_pos
 from lib.validators import parse_positions
 from lib.yaml_ops import load_yaml
@@ -19,319 +20,8 @@ from . import tool_runner_staging as _runner_staging
 from . import tool_runner_validation as _runner_validation
 from . import tool_runner_hints as _runner_hints
 
-_WRITE_TOOLS = {"add_entry", "record_takeout", "batch_takeout", "rollback", "edit_entry"}
-
-
-_TOOL_CONTRACTS = {
-    "list_empty_positions": {
-        "description": "List empty positions, optionally within one box.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "box": {"type": "integer", "minimum": 1},
-            },
-            "required": [],
-            "additionalProperties": False,
-        },
-    },
-    "search_records": {
-        "description": "Search inventory records, or list recently frozen records via recent_* filters.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Search text (cell line, short name, notes, etc).",
-                },
-                "mode": {
-                    "type": "string",
-                    "enum": ["fuzzy", "exact", "keywords"],
-                    "description": "Search strategy.",
-                },
-                "max_results": {"type": "integer", "minimum": 1},
-                "case_sensitive": {"type": "boolean"},
-                "box": {"type": "integer", "minimum": 1},
-                "position": {"type": "integer", "minimum": 1},
-                "record_id": {"type": "integer", "minimum": 1},
-                "active_only": {"type": "boolean"},
-                "recent_days": {"type": "integer", "minimum": 1},
-                "recent_count": {"type": "integer", "minimum": 1},
-            },
-            "required": [],
-            "additionalProperties": False,
-        },
-    },
-    "query_takeout_events": {
-        "description": "Query takeout/move events, or timeline summary via view=summary.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "view": {
-                    "type": "string",
-                    "enum": ["events", "summary"],
-                },
-                "date": {"type": "string"},
-                "days": {"type": "integer", "minimum": 1},
-                "start_date": {"type": "string"},
-                "end_date": {"type": "string"},
-                "action": {"type": "string"},
-                "max_records": {"type": "integer", "minimum": 0},
-                "all_history": {"type": "boolean"},
-            },
-            "required": [],
-            "additionalProperties": False,
-        },
-    },
-    "recommend_positions": {
-        "description": "Recommend empty positions for new tubes.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "count": {"type": "integer", "minimum": 1},
-                "box_preference": {"type": "integer", "minimum": 1},
-                "strategy": {
-                    "type": "string",
-                    "enum": ["consecutive", "same_row", "any"],
-                },
-            },
-            "required": [],
-            "additionalProperties": False,
-        },
-    },
-    "generate_stats": {
-        "description": "Generate inventory statistics.",
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": False,
-        },
-    },
-    "get_raw_entries": {
-        "description": "Fetch raw inventory records by ID list.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "ids": {
-                    "type": "array",
-                    "items": {"type": "integer", "minimum": 1},
-                    "minItems": 1,
-                },
-            },
-            "required": ["ids"],
-            "additionalProperties": False,
-        },
-    },
-    "add_entry": {
-        "description": "Add new frozen tube records.",
-        "notes": "Provide all sample metadata through fields object (e.g. fields.short_name, fields.cell_line).",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "box": {"type": "integer", "minimum": 1},
-                "positions": {
-                    "oneOf": [
-                        {
-                            "type": "array",
-                            "items": {"type": "integer", "minimum": 1},
-                            "minItems": 1,
-                        },
-                        {"type": "string"},
-                    ]
-                },
-                "frozen_at": {"type": "string"},
-                "fields": {"type": "object"},
-                "dry_run": {"type": "boolean"},
-            },
-            "required": ["box", "positions", "frozen_at"],
-            "additionalProperties": False,
-        },
-    },
-    "edit_entry": {
-        "description": "Edit metadata fields of an existing record.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "record_id": {"type": "integer", "minimum": 1},
-                "fields": {"type": "object", "minProperties": 1},
-            },
-            "required": ["record_id", "fields"],
-            "additionalProperties": False,
-        },
-    },
-    "record_takeout": {
-        "description": "Record takeout or move for one tube.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "record_id": {"type": "integer", "minimum": 1},
-                "position": {
-                    "oneOf": [
-                        {"type": "integer", "minimum": 1},
-                        {"type": "string"},
-                    ]
-                },
-                "date": {"type": "string"},
-                "action": {"type": "string", "enum": ["takeout", "move", "Takeout", "Move"]},
-                "to_position": {
-                    "oneOf": [
-                        {"type": "integer", "minimum": 1},
-                        {"type": "string"},
-                    ]
-                },
-                "to_box": {"type": "integer", "minimum": 1},
-                "dry_run": {"type": "boolean"},
-            },
-            "required": ["record_id", "date"],
-            "additionalProperties": False,
-        },
-    },
-    "batch_takeout": {
-        "description": "Record takeout or move for multiple tubes.",
-        "notes": "entries supports parsed string formats from parse_batch_entries and structured array rows.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "entries": {
-                    "oneOf": [
-                        {"type": "string"},
-                        {
-                            "type": "array",
-                            "minItems": 1,
-                            "items": {
-                                "oneOf": [
-                                    {
-                                        "type": "array",
-                                        "items": {
-                                            "oneOf": [
-                                                {"type": "integer"},
-                                                {"type": "string"},
-                                            ]
-                                        },
-                                        "minItems": 1,
-                                        "maxItems": 4,
-                                    },
-                                    {
-                                        "type": "object",
-                                        "properties": {
-                                            "record_id": {"type": "integer", "minimum": 1},
-                                            "id": {"type": "integer", "minimum": 1},
-                                            "position": {
-                                                "oneOf": [
-                                                    {"type": "integer", "minimum": 1},
-                                                    {"type": "string"},
-                                                ]
-                                            },
-                                            "from_position": {
-                                                "oneOf": [
-                                                    {"type": "integer", "minimum": 1},
-                                                    {"type": "string"},
-                                                ]
-                                            },
-                                            "to_position": {
-                                                "oneOf": [
-                                                    {"type": "integer", "minimum": 1},
-                                                    {"type": "string"},
-                                                ]
-                                            },
-                                            "to_box": {"type": "integer", "minimum": 1},
-                                        },
-                                        "required": [],
-                                        "additionalProperties": False,
-                                    },
-                                ]
-                            },
-                        },
-                    ]
-                },
-                "date": {"type": "string"},
-                "action": {"type": "string", "enum": ["takeout", "move", "Takeout", "Move"]},
-                "to_box": {"type": "integer", "minimum": 1},
-                "dry_run": {"type": "boolean"},
-            },
-            "required": ["entries"],
-            "additionalProperties": False,
-        },
-    },
-    "rollback": {
-        "description": "Rollback inventory YAML to a backup snapshot using explicit backup_path.",
-        "notes": "Always provide explicit backup_path.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "backup_path": {"type": "string"},
-            },
-            "required": ["backup_path"],
-            "additionalProperties": False,
-        },
-    },
-    "manage_boxes": {
-        "description": "Safely add or remove inventory boxes.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "operation": {"type": "string", "enum": ["add", "remove"]},
-                "count": {"type": "integer", "minimum": 1},
-                "box": {"type": "integer", "minimum": 1},
-                "renumber_mode": {
-                    "type": "string",
-                    "enum": ["keep_gaps", "renumber_contiguous"],
-                },
-                "dry_run": {"type": "boolean"},
-            },
-            "required": ["operation"],
-            "additionalProperties": False,
-        },
-    },
-    "question": {
-        "description": "Ask user clarifying questions when required values are unknown.",
-        "notes": "question tool is not a write tool and must run alone.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "questions": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "header": {"type": "string"},
-                            "question": {"type": "string"},
-                            "options": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                            },
-                            "multiple": {"type": "boolean"},
-                        },
-                        "required": ["header", "question"],
-                        "additionalProperties": False,
-                    },
-                }
-            },
-            "required": ["questions"],
-            "additionalProperties": False,
-        },
-    },
-    "manage_staged": {
-        "description": "List, remove, or clear staged plan items.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "operation": {
-                    "type": "string",
-                    "enum": ["list", "remove", "clear"],
-                },
-                "index": {"type": "integer", "minimum": 0},
-                "action": {"type": "string"},
-                "record_id": {"type": "integer", "minimum": 1},
-                "position": {"type": "integer", "minimum": 1},
-            },
-            "required": ["operation"],
-            "additionalProperties": False,
-        },
-    },
-}
-
+_TOOL_CONTRACTS = TOOL_CONTRACTS
+_WRITE_TOOLS = WRITE_TOOLS
 
 class AgentToolRunner:
     """Executes named tools with normalized input payloads."""
@@ -503,7 +193,7 @@ class AgentToolRunner:
     _normalize_search_mode = staticmethod(_runner_validation._normalize_search_mode)
 
     def list_tools(self):
-        return list(_TOOL_CONTRACTS.keys())
+        return list(TOOL_CONTRACTS.keys())
 
     tool_specs = _runner_validation.tool_specs
     tool_schemas = _runner_validation.tool_schemas
@@ -653,7 +343,9 @@ class AgentToolRunner:
     _build_staged_plan_items = _runner_staging._build_staged_plan_items
     _stage_items_add_entry = _runner_staging._stage_items_add_entry
     _stage_items_record_takeout = _runner_staging._stage_items_record_takeout
+    _stage_items_record_move = _runner_staging._stage_items_record_move
     _stage_items_batch_takeout = _runner_staging._stage_items_batch_takeout
+    _stage_items_batch_move = _runner_staging._stage_items_batch_move
     _stage_items_edit_entry = _runner_staging._stage_items_edit_entry
     _stage_items_rollback = _runner_staging._stage_items_rollback
     _build_stage_blocked_response = _runner_staging._build_stage_blocked_response
@@ -687,12 +379,14 @@ class AgentToolRunner:
     _run_edit_entry = _runner_handlers._run_edit_entry
     _run_add_entry = _runner_handlers._run_add_entry
     _run_record_takeout = _runner_handlers._run_record_takeout
+    _run_record_move = _runner_handlers._run_record_move
     _run_batch_takeout = _runner_handlers._run_batch_takeout
+    _run_batch_move = _runner_handlers._run_batch_move
     _run_rollback = _runner_handlers._run_rollback
     _run_manage_staged = _runner_handlers._run_manage_staged
 
     def _run_dispatch(self, tool_name, payload, trace_id=None):
-        if tool_name not in _TOOL_CONTRACTS:
+        if tool_name not in TOOL_CONTRACTS:
             return self._unknown_tool_response(tool_name)
 
         # Question tool keeps its own detailed validation/error codes.
@@ -711,7 +405,7 @@ class AgentToolRunner:
             )
 
         # Intercept write operations when plan_store is set.
-        if tool_name in _WRITE_TOOLS and self._plan_store is not None:
+        if tool_name in WRITE_TOOLS and self._plan_store is not None:
             return self._stage_to_plan(tool_name, payload, trace_id)
 
         handlers = {
@@ -725,7 +419,9 @@ class AgentToolRunner:
             "edit_entry": self._run_edit_entry,
             "add_entry": self._run_add_entry,
             "record_takeout": self._run_record_takeout,
+            "record_move": self._run_record_move,
             "batch_takeout": self._run_batch_takeout,
+            "batch_move": self._run_batch_move,
             "rollback": self._run_rollback,
             "manage_staged": self._run_manage_staged,
         }

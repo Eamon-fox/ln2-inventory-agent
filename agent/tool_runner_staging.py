@@ -2,7 +2,6 @@
 
 from app_gui.plan_gate import validate_stage_request
 from lib.plan_item_factory import build_add_plan_item, build_edit_plan_item, build_record_plan_item, build_rollback_plan_item
-from lib.tool_api import parse_batch_entries
 
 def _stage_to_plan(self, tool_name, payload, trace_id=None):
     return self._stage_to_plan_impl(tool_name, payload, trace_id)
@@ -77,7 +76,9 @@ def _build_staged_plan_items(self, tool_name, payload, layout):
     handlers = {
         "add_entry": self._stage_items_add_entry,
         "record_takeout": self._stage_items_record_takeout,
+        "record_move": self._stage_items_record_move,
         "batch_takeout": self._stage_items_batch_takeout,
+        "batch_move": self._stage_items_batch_move,
         "edit_entry": self._stage_items_edit_entry,
         "rollback": self._stage_items_rollback,
     }
@@ -102,15 +103,32 @@ def _stage_items_add_entry(self, payload, layout):
         )
     ]
 
-def _stage_items_record_takeout(self, payload, layout):
+def _extract_slot(self, slot_payload, *, layout, field_name):
+    if not isinstance(slot_payload, dict):
+        raise ValueError(
+            self._msg(
+                "validation.mustBeObject",
+                "{label} must be an object",
+                label=field_name,
+            )
+        )
+    box = self._required_int(slot_payload, "box")
+    position = self._parse_position(
+        slot_payload.get("position"),
+        layout=layout,
+        field_name=f"{field_name}.position",
+    )
+    return box, position
+
+
+def _parse_required_record_id(self, payload):
     rid_raw = payload.get("record_id")
     if rid_raw in (None, ""):
         raise ValueError(
             self._msg("errors.recordIdRequired", "record_id is required")
         )
-
     try:
-        rid = int(rid_raw)
+        return int(rid_raw)
     except (ValueError, TypeError) as exc:
         raise ValueError(
             self._msg(
@@ -120,151 +138,159 @@ def _stage_items_record_takeout(self, payload, layout):
             )
         ) from exc
 
-    pos_raw = payload.get("position")
-    pos = None
-    if pos_raw not in (None, ""):
-        pos = self._parse_position(pos_raw, layout=layout, field_name="position")
 
-    to_pos_raw = payload.get("to_position")
-    to_pos = None
-    if to_pos_raw not in (None, ""):
-        to_pos = self._parse_position(to_pos_raw, layout=layout, field_name="to_position")
+def _require_non_empty_entries(self, entries):
+    if entries:
+        return entries
+    raise ValueError(
+        self._msg(
+            "errors.entriesRequiredCannotBeEmpty",
+            "entries is required and cannot be empty",
+        )
+    )
 
-    to_box_raw = payload.get("to_box")
-    to_box = int(to_box_raw) if to_box_raw not in (None, "") else None
 
-    box, position = self._lookup_record_info(rid)
-    if pos is None:
-        if position is not None:
-            pos = int(position)
-        else:
-            raise ValueError(
-                self._msg(
-                    "errors.positionMissingCannotInfer",
-                    "position is missing and cannot be inferred for record_id={record_id}. record has no position (may be consumed).",
-                    record_id=rid,
-                )
+def _require_batch_entry_object(self, entry, idx):
+    if isinstance(entry, dict):
+        return entry
+    raise ValueError(
+        self._msg(
+            "validation.mustBeObject",
+            "{label} must be an object",
+            label=f"entries[{idx}]",
+        )
+    )
+
+
+def _parse_batch_entry_record_id(self, entry):
+    rid_raw = entry.get("record_id")
+    if rid_raw in (None, ""):
+        raise ValueError(
+            self._msg(
+                "errors.invalidBatchEntryMissingRecordId",
+                "Invalid batch entry (missing record_id): {entry}",
+                entry=entry,
             )
+        )
+    return int(rid_raw)
 
-    action_raw = payload.get("action", "takeout")
+
+def _stage_items_record_takeout(self, payload, layout):
+    rid = _parse_required_record_id(self, payload)
+    from_slot = payload.get("from")
+    from_box, pos = _extract_slot(
+        self,
+        from_slot,
+        layout=layout,
+        field_name="from",
+    )
     return [
         build_record_plan_item(
-            action=action_raw,
+            action="takeout",
             record_id=rid,
             position=pos,
-            box=box,
+            box=from_box,
+            date_str=payload.get("date"),
+            source="ai",
+            payload_action="Takeout",
+        )
+    ]
+
+def _stage_items_record_move(self, payload, layout):
+    rid = _parse_required_record_id(self, payload)
+
+    from_box, from_pos = _extract_slot(
+        self,
+        payload.get("from"),
+        layout=layout,
+        field_name="from",
+    )
+    to_box, to_pos = _extract_slot(
+        self,
+        payload.get("to"),
+        layout=layout,
+        field_name="to",
+    )
+
+    return [
+        build_record_plan_item(
+            action="move",
+            record_id=rid,
+            position=from_pos,
+            box=from_box,
             date_str=payload.get("date"),
             to_position=to_pos,
             to_box=to_box,
             source="ai",
-            payload_action=str(action_raw).strip(),
+            payload_action="Move",
         )
     ]
 
 def _stage_items_batch_takeout(self, payload, layout):
-    entries = payload.get("entries")
-    if isinstance(entries, str):
-        entries = parse_batch_entries(entries, layout=layout)
-
-    if not entries:
-        raise ValueError(
-            self._msg(
-                "errors.entriesRequiredCannotBeEmpty",
-                "entries is required and cannot be empty",
-            )
-        )
-
-    action_raw = payload.get("action", "takeout")
-    batch_to_box_raw = payload.get("to_box")
-    batch_to_box = int(batch_to_box_raw) if batch_to_box_raw not in (None, "") else None
-
+    entries = _require_non_empty_entries(self, payload.get("entries"))
     items = []
-    for entry in entries:
-        rid = None
-        pos = None
-        to_pos = None
-        to_box = batch_to_box
-
-        if isinstance(entry, (list, tuple)):
-            if len(entry) >= 4:
-                rid = int(entry[0])
-                pos = self._parse_position(entry[1], layout=layout, field_name="from_position")
-                to_pos = self._parse_position(entry[2], layout=layout, field_name="to_position")
-                to_box = int(entry[3])
-            elif len(entry) == 3:
-                rid = int(entry[0])
-                pos = self._parse_position(entry[1], layout=layout, field_name="from_position")
-                to_pos = self._parse_position(entry[2], layout=layout, field_name="to_position")
-            elif len(entry) == 2:
-                rid = int(entry[0])
-                pos = self._parse_position(entry[1], layout=layout, field_name="position")
-            elif len(entry) == 1:
-                rid = int(entry[0])
-            else:
-                continue
-        elif isinstance(entry, dict):
-            rid = int(entry.get("record_id", entry.get("id", 0)) or 0)
-            raw_pos = entry.get("position")
-            if raw_pos is None:
-                raw_pos = entry.get("from_position")
-            if raw_pos not in (None, ""):
-                pos = self._parse_position(raw_pos, layout=layout, field_name="position")
-            raw_to_pos = entry.get("to_position")
-            if raw_to_pos not in (None, ""):
-                to_pos = self._parse_position(raw_to_pos, layout=layout, field_name="to_position")
-            raw_to_box = entry.get("to_box")
-            if raw_to_box not in (None, ""):
-                to_box = int(raw_to_box)
-        else:
-            continue
-
-        if not rid:
-            raise ValueError(
-                self._msg(
-                    "errors.invalidBatchEntryMissingRecordId",
-                    "Invalid batch entry (missing record_id): {entry}",
-                    entry=entry,
-                )
-            )
-
-        box, position = self._lookup_record_info(rid)
-        if pos is None:
-            # Keep staging atomic: let plan validation reject schema-invalid rows.
-            pos = int(position) if position is not None else 0
+    for idx, entry in enumerate(entries):
+        entry = _require_batch_entry_object(self, entry, idx)
+        rid = _parse_batch_entry_record_id(self, entry)
+        from_box, pos = _extract_slot(
+            self,
+            entry.get("from"),
+            layout=layout,
+            field_name=f"entries[{idx}].from",
+        )
 
         items.append(
             build_record_plan_item(
-                action=action_raw,
+                action="takeout",
                 record_id=rid,
                 position=pos,
-                box=box,
+                box=from_box,
+                date_str=payload.get("date"),
+                source="ai",
+                payload_action="Takeout",
+            )
+        )
+
+    return items
+
+def _stage_items_batch_move(self, payload, layout):
+    entries = _require_non_empty_entries(self, payload.get("entries"))
+
+    items = []
+    for idx, entry in enumerate(entries):
+        entry = _require_batch_entry_object(self, entry, idx)
+        rid = _parse_batch_entry_record_id(self, entry)
+        from_box, from_pos = _extract_slot(
+            self,
+            entry.get("from"),
+            layout=layout,
+            field_name=f"entries[{idx}].from",
+        )
+        to_box, to_pos = _extract_slot(
+            self,
+            entry.get("to"),
+            layout=layout,
+            field_name=f"entries[{idx}].to",
+        )
+
+        items.append(
+            build_record_plan_item(
+                action="move",
+                record_id=rid,
+                position=from_pos,
+                box=from_box,
                 date_str=payload.get("date"),
                 to_position=to_pos,
                 to_box=to_box,
                 source="ai",
-                payload_action=str(action_raw).strip(),
+                payload_action="Move",
             )
         )
 
     return items
 
 def _stage_items_edit_entry(self, payload, _layout):
-    rid_raw = payload.get("record_id")
-    if rid_raw in (None, ""):
-        raise ValueError(
-            self._msg("errors.recordIdRequired", "record_id is required")
-        )
-
-    try:
-        rid = int(rid_raw)
-    except (ValueError, TypeError) as exc:
-        raise ValueError(
-            self._msg(
-                "errors.recordIdMustBeInteger",
-                "record_id must be an integer: {error}",
-                error=exc,
-            )
-        ) from exc
+    rid = _parse_required_record_id(self, payload)
 
     fields = payload.get("fields")
     if not fields or not isinstance(fields, dict):

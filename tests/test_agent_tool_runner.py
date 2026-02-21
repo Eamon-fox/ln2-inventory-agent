@@ -439,7 +439,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             current = load_yaml(str(yaml_path))
             self.assertEqual(1, current["inventory"][0]["position"])
 
-    def test_record_takeout_move_missing_target_returns_hint(self):
+    def test_record_takeout_missing_source_returns_hint(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_move_hint_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -453,15 +453,13 @@ class AgentToolRunnerTests(unittest.TestCase):
                 "record_takeout",
                 {
                     "record_id": 1,
-                    "position": 1,
                     "date": "2026-02-10",
-                    "action": "move",
                 },
             )
 
             self.assertFalse(response["ok"])
             self.assertEqual("invalid_tool_input", response["error_code"])
-            self.assertIn("to_position", response.get("message", ""))
+            self.assertIn("from", response.get("message", ""))
 
     def test_plan_preflight_hint_guides_record_repair_flow(self):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
@@ -513,7 +511,10 @@ class AgentToolRunnerTests(unittest.TestCase):
         self.assertIn("operation", specs["manage_staged"].get("required", []))
 
         self.assertIn("record_takeout", specs)
-        self.assertIn("to_position", specs["record_takeout"].get("optional", []))
+        self.assertIn("from", specs["record_takeout"].get("required", []))
+        self.assertIn("date", specs["record_takeout"].get("required", []))
+        self.assertIn("dry_run", specs["record_takeout"].get("optional", []))
+        self.assertIn("record_move", specs)
 
         schemas = runner.tool_schemas()
         search_schema = next(
