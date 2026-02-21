@@ -1028,11 +1028,10 @@ class OperationsPanel(QWidget):
         self._add_custom_form = form
         self._add_custom_widgets = {}
 
-        self.a_apply_btn = QPushButton(tr("operations.add"))
-        self._style_stage_button(self.a_apply_btn)
-        self.a_apply_btn.clicked.connect(self.on_add_entry)
-        a_btn_row = QHBoxLayout()
-        a_btn_row.addWidget(self.a_apply_btn)
+        self.a_apply_btn, a_btn_row = self._build_stage_action_button(
+            tr("operations.add"),
+            self.on_add_entry,
+        )
         form.addRow("", a_btn_row)
         layout.addLayout(form)
         layout.addStretch(1)
@@ -1183,14 +1182,11 @@ class OperationsPanel(QWidget):
         self.t_action = QComboBox()  # hidden, kept for compat
         self.t_action.addItem(tr("overview.takeout"), "Takeout")
 
-        # Action buttons at bottom
-        btn_row = QHBoxLayout()
-        self.t_takeout_btn = QPushButton(tr("overview.takeout"))
-        for btn in (self.t_takeout_btn,):
-            self._style_stage_button(btn)
-            btn_row.addWidget(btn)
-        btn_row.addStretch(1)
-        self.t_takeout_btn.clicked.connect(lambda: self._record_thaw_with_action("Takeout"))
+        # Action button at bottom
+        self.t_takeout_btn, btn_row = self._build_stage_action_button(
+            tr("overview.takeout"),
+            lambda: self._record_thaw_with_action("Takeout"),
+        )
         # Keep t_apply_btn as alias for the first button (compat)
         self.t_apply_btn = self.t_takeout_btn
         form.addRow("", btn_row)
@@ -1310,12 +1306,11 @@ class OperationsPanel(QWidget):
         self.m_ctx_id = self.m_id
         self.m_ctx_check = QLabel()  # hidden, kept for refresh method compat
 
-        # Button at bottom
-        m_btn_row = QHBoxLayout()
-        self.m_apply_btn = QPushButton(tr("operations.move"))
-        self._style_stage_button(self.m_apply_btn)
-        self.m_apply_btn.clicked.connect(self.on_record_move)
-        m_btn_row.addWidget(self.m_apply_btn)
+        # Action button at bottom
+        self.m_apply_btn, m_btn_row = self._build_stage_action_button(
+            tr("operations.move"),
+            self.on_record_move,
+        )
         form.addRow("", m_btn_row)
 
         layout.addLayout(form)
@@ -1468,7 +1463,20 @@ class OperationsPanel(QWidget):
 
     def _style_stage_button(self, btn):
         btn.setProperty("variant", "primary")
-        btn.setMinimumWidth(80)
+        btn.setMinimumWidth(96)
+        btn.setMinimumHeight(28)
+        btn.style().unpolish(btn)
+        btn.style().polish(btn)
+
+    def _build_stage_action_button(self, label, callback):
+        """Create a standardized primary action button row for operation forms."""
+        btn = QPushButton(label)
+        self._style_stage_button(btn)
+        btn.clicked.connect(callback)
+        row = QHBoxLayout()
+        row.addWidget(btn)
+        row.addStretch(1)
+        return btn, row
 
     def _set_plan_feedback(self, text="", level="info"):
         label = getattr(self, "plan_feedback_label", None)
@@ -1726,10 +1734,16 @@ class OperationsPanel(QWidget):
         record = self._lookup_record(self.t_id.value())
         fallback_box = int((self.t_prefill_source or {}).get("box", 0) or 0)
         box = resolve_record_box(record, fallback_box=fallback_box)
+
+        position = self.t_position.currentData()
+        if position is None:
+            self._show_error(tr("operations.positionRequired"))
+            return
+
         item = build_record_plan_item(
             action=action_text,
             record_id=self.t_id.value(),
-            position=self.t_position.currentData(),
+            position=position,
             box=box,
             date_str=self.t_date.date().toString("yyyy-MM-dd"),
             source="human",
@@ -2483,23 +2497,25 @@ class OperationsPanel(QWidget):
         box = item.get("box", "")
         pos = item.get("position", "")
         pos_text = self._position_to_display(pos)
+        box_text = box if box not in (None, "") else "?"
+        box_prefix = f"Box {box_text}"
 
         if action_norm == "add":
             positions = payload.get("positions") if isinstance(payload.get("positions"), list) else []
             if not positions:
-                return f"{box}: ?"
+                return f"{box_prefix}: ?"
             shown = ", ".join(self._position_to_display(p) for p in positions[:6])
             suffix = f", ... +{len(positions) - 6}" if len(positions) > 6 else ""
-            return f"{box}: [{shown}{suffix}]"
+            return f"{box_prefix}: [{shown}{suffix}]"
 
         to_pos = item.get("to_position")
         to_box = item.get("to_box")
         to_pos_text = self._position_to_display(to_pos)
         if to_pos and (to_box is None or to_box == box):
-            return f"{box}:{pos_text} -> {to_pos_text}"
+            return f"{box_prefix}:{pos_text} -> {box_prefix}:{to_pos_text}"
         if to_pos and to_box:
-            return f"{box}:{pos_text} -> {to_box}:{to_pos_text}"
-        return f"{box}:{pos_text}"
+            return f"{box_prefix}:{pos_text} -> Box {to_box}:{to_pos_text}"
+        return f"{box_prefix}:{pos_text}"
 
     def _build_plan_date_text(self, action_norm, payload):
         if action_norm == "rollback":
