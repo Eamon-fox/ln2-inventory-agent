@@ -39,6 +39,11 @@ class ImportValidatedYamlDialog(QDialog):
         desc.setProperty("role", "dialogHint")
         layout.addWidget(desc)
 
+        guide = QLabel(tr("main.importValidatedGuide"))
+        guide.setWordWrap(True)
+        guide.setProperty("role", "dialogHint")
+        layout.addWidget(guide)
+
         form = QFormLayout()
 
         candidate_row = QHBoxLayout()
@@ -132,7 +137,7 @@ class ImportValidatedYamlDialog(QDialog):
 
     def _run_validation(self):
         candidate = self.candidate_edit.text().strip()
-        result = validate_candidate_yaml(candidate)
+        result = validate_candidate_yaml(candidate, fail_on_warnings=True)
         self._last_validation_ok = bool(result.get("ok"))
         message = result.get("message") or ""
         report_text = self._format_report(result.get("report") or {})

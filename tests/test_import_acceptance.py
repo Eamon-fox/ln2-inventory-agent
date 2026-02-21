@@ -90,6 +90,22 @@ class ImportAcceptanceTests(unittest.TestCase):
             allowed = import_validated_yaml(str(candidate), str(target), overwrite=True)
             self.assertTrue(allowed.get("ok"), allowed)
 
+    def test_validate_candidate_yaml_blocks_warnings_in_strict_mode(self):
+        with tempfile.TemporaryDirectory() as td:
+            payload = _valid_payload()
+            # Missing cell_line triggers legacy-compatible warning in validators.
+            payload["inventory"][0].pop("cell_line", None)
+            candidate = Path(td) / "warn.yaml"
+            candidate.write_text(
+                yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
+                encoding="utf-8",
+            )
+            result = validate_candidate_yaml(str(candidate), fail_on_warnings=True)
+            self.assertFalse(result.get("ok"))
+            self.assertEqual("validation_failed", result.get("error_code"))
+            report = result.get("report") or {}
+            self.assertGreater((report.get("warning_count") or 0), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

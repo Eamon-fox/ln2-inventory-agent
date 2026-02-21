@@ -11,7 +11,7 @@
     "browse": "浏览",
     "ai": "AI 助手",
     "apiKey": "API 密钥：",
-    "apiKeyHint": "可选。通过环境变量配置。",
+    "apiKeyHint": "",
     "aiProvider": "提供商：",
     "aiModel": "模型：",
     "aiMaxSteps": "最大步数：",

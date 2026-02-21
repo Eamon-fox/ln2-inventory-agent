@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 from agent.llm_client import DEFAULT_PROVIDER, PROVIDER_DEFAULTS
 from app_gui.i18n import t, tr
 from app_gui.ui.icons import Icons, get_icon
+from lib.import_acceptance import validate_candidate_yaml
 from lib.yaml_ops import load_yaml
 
 APP_VERSION = "1.1.1"
@@ -103,7 +104,6 @@ class SettingsDialog(QDialog):
         app_release_url=APP_RELEASE_URL,
         github_api_latest=_GITHUB_API_LATEST,
         root_dir=None,
-        import_prompt_dialog_cls=None,
         export_task_bundle_dialog_cls=None,
         import_validated_yaml_dialog_cls=None,
         custom_fields_dialog_cls=None,
@@ -121,7 +121,6 @@ class SettingsDialog(QDialog):
         self._app_release_url = str(app_release_url or APP_RELEASE_URL)
         self._github_api_latest = str(github_api_latest or _GITHUB_API_LATEST)
         self._root_dir = root_dir or ROOT
-        self._import_prompt_dialog_cls = import_prompt_dialog_cls
         self._export_task_bundle_dialog_cls = export_task_bundle_dialog_cls
         self._import_validated_yaml_dialog_cls = import_validated_yaml_dialog_cls
         self._custom_fields_dialog_cls = custom_fields_dialog_cls
@@ -174,10 +173,6 @@ class SettingsDialog(QDialog):
         box_btn.clicked.connect(self._open_manage_boxes)
         tool_row.addWidget(box_btn)
 
-        import_btn = QPushButton(tr("main.importPromptTitle"))
-        import_btn.clicked.connect(self._open_import_prompt)
-        tool_row.addWidget(import_btn)
-
         export_bundle_btn = QPushButton(tr("main.exportTaskBundleTitle"))
         export_bundle_btn.clicked.connect(self._open_export_task_bundle)
         tool_row.addWidget(export_bundle_btn)
@@ -211,10 +206,12 @@ class SettingsDialog(QDialog):
                 help_label.setOpenExternalLinks(True)
                 ai_layout.addRow("", help_label)
 
-        api_hint = QLabel(tr("settings.apiKeyHint"))
-        api_hint.setProperty("role", "settingsHint")
-        api_hint.setWordWrap(True)
-        ai_layout.addRow("", api_hint)
+        api_hint_text = str(tr("settings.apiKeyHint") or "").strip()
+        if api_hint_text:
+            api_hint = QLabel(api_hint_text)
+            api_hint.setProperty("role", "settingsHint")
+            api_hint.setWordWrap(True)
+            ai_layout.addRow("", api_hint)
 
         ai_advanced = self._config.get("ai", {})
         current_provider = ai_advanced.get("provider") or DEFAULT_PROVIDER
@@ -388,6 +385,36 @@ class SettingsDialog(QDialog):
         if not hasattr(self, "_ok_button") or self._ok_button is None:
             return
         self._ok_button.setEnabled(self._is_valid_inventory_file_path(self.yaml_edit.text().strip()))
+
+    @staticmethod
+    def _render_validation_report(report, *, max_items=8):
+        if not isinstance(report, dict):
+            return ""
+        errors = list(report.get("errors") or [])
+        if not errors:
+            return ""
+        lines = [f"- {item}" for item in errors[:max_items]]
+        if len(errors) > max_items:
+            lines.append(f"- ... and {len(errors) - max_items} more")
+        return "\n".join(lines)
+
+    def accept(self):
+        """Block saving settings when selected dataset YAML fails strict validation."""
+        yaml_path = self._normalize_yaml_path(self.yaml_edit.text().strip())
+        if self._is_valid_inventory_file_path(yaml_path):
+            result = validate_candidate_yaml(yaml_path, fail_on_warnings=True)
+            if not result.get("ok"):
+                report_text = self._render_validation_report(result.get("report") or {})
+                message = t(
+                    "main.datasetYamlValidationBlocked",
+                    message=result.get("message") or tr("main.importValidationFailed"),
+                )
+                if report_text:
+                    message += "\n\n" + report_text
+                message += "\n\n" + tr("main.datasetYamlValidationHint")
+                QMessageBox.warning(self, tr("main.importValidatedTitle"), message)
+                return
+        super().accept()
 
     def _notify_data_changed(self, *, yaml_path=None, meta=None):
         """Notify parent window after metadata edits (best-effort backward compatible)."""
@@ -626,13 +653,6 @@ class SettingsDialog(QDialog):
     def _open_manage_boxes(self):
         if callable(self._on_manage_boxes):
             self._on_manage_boxes(self.yaml_edit.text().strip())
-
-    def _open_import_prompt(self):
-        dialog_cls = self._import_prompt_dialog_cls
-        if dialog_cls is None:
-            from app_gui.ui.dialogs.import_prompt_dialog import ImportPromptDialog as dialog_cls
-        dlg = dialog_cls(self)
-        dlg.exec()
 
     def _open_export_task_bundle(self):
         dialog_cls = self._export_task_bundle_dialog_cls

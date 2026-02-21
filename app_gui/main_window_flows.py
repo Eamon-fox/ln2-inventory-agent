@@ -29,7 +29,8 @@ class StartupFlow:
         github_api_latest,
         is_version_newer: Callable[[str, str], bool],
         show_nonblocking_dialog: Callable,
-        import_prompt_dialog_cls,
+        export_task_bundle_dialog_cls,
+        import_validated_yaml_dialog_cls,
     ):
         self._window = window
         self._app_version = str(app_version)
@@ -37,7 +38,8 @@ class StartupFlow:
         self._github_api_latest = str(github_api_latest)
         self._is_version_newer = is_version_newer
         self._show_nonblocking_dialog = show_nonblocking_dialog
-        self._import_prompt_dialog_cls = import_prompt_dialog_cls
+        self._export_task_bundle_dialog_cls = export_task_bundle_dialog_cls
+        self._import_validated_yaml_dialog_cls = import_validated_yaml_dialog_cls
 
     def _build_message_box(self, *, title, text, icon):
         box = QMessageBox(self._window)
@@ -190,11 +192,11 @@ class StartupFlow:
         )
         updater.start_update()
 
-    def check_empty_inventory_prompt(self):
-        """Show import prompt when active inventory file is empty."""
+    def check_empty_inventory_onboarding(self):
+        """Show onboarding actions when active inventory file is empty."""
         window = self._window
         try:
-            if window.gui_config.get("import_prompt_seen", False):
+            if window.gui_config.get("import_onboarding_seen", False):
                 return
             if not os.path.isfile(window.current_yaml_path):
                 return
@@ -214,28 +216,45 @@ class StartupFlow:
                 icon=QMessageBox.Information,
             )
 
-            import_btn = msg_box.addButton(tr("main.importStartupAction"), QMessageBox.ActionRole)
-            new_btn = msg_box.addButton(tr("main.importPromptNewInventory"), QMessageBox.ActionRole)
+            export_btn = msg_box.addButton(tr("main.exportTaskBundleTitle"), QMessageBox.ActionRole)
+            import_yaml_btn = msg_box.addButton(tr("main.importValidatedTitle"), QMessageBox.ActionRole)
+            new_btn = msg_box.addButton(tr("main.new"), QMessageBox.ActionRole)
             later_btn = msg_box.addButton(QMessageBox.Close)
             later_btn.setText(tr("main.newReleaseLater"))
-            msg_box.setDefaultButton(import_btn)
+            msg_box.setDefaultButton(export_btn)
 
-            def _mark_prompt_seen_once():
-                self._persist_gui_config_once("import_prompt_seen", True)
+            def _mark_onboarding_seen_once():
+                self._persist_gui_config_once("import_onboarding_seen", True)
 
-            def _handle_import_prompt(clicked):
-                _mark_prompt_seen_once()
-                if clicked == import_btn:
-                    dlg = self._import_prompt_dialog_cls(window)
+            def _handle_onboarding_action(clicked):
+                _mark_onboarding_seen_once()
+                if clicked == export_btn:
+                    dlg = self._export_task_bundle_dialog_cls(window)
                     dlg.exec()
+                elif clicked == import_yaml_btn:
+                    dlg = self._import_validated_yaml_dialog_cls(
+                        window,
+                        default_target_path=window.current_yaml_path,
+                    )
+                    if dlg.exec() == QDialog.Accepted:
+                        imported_yaml = str(getattr(dlg, "imported_yaml_path", "") or "").strip()
+                        if imported_yaml:
+                            old_abs = os.path.abspath(str(window.current_yaml_path or ""))
+                            window.current_yaml_path = imported_yaml
+                            if old_abs != os.path.abspath(imported_yaml):
+                                window.operations_panel.reset_for_dataset_switch()
+                            window._update_dataset_label()
+                            window.overview_panel.refresh()
+                            window.gui_config["yaml_path"] = imported_yaml
+                            save_gui_config(window.gui_config)
                 elif clicked == new_btn:
                     window.on_create_new_dataset()
 
-            msg_box.buttonClicked.connect(_handle_import_prompt)
-            msg_box.finished.connect(lambda _result: _mark_prompt_seen_once())
+            msg_box.buttonClicked.connect(_handle_onboarding_action)
+            msg_box.finished.connect(lambda _result: _mark_onboarding_seen_once())
             self._show_nonblocking_dialog(msg_box)
         except Exception as exc:
-            print("[ImportPrompt] Empty inventory check failed: %s" % exc)
+            print("[ImportOnboarding] Empty inventory check failed: %s" % exc)
 
 
 class WindowStateFlow:

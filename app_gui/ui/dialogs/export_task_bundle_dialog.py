@@ -39,6 +39,11 @@ class ExportTaskBundleDialog(QDialog):
         desc.setProperty("role", "dialogHint")
         layout.addWidget(desc)
 
+        guide = QLabel(tr("main.exportTaskBundleGuide"))
+        guide.setWordWrap(True)
+        guide.setProperty("role", "dialogHint")
+        layout.addWidget(guide)
+
         source_group = QWidget()
         source_form = QFormLayout(source_group)
 

@@ -41,7 +41,8 @@ from app_gui.ui.operations_panel import OperationsPanel
 from app_gui.ui.ai_panel import AIPanel
 from app_gui.ui.dialogs import (
     SettingsDialog,
-    ImportPromptDialog,
+    ExportTaskBundleDialog,
+    ImportValidatedYamlDialog,
     NewDatasetDialog,
     CustomFieldsDialog,
 )
@@ -134,7 +135,8 @@ class MainWindow(QMainWindow):
             github_api_latest=_GITHUB_API_LATEST,
             is_version_newer=_is_version_newer,
             show_nonblocking_dialog=self._show_nonblocking_dialog,
-            import_prompt_dialog_cls=ImportPromptDialog,
+            export_task_bundle_dialog_cls=ExportTaskBundleDialog,
+            import_validated_yaml_dialog_cls=ImportValidatedYamlDialog,
         )
         self._settings_flow = SettingsFlow(self, normalize_yaml_path=_normalize_inventory_yaml_path)
         self._dataset_flow = DatasetFlow(self)
@@ -164,7 +166,7 @@ class MainWindow(QMainWindow):
 
     def _run_startup_checks(self):
         self._check_release_notice_once()
-        self._check_empty_inventory_prompt()
+        self._check_empty_inventory_onboarding()
 
     def setup_ui(self):
         container = QWidget()
@@ -340,8 +342,8 @@ class MainWindow(QMainWindow):
     def _show_update_dialog(self, latest_tag, release_notes):
         self._startup_flow.show_update_dialog(latest_tag, release_notes)
 
-    def _check_empty_inventory_prompt(self):
-        self._startup_flow.check_empty_inventory_prompt()
+    def _check_empty_inventory_onboarding(self):
+        self._startup_flow.check_empty_inventory_onboarding()
 
     def _wire_plan_store(self):
         self._state_flow.wire_plan_store()
@@ -374,7 +376,8 @@ class MainWindow(QMainWindow):
             app_release_url=APP_RELEASE_URL,
             github_api_latest=_GITHUB_API_LATEST,
             root_dir=ROOT,
-            import_prompt_dialog_cls=ImportPromptDialog,
+            export_task_bundle_dialog_cls=ExportTaskBundleDialog,
+            import_validated_yaml_dialog_cls=ImportValidatedYamlDialog,
             custom_fields_dialog_cls=CustomFieldsDialog,
             normalize_yaml_path=_normalize_inventory_yaml_path,
         )

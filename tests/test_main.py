@@ -10,9 +10,10 @@ MAIN_FILE = ROOT / "app_gui" / "main.py"
 FLOW_FILE = ROOT / "app_gui" / "main_window_flows.py"
 DIALOG_FILES = [
     ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog.py",
-    ROOT / "app_gui" / "ui" / "dialogs" / "import_prompt_dialog.py",
     ROOT / "app_gui" / "ui" / "dialogs" / "new_dataset_dialog.py",
     ROOT / "app_gui" / "ui" / "dialogs" / "custom_fields_dialog.py",
+    ROOT / "app_gui" / "ui" / "dialogs" / "export_task_bundle_dialog.py",
+    ROOT / "app_gui" / "ui" / "dialogs" / "import_validated_yaml_dialog.py",
 ]
 
 
@@ -146,8 +147,9 @@ def test_startup_dialogs_use_non_blocking_open_and_fixed_tag_parsing():
     assert "def _show_nonblocking_dialog(" in text
     assert "dialog.setWindowModality(Qt.NonModal)" in text
     assert "dialog.show()" in text
-    assert 'msg_box.addButton(tr("main.importStartupAction"), QMessageBox.ActionRole)' in text
-    assert 'msg_box.addButton(tr("main.importPromptNewInventory"), QMessageBox.ActionRole)' in text
+    assert 'msg_box.addButton(tr("main.exportTaskBundleTitle"), QMessageBox.ActionRole)' in text
+    assert 'msg_box.addButton(tr("main.importValidatedTitle"), QMessageBox.ActionRole)' in text
+    assert 'msg_box.addButton(tr("main.new"), QMessageBox.ActionRole)' in text
     assert "QMessageBox.Close" in text
     assert '.lstrip("1.0.1")' not in text
     assert '.lstrip("vV")' in text

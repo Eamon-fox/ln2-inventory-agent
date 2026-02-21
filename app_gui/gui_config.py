@@ -42,7 +42,7 @@ DEFAULT_GUI_CONFIG = {
     "ui_scale": 1.0,
     "last_notified_release": "0.0.0",
     "release_notes_preview": "",
-    "import_prompt_seen": False,
+    "import_onboarding_seen": False,
     "ai": {
         "provider": DEFAULT_PROVIDER,
         "model": None,
@@ -68,7 +68,7 @@ def load_gui_config(path=DEFAULT_CONFIG_FILE):
         cfg["ai"]["thinking_enabled"] = bool(cfg.get("ai", {}).get("thinking_enabled", True))
         if not cfg.get("ai", {}).get("custom_prompt"):
             cfg["ai"]["custom_prompt"] = _load_default_prompt()
-        cfg["import_prompt_seen"] = bool(cfg.get("import_prompt_seen", False))
+        cfg["import_onboarding_seen"] = bool(cfg.get("import_onboarding_seen", False))
         return cfg
 
     if not os.path.isfile(path):
@@ -78,7 +78,7 @@ def load_gui_config(path=DEFAULT_CONFIG_FILE):
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         merged = copy.deepcopy(DEFAULT_GUI_CONFIG)
-        for key in ("yaml_path", "api_keys", "language", "theme", "ui_scale", "last_notified_release", "release_notes_preview", "import_prompt_seen"):
+        for key in ("yaml_path", "api_keys", "language", "theme", "ui_scale", "last_notified_release", "release_notes_preview", "import_onboarding_seen"):
             if key in data:
                 merged[key] = data[key]
         if "ai" in data and isinstance(data["ai"], dict):
