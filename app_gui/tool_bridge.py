@@ -11,6 +11,7 @@ from lib.tool_api import (
     build_actor_context,
     tool_add_entry,
     tool_adjust_box_count,
+    tool_batch_move,
     tool_batch_takeout,
     tool_collect_timeline,
     tool_edit_entry,
@@ -18,6 +19,7 @@ from lib.tool_api import (
     tool_generate_stats,
     tool_list_empty_positions,
     tool_list_backups,
+    tool_record_move,
     tool_record_takeout,
     tool_rollback,
 )
@@ -106,8 +108,24 @@ class GuiToolBridge:
             **payload,
         )
 
+    def record_move(self, yaml_path, **payload):
+        return tool_record_move(
+            yaml_path=yaml_path,
+            actor_context=self._ctx(),
+            source="app_gui",
+            **payload,
+        )
+
     def batch_takeout(self, yaml_path, **payload):
         return tool_batch_takeout(
+            yaml_path=yaml_path,
+            actor_context=self._ctx(),
+            source="app_gui",
+            **payload,
+        )
+
+    def batch_move(self, yaml_path, **payload):
+        return tool_batch_move(
             yaml_path=yaml_path,
             actor_context=self._ctx(),
             source="app_gui",

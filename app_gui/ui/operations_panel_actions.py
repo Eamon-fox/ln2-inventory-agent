@@ -16,9 +16,11 @@ def _print_items_with_grid(self, items_to_print, *, empty_message, opened_messag
         return
 
     grid_state = self._build_print_grid_state(items_to_print)
+    table_rows = self._build_print_table_rows(items_to_print)
     self._print_operation_sheet_with_grid(
         items_to_print,
         grid_state,
+        table_rows=table_rows,
         opened_message=str(opened_message),
     )
 
@@ -57,7 +59,35 @@ def _build_print_grid_state(self, items_to_print):
     return grid_state
 
 
-def _print_operation_sheet_with_grid(self, items, grid_state, opened_message=None):
+def _build_print_table_rows(self, items_to_print):
+    """Build print-table rows using the same semantics as plan table."""
+    from app_gui.ui import operations_panel_plan_table as _ops_plan_table
+
+    rows = []
+    fields = self._current_custom_fields if isinstance(self._current_custom_fields, list) else []
+    for item in list(items_to_print or []):
+        try:
+            rows.append(_ops_plan_table._build_plan_row_semantics(self, item, custom_fields=fields))
+        except Exception:
+            # Defensive fallback: print should still work when row enrichment fails.
+            action_text = str(item.get("action", "") or "")
+            rows.append(
+                {
+                    "action_norm": action_text.lower(),
+                    "action": action_text,
+                    "target": "",
+                    "date": "",
+                    "changes": "",
+                    "changes_detail": "",
+                    "status": "",
+                    "status_detail": "",
+                    "status_blocked": False,
+                }
+            )
+    return rows
+
+
+def _print_operation_sheet_with_grid(self, items, grid_state, *, table_rows=None, opened_message=None):
     """Print operation sheet with grid visualization."""
     if opened_message is None:
         opened_message = tr("operations.operationSheetOpened")
@@ -66,7 +96,7 @@ def _print_operation_sheet_with_grid(self, items, grid_state, opened_message=Non
     from app_gui.ui import operations_panel as _ops_panel
     from app_gui.plan_model import render_operation_sheet_with_grid
 
-    html = render_operation_sheet_with_grid(items, grid_state)
+    html = render_operation_sheet_with_grid(items, grid_state, table_rows=table_rows)
     open_html_in_browser(html, open_url_fn=_ops_panel.QDesktopServices.openUrl)
     self.status_message.emit(opened_message, 2000, "info")
 

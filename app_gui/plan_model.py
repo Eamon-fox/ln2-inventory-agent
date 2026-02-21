@@ -1,6 +1,6 @@
 """Grid-aware operation sheet rendering built on plan_model_sheet helpers."""
 
-from collections import defaultdict
+import os
 from datetime import date
 
 from app_gui.ui.theme import (
@@ -10,17 +10,16 @@ from app_gui.ui.theme import (
     FONT_SIZE_MD,
     FONT_SIZE_XXL,
     MONO_FONT_CSS_FAMILY,
-    resolve_theme_token,
 )
 from app_gui.plan_model_sheet import (
     _sheet_color,
     _apply_sheet_theme_tokens,
-    _pos_to_coord,
     validate_plan_item,
-    _get_action_display,
-    _extract_sample_info,
     render_operation_sheet,
 )
+
+# Compatibility export consumed by app_gui.plan_gate and tests.
+_PLAN_MODEL_EXPORTS = (validate_plan_item,)
 
 def extract_grid_state_for_print(overview_panel):
     """Extract current grid state from overview panel for print view.
@@ -245,12 +244,13 @@ def render_grid_html(grid_state):
     """
 
 
-def render_operation_sheet_with_grid(items, grid_state=None):
+def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
     """Generate enhanced printable HTML with grid visualization + operation list.
 
     Args:
         items: List of plan items
         grid_state: Dict with grid data from overview panel (optional)
+        table_rows: Optional rows from plan-table semantics.
 
     Returns:
         HTML string
@@ -261,101 +261,168 @@ def render_operation_sheet_with_grid(items, grid_state=None):
     if not grid_state:
         return render_operation_sheet(items)
 
+    from html import escape
+    from app_gui.i18n import tr as _tr
+
+    def _text(value):
+        return "" if value is None else str(value)
+
+    def _safe_cell(value):
+        text = _text(value).strip()
+        return text if text else "-"
+
+    def _normalize_action(value):
+        return _text(value).strip().lower()
+
+    def _build_fallback_row(item):
+        action_norm = _normalize_action(item.get("action"))
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+
+        if action_norm == "rollback":
+            target = "-"
+        else:
+            box_text = _safe_cell(item.get("box"))
+            pos_text = _safe_cell(item.get("position"))
+            target = f"Box {box_text}:{pos_text}"
+
+            if action_norm == "move":
+                to_pos = item.get("to_position")
+                if to_pos not in (None, ""):
+                    to_box = item.get("to_box")
+                    to_box_text = _safe_cell(to_box if to_box not in (None, "") else item.get("box"))
+                    target = f"{target} -> Box {to_box_text}:{_safe_cell(to_pos)}"
+            elif action_norm == "add":
+                positions = payload.get("positions") if isinstance(payload.get("positions"), list) else []
+                if positions:
+                    shown = ", ".join(_safe_cell(p) for p in positions[:6])
+                    suffix = f", ... +{len(positions) - 6}" if len(positions) > 6 else ""
+                    target = f"Box {_safe_cell(item.get('box'))}: [{shown}{suffix}]"
+
+        fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
+        if action_norm == "rollback":
+            source_event = payload.get("source_event") if isinstance(payload.get("source_event"), dict) else {}
+            parts = []
+            if source_event:
+                parts.append(
+                    f"source={_safe_cell(source_event.get('timestamp'))} "
+                    f"{_safe_cell(source_event.get('action'))}"
+                )
+            backup_path = payload.get("backup_path")
+            if backup_path:
+                parts.append(f"backup={os.path.basename(_text(backup_path))}")
+            changes = "; ".join(parts) if parts else "-"
+        elif fields:
+            field_parts = []
+            for key, value in fields.items():
+                value_text = _text(value).strip()
+                if value_text:
+                    field_parts.append(f"{key}={value_text}")
+            changes = "; ".join(field_parts) if field_parts else "-"
+        else:
+            changes = "-"
+
+        action_display = (action_norm.upper() if action_norm else _text(item.get("action"))).strip() or "-"
+        date_display = _safe_cell(payload.get("date_str") or payload.get("frozen_at"))
+        return {
+            "action_norm": action_norm,
+            "action": action_display,
+            "target": target,
+            "date": date_display,
+            "changes": changes,
+            "changes_detail": changes,
+            "status": "Ready",
+            "status_detail": "",
+            "status_blocked": False,
+        }
+
+    def _merge_table_row(item, row_data):
+        fallback = _build_fallback_row(item)
+        if not isinstance(row_data, dict):
+            return fallback
+
+        merged = dict(fallback)
+        for key in (
+            "action_norm",
+            "action",
+            "target",
+            "date",
+            "changes",
+            "changes_detail",
+            "status",
+            "status_detail",
+            "status_blocked",
+        ):
+            if key in row_data and row_data.get(key) not in (None, ""):
+                merged[key] = row_data.get(key)
+
+        merged["action_norm"] = _normalize_action(merged.get("action_norm") or merged.get("action"))
+        merged["status_blocked"] = bool(row_data.get("status_blocked", merged.get("status_blocked")))
+        return merged
+
+    normalized_rows = []
+    if isinstance(table_rows, list):
+        for idx, item in enumerate(items):
+            row_data = table_rows[idx] if idx < len(table_rows) else None
+            normalized_rows.append(_merge_table_row(item, row_data))
+    else:
+        normalized_rows = [_build_fallback_row(item) for item in items]
+
+    action_counts = {"takeout": 0, "move": 0, "add": 0, "edit": 0, "rollback": 0}
+    for item in items:
+        action_norm = _normalize_action(item.get("action"))
+        if action_norm in action_counts:
+            action_counts[action_norm] += 1
+
+    rows_html = []
+    for row in normalized_rows:
+        changes_summary = _safe_cell(row.get("changes"))
+        changes_detail = _text(row.get("changes_detail")).strip()
+        status_summary = _safe_cell(row.get("status"))
+        status_detail = _text(row.get("status_detail")).strip()
+        is_blocked = bool(row.get("status_blocked"))
+
+        row_classes = "op-row op-row-blocked" if is_blocked else "op-row"
+        changes_title = changes_detail if changes_detail and changes_detail != changes_summary else ""
+        status_title = status_detail
+
+        rows_html.append(
+            f"""
+            <tr class="{row_classes}">
+                <td class="op-action">{escape(_safe_cell(row.get("action")))}</td>
+                <td class="op-target">{escape(_safe_cell(row.get("target")))}</td>
+                <td class="op-date">{escape(_safe_cell(row.get("date")))}</td>
+                <td class="op-changes" title="{escape(changes_title)}">{escape(changes_summary)}</td>
+                <td class="op-status" title="{escape(status_title)}">{escape(status_summary)}</td>
+            </tr>"""
+        )
+
+    col_action = _tr("operations.colAction", default="Action")
+    col_target = _tr("operations.colPosition", default="Target")
+    col_date = _tr("operations.date", default="Date")
+    col_changes = _tr("operations.colChanges", default="Changes")
+    col_status = _tr("operations.colStatus", default="Status")
+
+    table_html = f"""
+    <div class="operation-list">
+        <table class="op-table">
+            <thead>
+                <tr>
+                    <th class="op-action">{escape(col_action)}</th>
+                    <th class="op-target">{escape(col_target)}</th>
+                    <th class="op-date">{escape(col_date)}</th>
+                    <th class="op-changes">{escape(col_changes)}</th>
+                    <th class="op-status">{escape(col_status)}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {''.join(rows_html)}
+            </tbody>
+        </table>
+    </div>
+    """
+
     today = date.today().isoformat()
     total_count = len(items)
-
-    by_action = defaultdict(list)
-    for item in items:
-        by_action[item.get("action", "unknown")].append(item)
-
-    action_order = ["takeout", "move", "add", "edit", "rollback"]
-
-    sections = []
-    op_counter = 1
-
-    for action in action_order:
-        if action not in by_action:
-            continue
-
-        action_items = by_action[action]
-        action_name, action_color, action_desc = _get_action_display(action)
-
-        action_rows = []
-        for item in sorted(action_items, key=lambda x: (x.get("box", 0), x.get("position", 0))):
-            box = item.get("box", 0)
-            pos = item.get("position", 0)
-            to_pos = item.get("to_position")
-            to_box = item.get("to_box")
-
-            if action == "move" and to_pos:
-                if to_box and to_box != box:
-                    pos_display = f"Box{box}:{_pos_to_coord(pos)} &rarr; Box{to_box}:{_pos_to_coord(to_pos)}"
-                    warning = '<span class="warning">[CROSS-BOX]</span>'
-                else:
-                    pos_display = f"Box{box}:{_pos_to_coord(pos)} &rarr; {_pos_to_coord(to_pos)}"
-                    warning = ""
-            else:
-                pos_display = f"Box{box}:{_pos_to_coord(pos)}"
-                warning = ""
-
-            sample = _extract_sample_info(item)
-            rid = item.get("record_id")
-
-            sample_label = sample['label'] or item.get("label", "-")
-
-            _payload = item.get("payload") or {}
-            _fields = _payload.get("fields") or {}
-            note = _fields.get("note", "") or ""
-
-            action_rows.append(f"""
-            <tr class="op-row">
-                <td class="op-num">{op_counter}</td>
-                <td class="chk-cell"><input type="checkbox" id="op{op_counter}"></td>
-                <td class="pos-cell">{pos_display} {warning}</td>
-                <td class="sample-cell">
-                    <div class="sample-name">{sample_label}</div>
-                    <div class="sample-meta">ID: {rid if rid else 'NEW'}</div>
-                </td>
-                <td class="note-cell">{note}</td>
-                <td class="confirm-cell">
-                    <div class="confirm-line">Time: _______</div>
-                    <div class="confirm-line">Init: _______</div>
-                </td>
-            </tr>""")
-            op_counter += 1
-
-        sections.append(f"""
-        <div class="action-section" style="border-left: 4px solid {action_color};">
-            <div class="action-header">
-                <span class="action-name" style="background-color: {action_color};">{action_name}</span>
-                <span class="action-count">{len(action_items)} operations</span>
-                <span class="action-desc">{action_desc}</span>
-            </div>
-            <table class="op-table">
-                <thead>
-                    <tr>
-                        <th class="col-num">#</th>
-                        <th class="col-chk">Done</th>
-                        <th class="col-pos">Location</th>
-                        <th class="col-sample">Sample</th>
-                        <th class="col-note">Notes</th>
-                        <th class="col-confirm">Confirmation</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {''.join(action_rows)}
-                </tbody>
-            </table>
-        </div>""")
-
-    sections_html = "\n".join(sections)
-
-    takeout_count = len(by_action.get("takeout", []))
-    move_count = len(by_action.get("move", []))
-    add_count = len(by_action.get("add", []))
-    edit_count = len(by_action.get("edit", []))
-    rollback_count = len(by_action.get("rollback", []))
-
     grid_html = render_grid_html(grid_state)
 
     html = f"""<!DOCTYPE html>
@@ -601,43 +668,16 @@ def render_operation_sheet_with_grid(items, grid_state=None):
             font-weight: 600;
         }}
 
-        .action-section {{
-            margin-bottom: 25px;
-            padding-left: 10px;
-            break-inside: avoid;
-            page-break-inside: avoid;
-        }}
-
-        .action-header {{
-            display: flex;
-            align-items: center;
-            gap: 10px;
+        .operation-list {{
             margin-bottom: 10px;
-            padding: 8px 0;
-        }}
-
-        .action-name {{
-            padding: 4px 12px;
-            border-radius: 4px;
-            color: white;
-            font-weight: bold;
-            font-size: {FONT_SIZE_MD}px;
-        }}
-
-        .action-count {{
-            color: #6b7280;
-            font-size: {FONT_SIZE_XS}px;
-        }}
-
-        .action-desc {{
-            color: #9ca3af;
-            font-size: {FONT_SIZE_MONO}px;
-            font-style: italic;
+            break-inside: auto;
+            page-break-inside: auto;
         }}
 
         .op-table {{
             width: 100%;
             border-collapse: collapse;
+            table-layout: fixed;
             margin-bottom: 10px;
             break-inside: auto;
             page-break-inside: auto;
@@ -657,6 +697,8 @@ def render_operation_sheet_with_grid(items, grid_state=None):
             padding: 10px 8px;
             border-bottom: 1px solid #e5e7eb;
             vertical-align: top;
+            white-space: pre-wrap;
+            word-break: break-word;
         }}
 
         .op-row {{
@@ -664,62 +706,31 @@ def render_operation_sheet_with_grid(items, grid_state=None):
             page-break-inside: avoid;
         }}
 
-        .op-num {{
-            width: 30px;
-            font-weight: bold;
-            color: #9ca3af;
-            text-align: center;
+        .op-row-blocked .op-status {{
+            color: #b91c1c;
+            font-weight: 700;
         }}
 
-        .chk-cell {{
-            width: 40px;
-            text-align: center;
+        .op-action {{
+            width: 18%;
+            font-weight: 600;
         }}
 
-        .chk-cell input {{
-            width: 16px;
-            height: 16px;
-        }}
-
-        .pos-cell {{
+        .op-target {{
+            width: 24%;
             font-family: {MONO_FONT_CSS_FAMILY};
-            font-weight: 600;
-            font-size: {FONT_SIZE_MD}px;
-            color: #1f2937;
         }}
 
-        .warning {{
-            color: #ef4444;
-            font-weight: bold;
-            font-size: {FONT_SIZE_MONO}px;
-            margin-left: 5px;
+        .op-date {{
+            width: 16%;
         }}
 
-        .sample-name {{
-            font-weight: 600;
-            color: #1f2937;
+        .op-changes {{
+            width: 26%;
         }}
 
-        .sample-meta {{
-            font-size: {FONT_SIZE_MONO}px;
-            color: #6b7280;
-            margin-top: 2px;
-        }}
-
-        .note-cell {{
-            color: #6b7280;
-            font-size: {FONT_SIZE_XS}px;
-            max-width: 150px;
-        }}
-
-        .confirm-cell {{
-            width: 100px;
-        }}
-
-        .confirm-line {{
-            font-size: {FONT_SIZE_MONO}px;
-            color: #9ca3af;
-            margin: 2px 0;
+        .op-status {{
+            width: 16%;
         }}
 
         .footer {{
@@ -755,6 +766,7 @@ def render_operation_sheet_with_grid(items, grid_state=None):
             }}
 
             .sheet-page {{
+                padding: 12mm;
                 box-shadow: 0 14px 36px rgba(15, 23, 42, 0.16);
             }}
         }}
@@ -773,6 +785,7 @@ def render_operation_sheet_with_grid(items, grid_state=None):
             .sheet-page {{
                 width: auto;
                 min-height: auto;
+                padding: 0;
                 box-shadow: none;
                 transform: none !important;
             }}
@@ -799,14 +812,14 @@ def render_operation_sheet_with_grid(items, grid_state=None):
     {grid_html}
 
     <div class="summary">
-        <div class="summary-item" style="background: #fef3c7;">Takeout: {takeout_count}</div>
-        <div class="summary-item" style="background: #dbeafe;">Move: {move_count}</div>
-        <div class="summary-item" style="background: #ede9fe;">Add: {add_count}</div>
-        <div class="summary-item" style="background: #cffafe;">Edit: {edit_count}</div>
-        <div class="summary-item" style="background: #f3f4f6;">Rollback: {rollback_count}</div>
+        <div class="summary-item" style="background: #fef3c7;">Takeout: {action_counts.get("takeout", 0)}</div>
+        <div class="summary-item" style="background: #dbeafe;">Move: {action_counts.get("move", 0)}</div>
+        <div class="summary-item" style="background: #ede9fe;">Add: {action_counts.get("add", 0)}</div>
+        <div class="summary-item" style="background: #cffafe;">Edit: {action_counts.get("edit", 0)}</div>
+        <div class="summary-item" style="background: #f3f4f6;">Rollback: {action_counts.get("rollback", 0)}</div>
     </div>
 
-    {sections_html}
+    {table_html}
 
     <div class="footer">
         <div class="footer-row">

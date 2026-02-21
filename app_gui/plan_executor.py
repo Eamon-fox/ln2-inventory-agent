@@ -583,7 +583,17 @@ def _preflight_batch_takeout(bridge: object, yaml_path: str, payload: Dict[str, 
         tool_name="tool_batch_takeout",
         entries=payload.get("entries", []),
         date_str=payload.get("date_str"),
-        action=payload.get("action", "Takeout"),
+    )
+
+
+def _preflight_batch_move(bridge: object, yaml_path: str, payload: Dict[str, object]) -> Dict[str, object]:
+    """Validate batch_move with the same path as execute mode."""
+    return _run_preflight_tool(
+        bridge=bridge,
+        yaml_path=yaml_path,
+        tool_name="tool_batch_move",
+        entries=payload.get("entries", []),
+        date_str=payload.get("date_str"),
     )
 
 
@@ -591,30 +601,34 @@ def _build_batch_takeout_payload(
     items: List[Dict[str, object]],
     *,
     date_str: str,
-    action_name: str,
     include_target: bool = False,
 ) -> Dict[str, object]:
-    """Build shared batch payload for takeout/move operations."""
+    """Build shared V2 batch payload for takeout/move operations."""
     entries = []
     for item in items:
         payload = item.get("payload") or {}
+        source_box = item.get("box")
+        source_position = payload.get("position")
         if include_target:
-            entry = (
-                payload.get("record_id"),
-                payload.get("position"),
-                payload.get("to_position"),
-            )
-            if payload.get("to_box") is not None:
-                entry = entry + (payload.get("to_box"),)
+            target_box = payload.get("to_box")
+            if target_box in (None, ""):
+                target_box = source_box
+            entry = {
+                "record_id": payload.get("record_id"),
+                "from": {"box": source_box, "position": source_position},
+                "to": {"box": target_box, "position": payload.get("to_position")},
+            }
         else:
-            entry = (payload.get("record_id"), payload.get("position"))
+            entry = {
+                "record_id": payload.get("record_id"),
+                "from": {"box": source_box, "position": source_position},
+            }
         entries.append(entry)
 
     first_payload = (items[0].get("payload") or {}) if items else {}
     return {
         "entries": entries,
         "date_str": first_payload.get("date_str", date_str),
-        "action": action_name,
     }
 
 
@@ -629,6 +643,17 @@ def _run_batch_takeout(
     return bridge.batch_takeout(yaml_path=yaml_path, execution_mode="execute", **batch_payload)
 
 
+def _run_batch_move(
+    bridge: object,
+    yaml_path: str,
+    batch_payload: Dict[str, object],
+    mode: str,
+) -> Dict[str, object]:
+    if mode == "preflight":
+        return _preflight_batch_move(bridge, yaml_path, batch_payload)
+    return bridge.batch_move(yaml_path=yaml_path, execution_mode="execute", **batch_payload)
+
+
 def _execute_moves_batch(
     yaml_path: str,
     items: List[Dict[str, object]],
@@ -640,11 +665,10 @@ def _execute_moves_batch(
     batch_payload = _build_batch_takeout_payload(
         items,
         date_str=date_str,
-        action_name="Move",
         include_target=True,
     )
 
-    response = _run_batch_takeout(bridge, yaml_path, batch_payload, mode)
+    response = _run_batch_move(bridge, yaml_path, batch_payload, mode)
 
     return _fanout_batch_response(
         items,
@@ -675,9 +699,11 @@ def _execute_takeout_batch(
             p = item.get("payload") or {}
             single_payload = {
                 "record_id": p.get("record_id"),
-                "position": p.get("position"),
+                "from_slot": {
+                    "box": item.get("box"),
+                    "position": p.get("position"),
+                },
                 "date_str": p.get("date_str", date_str),
-                "action": action_name,
             }
             response = _run_preflight_tool(
                 bridge=bridge,
@@ -698,7 +724,6 @@ def _execute_takeout_batch(
     batch_payload = _build_batch_takeout_payload(
         items,
         date_str=date_str,
-        action_name=action_name,
         include_target=False,
     )
 

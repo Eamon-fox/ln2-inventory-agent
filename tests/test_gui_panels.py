@@ -99,13 +99,18 @@ class _FakeOperationsBridge:
         entries = payload.get("entries") or []
         record_ids = []
         for entry in entries:
-            if isinstance(entry, (list, tuple)) and entry:
+            if isinstance(entry, dict):
+                record_ids.append(entry.get("record_id"))
+            elif isinstance(entry, (list, tuple)) and entry:
                 record_ids.append(entry[0])
         return {
             "ok": True,
             "preview": {"count": len(entries), "operations": []},
             "result": {"count": len(entries), "record_ids": record_ids},
         }
+
+    def batch_move(self, yaml_path, **payload):
+        return self.batch_takeout(yaml_path, **payload)
 
     def generate_stats(self, yaml_path):
         return {"ok": True, "result": {"total_records": 0, "total_slots": 405, "occupied_slots": 0, "boxes": {}}}
@@ -1031,7 +1036,10 @@ class GuiPanelRegressionTests(unittest.TestCase):
             panel.execute_plan()
 
         self.assertIsNotNone(bridge.last_batch_payload)
-        self.assertEqual("Takeout", bridge.last_batch_payload["action"])
+        self.assertNotIn("action", bridge.last_batch_payload)
+        self.assertEqual(10, bridge.last_batch_payload["entries"][0]["record_id"])
+        self.assertEqual(1, bridge.last_batch_payload["entries"][0]["from"]["box"])
+        self.assertEqual(5, bridge.last_batch_payload["entries"][0]["from"]["position"])
         self.assertEqual(0, len(panel.plan_items))
         self.assertEqual([True], emitted)
 
@@ -1373,9 +1381,8 @@ class ToolRunnerPlanSinkTests(unittest.TestCase):
         runner = self._make_runner()
         result = runner.run("record_takeout", {
             "record_id": 5,
-            "position": 10,
+            "from": {"box": 1, "position": 10},
             "date": "2026-02-10",
-            "action": "Takeout",
         })
         self.assertTrue(result.get("staged"))
         self.assertEqual(1, self.store.count())
@@ -1457,6 +1464,7 @@ class _ConfigurableBridge(_FakeOperationsBridge):
         self.record_takeout_fail_ids = set()
         self.record_takeout_calls = []
         self.batch_takeout_calls = []
+        self.batch_move_calls = []
 
     def batch_takeout(self, yaml_path, **payload):
         self.batch_takeout_calls.append(payload)
@@ -1468,6 +1476,17 @@ class _ConfigurableBridge(_FakeOperationsBridge):
                 "errors": ["绗?鏉? mock error"],
             }
         return super().batch_takeout(yaml_path, **payload)
+
+    def batch_move(self, yaml_path, **payload):
+        self.batch_move_calls.append(payload)
+        if self.batch_should_fail:
+            return {
+                "ok": False,
+                "error_code": "validation_failed",
+                "message": "批量 move 参数校验失败",
+                "errors": ["mock move error"],
+            }
+        return super().batch_move(yaml_path, **payload)
 
     def record_takeout(self, yaml_path, **payload):
         self.record_takeout_calls.append(payload)
@@ -1574,7 +1593,7 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
         return panel
 
     def test_move_batch_fails_falls_back_to_individual(self):
-        """When batch_takeout fails for moves, items are marked blocked (no individual fallback)."""
+        """When batch_move fails for moves, items are marked blocked (no individual fallback)."""
         bridge = _ConfigurableBridge()
         bridge.batch_should_fail = True
         panel = self._new_panel(bridge)
@@ -1590,8 +1609,8 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
         with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
             panel.execute_plan()
 
-        # batch_takeout called once (failed), no individual fallback
-        self.assertEqual(1, len(bridge.batch_takeout_calls))
+        # batch_move called once (failed), no individual fallback
+        self.assertEqual(1, len(bridge.batch_move_calls))
         self.assertEqual(0, len(bridge.record_takeout_calls))
         # Plan preserved on failure
         self.assertEqual(2, len(panel.plan_items))
@@ -1640,7 +1659,7 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
         self.assertEqual(2, len(panel.plan_items))
 
     def test_batch_success_no_fallback(self):
-        """When batch_takeout succeeds, no individual fallback should be triggered."""
+        """When batch_move succeeds, no individual fallback should be triggered."""
         bridge = _ConfigurableBridge()
         bridge.batch_should_fail = False  # batch succeeds
         panel = self._new_panel(bridge)
@@ -1655,8 +1674,8 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
         with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
             panel.execute_plan()
 
-        # batch called once, no individual calls
-        self.assertEqual(1, len(bridge.batch_takeout_calls))
+        # move batch called once, no individual calls
+        self.assertEqual(1, len(bridge.batch_move_calls))
         self.assertEqual(0, len(bridge.record_takeout_calls))
         self.assertEqual(0, len(panel.plan_items))
 
@@ -1733,6 +1752,7 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
         # Now execute again 鈥?this time all succeed
         bridge.batch_should_fail = False
         bridge.record_takeout_fail_ids.clear()
+        bridge.batch_move_calls.clear()
         bridge.batch_takeout_calls.clear()
         bridge.record_takeout_calls.clear()
 
@@ -1767,6 +1787,11 @@ class _UndoBridge(_FakeOperationsBridge):
 
     def batch_takeout(self, yaml_path, **payload):
         result = super().batch_takeout(yaml_path, **payload)
+        result["backup_path"] = "/tmp/backup_test.yaml"
+        return result
+
+    def batch_move(self, yaml_path, **payload):
+        result = super().batch_move(yaml_path, **payload)
         result["backup_path"] = "/tmp/backup_test.yaml"
         return result
 
@@ -2113,6 +2138,70 @@ class PrintPlanRegressionTests(unittest.TestCase):
 
         open_url.assert_not_called()
         self.assertTrue(any(tr("operations.noLastExecutedToPrint") in msg for msg in messages))
+
+    def test_print_plan_uses_business_table_headers_in_rendered_html(self):
+        panel = self._new_panel(_FakeOperationsBridge())
+        panel.add_plan_items([_make_takeout_item(record_id=1, position=5)])
+        panel._build_print_grid_state = lambda _items: {
+            "rows": 1,
+            "cols": 1,
+            "boxes": [
+                {
+                    "box_number": 1,
+                    "box_label": "1",
+                    "cells": [
+                        {
+                            "box": 1,
+                            "position": 1,
+                            "display_pos": "1",
+                            "is_occupied": False,
+                        }
+                    ],
+                }
+            ],
+            "theme": "dark",
+        }
+
+        captured = {}
+
+        def _capture_html(html_text, suffix=".html", open_url_fn=None):
+            captured["html"] = str(html_text or "")
+            captured["suffix"] = suffix
+            captured["open_url_fn"] = open_url_fn
+            return "/tmp/fake_print.html"
+
+        called_i18n_keys = []
+
+        def _fake_i18n_tr(key, default=None, **_kwargs):
+            called_i18n_keys.append(str(key))
+            if default is not None:
+                return str(default)
+            return str(key)
+
+        from unittest.mock import patch
+
+        with patch("app_gui.i18n.tr", side_effect=_fake_i18n_tr), patch(
+            "app_gui.ui.operations_panel_actions.open_html_in_browser",
+            side_effect=_capture_html,
+        ):
+            panel.print_plan()
+
+        html = str(captured.get("html") or "")
+        self.assertTrue(html)
+        self.assertIn("operations.colAction", called_i18n_keys)
+        self.assertIn("operations.colPosition", called_i18n_keys)
+        self.assertIn("operations.date", called_i18n_keys)
+        self.assertIn("operations.colChanges", called_i18n_keys)
+        self.assertIn("operations.colStatus", called_i18n_keys)
+        self.assertIn(">Action<", html)
+        self.assertIn(">Target<", html)
+        self.assertIn(">Date<", html)
+        self.assertIn(">Changes<", html)
+        self.assertIn(">Status<", html)
+        self.assertNotIn(">Done<", html)
+        self.assertNotIn(">Confirmation<", html)
+        self.assertNotIn("Time: _______", html)
+        self.assertNotIn("Init: _______", html)
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")

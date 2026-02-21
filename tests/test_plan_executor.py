@@ -339,7 +339,7 @@ class RunPlanExecuteTests(unittest.TestCase):
             )
 
             bridge = MagicMock()
-            bridge.batch_takeout.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
+            bridge.batch_move.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
 
             items = [
                 make_move_item(record_id=1, position=1, to_position=10),
@@ -349,7 +349,7 @@ class RunPlanExecuteTests(unittest.TestCase):
 
             self.assertTrue(result["ok"])
             self.assertEqual(2, result["stats"]["ok"])
-            bridge.batch_takeout.assert_called_once()
+            bridge.batch_move.assert_called_once()
 
     def test_run_plan_move_batch_fails_marks_all_blocked(self):
         with tempfile.TemporaryDirectory() as td:
@@ -364,7 +364,7 @@ class RunPlanExecuteTests(unittest.TestCase):
             )
 
             bridge = MagicMock()
-            bridge.batch_takeout.return_value = {"ok": False, "error_code": "validation_failed", "message": "Batch failed"}
+            bridge.batch_move.return_value = {"ok": False, "error_code": "validation_failed", "message": "Batch failed"}
 
             items = [
                 make_move_item(record_id=1, position=1, to_position=10),
@@ -375,7 +375,7 @@ class RunPlanExecuteTests(unittest.TestCase):
             self.assertFalse(result["ok"])
             self.assertTrue(result["blocked"])
             self.assertEqual(2, result["stats"]["blocked"])
-            bridge.batch_takeout.assert_called_once()
+            bridge.batch_move.assert_called_once()
             self.assertFalse(bridge.record_takeout.called)
             self.assertTrue(all(it.get("error_code") == "validation_failed" for it in result["items"]))
 
@@ -392,7 +392,7 @@ class RunPlanExecuteTests(unittest.TestCase):
             )
 
             bridge = MagicMock()
-            bridge.batch_takeout.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
+            bridge.batch_move.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
 
             items = [
                 make_takeout_item(record_id=1, position=1),

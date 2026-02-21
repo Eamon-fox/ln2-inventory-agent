@@ -310,6 +310,7 @@ class RenderOperationSheetWithGridTests(unittest.TestCase):
         self.assertIn("class=\"sheet-preview-shell\"", html)
         self.assertIn("class=\"sheet-page\"", html)
         self.assertIn("function fitA4Preview()", html)
+        self.assertIn("padding: 12mm;", html)
 
     def test_default_css_uses_a4_grid_dimensions(self):
         html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
@@ -340,6 +341,41 @@ class RenderOperationSheetWithGridTests(unittest.TestCase):
         html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
         self.assertIn('class="box-header-main">BOX 1</span>', html)
         self.assertIn('class="box-header-num">#1</span>', html)
+
+    def test_business_table_columns_replace_manual_checklist_columns(self):
+        html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
+        self.assertIn('class="op-action"', html)
+        self.assertIn('class="op-target"', html)
+        self.assertIn('class="op-date"', html)
+        self.assertIn('class="op-changes"', html)
+        self.assertIn('class="op-status"', html)
+        self.assertNotIn(">Done<", html)
+        self.assertNotIn(">Confirmation<", html)
+        self.assertNotIn("Time: _______", html)
+        self.assertNotIn("Init: _______", html)
+
+    def test_table_rows_input_drives_rendered_business_columns(self):
+        item = _base_item(action="takeout", box=7, position=15, record_id=99)
+        rows = [
+            {
+                "action_norm": "takeout",
+                "action": "Takeout (ID 99)",
+                "target": "Box 7:15",
+                "date": "2026-02-20",
+                "changes": "cell_line=K562",
+                "changes_detail": "cell_line=K562",
+                "status": "Blocked",
+                "status_detail": "Record already consumed",
+                "status_blocked": True,
+            }
+        ]
+        html = render_operation_sheet_with_grid([item], _grid_state_with_markers(), table_rows=rows)
+        self.assertIn("Takeout (ID 99)", html)
+        self.assertIn("Box 7:15", html)
+        self.assertIn("2026-02-20", html)
+        self.assertIn("cell_line=K562", html)
+        self.assertIn("Blocked", html)
+        self.assertIn('class="op-row op-row-blocked"', html)
 
     def test_render_grid_html_hides_non_active_boxes(self):
         grid_state = {

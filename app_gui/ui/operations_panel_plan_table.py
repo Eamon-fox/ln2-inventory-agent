@@ -19,6 +19,17 @@ def _tr(key, **kwargs):
     return _ops_panel.tr(key, **kwargs)
 
 
+def _trf(key, default, **kwargs):
+    """Translate with resilient formatting, even when key falls back to default."""
+    text = _tr(key, default=default, **kwargs)
+    if kwargs:
+        try:
+            return str(text).format(**kwargs)
+        except Exception:
+            return str(text)
+    return str(text)
+
+
 def _plan_value_text(value):
     """Render field values in table-friendly text form."""
     if value is None:
@@ -116,10 +127,44 @@ def _build_plan_changes(self, action_norm, item, payload, custom_fields):
     parts = []
     detail_parts = []
 
+    def _collect_sample_tokens(*sources):
+        tokens = []
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+
+            for key in ("cell_line", "short_name"):
+                text = self._plan_value_text(source.get(key)).strip()
+                if text and text not in tokens:
+                    tokens.append(text)
+
+            for fdef in custom_fields:
+                key = str((fdef or {}).get("key") or "")
+                if not key or key in {"cell_line", "short_name", "note"}:
+                    continue
+                text = self._plan_value_text(source.get(key)).strip()
+                if text and text not in tokens:
+                    tokens.append(text)
+                if len(tokens) >= 3:
+                    break
+            if len(tokens) >= 3:
+                break
+        return tokens[:2]
+
     if action_norm == "rollback":
         source_event = payload.get("source_event") if isinstance(payload, dict) else None
+        backup_path = payload.get("backup_path") if isinstance(payload, dict) else None
+        rollback_target = os.path.basename(str(backup_path)) if backup_path else _tr("operations.planRollbackLatest")
+        parts.append(
+            _trf(
+                "operations.planChangeRollbackCore",
+                default="[High risk] Rollback to {target}",
+                target=rollback_target,
+            )
+        )
+
         if isinstance(source_event, dict) and source_event:
-            parts.append(
+            detail_parts.append(
                 _tr(
                     "operations.planRollbackSourceEvent",
                     timestamp=str(source_event.get("timestamp") or "-"),
@@ -127,9 +172,8 @@ def _build_plan_changes(self, action_norm, item, payload, custom_fields):
                     trace_id=str(source_event.get("trace_id") or "-"),
                 )
             )
-        backup_path = payload.get("backup_path") if isinstance(payload, dict) else None
         if backup_path:
-            parts.append(_tr("operations.planRollbackBackupPath", path=os.path.basename(str(backup_path))))
+            detail_parts.append(_tr("operations.planRollbackBackupPath", path=os.path.basename(str(backup_path))))
             backup_abs = os.path.abspath(str(backup_path))
             try:
                 stat = os.stat(backup_abs)
@@ -141,12 +185,38 @@ def _build_plan_changes(self, action_norm, item, payload, custom_fields):
 
     elif action_norm == "add":
         fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
+        box = payload.get("box", item.get("box", "?"))
+        positions = payload.get("positions") if isinstance(payload.get("positions"), list) else []
+        if not positions:
+            fallback_pos = item.get("position")
+            if fallback_pos not in (None, ""):
+                positions = [fallback_pos]
+        count = len(positions)
+        positions_text = self._positions_to_display_text(positions) if positions else "?"
+        parts.append(
+            _trf(
+                "operations.planChangeAddCore",
+                default="Add {count} tube(s) -> Box {box}: [{positions}]",
+                count=count,
+                box=box,
+                positions=positions_text,
+            )
+        )
+        sample_tokens = _collect_sample_tokens(fields)
+        if sample_tokens:
+            parts.append(
+                _trf(
+                    "operations.planChangeSample",
+                    default="Sample: {sample}",
+                    sample=" / ".join(sample_tokens),
+                )
+            )
         for key, value in fields.items():
             value_text = self._plan_value_text(value)
             if not value_text:
                 continue
             label = label_map.get(str(key), str(key))
-            parts.append(f"{label}={value_text}")
+            detail_parts.append(f"{label}={value_text}")
 
     elif action_norm == "edit":
         fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
@@ -161,18 +231,47 @@ def _build_plan_changes(self, action_norm, item, payload, custom_fields):
                 parts.append(f"{label}: {old_text} -> {new_text}")
 
     else:
-        if isinstance(record, dict) and record:
-            cell_line = self._plan_value_text(record.get("cell_line", ""))
-            if cell_line:
-                parts.append(f"cell_line={cell_line}")
-            for fdef in custom_fields:
-                key = str((fdef or {}).get("key") or "")
-                if not key or key == "note":
-                    continue
-                value_text = self._plan_value_text(record.get(key, ""))
-                if value_text:
-                    label = str((fdef or {}).get("label") or key)
-                    parts.append(f"{label}={value_text}")
+        box = item.get("box", "?")
+        pos = self._position_to_display(item.get("position", "?"))
+        if action_norm == "move":
+            to_box = item.get("to_box")
+            if to_box in (None, ""):
+                to_box = box
+            to_pos = item.get("to_position")
+            to_pos_text = self._position_to_display(to_pos if to_pos not in (None, "") else "?")
+            suffix = ""
+            if to_box not in (None, "", box):
+                suffix = _tr("operations.planChangeMoveCrossBoxTag", default=" (cross-box)")
+            parts.append(
+                _trf(
+                    "operations.planChangeMoveCore",
+                    default="Move: Box {from_box}:{from_pos} -> Box {to_box}:{to_pos}{suffix}",
+                    from_box=box,
+                    from_pos=pos,
+                    to_box=to_box,
+                    to_pos=to_pos_text,
+                    suffix=suffix,
+                )
+            )
+        else:
+            parts.append(
+                _trf(
+                    "operations.planChangeTakeoutCore",
+                    default="Takeout: Box {box}:{pos} -> taken out",
+                    box=box,
+                    pos=pos,
+                )
+            )
+
+        sample_tokens = _collect_sample_tokens(record)
+        if sample_tokens:
+            parts.append(
+                _trf(
+                    "operations.planChangeSample",
+                    default="Sample: {sample}",
+                    sample=" / ".join(sample_tokens),
+                )
+            )
 
     summary, base_detail = self._summarize_change_parts(parts)
     if detail_parts:
@@ -186,6 +285,35 @@ def _build_plan_status(self, item):
     if validation.get("blocked"):
         return _tr("operations.planStatusBlocked"), localize_error_payload(validation)
     return _tr("operations.planStatusReady"), localize_error_payload(validation, fallback="")
+
+
+def _build_plan_row_semantics(self, item, custom_fields=None):
+    """Build a normalized row model shared by UI table and printable table."""
+    action_text = str(item.get("action", "") or "")
+    action_norm = action_text.lower()
+    payload = item.get("payload") or {}
+    fields = custom_fields if custom_fields is not None else self._current_custom_fields
+
+    action_display = self._build_plan_action_text(action_norm, item)
+    target_display = self._build_plan_target_text(action_norm, item, payload)
+    date_display = self._build_plan_date_text(action_norm, payload)
+    changes_summary, changes_detail = self._build_plan_changes(action_norm, item, payload, fields)
+    status_text, status_detail = self._build_plan_status(item)
+
+    validation = self._plan_validation_by_key.get(self._plan_item_key(item)) or {}
+    status_blocked = bool(validation.get("blocked"))
+
+    return {
+        "action_norm": action_norm,
+        "action": action_display,
+        "target": target_display,
+        "date": date_display,
+        "changes": changes_summary,
+        "changes_detail": changes_detail,
+        "status": status_text,
+        "status_detail": status_detail,
+        "status_blocked": status_blocked,
+    }
 
 
 def _refresh_plan_table(self):
@@ -218,26 +346,26 @@ def _refresh_plan_table(self):
     plan_items = self._plan_store.list_items()
     for row, item in enumerate(plan_items):
         self.plan_table.insertRow(row)
-        action_text = str(item.get("action", "") or "")
-        action_norm = action_text.lower()
-        payload = item.get("payload") or {}
+        row_model = self._build_plan_row_semantics(item, custom_fields=custom_fields)
 
-        action_item = QTableWidgetItem(self._build_plan_action_text(action_norm, item))
+        action_item = QTableWidgetItem(str(row_model.get("action", "")))
         self.plan_table.setItem(row, 0, action_item)
 
-        target_item = QTableWidgetItem(self._build_plan_target_text(action_norm, item, payload))
+        target_item = QTableWidgetItem(str(row_model.get("target", "")))
         self.plan_table.setItem(row, 1, target_item)
 
-        date_item = QTableWidgetItem(self._build_plan_date_text(action_norm, payload))
+        date_item = QTableWidgetItem(str(row_model.get("date", "")))
         self.plan_table.setItem(row, 2, date_item)
 
-        changes_summary, changes_detail = self._build_plan_changes(action_norm, item, payload, custom_fields)
+        changes_summary = str(row_model.get("changes", ""))
+        changes_detail = str(row_model.get("changes_detail", ""))
         changes_item = QTableWidgetItem(changes_summary)
         if changes_detail and changes_detail != changes_summary:
             changes_item.setToolTip(changes_detail)
         self.plan_table.setItem(row, 3, changes_item)
 
-        status_text, status_detail = self._build_plan_status(item)
+        status_text = str(row_model.get("status", ""))
+        status_detail = str(row_model.get("status_detail", ""))
         status_item = QTableWidgetItem(status_text)
         if status_detail:
             status_item.setToolTip(status_detail)

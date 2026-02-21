@@ -2192,6 +2192,7 @@ class OperationsPanel(QWidget):
     _build_plan_date_text = _ops_plan_table._build_plan_date_text
     _build_plan_changes = _ops_plan_table._build_plan_changes
     _build_plan_status = _ops_plan_table._build_plan_status
+    _build_plan_row_semantics = _ops_plan_table._build_plan_row_semantics
     _refresh_plan_table = _ops_plan_table._refresh_plan_table
 
     execute_plan = _ops_exec.execute_plan
@@ -2212,6 +2213,7 @@ class OperationsPanel(QWidget):
     print_last_executed = _ops_actions.print_last_executed
     _print_items_with_grid = _ops_actions._print_items_with_grid
     _build_print_grid_state = _ops_actions._build_print_grid_state
+    _build_print_table_rows = _ops_actions._build_print_table_rows
     _print_operation_sheet_with_grid = _ops_actions._print_operation_sheet_with_grid
     clear_plan = _ops_actions.clear_plan
     reset_for_dataset_switch = _ops_actions.reset_for_dataset_switch
