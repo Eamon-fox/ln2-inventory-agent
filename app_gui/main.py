@@ -4,13 +4,13 @@ import os
 import sys
 import yaml
 from PySide6.QtCore import Qt, QSettings, Slot, QTimer, QSize
-from PySide6.QtGui import QKeySequence
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QPushButton, QLabel, QSplitter,
     QMessageBox, QDialog, QFormLayout, QLineEdit,
     QDialogButtonBox, QFileDialog, QGroupBox,
-    QComboBox, QSpinBox, QCheckBox, QScrollArea, QTextEdit,
+    QComboBox, QSpinBox, QCheckBox, QScrollArea, QTextEdit, QPlainTextEdit,
     QInputDialog,
 )
 
@@ -185,13 +185,15 @@ class SettingsDialog(QDialog):
 
         api_keys_config = self._config.get("api_keys", {})
         self._api_key_edits = {}
+        self._api_key_lock_buttons = {}
         for provider_id, cfg in PROVIDER_DEFAULTS.items():
-            key_edit = QLineEdit(api_keys_config.get(provider_id, ""))
-            key_edit.setEchoMode(QLineEdit.Password)
-            key_edit.setPlaceholderText("sk-...")
+            key_row, key_edit, lock_btn = self._build_locked_api_key_row(
+                api_keys_config.get(provider_id, "")
+            )
             self._api_key_edits[provider_id] = key_edit
+            self._api_key_lock_buttons[provider_id] = lock_btn
             label = f'{cfg["display_name"]} ({cfg["env_key"]}):'
-            ai_layout.addRow(label, key_edit)
+            ai_layout.addRow(label, key_row)
             if cfg.get("help_url"):
                 help_label = QLabel(f'<a href="{cfg["help_url"]}">{cfg["help_url"]}</a>')
                 help_label.setProperty("role", "settingsHint")
@@ -616,6 +618,43 @@ class SettingsDialog(QDialog):
         self.ai_model_edit.setPlaceholderText(cfg["model"])
         self.ai_model_edit.setText(cfg["model"])
 
+    def _build_locked_api_key_row(self, initial_value):
+        row_widget = QWidget()
+        row_layout = QHBoxLayout(row_widget)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(4)
+
+        key_edit = QLineEdit(initial_value or "")
+        key_edit.setEchoMode(QLineEdit.Password)
+        key_edit.setPlaceholderText("sk-...")
+        key_edit.setReadOnly(True)
+        row_layout.addWidget(key_edit, 1)
+
+        lock_btn = QPushButton("\U0001F512")
+        lock_btn.setObjectName("inlineLockBtn")
+        lock_btn.setFixedSize(16, 16)
+        lock_btn.setToolTip(tr("operations.edit"))
+        lock_btn.clicked.connect(
+            lambda _checked=False, edit=key_edit, btn=lock_btn: self._toggle_api_key_lock(edit, btn)
+        )
+        row_layout.addWidget(lock_btn)
+
+        return row_widget, key_edit, lock_btn
+
+    @staticmethod
+    def _toggle_api_key_lock(key_edit, lock_btn):
+        if key_edit.isReadOnly():
+            key_edit.setReadOnly(False)
+            key_edit.setEchoMode(QLineEdit.Normal)
+            lock_btn.setText("\U0001F513")
+            key_edit.setFocus()
+            key_edit.selectAll()
+            return
+
+        key_edit.setReadOnly(True)
+        key_edit.setEchoMode(QLineEdit.Password)
+        lock_btn.setText("\U0001F512")
+
     def get_values(self):
         provider = self.ai_provider_combo.currentData() or DEFAULT_PROVIDER
         provider_cfg = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS[DEFAULT_PROVIDER])
@@ -654,33 +693,54 @@ def _get_import_prompt():
 1) 只输出 YAML 纯文本，不要 Markdown 代码块，不要解释。
 2) 顶层必须包含：
 meta:
-  version: "1.0"
   box_layout:
     rows: 9
     cols: 9
   custom_fields: []
 inventory: []
-3) 数据模型是 tube-level：一条 inventory 记录 = 一支物理冻存管。
- 4) 每条记录必填：
+3) meta 可选字段（导入时通常不需要）：
+    - inventory_instance_id: UUID（系统自动生成）
+    - cell_line_options: 细胞系选项列表
+    - display_key: 网格显示字段（默认 cell_line）
+    - color_key: 颜色分组字段（默认 cell_line）
+    - cell_line_required: 是否必填 cell_line（默认 false）
+    - custom_fields: 自定义字段列表，每项包含：
+        * key: 字段键名（必填，需符合标识符规则）
+        * label: 显示标签（必填）
+        * type: 数据类型，可选 str/int/float/date（默认 str）
+        * required: 是否必填（默认 false）
+        * default: 默认值（可选）
+4) 数据模型是 tube-level：一条 inventory 记录 = 一支物理冻存管。
+5) 每条记录的必填字段：
     - id: 正整数，唯一
     - box: 整数
-    - position: 整数（如 12）
     - frozen_at: YYYY-MM-DD
-5) 常用可选字段：
-    - cell_line, short_name, plasmid_name, plasmid_id, note, thaw_events
-6) 字段映射：
+6) 每条记录的常用可选字段：
+    - position: 整数（如 12），在库时必须有值，取出后可为 null
+    - cell_line: 字符串（某些配置下可能必填）
+    - short_name: 短名称
+    - plasmid_name, plasmid_id: 质粒信息
+    - note: 备注
+    - thaw_events: 取出/复苏事件列表（通常导入时为 null）
+7) thaw_events 结构（如果需要导入历史事件）：
+    thaw_events:
+      - date: "YYYY-MM-DD"
+        action: "takeout"    # takeout/thaw/discard/move
+        positions: [1]       # 注意是 positions（复数），列表格式
+8) 字段映射：
     - 若原表是 cell_line 列，直接映射
-   - 若有 quantity/tube_count>1，拆成多条记录
-7) 若位置是 A1/B3 形式，换算为整数 position：
+    - 若有 quantity/tube_count>1，拆成多条记录，每条一个position
+9) 若位置是 A1/B3 形式，换算为整数 position：
    position = (row_index-1)*cols + col_index，其中 A=1, B=2...
- 8) 空值统一用 null；字符串去首尾空格；日期统一 YYYY-MM-DD。
- 9) 如果缺少必填字段（尤其 box/position/frozen_at），先列出"缺失信息清单"，先不要输出 YAML。
+10) 空值统一用 null；字符串去首尾空格；日期统一 YYYY-MM-DD。
+11) 如果缺少必填字段（尤其 id/box/frozen_at），先列出"缺失信息清单"，先不要输出 YAML。
 
- 输出前自检：
- - 顶层只有 meta 和 inventory
- - inventory 是列表
- - 每条 position 是单个整数
- - id 无重复
+输出前自检：
+- 顶层只有 meta 和 inventory
+- inventory 是列表
+- 每条 position 是单个整数或 null
+- id 无重复
+- thaw_events 中的 positions 是列表（不是单个整数）
 
 下面是原始数据：
 <<<DATA
@@ -690,43 +750,50 @@ DATA"""
 
 def _get_yaml_example():
     return """meta:
-  version: "1.0"
   box_layout:
     rows: 9
     cols: 9
   custom_fields:
-    - key: plasmid_name
-      label: Plasmid Name
-      type: str
-    - key: passage_number
-      label: Passage #
-      type: int
     - key: short_name
       label: Short Name
       type: str
+      required: true
+    - key: plasmid_name
+      label: Plasmid Name
+      type: str
+      default: unknown
+    - key: plasmid_id
+      label: Plasmid ID
+      type: str
+  display_key: cell_line
+  color_key: cell_line
+  cell_line_required: true
 
 inventory:
   - id: 1
-    cell_line: K562
-    short_name: K562_ctrl_A
+    cell_line: NCCIT
+    short_name: NCCIT_ctrl_A
     plasmid_name: pLenti-empty
     plasmid_id: p0001
-    passage_number: 3
     box: 1
     position: 1
     frozen_at: "2026-02-01"
-    note: baseline control
+    note: baseline control clone
+    thaw_events: null
 
   - id: 2
     cell_line: HeLa
     short_name: HeLa_test_B
     plasmid_name: null
     plasmid_id: null
-    passage_number: 5
     box: 1
-    position: 2
+    position: null
     frozen_at: "2026-01-15"
-    note: null"""
+    note: already taken out
+    thaw_events:
+      - date: "2026-02-10"
+        action: takeout
+        positions: [2]"""
 
 
 class ImportPromptDialog(QDialog):
@@ -1213,6 +1280,7 @@ class MainWindow(QMainWindow):
 
         self.setup_ui()
         self.connect_signals()
+        self._setup_shortcuts()
         self.restore_ui_settings()
         self._startup_checks_scheduled = False
         self._floating_dialog_refs = []
@@ -1358,6 +1426,27 @@ class MainWindow(QMainWindow):
 
         # Hide summary cards (stats shown in status bar instead)
         self.overview_panel.set_summary_cards_visible(False)
+
+    def _setup_shortcuts(self):
+        self._find_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
+        self._find_shortcut.setContext(Qt.WindowShortcut)
+        self._find_shortcut.activated.connect(self._focus_overview_search)
+
+    def _focus_overview_search(self):
+        focused = QApplication.focusWidget()
+        if isinstance(focused, (QLineEdit, QTextEdit, QPlainTextEdit)):
+            return
+
+        overview = getattr(self, "overview_panel", None)
+        if overview is None:
+            return
+
+        search = getattr(overview, "ov_filter_keyword", None)
+        if search is None:
+            return
+
+        search.setFocus(Qt.ShortcutFocusReason)
+        search.selectAll()
 
     def show_status(self, msg, timeout=2000, level="info"):
         self.statusBar().showMessage(msg, timeout)
