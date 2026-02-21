@@ -1,6 +1,8 @@
 import os
 import sys
 import unittest
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 from pathlib import Path
 
 
@@ -13,7 +15,7 @@ if str(ROOT) not in sys.path:
 try:
     from PySide6.QtCore import QDate, Qt
     from PySide6.QtGui import QValidator
-    from PySide6.QtWidgets import QApplication, QMessageBox, QCompleter
+    from PySide6.QtWidgets import QApplication, QMessageBox, QCompleter, QPushButton, QLineEdit
 
     from app_gui.ui.ai_panel import AIPanel
     from app_gui.ui.overview_panel import OverviewPanel, TABLE_ROW_TINT_ROLE
@@ -29,6 +31,8 @@ except Exception:
     QApplication = None
     QMessageBox = None
     QCompleter = None
+    QPushButton = None
+    QLineEdit = None
     AIPanel = None
     OverviewPanel = None
     TABLE_ROW_TINT_ROLE = None
@@ -232,6 +236,99 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertFalse(hasattr(panel, "a_dry_run"))
         self.assertFalse(hasattr(panel, "t_dry_run"))
         self.assertFalse(hasattr(panel, "b_dry_run"))
+
+    def test_operations_panel_primary_action_buttons_have_unified_style(self):
+        panel = self._new_operations_panel()
+
+        primary_buttons = (panel.a_apply_btn, panel.t_apply_btn, panel.m_apply_btn)
+        for btn in primary_buttons:
+            self.assertEqual("primary", btn.property("variant"))
+            self.assertGreaterEqual(btn.minimumWidth(), 96)
+            self.assertGreaterEqual(btn.minimumHeight(), 28)
+
+    def test_main_window_ctrl_f_focuses_overview_search_when_focus_not_editable(self):
+        from app_gui.main import MainWindow
+
+        window = MainWindow.__new__(MainWindow)
+        search = MagicMock()
+        window.overview_panel = SimpleNamespace(ov_filter_keyword=search)
+
+        with patch("app_gui.main.QApplication.focusWidget", return_value=QPushButton()):
+            MainWindow._focus_overview_search(window)
+
+        search.setFocus.assert_called_once_with(Qt.ShortcutFocusReason)
+        search.selectAll.assert_called_once()
+
+    def test_main_window_ctrl_f_does_not_steal_focus_from_line_edit(self):
+        from app_gui.main import MainWindow
+
+        window = MainWindow.__new__(MainWindow)
+        search = MagicMock()
+        window.overview_panel = SimpleNamespace(ov_filter_keyword=search)
+
+        with patch("app_gui.main.QApplication.focusWidget", return_value=QLineEdit()):
+            MainWindow._focus_overview_search(window)
+
+        search.setFocus.assert_not_called()
+        search.selectAll.assert_not_called()
+
+    def test_main_window_setup_shortcuts_registers_window_ctrl_f(self):
+        from app_gui.main import MainWindow
+
+        window = MainWindow.__new__(MainWindow)
+        with patch("app_gui.main.QShortcut") as shortcut_cls:
+            shortcut = MagicMock()
+            shortcut_cls.return_value = shortcut
+
+            MainWindow._setup_shortcuts(window)
+
+        self.assertIs(window._find_shortcut, shortcut)
+        args, _kwargs = shortcut_cls.call_args
+        self.assertEqual(window, args[1])
+        self.assertEqual("Ctrl+F", args[0].toString())
+        shortcut.setContext.assert_called_once_with(Qt.WindowShortcut)
+        shortcut.activated.connect.assert_called_once_with(window._focus_overview_search)
+
+    def test_settings_dialog_api_key_is_locked_and_masked_by_default(self):
+        from app_gui.main import SettingsDialog, PROVIDER_DEFAULTS
+
+        provider_id = next(iter(PROVIDER_DEFAULTS))
+        dialog = SettingsDialog(config={"api_keys": {provider_id: "sk-initial"}})
+
+        api_edit = dialog._api_key_edits[provider_id]
+        self.assertTrue(api_edit.isReadOnly())
+        self.assertEqual(QLineEdit.Password, api_edit.echoMode())
+
+    def test_settings_dialog_api_key_unlock_and_relock(self):
+        from app_gui.main import SettingsDialog, PROVIDER_DEFAULTS
+
+        provider_id = next(iter(PROVIDER_DEFAULTS))
+        dialog = SettingsDialog(config={"api_keys": {provider_id: "sk-initial"}})
+
+        api_edit = dialog._api_key_edits[provider_id]
+        lock_btn = dialog._api_key_lock_buttons[provider_id]
+
+        lock_btn.click()
+        self.assertFalse(api_edit.isReadOnly())
+        self.assertEqual(QLineEdit.Normal, api_edit.echoMode())
+
+        lock_btn.click()
+        self.assertTrue(api_edit.isReadOnly())
+        self.assertEqual(QLineEdit.Password, api_edit.echoMode())
+
+    def test_settings_dialog_get_values_reads_updated_api_key(self):
+        from app_gui.main import SettingsDialog, PROVIDER_DEFAULTS
+
+        provider_id = next(iter(PROVIDER_DEFAULTS))
+        dialog = SettingsDialog(config={"api_keys": {provider_id: "sk-initial"}})
+
+        api_edit = dialog._api_key_edits[provider_id]
+        lock_btn = dialog._api_key_lock_buttons[provider_id]
+        lock_btn.click()
+        api_edit.setText("sk-updated")
+
+        values = dialog.get_values()
+        self.assertEqual("sk-updated", values["api_keys"][provider_id])
 
     def test_operations_panel_action_dropdown_supports_move(self):
         panel = self._new_operations_panel()
@@ -815,12 +912,64 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertIn("10", action_text)  # ID should be in the text
         # Column 1 now shows position (box:position)
         pos_text = panel.plan_table.item(0, 1).text()
-        self.assertEqual("1:5", pos_text)
+        self.assertEqual("Box 1:5", pos_text)
 
         # Badge should show count
         idx = panel.op_mode_combo.findData("plan")
         if idx >= 0:
             self.assertIn("1", panel.op_mode_combo.itemText(idx))
+
+    def test_add_plan_items_move_target_text_includes_box_prefix(self):
+        panel = self._new_operations_panel()
+        items = [
+            {
+                "action": "move",
+                "box": 1,
+                "position": 5,
+                "to_box": 2,
+                "to_position": 8,
+                "record_id": 10,
+                "source": "human",
+                "payload": {
+                    "record_id": 10,
+                    "position": 5,
+                    "to_position": 8,
+                    "to_box": 2,
+                    "date_str": "2026-02-10",
+                    "action": "Move",
+                },
+            },
+        ]
+        panel.add_plan_items(items)
+
+        self.assertEqual(1, panel.plan_table.rowCount())
+        pos_text = panel.plan_table.item(0, 1).text()
+        self.assertEqual("Box 1:5 -> Box 2:8", pos_text)
+
+    def test_add_plan_items_move_same_box_target_repeats_box_prefix(self):
+        panel = self._new_operations_panel()
+        items = [
+            {
+                "action": "move",
+                "box": 1,
+                "position": 5,
+                "to_position": 8,
+                "record_id": 10,
+                "source": "human",
+                "payload": {
+                    "record_id": 10,
+                    "position": 5,
+                    "to_position": 8,
+                    "date_str": "2026-02-10",
+                    "action": "Move",
+                },
+            },
+        ]
+        panel.add_plan_items(items)
+
+        self.assertEqual(1, panel.plan_table.rowCount())
+        pos_text = panel.plan_table.item(0, 1).text()
+        self.assertEqual("Box 1:5 -> Box 1:8", pos_text)
 
     def test_add_plan_items_validates_and_rejects_invalid(self):
         panel = self._new_operations_panel()
@@ -2471,6 +2620,104 @@ class OperationEventFeedTests(unittest.TestCase):
         self.assertNotIn("Type:", first_line)
         self.assertNotIn("Time:", first_line)
 
+    def test_ai_panel_notice_dedupes_details_for_plan_stage_accepted(self):
+        """Safe notice types should hide duplicate Details lines when Operations already contain them."""
+        panel = self._new_ai_panel()
+        event = {
+            "type": "system_notice",
+            "code": "plan.stage.accepted",
+            "level": "info",
+            "text": "Added 1 item(s) to plan.",
+            "timestamp": "2026-02-21T23:02:16.978201",
+            "details": "takeout 23 @ Box 3:22",
+            "data": {
+                "added_count": 1,
+                "total_count": 1,
+                "sample": ["takeout 23 @ Box 3:22"],
+            },
+        }
+
+        details_text = panel._format_system_notice_details(event)
+        self.assertIn("Operations (1):", details_text)
+        self.assertNotIn("Details:", details_text)
+        self.assertIn("Counts: added=1, total=1", details_text)
+        self.assertIn("Meta: code=plan.stage.accepted", details_text)
+
+    def test_ai_panel_notice_keeps_details_when_it_has_extra_context(self):
+        """Details should stay visible when it adds context beyond operation lines."""
+        panel = self._new_ai_panel()
+        event = {
+            "type": "system_notice",
+            "code": "plan.stage.accepted",
+            "level": "info",
+            "text": "Added 1 item(s) to plan.",
+            "details": "takeout 23 @ Box 3:22 | source=form",
+            "data": {
+                "added_count": 1,
+                "total_count": 1,
+                "sample": ["takeout 23 @ Box 3:22"],
+            },
+        }
+
+        details_text = panel._format_system_notice_details(event)
+        self.assertIn("Details: takeout 23 @ Box 3:22 | source=form", details_text)
+
+    def test_ai_panel_notice_keeps_details_for_non_dedupe_codes(self):
+        """Non-whitelisted notice codes must keep Details even when text repeats operations."""
+        panel = self._new_ai_panel()
+        blocked_data = {
+            "blocked_items": [
+                {
+                    "action": "takeout",
+                    "record_id": 23,
+                    "box": 3,
+                    "position": 22,
+                    "message": "Validation failed",
+                }
+            ],
+            "stats": {"total": 1},
+        }
+        blocked_ops = panel._extract_notice_operation_lines("plan.stage.blocked", blocked_data)
+        event = {
+            "type": "system_notice",
+            "code": "plan.stage.blocked",
+            "level": "error",
+            "text": "Plan rejected.",
+            "details": blocked_ops[0] if blocked_ops else "Validation failed",
+            "data": blocked_data,
+        }
+
+        details_text = panel._format_system_notice_details(event)
+        self.assertIn("Details:", details_text)
+        self.assertIn("Counts: blocked=1, total=1", details_text)
+
+    def test_ai_panel_notice_formats_placeholders_when_tr_falls_back_to_default(self):
+        """Fallback/default translation templates should still render formatted numbers."""
+        panel = self._new_ai_panel()
+        event = {
+            "type": "system_notice",
+            "code": "plan.stage.accepted",
+            "level": "info",
+            "text": "Added 1 item(s) to plan.",
+            "details": "takeout 23 @ Box 3:22",
+            "data": {
+                "added_count": 1,
+                "total_count": 1,
+                "sample": ["takeout 23 @ Box 3:22"],
+            },
+        }
+
+        from unittest.mock import patch
+
+        def _fallback_default(key, default=None, **kwargs):
+            return default if default is not None else key
+
+        with patch("app_gui.ui.ai_panel.tr", side_effect=_fallback_default):
+            details_text = panel._format_system_notice_details(event)
+
+        self.assertIn("Operations (1):", details_text)
+        self.assertIn("Counts: added=1, total=1", details_text)
+
     def test_ai_panel_collapsible_uses_single_toggle_link(self):
         """Expanded details should use a single toggle link, not an extra bottom control."""
         panel = self._new_ai_panel()
@@ -2496,6 +2743,35 @@ class OperationEventFeedTests(unittest.TestCase):
         self.assertEqual(1, expanded_html.count("Collapse"))
         self.assertNotIn("Expand", expanded_html)
         self.assertLess(expanded_html.find("Collapse"), expanded_html.find("line1"))
+
+    def test_ai_panel_collapsible_inline_expand_for_zero_preview(self):
+        """Collapsed details with zero preview lines should not reserve an extra block row."""
+        panel = self._new_ai_panel()
+
+        collapsed_html = panel._render_collapsible_details(
+            "toggle_test",
+            "line1\nline2",
+            collapsed=True,
+            is_dark=True,
+            preview_lines=0,
+        )
+        expanded_html = panel._render_collapsible_details(
+            "toggle_test",
+            "line1\nline2",
+            collapsed=False,
+            is_dark=True,
+            preview_lines=0,
+        )
+
+        self.assertIn('href="toggle_test"', collapsed_html)
+        self.assertIn("Expand (2 lines)", collapsed_html)
+        self.assertNotIn("<table", collapsed_html)
+        self.assertNotIn("<div", collapsed_html)
+
+        self.assertIn("Collapse", expanded_html)
+        self.assertNotIn("<table", expanded_html)
+        self.assertIn("<div", expanded_html)
+        self.assertLess(expanded_html.find("Collapse"), expanded_html.find("<div"))
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
