@@ -130,7 +130,31 @@
     "importStartupTitle": "欢迎！首次设置",
     "importStartupMessage": "要导入现有的 Excel/CSV 库存数据，您可以使用 AI 将其转换为 YAML 格式。",
     "importStartupAction": "获取导入提示词",
-    "importPromptTemplate": "You are a data-cleaning and structuring assistant.\nConvert my pasted Excel/CSV/table data into LN2 inventory YAML.\n\nRules:\n1) Output YAML only. Do not add explanations.\n2) Top-level keys must be exactly: meta, inventory.\n3) Always include:\nmeta:\n  box_layout:\n    rows: 9\n    cols: 9\n  custom_fields: []\ninventory: []\n4) Data model is tube-level: each inventory item is one physical tube.\n5) Required fields for each inventory item: id, box, frozen_at.\n6) Optional fields: position, cell_line, short_name, plasmid_name, plasmid_id, note, thaw_events.\n7) If a value is missing/unknown, use null.\n8) Dates must use YYYY-MM-DD.\n9) id must be unique positive integers.\n10) If source uses positions like A1/B3, convert to numeric position:\n    position = (row_index-1)*cols + col_index, where A=1, B=2...\n11) thaw_events format:\n    thaw_events:\n      - date: \"YYYY-MM-DD\"\n        action: \"takeout\"   # takeout/move\n        positions: [1]\n12) Do not invent fields not present in source.\n\nInput data:\n<<<DATA\n[paste Excel/CSV/table data here]\nDATA"
+    "importPromptTemplate": "You are a data-cleaning and structuring assistant.\nConvert my pasted Excel/CSV/table data into LN2 inventory YAML.\n\nRules:\n1) Output YAML only. Do not add explanations.\n2) Top-level keys must be exactly: meta, inventory.\n3) Always include:\nmeta:\n  box_layout:\n    rows: 9\n    cols: 9\n  custom_fields: []\ninventory: []\n4) Data model is tube-level: each inventory item is one physical tube.\n5) Required fields for each inventory item: id, box, frozen_at.\n6) Optional fields: position, cell_line, short_name, plasmid_name, plasmid_id, note, thaw_events.\n7) If a value is missing/unknown, use null.\n8) Dates must use YYYY-MM-DD.\n9) id must be unique positive integers.\n10) If source uses positions like A1/B3, convert to numeric position:\n    position = (row_index-1)*cols + col_index, where A=1, B=2...\n11) thaw_events format:\n    thaw_events:\n      - date: \"YYYY-MM-DD\"\n        action: \"takeout\"   # takeout/move\n        positions: [1]\n12) Do not invent fields not present in source.\n\nInput data:\n<<<DATA\n[paste Excel/CSV/table data here]\nDATA",
+    "exportTaskBundleTitle": "导出任务包",
+    "exportTaskBundleDesc": "生成可交给外部代理（Codex/Claude Code）的 ZIP 任务包，包含原始文件、Schema 与转换约束。",
+    "exportTaskBundleAction": "导出任务包",
+    "exportTaskBundleSuccess": "任务包已导出：\n{path}",
+    "exportTaskBundleFailed": "导出任务包失败。",
+    "exportTaskBundleWarnings": "警告：\n{warnings}",
+    "exportBundleSources": "源文件：",
+    "exportBundleOutput": "任务包 ZIP：",
+    "exportBundleNoSources": "尚未选择源文件。",
+    "selectSourceFiles": "选择源文件",
+    "selectSourceFolder": "选择源文件夹",
+    "allFilesFilter": "所有文件 (*)",
+    "zipFilesFilter": "ZIP 文件 (*.zip)",
+    "importValidatedTitle": "导入已验证 YAML",
+    "importValidatedDesc": "对外部生成的 YAML 执行本地严格校验，通过后再导入为数据集。",
+    "importValidateAction": "校验 YAML",
+    "importValidatedAction": "导入数据集",
+    "importValidationResultPlaceholder": "这里将显示校验结果。",
+    "importValidationFailed": "校验未通过，请先修复错误后再导入。",
+    "importValidatedFailed": "导入已验证 YAML 失败。",
+    "importValidatedSuccess": "已导入到：\n{path}",
+    "importCandidateYaml": "候选 YAML：",
+    "importTargetYaml": "目标数据集路径：",
+    "importTargetExistsConfirm": "目标文件已存在：\n{path}\n\n是否覆盖？"
   },
   "overview": {
     "title": "概览",
@@ -742,8 +766,7 @@
         "notes": "通过 fields 对象提供所有示例元数据（例如 fields.short_name、fields.cell_line）。"
       },
       "batch_takeout": {
-        "description": "对于多个管，记录 takeout 或 move。",
-        "notes": "条目支持来自 parse_batch_entries 和结构化数组行的解析字符串格式。"
+        "description": "?? takeout??????? from ???"
       },
       "defaultDescription": "LN2 库存工具：{name}",
       "edit_entry": {
@@ -775,7 +798,7 @@
         "description": "推荐新管的空位置。"
       },
       "record_takeout": {
-        "description": "记录一根管子的 takeout 或 move。"
+        "description": "?? takeout??????? from ???"
       },
       "rollback": {
         "description": "使用显式 backup_path 将清单 YAML 回滚到备份快照。",
@@ -783,6 +806,12 @@
       },
       "search_records": {
         "description": "搜索库存记录，或通过recent_*过滤器列出最近冻结的记录。"
+      },
+      "batch_move": {
+        "description": "?? move??????? from/to ???"
+      },
+      "record_move": {
+        "description": "?? move??????? from/to ???"
       }
     },
     "validation": {

@@ -104,6 +104,8 @@ class SettingsDialog(QDialog):
         github_api_latest=_GITHUB_API_LATEST,
         root_dir=None,
         import_prompt_dialog_cls=None,
+        export_task_bundle_dialog_cls=None,
+        import_validated_yaml_dialog_cls=None,
         custom_fields_dialog_cls=None,
         normalize_yaml_path=None,
     ):
@@ -120,6 +122,8 @@ class SettingsDialog(QDialog):
         self._github_api_latest = str(github_api_latest or _GITHUB_API_LATEST)
         self._root_dir = root_dir or ROOT
         self._import_prompt_dialog_cls = import_prompt_dialog_cls
+        self._export_task_bundle_dialog_cls = export_task_bundle_dialog_cls
+        self._import_validated_yaml_dialog_cls = import_validated_yaml_dialog_cls
         self._custom_fields_dialog_cls = custom_fields_dialog_cls
         self._normalize_yaml_path = normalize_yaml_path or _normalize_inventory_yaml_path
 
@@ -173,6 +177,14 @@ class SettingsDialog(QDialog):
         import_btn = QPushButton(tr("main.importPromptTitle"))
         import_btn.clicked.connect(self._open_import_prompt)
         tool_row.addWidget(import_btn)
+
+        export_bundle_btn = QPushButton(tr("main.exportTaskBundleTitle"))
+        export_bundle_btn.clicked.connect(self._open_export_task_bundle)
+        tool_row.addWidget(export_bundle_btn)
+
+        import_validated_btn = QPushButton(tr("main.importValidatedTitle"))
+        import_validated_btn.clicked.connect(self._open_import_validated_yaml)
+        tool_row.addWidget(import_validated_btn)
 
         tool_row.addStretch()
         data_layout.addRow("", tool_row)
@@ -621,6 +633,39 @@ class SettingsDialog(QDialog):
             from app_gui.ui.dialogs.import_prompt_dialog import ImportPromptDialog as dialog_cls
         dlg = dialog_cls(self)
         dlg.exec()
+
+    def _open_export_task_bundle(self):
+        dialog_cls = self._export_task_bundle_dialog_cls
+        if dialog_cls is None:
+            from app_gui.ui.dialogs.export_task_bundle_dialog import ExportTaskBundleDialog as dialog_cls
+        dlg = dialog_cls(self)
+        dlg.exec()
+
+    def _suggest_import_target_path(self):
+        current = self.yaml_edit.text().strip()
+        if current and os.path.splitext(current)[1].lower() in {".yaml", ".yml"}:
+            return current
+
+        if current:
+            candidate_dir = os.path.dirname(self._normalize_yaml_path(current))
+        else:
+            candidate_dir = os.getcwd()
+        if not candidate_dir:
+            candidate_dir = os.getcwd()
+        return os.path.join(candidate_dir, "ln2_inventory.imported.yaml")
+
+    def _open_import_validated_yaml(self):
+        dialog_cls = self._import_validated_yaml_dialog_cls
+        if dialog_cls is None:
+            from app_gui.ui.dialogs.import_validated_yaml_dialog import (
+                ImportValidatedYamlDialog as dialog_cls,
+            )
+        dlg = dialog_cls(self, default_target_path=self._suggest_import_target_path())
+        if dlg.exec() != QDialog.Accepted:
+            return
+        imported_yaml = getattr(dlg, "imported_yaml_path", "")
+        if imported_yaml:
+            self.yaml_edit.setText(self._normalize_yaml_path(imported_yaml))
 
     def _on_provider_changed(self):
         provider = self.ai_provider_combo.currentData()

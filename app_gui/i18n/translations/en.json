@@ -130,7 +130,31 @@
     "importStartupTitle": "Welcome! First Time Setup",
     "importStartupMessage": "To import your existing Excel/CSV inventory data, you can use an AI to convert it to YAML format.",
     "importStartupAction": "Get Import Prompt",
-    "importPromptTemplate": "You are a data-cleaning and structuring assistant.\nConvert my pasted Excel/CSV/table data into LN2 inventory YAML.\n\nRules:\n1) Output YAML only. Do not add explanations.\n2) Top-level keys must be exactly: meta, inventory.\n3) Always include:\nmeta:\n  box_layout:\n    rows: 9\n    cols: 9\n  custom_fields: []\ninventory: []\n4) Data model is tube-level: each inventory item is one physical tube.\n5) Required fields for each inventory item: id, box, frozen_at.\n6) Optional fields: position, cell_line, short_name, plasmid_name, plasmid_id, note, thaw_events.\n7) If a value is missing/unknown, use null.\n8) Dates must use YYYY-MM-DD.\n9) id must be unique positive integers.\n10) If source uses positions like A1/B3, convert to numeric position:\n    position = (row_index-1)*cols + col_index, where A=1, B=2...\n11) thaw_events format:\n    thaw_events:\n      - date: \"YYYY-MM-DD\"\n        action: \"takeout\"   # takeout/move\n        positions: [1]\n12) Do not invent fields not present in source.\n\nInput data:\n<<<DATA\n[paste Excel/CSV/table data here]\nDATA"
+    "importPromptTemplate": "You are a data-cleaning and structuring assistant.\nConvert my pasted Excel/CSV/table data into LN2 inventory YAML.\n\nRules:\n1) Output YAML only. Do not add explanations.\n2) Top-level keys must be exactly: meta, inventory.\n3) Always include:\nmeta:\n  box_layout:\n    rows: 9\n    cols: 9\n  custom_fields: []\ninventory: []\n4) Data model is tube-level: each inventory item is one physical tube.\n5) Required fields for each inventory item: id, box, frozen_at.\n6) Optional fields: position, cell_line, short_name, plasmid_name, plasmid_id, note, thaw_events.\n7) If a value is missing/unknown, use null.\n8) Dates must use YYYY-MM-DD.\n9) id must be unique positive integers.\n10) If source uses positions like A1/B3, convert to numeric position:\n    position = (row_index-1)*cols + col_index, where A=1, B=2...\n11) thaw_events format:\n    thaw_events:\n      - date: \"YYYY-MM-DD\"\n        action: \"takeout\"   # takeout/move\n        positions: [1]\n12) Do not invent fields not present in source.\n\nInput data:\n<<<DATA\n[paste Excel/CSV/table data here]\nDATA",
+    "exportTaskBundleTitle": "Export Task Bundle",
+    "exportTaskBundleDesc": "Create a ZIP package for external agents (Codex/Claude Code). The bundle includes source files, schema, and conversion constraints.",
+    "exportTaskBundleAction": "Export Bundle",
+    "exportTaskBundleSuccess": "Task bundle exported:\n{path}",
+    "exportTaskBundleFailed": "Failed to export task bundle.",
+    "exportTaskBundleWarnings": "Warnings:\n{warnings}",
+    "exportBundleSources": "Source Files:",
+    "exportBundleOutput": "Bundle ZIP:",
+    "exportBundleNoSources": "No source files selected.",
+    "selectSourceFiles": "Select Source Files",
+    "selectSourceFolder": "Select Source Folder",
+    "allFilesFilter": "All Files (*)",
+    "zipFilesFilter": "ZIP Files (*.zip)",
+    "importValidatedTitle": "Import Validated YAML",
+    "importValidatedDesc": "Validate an externally generated YAML file with strict local rules, then import it as a dataset.",
+    "importValidateAction": "Validate YAML",
+    "importValidatedAction": "Import Dataset",
+    "importValidationResultPlaceholder": "Validation result will appear here.",
+    "importValidationFailed": "Validation failed. Resolve errors before importing.",
+    "importValidatedFailed": "Failed to import validated YAML.",
+    "importValidatedSuccess": "Imported validated YAML to:\n{path}",
+    "importCandidateYaml": "Candidate YAML:",
+    "importTargetYaml": "Target Dataset Path:",
+    "importTargetExistsConfirm": "Target file already exists:\n{path}\n\nOverwrite?"
   },
   "overview": {
     "title": "Overview",
@@ -742,9 +766,11 @@
         "description": "Add new frozen tube records.",
         "notes": "Provide all sample metadata through fields object (e.g. fields.short_name, fields.cell_line)."
       },
+      "batch_move": {
+        "description": "Record move for multiple tubes using explicit source and target slots."
+      },
       "batch_takeout": {
-        "description": "Record takeout or move for multiple tubes.",
-        "notes": "entries supports parsed string formats from parse_batch_entries and structured array rows."
+        "description": "Record takeout for multiple tubes using explicit source slots."
       },
       "defaultDescription": "LN2 inventory tool: {name}",
       "edit_entry": {
@@ -776,7 +802,10 @@
         "description": "Recommend empty positions for new tubes."
       },
       "record_takeout": {
-        "description": "Record takeout or move for one tube."
+        "description": "Record takeout for one tube using explicit source slot."
+      },
+      "record_move": {
+        "description": "Record move for one tube using explicit source and target slots."
       },
       "rollback": {
         "description": "Rollback inventory YAML to a backup snapshot using explicit backup_path.",
