@@ -8,7 +8,9 @@ import shutil
 import socket
 import sys
 import uuid
+from contextlib import suppress
 from datetime import datetime
+from typing import Any
 
 import yaml
 from .config import (
@@ -24,6 +26,16 @@ from .config import (
 )
 from .position_fmt import get_box_numbers, get_total_slots
 from .validators import format_validation_errors, validate_inventory
+
+_COMMON_CJK_CHARS = set(
+    "\u7684\u4e00\u662f\u5728\u4e0d\u4e86\u6709\u548c\u4eba\u8fd9\u4e2d\u5927\u4e0a\u4e2a\u56fd"
+    "\u6211\u4ee5\u8981\u4ed6\u65f6\u6765\u7528\u4eec\u5230\u4f5c\u5730\u4e8e\u51fa\u5c31\u5206\u5bf9"
+    "\u6210\u4f1a\u53ef\u4e3b\u53d1\u5e74\u52a8\u540c\u5de5\u4e5f\u80fd\u4e0b\u8fc7\u5b50\u8bf4\u4ea7"
+    "\u79cd\u9762\u800c\u65b9\u540e\u591a\u5b9a\u884c\u5b66\u6cd5\u6240\u6c11\u5f97\u7ecf"
+)
+
+_MOJIBAKE_SOURCE_ENCODINGS = ("gb18030", "gbk", "cp936")
+_MOJIBAKE_MARKER_CHARS = set("浣鍙璁瀹鍐绉缁澶鎿娓寮鎴鍚闄鏄鐨锛銆鈥")
 
 
 def _ensure_inventory_integrity(data, prefix="完整性校验失败"):
@@ -123,11 +135,119 @@ def _abs_path(path):
     return os.path.abspath(os.fspath(path if path is not None else YAML_PATH))
 
 
+def _text_readability_score(text: str) -> float:
+    if not text:
+        return float("-inf")
+
+    common = 0
+    cjk_basic = 0
+    cjk_rare = 0
+    private_use = 0
+    ascii_printable = 0
+    chinese_punct = 0
+    question_marks = 0
+
+    for ch in text:
+        code = ord(ch)
+        if 0x4E00 <= code <= 0x9FFF:
+            cjk_basic += 1
+            if ch in _COMMON_CJK_CHARS:
+                common += 1
+        elif 0x3400 <= code <= 0x4DBF or 0x20000 <= code <= 0x2FA1F:
+            cjk_rare += 1
+        elif 0xE000 <= code <= 0xF8FF:
+            private_use += 1
+        elif 0x20 <= code <= 0x7E:
+            ascii_printable += 1
+        elif ch in "，。！？：；、“”‘’（）《》【】—…":
+            chinese_punct += 1
+
+        if ch == "?":
+            question_marks += 1
+
+    return (
+        common * 3.0
+        + cjk_basic * 0.45
+        + ascii_printable * 0.12
+        + chinese_punct * 0.35
+        - cjk_rare * 1.9
+        - private_use * 2.4
+        - question_marks * 0.8
+    )
+
+
+def _marker_count(text: str) -> int:
+    return sum(1 for ch in (text or "") if ch in _MOJIBAKE_MARKER_CHARS)
+
+
+def _is_probable_mojibake_upgrade(source: str, candidate: str, source_score: float, candidate_score: float) -> bool:
+    src_markers = _marker_count(source)
+    if src_markers <= 0:
+        return False
+
+    cand_markers = _marker_count(candidate)
+    # Candidate should remove at least one suspicious marker and not make readability much worse.
+    if cand_markers >= src_markers:
+        return False
+    return candidate_score >= source_score - 0.6
+
+
+def _repair_mojibake_text(value: str) -> str:
+    text = str(value or "")
+    if not text:
+        return text
+    if len(text) < 4:
+        return text
+    if all(ord(ch) < 128 for ch in text):
+        return text
+
+    best = text
+    best_score = _text_readability_score(text)
+
+    for _ in range(2):
+        improved = False
+        for enc in _MOJIBAKE_SOURCE_ENCODINGS:
+            try:
+                raw = best.encode(enc)
+                candidate = raw.decode("utf-8")
+            except UnicodeError:
+                continue
+            if not candidate or candidate == best:
+                continue
+
+            candidate_score = _text_readability_score(candidate)
+            # Require a small margin to avoid rewriting already-good strings.
+            # For true UTF8->GBK mojibake, candidate existence is already a strong signal.
+            if (
+                candidate_score > best_score + 0.35
+                or _is_probable_mojibake_upgrade(best, candidate, best_score, candidate_score)
+            ):
+                best = candidate
+                best_score = candidate_score
+                improved = True
+
+        if not improved:
+            break
+
+    return best
+
+
+def _repair_mojibake_values(node: Any) -> Any:
+    if isinstance(node, dict):
+        return {key: _repair_mojibake_values(value) for key, value in node.items()}
+    if isinstance(node, list):
+        return [_repair_mojibake_values(value) for value in node]
+    if isinstance(node, str):
+        return _repair_mojibake_text(node)
+    return node
+
+
 def load_yaml(path=YAML_PATH):
     """Load YAML file and return data."""
     abs_path = _abs_path(path)
     with open(abs_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        data = yaml.safe_load(f)
+    return _repair_mojibake_values(data)
 
 
 def _backup_dir(yaml_path):
@@ -199,10 +319,8 @@ def create_yaml_backup(yaml_path=YAML_PATH, keep=BACKUP_KEEP_COUNT):
     if keep is not None and keep > 0:
         old_backups = list_yaml_backups(src)
         for old in old_backups[keep:]:
-            try:
+            with suppress(OSError):
                 os.remove(old)
-            except OSError:
-                pass
 
     return backup_path
 
@@ -256,13 +374,6 @@ def read_audit_events(yaml_path=YAML_PATH, limit=None):
     if limit is not None:
         return events[: max(0, int(limit))]
     return events
-
-
-def _inventory_box_total(data):
-    layout = (data or {}).get("meta", {}).get("box_layout", {}) if isinstance(data, dict) else {}
-    rows = int(layout.get("rows", 9))
-    cols = int(layout.get("cols", 9))
-    return rows * cols
 
 
 def compute_occupancy(records):
@@ -540,7 +651,7 @@ def write_yaml(
     """
     yaml_abs = _abs_path(path)
 
-    _ensure_inventory_integrity(data, prefix="写入被阻止：库存完整性校验失败")
+    _ensure_inventory_integrity(data, prefix="完整性校验失败")
 
     existing_instance_id = None
     before_data = None

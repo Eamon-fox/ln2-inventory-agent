@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from lib.custom_fields import STRUCTURAL_FIELD_KEYS, coerce_value, parse_custom_fields, get_effective_fields, get_display_key, get_required_field_keys, DEFAULT_PRESET_FIELDS, get_color_key, get_cell_line_options, DEFAULT_CELL_LINE_OPTIONS, is_cell_line_required
+from lib.custom_fields import STRUCTURAL_FIELD_KEYS, coerce_value, parse_custom_fields, get_color_key, get_cell_line_options, DEFAULT_CELL_LINE_OPTIONS, is_cell_line_required
 from lib.tool_api import (
     tool_add_entry,
     tool_edit_entry,
@@ -575,7 +575,7 @@ class TestCellLineBaselineValidation(unittest.TestCase):
         }
         errors, warnings = validate_inventory(data)
         self.assertEqual([], errors)
-        self.assertTrue(any("不在预设选项中" in w for w in warnings))
+        self.assertTrue(any("not in configured options" in w for w in warnings))
 
     def test_missing_cell_line_key_is_warning_not_error(self):
         data = {
@@ -595,7 +595,7 @@ class TestCellLineBaselineValidation(unittest.TestCase):
         }
         errors, warnings = validate_inventory(data)
         self.assertEqual([], errors)
-        self.assertTrue(any("缺少字段 'cell_line'" in w for w in warnings))
+        self.assertTrue(any("missing 'cell_line'" in w for w in warnings))
 
 
 # ===========================================================================

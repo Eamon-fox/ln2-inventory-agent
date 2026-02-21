@@ -59,6 +59,7 @@ class RuntimeConfigTests(unittest.TestCase):
                 mod = importlib.reload(config_module)
                 expected = str((ROOT / "demo" / "ln2_inventory.demo.yaml").resolve())
                 self.assertEqual(expected, mod.YAML_PATH)
+                os.chdir(previous_cwd)
         finally:
             os.chdir(previous_cwd)
 

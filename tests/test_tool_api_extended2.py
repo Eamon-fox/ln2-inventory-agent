@@ -1,9 +1,9 @@
-"""Extended tests for lib/tool_api.py.
+﻿"""Extended tests for lib/tool_api.py.
 
 Tests for:
 - tool_recent_frozen: days, count parameters
 - tool_recommend_positions: box_preference, strategy
-- tool_query_thaw_events: date range queries
+- tool_query_takeout_events: date range queries
 - tool_collect_timeline: all_history parameter
 - tool_generate_stats: stats output structure
 """
@@ -18,16 +18,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from lib.tool_api import (
-    tool_add_entry,
     tool_collect_timeline,
-    tool_edit_entry,
     tool_generate_stats,
-    tool_query_thaw_events,
+    tool_query_takeout_events,
     tool_recent_frozen,
     tool_recommend_positions,
-    tool_search_records,
 )
-from lib.yaml_ops import load_yaml, write_yaml
+from lib.yaml_ops import write_yaml
 
 
 def make_record(rec_id=1, box=1, position=None, **kwargs):
@@ -50,7 +47,7 @@ def make_data(records):
     }
 
 
-# ── tool_recent_frozen Tests ─────────────────────────────────────
+# 鈹€鈹€ tool_recent_frozen Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class RecentFrozenTests(unittest.TestCase):
@@ -122,7 +119,7 @@ class RecentFrozenTests(unittest.TestCase):
             self.assertEqual(0, result["result"]["count"])
 
 
-# ── tool_recommend_positions Tests ──────────────────────────────
+# 鈹€鈹€ tool_recommend_positions Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class RecommendPositionsTests(unittest.TestCase):
@@ -211,13 +208,13 @@ class RecommendPositionsTests(unittest.TestCase):
             # Should still find positions in other boxes
 
 
-# ── tool_query_thaw_events Tests ───────────────────────────────
+# 鈹€鈹€ tool_query_takeout_events Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class QueryThawEventsExtendedTests(unittest.TestCase):
-    """Extended tests for tool_query_thaw_events."""
+    """Extended tests for tool_query_takeout_events."""
 
-    def test_query_thaw_events_start_end_date(self):
+    def test_query_takeout_events_start_end_date(self):
         """Test date range query with start_date and end_date."""
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
@@ -233,14 +230,14 @@ class QueryThawEventsExtendedTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
-            result = tool_query_thaw_events(
+            result = tool_query_takeout_events(
                 str(yaml_path), start_date="2025-01-12", end_date="2025-01-18"
             )
             self.assertTrue(result["ok"])
             # Should only include event from Jan 15
             self.assertEqual(1, result["result"]["event_count"])
 
-    def test_query_thaw_events_date_range_outside(self):
+    def test_query_takeout_events_date_range_outside(self):
         """Test date range with no matching events."""
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
@@ -254,13 +251,13 @@ class QueryThawEventsExtendedTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
-            result = tool_query_thaw_events(
+            result = tool_query_takeout_events(
                 str(yaml_path), start_date="2025-02-01", end_date="2025-02-28"
             )
             self.assertTrue(result["ok"])
             self.assertEqual(0, result["result"]["event_count"])
 
-    def test_query_thaw_events_with_max_records(self):
+    def test_query_takeout_events_with_max_records(self):
         """Test max_records parameter."""
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
@@ -274,19 +271,19 @@ class QueryThawEventsExtendedTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
-            result = tool_query_thaw_events(str(yaml_path), max_records=3)
+            result = tool_query_takeout_events(str(yaml_path), max_records=3)
             self.assertTrue(result["ok"])
             self.assertEqual(3, result["result"]["event_count"])
 
-    def test_query_thaw_events_all_actions(self):
+    def test_query_takeout_events_all_actions(self):
         """Test querying for all action types."""
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
             rec = make_record(1, box=1, position=5)
             rec["thaw_events"] = [
                 {"date": "2026-01-10", "action": "takeout", "positions": [1]},
-                {"date": "2026-01-15", "action": "thaw", "positions": [2]},
-                {"date": "2026-01-20", "action": "discard", "positions": [3]},
+                {"date": "2026-01-15", "action": "takeout", "positions": [2]},
+                {"date": "2026-01-20", "action": "takeout", "positions": [3]},
                 {"date": "2026-01-25", "action": "move", "positions": [1], "from_position": 1, "to_position": 5},
             ]
             write_yaml(
@@ -295,13 +292,13 @@ class QueryThawEventsExtendedTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
-            result = tool_query_thaw_events(str(yaml_path))
+            result = tool_query_takeout_events(str(yaml_path))
             self.assertTrue(result["ok"])
             # All events should be returned
             self.assertEqual(4, result["result"]["event_count"])
 
 
-# ── tool_collect_timeline Tests ─────────────────────────────────
+# 鈹€鈹€ tool_collect_timeline Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class CollectTimelineExtendedTests(unittest.TestCase):
@@ -360,7 +357,7 @@ class CollectTimelineExtendedTests(unittest.TestCase):
             self.assertEqual(0, result["result"]["summary"]["takeout"])
 
 
-# ── tool_generate_stats Tests ─────────────────────────────────────
+# 鈹€鈹€ tool_generate_stats Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class GenerateStatsTests(unittest.TestCase):
@@ -449,3 +446,4 @@ class GenerateStatsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

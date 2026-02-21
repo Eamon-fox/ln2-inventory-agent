@@ -1,11 +1,10 @@
-"""Invariant & edge-case tests for lib/tool_api.py.
+﻿"""Invariant & edge-case tests for lib/tool_api.py.
 
 These tests verify properties that must ALWAYS hold, regardless of
 implementation details.  They are designed to catch bugs before they
 surface as end-to-end failures.
 """
 
-import json
 import sys
 import tempfile
 import unittest
@@ -18,8 +17,8 @@ if str(ROOT) not in sys.path:
 from lib.tool_api import (
     parse_batch_entries,
     tool_add_entry,
-    tool_batch_thaw,
-    tool_record_thaw,
+    tool_batch_takeout,
+    tool_record_takeout,
 )
 from lib.yaml_ops import load_yaml, write_yaml, read_audit_events
 
@@ -61,7 +60,7 @@ def _read_audit(temp_dir):
     return read_audit_events(str(yaml_path))
 
 
-# ── parse_batch_entries ─────────────────────────────────────────────
+# 鈹€鈹€ parse_batch_entries 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class ParseBatchEntriesTests(unittest.TestCase):
@@ -82,7 +81,7 @@ class ParseBatchEntriesTests(unittest.TestCase):
             parse_batch_entries("not-valid")
 
 
-# ── Position consistency invariants ─────────────────────────────────
+# 鈹€鈹€ Position consistency invariants 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class PositionConsistencyTests(unittest.TestCase):
@@ -92,9 +91,9 @@ class PositionConsistencyTests(unittest.TestCase):
         """After takeout, the removed position must NOT appear in positions list."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [make_record(1, box=1, position=2)])
-            tool_record_thaw(
+            tool_record_takeout(
                 yaml_path=yp, record_id=1, position=2,
-                date_str="2026-02-10", action="取出",
+                date_str="2026-02-10", action="鍙栧嚭",
             )
             data = load_yaml(yp)
             position = data["inventory"][0]["position"]
@@ -105,9 +104,9 @@ class PositionConsistencyTests(unittest.TestCase):
         """Every takeout must record a thaw_event with the removed position."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [make_record(1, box=1, position=1)])
-            tool_record_thaw(
+            tool_record_takeout(
                 yaml_path=yp, record_id=1, position=1,
-                date_str="2026-02-10", action="取出",
+                date_str="2026-02-10", action="鍙栧嚭",
             )
             data = load_yaml(yp)
             events = data["inventory"][0].get("thaw_events", [])
@@ -118,9 +117,9 @@ class PositionConsistencyTests(unittest.TestCase):
         """Taking out the only remaining position yields position=None."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [make_record(1, box=1, position=5)])
-            result = tool_record_thaw(
+            result = tool_record_takeout(
                 yaml_path=yp, record_id=1, position=5,
-                date_str="2026-02-10", action="取出",
+                date_str="2026-02-10", action="鍙栧嚭",
             )
             self.assertTrue(result["ok"])
             data = load_yaml(yp)
@@ -130,7 +129,7 @@ class PositionConsistencyTests(unittest.TestCase):
         """Move must not change the total number of positions on the record."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [make_record(1, box=1, position=1)])
-            tool_record_thaw(
+            tool_record_takeout(
                 yaml_path=yp, record_id=1, position=1, to_position=10,
                 date_str="2026-02-10", action="move",
             )
@@ -141,7 +140,7 @@ class PositionConsistencyTests(unittest.TestCase):
         """After move, old position is gone and new position is present."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [make_record(1, box=1, position=1)])
-            tool_record_thaw(
+            tool_record_takeout(
                 yaml_path=yp, record_id=1, position=1, to_position=5,
                 date_str="2026-02-10", action="move",
             )
@@ -157,7 +156,7 @@ class PositionConsistencyTests(unittest.TestCase):
                 make_record(1, box=1, position=1),
                 make_record(2, box=1, position=3),
             ])
-            tool_record_thaw(
+            tool_record_takeout(
                 yaml_path=yp, record_id=1, position=1, to_position=3,
                 date_str="2026-02-10", action="move",
             )
@@ -195,7 +194,7 @@ class PositionConsistencyTests(unittest.TestCase):
             self.assertFalse(result["ok"])
 
 
-# ── Batch same-record edge cases ────────────────────────────────────
+# 鈹€鈹€ Batch same-record edge cases 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class BatchSameRecordTests(unittest.TestCase):
@@ -209,10 +208,10 @@ class BatchSameRecordTests(unittest.TestCase):
                 make_record(2, box=1, position=2),
                 make_record(3, box=1, position=3),
             ])
-            result = tool_batch_thaw(
+            result = tool_batch_takeout(
                 yaml_path=yp,
                 entries=[(1, 1), (2, 2), (3, 3)],
-                date_str="2026-02-10", action="取出",
+                date_str="2026-02-10", action="鍙栧嚭",
             )
             self.assertTrue(result["ok"])
             data = load_yaml(yp)
@@ -228,10 +227,10 @@ class BatchSameRecordTests(unittest.TestCase):
                 make_record(2, box=1, position=20),
                 make_record(3, box=1, position=30),
             ])
-            result = tool_batch_thaw(
+            result = tool_batch_takeout(
                 yaml_path=yp,
                 entries=[(1, 10), (3, 30)],
-                date_str="2026-02-10", action="取出",
+                date_str="2026-02-10", action="鍙栧嚭",
             )
             self.assertTrue(result["ok"])
             data = load_yaml(yp)
@@ -248,10 +247,10 @@ class BatchSameRecordTests(unittest.TestCase):
                 make_record(3, box=1, position=3),
                 make_record(4, box=1, position=4),
             ])
-            result = tool_batch_thaw(
+            result = tool_batch_takeout(
                 yaml_path=yp,
                 entries=[(1, 1), (2, 2), (4, 4)],
-                date_str="2026-02-10", action="取出",
+                date_str="2026-02-10", action="鍙栧嚭",
             )
             self.assertTrue(result["ok"])
             data = load_yaml(yp)
@@ -266,17 +265,17 @@ class BatchSameRecordTests(unittest.TestCase):
         """Trying to remove the same position twice should fail on the second one."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [make_record(1, box=1, position=1)])
-            result = tool_batch_thaw(
+            result = tool_batch_takeout(
                 yaml_path=yp,
                 entries=[(1, 1), (1, 1)],
-                date_str="2026-02-10", action="取出",
+                date_str="2026-02-10", action="鍙栧嚭",
             )
             # The second (1,1) should fail validation because position 1
             # was already removed by the first entry.
             self.assertFalse(result["ok"])
 
 
-# ── Audit trail invariants ──────────────────────────────────────────
+# 鈹€鈹€ Audit trail invariants 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class AuditTrailTests(unittest.TestCase):
@@ -300,12 +299,12 @@ class AuditTrailTests(unittest.TestCase):
     def test_successful_thaw_writes_audit(self):
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [make_record(1, box=1, position=1)])
-            tool_record_thaw(
+            tool_record_takeout(
                 yaml_path=yp, record_id=1, position=1,
-                date_str="2026-02-10", action="取出",
+                date_str="2026-02-10", action="鍙栧嚭",
             )
             rows = _read_audit(td)
-            thaw_rows = [r for r in rows if r.get("action") == "record_thaw"]
+            thaw_rows = [r for r in rows if r.get("action") == "record_takeout"]
             self.assertGreaterEqual(len(thaw_rows), 1)
 
     def test_successful_batch_writes_audit(self):
@@ -314,13 +313,13 @@ class AuditTrailTests(unittest.TestCase):
                 make_record(1, box=1, position=1),
                 make_record(2, box=1, position=2),
             ])
-            tool_batch_thaw(
+            tool_batch_takeout(
                 yaml_path=yp,
                 entries=[(1, 1), (2, 2)],
-                date_str="2026-02-10", action="取出",
+                date_str="2026-02-10", action="鍙栧嚭",
             )
             rows = _read_audit(td)
-            batch_rows = [r for r in rows if r.get("action") == "batch_thaw"]
+            batch_rows = [r for r in rows if r.get("action") == "batch_takeout"]
             self.assertGreaterEqual(len(batch_rows), 1)
 
     def test_failed_add_writes_failed_audit(self):
@@ -337,7 +336,7 @@ class AuditTrailTests(unittest.TestCase):
             self.assertGreaterEqual(len(failed), 1)
 
 
-# ── Boundary values on tool_api ─────────────────────────────────────
+# 鈹€鈹€ Boundary values on tool_api 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class BoundaryValueTests(unittest.TestCase):
@@ -349,15 +348,15 @@ class BoundaryValueTests(unittest.TestCase):
                 make_record(2, box=1, position=81),
             ])
 
-            r1 = tool_record_thaw(
+            r1 = tool_record_takeout(
                 yaml_path=yp, record_id=1, position=1,
-                date_str="2026-02-10", action="取出",
+                date_str="2026-02-10", action="鍙栧嚭",
             )
             self.assertTrue(r1["ok"])
 
-            r2 = tool_record_thaw(
+            r2 = tool_record_takeout(
                 yaml_path=yp, record_id=2, position=81,
-                date_str="2026-02-10", action="取出",
+                date_str="2026-02-10", action="鍙栧嚭",
             )
             self.assertTrue(r2["ok"])
 
@@ -368,7 +367,7 @@ class BoundaryValueTests(unittest.TestCase):
     def test_position_zero_rejected(self):
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [make_record(1, box=1, position=1)])
-            result = tool_record_thaw(
+            result = tool_record_takeout(
                 yaml_path=yp, record_id=1, position=0,
                 date_str="2026-02-10",
             )
@@ -377,7 +376,7 @@ class BoundaryValueTests(unittest.TestCase):
     def test_position_82_rejected(self):
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [make_record(1, box=1, position=1)])
-            result = tool_record_thaw(
+            result = tool_record_takeout(
                 yaml_path=yp, record_id=1, position=82,
                 date_str="2026-02-10",
             )
@@ -422,14 +421,14 @@ class BoundaryValueTests(unittest.TestCase):
             self.assertFalse(result["ok"])
 
 
-# ── Error path tests ────────────────────────────────────────────────
+# 鈹€鈹€ Error path tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class ErrorPathTests(unittest.TestCase):
     def test_thaw_nonexistent_record(self):
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [make_record(1, box=1, position=1)])
-            result = tool_record_thaw(
+            result = tool_record_takeout(
                 yaml_path=yp, record_id=999, position=1,
                 date_str="2026-02-10",
             )
@@ -438,7 +437,7 @@ class ErrorPathTests(unittest.TestCase):
     def test_thaw_position_not_in_record(self):
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [make_record(1, box=1, position=1)])
-            result = tool_record_thaw(
+            result = tool_record_takeout(
                 yaml_path=yp, record_id=1, position=2,
                 date_str="2026-02-10",
             )
@@ -447,7 +446,7 @@ class ErrorPathTests(unittest.TestCase):
     def test_move_to_same_position_rejected(self):
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [make_record(1, box=1, position=1)])
-            result = tool_record_thaw(
+            result = tool_record_takeout(
                 yaml_path=yp, record_id=1, position=1, to_position=1,
                 date_str="2026-02-10", action="move",
             )
@@ -456,25 +455,25 @@ class ErrorPathTests(unittest.TestCase):
     def test_batch_nonexistent_record_fails(self):
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [make_record(1, box=1, position=1)])
-            result = tool_batch_thaw(
+            result = tool_batch_takeout(
                 yaml_path=yp,
                 entries=[(999, 1)],
-                date_str="2026-02-10", action="取出",
+                date_str="2026-02-10", action="鍙栧嚭",
             )
             self.assertFalse(result["ok"])
 
     def test_batch_position_not_in_record_fails(self):
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [make_record(1, box=1, position=1)])
-            result = tool_batch_thaw(
+            result = tool_batch_takeout(
                 yaml_path=yp,
                 entries=[(1, 50)],
-                date_str="2026-02-10", action="取出",
+                date_str="2026-02-10", action="鍙栧嚭",
             )
             self.assertFalse(result["ok"])
 
     def test_nonexistent_yaml_path_fails(self):
-        result = tool_record_thaw(
+        result = tool_record_takeout(
             yaml_path="/tmp/nonexistent_test_yaml.yaml",
             record_id=1, position=1,
             date_str="2026-02-10",
@@ -503,17 +502,17 @@ class ErrorPathTests(unittest.TestCase):
             self.assertTrue(result["ok"])
 
 
-# ── Cross-box move tests ──────────────────────────────────────────
+# 鈹€鈹€ Cross-box move tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class CrossBoxMoveTests(unittest.TestCase):
     """Tests for the to_box parameter in move operations."""
 
-    def test_record_thaw_move_cross_box_updates_box_field(self):
+    def test_record_takeout_move_cross_box_updates_box_field(self):
         """Move with to_box should update the record's box field."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [make_record(1, box=2, position=5)])
-            result = tool_record_thaw(
+            result = tool_record_takeout(
                 yaml_path=yp, record_id=1, position=5, to_position=4,
                 to_box=1,
                 date_str="2026-02-10", action="move",
@@ -525,28 +524,28 @@ class CrossBoxMoveTests(unittest.TestCase):
             self.assertEqual(4, rec["position"])
             self.assertNotEqual(5, rec["position"])
 
-    def test_record_thaw_move_cross_box_rejects_occupied_target(self):
+    def test_record_takeout_move_cross_box_rejects_occupied_target(self):
         """Cross-box move to an occupied position should be rejected."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [
                 make_record(1, box=2, position=5),
                 make_record(2, box=1, position=4),
             ])
-            result = tool_record_thaw(
+            result = tool_record_takeout(
                 yaml_path=yp, record_id=1, position=5, to_position=4,
                 to_box=1,
                 date_str="2026-02-10", action="move",
             )
             self.assertFalse(result["ok"])
 
-    def test_record_thaw_move_same_box_swap_still_works(self):
+    def test_record_takeout_move_same_box_swap_still_works(self):
         """Same-box swap should still work after adding to_box support."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [
                 make_record(1, box=1, position=1),
                 make_record(2, box=1, position=2),
             ])
-            result = tool_record_thaw(
+            result = tool_record_takeout(
                 yaml_path=yp, record_id=1, position=1, to_position=2,
                 date_str="2026-02-10", action="move",
             )
@@ -562,7 +561,7 @@ class CrossBoxMoveTests(unittest.TestCase):
                 make_record(1, box=2, position=5),
                 make_record(2, box=3, position=10),
             ])
-            result = tool_batch_thaw(
+            result = tool_batch_takeout(
                 yaml_path=yp,
                 entries=[(1, 5, 4, 1), (2, 10, 5, 1)],
                 date_str="2026-02-10", action="move",
@@ -582,7 +581,7 @@ class CrossBoxMoveTests(unittest.TestCase):
                 make_record(2, box=2, position=6),
                 make_record(3, box=2, position=7),
             ])
-            result = tool_batch_thaw(
+            result = tool_batch_takeout(
                 yaml_path=yp,
                 entries=[(1, 5, 1, 1), (2, 6, 2, 1), (3, 7, 3, 1)],
                 date_str="2026-02-10", action="move",
@@ -610,7 +609,7 @@ class CrossBoxMoveTests(unittest.TestCase):
         """The thaw_event for a cross-box move should contain from_box and to_box."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [make_record(1, box=2, position=5)])
-            tool_record_thaw(
+            tool_record_takeout(
                 yaml_path=yp, record_id=1, position=5, to_position=4,
                 to_box=1,
                 date_str="2026-02-10", action="move",
@@ -626,7 +625,7 @@ class CrossBoxMoveTests(unittest.TestCase):
         """Cross-box move with out-of-range to_box should be rejected."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [make_record(1, box=1, position=1)])
-            result = tool_record_thaw(
+            result = tool_record_takeout(
                 yaml_path=yp, record_id=1, position=1, to_position=1,
                 to_box=99,
                 date_str="2026-02-10", action="move",
@@ -636,3 +635,4 @@ class CrossBoxMoveTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

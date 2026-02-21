@@ -1,42 +1,30 @@
-"""Utilities for normalized thaw/takeout/discard events."""
+﻿"""Utilities for normalized takeout/move events."""
 
 from .config import POSITION_RANGE
 
 
 ACTION_ALIAS = {
     "取出": "takeout",
-    "复苏": "thaw",
-    "扔掉": "discard",
-    "丢掉": "discard",
+    "鍙栧嚭": "takeout",
     "移动": "move",
+    "绉诲姩": "move",
     "整理": "move",
     "takeout": "takeout",
-    "thaw": "thaw",
-    "discard": "discard",
     "move": "move",
 }
 
+
 ACTION_LABEL = {
     "takeout": "取出",
-    "thaw": "复苏",
-    "discard": "扔掉",
     "move": "移动",
 }
-
-
-def canonicalize_non_move_action(action):
-    """Collapse thaw/discard semantics into takeout for write paths."""
-    normalized = normalize_action(action)
-    if normalized in {"takeout", "thaw", "discard"}:
-        return "takeout"
-    return normalized
 
 
 def normalize_action(action):
     """Normalize action to canonical English form.
 
-    Accepts Chinese or English values. Returns ``takeout``/``thaw``/``discard``/
-    ``move`` or ``None`` for unrecognized input.
+    Accepts Chinese or English values. Returns ``takeout``/``move``
+    or ``None`` for unrecognized input.
     """
     if action is None:
         return None
@@ -45,7 +33,7 @@ def normalize_action(action):
 
 
 def extract_events(rec):
-    """Extract structured thaw events from one record."""
+    """Extract structured events from one record."""
     events = []
     thaw_events = rec.get("thaw_events") or []
     for ev in thaw_events:
@@ -62,9 +50,9 @@ def extract_events(rec):
     return events
 
 
-def extract_thaw_positions(rec):
-    """Extract all positions that have been thawed/taken out/discarded."""
-    thawed = set()
+def extract_takeout_positions(rec):
+    """Extract all positions that have been taken out."""
+    taken_out = set()
     thaw_events = rec.get("thaw_events") or []
     for ev in thaw_events:
         action = normalize_action(ev.get("action"))
@@ -75,7 +63,7 @@ def extract_thaw_positions(rec):
         if pos is None:
             continue
         if isinstance(pos, str) and pos.strip().lower() == "all":
-            thawed.update(int(p) for p in (rec.get("positions") or []))
+            taken_out.update(int(p) for p in (rec.get("positions") or []))
             continue
         if isinstance(pos, int):
             pos = [pos]
@@ -86,13 +74,13 @@ def extract_thaw_positions(rec):
                 except Exception:
                     continue
                 if POSITION_RANGE[0] <= p_int <= POSITION_RANGE[1]:
-                    thawed.add(p_int)
-    return thawed
+                    taken_out.add(p_int)
+    return taken_out
 
 
 def is_position_active(rec, pos):
     """Check if a specific position is still active."""
-    return pos not in extract_thaw_positions(rec)
+    return pos not in extract_takeout_positions(rec)
 
 
 def format_positions(positions):

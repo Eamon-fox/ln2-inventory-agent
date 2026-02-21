@@ -1,10 +1,10 @@
-"""
+﻿"""
 Validation functions for LN2 inventory data
 """
 from collections import defaultdict
 from datetime import datetime
 from .config import BOX_RANGE, POSITION_RANGE, VALID_ACTIONS
-from .thaw_parser import normalize_action
+from .takeout_parser import normalize_action
 from .position_fmt import (
     get_box_numbers,
     get_position_range,
@@ -166,26 +166,17 @@ def parse_positions(positions_str, layout=None):
             else:
                 positions.append(int(part))
     except Exception as e:
-        raise ValueError(f"位置格式错误: {e}. 正确格式示例: '1,2,3' 或 '1-3'")
+        raise ValueError(f"Invalid position format: {e}. Example: '1,2,3' or '1-3'")
 
     for pos in positions:
         if not (lo <= pos <= hi):
-            raise ValueError(f"位置 {pos} 超出范围（{lo}-{hi}）")
+            raise ValueError(f"Position {pos} out of range ({lo}-{hi})")
 
     return sorted(set(positions))
 
 
 def format_chinese_date(date_str, weekday=False):
-    """
-    Convert YYYY-MM-DD to YYYY年MM月DD日
-
-    Args:
-        date_str: Date string in YYYY-MM-DD format
-        weekday: If True, append weekday info
-
-    Returns:
-        str: Chinese formatted date
-    """
+    """Convert YYYY-MM-DD to Chinese date text."""
     dt = parse_date(date_str)
     if not dt:
         return date_str
@@ -197,7 +188,7 @@ def format_chinese_date(date_str, weekday=False):
 
 
 def has_depletion_history(rec):
-    """Return True if record has thaw/takeout/discard history.
+    """Return True if record has takeout history.
 
     Fully consumed records are expected to end with ``position=None``.
     """
@@ -205,7 +196,7 @@ def has_depletion_history(rec):
     for ev in thaw_events:
         if not isinstance(ev, dict):
             continue
-        if normalize_action(ev.get("action")) in {"takeout", "thaw", "discard"}:
+        if normalize_action(ev.get("action")) == "takeout":
             return True
 
     return False
@@ -213,8 +204,8 @@ def has_depletion_history(rec):
 
 def _record_label(rec, idx):
     if idx is None:
-        return f"记录(id={rec.get('id', 'N/A')})"
-    return f"记录 #{idx + 1} (id={rec.get('id', 'N/A')})"
+        return f"Record (id={rec.get('id', 'N/A')})"
+    return f"Record #{idx + 1} (id={rec.get('id', 'N/A')})"
 
 
 def validate_record(rec, idx=None, layout=None, meta=None):
@@ -244,23 +235,23 @@ def validate_record(rec, idx=None, layout=None, meta=None):
     required_fields = structural_required + sorted(user_required)
     for field in required_fields:
         if field not in rec or rec[field] is None:
-            errors.append(f"{rec_id}: 缺少必填字段 '{field}'")
+            errors.append(f"{rec_id}: missing required field '{field}'")
 
     rec_id_value = rec.get("id")
     if not isinstance(rec_id_value, int) or rec_id_value <= 0:
-        errors.append(f"{rec_id}: 'id' 必须是正整数")
+        errors.append(f"{rec_id}: 'id' must be a positive integer")
 
     box = rec.get("box")
     if not isinstance(box, int):
-        errors.append(f"{rec_id}: 'box' 必须是整数")
+        errors.append(f"{rec_id}: 'box' must be an integer")
     elif not validate_box(box, layout):
-        errors.append(f"{rec_id}: 'box' 超出范围 ({box_rule})")
+        errors.append(f"{rec_id}: 'box' out of range ({box_rule})")
 
     # Validate required user fields are non-empty strings
     for field in sorted(user_required):
         value = rec.get(field)
         if isinstance(value, str) and not value.strip():
-            errors.append(f"{rec_id}: '{field}' 必须是非空字符串")
+            errors.append(f"{rec_id}: '{field}' must be a non-empty string")
 
     # Relaxed baseline validation for cell_line:
     # - Do not block historical inventory due to non-option / empty values.
@@ -271,7 +262,7 @@ def validate_record(rec, idx=None, layout=None, meta=None):
         has_cell_line_key = "cell_line" in rec
 
         if not has_cell_line_key:
-            warnings.append(f"{rec_id}: 缺少字段 'cell_line'（历史数据兼容：仅警告）")
+            warnings.append(f"{rec_id}: missing 'cell_line' (legacy-compatible warning)")
         else:
             raw_cell_line = rec.get("cell_line")
             if raw_cell_line is None:
@@ -280,73 +271,76 @@ def validate_record(rec, idx=None, layout=None, meta=None):
                 cell_line = raw_cell_line.strip()
             else:
                 cell_line = str(raw_cell_line).strip()
-                warnings.append(f"{rec_id}: 'cell_line' 不是字符串（历史数据兼容：仅警告）")
+                warnings.append(f"{rec_id}: 'cell_line' is not a string (legacy-compatible warning)")
 
             if cell_line_required and not cell_line:
-                warnings.append(f"{rec_id}: 'cell_line' 为空（required=true，历史数据兼容：仅警告）")
+                warnings.append(f"{rec_id}: 'cell_line' is empty while required=true (legacy-compatible warning)")
             elif cell_line and cell_line_options and cell_line not in cell_line_options:
                 opts_str = ", ".join(cell_line_options[:5])
                 if len(cell_line_options) > 5:
-                    opts_str += f" 等共{len(cell_line_options)}个"
-                warnings.append(f"{rec_id}: 'cell_line' 不在预设选项中 ({opts_str})（历史数据兼容：仅警告）")
+                    opts_str += f" ... total {len(cell_line_options)}"
+                warnings.append(
+                    f"{rec_id}: 'cell_line' not in configured options ({opts_str}) "
+                    "(legacy-compatible warning)"
+                )
 
     # Validate position (single integer, optional for consumed records)
     position = rec.get("position")
     if position is not None:
         if not isinstance(position, int):
-            errors.append(f"{rec_id}: 'position' 必须是整数")
+            errors.append(f"{rec_id}: 'position' must be an integer")
         elif not validate_position(position, layout):
-            errors.append(f"{rec_id}: 'position' {position} 超出范围 ({pos_lo}-{pos_hi})")
+            errors.append(f"{rec_id}: 'position' {position} out of range ({pos_lo}-{pos_hi})")
     else:
         # position is None - record should have depletion history
         if not has_depletion_history(rec):
-            errors.append(f"{rec_id}: 'position' 为空，但没有取出/复苏/扔掉历史")
+            errors.append(f"{rec_id}: 'position' is null but no takeout history found")
 
     frozen_at = rec.get("frozen_at")
     if not validate_date(frozen_at):
-        errors.append(f"{rec_id}: 'frozen_at' 日期格式错误，应为 YYYY-MM-DD")
+        errors.append(f"{rec_id}: 'frozen_at' must be YYYY-MM-DD")
     else:
         frozen_date = parse_date(frozen_at)
         if frozen_date and frozen_date > datetime.now():
-            errors.append(f"{rec_id}: 冻存日期 {frozen_at} 在未来")
+            errors.append(f"{rec_id}: frozen date {frozen_at} is in the future")
 
     thaw_events = rec.get("thaw_events")
     if thaw_events is not None:
         if not isinstance(thaw_events, list):
-            errors.append(f"{rec_id}: 'thaw_events' 必须是列表")
+            errors.append(f"{rec_id}: 'thaw_events' must be a list")
         else:
             for event_idx, ev in enumerate(thaw_events, 1):
                 if not isinstance(ev, dict):
-                    errors.append(f"{rec_id}: thaw_events[{event_idx}] 必须是对象")
+                    errors.append(f"{rec_id}: thaw_events[{event_idx}] must be an object")
                     continue
 
                 ev_action = normalize_action(ev.get("action"))
                 if not ev_action:
-                    errors.append(f"{rec_id}: thaw_events[{event_idx}] action 非法")
+                    errors.append(f"{rec_id}: thaw_events[{event_idx}] has invalid action")
 
                 ev_date = ev.get("date")
                 if not validate_date(ev_date):
-                    errors.append(f"{rec_id}: thaw_events[{event_idx}] date 格式错误")
+                    errors.append(f"{rec_id}: thaw_events[{event_idx}] has invalid date")
 
                 ev_positions = ev.get("positions")
                 if isinstance(ev_positions, int):
                     ev_positions = [ev_positions]
                 if not isinstance(ev_positions, list) or not ev_positions:
-                    errors.append(f"{rec_id}: thaw_events[{event_idx}] positions 必须是非空列表")
+                    errors.append(f"{rec_id}: thaw_events[{event_idx}] positions must be a non-empty list")
                     continue
 
                 seen_ev_pos = set()
                 for ev_pos in ev_positions:
                     if not isinstance(ev_pos, int):
-                        errors.append(f"{rec_id}: thaw_events[{event_idx}] 位置 {ev_pos} 必须是整数")
+                        errors.append(f"{rec_id}: thaw_events[{event_idx}] position {ev_pos} must be an integer")
                         continue
                     if not validate_position(ev_pos, layout):
                         errors.append(
-                            f"{rec_id}: thaw_events[{event_idx}] 位置 {ev_pos} 超出范围 ({pos_lo}-{pos_hi})"
+                            f"{rec_id}: thaw_events[{event_idx}] position {ev_pos} out of range ({pos_lo}-{pos_hi})"
                         )
                         continue
                     if ev_pos in seen_ev_pos:
-                        errors.append(f"{rec_id}: thaw_events[{event_idx}] positions 中重复 {ev_pos}")
+                        errors.append(f"{rec_id}: thaw_events[{event_idx}] duplicate position {ev_pos}")
                     seen_ev_pos.add(ev_pos)
 
     return errors, warnings
@@ -364,7 +358,9 @@ def check_duplicate_ids(records):
             continue
         if rec_id in id_map:
             prev_idx = id_map[rec_id]
-            errors.append(f"重复的 ID {rec_id}: 记录 #{prev_idx + 1} 和记录 #{idx + 1}")
+            errors.append(
+                f"Duplicate ID {rec_id}: Record #{prev_idx + 1} and Record #{idx + 1}"
+            )
         else:
             id_map[rec_id] = idx
     return errors
@@ -388,7 +384,9 @@ def check_position_conflicts(records):
         if len(entries) <= 1:
             continue
         rec_ids = ", ".join(f"#{idx + 1} (id={rec.get('id')})" for idx, rec in entries)
-        conflicts.append(f"位置冲突: 盒子 {box} 位置 {pos} 被多条记录占用: {rec_ids}")
+        conflicts.append(
+            f"Position conflict: Box {box} Position {pos} is occupied by multiple records: {rec_ids}"
+        )
     return conflicts
 
 
@@ -402,18 +400,18 @@ def validate_inventory(data):
     warnings = []
 
     if not isinstance(data, dict):
-        return ["YAML 根节点必须是对象"], []
+        return ["YAML root must be an object"], []
 
     inventory = data.get("inventory")
     if not isinstance(inventory, list):
-        return ["'inventory' 必须是列表"], []
+        return ["'inventory' must be a list"], []
 
     meta = data.get("meta", {})
     layout = meta.get("box_layout", {})
 
     for idx, rec in enumerate(inventory):
         if not isinstance(rec, dict):
-            errors.append(f"记录 #{idx + 1}: 必须是对象")
+            errors.append(f"Record #{idx + 1}: must be an object")
             continue
         rec_errors, rec_warnings = validate_record(rec, idx=idx, layout=layout, meta=meta)
         errors.extend(rec_errors)
@@ -424,7 +422,7 @@ def validate_inventory(data):
     return errors, warnings
 
 
-def format_validation_errors(errors, prefix="完整性校验失败"):
+def format_validation_errors(errors, prefix="Integrity validation failed"):
     """Format validation errors into a concise message."""
     if not errors:
         return prefix
@@ -432,7 +430,7 @@ def format_validation_errors(errors, prefix="完整性校验失败"):
     more = len(errors) - len(top)
     lines = [prefix] + [f"- {msg}" for msg in top]
     if more > 0:
-        lines.append(f"- ... 以及另外 {more} 条")
+        lines.append(f"- ... and {more} more")
     return "\n".join(lines)
 
 
@@ -480,7 +478,7 @@ def validate_plan_item_with_history(new_item, existing_items, tr_fn=None):
             for p in positions:
                 all_positions.append((box, p))
         else:
-            # takeout/thaw/discard: track source position
+            # takeout: track source position
             box = existing.get("box", 0)
             pos = existing.get("position")
             if pos is not None:
@@ -509,12 +507,10 @@ def validate_plan_item_with_history(new_item, existing_items, tr_fn=None):
 
         # Check target position
         if new_to_pos is not None:
-            if new_to_box:
-                target = (new_to_box, new_to_pos)
-            else:
-                target = (new_box, new_to_pos)
+            target = (new_to_box, new_to_pos) if new_to_box else (new_box, new_to_pos)
             if target in all_positions:
                 return False, tr_fn("operations.targetPositionOccupied", box=target[0], position=target[1])
 
-    # takeout/thaw/discard: source position check already done by position occupancy check
+    # takeout: source position check already done by position occupancy check
     return True, None
+

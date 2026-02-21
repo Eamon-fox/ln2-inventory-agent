@@ -1,35 +1,20 @@
 """Unified Tool API shared by CLI, GUI, and AI agents."""
 
-import getpass
-import os
 import re
 import uuid
-from copy import deepcopy
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-from .csv_export import export_inventory_to_csv
-from .custom_fields import (
-    STRUCTURAL_FIELD_KEYS,
-    get_cell_line_options,
-    get_effective_fields,
-    get_required_field_keys,
-    is_cell_line_required,
-)
 from .position_fmt import (
     display_to_box,
     display_to_pos,
     get_box_numbers,
-    get_position_range,
-    get_total_slots,
 )
-from .operations import check_position_conflicts, find_record_by_id, get_next_id
-from .thaw_parser import ACTION_LABEL, canonicalize_non_move_action, extract_events, normalize_action
+from .migrate_takeout_actions import migrate_takeout_actions
+from .takeout_parser import extract_events, normalize_action
 from .validators import (
     format_validation_errors,
-    normalize_date_arg,
     parse_positions,
-    parse_date,
     validate_box,
     validate_date,
     validate_inventory,
@@ -37,11 +22,6 @@ from .validators import (
 )
 from .yaml_ops import (
     append_audit_event,
-    compute_occupancy,
-    list_yaml_backups,
-    load_yaml,
-    rollback_yaml,
-    write_yaml,
 )
 
 
@@ -91,11 +71,11 @@ def build_actor_context(
 def _coerce_position_value(raw_value, layout=None, field_name="position"):
     """Convert a display/internal position value to internal integer position."""
     if raw_value in (None, ""):
-        raise ValueError(f"{field_name} 不能为空")
+        raise ValueError(f"{field_name} cannot be empty")
     try:
         return int(display_to_pos(raw_value, layout))
     except Exception as exc:
-        raise ValueError(f"{field_name} 无效: {raw_value}") from exc
+        raise ValueError(f"{field_name} is invalid: {raw_value}") from exc
 
 
 def _normalize_positions_input(positions, layout=None):
@@ -116,8 +96,8 @@ def parse_batch_entries(entries_str, layout=None):
     """Parse batch input format.
 
     Supports:
-    - ``id1,id2,...`` (use current active position for each tube id; takeout/thaw/discard only)
-    - ``id1:pos1,id2:pos2,...`` (takeout/thaw/discard)
+    - ``id1,id2,...`` (use current active position for each tube id; takeout only)
+    - ``id1:pos1,id2:pos2,...`` (takeout)
     - ``id1:from1->to1,id2:from2->to2,...`` (move within same box)
     - ``id1:from1->to1:box,id2:from2->to2:box,...`` (cross-box move)
 
@@ -165,8 +145,8 @@ def parse_batch_entries(entries_str, layout=None):
                 result.append((record_id, _coerce_position_value(pos_text, layout=layout, field_name="position")))
     except Exception as exc:
         raise ValueError(
-            "输入格式错误: "
-            f"{exc}. 正确格式示例: '182,183' 或 '182:23,183:41' 或 '182:23->31,183:41->42' 或 '182:23->31:1' (cross-box)"
+            "Invalid input format: "
+            f"{exc}. Valid examples: '182,183' or '182:23,183:41' or '182:23->31,183:41->42' or '182:23->31:1' (cross-box)"
         )
     return result
 
@@ -188,11 +168,11 @@ def _coerce_batch_entry(entry, layout=None):
         to_box = entry.get("to_box")
 
         if record_id is None:
-            raise ValueError("每个条目必须包含 record_id/id")
+            raise ValueError("Each item must include record_id/id")
         if from_pos is None:
             if to_pos is None:
                 return (int(record_id),)
-            raise ValueError("每个条目必须包含 position/from_position")
+            raise ValueError("Each item must include position/from_position")
         if to_pos is None:
             return (int(record_id), _coerce_position_value(from_pos, layout=layout, field_name="position"))
         if to_box is not None:
@@ -230,10 +210,10 @@ def _coerce_batch_entry(entry, layout=None):
                 int(entry[3]),
             )
         raise ValueError(
-            "每个条目必须是 (record_id) 或 (record_id, position) 或 (record_id, from_position, to_position[, to_box])"
+            "Each item must be (record_id) or (record_id, position) or (record_id, from_position, to_position[, to_box])"
         )
 
-    raise ValueError("每个条目必须是 tuple/list/dict")
+    raise ValueError("Each item must be tuple/list/dict")
 
 
 def _build_move_event(
@@ -284,7 +264,7 @@ def _build_audit_meta(action, source, tool_name, actor_context=None, details=Non
     }
 
 
-def _validate_data_or_error(data, message_prefix="写入被阻止：完整性校验失败"):
+def _validate_data_or_error(data, message_prefix="Write blocked: integrity validation failed"):
     """Return structured validation error payload when data is invalid."""
     errors, _warnings = validate_inventory(data)
     if not errors:
@@ -408,7 +388,7 @@ def _validate_execution_gate(*, dry_run=False, execution_mode=None, source="tool
     if mode not in _ALLOWED_EXECUTION_MODES:
         return {
             "error_code": "invalid_execution_mode",
-            "message": "execution_mode 必须是 direct/preflight/execute",
+            "message": "execution_mode must be direct/preflight/execute",
             "details": {"execution_mode": execution_mode},
         }, mode
 
@@ -418,7 +398,7 @@ def _validate_execution_gate(*, dry_run=False, execution_mode=None, source="tool
     if _enforce_execute_mode_for_source(source) and mode != "execute":
         return {
             "error_code": "write_requires_execute_mode",
-            "message": "只能在执行计划时写入（请先暂存到 Plan，再点击 Execute）",
+            "message": "Writes are only allowed during plan execution (save to Plan first, then click Execute).",
             "details": {"execution_mode": mode, "source": source},
         }, mode
 
@@ -431,13 +411,13 @@ def _validate_add_entry_request(payload):
     if not validate_date(frozen_at):
         return {
             "error_code": "invalid_date",
-            "message": f"日期格式无效: {frozen_at}",
+            "message": f"Invalid date format: {frozen_at}",
             "details": {"frozen_at": frozen_at},
         }, {}
     if not positions:
         return {
             "error_code": "empty_positions",
-            "message": "必须指定至少一个位置",
+            "message": "At least one position is required",
         }, {}
     return None, {}
 
@@ -447,18 +427,18 @@ def _validate_edit_entry_request(payload):
     if not fields:
         return {
             "error_code": "no_fields",
-            "message": "至少需要修改一个字段",
+            "message": "At least one field must be provided",
         }, {}
     if "frozen_at" in fields and not validate_date(fields["frozen_at"]):
         return {
             "error_code": "invalid_date",
-            "message": f"日期格式无效: {fields['frozen_at']}",
+            "message": f"Invalid date format: {fields['frozen_at']}",
             "details": {"frozen_at": fields["frozen_at"]},
         }, {}
     return None, {}
 
 
-def _validate_record_thaw_request(payload):
+def _validate_record_takeout_request(payload):
     date_str = payload.get("date_str")
     action = payload.get("action")
     to_position = payload.get("to_position")
@@ -466,7 +446,7 @@ def _validate_record_thaw_request(payload):
     if not validate_date(date_str):
         return {
             "error_code": "invalid_date",
-            "message": f"日期格式无效: {date_str}",
+            "message": f"Invalid date format: {date_str}",
             "details": {"date": date_str},
         }, {}
 
@@ -474,24 +454,23 @@ def _validate_record_thaw_request(payload):
     if not action_en:
         return {
             "error_code": "invalid_action",
-            "message": "操作类型必须是 取出/移动（兼容复苏/扔掉并自动归一为取出）",
+            "message": "Action must be takeout/move",
             "details": {"action": action},
         }, {}
 
-    action_en = canonicalize_non_move_action(action_en) or action_en
     normalized = {"action_en": action_en, "move_to_position": None}
     if action_en == "move":
         if to_position in (None, ""):
             return {
                 "error_code": "invalid_move_target",
-                "message": "移动操作必须提供 to_position（目标位置）",
+                "message": "Move operation requires to_position (target position)",
             }, normalized
         normalized["move_to_position"] = to_position
 
     return None, normalized
 
 
-def _validate_batch_thaw_request(payload):
+def _validate_batch_takeout_request(payload):
     date_str = payload.get("date_str")
     action = payload.get("action")
     entries = payload.get("entries")
@@ -499,25 +478,24 @@ def _validate_batch_thaw_request(payload):
     if not validate_date(date_str):
         return {
             "error_code": "invalid_date",
-            "message": f"日期格式无效: {date_str}",
+            "message": f"Invalid date format: {date_str}",
             "details": {"date": date_str},
         }, {}
 
     if not entries:
         return {
             "error_code": "empty_entries",
-            "message": "未指定任何操作",
+            "message": "No entries provided",
         }, {}
 
     action_en = normalize_action(action)
     if not action_en:
         return {
             "error_code": "invalid_action",
-            "message": "操作类型必须是 取出/移动（兼容复苏/扔掉并自动归一为取出）",
+            "message": "Action must be takeout/move",
             "details": {"action": action},
         }, {}
 
-    action_en = canonicalize_non_move_action(action_en) or action_en
     return None, {"action_en": action_en}
 
 
@@ -531,14 +509,12 @@ def _validate_adjust_box_count_request(payload):
         "remove": "remove",
         "remove_box": "remove",
         "delete": "remove",
-        "删除": "remove",
-        "增加": "add",
     }
     op = op_alias.get(op_text)
     if not op:
         return {
             "error_code": "invalid_operation",
-            "message": "operation 必须是 add/remove",
+            "message": "operation must be add/remove",
             "details": {"operation": operation},
         }, {}
     return None, {"op": op}
@@ -547,8 +523,8 @@ def _validate_adjust_box_count_request(payload):
 _WRITE_REQUEST_VALIDATORS = {
     "tool_add_entry": _validate_add_entry_request,
     "tool_edit_entry": _validate_edit_entry_request,
-    "tool_record_thaw": _validate_record_thaw_request,
-    "tool_batch_thaw": _validate_batch_thaw_request,
+    "tool_record_takeout": _validate_record_takeout_request,
+    "tool_batch_takeout": _validate_batch_takeout_request,
     "tool_rollback": lambda _payload: (None, {}),
     "tool_adjust_box_count": _validate_adjust_box_count_request,
 }
@@ -585,7 +561,7 @@ def validate_write_tool_call(
             source=source,
             tool_name=tool_name,
             error_code=gate_issue.get("error_code", "validation_failed"),
-            message=gate_issue.get("message", "写入校验失败"),
+            message=gate_issue.get("message", "Write validation failed"),
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=before_data,
@@ -609,7 +585,7 @@ def validate_write_tool_call(
                 source=source,
                 tool_name=tool_name,
                 error_code=issue.get("error_code", "validation_failed"),
-                message=issue.get("message", "写入校验失败"),
+                message=issue.get("message", "Write validation failed"),
                 actor_context=actor_context,
                 tool_input=tool_input,
                 before_data=before_data,
@@ -639,353 +615,55 @@ def tool_add_entry(
     source="tool_api",
     auto_backup=True,
 ):
-    """Add a new frozen entry using the shared tool flow.
-
-    Args:
-        fields: dict of user-configurable field values (e.g. cell_line, short_name, etc.)
-    """
-    action = "add_entry"
-    tool_name = "tool_add_entry"
-    fields = dict(fields or {})
-    tool_input = {
-        "box": box,
-        "positions": list(positions) if isinstance(positions, list) else positions,
-        "frozen_at": frozen_at,
-        "fields": fields,
-        "dry_run": bool(dry_run),
-        "execution_mode": execution_mode,
-    }
-
-    validation = validate_write_tool_call(
+    return _tool_add_entry_impl(
         yaml_path=yaml_path,
-        action=action,
-        source=source,
-        tool_name=tool_name,
-        tool_input=tool_input,
-        payload={"frozen_at": frozen_at, "positions": positions},
+        box=box,
+        positions=positions,
+        frozen_at=frozen_at,
+        fields=fields,
         dry_run=dry_run,
         execution_mode=execution_mode,
         actor_context=actor_context,
+        source=source,
+        auto_backup=auto_backup,
     )
-    if not validation.get("ok"):
-        return validation
 
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=action,
-            source=source,
-            tool_name=tool_name,
-            error_code="load_failed",
-            message=f"无法读取YAML文件: {exc}",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            details={"load_error": str(exc)},
-        )
 
-    layout = _get_layout(data)
-    _pos_lo, _pos_hi = get_position_range(layout)
+def _tool_add_entry_impl(
+    yaml_path,
+    box,
+    positions,
+    frozen_at,
+    fields=None,
+    dry_run=False,
+    execution_mode=None,
+    actor_context=None,
+    source="tool_api",
+    auto_backup=True,
+):
+    from .tool_api_impl import write_ops as _write_ops
 
-    try:
-        positions = _normalize_positions_input(positions, layout=layout)
-    except ValueError as exc:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_position",
-            message=str(exc),
-            actor_context=actor_context,
-            tool_input=tool_input,
-            before_data=data,
-            details={"positions": positions},
-        )
-
-    if not positions:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=action,
-            source=source,
-            tool_name=tool_name,
-            error_code="empty_positions",
-            message="必须指定至少一个位置",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            before_data=data,
-        )
-
-    for pos in positions:
-        if not validate_position(pos, layout):
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=action,
-                source=source,
-                tool_name=tool_name,
-                error_code="invalid_position",
-                message=f"位置编号必须在 {_pos_lo}-{_pos_hi} 之间",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                details={"position": pos},
-            )
-
-    if not validate_box(box, layout):
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_box",
-            message=f"盒子编号必须在 {_format_box_constraint(layout)} 范围内",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            details={"box": box},
-        )
-
-    records = data.get("inventory", [])
-    conflicts = check_position_conflicts(records, box, positions)
-    if conflicts:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=action,
-            source=source,
-            tool_name=tool_name,
-            error_code="position_conflict",
-            message="位置冲突",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            before_data=data,
-            details={"box": box, "positions": list(positions), "conflict_count": len(conflicts)},
-            extra={"conflicts": conflicts},
-        )
-
-    # Check required user fields from meta
-    meta = data.get("meta", {})
-    required_keys = get_required_field_keys(meta)
-    missing = [k for k in sorted(required_keys) if not fields.get(k)]
-
-    cell_line_text = str(fields.get("cell_line") or "").strip()
-    if is_cell_line_required(meta) and not cell_line_text:
-        missing.append("cell_line")
-
-    if missing:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=action,
-            source=source,
-            tool_name=tool_name,
-            error_code="missing_required_fields",
-            message=f"缺少必填字段: {', '.join(missing)}",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            before_data=data,
-            details={"missing": missing},
-        )
-
-    if cell_line_text:
-        cell_line_options = get_cell_line_options(meta)
-        if not cell_line_options:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=action,
-                source=source,
-                tool_name=tool_name,
-                error_code="invalid_cell_line_options",
-                message="cell_line 需要预设选项，但 meta.cell_line_options 为空",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-            )
-        if cell_line_text not in cell_line_options:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=action,
-                source=source,
-                tool_name=tool_name,
-                error_code="invalid_cell_line",
-                message="cell_line 必须来自预设下拉选项",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                details={"cell_line": cell_line_text, "options": cell_line_options},
-            )
-
-        fields["cell_line"] = cell_line_text
-
-    # Tube-level model: one record == one physical tube.
-    # Add multiple tubes by creating multiple records, one per position.
-    next_id = get_next_id(records)
-    new_records = []
-    created = []
-    cell_line = fields.pop("cell_line", None)
-    raw_note = fields.pop("note", None)
-    note_value = None
-    if raw_note is not None:
-        note_text = str(raw_note).strip()
-        note_value = note_text or None
-    for offset, pos in enumerate(list(positions)):
-        tube_id = next_id + offset
-        rec = {
-            "id": tube_id,
-            "cell_line": cell_line or "",
-            "note": note_value,
-            "box": box,
-            "position": int(pos),
-            "frozen_at": frozen_at,
-        }
-        # Merge user fields (skip structural keys)
-        for k, v in fields.items():
-            if k not in STRUCTURAL_FIELD_KEYS:
-                rec[k] = v
-        new_records.append(rec)
-        created.append({"id": tube_id, "box": box, "position": int(pos)})
-
-    preview = {
-        "new_ids": [item["id"] for item in created],
-        "count": len(created),
-        "box": box,
-        "positions": list(int(p) for p in positions),
-        "frozen_at": frozen_at,
-        "note": note_value,
-        "fields": fields,
-        "created": created,
-    }
-
-    if dry_run:
-        return {
-            "ok": True,
-            "dry_run": True,
-            "preview": preview,
-            "result": {
-                "new_id": created[0]["id"] if created else None,
-                "new_ids": [item["id"] for item in created],
-                "count": len(created),
-                "created": created,
-                "records": new_records,
-            },
-        }
-
-    try:
-        candidate_data = deepcopy(data)
-        candidate_inventory = candidate_data.setdefault("inventory", [])
-        if not isinstance(candidate_inventory, list):
-            validation_error = _validate_data_or_error(candidate_data) or {
-                "error_code": "integrity_validation_failed",
-                "message": "写入被阻止：完整性校验失败",
-                "errors": [],
-            }
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=action,
-                source=source,
-                tool_name=tool_name,
-                error_code=validation_error.get("error_code", "integrity_validation_failed"),
-                message=validation_error.get("message", "写入被阻止：完整性校验失败"),
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                errors=validation_error.get("errors"),
-            )
-        candidate_inventory.extend(new_records)
-        validation_error = _validate_data_or_error(candidate_data)
-        if validation_error:
-            validation_error = validation_error or {
-                "error_code": "integrity_validation_failed",
-                "message": "写入被阻止：完整性校验失败",
-                "errors": [],
-            }
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=action,
-                source=source,
-                tool_name=tool_name,
-                error_code=validation_error.get("error_code", "integrity_validation_failed"),
-                message=validation_error.get("message", "写入被阻止：完整性校验失败"),
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                errors=validation_error.get("errors"),
-                details={
-                    "new_ids": [item["id"] for item in created],
-                    "count": len(created),
-                    "box": box,
-                    "positions": list(int(p) for p in positions),
-                },
-            )
-
-        _backup_path = write_yaml(
-            candidate_data,
-            yaml_path,
-            auto_backup=auto_backup,
-            audit_meta=_build_audit_meta(
-                action=action,
-                source=source,
-                tool_name=tool_name,
-                actor_context=actor_context,
-                details={
-                    "new_ids": [item["id"] for item in created],
-                    "count": len(created),
-                    "box": box,
-                    "positions": list(int(p) for p in positions),
-                    "fields": fields,
-                },
-                tool_input={
-                    "box": box,
-                    "positions": list(int(p) for p in positions),
-                    "frozen_at": frozen_at,
-                    "fields": fields,
-                },
-            ),
-        )
-    except Exception as exc:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=action,
-            source=source,
-            tool_name=tool_name,
-            error_code="write_failed",
-            message=f"添加失败: {exc}",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            before_data=data,
-            details={
-                "new_ids": [item["id"] for item in created],
-                "count": len(created),
-                "box": box,
-            },
-        )
-
-    return {
-        "ok": True,
-        "dry_run": False,
-        "preview": preview,
-        "result": {
-            "new_id": created[0]["id"] if created else None,
-            "new_ids": [item["id"] for item in created],
-            "count": len(created),
-            "created": created,
-            "records": new_records,
-        },
-        "backup_path": _backup_path,
-    }
+    return _write_ops._tool_add_entry_impl(
+        yaml_path=yaml_path,
+        box=box,
+        positions=positions,
+        frozen_at=frozen_at,
+        fields=fields,
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+        source=source,
+        auto_backup=auto_backup,
+    )
 
 
 _EDITABLE_FIELDS = {"frozen_at", "cell_line", "note"}
 
 
 def _get_editable_fields(yaml_path):
-    """Return editable field set: frozen_at + cell_line + note + user fields from meta."""
-    try:
-        data = load_yaml(yaml_path)
-        meta = data.get("meta", {})
-        fields = get_effective_fields(meta)
-        return _EDITABLE_FIELDS | {f["key"] for f in fields}
-    except Exception:
-        pass
-    return _EDITABLE_FIELDS
+    from .tool_api_impl import write_ops as _write_ops
+
+    return _write_ops._get_editable_fields(yaml_path)
 
 
 def tool_edit_entry(
@@ -998,178 +676,26 @@ def tool_edit_entry(
     source="tool_api",
     auto_backup=True,
 ):
-    """Edit metadata fields of an existing record.
+    from .tool_api_impl import write_ops as _write_ops
 
-    Only fields in _EDITABLE_FIELDS may be changed.
-    Structural fields (id, box, positions, thaw_events) are rejected.
-    """
-    action = "edit_entry"
-    tool_name = "tool_edit_entry"
-    tool_input = {
-        "record_id": record_id,
-        "fields": dict(fields or {}),
-        "dry_run": bool(dry_run),
-        "execution_mode": execution_mode,
-    }
-
-    validation = validate_write_tool_call(
+    return _write_ops.tool_edit_entry(
         yaml_path=yaml_path,
-        action=action,
-        source=source,
-        tool_name=tool_name,
-        tool_input=tool_input,
-        payload={"fields": fields or {}},
+        record_id=record_id,
+        fields=fields,
         dry_run=dry_run,
         execution_mode=execution_mode,
         actor_context=actor_context,
+        source=source,
+        auto_backup=auto_backup,
     )
-    if not validation.get("ok"):
-        return validation
-
-    allowed = _get_editable_fields(yaml_path)
-    bad_keys = set(fields.keys()) - allowed
-    if bad_keys:
-        return _failure_result(
-            yaml_path=yaml_path, action=action, source=source,
-            tool_name=tool_name, error_code="forbidden_fields",
-            message=f"以下字段不可编辑: {', '.join(sorted(bad_keys))}",
-            actor_context=actor_context, tool_input=tool_input,
-            details={"forbidden": sorted(bad_keys), "allowed": sorted(allowed)},
-        )
-
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return _failure_result(
-            yaml_path=yaml_path, action=action, source=source,
-            tool_name=tool_name, error_code="load_failed",
-            message=f"无法读取YAML文件: {exc}",
-            actor_context=actor_context, tool_input=tool_input,
-        )
-
-    meta = data.get("meta", {})
-    if "cell_line" in fields:
-        raw_cell_line = fields.get("cell_line")
-        cell_line_text = str(raw_cell_line or "").strip()
-
-        if is_cell_line_required(meta) and not cell_line_text:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=action,
-                source=source,
-                tool_name=tool_name,
-                error_code="invalid_cell_line",
-                message="cell_line 为必填，不能为空",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-            )
-
-        if cell_line_text:
-            cell_line_options = get_cell_line_options(meta)
-            if not cell_line_options:
-                return _failure_result(
-                    yaml_path=yaml_path,
-                    action=action,
-                    source=source,
-                    tool_name=tool_name,
-                    error_code="invalid_cell_line_options",
-                    message="cell_line 需要预设选项，但 meta.cell_line_options 为空",
-                    actor_context=actor_context,
-                    tool_input=tool_input,
-                    before_data=data,
-                )
-            if cell_line_text not in cell_line_options:
-                return _failure_result(
-                    yaml_path=yaml_path,
-                    action=action,
-                    source=source,
-                    tool_name=tool_name,
-                    error_code="invalid_cell_line",
-                    message="cell_line 必须来自预设下拉选项",
-                    actor_context=actor_context,
-                    tool_input=tool_input,
-                    before_data=data,
-                    details={"cell_line": cell_line_text, "options": cell_line_options},
-                )
-
-        fields = dict(fields)
-        fields["cell_line"] = cell_line_text
-
-    _idx, record = find_record_by_id(data.get("inventory", []), record_id)
-    if record is None:
-        return _failure_result(
-            yaml_path=yaml_path, action=action, source=source,
-            tool_name=tool_name, error_code="record_not_found",
-            message=f"未找到记录 ID={record_id}",
-            actor_context=actor_context, tool_input=tool_input,
-            before_data=data,
-        )
-
-    before = {k: record.get(k) for k in fields}
-    candidate_data = deepcopy(data)
-    _cidx, candidate_record = find_record_by_id(candidate_data.get("inventory", []), record_id)
-    for key, value in fields.items():
-        candidate_record[key] = value
-
-    validation_error = _validate_data_or_error(candidate_data)
-    if validation_error:
-        return _failure_result(
-            yaml_path=yaml_path, action=action, source=source,
-            tool_name=tool_name,
-            error_code=validation_error.get("error_code", "integrity_validation_failed"),
-            message=validation_error.get("message", "写入被阻止：完整性校验失败"),
-            actor_context=actor_context, tool_input=tool_input,
-            before_data=data, errors=validation_error.get("errors"),
-        )
-
-    if dry_run:
-        return {
-            "ok": True,
-            "dry_run": True,
-            "preview": {
-                "record_id": record_id,
-                "before": before,
-                "after": dict(fields),
-            },
-        }
-
-    try:
-        _backup_path = write_yaml(
-            candidate_data, yaml_path, auto_backup=auto_backup,
-            audit_meta=_build_audit_meta(
-                action=action, source=source, tool_name=tool_name,
-                actor_context=actor_context,
-                details={"record_id": record_id, "before": before, "after": dict(fields)},
-                tool_input=tool_input,
-            ),
-        )
-    except Exception as exc:
-        return _failure_result(
-            yaml_path=yaml_path, action=action, source=source,
-            tool_name=tool_name, error_code="write_failed",
-            message=f"编辑失败: {exc}",
-            actor_context=actor_context, tool_input=tool_input,
-            before_data=data,
-        )
-
-    return {
-        "ok": True,
-        "result": {
-            "record_id": record_id,
-            "before": before,
-            "after": dict(fields),
-        },
-        "backup_path": _backup_path,
-    }
 
 
-def tool_record_thaw(
+def tool_record_takeout(
     yaml_path,
     record_id,
     position=None,
     date_str=None,
-    action="取出",
+    action="takeout",
     to_position=None,
     to_box=None,
     dry_run=False,
@@ -1178,1109 +704,106 @@ def tool_record_thaw(
     source="tool_api",
     auto_backup=True,
 ):
-    """Record one thaw/takeout/discard/move operation via shared tool flow."""
-    audit_action = "record_thaw"
-    tool_name = "tool_record_thaw"
-    tool_input = {
-        "record_id": record_id,
-        "position": position,
-        "to_position": to_position,
-        "to_box": to_box,
-        "date": date_str,
-        "action": action,
-        "dry_run": bool(dry_run),
-        "execution_mode": execution_mode,
-    }
-
-    validation = validate_write_tool_call(
+    return _tool_record_takeout_impl(
         yaml_path=yaml_path,
-        action=audit_action,
-        source=source,
-        tool_name=tool_name,
-        tool_input=tool_input,
-        payload={"date_str": date_str, "action": action, "to_position": to_position},
+        record_id=record_id,
+        position=position,
+        date_str=date_str,
+        action=action,
+        to_position=to_position,
+        to_box=to_box,
         dry_run=dry_run,
         execution_mode=execution_mode,
         actor_context=actor_context,
+        source=source,
+        auto_backup=auto_backup,
     )
-    if not validation.get("ok"):
-        return validation
-
-    normalized = validation.get("normalized") or {}
-    action_en = normalized.get("action_en") or normalize_action(action) or ""
-    action_cn = ACTION_LABEL.get(action_en, action)
-    move_to_position = normalized.get("move_to_position")
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="load_failed",
-            message=f"无法读取YAML文件: {exc}",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            details={"load_error": str(exc)},
-        )
-
-    records = data.get("inventory", [])
-    layout = _get_layout(data)
-    _pos_lo, _pos_hi = get_position_range(layout)
-
-    if move_to_position is not None:
-        try:
-            move_to_position = _coerce_position_value(
-                move_to_position,
-                layout=layout,
-                field_name="to_position",
-            )
-        except ValueError:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="invalid_move_target",
-                message=f"目标位置无效: {move_to_position}",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                details={"to_position": move_to_position},
-            )
-
-    if move_to_position is not None and (move_to_position < _pos_lo or move_to_position > _pos_hi):
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_position",
-            message=f"目标位置编号必须在 {_pos_lo}-{_pos_hi} 之间",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            before_data=data,
-            details={"to_position": move_to_position},
-        )
-
-    idx, record = find_record_by_id(records, record_id)
-    if record is None:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="record_not_found",
-            message=f"未找到 ID={record_id} 的记录",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            before_data=data,
-            details={"record_id": record_id},
-        )
-
-    current_position = record.get("position")
-    if position in ("", "auto"):
-        position = None
-
-    if position is None:
-        if current_position is None:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="position_not_found",
-                message=f"记录 #{record_id} 没有可用位置（可能已取出/复苏/扔掉）",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                details={"record_id": record_id},
-                extra={"current_position": current_position},
-            )
-        position = current_position
-
-    try:
-        position = _coerce_position_value(position, layout=layout, field_name="position")
-    except ValueError:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_position",
-            message=f"位置无效: {position}",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            before_data=data,
-            details={"record_id": record_id, "position": position},
-        )
-    if position < _pos_lo or position > _pos_hi:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_position",
-            message=f"位置编号必须在 {_pos_lo}-{_pos_hi} 之间",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            details={"position": position},
-        )
-    if current_position is not None and position != current_position:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="position_not_found",
-            message=f"位置 {position} 与记录 #{record_id} 的当前位置 {current_position} 不匹配",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            before_data=data,
-            details={"record_id": record_id, "position": position},
-            extra={"current_position": current_position},
-        )
-
-    if action_en == "move" and move_to_position == position:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_move_target",
-            message="移动操作的起始位置与目标位置不能相同",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            details={"position": position, "to_position": move_to_position},
-        )
-
-    swap_target = None
-    swap_target_new_position = None
-    swap_target_event = None
-
-    if action_en == "move":
-        new_position = move_to_position
-        box = record.get("box")
-        cross_box = to_box is not None and to_box != box
-
-        if cross_box:
-            if not validate_box(to_box, layout):
-                return _failure_result(
-                    yaml_path=yaml_path,
-                    action=audit_action,
-                    source=source,
-                    tool_name=tool_name,
-                    error_code="invalid_box",
-                    message=f"目标盒子编号 {to_box} 超出范围 ({_format_box_constraint(layout)})",
-                    actor_context=actor_context,
-                    tool_input=tool_input,
-                    before_data=data,
-                    details={"to_box": to_box},
-                )
-            target_box = to_box
-            for other_idx, other in enumerate(records):
-                if other.get("box") != target_box:
-                    continue
-                other_position = other.get("position")
-                if other_position == move_to_position:
-                    return _failure_result(
-                        yaml_path=yaml_path,
-                        action=audit_action,
-                        source=source,
-                        tool_name=tool_name,
-                        error_code="position_conflict",
-                        message=f"目标盒子 {target_box} 位置 {move_to_position} 已被记录 #{other.get('id')} 占用",
-                        actor_context=actor_context,
-                        tool_input=tool_input,
-                        before_data=data,
-                        details={
-                            "record_id": record_id,
-                            "to_box": target_box,
-                            "to_position": move_to_position,
-                            "blocking_record_id": other.get("id"),
-                        },
-                    )
-        else:
-            for other_idx, other in enumerate(records):
-                if other.get("box") != box:
-                    continue
-                other_position = other.get("position")
-                if other_position == move_to_position:
-                    if other_idx == idx:
-                        return _failure_result(
-                            yaml_path=yaml_path,
-                            action=audit_action,
-                            source=source,
-                            tool_name=tool_name,
-                            error_code="invalid_move_target",
-                            message=f"目标位置 {move_to_position} 已属于记录 #{record_id}，无需移动",
-                            actor_context=actor_context,
-                            tool_input=tool_input,
-                            before_data=data,
-                            details={"record_id": record_id, "to_position": move_to_position},
-                        )
-
-                    swap_target_new_position = position
-                    swap_target = {
-                        "idx": other_idx,
-                        "record": other,
-                        "old_position": other_position,
-                    }
-                    break
-
-        new_event = _build_move_event(
-            date_str=date_str,
-            from_position=position,
-            to_position=move_to_position,
-            paired_record_id=swap_target["record"].get("id") if swap_target else None,
-            from_box=box if cross_box else None,
-            to_box=to_box if cross_box else None,
-        )
-        if swap_target:
-            swap_target_event = _build_move_event(
-                date_str=date_str,
-                from_position=move_to_position,
-                to_position=position,
-                paired_record_id=record_id,
-            )
-    else:
-        new_position = None
-        new_event = {"date": date_str, "action": action_en, "positions": [position]}
-
-    preview = {
-        "record_id": record_id,
-        "cell_line": record.get("cell_line"),
-        "short_name": record.get("short_name"),
-        "box": record.get("box"),
-        "action_en": action_en,
-        "action_cn": action_cn,
-        "position": position,
-        "to_position": move_to_position,
-        "to_box": to_box,
-        "date": date_str,
-        "position_before": current_position,
-        "position_after": new_position,
-    }
-    if swap_target:
-        preview["swap_with_record_id"] = swap_target["record"].get("id")
-        preview["swap_with_short_name"] = swap_target["record"].get("short_name")
-        preview["swap_position_before"] = swap_target["old_position"]
-        preview["swap_position_after"] = swap_target_new_position
-
-    if dry_run:
-        return {
-            "ok": True,
-            "dry_run": True,
-            "preview": preview,
-        }
-
-    try:
-        candidate_data = deepcopy(data)
-        candidate_records = candidate_data.get("inventory", [])
-        if not isinstance(candidate_records, list):
-            validation_error = _validate_data_or_error(candidate_data) or {
-                "error_code": "integrity_validation_failed",
-                "message": "写入被阻止：完整性校验失败",
-                "errors": [],
-            }
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code=validation_error.get("error_code", "integrity_validation_failed"),
-                message=validation_error.get("message", "写入被阻止：完整性校验失败"),
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                errors=validation_error.get("errors"),
-            )
-
-        candidate_records[idx]["position"] = new_position
-        if to_box is not None and to_box != record.get("box"):
-            candidate_records[idx]["box"] = to_box
-        thaw_events = candidate_records[idx].get("thaw_events")
-        if thaw_events is None:
-            candidate_records[idx]["thaw_events"] = []
-            thaw_events = candidate_records[idx]["thaw_events"]
-        if not isinstance(thaw_events, list):
-            validation_error = _validate_data_or_error(candidate_data) or {
-                "error_code": "integrity_validation_failed",
-                "message": "写入被阻止：完整性校验失败",
-                "errors": [],
-            }
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code=validation_error.get("error_code", "integrity_validation_failed"),
-                message=validation_error.get("message", "写入被阻止：完整性校验失败"),
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                errors=validation_error.get("errors"),
-            )
-        thaw_events.append(new_event)
-
-        affected_record_ids = [record_id]
-        if swap_target:
-            swap_idx = swap_target["idx"]
-            candidate_records[swap_idx]["position"] = swap_target_new_position
-            swap_events = candidate_records[swap_idx].get("thaw_events")
-            if swap_events is None:
-                candidate_records[swap_idx]["thaw_events"] = []
-                swap_events = candidate_records[swap_idx]["thaw_events"]
-            if not isinstance(swap_events, list):
-                validation_error = _validate_data_or_error(candidate_data) or {
-                    "error_code": "integrity_validation_failed",
-                    "message": "写入被阻止：完整性校验失败",
-                    "errors": [],
-                }
-                return _failure_result(
-                    yaml_path=yaml_path,
-                    action=audit_action,
-                    source=source,
-                    tool_name=tool_name,
-                    error_code=validation_error.get("error_code", "integrity_validation_failed"),
-                    message=validation_error.get("message", "写入被阻止：完整性校验失败"),
-                    actor_context=actor_context,
-                    tool_input=tool_input,
-                    before_data=data,
-                    errors=validation_error.get("errors"),
-                )
-            swap_events.append(swap_target_event)
-            affected_record_ids.append(swap_target["record"].get("id"))
-
-        validation_error = _validate_data_or_error(candidate_data)
-        if validation_error:
-            validation_error = validation_error or {
-                "error_code": "integrity_validation_failed",
-                "message": "写入被阻止：完整性校验失败",
-                "errors": [],
-            }
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code=validation_error.get("error_code", "integrity_validation_failed"),
-                message=validation_error.get("message", "写入被阻止：完整性校验失败"),
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                errors=validation_error.get("errors"),
-                details={
-                    "record_id": record_id,
-                    "position": position,
-                    "to_position": move_to_position,
-                    "action": action_en,
-                    "date": date_str,
-                },
-            )
-
-        _backup_path = write_yaml(
-            candidate_data,
-            yaml_path,
-            auto_backup=auto_backup,
-            audit_meta=_build_audit_meta(
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                actor_context=actor_context,
-                details={
-                    "record_id": record_id,
-                    "box": record.get("box"),
-                    "position": position,
-                    "to_position": move_to_position,
-                    "action": action_en,
-                    "date": date_str,
-                    "affected_record_ids": affected_record_ids,
-                },
-                tool_input={
-                    "record_id": record_id,
-                    "position": position,
-                    "to_position": move_to_position,
-                    "date": date_str,
-                    "action": action,
-                },
-            ),
-        )
-    except Exception as exc:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="write_failed",
-            message=f"更新失败: {exc}",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            before_data=data,
-            details={
-                "record_id": record_id,
-                "position": position,
-                "to_position": move_to_position,
-                "action": action_en,
-            },
-        )
-
-    result_payload = {
-        "record_id": record_id,
-        "remaining_position": new_position,
-    }
-    if move_to_position is not None:
-        result_payload["to_position"] = move_to_position
-    if swap_target:
-        result_payload["swap_with_record_id"] = swap_target["record"].get("id")
-
-    return {
-        "ok": True,
-        "dry_run": False,
-        "preview": preview,
-        "result": result_payload,
-        "backup_path": _backup_path,
-    }
 
 
-def tool_batch_thaw(
+def _tool_record_takeout_impl(
     yaml_path,
-    entries,
-    date_str,
-    action="取出",
+    record_id,
+    position=None,
+    date_str=None,
+    action="takeout",
+    to_position=None,
+    to_box=None,
     dry_run=False,
     execution_mode=None,
     actor_context=None,
     source="tool_api",
     auto_backup=True,
 ):
-    """Record batch thaw/takeout/discard/move operations via shared tool flow."""
-    audit_action = "batch_thaw"
-    tool_name = "tool_batch_thaw"
-    tool_input = {
-        "entries": list(entries) if isinstance(entries, (list, tuple)) else entries,
-        "date": date_str,
-        "action": action,
-        "dry_run": bool(dry_run),
-        "execution_mode": execution_mode,
-    }
+    from .tool_api_impl import write_ops as _write_ops
 
-    validation = validate_write_tool_call(
+    return _write_ops._tool_record_takeout_impl(
         yaml_path=yaml_path,
-        action=audit_action,
-        source=source,
-        tool_name=tool_name,
-        tool_input=tool_input,
-        payload={"date_str": date_str, "action": action, "entries": entries},
+        record_id=record_id,
+        position=position,
+        date_str=date_str,
+        action=action,
+        to_position=to_position,
+        to_box=to_box,
         dry_run=dry_run,
         execution_mode=execution_mode,
         actor_context=actor_context,
+        source=source,
+        auto_backup=auto_backup,
     )
-    if not validation.get("ok"):
-        return validation
 
-    action_en = (validation.get("normalized") or {}).get("action_en") or normalize_action(action) or ""
+def tool_batch_takeout(
+    yaml_path,
+    entries,
+    date_str,
+    action="takeout",
+    dry_run=False,
+    execution_mode=None,
+    actor_context=None,
+    source="tool_api",
+    auto_backup=True,
+):
+    return _tool_batch_takeout_impl(
+        yaml_path=yaml_path,
+        entries=entries,
+        date_str=date_str,
+        action=action,
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+        source=source,
+        auto_backup=auto_backup,
+    )
 
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="load_failed",
-            message=f"无法读取YAML文件: {exc}",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            details={"load_error": str(exc)},
-        )
 
-    records = data.get("inventory", [])
-    layout = _get_layout(data)
-    _pos_lo, _pos_hi = get_position_range(layout)
+def _tool_batch_takeout_impl(
+    yaml_path,
+    entries,
+    date_str,
+    action="takeout",
+    dry_run=False,
+    execution_mode=None,
+    actor_context=None,
+    source="tool_api",
+    auto_backup=True,
+):
+    from .tool_api_impl import write_ops as _write_ops
 
-    if isinstance(entries, str):
-        try:
-            entries = parse_batch_entries(entries, layout=layout)
-        except ValueError as exc:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="validation_failed",
-                message="批量操作参数校验失败",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                errors=[str(exc)],
-            )
-
-    normalized_entries = []
-    normalize_errors = []
-    for idx, entry in enumerate(entries, 1):
-        try:
-            normalized_entries.append(_coerce_batch_entry(entry, layout=layout))
-        except Exception as exc:
-            normalize_errors.append(f"第{idx}条: {exc}")
-
-    if normalize_errors:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="validation_failed",
-            message="批量操作参数校验失败",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            errors=normalize_errors,
-        )
-
-    operations = []
-    errors = []
-
-    if action_en == "move":
-        simulated_position = {}
-        simulated_box = {}
-        position_owner = {}
-        events_by_idx = defaultdict(list)
-        touched_indices = set()
-
-        for idx, rec in enumerate(records):
-            rec_position = rec.get("position")
-            simulated_position[idx] = rec_position
-            box = rec.get("box")
-            simulated_box[idx] = box
-            if rec_position is not None:
-                key = (box, rec_position)
-                if key in position_owner and position_owner[key] != idx:
-                    errors.append(f"盒子 {box} 位置 {rec_position} 已存在冲突，无法执行移动")
-                else:
-                    position_owner[key] = idx
-
-        for row_idx, entry in enumerate(normalized_entries, 1):
-            if len(entry) < 3:
-                errors.append(f"第{row_idx}条: move 操作必须使用 id:from->to 格式")
-                continue
-
-            record_id, from_pos, to_pos = entry[0], entry[1], entry[2]
-            entry_to_box = entry[3] if len(entry) >= 4 else None
-
-            if from_pos < _pos_lo or from_pos > _pos_hi:
-                errors.append(
-                    f"第{row_idx}条 ID {record_id}: 起始位置 {from_pos} 必须在 {_pos_lo}-{_pos_hi} 之间"
-                )
-                continue
-            if to_pos < _pos_lo or to_pos > _pos_hi:
-                errors.append(
-                    f"第{row_idx}条 ID {record_id}: 目标位置 {to_pos} 必须在 {_pos_lo}-{_pos_hi} 之间"
-                )
-                continue
-            if entry_to_box is not None and not validate_box(entry_to_box, layout):
-                errors.append(
-                    f"第{row_idx}条 ID {record_id}: 目标盒子 {entry_to_box} 超出范围 ({_format_box_constraint(layout)})"
-                )
-                continue
-
-            idx, record = find_record_by_id(records, record_id)
-            if record is None:
-                errors.append(f"第{row_idx}条 ID {record_id}: 未找到该记录")
-                continue
-
-            current_box = simulated_box.get(idx, record.get("box"))
-            cross_box = entry_to_box is not None and entry_to_box != current_box
-
-            if not cross_box and from_pos == to_pos:
-                errors.append(f"第{row_idx}条 ID {record_id}: 起始位置与目标位置不能相同")
-                continue
-
-            source_before = simulated_position.get(idx)
-            if source_before is None:
-                errors.append(f"第{row_idx}条 ID {record_id}: 记录没有可用位置（可能已取出/复苏/扔掉）")
-                continue
-            if from_pos != source_before:
-                errors.append(f"第{row_idx}条 ID {record_id}: 起始位置 {from_pos} 与当前位置 {source_before} 不匹配")
-                continue
-
-            source_after = to_pos
-
-            target_box = entry_to_box if cross_box else current_box
-            dest_idx = position_owner.get((target_box, to_pos))
-            if dest_idx == idx:
-                errors.append(f"第{row_idx}条 ID {record_id}: 目标位置 {to_pos} 已属于该记录")
-                continue
-
-            dest_before = None
-            dest_after = None
-            dest_record = None
-            if dest_idx is not None:
-                if cross_box:
-                    dest_record = records[dest_idx]
-                    errors.append(
-                        f"第{row_idx}条 ID {record_id}: 目标盒子 {target_box} 位置 {to_pos} 已被记录 #{dest_record.get('id')} 占用"
-                    )
-                    continue
-                else:
-                    if dest_idx in touched_indices:
-                        dest_record = records[dest_idx]
-                        errors.append(
-                            f"第{row_idx}条 ID {record_id}: 目标位置 {to_pos} 已被本批次前序移动占用，无法完成换位"
-                        )
-                        continue
-                    dest_record = records[dest_idx]
-                    dest_before = simulated_position.get(dest_idx)
-                    dest_after = from_pos
-
-            simulated_position[idx] = source_after
-            touched_indices.add(idx)
-
-            old_key = (current_box, from_pos)
-            if dest_idx is None:
-                position_owner.pop(old_key, None)
-            else:
-                simulated_position[dest_idx] = dest_after
-                touched_indices.add(dest_idx)
-                position_owner[old_key] = dest_idx
-            position_owner[(target_box, to_pos)] = idx
-
-            if cross_box:
-                simulated_box[idx] = entry_to_box
-
-            source_event = _build_move_event(
-                date_str=date_str,
-                from_position=from_pos,
-                to_position=to_pos,
-                paired_record_id=dest_record.get("id") if dest_record else None,
-                from_box=current_box if cross_box else None,
-                to_box=entry_to_box if cross_box else None,
-            )
-            events_by_idx[idx].append(source_event)
-
-            if dest_record is not None:
-                events_by_idx[dest_idx].append(
-                    _build_move_event(
-                        date_str=date_str,
-                        from_position=to_pos,
-                        to_position=from_pos,
-                        paired_record_id=record_id,
-                    )
-                )
-
-            op = {
-                "idx": idx,
-                "record_id": record_id,
-                "record": record,
-                "position": from_pos,
-                "to_position": to_pos,
-                "old_position": source_before,
-                "new_position": source_after,
-            }
-            if entry_to_box is not None:
-                op["to_box"] = entry_to_box
-            if dest_record is not None:
-                op["swap_with_record_id"] = dest_record.get("id")
-                op["swap_with_short_name"] = dest_record.get("short_name")
-                op["swap_old_position"] = dest_before
-                op["swap_new_position"] = dest_after
-            operations.append(op)
-
-        if errors:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="validation_failed",
-                message="批量操作参数校验失败",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                errors=errors,
-                extra={"operations": operations},
-                details={"error_count": len(errors)},
-            )
-
-        preview = {
-            "date": date_str,
-            "action_en": action_en,
-            "action_cn": ACTION_LABEL.get(action_en, action),
-            "count": len(operations),
-            "operations": [
-                {
-                    "record_id": op["record_id"],
-                    "cell_line": op["record"].get("cell_line"),
-                    "short_name": op["record"].get("short_name"),
-                    "box": op["record"].get("box"),
-                    "position": op["position"],
-                    "to_position": op.get("to_position"),
-                    "old_position": op["old_position"],
-                    "new_position": op["new_position"],
-                    "swap_with_record_id": op.get("swap_with_record_id"),
-                }
-                for op in operations
-            ],
-        }
-
-        if dry_run:
-            return {
-                "ok": True,
-                "dry_run": True,
-                "preview": preview,
-            }
-
-        try:
-            candidate_data = deepcopy(data)
-            candidate_records = candidate_data.get("inventory", [])
-            if not isinstance(candidate_records, list):
-                validation_error = _validate_data_or_error(candidate_data) or {
-                    "error_code": "integrity_validation_failed",
-                    "message": "写入被阻止：完整性校验失败",
-                    "errors": [],
-                }
-                return _failure_result(
-                    yaml_path=yaml_path,
-                    action=audit_action,
-                    source=source,
-                    tool_name=tool_name,
-                    error_code=validation_error.get("error_code", "integrity_validation_failed"),
-                    message=validation_error.get("message", "写入被阻止：完整性校验失败"),
-                    actor_context=actor_context,
-                    tool_input=tool_input,
-                    before_data=data,
-                    errors=validation_error.get("errors"),
-                )
-
-            for idx in touched_indices:
-                candidate_records[idx]["position"] = simulated_position[idx]
-                if simulated_box.get(idx) != records[idx].get("box"):
-                    candidate_records[idx]["box"] = simulated_box[idx]
-
-            for idx in touched_indices:
-                events = events_by_idx.get(idx) or []
-                if not events:
-                    continue
-                thaw_events = candidate_records[idx].get("thaw_events")
-                if thaw_events is None:
-                    candidate_records[idx]["thaw_events"] = []
-                    thaw_events = candidate_records[idx]["thaw_events"]
-                if not isinstance(thaw_events, list):
-                    validation_error = _validate_data_or_error(candidate_data) or {
-                        "error_code": "integrity_validation_failed",
-                        "message": "写入被阻止：完整性校验失败",
-                        "errors": [],
-                    }
-                    return _failure_result(
-                        yaml_path=yaml_path,
-                        action=audit_action,
-                        source=source,
-                        tool_name=tool_name,
-                        error_code=validation_error.get("error_code", "integrity_validation_failed"),
-                        message=validation_error.get("message", "写入被阻止：完整性校验失败"),
-                        actor_context=actor_context,
-                        tool_input=tool_input,
-                        before_data=data,
-                        errors=validation_error.get("errors"),
-                    )
-                thaw_events.extend(events)
-
-            validation_error = _validate_data_or_error(candidate_data)
-            if validation_error:
-                validation_error = validation_error or {
-                    "error_code": "integrity_validation_failed",
-                    "message": "写入被阻止：完整性校验失败",
-                    "errors": [],
-                }
-                return _failure_result(
-                    yaml_path=yaml_path,
-                    action=audit_action,
-                    source=source,
-                    tool_name=tool_name,
-                    error_code=validation_error.get("error_code", "integrity_validation_failed"),
-                    message=validation_error.get("message", "写入被阻止：完整性校验失败"),
-                    actor_context=actor_context,
-                    tool_input=tool_input,
-                    before_data=data,
-                    errors=validation_error.get("errors"),
-                    details={"count": len(operations), "action": action_en, "date": date_str},
-                )
-
-            affected_ids = sorted({records[idx].get("id") for idx in touched_indices})
-            _backup_path = write_yaml(
-                candidate_data,
-                yaml_path,
-                auto_backup=auto_backup,
-                audit_meta=_build_audit_meta(
-                    action=audit_action,
-                    source=source,
-                    tool_name=tool_name,
-                    actor_context=actor_context,
-                    details={
-                        "count": len(operations),
-                        "action": action_en,
-                        "date": date_str,
-                        "record_ids": [op["record_id"] for op in operations],
-                        "affected_record_ids": affected_ids,
-                    },
-                    tool_input={
-                        "entries": list(normalized_entries),
-                        "date": date_str,
-                        "action": action,
-                    },
-                ),
-            )
-        except Exception as exc:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="write_failed",
-                message=f"批量更新失败: {exc}",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                details={"count": len(operations), "action": action_en, "date": date_str},
-            )
-
-        return {
-            "ok": True,
-            "dry_run": False,
-            "preview": preview,
-            "result": {
-                "count": len(operations),
-                "record_ids": [op["record_id"] for op in operations],
-                "affected_record_ids": affected_ids,
-            },
-            "backup_path": _backup_path,
-        }
-
-    # Track cumulative position changes per record index so that multiple
-    # entries targeting the same record correctly build on each other.
-    seen_nonmove_entries = set()
-    for row_idx, entry in enumerate(normalized_entries, 1):
-        if len(entry) not in (1, 2):
-            errors.append(f"第{row_idx}条: 非移动操作必须使用 id 或 id:position 格式")
-            continue
-
-        record_id = entry[0]
-
-        idx, record = find_record_by_id(records, record_id)
-        if record is None:
-            errors.append(f"ID {record_id}: 未找到该记录")
-            continue
-
-        current_position = record.get("position")
-
-        if len(entry) == 2:
-            position = entry[1]
-            if position < _pos_lo or position > _pos_hi:
-                errors.append(f"ID {record_id}: 位置编号 {position} 必须在 {_pos_lo}-{_pos_hi} 之间")
-                continue
-            if current_position is not None and position != current_position:
-                errors.append(f"ID {record_id}: 位置 {position} 与当前位置 {current_position} 不匹配")
-                continue
-        else:
-            if current_position is None:
-                errors.append(
-                    f"ID {record_id}: 记录没有可用位置（可能已取出/复苏/扔掉），请使用 id:position"
-                )
-                continue
-            position = current_position
-            if position < _pos_lo or position > _pos_hi:
-                errors.append(f"ID {record_id}: 位置编号 {position} 必须在 {_pos_lo}-{_pos_hi} 之间")
-                continue
-
-        entry_key = (record_id, position)
-        if entry_key in seen_nonmove_entries:
-            errors.append(f"ID {record_id}: 位置 {position} 在同一批次中重复提交")
-            continue
-        seen_nonmove_entries.add(entry_key)
-
-        new_position = None
-
-        operations.append(
-            {
-                "idx": idx,
-                "record_id": record_id,
-                "record": record,
-                "position": position,
-                "old_position": current_position,
-                "new_position": new_position,
-            }
-        )
-
-    if errors:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="validation_failed",
-            message="批量操作参数校验失败",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            before_data=data,
-            errors=errors,
-            extra={"operations": operations},
-            details={"error_count": len(errors)},
-        )
-
-    preview = {
-        "date": date_str,
-        "action_en": action_en,
-        "action_cn": ACTION_LABEL.get(action_en, action),
-        "count": len(operations),
-        "operations": [
-            {
-                "record_id": op["record_id"],
-                "cell_line": op["record"].get("cell_line"),
-                "short_name": op["record"].get("short_name"),
-                "box": op["record"].get("box"),
-                "position": op["position"],
-                "old_position": op["old_position"],
-                "new_position": op["new_position"],
-            }
-            for op in operations
-        ],
-    }
-
-    if dry_run:
-        return {
-            "ok": True,
-            "dry_run": True,
-            "preview": preview,
-        }
-
-    try:
-        candidate_data = deepcopy(data)
-        candidate_records = candidate_data.get("inventory", [])
-        if not isinstance(candidate_records, list):
-            validation_error = _validate_data_or_error(candidate_data) or {
-                "error_code": "integrity_validation_failed",
-                "message": "写入被阻止：完整性校验失败",
-                "errors": [],
-            }
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code=validation_error.get("error_code", "integrity_validation_failed"),
-                message=validation_error.get("message", "写入被阻止：完整性校验失败"),
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                errors=validation_error.get("errors"),
-            )
-
-        for op in operations:
-            idx = op["idx"]
-            position = op["position"]
-            candidate_records[idx]["position"] = op["new_position"]
-
-            new_event = {
-                "date": date_str,
-                "action": action_en,
-                "positions": [position],
-            }
-            thaw_events = candidate_records[idx].get("thaw_events")
-            if thaw_events is None:
-                candidate_records[idx]["thaw_events"] = []
-                thaw_events = candidate_records[idx]["thaw_events"]
-            if not isinstance(thaw_events, list):
-                validation_error = _validate_data_or_error(candidate_data) or {
-                    "error_code": "integrity_validation_failed",
-                    "message": "写入被阻止：完整性校验失败",
-                    "errors": [],
-                }
-                return _failure_result(
-                    yaml_path=yaml_path,
-                    action=audit_action,
-                    source=source,
-                    tool_name=tool_name,
-                    error_code=validation_error.get("error_code", "integrity_validation_failed"),
-                    message=validation_error.get("message", "写入被阻止：完整性校验失败"),
-                    actor_context=actor_context,
-                    tool_input=tool_input,
-                    before_data=data,
-                    errors=validation_error.get("errors"),
-                )
-            thaw_events.append(new_event)
-
-        validation_error = _validate_data_or_error(candidate_data)
-        if validation_error:
-            validation_error = validation_error or {
-                "error_code": "integrity_validation_failed",
-                "message": "写入被阻止：完整性校验失败",
-                "errors": [],
-            }
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code=validation_error.get("error_code", "integrity_validation_failed"),
-                message=validation_error.get("message", "写入被阻止：完整性校验失败"),
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                errors=validation_error.get("errors"),
-                details={"count": len(operations), "action": action_en, "date": date_str},
-            )
-
-        _backup_path = write_yaml(
-            candidate_data,
-            yaml_path,
-            auto_backup=auto_backup,
-            audit_meta=_build_audit_meta(
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                actor_context=actor_context,
-                details={
-                    "count": len(operations),
-                    "action": action_en,
-                    "date": date_str,
-                    "record_ids": [op["record_id"] for op in operations],
-                },
-                tool_input={
-                    "entries": list(normalized_entries),
-                    "date": date_str,
-                    "action": action,
-                },
-            ),
-        )
-    except Exception as exc:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="write_failed",
-            message=f"批量更新失败: {exc}",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            before_data=data,
-            details={"count": len(operations), "action": action_en, "date": date_str},
-        )
-
-    return {
-        "ok": True,
-        "dry_run": False,
-        "preview": preview,
-        "result": {
-            "count": len(operations),
-            "record_ids": [op["record_id"] for op in operations],
-        },
-        "backup_path": _backup_path,
-    }
-
+    return _write_ops._tool_batch_takeout_impl(
+        yaml_path=yaml_path,
+        entries=entries,
+        date_str=date_str,
+        action=action,
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+        source=source,
+        auto_backup=auto_backup,
+    )
 
 def tool_list_backups(yaml_path):
-    """List YAML backup files, newest first."""
-    return list_yaml_backups(yaml_path)
+    from .tool_api_impl import write_ops as _write_ops
+
+    return _write_ops.tool_list_backups(yaml_path=yaml_path)
 
 
 def tool_rollback(
@@ -2293,182 +816,18 @@ def tool_rollback(
     auto_backup=True,
     source_event=None,
 ):
-    """Rollback inventory YAML using shared tool flow."""
-    audit_action = "rollback"
-    tool_name = "tool_rollback"
-    normalized_source_event = {}
-    if isinstance(source_event, dict):
-        normalized_source_event = {
-            str(key): value
-            for key, value in source_event.items()
-            if value not in (None, "")
-        }
+    from .tool_api_impl import write_ops as _write_ops
 
-    def _details_for_target(target_path=None):
-        details = {}
-        if target_path not in (None, ""):
-            details["requested_backup"] = target_path
-        if normalized_source_event:
-            details["requested_from_event"] = dict(normalized_source_event)
-        return details or None
-
-    tool_input = {
-        "backup_path": backup_path,
-        "dry_run": bool(dry_run),
-        "execution_mode": execution_mode,
-    }
-    if normalized_source_event:
-        tool_input["source_event"] = dict(normalized_source_event)
-
-    validation = validate_write_tool_call(
+    return _write_ops.tool_rollback(
         yaml_path=yaml_path,
-        action=audit_action,
-        source=source,
-        tool_name=tool_name,
-        tool_input=tool_input,
-        payload={},
+        backup_path=backup_path,
         dry_run=dry_run,
         execution_mode=execution_mode,
         actor_context=actor_context,
+        source=source,
+        auto_backup=auto_backup,
+        source_event=source_event,
     )
-    if not validation.get("ok"):
-        return validation
-
-    current_data = None
-    try:
-        current_data = load_yaml(yaml_path)
-    except Exception:
-        current_data = None
-
-    backups = list_yaml_backups(yaml_path)
-    if not backups and not backup_path:
-        payload = {
-            "ok": False,
-            "error_code": "no_backups",
-            "message": "无可用备份，无法回滚",
-        }
-        if not dry_run:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code=payload["error_code"],
-                message=payload["message"],
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=current_data,
-                details=_details_for_target(),
-            )
-        return payload
-
-    target = backup_path or backups[0]
-    if dry_run and not os.path.exists(target):
-        return {
-            "ok": False,
-            "error_code": "backup_not_found",
-            "message": f"备份不存在: {target}",
-        }
-    try:
-        backup_data = load_yaml(target)
-    except Exception as exc:
-        payload = {
-            "ok": False,
-            "error_code": "backup_load_failed",
-            "message": f"无法读取备份文件: {exc}",
-        }
-        if not dry_run:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code=payload["error_code"],
-                message=payload["message"],
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=current_data,
-                details=_details_for_target(target),
-            )
-        return payload
-
-    validation_error = _validate_data_or_error(
-        backup_data,
-        message_prefix="回滚被阻止：目标备份不满足完整性约束",
-    )
-    if validation_error:
-        validation_error = validation_error or {
-            "error_code": "rollback_backup_invalid",
-            "message": "回滚被阻止：目标备份不满足完整性约束",
-            "errors": [],
-        }
-        payload = {
-            "ok": False,
-            "error_code": "rollback_backup_invalid",
-            "message": validation_error.get("message", "回滚被阻止：目标备份不满足完整性约束"),
-            "errors": validation_error.get("errors"),
-            "backup_path": target,
-        }
-        if not dry_run:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code=payload["error_code"],
-                message=payload["message"],
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=current_data,
-                errors=payload.get("errors"),
-                details=_details_for_target(target),
-                extra={"backup_path": target},
-            )
-        return payload
-
-    if dry_run:
-        return {
-            "ok": True,
-            "dry_run": True,
-            "result": {
-                "requested_backup": target,
-            },
-        }
-
-    try:
-        result = rollback_yaml(
-            path=yaml_path,
-            backup_path=target,
-            audit_meta=_build_audit_meta(
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                actor_context=actor_context,
-                details=_details_for_target(target),
-                tool_input=tool_input,
-            ),
-        )
-    except Exception as exc:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="rollback_failed",
-            message=f"回滚失败: {exc}",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            before_data=current_data,
-            details=_details_for_target(target),
-        )
-
-    return {
-        "ok": True,
-        "dry_run": False,
-        "result": result,
-        # Expose pre-rollback snapshot so Plan executor can offer an Undo path.
-        "backup_path": result.get("snapshot_before_rollback"),
-    }
 
 
 def tool_adjust_box_count(
@@ -2483,419 +842,63 @@ def tool_adjust_box_count(
     source="tool_api",
     auto_backup=True,
 ):
-    """Safely add/remove boxes without changing rows/cols/indexing.
-
-    Rules:
-    - Only updates ``meta.box_layout.box_count`` and ``meta.box_layout.box_numbers``.
-    - Remove is allowed only when target box has no active positions.
-    - Removing a middle box supports:
-      - ``keep_gaps`` (preserve box IDs with gaps)
-      - ``renumber_contiguous`` (remap to 1..N)
-    """
-
-    audit_action = "adjust_box_count"
-    tool_name = "tool_adjust_box_count"
-    tool_input = {
-        "operation": operation,
-        "count": count,
-        "box": box,
-        "renumber_mode": renumber_mode,
-        "dry_run": bool(dry_run),
-        "execution_mode": execution_mode,
-    }
-
-    validation = validate_write_tool_call(
+    return _tool_adjust_box_count_impl(
         yaml_path=yaml_path,
-        action=audit_action,
-        source=source,
-        tool_name=tool_name,
-        tool_input=tool_input,
-        payload={"operation": operation},
+        operation=operation,
+        count=count,
+        box=box,
+        renumber_mode=renumber_mode,
         dry_run=dry_run,
         execution_mode=execution_mode,
         actor_context=actor_context,
+        source=source,
+        auto_backup=auto_backup,
     )
-    if not validation.get("ok"):
-        return validation
 
-    op = (validation.get("normalized") or {}).get("op")
 
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="load_failed",
-            message=f"无法读取YAML文件: {exc}",
-            actor_context=actor_context,
-            tool_input=tool_input,
-        )
+def _tool_adjust_box_count_impl(
+    yaml_path,
+    operation,
+    count=1,
+    box=None,
+    renumber_mode=None,
+    dry_run=False,
+    execution_mode=None,
+    actor_context=None,
+    source="tool_api",
+    auto_backup=True,
+):
+    from .tool_api_impl import write_ops as _write_ops
 
-    if not isinstance(data, dict):
-        data = {}
-    records = data.get("inventory") or []
-    layout = _get_layout(data)
-    current_boxes = list(get_box_numbers(layout))
-    if not current_boxes:
-        current_boxes = [1]
-
-    candidate_data = deepcopy(data)
-    if not isinstance(candidate_data, dict):
-        candidate_data = {}
-    meta = candidate_data.setdefault("meta", {})
-    if not isinstance(meta, dict):
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_meta",
-            message="meta 必须是对象",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            before_data=data,
-        )
-    candidate_layout = meta.setdefault("box_layout", {})
-    if not isinstance(candidate_layout, dict):
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_box_layout",
-            message="meta.box_layout 必须是对象",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            before_data=data,
-        )
-
-    preview = {
-        "operation": op,
-        "box_numbers_before": current_boxes,
-        "box_count_before": len(current_boxes),
-    }
-
-    if op == "add":
-        try:
-            add_count = int(count)
-        except Exception:
-            add_count = 0
-        if add_count <= 0:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="invalid_count",
-                message="count 必须是大于 0 的整数",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                details={"count": count},
-            )
-
-        start = max(current_boxes) + 1 if current_boxes else 1
-        added_boxes = list(range(start, start + add_count))
-        new_boxes = current_boxes + added_boxes
-        preview.update(
-            {
-                "added_boxes": added_boxes,
-                "box_numbers_after": new_boxes,
-                "box_count_after": len(new_boxes),
-            }
-        )
-
-    else:
-        try:
-            target_box = int(box)
-        except Exception:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="invalid_box",
-                message="删除操作必须提供有效的 box 编号",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                details={"box": box},
-            )
-
-        if target_box not in current_boxes:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="invalid_box",
-                message=f"盒子编号 {target_box} 不存在 (允许: {_format_box_constraint(layout)})",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                details={"box": target_box},
-            )
-
-        blocking_records = []
-        for rec in records:
-            if not isinstance(rec, dict):
-                continue
-            if rec.get("box") != target_box:
-                continue
-            blocking_records.append(rec)
-
-        if blocking_records:
-            blocking_ids = [rec.get("id") for rec in blocking_records if rec.get("id") is not None]
-            active_ids = [
-                rec.get("id")
-                for rec in blocking_records
-                if rec.get("id") is not None and rec.get("position") is not None
-            ]
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="box_not_empty",
-                message=f"盒子 {target_box} 非空，无法删除",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                details={
-                    "box": target_box,
-                    "blocking_record_ids": blocking_ids,
-                    "active_blocking_record_ids": active_ids,
-                },
-                extra={
-                    "blocking_record_ids": blocking_ids,
-                    "active_blocking_record_ids": active_ids,
-                },
-            )
-
-        is_middle = _is_middle_box(current_boxes, target_box)
-        mode = str(renumber_mode or "").strip().lower() or None
-        if mode in {"renumber", "compact", "reindex"}:
-            mode = "renumber_contiguous"
-
-        if is_middle and mode not in {"keep_gaps", "renumber_contiguous"}:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="renumber_mode_required",
-                message="删除中间盒子时，必须指定 renumber_mode=keep_gaps 或 renumber_contiguous",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                details={"box": target_box, "current_boxes": current_boxes},
-                extra={"choices": ["keep_gaps", "renumber_contiguous"]},
-            )
-
-        if mode is None:
-            mode = "keep_gaps"
-        if mode not in {"keep_gaps", "renumber_contiguous"}:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="invalid_renumber_mode",
-                message="renumber_mode 必须是 keep_gaps 或 renumber_contiguous",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                details={"renumber_mode": renumber_mode},
-            )
-
-        remaining_boxes = [box_num for box_num in current_boxes if box_num != target_box]
-        if not remaining_boxes:
-            return _failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code="min_box_count",
-                message="至少需要保留 1 个盒子，无法删除最后一个盒子",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                details={"box": target_box},
-            )
-
-        box_mapping = {}
-        if mode == "renumber_contiguous":
-            sorted_remaining = sorted(remaining_boxes)
-            box_mapping = {old_box: idx + 1 for idx, old_box in enumerate(sorted_remaining)}
-            for rec in candidate_data.get("inventory", []):
-                if not isinstance(rec, dict):
-                    continue
-                rec_box = rec.get("box")
-                if rec_box in box_mapping:
-                    rec["box"] = box_mapping[rec_box]
-            new_boxes = list(range(1, len(sorted_remaining) + 1))
-        else:
-            new_boxes = sorted(remaining_boxes)
-
-        preview.update(
-            {
-                "removed_box": target_box,
-                "middle_box": is_middle,
-                "renumber_mode": mode,
-                "box_mapping": box_mapping,
-                "box_numbers_after": new_boxes,
-                "box_count_after": len(new_boxes),
-            }
-        )
-
-    candidate_layout["box_numbers"] = list(new_boxes)
-    candidate_layout["box_count"] = len(new_boxes)
-
-    validation_error = _validate_data_or_error(candidate_data)
-    if validation_error:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code=validation_error.get("error_code", "integrity_validation_failed"),
-            message=validation_error.get("message", "写入被阻止：完整性校验失败"),
-            actor_context=actor_context,
-            tool_input=tool_input,
-            before_data=data,
-            errors=validation_error.get("errors"),
-            details=preview,
-        )
-
-    if dry_run:
-        return {
-            "ok": True,
-            "dry_run": True,
-            "preview": preview,
-        }
-
-    try:
-        backup_path = write_yaml(
-            candidate_data,
-            yaml_path,
-            auto_backup=auto_backup,
-            audit_meta=_build_audit_meta(
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                actor_context=actor_context,
-                details=preview,
-                tool_input=tool_input,
-            ),
-        )
-    except Exception as exc:
-        return _failure_result(
-            yaml_path=yaml_path,
-            action=audit_action,
-            source=source,
-            tool_name=tool_name,
-            error_code="write_failed",
-            message=f"调整盒子数量失败: {exc}",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            before_data=data,
-            details=preview,
-        )
-
-    return {
-        "ok": True,
-        "dry_run": False,
-        "preview": preview,
-        "result": preview,
-        "backup_path": backup_path,
-    }
-
+    return _write_ops._tool_adjust_box_count_impl(
+        yaml_path=yaml_path,
+        operation=operation,
+        count=count,
+        box=box,
+        renumber_mode=renumber_mode,
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+        source=source,
+        auto_backup=auto_backup,
+    )
 
 def tool_export_inventory_csv(yaml_path, output_path):
-    """Export full inventory records to a CSV file."""
-    if not output_path:
-        return {
-            "ok": False,
-            "error_code": "invalid_output_path",
-            "message": "必须提供 CSV 输出路径",
-        }
+    from .tool_api_impl import read_ops as _read_ops
 
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "load_failed",
-            "message": f"无法读取YAML文件: {exc}",
-        }
-
-    try:
-        result = export_inventory_to_csv(data, output_path=output_path)
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "export_failed",
-            "message": f"导出CSV失败: {exc}",
-        }
-
-    return {
-        "ok": True,
-        "result": result,
-    }
+    return _read_ops.tool_export_inventory_csv(
+        yaml_path=yaml_path,
+        output_path=output_path,
+    )
 
 
 def tool_list_empty_positions(yaml_path, box=None):
-    """List empty positions by box."""
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "load_failed",
-            "message": f"无法读取YAML文件: {exc}",
-        }
+    from .tool_api_impl import read_ops as _read_ops
 
-    records = data.get("inventory", [])
-    layout = _get_layout(data)
-    total_slots = get_total_slots(layout)
-    box_numbers = get_box_numbers(layout)
-    all_positions = set(range(1, total_slots + 1))
-    occupancy = compute_occupancy(records)
-
-    if box is not None:
-        if not validate_box(box, layout):
-            return {
-                "ok": False,
-                "error_code": "invalid_box",
-                "message": f"盒子编号必须在 {_format_box_constraint(layout)} 范围内",
-            }
-        boxes = [str(box)]
-    else:
-        boxes = [str(i) for i in box_numbers]
-
-    items = []
-    for box_key in boxes:
-        used = set(occupancy.get(box_key, []))
-        empty = sorted(all_positions - used)
-        items.append(
-            {
-                "box": box_key,
-                "total_slots": total_slots,
-                "empty_count": len(empty),
-                "empty_positions": empty,
-            }
-        )
-
-    return {
-        "ok": True,
-        "result": {
-            "boxes": items,
-            "total_slots": total_slots,
-        },
-    }
+    return _read_ops.tool_list_empty_positions(
+        yaml_path=yaml_path,
+        box=box,
+    )
 
 
 def _record_search_blob(record, case_sensitive=False):
@@ -2921,7 +924,7 @@ def _parse_search_location_shortcut(query_text, layout):
     if not text:
         return None
 
-    match = re.match(r"^(?:box\s*)?([^:：\s]+)\s*[:：]\s*([^:：\s]+)$", text, flags=re.IGNORECASE)
+    match = re.match(r"^(?:box\s*)?([^:\s]+)\s*[:：]\s*([^:\s]+)$", text, flags=re.IGNORECASE)
     if not match:
         return None
 
@@ -2950,296 +953,32 @@ def tool_search_records(
     record_id=None,
     active_only=None,
 ):
-    """Search records by text and/or structured filters."""
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "load_failed",
-            "message": f"无法读取YAML文件: {exc}",
-        }
+    from .tool_api_impl import read_ops as _read_ops
 
-    records = data.get("inventory", [])
-    layout = _get_layout(data)
-
-    if mode not in {"fuzzy", "exact", "keywords"}:
-        return {
-            "ok": False,
-            "error_code": "invalid_mode",
-            "message": "mode 必须是 fuzzy/exact/keywords",
-        }
-
-    normalized_record_id = None
-    if record_id not in (None, ""):
-        try:
-            normalized_record_id = int(record_id)
-        except (TypeError, ValueError):
-            return {
-                "ok": False,
-                "error_code": "invalid_record_id",
-                "message": f"record_id 必须是整数: {record_id}",
-            }
-
-    normalized_box = None
-    if box not in (None, ""):
-        try:
-            normalized_box = int(display_to_box(box, layout))
-        except Exception:
-            return {
-                "ok": False,
-                "error_code": "invalid_box",
-                "message": f"盒子编号必须是有效值: {box}",
-            }
-        if not validate_box(normalized_box, layout):
-            return {
-                "ok": False,
-                "error_code": "invalid_box",
-                "message": f"盒子编号必须在 {_format_box_constraint(layout)} 范围内",
-            }
-
-    normalized_position = None
-    if position not in (None, ""):
-        try:
-            normalized_position = int(display_to_pos(position, layout))
-        except Exception:
-            return {
-                "ok": False,
-                "error_code": "invalid_position",
-                "message": f"位置编号必须是有效值: {position}",
-            }
-        if not validate_position(normalized_position, layout):
-            pos_lo, pos_hi = get_position_range(layout)
-            return {
-                "ok": False,
-                "error_code": "invalid_position",
-                "message": f"位置编号必须在 {pos_lo}-{pos_hi} 之间",
-            }
-
-    normalized_active_only = None
-    if active_only not in (None, ""):
-        if isinstance(active_only, bool):
-            normalized_active_only = active_only
-        elif isinstance(active_only, (int, float)):
-            normalized_active_only = bool(active_only)
-        else:
-            flag = str(active_only).strip().lower()
-            if flag in {"1", "true", "yes", "y", "on"}:
-                normalized_active_only = True
-            elif flag in {"0", "false", "no", "n", "off"}:
-                normalized_active_only = False
-            else:
-                return {
-                    "ok": False,
-                    "error_code": "invalid_tool_input",
-                    "message": "active_only 必须是布尔值",
-                }
-
-    normalized_query = " ".join(str(query or "").split())
-    query_shortcut = None
-    if normalized_query and normalized_box is None and normalized_position is None:
-        parsed = _parse_search_location_shortcut(normalized_query, layout)
-        if parsed is not None:
-            normalized_box, normalized_position = parsed
-            query_shortcut = normalized_query
-            normalized_query = ""
-
-    keywords = normalized_query.split() if normalized_query else []
-    q = normalized_query if case_sensitive else normalized_query.lower()
-
-    scoped_records = []
-    for rec in records:
-        if normalized_record_id is not None:
-            try:
-                if int(rec.get("id")) != normalized_record_id:
-                    continue
-            except (TypeError, ValueError):
-                continue
-
-        if normalized_box is not None:
-            try:
-                if int(rec.get("box")) != normalized_box:
-                    continue
-            except (TypeError, ValueError):
-                continue
-
-        if normalized_position is not None:
-            rec_position = rec.get("position")
-            if rec_position is None:
-                continue
-            try:
-                if int(rec_position) != normalized_position:
-                    continue
-            except (TypeError, ValueError):
-                continue
-
-        if normalized_active_only is True and rec.get("position") is None:
-            continue
-        if normalized_active_only is False and rec.get("position") is not None:
-            continue
-
-        scoped_records.append(rec)
-
-    has_structured_filter = any(
-        value is not None
-        for value in (
-            normalized_record_id,
-            normalized_box,
-            normalized_position,
-            normalized_active_only,
-        )
+    return _read_ops.tool_search_records(
+        yaml_path=yaml_path,
+        query=query,
+        mode=mode,
+        max_results=max_results,
+        case_sensitive=case_sensitive,
+        box=box,
+        position=position,
+        record_id=record_id,
+        active_only=active_only,
     )
-
-    matches = []
-    if q:
-        for rec in scoped_records:
-            blob = _record_search_blob(rec, case_sensitive=case_sensitive)
-            if mode in {"fuzzy", "exact"}:
-                if q in blob:
-                    matches.append(rec)
-                continue
-
-            # keywords (AND)
-            ok = True
-            for kw in keywords:
-                kw_cmp = kw if case_sensitive else kw.lower()
-                if kw_cmp not in blob:
-                    ok = False
-                    break
-            if ok and keywords:
-                matches.append(rec)
-    elif has_structured_filter:
-        matches = list(scoped_records)
-
-    total_count = len(matches)
-    display_matches = matches[:max_results] if (max_results and max_results > 0) else matches
-
-    suggestions = []
-    if total_count == 0:
-        if normalized_box is not None and normalized_position is not None:
-            suggestions.append("指定位置当前没有匹配记录，可改查其他盒子/位置")
-        elif has_structured_filter:
-            suggestions.append("检查结构化筛选条件（record_id/box/position/active_only）")
-        else:
-            suggestions.extend(
-                [
-                    "尝试使用更短的关键词，如 'reporter' 或 '36'",
-                    "检查是否有拼写错误",
-                    "使用 keywords 模式尝试分词搜索",
-                ]
-            )
-    elif total_count > 50:
-        suggestions.extend(["结果较多，建议添加关键词进一步缩小范围"])
-
-    slot_lookup = None
-    if normalized_box is not None and normalized_position is not None:
-        slot_matches = []
-        for rec in records:
-            try:
-                rec_box = int(rec.get("box"))
-                rec_pos_raw = rec.get("position")
-                if rec_pos_raw is None:
-                    continue
-                rec_pos = int(rec_pos_raw)
-            except (TypeError, ValueError):
-                continue
-
-            if rec_box == normalized_box and rec_pos == normalized_position:
-                slot_matches.append(rec)
-
-        status = "empty"
-        if len(slot_matches) == 1:
-            status = "occupied"
-        elif len(slot_matches) > 1:
-            status = "conflict"
-
-        slot_record_ids = []
-        for rec in slot_matches:
-            raw_id = rec.get("id")
-            if raw_id is None:
-                continue
-            try:
-                slot_record_ids.append(int(raw_id))
-            except (TypeError, ValueError):
-                continue
-
-        slot_lookup = {
-            "box": normalized_box,
-            "position": normalized_position,
-            "status": status,
-            "record_count": len(slot_matches),
-            "record_ids": slot_record_ids,
-        }
-
-    result = {
-        "query": query,
-        "normalized_query": normalized_query,
-        "keywords": keywords,
-        "mode": mode,
-        "records": display_matches,
-        "total_count": total_count,
-        "display_count": len(display_matches),
-        "suggestions": suggestions,
-        "applied_filters": {
-            "record_id": normalized_record_id,
-            "box": normalized_box,
-            "position": normalized_position,
-            "active_only": normalized_active_only,
-            "query_shortcut": query_shortcut,
-        },
-    }
-    if slot_lookup is not None:
-        result["slot_lookup"] = slot_lookup
-
-    return {
-        "ok": True,
-        "result": result,
-    }
 
 
 def tool_recent_frozen(yaml_path, days=None, count=None):
-    """Query recently frozen records sorted by date desc."""
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "load_failed",
-            "message": f"无法读取YAML文件: {exc}",
-        }
+    from .tool_api_impl import read_ops as _read_ops
 
-    records = data.get("inventory", [])
-    valid = []
-    for rec in records:
-        frozen_at = rec.get("frozen_at")
-        if not frozen_at:
-            continue
-        dt = parse_date(frozen_at)
-        if not dt:
-            continue
-        valid.append((dt, rec))
-
-    valid.sort(key=lambda x: x[0], reverse=True)
-    if days is not None:
-        cutoff = datetime.now() - timedelta(days=days)
-        selected = [rec for dt, rec in valid if dt >= cutoff]
-    elif count is not None:
-        selected = [rec for _, rec in valid[:count]]
-    else:
-        selected = [rec for _, rec in valid[:10]]
-
-    return {
-        "ok": True,
-        "result": {
-            "records": selected,
-            "count": len(selected),
-            "days": days,
-            "limit": count,
-        },
-    }
+    return _read_ops.tool_recent_frozen(
+        yaml_path=yaml_path,
+        days=days,
+        count=count,
+    )
 
 
-def tool_query_thaw_events(
+def tool_query_takeout_events(
     yaml_path,
     date=None,
     days=None,
@@ -3248,135 +987,40 @@ def tool_query_thaw_events(
     action=None,
     max_records=0,
 ):
-    """Query thaw/takeout/discard/move events by date mode and action."""
-    action_filter = normalize_action(action) if action else None
-    if action and not action_filter:
-        return {
-            "ok": False,
-            "error_code": "invalid_action",
-            "message": "操作类型必须是 取出/复苏/扔掉/移动 或 takeout/thaw/discard/move",
-        }
+    from .tool_api_impl import read_ops as _read_ops
 
-    if days:
-        end_dt = datetime.now()
-        start_dt = end_dt - timedelta(days=days)
-        mode = "days"
-        target_dates = None
-        date_range = (start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d"))
-    elif start_date and end_date:
-        start = normalize_date_arg(start_date)
-        end = normalize_date_arg(end_date)
-        if not start or not end:
-            return {
-                "ok": False,
-                "error_code": "invalid_date",
-                "message": "日期格式无效，请使用 YYYY-MM-DD",
-            }
-        mode = "range"
-        target_dates = None
-        date_range = (start, end)
-    elif date is not None:
-        target = normalize_date_arg(date)
-        if not target:
-            return {
-                "ok": False,
-                "error_code": "invalid_date",
-                "message": "日期格式无效，请使用 YYYY-MM-DD",
-            }
-        mode = "single"
-        target_dates = [target]
-        date_range = None
-    else:
-        # No date specified - return all events
-        mode = "all"
-        target_dates = None
-        date_range = None
+    return _read_ops.tool_query_takeout_events(
+        yaml_path=yaml_path,
+        date=date,
+        days=days,
+        start_date=start_date,
+        end_date=end_date,
+        action=action,
+        max_records=max_records,
+    )
 
-    range_start, range_end = date_range if date_range else (None, None)
 
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "load_failed",
-            "message": f"无法读取YAML文件: {exc}",
-        }
+def tool_migrate_takeout_actions(
+    yaml_path,
+    dry_run=False,
+    auto_backup=True,
+):
+    """One-click migration for legacy thaw/discard events.
 
-    records = data.get("inventory", [])
-    matched = []
-    total_events = 0
-    for rec in records:
-        events = extract_events(rec)
-        if not events:
-            continue
-
-        if mode == "all":
-            # Return all events with optional action filter
-            filtered = [
-                ev
-                for ev in events
-                if ev.get("date") and (not action_filter or ev.get("action") == action_filter)
-            ]
-        elif mode == "single":
-            filtered = [
-                ev
-                for ev in events
-                if ev.get("date") in target_dates and (not action_filter or ev.get("action") == action_filter)
-            ]
-        else:  # mode == "range" or "days"
-            filtered = [
-                ev
-                for ev in events
-                if ev.get("date")
-                and range_start <= ev.get("date") <= range_end
-                and (not action_filter or ev.get("action") == action_filter)
-            ]
-
-        if filtered:
-            matched.append({"record": rec, "events": filtered})
-            total_events += len(filtered)
-
-    total_record_count = len(matched)
-
-    # Apply max_records to limit number of events (not records)
-    if max_records and max_records > 0:
-        # Collect all events and limit by max_records
-        all_events = []
-        for m in matched:
-            events_for_record = m["events"][:max_records]
-            remaining = max_records - len(events_for_record)
-            if remaining > 0:
-                max_records = remaining
-                all_events.append({"record": m["record"], "events": events_for_record})
-            else:
-                if events_for_record:
-                    all_events.append({"record": m["record"], "events": events_for_record})
-                break
-        records_to_return = all_events
-    else:
-        records_to_return = matched
-
-    # Recalculate event_count based on filtered records
-    final_event_count = sum(len(m["events"]) for m in records_to_return)
-
-    return {
-        "ok": True,
-        "result": {
-            "mode": mode,
-            "target_dates": target_dates,
-            "date_range": date_range,
-            "action_filter": action_filter,
-            "records": records_to_return,
-            "record_count": total_record_count,
-            "display_count": len(records_to_return),
-            "event_count": final_event_count,
-        },
-    }
+    Converts stored event actions to canonical values:
+    - thaw/discard -> takeout
+    - takeout/move stay unchanged
+    """
+    return migrate_takeout_actions(
+        yaml_path=yaml_path,
+        dry_run=bool(dry_run),
+        auto_backup=bool(auto_backup),
+        audit_source="tool_api",
+    )
 
 
 def _collect_timeline_events(records, days=None):
-    timeline = defaultdict(lambda: {"frozen": [], "thaw": [], "takeout": [], "discard": [], "move": []})
+    timeline = defaultdict(lambda: {"frozen": [], "takeout": [], "move": []})
     cutoff_str = None
     if days:
         cutoff_str = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
@@ -3394,68 +1038,20 @@ def _collect_timeline_events(records, days=None):
             if cutoff_str and date < cutoff_str:
                 continue
             action = ev.get("action")
-            if action not in {"thaw", "takeout", "discard", "move"}:
+            if action not in {"takeout", "move"}:
                 continue
             timeline[date][action].append({**ev, "record": rec})
     return timeline
 
 
 def tool_collect_timeline(yaml_path, days=30, all_history=False):
-    """Collect timeline events and summary stats."""
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "load_failed",
-            "message": f"无法读取YAML文件: {exc}",
-        }
+    from .tool_api_impl import read_ops as _read_ops
 
-    records = data.get("inventory", [])
-    timeline = _collect_timeline_events(records, days=None if all_history else days)
-
-    total_frozen = 0
-    total_thaw = 0
-    total_takeout = 0
-    total_discard = 0
-    total_move = 0
-    active_days = 0
-    for _, events in timeline.items():
-        frozen = len(events["frozen"])
-        thaw = len(events["thaw"])
-        takeout = len(events["takeout"])
-        discard = len(events["discard"])
-        move = len(events["move"])
-        total_frozen += frozen
-        total_thaw += thaw
-        total_takeout += takeout
-        total_discard += discard
-        total_move += move
-        if frozen + thaw + takeout + discard + move > 0:
-            active_days += 1
-
-    return {
-        "ok": True,
-        "result": {
-            "timeline": dict(timeline),
-            "sorted_dates": sorted(timeline.keys(), reverse=True),
-            "summary": {
-                "active_days": active_days,
-                "total_ops": total_frozen + total_thaw + total_takeout + total_discard + total_move,
-                "frozen": total_frozen,
-                "thaw": total_thaw,
-                "takeout": total_takeout,
-                "discard": total_discard,
-                "move": total_move,
-            },
-        },
-    }
-
-
-def _get_box_total_slots(layout):
-    rows = int(layout.get("rows", 9))
-    cols = int(layout.get("cols", 9))
-    return rows * cols
+    return _read_ops.tool_collect_timeline(
+        yaml_path=yaml_path,
+        days=days,
+        all_history=all_history,
+    )
 
 
 def _find_consecutive_slots(empty_positions, count):
@@ -3495,189 +1091,28 @@ def _find_same_row_slots(empty_positions, count, layout):
 
 
 def tool_recommend_positions(yaml_path, count, box_preference=None, strategy="consecutive"):
-    """Recommend positions for new samples."""
-    if count <= 0:
-        return {
-            "ok": False,
-            "error_code": "invalid_count",
-            "message": "数量必须大于 0",
-        }
+    from .tool_api_impl import read_ops as _read_ops
 
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "load_failed",
-            "message": f"无法读取YAML文件: {exc}",
-        }
-
-    layout = _get_layout(data)
-    total_slots = get_total_slots(layout)
-    box_numbers = get_box_numbers(layout)
-    all_positions = set(range(1, total_slots + 1))
-    occupancy = compute_occupancy(data.get("inventory", []))
-
-    if box_preference:
-        if not validate_box(box_preference, layout):
-            return {
-                "ok": False,
-                "error_code": "invalid_box",
-                "message": f"盒子编号必须在 {_format_box_constraint(layout)} 范围内",
-            }
-        boxes_to_check = [str(box_preference)]
-    else:
-        boxes_to_check = []
-        for box_num in box_numbers:
-            key = str(box_num)
-            boxes_to_check.append((key, len(occupancy.get(key, []))))
-        boxes_to_check = [b for b, _ in sorted(boxes_to_check, key=lambda x: x[1])]
-
-    recommendations = []
-    for box_key in boxes_to_check:
-        occupied = set(occupancy.get(box_key, []))
-        empty = sorted(all_positions - occupied)
-        if len(empty) < count:
-            continue
-
-        box_recs = []
-        if strategy in {"consecutive", "any"}:
-            for group in _find_consecutive_slots(empty, count)[:3]:
-                box_recs.append({"box": int(box_key), "positions": group, "reason": "连续位置", "score": 100})
-
-        if strategy == "same_row":
-            for group in _find_same_row_slots(empty, count, layout)[:3]:
-                box_recs.append({"box": int(box_key), "positions": group, "reason": "同一行", "score": 90})
-
-        if not box_recs:
-            box_recs.append({"box": int(box_key), "positions": empty[:count], "reason": "最早空位", "score": 50})
-
-        recommendations.extend(box_recs)
-        if len(recommendations) >= 5:
-            break
-
-    return {
-        "ok": True,
-        "result": {
-            "count": count,
-            "strategy": strategy,
-            "recommendations": recommendations[:5],
-        },
-    }
+    return _read_ops.tool_recommend_positions(
+        yaml_path=yaml_path,
+        count=count,
+        box_preference=box_preference,
+        strategy=strategy,
+    )
 
 
 def tool_generate_stats(yaml_path):
-    """Generate inventory statistics and occupancy maps."""
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "load_failed",
-            "message": f"无法读取YAML文件: {exc}",
-        }
+    from .tool_api_impl import read_ops as _read_ops
 
-    records = data.get("inventory", [])
-    layout = _get_layout(data)
-    total_slots = get_total_slots(layout)
-    occupancy = compute_occupancy(records)
-    box_numbers = get_box_numbers(layout)
-    total_boxes = len(box_numbers)
-
-    total_occupied = sum(len(positions) for positions in occupancy.values())
-    total_capacity = total_boxes * total_slots
-    overall_rate = (total_occupied / total_capacity * 100) if total_capacity > 0 else 0
-
-    box_stats = {}
-    for box_num in box_numbers:
-        key = str(box_num)
-        occupied_count = len(occupancy.get(key, []))
-        rate = (occupied_count / total_slots * 100) if total_slots > 0 else 0
-        box_stats[key] = {
-            "occupied": occupied_count,
-            "empty": total_slots - occupied_count,
-            "total": total_slots,
-            "rate": rate,
-        }
-
-    cell_lines = defaultdict(int)
-    for rec in records:
-        if rec.get("position") is not None:
-            cell_lines[rec.get("cell_line", "Unknown")] += 1
-
-    # Flatten the stats structure for easier access, but keep nested structure for backward compatibility
-    stats_nested = {
-        "overall": {
-            "total_occupied": total_occupied,
-            "total_empty": total_capacity - total_occupied,
-            "total_capacity": total_capacity,
-            "occupancy_rate": overall_rate,
-        },
-        "boxes": box_stats,
-        "cell_lines": dict(sorted(cell_lines.items(), key=lambda x: x[1], reverse=True)),
-    }
-
-    stats_result = {
-        # Backward compatibility: keep nested structure
-        "data": data,
-        "layout": layout,
-        "occupancy": occupancy,
-        "stats": stats_nested,
-        # Also provide flattened structure for easier access
-        "total_slots": total_capacity,  # Total slots across all boxes
-        "slots_per_box": total_slots,  # Slots per single box
-        "total_occupied": total_occupied,
-        "total_empty": total_capacity - total_occupied,
-        "total_capacity": total_capacity,
-        "occupancy_rate": overall_rate,
-        "boxes": box_stats,
-        "cell_lines": dict(sorted(cell_lines.items(), key=lambda x: x[1], reverse=True)),
-        "record_count": len(records),
-    }
-
-    return {
-        "ok": True,
-        "result": stats_result,
-    }
+    return _read_ops.tool_generate_stats(
+        yaml_path=yaml_path,
+    )
 
 
 def tool_get_raw_entries(yaml_path, ids):
-    """Return raw YAML entries for selected IDs."""
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "load_failed",
-            "message": f"无法读取YAML文件: {exc}",
-        }
+    from .tool_api_impl import read_ops as _read_ops
 
-    inventory = data.get("inventory", [])
-    id_set = set(ids)
-    found = []
-    found_ids = set()
-    for entry in inventory:
-        entry_id = entry.get("id")
-        if entry_id in id_set:
-            found.append(entry)
-            found_ids.add(entry_id)
-    found.sort(key=lambda x: x.get("id", 0))
-    missing = sorted(id_set - found_ids)
-
-    if not found:
-        return {
-            "ok": False,
-            "error_code": "not_found",
-            "message": f"未找到 ID: {', '.join(map(str, ids))}",
-            "missing_ids": missing,
-            "entries": [],
-        }
-
-    return {
-        "ok": True,
-        "result": {
-            "entries": found,
-            "missing_ids": missing,
-            "requested_ids": list(ids),
-        },
-    }
+    return _read_ops.tool_get_raw_entries(
+        yaml_path=yaml_path,
+        ids=ids,
+    )

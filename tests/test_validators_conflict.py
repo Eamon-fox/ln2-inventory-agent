@@ -1,6 +1,5 @@
 """Tests for plan item conflict detection in validators.py"""
 
-import os
 import sys
 import unittest
 from pathlib import Path

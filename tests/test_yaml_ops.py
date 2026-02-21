@@ -4,6 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -13,7 +15,6 @@ from lib.yaml_ops import (
     get_audit_log_path,
     list_yaml_backups,
     load_yaml,
-    read_audit_events,
     rollback_yaml,
     write_yaml,
 )
@@ -37,6 +38,15 @@ def make_data(records):
     }
 
 
+def make_utf8_mojibake(text):
+    for enc in ("gb18030", "gbk", "cp936"):
+        try:
+            return text.encode("utf-8").decode(enc)
+        except UnicodeDecodeError:
+            continue
+    raise AssertionError("Failed to synthesize mojibake sample")
+
+
 class YamlOpsWriteTests(unittest.TestCase):
     def test_write_yaml_persists_inventory(self):
         with tempfile.TemporaryDirectory(prefix="ln2_yaml_ops_") as temp_dir:
@@ -48,6 +58,55 @@ class YamlOpsWriteTests(unittest.TestCase):
             self.assertTrue(yaml_path.exists())
             loaded = load_yaml(str(yaml_path))
             self.assertEqual([], loaded.get("inventory", []))
+
+    def test_load_yaml_repairs_utf8_gbk_mojibake_values(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_yaml_repair_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            original = "\u4f60\u662f\u6570\u636e\u6e05\u6d17\u4e0e\u7ed3\u6784\u5316\u52a9\u624b"
+            mojibake = original.encode("utf-8").decode("gb18030")
+
+            data = make_data([make_record(1, box=1, position=1)])
+            data["inventory"][0]["note"] = mojibake
+            data["inventory"][0]["short_name"] = mojibake
+
+            with open(yaml_path, "w", encoding="utf-8") as handle:
+                yaml.safe_dump(data, handle, allow_unicode=True, sort_keys=False, width=120)
+
+            loaded = load_yaml(str(yaml_path))
+            rec = loaded.get("inventory", [])[0]
+            self.assertEqual(original, rec.get("note"))
+            self.assertEqual(original, rec.get("short_name"))
+
+    def test_load_yaml_repairs_utf8_gbk_mojibake_mixed_content(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_yaml_repair_mixed_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            original_note = "\u8bb0\u5f55 #20 (id=20): thaw_events[1] has invalid action"
+            mojibake_note = make_utf8_mojibake(original_note)
+
+            data = make_data([make_record(1, box=1, position=1)])
+            data["inventory"][0]["note"] = mojibake_note
+
+            with open(yaml_path, "w", encoding="utf-8") as handle:
+                yaml.safe_dump(data, handle, allow_unicode=True, sort_keys=False, width=120)
+
+            loaded = load_yaml(str(yaml_path))
+            rec = loaded.get("inventory", [])[0]
+            self.assertEqual(original_note, rec.get("note"))
+
+    def test_load_yaml_keeps_valid_chinese_mixed_content_unchanged(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_yaml_keep_valid_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            original_note = "\u8bb0\u5f55 #20 (id=20): thaw_events[1] has invalid action"
+
+            data = make_data([make_record(1, box=1, position=1)])
+            data["inventory"][0]["note"] = original_note
+
+            with open(yaml_path, "w", encoding="utf-8") as handle:
+                yaml.safe_dump(data, handle, allow_unicode=True, sort_keys=False, width=120)
+
+            loaded = load_yaml(str(yaml_path))
+            rec = loaded.get("inventory", [])[0]
+            self.assertEqual(original_note, rec.get("note"))
 
 
 class YamlOpsSafetyTests(unittest.TestCase):

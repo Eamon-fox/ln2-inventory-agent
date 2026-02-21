@@ -272,7 +272,7 @@ inventory:
   note: CRISPR knockout pool (original stock)
   thaw_events:
   - date: '2026-01-28'
-    action: thaw
+    action: takeout
     positions:
     - 17
     note: recovery culture

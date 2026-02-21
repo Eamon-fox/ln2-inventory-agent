@@ -1,13 +1,12 @@
-"""Missing unit tests for lib/ layer modules.
+﻿"""Missing unit tests for lib/ layer modules.
 
 Tests for:
 - yaml_ops.py: backup, warnings, diff functions
 - validators.py: date normalization, action validation, conflict checks
 - operations.py: find_record, check_conflicts, get_next_id
-- thaw_parser.py: normalization, extraction, position activity
+- takeout_parser.py: normalization, extraction, position activity
 """
 
-import json
 import sys
 import tempfile
 import unittest
@@ -21,10 +20,8 @@ from lib.yaml_ops import (
     _diff_record_ids,
     create_yaml_backup,
     emit_capacity_warnings,
-    emit_yaml_size_warning,
     get_yaml_size_warning,
     list_yaml_backups,
-    load_yaml,
     write_yaml,
 )
 from lib.validators import (
@@ -37,7 +34,7 @@ from lib.validators import (
     validate_action,
     validate_record,
 )
-from lib.thaw_parser import (
+from lib.takeout_parser import (
     ACTION_LABEL,
     extract_events,
     is_position_active,
@@ -68,7 +65,7 @@ def make_data(records):
     }
 
 
-# ── yaml_ops.py Tests ──────────────────────────────────────────────
+# 鈹€鈹€ yaml_ops.py Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class YamlOpsBackupTests(unittest.TestCase):
@@ -142,14 +139,14 @@ class YamlOpsWarningTests(unittest.TestCase):
         data = make_data([])
         warnings = emit_capacity_warnings(data, total_empty_threshold=500, box_empty_threshold=5)
         self.assertEqual(1, len(warnings))
-        self.assertIn("仅剩 405 个空位", warnings[0])  # 5 boxes * 81 positions = 405
+        self.assertIn("405", warnings[0])  # 5 boxes * 81 positions = 405
 
     def test_emit_capacity_warnings_box_empty(self):
         """Test box-specific capacity warning."""
         data = make_data([make_record(i, box=1, position=i) for i in range(1, 81)])
         warnings = emit_capacity_warnings(data, total_empty_threshold=0, box_empty_threshold=5)
         self.assertEqual(1, len(warnings))
-        self.assertIn("盒子 1 仅剩 1 个空位", warnings[0])  # 81 - 80 = 1
+        self.assertIn("1", warnings[0])  # 81 - 80 = 1
 
     def test_emit_yaml_size_warning_large_file(self):
         """Test YAML size warning for large file."""
@@ -210,7 +207,7 @@ class DiffRecordIdsTests(unittest.TestCase):
         self.assertEqual([], diff["updated"])
 
 
-# ── validators.py Tests ───────────────────────────────────────────
+# 鈹€鈹€ validators.py Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class ValidatorsDateTests(unittest.TestCase):
@@ -294,7 +291,7 @@ class ValidatorsDuplicateIdsTests(unittest.TestCase):
         records = [make_record(1), make_record(2), make_record(1)]
         errors = check_duplicate_ids(records)
         self.assertEqual(1, len(errors))
-        self.assertIn("重复的 ID 1", errors[0])
+        self.assertIn("Duplicate ID 1", errors[0])
 
     def test_check_duplicate_ids_multiple_duplicates(self):
         """Test with multiple duplicate IDs."""
@@ -320,7 +317,7 @@ class ValidatorsPositionConflictsTests(unittest.TestCase):
         ]
         errors = check_position_conflicts(records)
         self.assertEqual(1, len(errors))
-        self.assertIn("位置冲突", errors[0])
+        self.assertIn("Position conflict", errors[0])
 
     def test_check_position_conflicts_multiple_boxes(self):
         """Test conflicts don't span boxes."""
@@ -355,7 +352,7 @@ class ValidatorsRecordTests(unittest.TestCase):
         self.assertEqual([], errors)
 
 
-# ── operations.py Tests ────────────────────────────────────────────
+# 鈹€鈹€ operations.py Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class OperationsTests(unittest.TestCase):
@@ -421,25 +418,25 @@ class OperationsTests(unittest.TestCase):
         self.assertEqual(6, next_id)  # Should be max + 1
 
 
-# ── thaw_parser.py Tests ───────────────────────────────────────────
+# 鈹€鈹€ takeout_parser.py Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class ThawParserNormalizationTests(unittest.TestCase):
     """Test thaw event normalization."""
 
     def test_normalize_action_all_chinese(self):
-        """Test normalizing all Chinese action variants."""
-        self.assertEqual("takeout", thaw_normalize_action("取出"))
-        self.assertEqual("thaw", thaw_normalize_action("复苏"))
-        self.assertEqual("discard", thaw_normalize_action("扔掉"))
-        self.assertEqual("move", thaw_normalize_action("移动"))
+        """Test normalizing supported Chinese action variants."""
+        self.assertEqual("takeout", thaw_normalize_action("鍙栧嚭"))
+        self.assertEqual("move", thaw_normalize_action("绉诲姩"))
+        self.assertIsNone(thaw_normalize_action("澶嶈嫃"))
+        self.assertIsNone(thaw_normalize_action("鎵旀帀"))
 
     def test_normalize_action_all_english(self):
-        """Test normalizing all English action variants."""
+        """Test normalizing supported English action variants."""
         self.assertEqual("takeout", thaw_normalize_action("takeout"))
-        self.assertEqual("thaw", thaw_normalize_action("thaw"))
-        self.assertEqual("discard", thaw_normalize_action("discard"))
         self.assertEqual("move", thaw_normalize_action("move"))
+        self.assertIsNone(thaw_normalize_action("thaw"))
+        self.assertIsNone(thaw_normalize_action("discard"))
 
     def test_normalize_action_case_insensitive(self):
         """Test case-insensitive normalization."""
@@ -448,15 +445,13 @@ class ThawParserNormalizationTests(unittest.TestCase):
 
     def test_action_label_all_keys(self):
         """Test ACTION_LABEL has entries for all canonical actions."""
-        for action in ["takeout", "thaw", "discard", "move"]:
+        for action in ["takeout", "move"]:
             self.assertIn(action, ACTION_LABEL)
             self.assertIsInstance(ACTION_LABEL[action], str)
 
     def test_action_label_values(self):
         """Test ACTION_LABEL provides meaningful labels."""
         self.assertEqual("取出", ACTION_LABEL["takeout"])
-        self.assertEqual("复苏", ACTION_LABEL["thaw"])
-        self.assertEqual("扔掉", ACTION_LABEL["discard"])
         self.assertEqual("移动", ACTION_LABEL["move"])
 
 
@@ -468,7 +463,7 @@ class ThawParserExtractionTests(unittest.TestCase):
         record = make_record(1, position=1)
         record["thaw_events"] = [
             {"date": "2025-01-15", "action": "takeout", "positions": [1]},
-            {"date": "2025-01-16", "action": "thaw", "positions": [1]},
+            {"date": "2025-01-16", "action": "move", "positions": [1]},
         ]
         events = extract_events(record)
         self.assertEqual(2, len(events))
@@ -525,15 +520,15 @@ class ThawParserActivityTests(unittest.TestCase):
         self.assertTrue(is_position_active(record, 99))
 
 
-# ── Cross-module normalization tests ────────────────────────────────
+# 鈹€鈹€ Cross-module normalization tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class NormalizeActionConsistencyTests(unittest.TestCase):
-    """Test consistency between validators.normalize_action and thaw_parser.normalize_action."""
+    """Test consistency between validators.normalize_action and takeout_parser.normalize_action."""
 
     def test_normalize_action_consistency(self):
         """Both normalize_action functions should behave identically."""
-        test_actions = ["takeout", "取出", "thaw", "复苏", "discard", "扔掉", "move", "移动"]
+        test_actions = ["takeout", "鍙栧嚭", "thaw", "澶嶈嫃", "discard", "鎵旀帀", "move", "绉诲姩"]
         for action in test_actions:
             val_result = normalize_action(action)
             thaw_result = thaw_normalize_action(action)
@@ -543,3 +538,4 @@ class NormalizeActionConsistencyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

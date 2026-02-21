@@ -3,7 +3,7 @@
 import csv
 import os
 
-from .custom_fields import STRUCTURAL_FIELD_KEYS, get_effective_fields
+from .custom_fields import get_effective_fields
 
 
 CORE_EXPORT_COLUMNS = [
@@ -45,8 +45,6 @@ def build_export_columns(meta=None):
 
     Note: location column shows "box:position" format
     """
-    from .custom_fields import STRUCTURAL_FIELD_KEYS
-
     STRUCTURAL_COLUMNS = ["id", "location", "frozen_at", "cell_line", "note", "thaw_events"]
 
     columns = list(STRUCTURAL_COLUMNS)
@@ -75,7 +73,7 @@ def _row_value(record, column):
         events = record.get("thaw_events")
         if not events or not isinstance(events, list):
             return ""
-        # Format: "2026-02-16 move 15→20; 2026-02-17 takeout"
+        # Format: "2026-02-16 move 15->20; 2026-02-17 takeout"
         parts = []
         for ev in events:
             if not isinstance(ev, dict):
@@ -85,14 +83,11 @@ def _row_value(record, column):
             from_pos = ev.get("from_position")
             to_pos = ev.get("to_position")
             if action == "move" and from_pos and to_pos:
-                parts.append(f"{date} {action} {from_pos}→{to_pos}")
+                parts.append(f"{date} {action} {from_pos}->{to_pos}")
             else:
                 parts.append(f"{date} {action}")
         return "; ".join(parts) if parts else ""
-    if column == "cell_line":
-        value = record.get("cell_line")
-    else:
-        value = record.get(column)
+    value = record.get("cell_line") if column == "cell_line" else record.get(column)
     if value is None:
         return ""
     # Serialize complex types (list, dict) to JSON for display
@@ -137,7 +132,7 @@ def export_inventory_to_csv(data, output_path):
     rows = payload["rows"]
 
     abs_output_path = os.path.abspath(os.fspath(output_path))
-    with open(abs_output_path, "w", newline="", encoding="utf-8-sig") as handle:
+    with open(abs_output_path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(columns)
         for row in rows:

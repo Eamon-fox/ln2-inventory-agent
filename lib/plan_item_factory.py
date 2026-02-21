@@ -1,19 +1,15 @@
-"""Shared builders for plan items used by GUI and AI flows."""
+﻿"""Shared builders for plan items used by GUI and AI flows."""
 
 from __future__ import annotations
 
 from typing import Any, Dict, Iterable, Iterator, Optional
 
-from lib.thaw_parser import canonicalize_non_move_action, normalize_action
+from lib.takeout_parser import normalize_action
 
 _EXTRA_ACTION_ALIAS = {
-    "解冻": "takeout",
-    "丢弃": "takeout",
     "take out": "takeout",
     "add_entry": "add",
-    "新增": "add",
     "edit_entry": "edit",
-    "编辑": "edit",
 }
 
 
@@ -21,8 +17,7 @@ def normalize_plan_action(action: Any) -> str:
     """Normalize action text into canonical plan action."""
     normalized = normalize_action(action)
     if normalized:
-        collapsed = canonicalize_non_move_action(normalized)
-        return collapsed or normalized
+        return normalized
     raw = str(action or "").strip()
     text = raw.lower()
     if text in _EXTRA_ACTION_ALIAS:
@@ -220,3 +215,4 @@ def iter_batch_entries(
             "to_position": to_position,
             "to_box": to_box,
         }
+

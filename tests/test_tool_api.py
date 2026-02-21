@@ -1,4 +1,4 @@
-import csv
+﻿import csv
 import json
 import sys
 import tempfile
@@ -16,16 +16,16 @@ from lib.tool_api import (
     build_actor_context,
     tool_add_entry,
     tool_adjust_box_count,
-    tool_batch_thaw,
+    tool_batch_takeout,
     tool_collect_timeline,
     tool_edit_entry,
     tool_export_inventory_csv,
-    tool_record_thaw,
+    tool_record_takeout,
     tool_rollback,
 )
 from lib.tool_api import (
     tool_get_raw_entries,
-    tool_query_thaw_events,
+    tool_query_takeout_events,
     tool_recommend_positions,
     tool_search_records,
     tool_generate_stats,
@@ -115,7 +115,7 @@ class ToolApiTests(unittest.TestCase):
             self.assertEqual("sess-test", last["session_id"])
             self.assertEqual("trace-test", last["trace_id"])
 
-    def test_tool_record_thaw_dry_run_no_write(self):
+    def test_tool_record_takeout_dry_run_no_write(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_thaw_dry_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -124,7 +124,7 @@ class ToolApiTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
-            result = tool_record_thaw(
+            result = tool_record_takeout(
                 yaml_path=str(yaml_path),
                 record_id=1,
                 position=1,
@@ -143,7 +143,7 @@ class ToolApiTests(unittest.TestCase):
             lines = [line for line in audit_path.read_text(encoding="utf-8").splitlines() if line.strip()]
             self.assertEqual(1, len(lines))
 
-    def test_tool_record_thaw_blocks_agent_write_without_execute_mode(self):
+    def test_tool_record_takeout_blocks_agent_write_without_execute_mode(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_thaw_gate_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -152,7 +152,7 @@ class ToolApiTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
-            blocked = tool_record_thaw(
+            blocked = tool_record_takeout(
                 yaml_path=str(yaml_path),
                 record_id=1,
                 position=1,
@@ -166,7 +166,7 @@ class ToolApiTests(unittest.TestCase):
             current = load_yaml(str(yaml_path))
             self.assertEqual(1, current["inventory"][0]["position"])
 
-            allowed = tool_record_thaw(
+            allowed = tool_record_takeout(
                 yaml_path=str(yaml_path),
                 record_id=1,
                 position=1,
@@ -176,7 +176,7 @@ class ToolApiTests(unittest.TestCase):
             )
             self.assertTrue(allowed["ok"])
 
-    def test_tool_batch_thaw_updates_multiple_records(self):
+    def test_tool_batch_takeout_updates_multiple_records(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_batch_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -190,11 +190,11 @@ class ToolApiTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
-            result = tool_batch_thaw(
+            result = tool_batch_takeout(
                 yaml_path=str(yaml_path),
                 entries=[(1, 1), (2, 2)],
                 date_str="2026-02-10",
-                action="取出",
+                action="鍙栧嚭",
                 source="tests/test_tool_api.py",
             )
 
@@ -205,7 +205,7 @@ class ToolApiTests(unittest.TestCase):
             self.assertIsNone(current["inventory"][0]["position"])
             self.assertIsNone(current["inventory"][1]["position"])
 
-    def test_tool_batch_thaw_same_record_duplicate_entry_rejected(self):
+    def test_tool_batch_takeout_same_record_duplicate_entry_rejected(self):
         """Tube-level model: batching the same tube twice should be rejected."""
         with tempfile.TemporaryDirectory(prefix="ln2_tool_batch_same_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
@@ -217,18 +217,18 @@ class ToolApiTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
-            result = tool_batch_thaw(
+            result = tool_batch_takeout(
                 yaml_path=str(yaml_path),
                 entries=[(1, 33), (1, 33)],
                 date_str="2026-02-10",
-                action="取出",
+                action="鍙栧嚭",
                 source="tests/test_tool_api.py",
             )
 
             self.assertFalse(result["ok"])
             self.assertEqual("validation_failed", result.get("error_code"))
 
-    def test_legacy_actions_are_written_as_takeout(self):
+    def test_legacy_actions_are_rejected(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_takeout_canon_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -242,7 +242,7 @@ class ToolApiTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
-            single = tool_record_thaw(
+            single = tool_record_takeout(
                 yaml_path=str(yaml_path),
                 record_id=1,
                 position=1,
@@ -250,24 +250,24 @@ class ToolApiTests(unittest.TestCase):
                 action="Thaw",
                 source="tests/test_tool_api.py",
             )
-            self.assertTrue(single["ok"])
+            self.assertFalse(single["ok"])
+            self.assertEqual("invalid_action", single["error_code"])
 
-            batch = tool_batch_thaw(
+            batch = tool_batch_takeout(
                 yaml_path=str(yaml_path),
                 entries=[(2, 2)],
                 date_str="2026-02-10",
                 action="Discard",
                 source="tests/test_tool_api.py",
             )
-            self.assertTrue(batch["ok"])
+            self.assertFalse(batch["ok"])
+            self.assertEqual("invalid_action", batch["error_code"])
 
             data = load_yaml(str(yaml_path))
-            ev1 = (data["inventory"][0].get("thaw_events") or [])[-1]
-            ev2 = (data["inventory"][1].get("thaw_events") or [])[-1]
-            self.assertEqual("takeout", ev1.get("action"))
-            self.assertEqual("takeout", ev2.get("action"))
+            self.assertEqual([], data["inventory"][0].get("thaw_events") or [])
+            self.assertEqual([], data["inventory"][1].get("thaw_events") or [])
 
-    def test_tool_record_thaw_move_updates_positions_and_appends_event(self):
+    def test_tool_record_takeout_move_updates_positions_and_appends_event(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_move_single_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -275,7 +275,7 @@ class ToolApiTests(unittest.TestCase):
                 path=str(yaml_path),
             )
 
-            result = tool_record_thaw(
+            result = tool_record_takeout(
                 yaml_path=str(yaml_path),
                 record_id=1,
                 position=1,
@@ -300,7 +300,7 @@ class ToolApiTests(unittest.TestCase):
             self.assertEqual(3, events[-1].get("to_position"))
             self.assertNotIn("note", events[-1])
 
-    def test_tool_record_thaw_move_swaps_with_occupied_position(self):
+    def test_tool_record_takeout_move_swaps_with_occupied_position(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_move_swap_single_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -313,13 +313,13 @@ class ToolApiTests(unittest.TestCase):
                 path=str(yaml_path),
             )
 
-            result = tool_record_thaw(
+            result = tool_record_takeout(
                 yaml_path=str(yaml_path),
                 record_id=1,
                 position=1,
                 to_position=2,
                 date_str="2026-02-10",
-                action="移动",
+                action="绉诲姩",
             )
 
             self.assertTrue(result["ok"])
@@ -336,7 +336,7 @@ class ToolApiTests(unittest.TestCase):
             self.assertEqual(2, source_events[-1].get("to_position"))
             self.assertEqual(1, swap_events[-1].get("to_position"))
 
-    def test_tool_record_thaw_move_requires_to_position(self):
+    def test_tool_record_takeout_move_requires_to_position(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_move_require_to_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -344,7 +344,7 @@ class ToolApiTests(unittest.TestCase):
                 path=str(yaml_path),
             )
 
-            result = tool_record_thaw(
+            result = tool_record_takeout(
                 yaml_path=str(yaml_path),
                 record_id=1,
                 position=1,
@@ -355,7 +355,7 @@ class ToolApiTests(unittest.TestCase):
             self.assertFalse(result["ok"])
             self.assertEqual("invalid_move_target", result["error_code"])
 
-    def test_tool_batch_thaw_move_updates_positions_and_swaps(self):
+    def test_tool_batch_takeout_move_updates_positions_and_swaps(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_move_batch_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -369,11 +369,11 @@ class ToolApiTests(unittest.TestCase):
                 path=str(yaml_path),
             )
 
-            result = tool_batch_thaw(
+            result = tool_batch_takeout(
                 yaml_path=str(yaml_path),
                 entries="1:1->2,3:3->4",
                 date_str="2026-02-10",
-                action="移动",
+                action="绉诲姩",
             )
 
             self.assertTrue(result["ok"])
@@ -390,7 +390,7 @@ class ToolApiTests(unittest.TestCase):
             self.assertEqual(1, len(current["inventory"][1].get("thaw_events") or []))
             self.assertEqual(1, len(current["inventory"][2].get("thaw_events") or []))
 
-    def test_tool_batch_thaw_move_rejects_non_move_entry_shape(self):
+    def test_tool_batch_takeout_move_rejects_non_move_entry_shape(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_move_batch_shape_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -398,7 +398,7 @@ class ToolApiTests(unittest.TestCase):
                 path=str(yaml_path),
             )
 
-            result = tool_batch_thaw(
+            result = tool_batch_takeout(
                 yaml_path=str(yaml_path),
                 entries=[(1, 1)],
                 date_str="2026-02-10",
@@ -408,7 +408,7 @@ class ToolApiTests(unittest.TestCase):
             self.assertFalse(result["ok"])
             self.assertEqual("validation_failed", result["error_code"])
 
-    def test_tool_batch_thaw_move_rejects_duplicate_targets_in_batch(self):
+    def test_tool_batch_takeout_move_rejects_duplicate_targets_in_batch(self):
         """Regression: multiple moves to same target position should be rejected."""
         with tempfile.TemporaryDirectory(prefix="ln2_tool_move_batch_dup_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
@@ -423,16 +423,18 @@ class ToolApiTests(unittest.TestCase):
                 path=str(yaml_path),
             )
 
-            result = tool_batch_thaw(
+            result = tool_batch_takeout(
                 yaml_path=str(yaml_path),
                 entries="8:3->4,7:2->3,6:1->3",
                 date_str="2026-02-14",
-                action="移动",
+                action="绉诲姩",
             )
 
             self.assertFalse(result["ok"])
             self.assertEqual("validation_failed", result["error_code"])
-            self.assertTrue(any("已被本批次前序移动占用" in err for err in result.get("errors", [])))
+            self.assertTrue(
+                any("already been moved in this batch" in err for err in result.get("errors", []))
+            )
 
     def test_tool_add_entry_rejects_duplicate_ids_in_inventory(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_dup_") as temp_dir:
@@ -457,7 +459,7 @@ class ToolApiTests(unittest.TestCase):
 
             self.assertFalse(result["ok"])
             self.assertEqual("integrity_validation_failed", result["error_code"])
-            self.assertTrue(any("重复的 ID" in err for err in result.get("errors", [])))
+            self.assertTrue(any("Duplicate ID" in err for err in result.get("errors", [])))
 
             rows = read_audit_rows(temp_dir)
             self.assertGreaterEqual(len(rows), 1)
@@ -494,14 +496,14 @@ class ToolApiTests(unittest.TestCase):
             self.assertEqual("failed", last.get("status"))
             self.assertEqual("invalid_date", (last.get("error") or {}).get("error_code"))
 
-    def test_tool_record_thaw_rejects_malformed_thaw_events(self):
+    def test_tool_record_takeout_rejects_malformed_thaw_events(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_bad_events_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             broken = make_record(1, box=1, position=1)
             broken["thaw_events"] = "broken"
             write_raw_yaml(yaml_path, make_data([broken]))
 
-            result = tool_record_thaw(
+            result = tool_record_takeout(
                 yaml_path=str(yaml_path),
                 record_id=1,
                 position=1,
@@ -540,7 +542,7 @@ class ToolApiTests(unittest.TestCase):
             self.assertFalse(bad_box["ok"])
             self.assertEqual("invalid_box", bad_box["error_code"])
 
-            bad_pos = tool_record_thaw(
+            bad_pos = tool_record_takeout(
                 yaml_path=str(yaml_path),
                 record_id=1,
                 position=999,
@@ -572,7 +574,7 @@ class ToolApiTests(unittest.TestCase):
 
             self.assertFalse(result["ok"])
             self.assertEqual("integrity_validation_failed", result["error_code"])
-            self.assertTrue(any("位置冲突" in err for err in result.get("errors", [])))
+            self.assertTrue(any("Position conflict" in err for err in result.get("errors", [])))
 
     def test_tool_rollback_blocks_invalid_backup(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_rollback_guard_") as temp_dir:
@@ -611,12 +613,12 @@ class ToolApiTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, box=1, position=9)]),
                 path=str(yaml_path),
-                audit_meta={"action": "record_thaw", "source": "tests"},
+                audit_meta={"action": "record_takeout", "source": "tests"},
             )
 
             source_event = {
                 "timestamp": "2026-02-12T09:00:00",
-                "action": "record_thaw",
+                "action": "record_takeout",
                 "trace_id": "trace-audit-1",
                 "session_id": "session-audit-1",
             }
@@ -636,7 +638,7 @@ class ToolApiTests(unittest.TestCase):
             details = last.get("details") or {}
             requested_from_event = details.get("requested_from_event") or {}
             self.assertEqual("2026-02-12T09:00:00", requested_from_event.get("timestamp"))
-            self.assertEqual("record_thaw", requested_from_event.get("action"))
+            self.assertEqual("record_takeout", requested_from_event.get("action"))
             self.assertEqual("trace-audit-1", requested_from_event.get("trace_id"))
             self.assertEqual("session-audit-1", requested_from_event.get("session_id"))
 
@@ -824,12 +826,12 @@ class ToolApiTests(unittest.TestCase):
             self.assertEqual(1, response["result"]["total_count"])
             self.assertEqual(7, response["result"]["records"][0]["id"])
 
-    def test_tool_query_thaw_events_single_date_and_action(self):
+    def test_tool_query_takeout_events_single_date_and_action(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_thaw_query_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             rec = make_record(1, box=1, position=2)
             rec["thaw_events"] = [
-                {"date": "2026-02-10", "action": "thaw", "positions": [1]},
+                {"date": "2026-02-10", "action": "takeout", "positions": [1]},
                 {"date": "2026-02-11", "action": "takeout", "positions": [2]},
                 {"date": "2026-02-12", "action": "move", "positions": [2]},
             ]
@@ -839,21 +841,21 @@ class ToolApiTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
-            response = tool_query_thaw_events(
+            response = tool_query_takeout_events(
                 str(yaml_path),
                 date="2026-02-10",
-                action="复苏",
+                action="鍙栧嚭",
             )
             self.assertTrue(response["ok"])
             payload = response["result"]
             self.assertEqual(1, payload["record_count"])
             self.assertEqual(1, payload["event_count"])
-            self.assertEqual("thaw", payload["records"][0]["events"][0]["action"])
+            self.assertEqual("takeout", payload["records"][0]["events"][0]["action"])
 
-            move_response = tool_query_thaw_events(
+            move_response = tool_query_takeout_events(
                 str(yaml_path),
                 date="2026-02-12",
-                action="移动",
+                action="绉诲姩",
             )
             self.assertTrue(move_response["ok"])
             move_payload = move_response["result"]
@@ -1109,8 +1111,8 @@ class TestCustomLayout10x10(unittest.TestCase):
         """Record at position 95 can be moved to position 100."""
         rec = make_record(1, box=1, position=95)
         p, _ = self._seed([rec])
-        result = tool_record_thaw(
-            p, record_id=1, position=95, action="移动",
+        result = tool_record_takeout(
+            p, record_id=1, position=95, action="绉诲姩",
             to_position=100, date_str="2025-06-01", auto_backup=False,
         )
         self.assertTrue(result["ok"], result.get("message"))
@@ -1152,16 +1154,16 @@ class TestCustomLayout8x12(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(288, result["result"]["total_capacity"])
 
-    def test_batch_thaw_high_positions(self):
+    def test_batch_takeout_high_positions(self):
         """Batch thaw records at positions > 81 (old default limit)."""
         recs = [
             make_record(1, box=1, position=85),
             make_record(2, box=1, position=90),
         ]
         p, _ = self._seed(recs)
-        result = tool_batch_thaw(
+        result = tool_batch_takeout(
             p, entries=[{"record_id": 1, "position": 85}, {"record_id": 2, "position": 90}],
-            action="取出", date_str="2025-06-01", auto_backup=False,
+            action="鍙栧嚭", date_str="2025-06-01", auto_backup=False,
         )
         self.assertTrue(result["ok"], result.get("message"))
         self.assertEqual(2, result["result"]["count"])
@@ -1189,7 +1191,7 @@ class TestValidatorsWithLayout(unittest.TestCase):
         rec = make_record(1, box=6, position=1)
         data = make_data_custom([rec], rows=9, cols=9, box_count=5)
         errors, _ = validate_inventory(data)
-        self.assertTrue(any("box" in e.lower() or "盒" in e for e in errors))
+        self.assertTrue(any("box" in e.lower() for e in errors))
 
     def test_parse_positions_alphanumeric(self):
         from lib.validators import parse_positions
@@ -1266,17 +1268,17 @@ class TestAdjustBoxCount(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual("box_not_empty", result.get("error_code"))
 
-    def test_record_thaw_cross_box_respects_box_numbers(self):
+    def test_record_takeout_cross_box_respects_box_numbers(self):
         records = [make_record(1, box=1, position=1)]
         p, _ = self._seed(
             records,
             {"rows": 9, "cols": 9, "box_count": 4, "box_numbers": [1, 2, 4, 5]},
         )
-        result = tool_record_thaw(
+        result = tool_record_takeout(
             p,
             record_id=1,
             position=1,
-            action="移动",
+            action="绉诲姩",
             to_position=2,
             to_box=3,
             date_str="2025-06-01",
@@ -1288,3 +1290,4 @@ class TestAdjustBoxCount(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
