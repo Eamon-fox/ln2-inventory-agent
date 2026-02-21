@@ -73,7 +73,7 @@ Agent (agent/)  ─┘           │                              │
 
 ### Data model
 
-Single YAML file (`ln2_inventory.yaml`): `inventory[]` records with `id`, `parent_cell_line`, `short_name`, `box`, `positions[]`, `frozen_at`, `thaw_events[]`, plus `meta.box_layout`. Default grid is 9x9 (positions 1-81) across boxes 1-5.
+Single YAML file (`ln2_inventory.yaml`): `inventory[]` records with `id`, `cell_line`, `short_name`, `box`, `position`, `frozen_at`, `thaw_events[]`, plus `meta.box_layout`. Default grid is 9x9 (positions 1-81) across boxes 1-5.
 
 ### GUI panel communication (Qt signals)
 
