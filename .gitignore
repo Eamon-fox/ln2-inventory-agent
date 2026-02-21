@@ -17,6 +17,7 @@ build/
 .env
 .env.local
 .env.*.local
+.claude/settings.local.json
 
 # Project Data
 ln2_inventory.yaml
@@ -41,6 +42,7 @@ Thumbs.db
 *.tmp
 *.bak
 *.cache
+/nul
 
 # Testing
 .pytest_cache/
