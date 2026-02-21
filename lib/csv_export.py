@@ -137,7 +137,7 @@ def export_inventory_to_csv(data, output_path):
     rows = payload["rows"]
 
     abs_output_path = os.path.abspath(os.fspath(output_path))
-    with open(abs_output_path, "w", newline="", encoding="utf-8") as handle:
+    with open(abs_output_path, "w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.writer(handle)
         writer.writerow(columns)
         for row in rows:
