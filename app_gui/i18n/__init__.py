@@ -9,7 +9,6 @@ Usage:
 
 import json
 import os
-from functools import lru_cache
 from typing import Optional
 
 _LOCALE_DIR = os.path.join(os.path.dirname(__file__), "translations")
@@ -68,10 +67,7 @@ def tr(key: str, default: Optional[str] = None, **kwargs) -> str:
         if not isinstance(value, dict):
             return default
         value = value.get(part)
-    if value is None or isinstance(value, dict):
-        text = default
-    else:
-        text = str(value)
+    text = default if value is None or isinstance(value, dict) else str(value)
 
     if kwargs:
         try:

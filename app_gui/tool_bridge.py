@@ -1,25 +1,24 @@
-"""GUI-facing bridge to the unified Tool API."""
+﻿"""GUI-facing bridge to the unified Tool API."""
 
 import os
 
 from agent.llm_client import DEFAULT_PROVIDER, DeepSeekLLMClient, ZhipuLLMClient, PROVIDER_DEFAULTS
 from agent.react_agent import ReactAgent
 from agent.tool_runner import AgentToolRunner
-from app_gui.gui_config import DEFAULT_CONFIG_FILE, DEFAULT_MAX_STEPS
+from app_gui.gui_config import DEFAULT_MAX_STEPS
 from app_gui.i18n import tr
 from lib.tool_api import (
     build_actor_context,
-    parse_batch_entries,
     tool_add_entry,
     tool_adjust_box_count,
-    tool_batch_thaw,
+    tool_batch_takeout,
     tool_collect_timeline,
     tool_edit_entry,
     tool_export_inventory_csv,
     tool_generate_stats,
     tool_list_empty_positions,
     tool_list_backups,
-    tool_record_thaw,
+    tool_record_takeout,
     tool_rollback,
 )
 
@@ -99,25 +98,21 @@ class GuiToolBridge:
             source="app_gui",
         )
 
-    def record_thaw(self, yaml_path, **payload):
-        return tool_record_thaw(
+    def record_takeout(self, yaml_path, **payload):
+        return tool_record_takeout(
             yaml_path=yaml_path,
             actor_context=self._ctx(),
             source="app_gui",
             **payload,
         )
 
-    def batch_thaw(self, yaml_path, **payload):
-        return tool_batch_thaw(
+    def batch_takeout(self, yaml_path, **payload):
+        return tool_batch_takeout(
             yaml_path=yaml_path,
             actor_context=self._ctx(),
             source="app_gui",
             **payload,
         )
-
-    def batch_thaw_from_text(self, yaml_path, entries_text, **payload):
-        entries = parse_batch_entries(entries_text)
-        return self.batch_thaw(yaml_path=yaml_path, entries=entries, **payload)
 
     def rollback(self, yaml_path, backup_path=None, source_event=None, execution_mode=None):
         return tool_rollback(
@@ -244,3 +239,4 @@ class GuiToolBridge:
             "mode": provider,
             "model": chosen_model,
         }
+

@@ -1,4 +1,4 @@
-"""Unit tests for app_gui/plan_model.py — validation edge cases, rendering."""
+"""Unit tests for app_gui/plan_model.py - validation edge cases and rendering."""
 
 import sys
 import unittest
@@ -8,7 +8,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app_gui.plan_model import render_operation_sheet, validate_plan_item
+from app_gui.plan_model import (
+    apply_operation_markers_to_grid,
+    render_grid_html,
+    render_operation_sheet,
+    render_operation_sheet_with_grid,
+    validate_plan_item,
+)
 
 
 def _base_item(**overrides):
@@ -78,12 +84,54 @@ def _rollback_item(**overrides):
     return base
 
 
-# ── validate_plan_item ──────────────────────────────────────────────
+def _grid_state_with_markers():
+    return {
+        "rows": 9,
+        "cols": 9,
+        "boxes": [
+            {
+                "box_number": 1,
+                "box_label": "Box1",
+                "cells": [
+                    {
+                        "box": 1,
+                        "position": 1,
+                        "display_pos": "1",
+                        "is_occupied": True,
+                        "label": "A1",
+                        "color": "#4a90d9",
+                        "operation_marker": "move-source",
+                        "move_id": 1,
+                    },
+                    {
+                        "box": 1,
+                        "position": 2,
+                        "display_pos": "2",
+                        "is_occupied": True,
+                        "label": "A2",
+                        "color": "#e67e22",
+                        "operation_marker": "move-target",
+                        "move_id": 1,
+                    },
+                    {
+                        "box": 1,
+                        "position": 3,
+                        "display_pos": "3",
+                        "is_occupied": False,
+                    },
+                ],
+            }
+        ],
+        "theme": "dark",
+    }
+
+
+# 鈹€鈹€ validate_plan_item 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class ValidateActionTests(unittest.TestCase):
     def test_all_valid_actions(self):
-        for action in ("takeout", "thaw", "discard", "move", "add", "rollback"):
+        for action in ("takeout", "move", "add", "rollback"):
             if action == "rollback":
                 item = _rollback_item()
             else:
@@ -101,7 +149,7 @@ class ValidateActionTests(unittest.TestCase):
 
     def test_action_case_insensitive(self):
         self.assertIsNone(validate_plan_item(_base_item(action="Takeout")))
-        self.assertIsNone(validate_plan_item(_base_item(action="THAW")))
+        self.assertIn("Unknown action", validate_plan_item(_base_item(action="THAW")))
 
     def test_missing_action(self):
         item = _base_item()
@@ -163,8 +211,10 @@ class ValidateMoveTests(unittest.TestCase):
 
 class ValidateRecordIdTests(unittest.TestCase):
     def test_non_add_requires_record_id(self):
-        for action in ("takeout", "thaw", "discard"):
+        for action in ("takeout", "move"):
             item = _base_item(action=action)
+            if action == "move":
+                item["to_position"] = 2
             del item["record_id"]
             result = validate_plan_item(item)
             self.assertIn("record_id", result, f"{action} without record_id should fail")
@@ -204,7 +254,7 @@ class ValidateAddPayloadTests(unittest.TestCase):
         self.assertIsNone(validate_plan_item(item))
 
 
-# ── render_operation_sheet ──────────────────────────────────────────
+# ── render_operation_sheet ────────────────────────────────────
 
 
 class RenderOperationSheetTests(unittest.TestCase):
@@ -252,7 +302,98 @@ class RenderOperationSheetTests(unittest.TestCase):
         self.assertIn("my special note", html)
 
 
-# ── to_box validation for move ────────────────────────────────────
+class RenderOperationSheetWithGridTests(unittest.TestCase):
+    def test_print_css_has_a4_page_rule(self):
+        html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
+        self.assertIn("@page", html)
+        self.assertIn("size: A4 portrait", html)
+
+    def test_default_css_uses_a4_grid_dimensions(self):
+        html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
+        self.assertIn("aspect-ratio: auto;", html)
+        self.assertIn("width: 7.2mm;", html)
+        self.assertNotIn("aspect-ratio: 1;", html)
+
+    def test_move_marker_text_is_ascii_safe(self):
+        html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
+        self.assertIn('content: "M" attr(data-move-id) "-FROM";', html)
+        self.assertIn('content: "M" attr(data-move-id) "-TO";', html)
+        self.assertNotIn('content: "M" attr(data-move-id) "->";', html)
+        self.assertNotIn("\u2192", html)
+
+    def test_grid_html_has_print_specific_classes(self):
+        html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
+        self.assertIn('class="grid-section print-grid-section"', html)
+        self.assertIn('class="grid-container print-grid-container"', html)
+
+    def test_print_css_has_break_inside_compat_rules(self):
+        html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
+        self.assertIn("break-inside: avoid;", html)
+        self.assertIn("page-break-inside: avoid;", html)
+        self.assertIn("break-inside: auto;", html)
+        self.assertIn("page-break-inside: auto;", html)
+
+    def test_grid_header_emphasizes_box_number(self):
+        html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
+        self.assertIn('class="box-header-main">BOX 1</span>', html)
+        self.assertIn('class="box-header-num">#1</span>', html)
+
+    def test_render_grid_html_hides_non_active_boxes(self):
+        grid_state = {
+            "rows": 1,
+            "cols": 1,
+            "active_boxes": [2],
+            "boxes": [
+                {
+                    "box_number": 1,
+                    "box_label": "1",
+                    "cells": [{"box": 1, "position": 1, "display_pos": "1", "is_occupied": False}],
+                },
+                {
+                    "box_number": 2,
+                    "box_label": "2",
+                    "cells": [{"box": 2, "position": 1, "display_pos": "1", "is_occupied": False}],
+                },
+            ],
+        }
+        html = render_grid_html(grid_state)
+        self.assertIn('class="box-header-main">BOX 2</span>', html)
+        self.assertNotIn('class="box-header-main">BOX 1</span>', html)
+
+    def test_render_grid_html_returns_empty_when_no_active_boxes(self):
+        grid_state = {
+            "rows": 1,
+            "cols": 1,
+            "active_boxes": [],
+            "boxes": [
+                {
+                    "box_number": 1,
+                    "box_label": "1",
+                    "cells": [{"box": 1, "position": 1, "display_pos": "1", "is_occupied": False}],
+                }
+            ],
+        }
+        html = render_grid_html(grid_state)
+        self.assertEqual("", html)
+
+    def test_apply_operation_markers_tracks_active_boxes_for_edit_and_move(self):
+        grid_state = {
+            "rows": 1,
+            "cols": 1,
+            "boxes": [
+                {"box_number": 1, "box_label": "1", "cells": [{"box": 1, "position": 1, "display_pos": "1", "is_occupied": False}]},
+                {"box_number": 2, "box_label": "2", "cells": [{"box": 2, "position": 1, "display_pos": "1", "is_occupied": False}]},
+                {"box_number": 3, "box_label": "3", "cells": [{"box": 3, "position": 1, "display_pos": "1", "is_occupied": False}]},
+            ],
+        }
+        items = [
+            _move_item(box=1, position=1, to_box=2, to_position=1),
+            _base_item(action="edit", box=3, position=1, record_id=9),
+        ]
+        out = apply_operation_markers_to_grid(grid_state, items)
+        self.assertEqual([1, 2, 3], out.get("active_boxes"))
+
+# 鈹€鈹€ to_box validation for move 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class ValidateToBoxTests(unittest.TestCase):
@@ -283,7 +424,7 @@ class ValidateToBoxTests(unittest.TestCase):
         self.assertIsNone(validate_plan_item(item))
 
 
-# ── cross-box move rendering ────────────────────────────────────────
+# 鈹€鈹€ cross-box move rendering 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class CrossBoxMoveRenderTests(unittest.TestCase):
@@ -315,7 +456,7 @@ class CrossBoxMoveRenderTests(unittest.TestCase):
         self.assertIn("cross-test", html)
 
 
-# ── edit action validation ─────────────────────────────────────────
+# 鈹€鈹€ edit action validation 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 def _edit_item(**overrides):
@@ -370,7 +511,7 @@ class ValidateRollbackSkipsBoxPositionTests(unittest.TestCase):
         self.assertIsNone(validate_plan_item(_rollback_item(record_id=None)))
 
 
-# ── edit/rollback rendering ────────────────────────────────────────
+# 鈹€鈹€ edit/rollback rendering 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class RenderEditRollbackTests(unittest.TestCase):
@@ -405,7 +546,7 @@ class RenderEditRollbackTests(unittest.TestCase):
             self.assertIn(action_name, html)
 
 
-# ── factory → validate round-trip ──────────────────────────────────
+# 鈹€鈹€ factory 鈫?validate round-trip 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class FactoryValidateRoundTripTests(unittest.TestCase):
@@ -440,14 +581,25 @@ class FactoryValidateRoundTripTests(unittest.TestCase):
 
     def test_build_record_plan_item_passes_validation(self):
         from lib.plan_item_factory import build_record_plan_item
-        for action in ("Takeout", "Thaw", "Discard"):
-            item = build_record_plan_item(
-                action=action, record_id=1, position=5, box=1,
-                date_str="2026-01-01",
-            )
-            self.assertIsNone(validate_plan_item(item), f"{action} should pass")
+        takeout_item = build_record_plan_item(
+            action="Takeout",
+            record_id=1,
+            position=5,
+            box=1,
+            date_str="2026-01-01",
+        )
+        move_item = build_record_plan_item(
+            action="move",
+            record_id=1,
+            position=5,
+            to_position=6,
+            box=1,
+            date_str="2026-01-01",
+        )
+        self.assertIsNone(validate_plan_item(takeout_item), "Takeout should pass")
+        self.assertIsNone(validate_plan_item(move_item), "move should pass")
 
-    def test_build_record_plan_item_canonicalizes_legacy_out_actions(self):
+    def test_build_record_plan_item_preserves_legacy_action_for_validation(self):
         from lib.plan_item_factory import build_record_plan_item
 
         thaw_item = build_record_plan_item(
@@ -457,8 +609,10 @@ class FactoryValidateRoundTripTests(unittest.TestCase):
             action="Discard", record_id=2, position=6, box=1, date_str="2026-01-01"
         )
 
-        self.assertEqual("takeout", thaw_item.get("action"))
-        self.assertEqual("takeout", discard_item.get("action"))
+        self.assertEqual("thaw", thaw_item.get("action"))
+        self.assertEqual("discard", discard_item.get("action"))
+        self.assertIn("Unknown action", validate_plan_item(thaw_item))
+        self.assertIn("Unknown action", validate_plan_item(discard_item))
 
     def test_build_add_plan_item_passes_validation(self):
         from lib.plan_item_factory import build_add_plan_item
@@ -471,3 +625,4 @@ class FactoryValidateRoundTripTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

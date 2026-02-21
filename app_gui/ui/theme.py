@@ -88,6 +88,26 @@ _CJK_FONT_CANDIDATES = [
     "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",
 ]
 
+_MONO_FONT_FAMILIES = [
+    "Cascadia Mono",
+    "Consolas",
+    "JetBrains Mono",
+    "SF Mono",
+    "Menlo",
+    "Monaco",
+    "Source Code Pro",
+    "DejaVu Sans Mono",
+    "Noto Sans Mono CJK SC",
+    "Sarasa Mono SC",
+    # CJK-safe fallbacks when no true mono CJK font is available.
+    "Microsoft YaHei UI",
+    "Microsoft YaHei",
+    "SimHei",
+    "SimSun",
+]
+
+MONO_FONT_CSS_FAMILY = ", ".join([f"'{name}'" for name in _MONO_FONT_FAMILIES] + ["monospace"])
+
 
 def _setup_cjk_font(app):
     loaded_family = None
@@ -117,6 +137,15 @@ def _setup_cjk_font(app):
     fallbacks.extend(["Microsoft YaHei", "Microsoft YaHei UI", "SimHei", "SimSun", "sans-serif"])
     font.setFamilies([font.family()] + fallbacks)
     app.setFont(font)
+
+
+def build_mono_font(point_size=FONT_SIZE_MONO):
+    """Return a cross-platform monospace-ish font without Fixedsys fallback."""
+    font = QFont(_MONO_FONT_FAMILIES[0])
+    font.setPointSize(int(point_size))
+    font.setFamilies(list(_MONO_FONT_FAMILIES))
+    font.setFixedPitch(True)
+    return font
 
 
 def _resolve_qss_vars(stylesheet):
@@ -163,6 +192,49 @@ def _resolve_inline_qss(fragment, mode=None):
     return _resolve_qss_vars(wrapped)
 
 
+_TOKEN_DECL_PATTERN = re.compile(r"--([A-Za-z0-9_-]+)\s*:\s*([^;]+);")
+_TOKEN_REF_PATTERN = re.compile(r"var\(--([A-Za-z0-9_-]+)\)")
+
+
+def get_theme_tokens(mode=None):
+    """Return resolved theme tokens as a ``dict`` for the given mode."""
+    active_mode = mode or _current_theme_mode()
+    raw = _get_theme_vars(active_mode)
+
+    tokens = {}
+    for match in _TOKEN_DECL_PATTERN.finditer(raw):
+        key = match.group(1).strip()
+        value = match.group(2).strip()
+        if key and value:
+            tokens[key] = value
+
+    # Resolve nested refs like var(--background-raised)
+    for _ in range(6):
+        changed = False
+        for key, value in list(tokens.items()):
+            resolved = _TOKEN_REF_PATTERN.sub(
+                lambda m: tokens.get(m.group(1), m.group(0)),
+                str(value),
+            )
+            if resolved != value:
+                tokens[key] = resolved
+                changed = True
+        if not changed:
+            break
+
+    return tokens
+
+
+def resolve_theme_token(token_name, mode=None, fallback=""):
+    """Resolve a single theme token like ``'status-success'`` or ``'--status-success'``."""
+    key = str(token_name or "").strip()
+    if key.startswith("--"):
+        key = key[2:]
+    if not key:
+        return str(fallback)
+    return str(get_theme_tokens(mode).get(key, fallback))
+
+
 def _get_theme_vars(mode):
     """Return CSS variables for the given theme mode."""
     if mode == "light":
@@ -188,6 +260,10 @@ def _get_theme_vars(mode):
             --warning: #d97706;
             --error: #dc2626;
             --status-success-bg: rgba(22,163,74,0.12);
+            --status-warning-bg: rgba(245,158,11,0.12);
+            --status-error-bg: rgba(220,53,69,0.12);
+            --status-info-bg: rgba(43,127,229,0.12);
+            --status-muted-bg: rgba(100,116,139,0.10);
             --button-background: #ffffff;
             --button-border: #cbd5e1;
             --button-hover: #f2f6fb;
@@ -225,6 +301,9 @@ def _get_theme_vars(mode):
             --overview-bg: #f5f9fd;
             --tooltip-bg: #ffffff;
             --tooltip-color: #1e1e1e;
+            --tooltip-border: rgba(15,23,42,0.16);
+            --surface-border-subtle: rgba(15,23,42,0.08);
+            --surface-border-strong: rgba(15,23,42,0.16);
             --input-focus-bg: var(--background-raised);
             --primary-btn-text: #ffffff;
             --toggle-checked-text: #ffffff;
@@ -234,6 +313,55 @@ def _get_theme_vars(mode):
             --quick-prompt-hover-bg: rgba(43,127,229,0.18);
             --quick-prompt-hover-color: #0f172a;
             --radio-bg: var(--background-raised);
+            --chat-panel-bg: #f5f5f5;
+            --chat-panel-header-bg: #f5f5f5;
+            --chat-panel-content-bg: #fafafa;
+            --chat-panel-border: rgba(0,0,0,0.08);
+            --chat-panel-border-hover: rgba(0,0,0,0.12);
+            --chat-inline-code-bg: rgba(0,0,0,0.06);
+            --chat-code-bg: #f5f5f5;
+            --chat-code-border: rgba(0,0,0,0.08);
+            --chat-code-text: #1e1e1e;
+            --chat-muted-text: #646464;
+            --chat-link: #2563eb;
+            --chat-role-agent: #0284c7;
+            --chat-role-you: #4d7c0f;
+            --chat-role-tool: #b45309;
+            --chat-role-system: #c2410c;
+            --chat-role-muted: #64748b;
+            --chat-role-link: #2563eb;
+            --preview-add-bg: rgba(34,197,94,0.25);
+            --preview-takeout-bg: rgba(239,68,68,0.25);
+            --preview-move-source-bg: rgba(56,189,248,0.20);
+            --preview-move-target-bg: rgba(56,189,248,0.35);
+            --icon-default: #000000;
+            --icon-on-primary: #ffffff;
+            --icon-on-danger: #ffffff;
+            --sheet-bg: #ffffff;
+            --sheet-text-primary: #1f2937;
+            --sheet-text-muted: #6b7280;
+            --sheet-border: #e5e7eb;
+            --sheet-section-bg: #f9fafb;
+            --sheet-tip-bg: #fef3c7;
+            --sheet-tip-border: #f59e0b;
+            --sheet-tip-text: #78350f;
+            --sheet-tip-title: #92400e;
+            --sheet-grid-bg: #0f1a2a;
+            --sheet-grid-border: #36506d;
+            --sheet-grid-text: #c6dbf3;
+            --sheet-grid-empty-bg: #1a2a40;
+            --sheet-grid-empty-text: #86a0bb;
+            --sheet-grid-overlay-bg: rgba(0,0,0,0.7);
+            --sheet-chip-takeout-bg: #fef3c7;
+            --sheet-chip-move-bg: #dbeafe;
+            --sheet-chip-add-bg: #ede9fe;
+            --sheet-chip-edit-bg: #cffafe;
+            --sheet-chip-rollback-bg: #f3f4f6;
+            --sheet-action-takeout: #f59e0b;
+            --sheet-action-move: #3b82f6;
+            --sheet-action-add: #8b5cf6;
+            --sheet-action-edit: #06b6d4;
+            --sheet-action-rollback: #6b7280;
         """
     else:  # dark
         return """
@@ -258,6 +386,10 @@ def _get_theme_vars(mode):
             --warning: #f59e0b;
             --error: #ef4444;
             --status-success-bg: rgba(34,197,94,0.14);
+            --status-warning-bg: rgba(245,158,11,0.16);
+            --status-error-bg: rgba(239,68,68,0.16);
+            --status-info-bg: rgba(99,179,255,0.18);
+            --status-muted-bg: rgba(148,163,184,0.14);
             --button-background: #1e2a3a;
             --button-border: #475569;
             --button-hover: #24364d;
@@ -295,6 +427,9 @@ def _get_theme_vars(mode):
             --overview-bg: #112033;
             --tooltip-bg: #e8e8e8;
             --tooltip-color: #1a1a1a;
+            --tooltip-border: rgba(255,255,255,0.18);
+            --surface-border-subtle: rgba(255,255,255,0.08);
+            --surface-border-strong: rgba(255,255,255,0.16);
             --input-focus-bg: var(--background-base);
             --primary-btn-text: #ffffff;
             --toggle-checked-text: #000000;
@@ -304,6 +439,55 @@ def _get_theme_vars(mode):
             --quick-prompt-hover-bg: rgba(99,179,255,0.24);
             --quick-prompt-hover-color: #e6f1ff;
             --radio-bg: var(--background-inset);
+            --chat-panel-bg: #1f1f1f;
+            --chat-panel-header-bg: #242424;
+            --chat-panel-content-bg: #1f1f1f;
+            --chat-panel-border: rgba(255,255,255,0.08);
+            --chat-panel-border-hover: rgba(255,255,255,0.12);
+            --chat-inline-code-bg: rgba(255,255,255,0.10);
+            --chat-code-bg: #1a1a1a;
+            --chat-code-border: rgba(255,255,255,0.08);
+            --chat-code-text: #e8e8e8;
+            --chat-muted-text: #888888;
+            --chat-link: #38bdf8;
+            --chat-role-agent: #38bdf8;
+            --chat-role-you: #a3e635;
+            --chat-role-tool: #f59e0b;
+            --chat-role-system: #f97316;
+            --chat-role-muted: #9ca3af;
+            --chat-role-link: #60a5fa;
+            --preview-add-bg: rgba(34,197,94,0.25);
+            --preview-takeout-bg: rgba(239,68,68,0.25);
+            --preview-move-source-bg: rgba(56,189,248,0.20);
+            --preview-move-target-bg: rgba(56,189,248,0.35);
+            --icon-default: #ffffff;
+            --icon-on-primary: #ffffff;
+            --icon-on-danger: #ffffff;
+            --sheet-bg: #0f1724;
+            --sheet-text-primary: #e6f1ff;
+            --sheet-text-muted: #9fb3c8;
+            --sheet-border: #36506d;
+            --sheet-section-bg: #132033;
+            --sheet-tip-bg: rgba(245,158,11,0.16);
+            --sheet-tip-border: #f59e0b;
+            --sheet-tip-text: #fcd34d;
+            --sheet-tip-title: #fbbf24;
+            --sheet-grid-bg: #0f1a2a;
+            --sheet-grid-border: #36506d;
+            --sheet-grid-text: #c6dbf3;
+            --sheet-grid-empty-bg: #1a2a40;
+            --sheet-grid-empty-text: #86a0bb;
+            --sheet-grid-overlay-bg: rgba(0,0,0,0.7);
+            --sheet-chip-takeout-bg: rgba(245,158,11,0.22);
+            --sheet-chip-move-bg: rgba(59,130,246,0.22);
+            --sheet-chip-add-bg: rgba(139,92,246,0.22);
+            --sheet-chip-edit-bg: rgba(6,182,212,0.22);
+            --sheet-chip-rollback-bg: rgba(148,163,184,0.22);
+            --sheet-action-takeout: #f59e0b;
+            --sheet-action-move: #63b3ff;
+            --sheet-action-add: #a78bfa;
+            --sheet-action-edit: #22d3ee;
+            --sheet-action-rollback: #94a3b8;
         """
 
 
@@ -343,7 +527,7 @@ def _get_common_qss():
             --splitter-width: 6px;
             --splitter-radius: 2px;
         }
-        QToolTip { color: var(--tooltip-color); background-color: var(--tooltip-bg); border: 1px solid rgba(0,0,0,0.1); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); font-size: {FONT_SIZE_SM}px; }
+        QToolTip { color: var(--tooltip-color); background-color: var(--tooltip-bg); border: 1px solid var(--tooltip-border); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); font-size: {FONT_SIZE_SM}px; }
         QGroupBox {{ border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-lg); margin-top: var(--space-3); font-weight: {FONT_WEIGHT_MEDIUM}; color: var(--text-weak); padding-top: var(--space-2); }}
         QGroupBox::title {{ subcontrol-origin: margin; subcontrol-position: top left; padding: 0 var(--space-2); left: var(--space-2); color: var(--text-weak); font-size: {FONT_SIZE_MD}px; }}
         QTableWidget {{ gridline-color: var(--table-gridline); background-color: var(--background-inset); selection-background-color: var(--accent-muted); border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-md); }}
@@ -382,8 +566,8 @@ def _get_common_qss():
         QWidget#operationsResultActions QPushButton {{ min-height: 28px; }}
         QLabel#operationsPlanFeedback {{ border: 1px solid var(--border-weak); border-radius: var(--radius-sm); padding: 8px 10px; }}
         QLabel#operationsPlanFeedback[level="info"] {{ color: var(--text-muted); background: var(--background-inset); }}
-        QLabel#operationsPlanFeedback[level="warning"] {{ color: var(--status-warning); background: rgba(255, 193, 7, 0.12); }}
-        QLabel#operationsPlanFeedback[level="error"] {{ color: var(--status-error); background: rgba(220, 53, 69, 0.12); }}
+        QLabel#operationsPlanFeedback[level="warning"] {{ color: var(--status-warning); background: var(--status-warning-bg); }}
+        QLabel#operationsPlanFeedback[level="error"] {{ color: var(--status-error); background: var(--status-error-bg); }}
         QLabel[role="statusWarning"] {{ color: var(--status-warning); }}
         QLabel[role="readonlyField"] {{ background: var(--display-bg); border: none; color: var(--display-text); padding: 2px 4px; }}
         QLineEdit[role="contextEditable"][readOnly="true"] {{ background: var(--display-bg); border: none; color: var(--display-text); padding: 2px 4px; }}
@@ -397,7 +581,7 @@ def _get_common_qss():
         QLabel#overviewZoomLabel {{ font-size: {FONT_SIZE_XS}px; }}
         QLabel#overviewZoomSeparator {{ color: var(--border-weak); margin: 0 4px; }}
         QLabel#overviewHoverHint {{ color: var(--text-weak); font-weight: {FONT_WEIGHT_MEDIUM}; }}
-        QLabel#overviewHoverHint[state="warning"] {{ color: var(--warning); padding: 8px; background-color: rgba(245,158,11,0.1); border-radius: var(--radius-xs); }}
+        QLabel#overviewHoverHint[state="warning"] {{ color: var(--warning); padding: 8px; background-color: var(--status-warning-bg); border-radius: var(--radius-xs); }}
         QLabel[role="settingsHint"], QLabel[role="dialogHint"] {{ color: var(--text-muted); font-size: {FONT_SIZE_XS}px; margin-left: 100px; }}
         QLabel[role="dialogHint"] {{ margin-left: 0; margin-bottom: 4px; }}
         QLabel[role="cfHeaderLabel"] {{ font-size: {FONT_SIZE_XS}px; color: var(--text-muted); font-weight: {FONT_WEIGHT_SEMIBOLD}; }}
@@ -501,17 +685,6 @@ def _apply_theme(app, mode):
     app.setStyleSheet(_resolve_qss_vars(qss))
 
 
-def input_style():
-    return _resolve_inline_qss(f"""
-        background-color: var(--background-inset);
-        border: 1px solid var(--border-weak);
-        border-radius: var(--radius-sm);
-        color: var(--text-strong);
-        padding: 6px 10px;
-        font-size: {FONT_SIZE_MD}px;
-    """)
-
-
 def cell_occupied_style(color="#22c55e", is_selected=False, font_size=9):
     if is_selected:
         return _resolve_inline_qss(f"""
@@ -529,22 +702,21 @@ def cell_occupied_style(color="#22c55e", is_selected=False, font_size=9):
                 border: 2px solid var(--accent);
             }}
         """)
-    else:
-        return _resolve_inline_qss(f"""
-            QPushButton {{
-                background-color: {color};
-                color: white;
-                border: 1px solid var(--cell-border-default);
-                border-radius: var(--radius-xs);
-                font-size: {font_size}px;
-                font-weight: 500;
-                padding: 1px;
+    return _resolve_inline_qss(f"""
+        QPushButton {{
+            background-color: {color};
+            color: white;
+            border: 1px solid var(--cell-border-default);
+            border-radius: var(--radius-xs);
+            font-size: {font_size}px;
+            font-weight: 500;
+            padding: 1px;
 
-            }}
-            QPushButton:hover {{
-                border: 2px solid var(--accent);
-            }}
-        """)
+        }}
+        QPushButton:hover {{
+            border: 2px solid var(--accent);
+        }}
+    """)
 
 
 def cell_empty_style(is_selected=False, font_size=8):
@@ -565,204 +737,22 @@ def cell_empty_style(is_selected=False, font_size=8):
                 color: var(--text-weak);
             }}
         """)
-    else:
-        return _resolve_inline_qss(f"""
-            QPushButton {{
-                background-color: var(--cell-empty-bg);
-                color: var(--cell-empty-text);
-                border: 1px solid var(--cell-border-default);
-                border-radius: var(--radius-xs);
-                font-size: {font_size}px;
-                padding: 1px;
-
-            }}
-            QPushButton:hover {{
-                border: 2px solid var(--accent);
-                background-color: var(--background-raised);
-                color: var(--text-weak);
-            }}
-        """)
-
-
-def cell_preview_add_style():
     return _resolve_inline_qss(f"""
         QPushButton {{
-            background-color: rgba(34, 197, 94, 0.25);
-            color: var(--text-strong);
-            border: 2px solid var(--success);
+            background-color: var(--cell-empty-bg);
+            color: var(--cell-empty-text);
+            border: 1px solid var(--cell-border-default);
             border-radius: var(--radius-xs);
-            font-size: {FONT_SIZE_CELL}px;
-            font-weight: 500;
+            font-size: {font_size}px;
             padding: 1px;
+
         }}
-    """)
-
-
-def cell_preview_takeout_style():
-    return _resolve_inline_qss(f"""
-        QPushButton {{
-            background-color: rgba(239, 68, 68, 0.25);
-            color: var(--text-strong);
-            border: 2px solid var(--error);
-            border-radius: var(--radius-xs);
-            font-size: {FONT_SIZE_CELL}px;
-            font-weight: 500;
-            padding: 1px;
-        }}
-    """)
-
-
-def cell_preview_move_source_style():
-    return _resolve_inline_qss(f"""
-        QPushButton {{
-            background-color: rgba(56, 189, 248, 0.2);
-            color: var(--text-strong);
+        QPushButton:hover {{
             border: 2px solid var(--accent);
-            border-radius: var(--radius-xs);
-            font-size: {FONT_SIZE_CELL}px;
-            font-weight: 500;
-            padding: 1px;
+            background-color: var(--background-raised);
+            color: var(--text-weak);
         }}
     """)
-
-
-def cell_preview_move_target_style():
-    return _resolve_inline_qss(f"""
-        QPushButton {{
-            background-color: rgba(56, 189, 248, 0.35);
-            color: var(--text-strong);
-            border: 2px solid var(--accent);
-            border-radius: var(--radius-xs);
-            font-size: {FONT_SIZE_CELL}px;
-            font-weight: 500;
-            padding: 1px;
-        }}
-    """)
-
-
-def chat_code_block_style(is_dark=True):
-    if is_dark:
-        return f"""
-            background-color: #1a1a1a;
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 6px;
-            padding: 12px;
-            font-family: "IBM Plex Mono", "Consolas", "Monaco", monospace;
-            font-size: {FONT_SIZE_MD}px;
-            color: #e8e8e8;
-        """
-    else:
-        return f"""
-            background-color: #f5f5f5;
-            border: 1px solid rgba(0,0,0,0.08);
-            border-radius: 6px;
-            padding: 12px;
-            font-family: "IBM Plex Mono", "Consolas", "Monaco", monospace;
-            font-size: {FONT_SIZE_MD}px;
-            color: #1e1e1e;
-        """
-
-
-def chat_inline_code_style(is_dark=True):
-    if is_dark:
-        return "background-color: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; font-family: monospace;"
-    else:
-        return "background-color: rgba(0,0,0,0.06); padding: 2px 6px; border-radius: 4px; font-family: monospace;"
-
-
-def chat_collapsible_header_style(is_dark=True):
-    if is_dark:
-        return f"""
-            QPushButton {{
-                background-color: #242424;
-                border: 1px solid rgba(255,255,255,0.08);
-                border-radius: 6px;
-                padding: 8px 12px;
-                text-align: left;
-                font-size: {FONT_SIZE_MD}px;
-                color: #e8e8e8;
-            }}
-            QPushButton:hover {{
-                background-color: #2d2d2d;
-                border-color: rgba(255,255,255,0.12);
-            }}
-            QPushButton:checked {{
-                border-bottom-left-radius: 0;
-                border-bottom-right-radius: 0;
-            }}
-        """
-    else:
-        return f"""
-            QPushButton {{
-                background-color: #f5f5f5;
-                border: 1px solid rgba(0,0,0,0.08);
-                border-radius: 6px;
-                padding: 8px 12px;
-                text-align: left;
-                font-size: {FONT_SIZE_MD}px;
-                color: #1e1e1e;
-            }}
-            QPushButton:hover {{
-                background-color: #eaeaea;
-                border-color: rgba(0,0,0,0.12);
-            }}
-            QPushButton:checked {{
-                border-bottom-left-radius: 0;
-                border-bottom-right-radius: 0;
-            }}
-        """
-
-
-def chat_collapsible_content_style(is_dark=True):
-    if is_dark:
-        return f"""
-            background-color: #1f1f1f;
-            border: 1px solid rgba(255,255,255,0.08);
-            border-top: none;
-            border-bottom-left-radius: 6px;
-            border-bottom-right-radius: 6px;
-            padding: 8px 12px;
-            font-family: "IBM Plex Mono", monospace;
-            font-size: {FONT_SIZE_SM}px;
-            color: #888888;
-        """
-    else:
-        return f"""
-            background-color: #fafafa;
-            border: 1px solid rgba(0,0,0,0.08);
-            border-top: none;
-            border-bottom-left-radius: 6px;
-            border-bottom-right-radius: 6px;
-            padding: 8px 12px;
-            font-family: "IBM Plex Mono", monospace;
-            font-size: {FONT_SIZE_SM}px;
-            color: #646464;
-        """
-
-
-def syntax_colors(is_dark=True):
-    if is_dark:
-        return {
-            "string": "#00ceb9",
-            "primitive": "#ffba92",
-            "property": "#ff9ae2",
-            "type": "#ecf58c",
-            "constant": "#93e9f6",
-            "keyword": "#c792ea",
-            "comment": "#636d83",
-            "number": "#f78c6c",
-        }
-    else:
-        return {
-            "string": "#006656",
-            "primitive": "#fb4804",
-            "property": "#ed6dc8",
-            "type": "#596600",
-            "constant": "#007b80",
-            "keyword": "#8b0a50",
-            "comment": "#6a737d",
-            "number": "#b52a1d",
-        }
 
 
 _THEME_COLORS = {

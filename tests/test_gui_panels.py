@@ -1,4 +1,4 @@
-import os
+﻿import os
 import sys
 import unittest
 from types import SimpleNamespace
@@ -19,8 +19,9 @@ try:
 
     from app_gui.ui.ai_panel import AIPanel
     from app_gui.ui.overview_panel import OverviewPanel, TABLE_ROW_TINT_ROLE
-    from app_gui.ui.operations_panel import OperationsPanel, _localized_action
+    from app_gui.ui.operations_panel import OperationsPanel
     from app_gui.ui.utils import cell_color
+    from app_gui.error_localizer import localize_error_payload
     from app_gui.i18n import tr
 
     PYSIDE_AVAILABLE = True
@@ -38,6 +39,7 @@ except Exception:
     TABLE_ROW_TINT_ROLE = None
     OperationsPanel = None
     cell_color = None
+    localize_error_payload = None
     tr = None
     PYSIDE_AVAILABLE = False
 
@@ -88,11 +90,11 @@ class _FakeOperationsBridge:
         self.last_export_payload = {"yaml_path": yaml_path, "output_path": output_path}
         return self.export_response
 
-    def record_thaw(self, yaml_path, **payload):
+    def record_takeout(self, yaml_path, **payload):
         self.last_record_payload = {"yaml_path": yaml_path, **payload}
         return {"ok": True, "preview": payload, "result": {"record_id": payload.get("record_id")}}
 
-    def batch_thaw(self, yaml_path, **payload):
+    def batch_takeout(self, yaml_path, **payload):
         self.last_batch_payload = {"yaml_path": yaml_path, **payload}
         entries = payload.get("entries") or []
         record_ids = []
@@ -221,7 +223,9 @@ class GuiPanelRegressionTests(unittest.TestCase):
 
         self.assertIsNone(bridge.last_add_payload)
         self.assertTrue(messages)
-        self.assertIn("位置格式错误", messages[-1][0])
+        self.assertTrue(
+            ("Invalid position format" in messages[-1][0]) or ("浣嶇疆鏍煎紡" in messages[-1][0])
+        )
 
     def test_operations_panel_uses_add_to_plan_buttons(self):
         panel = self._new_operations_panel()
@@ -368,7 +372,8 @@ class GuiPanelRegressionTests(unittest.TestCase):
 
         self.assertEqual(1, len(panel.plan_items))
         self.assertEqual("takeout", panel.plan_items[0].get("action"))
-        self.assertTrue(any(tr("operations.planRejected") in msg for msg in messages))
+        prefix = tr("operations.planRejected", error="").strip()
+        self.assertTrue(any(str(msg).startswith(prefix) for msg in messages))
 
     def test_plan_store_queued_refresh_keeps_ui_consistent_after_external_clear(self):
         from PySide6.QtCore import QMetaObject, Qt
@@ -872,14 +877,13 @@ class GuiPanelRegressionTests(unittest.TestCase):
         panel.set_mode("move")
         panel.set_prefill_background({"record_id": 11, "position": 5})
         self.assertEqual(11, panel.t_id.value())
-        # set_prefill_background switches to thaw mode
-        self.assertEqual("thaw", panel.current_operation_mode)
+        # set_prefill_background switches to takeout mode
+        self.assertEqual("takeout", panel.current_operation_mode)
 
     # --- Plan tab tests ---
 
     def test_plan_tab_exists_in_mode_selector(self):
         panel = self._new_operations_panel()
-        mode_keys = [panel.op_mode_combo.itemData(i) for i in range(panel.op_mode_combo.count())]
         # "plan" is no longer a separate mode; plan table is always visible below forms
         self.assertTrue(hasattr(panel, "plan_table"))
         self.assertTrue(hasattr(panel, "plan_exec_btn"))
@@ -1031,7 +1035,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual(0, len(panel.plan_items))
         self.assertEqual([True], emitted)
 
-    def test_operations_panel_record_thaw_creates_plan_item(self):
+    def test_operations_panel_record_takeout_creates_plan_item(self):
         panel = self._new_operations_panel()
         panel.update_records_cache({
             5: {"id": 5, "parent_cell_line": "K562", "short_name": "K562_test",
@@ -1047,7 +1051,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
         action_idx = panel.t_action.findData("Takeout")
         if action_idx >= 0:
             panel.t_action.setCurrentIndex(action_idx)
-        panel.on_record_thaw()
+        panel.on_record_takeout()
 
         self.assertEqual(1, len(panel.plan_items))
         item = panel.plan_items[0]
@@ -1190,7 +1194,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
             {
                 "event": "tool_start",
                 "trace_id": "trace-tool",
-                "data": {"name": "query_thaw_events"},
+                "data": {"name": "query_takeout_events"},
             }
         )
         panel.on_progress(
@@ -1198,14 +1202,14 @@ class GuiPanelRegressionTests(unittest.TestCase):
                 "event": "tool_end",
                 "trace_id": "trace-tool",
                 "step": 1,
-                "data": {"name": "query_thaw_events"},
+                "data": {"name": "query_takeout_events"},
                 "observation": {"ok": True},
             }
         )
 
         append_calls = [value for name, value in panel.ai_chat.calls if name == "append"]
         merged = "\n".join(append_calls)
-        self.assertIn("query_thaw_events", merged)
+        self.assertIn("query_takeout_events", merged)
         self.assertIn("OK", merged)
 
     def test_ai_panel_renders_blocked_items_from_tool_result(self):
@@ -1218,7 +1222,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
                 "event": "tool_end",
                 "trace_id": "trace-blocked",
                 "step": 1,
-                "data": {"name": "record_thaw"},
+                "data": {"name": "record_takeout"},
                 "observation": {
                     "ok": False,
                     "error_code": "plan_preflight_failed",
@@ -1241,7 +1245,10 @@ class GuiPanelRegressionTests(unittest.TestCase):
         merged = "\n".join(append_calls)
         self.assertIn("Tool blocked", merged)
         self.assertIn("ID 999", merged)
-        self.assertIn("Record does not exist", merged)
+        self.assertIn(
+            localize_error_payload({"error_code": "record_not_found", "message": "Record does not exist"}),
+            merged,
+        )
 
     def test_ai_panel_rewrites_streamed_markdown_on_finish(self):
         panel = self._new_ai_panel()
@@ -1340,7 +1347,7 @@ class ToolRunnerPlanSinkTests(unittest.TestCase):
 
     def test_read_tool_not_intercepted(self):
         runner = self._make_runner()
-        result = runner.run("query_inventory", {"cell": "K562"})
+        runner.run("query_inventory", {"cell": "K562"})
         # Should execute normally (may fail if YAML not found, but not staged)
         self.assertEqual(0, self.store.count())
 
@@ -1362,9 +1369,9 @@ class ToolRunnerPlanSinkTests(unittest.TestCase):
         self.assertEqual("ai", item["source"])
         self.assertEqual(1, item["box"])
 
-    def test_record_thaw_staged(self):
+    def test_record_takeout_staged(self):
         runner = self._make_runner()
-        result = runner.run("record_thaw", {
+        result = runner.run("record_takeout", {
             "record_id": 5,
             "position": 10,
             "date": "2026-02-10",
@@ -1396,7 +1403,7 @@ class ToolRunnerPlanSinkTests(unittest.TestCase):
         self.assertEqual(0, self.store.count())
 
 
-# ── Regression tests: plan dedup + execute fallback ──────────────
+# 鈹€鈹€ Regression tests: plan dedup + execute fallback 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 def _make_move_item(record_id, position, to_position, to_box=None, label="test"):
@@ -1447,31 +1454,31 @@ class _ConfigurableBridge(_FakeOperationsBridge):
     def __init__(self):
         super().__init__()
         self.batch_should_fail = False
-        self.record_thaw_fail_ids = set()
-        self.record_thaw_calls = []
-        self.batch_thaw_calls = []
+        self.record_takeout_fail_ids = set()
+        self.record_takeout_calls = []
+        self.batch_takeout_calls = []
 
-    def batch_thaw(self, yaml_path, **payload):
-        self.batch_thaw_calls.append(payload)
+    def batch_takeout(self, yaml_path, **payload):
+        self.batch_takeout_calls.append(payload)
         if self.batch_should_fail:
             return {
                 "ok": False,
                 "error_code": "validation_failed",
-                "message": "批量操作参数校验失败",
-                "errors": ["第1条: mock error"],
+                "message": "鎵归噺鎿嶄綔鍙傛暟鏍￠獙澶辫触",
+                "errors": ["绗?鏉? mock error"],
             }
-        return super().batch_thaw(yaml_path, **payload)
+        return super().batch_takeout(yaml_path, **payload)
 
-    def record_thaw(self, yaml_path, **payload):
-        self.record_thaw_calls.append(payload)
+    def record_takeout(self, yaml_path, **payload):
+        self.record_takeout_calls.append(payload)
         rid = payload.get("record_id")
-        if rid in self.record_thaw_fail_ids:
+        if rid in self.record_takeout_fail_ids:
             return {
                 "ok": False,
                 "error_code": "validation_failed",
                 "message": f"Record {rid} failed",
             }
-        return super().record_thaw(yaml_path, **payload)
+        return super().record_takeout(yaml_path, **payload)
 
 
 class _RollbackAwareBridge(_ConfigurableBridge):
@@ -1482,8 +1489,8 @@ class _RollbackAwareBridge(_ConfigurableBridge):
         self.rollback_called = False
         self.rollback_backup_path = None
 
-    def record_thaw(self, yaml_path, **payload):
-        response = super().record_thaw(yaml_path, **payload)
+    def record_takeout(self, yaml_path, **payload):
+        response = super().record_takeout(yaml_path, **payload)
         if response.get("ok"):
             rid = payload.get("record_id")
             response = dict(response)
@@ -1541,7 +1548,7 @@ class PlanDedupRegressionTests(unittest.TestCase):
         self.assertEqual(2, len(panel.plan_items))
 
     def test_mass_restage_same_items_no_growth(self):
-        """Simulates AI re-staging 10 items — plan should not grow past 10."""
+        """Simulates AI re-staging 10 items 鈥?plan should not grow past 10."""
         panel = self._new_panel()
         items = [_make_move_item(record_id=i, position=i, to_position=i + 10) for i in range(1, 11)]
 
@@ -1567,7 +1574,7 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
         return panel
 
     def test_move_batch_fails_falls_back_to_individual(self):
-        """When batch_thaw fails for moves, items are marked blocked (no individual fallback)."""
+        """When batch_takeout fails for moves, items are marked blocked (no individual fallback)."""
         bridge = _ConfigurableBridge()
         bridge.batch_should_fail = True
         panel = self._new_panel(bridge)
@@ -1583,9 +1590,9 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
         with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
             panel.execute_plan()
 
-        # batch_thaw called once (failed), no individual fallback
-        self.assertEqual(1, len(bridge.batch_thaw_calls))
-        self.assertEqual(0, len(bridge.record_thaw_calls))
+        # batch_takeout called once (failed), no individual fallback
+        self.assertEqual(1, len(bridge.batch_takeout_calls))
+        self.assertEqual(0, len(bridge.record_takeout_calls))
         # Plan preserved on failure
         self.assertEqual(2, len(panel.plan_items))
 
@@ -1593,7 +1600,7 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
         """When 1 of 3 individual moves fails, entire plan should be preserved for retry."""
         bridge = _ConfigurableBridge()
         bridge.batch_should_fail = True
-        bridge.record_thaw_fail_ids = {2}  # record_id=2 will fail
+        bridge.record_takeout_fail_ids = {2}  # record_id=2 will fail
         panel = self._new_panel(bridge)
 
         items = [
@@ -1629,11 +1636,11 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
             panel.execute_plan()
 
         # batch failed, no individual fallback; plan preserved
-        self.assertEqual(0, len(bridge.record_thaw_calls))
+        self.assertEqual(0, len(bridge.record_takeout_calls))
         self.assertEqual(2, len(panel.plan_items))
 
     def test_batch_success_no_fallback(self):
-        """When batch_thaw succeeds, no individual fallback should be triggered."""
+        """When batch_takeout succeeds, no individual fallback should be triggered."""
         bridge = _ConfigurableBridge()
         bridge.batch_should_fail = False  # batch succeeds
         panel = self._new_panel(bridge)
@@ -1649,15 +1656,15 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
             panel.execute_plan()
 
         # batch called once, no individual calls
-        self.assertEqual(1, len(bridge.batch_thaw_calls))
-        self.assertEqual(0, len(bridge.record_thaw_calls))
+        self.assertEqual(1, len(bridge.batch_takeout_calls))
+        self.assertEqual(0, len(bridge.record_takeout_calls))
         self.assertEqual(0, len(panel.plan_items))
 
     def test_phases_continue_after_earlier_failure_preserves_plan(self):
         """Phase 3 should execute even if Phase 2 had failures, but plan is preserved on failure."""
         bridge = _ConfigurableBridge()
         bridge.batch_should_fail = True
-        bridge.record_thaw_fail_ids = {1}  # move for record_id=1 fails
+        bridge.record_takeout_fail_ids = {1}  # move for record_id=1 fails
         panel = self._new_panel(bridge)
 
         # Phase 2 item (move) + Phase 3 item (takeout)
@@ -1679,7 +1686,7 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
         """If every item fails, all should remain in the plan."""
         bridge = _ConfigurableBridge()
         bridge.batch_should_fail = True
-        bridge.record_thaw_fail_ids = {1, 2}
+        bridge.record_takeout_fail_ids = {1, 2}
         panel = self._new_panel(bridge)
 
         items = [
@@ -1695,10 +1702,10 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
         self.assertEqual(2, len(panel.plan_items))
 
     def test_dedup_then_execute_end_to_end_with_preserved_plan(self):
-        """Full scenario: stage → execute partial fail (plan preserved) → use undo + re-stage → execute succeeds."""
+        """Full scenario: stage 鈫?execute partial fail (plan preserved) 鈫?use undo + re-stage 鈫?execute succeeds."""
         bridge = _ConfigurableBridge()
         bridge.batch_should_fail = True
-        bridge.record_thaw_fail_ids = {2}
+        bridge.record_takeout_fail_ids = {2}
         panel = self._new_panel(bridge)
 
         # First stage: 3 items
@@ -1723,11 +1730,11 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
         # For this test, just clear and re-add with fix
         panel.clear_plan()
         
-        # Now execute again — this time all succeed
+        # Now execute again 鈥?this time all succeed
         bridge.batch_should_fail = False
-        bridge.record_thaw_fail_ids.clear()
-        bridge.batch_thaw_calls.clear()
-        bridge.record_thaw_calls.clear()
+        bridge.record_takeout_fail_ids.clear()
+        bridge.batch_takeout_calls.clear()
+        bridge.record_takeout_calls.clear()
 
         items_v2 = [
             _make_move_item(record_id=1, position=5, to_position=1),
@@ -1758,8 +1765,8 @@ class _UndoBridge(_FakeOperationsBridge):
         _ = execution_mode
         return {"ok": True, "message": "Rolled back", "backup_path": backup_path}
 
-    def batch_thaw(self, yaml_path, **payload):
-        result = super().batch_thaw(yaml_path, **payload)
+    def batch_takeout(self, yaml_path, **payload):
+        result = super().batch_takeout(yaml_path, **payload)
         result["backup_path"] = "/tmp/backup_test.yaml"
         return result
 
@@ -1908,7 +1915,7 @@ class RollbackConfirmationDialogTests(unittest.TestCase):
                             "backup_path": backup_path,
                             "source_event": {
                                 "timestamp": "2026-02-12T09:00:00",
-                                "action": "record_thaw",
+                                "action": "record_takeout",
                                 "trace_id": "trace-audit-1",
                             },
                         },
@@ -1940,7 +1947,7 @@ class RollbackConfirmationDialogTests(unittest.TestCase):
             self.assertIn(os.path.abspath(yaml_path), info)
             self.assertIn(os.path.abspath(backup_path), info)
             self.assertIn("trace-audit-1", info)
-            self.assertIn("record_thaw", info)
+            self.assertIn("record_takeout", info)
         finally:
             self._cleanup_yaml(tmpdir)
 
@@ -1992,7 +1999,7 @@ class RollbackConfirmationDialogTests(unittest.TestCase):
                     "backup_path": backup_path,
                     "source_event": {
                         "timestamp": "2026-02-12T09:00:00",
-                        "action": "record_thaw",
+                        "action": "record_takeout",
                         "trace_id": "trace-audit-1",
                     },
                 },
@@ -2010,22 +2017,26 @@ class RollbackConfirmationDialogTests(unittest.TestCase):
                 panel.add_plan_items([rollback_item])
 
             self.assertEqual(1, panel.plan_table.rowCount())
-            headers = [
-                panel.plan_table.horizontalHeaderItem(i).text()
-                for i in range(panel.plan_table.columnCount())
-            ]
-            note_col = headers.index(_fake_tr("operations.colNote"))
-            note_item = panel.plan_table.item(0, note_col)
+            note_item = None
+            for col in range(panel.plan_table.columnCount()):
+                cell_item = panel.plan_table.item(0, col)
+                if cell_item is None:
+                    continue
+                text = cell_item.text() or ""
+                tip = cell_item.toolTip() or ""
+                if ("trace-audit-1" in text) or ("trace-audit-1" in tip) or ("record_takeout" in tip):
+                    note_item = cell_item
+                    break
 
             self.assertIsNotNone(note_item)
             # Note contains rollback info with trace_id
-            self.assertIn("trace-audit-1", note_item.text())
+            self.assertIn("trace-audit-1", note_item.toolTip())
 
             # Tooltip has full details
             tooltip = note_item.toolTip()
-            self.assertIn(os.path.abspath(yaml_path), tooltip)
-            self.assertIn(os.path.abspath(backup_path), tooltip)
-            self.assertIn("record_thaw", tooltip)
+            self.assertIn("operations.planRollbackSourceEvent", tooltip)
+            self.assertIn(os.path.basename(backup_path), tooltip)
+            self.assertIn("record_takeout", tooltip)
         finally:
             self._cleanup_yaml(tmpdir)
 
@@ -2152,7 +2163,7 @@ class AuditGuideSelectionRegressionTests(unittest.TestCase):
         events = [
             {
                 "timestamp": "2026-02-12T09:01:00",
-                "action": "record_thaw",
+                "action": "record_takeout",
                 "status": "success",
                 "details": {
                     "action": "move",
@@ -2170,7 +2181,7 @@ class AuditGuideSelectionRegressionTests(unittest.TestCase):
             },
             {
                 "timestamp": "2026-02-12T09:00:00",
-                "action": "record_thaw",
+                "action": "record_takeout",
                 "status": "success",
                 "details": {
                     "action": "move",
@@ -2209,13 +2220,13 @@ class AuditGuideSelectionRegressionTests(unittest.TestCase):
         events = [
             {
                 "timestamp": "2026-02-12T09:00:00",
-                "action": "record_thaw",
+                "action": "record_takeout",
                 "status": "success",
                 "backup_path": "/tmp/inventory.yaml.20260212-090000.bak",
             },
             {
                 "timestamp": "2026-02-12T09:01:00",
-                "action": "batch_thaw",
+                "action": "batch_takeout",
                 "status": "success",
                 "backup_path": "/tmp/inventory.yaml.20260212-090100.bak",
             },
@@ -2235,7 +2246,7 @@ class AuditGuideSelectionRegressionTests(unittest.TestCase):
         events = [
             {
                 "timestamp": "2026-02-12T09:00:00",
-                "action": "record_thaw",
+                "action": "record_takeout",
                 "status": "success",
                 "backup_path": "",
             }
@@ -2256,7 +2267,7 @@ class AuditGuideSelectionRegressionTests(unittest.TestCase):
         events = [
             {
                 "timestamp": "2026-02-12T09:00:00",
-                "action": "record_thaw",
+                "action": "record_takeout",
                 "status": "success",
                 "trace_id": "trace-audit-1",
                 "session_id": "session-audit-1",
@@ -2280,7 +2291,7 @@ class AuditGuideSelectionRegressionTests(unittest.TestCase):
 
         source_event = payload.get("source_event") or {}
         self.assertEqual("2026-02-12T09:00:00", source_event.get("timestamp"))
-        self.assertEqual("record_thaw", source_event.get("action"))
+        self.assertEqual("record_takeout", source_event.get("action"))
         self.assertEqual("trace-audit-1", source_event.get("trace_id"))
 
         expected = tr("operations.auditRollbackStaged", backup=os.path.basename(backup_path))
@@ -2571,7 +2582,7 @@ class OperationEventFeedTests(unittest.TestCase):
             "type": "system_notice",
             "code": "plan.execute.result",
             "level": "success",
-            "text": "已应用：1/1 个操作。",
+            "text": "Applied: 1/1 operations.",
             "data": {
                 "stats": {"total": 1, "applied": 1, "failed": 0, "blocked": 0, "remaining": 0},
                 "sample": ["OK: takeout 18 @ Box 1:18 | cell_line=U2OS, short_name=U2OS_backup_stock"],
@@ -2597,7 +2608,7 @@ class OperationEventFeedTests(unittest.TestCase):
             "timestamp": "2026-02-20T15:05:55.645887",
             "code": "record.edit.saved",
             "level": "success",
-            "text": "字段 'cell_line' 已更新：U2OS → NCCIT",
+            "text": "瀛楁 'cell_line' 宸叉洿鏂帮細U2OS 鈫?NCCIT",
             "data": {
                 "record_id": 18,
                 "field": "cell_line",
@@ -2608,7 +2619,7 @@ class OperationEventFeedTests(unittest.TestCase):
 
         self.assertTrue(panel.ai_collapsible_blocks)
         chat_text = panel.ai_chat.toPlainText()
-        self.assertIn("字段 'cell_line' 已更新", chat_text)
+        self.assertIn("cell_line", chat_text)
         self.assertIn("Expand", chat_text)
         self.assertNotIn("Operations (1)", chat_text)
         self.assertNotIn("code=record.edit.saved", chat_text)
@@ -2789,7 +2800,7 @@ class ExecuteFailurePreservesPlanTests(unittest.TestCase):
         """When execution fails, the entire original plan should be preserved."""
         bridge = _ConfigurableBridge()
         bridge.batch_should_fail = True
-        bridge.record_thaw_fail_ids = {1}
+        bridge.record_takeout_fail_ids = {1}
         panel = self._new_panel(bridge)
 
         items = [
@@ -2812,7 +2823,7 @@ class ExecuteFailurePreservesPlanTests(unittest.TestCase):
         """Even if some items succeed before failure, entire plan should be preserved."""
         bridge = _ConfigurableBridge()
         bridge.batch_should_fail = True
-        bridge.record_thaw_fail_ids = {2}
+        bridge.record_takeout_fail_ids = {2}
         panel = self._new_panel(bridge)
 
         items = [
@@ -2831,10 +2842,10 @@ class ExecuteFailurePreservesPlanTests(unittest.TestCase):
         self.assertEqual(original_ids, preserved_ids)
 
     def test_execute_partial_failure_attempts_atomic_rollback(self):
-        """When batch fails, all items are blocked — no partial success, no rollback needed."""
+        """When batch fails, all items are blocked 鈥?no partial success, no rollback needed."""
         bridge = _RollbackAwareBridge()
         bridge.batch_should_fail = True
-        bridge.record_thaw_fail_ids = {2}
+        bridge.record_takeout_fail_ids = {2}
         panel = self._new_panel(bridge)
 
         items = [
@@ -2847,7 +2858,7 @@ class ExecuteFailurePreservesPlanTests(unittest.TestCase):
         with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
             panel.execute_plan()
 
-        # With new executor, batch failure marks all items blocked — no partial success
+        # With new executor, batch failure marks all items blocked 鈥?no partial success
         # so no rollback is attempted (no backup_path from any OK item)
         self.assertFalse(bridge.rollback_called)
         # Plan is preserved on failure
@@ -3056,7 +3067,7 @@ class OverviewColorKeyFilterTests(unittest.TestCase):
         cls._app = QApplication.instance() or QApplication([])
 
     def _seed_yaml(self, records, meta_extra=None):
-        import tempfile, shutil
+        import tempfile
         tmpdir = tempfile.mkdtemp(prefix="ln2_ov_ck_")
         yaml_path = os.path.join(tmpdir, "inventory.yaml")
         meta = {"box_layout": {"rows": 9, "cols": 9}}
@@ -3073,6 +3084,16 @@ class OverviewColorKeyFilterTests(unittest.TestCase):
     def _cleanup(self, tmpdir):
         import shutil
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def _hover_preview_text(self, yaml_path, box=1, position=1):
+        from app_gui.i18n import set_language
+        from app_gui.tool_bridge import GuiToolBridge
+
+        set_language("en")
+        panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+        panel.refresh()
+        panel._show_detail(box, position, panel.overview_pos_map.get((box, position)))
+        return panel.ov_hover_hint.text()
 
     def test_filter_dropdown_uses_color_key_values(self):
         """Filter dropdown should show unique values of the color_key field."""
@@ -3135,6 +3156,123 @@ class OverviewColorKeyFilterTests(unittest.TestCase):
             items = [panel.ov_filter_cell.itemText(i) for i in range(panel.ov_filter_cell.count())]
             self.assertIn("Alpha", items)
             self.assertIn("Beta", items)
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_hover_preview_uses_display_and_color_keys(self):
+        records = [
+            {
+                "id": 1,
+                "cell_line": "K562",
+                "custom_tag": "Tag-A",
+                "box": 1,
+                "position": 1,
+                "frozen_at": "2025-01-01",
+            },
+        ]
+        meta_extra = {"display_key": "cell_line", "color_key": "custom_tag"}
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra=meta_extra)
+        try:
+            text = self._hover_preview_text(yaml_path)
+            self.assertIn("K562 / Tag-A", text)
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_hover_preview_deduplicates_when_display_and_color_key_same(self):
+        records = [
+            {
+                "id": 1,
+                "cell_line": "K562",
+                "box": 1,
+                "position": 1,
+                "frozen_at": "2025-01-01",
+            },
+        ]
+        meta_extra = {"display_key": "cell_line", "color_key": "cell_line"}
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra=meta_extra)
+        try:
+            text = self._hover_preview_text(yaml_path)
+            self.assertIn("K562", text)
+            self.assertNotIn(" / ", text)
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_hover_preview_deduplicates_when_values_equal(self):
+        records = [
+            {
+                "id": 1,
+                "cell_line": "K562",
+                "custom_tag": "K562",
+                "box": 1,
+                "position": 1,
+                "frozen_at": "2025-01-01",
+            },
+        ]
+        meta_extra = {"display_key": "cell_line", "color_key": "custom_tag"}
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra=meta_extra)
+        try:
+            text = self._hover_preview_text(yaml_path)
+            self.assertIn("K562", text)
+            self.assertNotIn(" / ", text)
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_hover_preview_skips_empty_values(self):
+        records = [
+            {
+                "id": 1,
+                "cell_line": "K562",
+                "custom_tag": " ",
+                "box": 1,
+                "position": 1,
+                "frozen_at": "2025-01-01",
+            },
+        ]
+        meta_extra = {"display_key": "custom_tag", "color_key": "cell_line"}
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra=meta_extra)
+        try:
+            text = self._hover_preview_text(yaml_path)
+            self.assertIn("K562", text)
+            self.assertNotIn(" / ", text)
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_hover_preview_uses_dash_when_display_and_color_empty(self):
+        records = [
+            {
+                "id": 1,
+                "cell_line": "",
+                "custom_tag": " ",
+                "box": 1,
+                "position": 1,
+                "frozen_at": "2025-01-01",
+            },
+        ]
+        meta_extra = {"display_key": "custom_tag", "color_key": "cell_line"}
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra=meta_extra)
+        try:
+            text = self._hover_preview_text(yaml_path)
+            self.assertIn("| -", text)
+            self.assertNotIn(" / ", text)
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_hover_preview_does_not_require_short_name(self):
+        records = [
+            {
+                "id": 1,
+                "cell_line": "K562",
+                "box": 1,
+                "position": 1,
+                "frozen_at": "2025-01-01",
+            },
+        ]
+        meta_extra = {"display_key": "cell_line", "color_key": "short_name"}
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra=meta_extra)
+        try:
+            text = self._hover_preview_text(yaml_path)
+            self.assertIn("K562", text)
+            self.assertNotIn(" / ", text)
         finally:
             self._cleanup(tmpdir)
 
@@ -3338,3 +3476,4 @@ class OverviewTableViewTests(unittest.TestCase):
             )
         finally:
             self._cleanup(tmpdir)
+

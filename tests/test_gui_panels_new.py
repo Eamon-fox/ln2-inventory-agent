@@ -180,10 +180,9 @@ class PlanTableColumnsTests(unittest.TestCase):
         self.assertIn(tr("operations.colPosition"), headers)
         self.assertIn(tr("operations.date"), headers)
         self.assertIn(tr("operations.colChanges"), headers)
-        self.assertIn(tr("operations.colNote"), headers)
         self.assertIn(tr("operations.colStatus"), headers)
 
-    def test_plan_table_shows_changes_summary_for_thaw_item(self):
+    def test_plan_table_shows_changes_summary_for_takeout_item(self):
         """Plan table should summarize record metadata in Changes column."""
         panel = self._new_operations_panel()
         panel.update_records_cache({
@@ -191,11 +190,11 @@ class PlanTableColumnsTests(unittest.TestCase):
         })
 
         panel.add_plan_items([{
-            "action": "thaw",
+            "action": "takeout",
             "record_id": 2,
             "box": 2,
             "position": 10,
-            "payload": {"date_str": "2025-02-19", "action": "Takeout"},
+            "payload": {"date_str": "2025-02-19", "action": "takeout"},
         }])
 
         # Find date and changes column indices
@@ -241,7 +240,10 @@ class PlanTableColumnsTests(unittest.TestCase):
         ]
         changes_col = headers.index(tr("operations.colChanges"))
         cell_text = panel.plan_table.item(0, changes_col).text()
-        self.assertIn("operations.shortName", cell_text)
+        self.assertTrue(
+            tr("operations.shortName", default="operations.shortName") in cell_text
+            or "operations.shortName" in cell_text
+        )
         self.assertIn("new-name", cell_text)
         self.assertIn("HeLa", cell_text)
 

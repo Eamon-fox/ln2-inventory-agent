@@ -241,8 +241,8 @@ def simulate_plan_pos_map(
         owner[src_loc] = dest_owner
         owner[dst_loc] = record_id
 
-    # Phase 3: takeout/thaw/discard (order by action group like executor)
-    for action_name in ("takeout", "thaw", "discard"):
+    # Phase 3: takeout (order by action group like executor)
+    for action_name in ("takeout",):
         for item in items:
             if str(item.get("action") or "").lower() != action_name:
                 continue

@@ -129,7 +129,8 @@
     "importPromptNewInventory": "新建库存",
     "importStartupTitle": "欢迎！首次设置",
     "importStartupMessage": "要导入现有的 Excel/CSV 库存数据，您可以使用 AI 将其转换为 YAML 格式。",
-    "importStartupAction": "获取导入提示词"
+    "importStartupAction": "获取导入提示词",
+    "importPromptTemplate": "You are a data-cleaning and structuring assistant.\nConvert my pasted Excel/CSV/table data into LN2 inventory YAML.\n\nRules:\n1) Output YAML only. Do not add explanations.\n2) Top-level keys must be exactly: meta, inventory.\n3) Always include:\nmeta:\n  box_layout:\n    rows: 9\n    cols: 9\n  custom_fields: []\ninventory: []\n4) Data model is tube-level: each inventory item is one physical tube.\n5) Required fields for each inventory item: id, box, frozen_at.\n6) Optional fields: position, cell_line, short_name, plasmid_name, plasmid_id, note, thaw_events.\n7) If a value is missing/unknown, use null.\n8) Dates must use YYYY-MM-DD.\n9) id must be unique positive integers.\n10) If source uses positions like A1/B3, convert to numeric position:\n    position = (row_index-1)*cols + col_index, where A=1, B=2...\n11) thaw_events format:\n    thaw_events:\n      - date: \"YYYY-MM-DD\"\n        action: \"takeout\"   # takeout/move\n        positions: [1]\n12) Do not invent fields not present in source.\n\nInput data:\n<<<DATA\n[paste Excel/CSV/table data here]\nDATA"
   },
   "overview": {
     "title": "概览",
@@ -145,7 +146,7 @@
     "viewTable": "表格",
     "quickAdd": "快速存入",
     "search": "搜索",
-    "searchPlaceholder": "\u641c\u7d22\u6240\u6709\u53ef\u89c1\u5b57\u6bb5...",
+    "searchPlaceholder": "搜索所有可见字段...",
     "moreFilters": "更多筛选",
     "hideFilters": "隐藏筛选",
     "allBoxes": "所有盒子",
@@ -167,8 +168,6 @@
     "previewAdd": "存入",
     "previewOut": "取出",
     "takeout": "取出",
-    "thaw": "复苏",
-    "discard": "丢弃",
     "boxLabel": "盒子 {box}",
     "occupiedCount": "已占用 {occupied}/{total} | 空闲 {empty}",
     "filteredCount": "筛选后：已占用 {occupied} | 空闲 {empty}",
@@ -178,6 +177,7 @@
     "loadFailed": "加载概览失败：{error}",
     "previewEmpty": "盒子 {box} 位置 {pos} | 空格子",
     "previewRecord": "盒子 {box}:{pos} | ID {id} | {cell} / {short}",
+    "previewRecordSingle": "盒子 {box}:{pos} | ID {id} | {value}",
     "ctxStatus": "状态",
     "ctxSource": "来源",
     "ctxId": "ID",
@@ -202,7 +202,16 @@
     "tooltipId": "ID",
     "tooltipPos": "位置",
     "tooltipCellLine": "细胞系",
-    "tooltipDate": "日期"
+    "tooltipDate": "日期",
+    "filterColumn": "筛选: {column}",
+    "selectAll": "全选",
+    "searchText": "搜索文本",
+    "enterSearchText": "输入搜索文本...",
+    "numberRange": "数字范围",
+    "min": "最小值",
+    "max": "最大值",
+    "dateRange": "日期范围",
+    "activeFilters": "活动筛选: {count} 列"
   },
   "operations": {
     "title": "操作",
@@ -216,7 +225,6 @@
     "clear": "清空",
     "add": "存入",
     "edit": "编辑",
-    "thaw": "取出",
     "move": "移动",
     "rollback": "回滚",
     "auditLog": "审计日志",
@@ -244,7 +252,7 @@
     "date": "日期",
     "from": "从",
     "fromPosition": "来源位置",
-    "to": "向",
+    "to": "到",
     "toPosition": "目标位置",
     "toBox": "目标盒子",
     "sameBox": "同一盒子",
@@ -399,16 +407,14 @@
     "foundBackups": "已找到 {count} 条备份。",
     "noBackupsFound": "未找到备份。请先点击“刷新备份”。",
     "selectBackupPathFirst": "请先选择备份路径。",
-    "from": "从",
-    "to": "到",
     "auditAction": "操作",
     "auditStatus": "状态",
     "auditStatusSuccess": "成功",
     "auditStatusFailed": "失败",
     "loadAuditLog": "加载审计日志",
     "auditActionAddEntry": "存入",
-    "auditActionRecordThaw": "单条操作",
-    "auditActionBatchThaw": "批量操作",
+    "auditActionRecordTakeout": "单条取出",
+    "auditActionBatchTakeout": "批量取出",
     "auditActionRollback": "回滚",
     "auditGuideFromSelected": "从所选生成导引",
     "auditPrintSelectedGuide": "打印所选导引",
@@ -520,6 +526,61 @@
     "cancel": "取消",
     "close": "关闭"
   },
+  "errors": {
+    "unknown": "未知错误",
+    "code": {
+      "backup_load_failed": "读取备份文件失败。",
+      "backup_not_found": "未找到备份文件。",
+      "box_not_empty": "盒子非空。",
+      "empty_entries": "至少需要一条条目。",
+      "empty_positions": "至少需要一个位置。",
+      "export_failed": "导出失败。",
+      "forbidden_fields": "包含不可编辑字段。",
+      "integrity_validation_failed": "写入被阻止：完整性校验失败。",
+      "invalid_action": "操作类型无效。",
+      "invalid_box": "盒子编号无效。",
+      "invalid_box_layout": "盒子布局元数据无效。",
+      "invalid_cell_line": "细胞系无效。",
+      "invalid_cell_line_options": "未配置细胞系选项。",
+      "invalid_count": "数量必须大于 0。",
+      "invalid_date": "日期格式无效，请使用 YYYY-MM-DD。",
+      "invalid_execution_mode": "执行模式无效。",
+      "invalid_max_steps": "max_steps 参数无效。",
+      "invalid_meta": "元数据格式无效。",
+      "invalid_mode": "查询模式无效，应为 fuzzy/exact/keywords。",
+      "invalid_move_target": "移动目标无效。",
+      "invalid_operation": "操作类型无效。",
+      "invalid_output_path": "输出路径无效。",
+      "invalid_position": "位置无效。",
+      "invalid_record_id": "记录 ID 无效。",
+      "invalid_renumber_mode": "重排模式无效。",
+      "invalid_tool_input": "输入参数无效。",
+      "invalid_agent_result": "Agent 返回格式无效。",
+      "agent_runtime_failed": "Agent 运行失败。",
+      "api_key_required": "缺少 API Key。",
+      "empty_query": "查询内容不能为空。",
+      "load_failed": "读取 YAML 文件失败。",
+      "min_box_count": "至少保留一个盒子。",
+      "missing_required_fields": "缺少必填字段。",
+      "no_backups": "没有可用备份。",
+      "no_plan_store": "计划存储不可用。",
+      "no_fields": "至少需要提供一个字段。",
+      "not_found": "未找到请求的记录。",
+      "plan_preflight_failed": "计划预检失败。",
+      "plan_validation_failed": "计划校验失败。",
+      "position_conflict": "位置冲突。",
+      "position_not_found": "记录中未找到该位置。",
+      "record_not_found": "未找到记录。",
+      "renumber_mode_required": "删除中间盒子时必须指定 renumber_mode。",
+      "rollback_backup_invalid": "当前数据集下该备份不可回滚。",
+      "rollback_failed": "回滚失败。",
+      "unknown_tool": "未知工具。",
+      "validation_failed": "校验失败。",
+      "write_failed": "写入 YAML 文件失败。",
+      "write_requires_execute_mode": "仅允许在执行计划时写入。"
+    },
+    "qtFontFaceFromHdcFailed": "字体渲染警告：无法通过 DirectWrite 加载「{family}」（DPI {dpi}），已自动回退到兼容字体。"
+  },
   "eventDetails": {
     "type": "类型",
     "time": "时间",
@@ -560,8 +621,6 @@
       "add": "存入",
       "takeout": "取出",
       "move": "移动",
-      "thaw": "复苏",
-      "discard": "丢弃",
       "edit": "编辑"
     },
     "recordId": "记录 ID",
@@ -585,5 +644,161 @@
     "statusOk": "状态: OK",
     "statusBlocked": "状态: 已阻塞",
     "errorDetails": "错误详情"
+  },
+  "agentToolRunner": {
+    "errors": {
+      "entriesRequiredCannotBeEmpty": "条目为必填项且不能为空",
+      "fieldMustBeInteger": "{key} 必须是整数",
+      "fieldsMustBeNonEmptyObject": "字段必须是非空对象",
+      "invalidBatchEntryMissingRecordId": "批次条目无效（缺少 record_id）：{entry}",
+      "invalidPositionField": "{field_name} 无效：{value}",
+      "missingRequiredIntegerField": "缺少必需的整数字段：{key}",
+      "modeMustBeOneOf": "模式必须是以下之一：fuzzy、exact、keywords",
+      "operationMustBeAddOrRemove": "操作必须是 add 或 remove",
+      "positionMissingCannotInfer": "位置缺失，无法推断 record_id={record_id}。记录没有位置（可能会被消耗）。",
+      "recordIdMustBeInteger": "record_id 必须是整数：{error}",
+      "recordIdRequired": "需要record_id",
+      "unknownError": "未知错误",
+      "unknownTool": "未知工具：{tool_name}"
+    },
+    "hint": {
+      "adjustInputByToolSpecs": "根据 `tool_specs` 调整 `{tool_name}` 输入，然后重试。",
+      "boxNotEmpty": "首先重新move 该盒子中的所有活动管，然后重试 remove 操作。",
+      "emptyPositionsOrEntries": "重试之前至少提供一个目标位置或条目。",
+      "invalidAction": "使用支持的操作值：takeout / move。",
+      "invalidBoxOrPositionOrRecordId": "提供当前布局中的有效框 ID 和有效位置（例如 12 或 A1）。",
+      "invalidDate": "使用日期格式 `YYYY-MM-DD`（例如：2026-02-10）。",
+      "invalidMode": "对于 `search_records`，使用模式：fuzzy / exact / keywords。",
+      "invalidMoveTarget": "对于 move 操作，请提供与源位置不同的有效 `to_position`。",
+      "invalidToolInput": "检查 `{tool_name}` 输入字段。必需：{required_text}。可选：{optional_text}。",
+      "minBoxCount": "至少必须保留一盒；不要remove最后一个盒子。",
+      "noBackups": "尚无备份；在选择 backup_path 之前，首先调查写入历史记录并使用 `question` 工具确认回滚意图。",
+      "pathOrPermission": "验证 yaml_path 是否存在并且文件权限是否正确，然后重试。",
+      "planPreflightFailedNoIds": "一项或多项写入操作对于当前清单状态无效。查看被阻止的详细信息，然后仅重试已更正的操作。",
+      "planPreflightFailedWithIds": "由于基线完整性问题，预检失败。使用 `get_raw_entries` ids=[{ids_text}] 获取受影响的记录，然后通过 `edit_entry` 修复无效字段（例如，将 `cell_line` 规范化为配置的选项），然后重试暂存。",
+      "positionConflict": "通过 `list_empty_positions` 或 `recommend_positions` 选择空闲插槽，然后重试。",
+      "positionNotFound": "使用属于目标记录的位置。",
+      "recordNotFound": "首先调用 `search_records` 并使用结果中的有效 `record_id` 。",
+      "renumberModeRequired": "拆除中间盒时，选择renumber_mode：keep_gaps 或renumber_contiguous。",
+      "retryWithCorrectedInput": "使用更正的工具输入重试。",
+      "unknownTool": "使用可用工具之一：{available_text}。",
+      "userCancelled": "用户取消了确认对话框。",
+      "validationOrRollbackInvalid": "回滚目标对于当前文件状态无效。根据审核/时间线重新检查 backup_path，并在重试之前根据需要要求用户使用 `question` 进行确认。",
+      "writeRequiresExecuteMode": "写入工具是执行门控的。首先进行阶段操作，然后让人员在 GUI Plan 选项卡中运行 Execute。使用 dry_run 进行仅预览检查。"
+    },
+    "input": {
+      "allHistoryOnlyForSummary": "all_history 仅在 view=summary 时有效",
+      "backupPathRequired": "backup_path 必须是非空字符串",
+      "boxNotAllowedWhenAdd": "当操作=add时不允许使用盒子",
+      "boxRequiredWhenRemove": "当操作=remove时需要盒子",
+      "countNotAllowedWhenRemove": "当操作=remove时不允许计数",
+      "countRequiredWhenAdd": "当操作=add时需要计数",
+      "manageStagedIndexOrKeyNotBoth": "提供索引或操作+record_id+位置，而不是两者都提供",
+      "manageStagedNeedActionRecordPosition": "通过钥匙移除时需要动作、record_id 和位置",
+      "manageStagedNeedIndexOrKey": "提供索引或操作+record_id+位置",
+      "manageStagedSelectorOnlyForRemove": "索引/动作/record_id/位置仅在操作=remove时有效",
+      "recentCannotMixSearchFields": "centre_* 过滤器不能与文本/结构化搜索字段混合",
+      "renumberOnlyForRemove": "renumber_mode仅在操作=remove时有效",
+      "summaryViewAllowedFields": "view=summary 仅支持：视图、天数、all_history",
+      "toPositionRequiredWhenMove": "当action=move时需要to_position",
+      "useEitherRecentDaysOrCount": "使用 recent_days 或 recent_count，而不是同时使用"
+    },
+    "itemDesc": {
+      "default": "{action} {label} @ 盒子 {box}:{pos}{target}",
+      "moveTarget": "-> {to_pos}",
+      "moveTargetWithBox": "-> 框 {to_box}:{to_pos}",
+      "rollbackLatest": "回滚最新备份",
+      "rollbackWithPath": "回滚 {name} ({backup_path})"
+    },
+    "manageBoxes": {
+      "awaitingUserConfirmation": "等待用户在 GUI 中确认。"
+    },
+    "manageStaged": {
+      "clearedCount": "已清除 {count} 暂存项目。",
+      "indexOutOfRange": "索引 {idx} 超出范围 (0..{max_idx})。",
+      "noMatchingItem": "未找到匹配的暂存项目。",
+      "noPlanStoreAvailableList": "没有可用的计划商店。",
+      "planStoreNotAvailable": "计划商店不可用。",
+      "removedByIndex": "索引 {idx} 处的 Removed 项目：{desc}",
+      "removedMatchingCount": "Removed {count} 匹配项目。"
+    },
+    "question": {
+      "atLeastOneRequired": "至少需要一个 question。",
+      "missingHeaderOrQuestion": "问题 {index} 缺少“标题”或“question”。",
+      "mustBeDict": "问题 {index} 必须是一个字典。"
+    },
+    "response": {
+      "nonDict": "工具 `{tool_name}` 返回非字典响应。"
+    },
+    "stage": {
+      "allRejectedByValidation": "所有操作均被验证拒绝：{detail}",
+      "moreBlockedItems": "; ...以及 {count} 更多",
+      "planStoreNotAvailable": "计划商店不可用。",
+      "stagedForHumanApproval": "在 Plan 选项卡中上演 {count} 操作以供人工批准：{summary}"
+    },
+    "toolContracts": {
+      "add_entry": {
+        "description": "添加新的冷冻管记录。",
+        "notes": "通过 fields 对象提供所有示例元数据（例如 fields.short_name、fields.cell_line）。"
+      },
+      "batch_takeout": {
+        "description": "对于多个管，记录 takeout 或 move。",
+        "notes": "条目支持来自 parse_batch_entries 和结构化数组行的解析字符串格式。"
+      },
+      "defaultDescription": "LN2 库存工具：{name}",
+      "edit_entry": {
+        "description": "编辑现有记录的元数据字段。"
+      },
+      "generate_stats": {
+        "description": "生成库存统计数据。"
+      },
+      "get_raw_entries": {
+        "description": "通过ID列表获取原始库存记录。"
+      },
+      "list_empty_positions": {
+        "description": "列出空缺职位，可以选择在一个框中列出。"
+      },
+      "manage_boxes": {
+        "description": "安全地使用 add 或 remove 库存箱。"
+      },
+      "manage_staged": {
+        "description": "列出remove，或明确分阶段计划项目。"
+      },
+      "query_takeout_events": {
+        "description": "通过view=summary查询takeout/move事件，或时间线摘要。"
+      },
+      "question": {
+        "description": "当所需值未知时，要求用户澄清 ​​questions。",
+        "notes": "question 工具不是写入工具，必须单独运行。"
+      },
+      "recommend_positions": {
+        "description": "推荐新管的空位置。"
+      },
+      "record_takeout": {
+        "description": "记录一根管子的 takeout 或 move。"
+      },
+      "rollback": {
+        "description": "使用显式 backup_path 将清单 YAML 回滚到备份快照。",
+        "notes": "始终提供明确的 backup_path。"
+      },
+      "search_records": {
+        "description": "搜索库存记录，或通过recent_*过滤器列出最近冻结的记录。"
+      }
+    },
+    "validation": {
+      "doesNotMatchAllowedSchema": "{label} 与任何允许的 schema 不匹配",
+      "missingRequiredField": "缺少必填字段：{field}",
+      "mustBeArray": "{label} 必须是一个数组",
+      "mustBeBoolean": "{label} 必须是布尔值",
+      "mustBeGreaterEqual": "{label} 必须 >= {minimum}",
+      "mustBeInteger": "{label} 必须是整数",
+      "mustBeObject": "{label} 必须是一个对象",
+      "mustBeOneOf": "{label} 必须是以下之一： {values}",
+      "mustBeString": "{label} 必须是字符串",
+      "mustContainAtLeastFields": "{label} 必须至少包含 {min_props} 字段",
+      "mustContainAtLeastItems": "{label} 必须至少包含 {min_items} 项",
+      "mustContainAtMostItems": "{label} 必须最多包含 {max_items} 项",
+      "unexpectedFields": "意外字段：{fields}"
+    }
   }
 }

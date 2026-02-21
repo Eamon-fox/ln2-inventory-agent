@@ -2,16 +2,13 @@
 
 import os
 import sys
-import yaml
-from PySide6.QtCore import Qt, QSettings, Slot, QTimer, QSize
+from contextlib import suppress
+from PySide6.QtCore import Qt, QSettings, Slot, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QPushButton, QLabel, QSplitter,
-    QMessageBox, QDialog, QFormLayout, QLineEdit,
-    QDialogButtonBox, QFileDialog, QGroupBox,
-    QComboBox, QSpinBox, QCheckBox, QScrollArea, QTextEdit, QPlainTextEdit,
-    QInputDialog,
+    QDialog, QLineEdit, QFileDialog, QTextEdit, QPlainTextEdit,
 )
 
 if getattr(sys, "frozen", False):
@@ -27,15 +24,13 @@ from app_gui.gui_config import (
     load_gui_config,
     save_gui_config,
 )
-from agent.llm_client import DEFAULT_PROVIDER, PROVIDER_DEFAULTS
+from agent.llm_client import PROVIDER_DEFAULTS
 from app_gui.i18n import t, tr, set_language
 from lib.config import YAML_PATH
 from lib.plan_store import PlanStore
-from lib.position_fmt import get_box_numbers
-from lib.yaml_ops import load_yaml
 from app_gui.ui.theme import (
     apply_dark_theme, apply_light_theme,
-    FONT_SIZE_XS, FONT_SIZE_SM, FONT_SIZE_MONO,
+    resolve_theme_token,
     LAYOUT_OVERVIEW_MIN_WIDTH,
     LAYOUT_OPS_MIN_WIDTH, LAYOUT_OPS_MAX_WIDTH, LAYOUT_OPS_DEFAULT_WIDTH,
     LAYOUT_AI_MIN_WIDTH, LAYOUT_AI_MAX_WIDTH, LAYOUT_AI_DEFAULT_WIDTH,
@@ -44,13 +39,25 @@ from app_gui.ui.theme import (
 from app_gui.ui.overview_panel import OverviewPanel
 from app_gui.ui.operations_panel import OperationsPanel
 from app_gui.ui.ai_panel import AIPanel
+from app_gui.ui.dialogs import (
+    SettingsDialog,
+    ImportPromptDialog,
+    NewDatasetDialog,
+    CustomFieldsDialog,
+)
 from app_gui.ui.icons import get_icon, Icons, set_icon_color
-from app_gui.system_notice import build_system_notice
-from app_gui.auto_updater import AutoUpdater
+from app_gui.main_window_flows import (
+    StartupFlow,
+    WindowStateFlow,
+    SettingsFlow,
+    DatasetFlow,
+    ManageBoxesFlow,
+)
 
 APP_VERSION = "1.1.1"
 APP_RELEASE_URL = "https://github.com/Eamon-fox/snowfox/releases"
 _GITHUB_API_LATEST = "https://api.github.com/repos/Eamon-fox/snowfox/releases/latest"
+_SETTINGS_EXPORTS = (PROVIDER_DEFAULTS,)
 
 
 def _parse_version(v: str) -> tuple:
@@ -87,1166 +94,6 @@ def _normalize_inventory_yaml_path(path_text) -> str:
     return abs_path
 
 
-class _NoWheelComboBox(QComboBox):
-    """Let parent scroll area handle mouse wheel."""
-
-    def wheelEvent(self, event):
-        event.ignore()
-
-
-class _NoWheelSpinBox(QSpinBox):
-    """Let parent scroll area handle mouse wheel."""
-
-    def wheelEvent(self, event):
-        event.ignore()
-
-
-class _NoWheelTextEdit(QTextEdit):
-    """Scroll parent unless this editor is actively focused."""
-
-    def wheelEvent(self, event):
-        if self.hasFocus():
-            super().wheelEvent(event)
-            return
-        event.ignore()
-
-
-class SettingsDialog(QDialog):
-    """Enhanced Settings dialog with sections and help text."""
-
-    def __init__(self, parent=None, config=None, on_create_new_dataset=None, on_manage_boxes=None, on_data_changed=None):
-        super().__init__(parent)
-        self.setWindowTitle(tr("settings.title"))
-        self.setMinimumWidth(750)
-        self.setMinimumHeight(750)
-        self._config = config or {}
-        self._on_create_new_dataset = on_create_new_dataset
-        self._on_manage_boxes = on_manage_boxes
-        self._on_data_changed = on_data_changed
-
-        layout = QVBoxLayout(self)
-        layout.setSpacing(8)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.NoFrame)
-        scroll_content = QWidget()
-        content_layout = QVBoxLayout(scroll_content)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(16)
-        scroll.setWidget(scroll_content)
-        layout.addWidget(scroll, 1)
-
-        data_group = QGroupBox(tr("settings.data"))
-        data_layout = QFormLayout(data_group)
-
-        yaml_row = QHBoxLayout()
-        self.yaml_edit = QLineEdit(self._config.get("yaml_path", ""))
-        self.yaml_new_btn = QPushButton(tr("main.new"))
-        self.yaml_new_btn.setIcon(get_icon(Icons.FILE_PLUS))
-        self.yaml_new_btn.setIconSize(QSize(14, 14))
-        self.yaml_new_btn.setMinimumWidth(60)
-        self.yaml_new_btn.clicked.connect(self._emit_create_new_dataset_request)
-        yaml_browse = QPushButton(tr("settings.browse"))
-        yaml_browse.setIcon(get_icon(Icons.FOLDER_OPEN))
-        yaml_browse.setIconSize(QSize(14, 14))
-        yaml_browse.setMinimumWidth(60)
-        yaml_browse.clicked.connect(self._browse_yaml)
-        yaml_row.addWidget(self.yaml_edit, 1)
-        yaml_row.addWidget(self.yaml_new_btn)
-        yaml_row.addWidget(yaml_browse)
-        data_layout.addRow(tr("settings.inventoryFile"), yaml_row)
-
-        yaml_hint = QLabel(tr("settings.inventoryFileHint"))
-        yaml_hint.setProperty("role", "settingsHint")
-        yaml_hint.setWordWrap(True)
-        data_layout.addRow("", yaml_hint)
-
-        tool_row = QHBoxLayout()
-        cf_btn = QPushButton(tr("main.manageCustomFields"))
-        cf_btn.clicked.connect(self._open_custom_fields_editor)
-        tool_row.addWidget(cf_btn)
-
-        box_btn = QPushButton(tr("main.manageBoxes"))
-        box_btn.clicked.connect(self._open_manage_boxes)
-        tool_row.addWidget(box_btn)
-
-        import_btn = QPushButton(tr("main.importPromptTitle"))
-        import_btn.clicked.connect(self._open_import_prompt)
-        tool_row.addWidget(import_btn)
-
-        tool_row.addStretch()
-        data_layout.addRow("", tool_row)
-
-        content_layout.addWidget(data_group)
-
-        ai_group = QGroupBox(tr("settings.ai"))
-        ai_layout = QFormLayout(ai_group)
-
-        api_keys_config = self._config.get("api_keys", {})
-        self._api_key_edits = {}
-        self._api_key_lock_buttons = {}
-        for provider_id, cfg in PROVIDER_DEFAULTS.items():
-            key_row, key_edit, lock_btn = self._build_locked_api_key_row(
-                api_keys_config.get(provider_id, "")
-            )
-            self._api_key_edits[provider_id] = key_edit
-            self._api_key_lock_buttons[provider_id] = lock_btn
-            label = f'{cfg["display_name"]} ({cfg["env_key"]}):'
-            ai_layout.addRow(label, key_row)
-            if cfg.get("help_url"):
-                help_label = QLabel(f'<a href="{cfg["help_url"]}">{cfg["help_url"]}</a>')
-                help_label.setProperty("role", "settingsHint")
-                help_label.setOpenExternalLinks(True)
-                ai_layout.addRow("", help_label)
-
-        api_hint = QLabel(tr("settings.apiKeyHint"))
-        api_hint.setProperty("role", "settingsHint")
-        api_hint.setWordWrap(True)
-        ai_layout.addRow("", api_hint)
-
-        ai_advanced = self._config.get("ai", {})
-        current_provider = ai_advanced.get("provider") or DEFAULT_PROVIDER
-        self.ai_provider_combo = _NoWheelComboBox()
-        for provider_id, cfg in PROVIDER_DEFAULTS.items():
-            self.ai_provider_combo.addItem(cfg["display_name"], provider_id)
-        idx = self.ai_provider_combo.findData(current_provider)
-        if idx >= 0:
-            self.ai_provider_combo.setCurrentIndex(idx)
-        self.ai_provider_combo.currentIndexChanged.connect(self._on_provider_changed)
-        ai_layout.addRow(tr("settings.aiProvider"), self.ai_provider_combo)
-
-        provider_cfg = PROVIDER_DEFAULTS.get(current_provider, PROVIDER_DEFAULTS[DEFAULT_PROVIDER])
-        default_model = ai_advanced.get("model") or provider_cfg["model"]
-        self.ai_model_edit = QLineEdit(default_model)
-        self.ai_model_edit.setPlaceholderText(provider_cfg["model"])
-        self.ai_model_edit.setEnabled(False)
-        self.ai_model_edit.setObjectName("settingsModelPreview")
-        ai_layout.addRow(tr("settings.aiModel"), self.ai_model_edit)
-
-        self.ai_max_steps = _NoWheelSpinBox()
-        self.ai_max_steps.setRange(1, 20)
-        self.ai_max_steps.setValue(ai_advanced.get("max_steps", 8))
-        ai_layout.addRow(tr("settings.aiMaxSteps"), self.ai_max_steps)
-
-        self.ai_thinking_enabled = QCheckBox()
-        self.ai_thinking_enabled.setChecked(ai_advanced.get("thinking_enabled", True))
-        ai_layout.addRow(tr("settings.aiThinking"), self.ai_thinking_enabled)
-
-        self.ai_thinking_expanded = QCheckBox()
-        self.ai_thinking_expanded.setChecked(ai_advanced.get("thinking_expanded", True))
-        ai_layout.addRow(tr("settings.aiThinkingExpanded"), self.ai_thinking_expanded)
-
-        self.ai_custom_prompt = _NoWheelTextEdit()
-        self.ai_custom_prompt.setPlaceholderText(tr("settings.customPromptPlaceholder"))
-        self.ai_custom_prompt.setPlainText(ai_advanced.get("custom_prompt", ""))
-        self.ai_custom_prompt.setMaximumHeight(100)
-        ai_layout.addRow(tr("settings.customPrompt"), self.ai_custom_prompt)
-
-        custom_prompt_hint = QLabel(tr("settings.customPromptHint"))
-        custom_prompt_hint.setProperty("role", "settingsHint")
-        custom_prompt_hint.setWordWrap(True)
-        ai_layout.addRow("", custom_prompt_hint)
-
-        content_layout.addWidget(ai_group)
-
-        from app_gui.i18n import SUPPORTED_LANGUAGES
-        preferences_group = QGroupBox(tr("settings.preferences"))
-        preferences_layout = QFormLayout(preferences_group)
-
-        prefs_row = QWidget()
-        row_layout = QHBoxLayout(prefs_row)
-        row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.setSpacing(12)
-
-        lang_label = QLabel(tr("settings.language"))
-        lang_label.setProperty("role", "inlineFormLabel")
-        row_layout.addWidget(lang_label)
-
-        self.lang_combo = _NoWheelComboBox()
-        for code, name in SUPPORTED_LANGUAGES.items():
-            self.lang_combo.addItem(name, code)
-        current_lang = self._config.get("language", "en")
-        idx = self.lang_combo.findData(current_lang)
-        if idx >= 0:
-            self.lang_combo.setCurrentIndex(idx)
-        row_layout.addWidget(self.lang_combo)
-
-        theme_label = QLabel(tr("settings.theme"))
-        theme_label.setProperty("role", "inlineFormLabel")
-        row_layout.addWidget(theme_label)
-
-        self.theme_combo = _NoWheelComboBox()
-        self.theme_combo.addItem(tr("settings.themeAuto"), "auto")
-        self.theme_combo.addItem(tr("settings.themeDark"), "dark")
-        self.theme_combo.addItem(tr("settings.themeLight"), "light")
-        current_theme = self._config.get("theme", "dark")
-        idx = self.theme_combo.findData(current_theme)
-        if idx >= 0:
-            self.theme_combo.setCurrentIndex(idx)
-        row_layout.addWidget(self.theme_combo)
-
-        scale_label = QLabel(tr("settings.uiScale"))
-        scale_label.setProperty("role", "inlineFormLabel")
-        row_layout.addWidget(scale_label)
-
-        self.scale_combo = _NoWheelComboBox()
-        self.scale_combo.addItem("100%", 1.0)
-        self.scale_combo.addItem("125%", 1.25)
-        self.scale_combo.addItem("150%", 1.5)
-        # Removed 175% and 200% - too extreme, causes display issues
-        current_scale = self._config.get("ui_scale", 1.0)
-        # Cap scale at 1.5 if config has higher value
-        if current_scale > 1.5:
-            current_scale = 1.5
-        idx = self.scale_combo.findData(current_scale)
-        if idx >= 0:
-            self.scale_combo.setCurrentIndex(idx)
-        row_layout.addWidget(self.scale_combo)
-
-        row_layout.addStretch()
-
-        preferences_layout.addRow(prefs_row)
-
-        content_layout.addWidget(preferences_group)
-
-        about_group = QGroupBox(tr("settings.about"))
-        about_layout = QVBoxLayout(about_group)
-        about_label = QLabel(
-            f'{tr("app.title")}  v{APP_VERSION}<br>'
-            f'{tr("settings.aboutDesc")}<br><br>'
-            f'GitHub: <a href="{APP_RELEASE_URL}">'
-            f'SnowFox</a>'
-        )
-        about_label.setOpenExternalLinks(True)
-        about_label.setWordWrap(True)
-        about_label.setObjectName("settingsAboutLabel")
-        about_layout.addWidget(about_label)
-
-        self._check_update_btn = QPushButton(tr("settings.checkUpdate"))
-        self._check_update_btn.setMinimumWidth(140)
-        self._check_update_btn.clicked.connect(self._on_check_update)
-        about_layout.addWidget(self._check_update_btn)
-
-        donate_path = os.path.join(ROOT, "app_gui", "assets", "donate.png")
-        if os.path.isfile(donate_path):
-            from PySide6.QtGui import QPixmap
-            donate_vbox = QVBoxLayout()
-            donate_vbox.setAlignment(Qt.AlignCenter)
-            donate_text = QLabel(tr("settings.supportHint"))
-            donate_text.setObjectName("settingsSupportLabel")
-            donate_text.setAlignment(Qt.AlignCenter)
-            donate_pixmap = QPixmap(donate_path)
-            donate_img = QLabel()
-            donate_scaled = donate_pixmap.scaledToWidth(380, Qt.SmoothTransformation)
-            donate_img.setPixmap(donate_scaled)
-            donate_img.setFixedSize(donate_scaled.size())
-            donate_img.setAlignment(Qt.AlignCenter)
-            donate_vbox.addWidget(donate_text, alignment=Qt.AlignCenter)
-            donate_vbox.addWidget(donate_img, alignment=Qt.AlignCenter)
-            about_layout.addLayout(donate_vbox)
-
-        content_layout.addWidget(about_group)
-
-        content_layout.addStretch()
-
-        buttons = QDialogButtonBox()
-        ok_btn = QPushButton(tr("common.ok"))
-        ok_btn.clicked.connect(self.accept)
-        buttons.addButton(ok_btn, QDialogButtonBox.AcceptRole)
-        cancel_btn = QPushButton(tr("common.cancel"))
-        cancel_btn.clicked.connect(self.reject)
-        buttons.addButton(cancel_btn, QDialogButtonBox.RejectRole)
-        self._ok_button = ok_btn
-        self.yaml_edit.textChanged.connect(self._refresh_yaml_path_validity)
-        self._refresh_yaml_path_validity()
-        layout.addWidget(buttons)
-
-    @staticmethod
-    def _is_valid_inventory_file_path(path_text):
-        path = _normalize_inventory_yaml_path(path_text)
-        if not path or os.path.isdir(path):
-            return False
-        suffix = os.path.splitext(path)[1].lower()
-        if suffix not in {".yaml", ".yml"}:
-            return False
-        return os.path.isfile(path)
-
-    def _refresh_yaml_path_validity(self):
-        if not hasattr(self, "_ok_button") or self._ok_button is None:
-            return
-        self._ok_button.setEnabled(self._is_valid_inventory_file_path(self.yaml_edit.text().strip()))
-
-    def _notify_data_changed(self, *, yaml_path=None, meta=None):
-        """Notify parent window after metadata edits (best-effort backward compatible)."""
-        if not callable(self._on_data_changed):
-            return
-        try:
-            self._on_data_changed(yaml_path=yaml_path, meta=meta)
-        except TypeError:
-            self._on_data_changed()
-
-    def _browse_yaml(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            tr("settings.selectInventoryFile"),
-            "",
-            "YAML Files (*.yaml *.yml)",
-        )
-        if path:
-            self.yaml_edit.setText(_normalize_inventory_yaml_path(path))
-
-    def _emit_create_new_dataset_request(self):
-        if not callable(self._on_create_new_dataset):
-            return
-        # Create + switch immediately so users keep the newly created dataset
-        # even if they close Settings without pressing OK.
-        new_path = self._on_create_new_dataset(update_window=True)
-        if new_path:
-            self.yaml_edit.setText(_normalize_inventory_yaml_path(new_path))
-
-    def _on_check_update(self):
-        """Manually check for updates from GitHub."""
-        self._check_update_btn.setEnabled(False)
-        self._check_update_btn.setText(tr("settings.checking"))
-        import threading
-
-        def _fetch():
-            try:
-                import urllib.request
-                import json
-                req = urllib.request.Request(
-                    _GITHUB_API_LATEST,
-                    headers={"Accept": "application/vnd.github.v3+json",
-                             "User-Agent": "LN2InventoryAgent"},
-                )
-                with urllib.request.urlopen(req, timeout=8) as resp:
-                    data = json.loads(resp.read())
-                latest_tag = data.get("tag_name", "").lstrip("v")
-                body = (data.get("body") or "")[:200]
-                from PySide6.QtCore import QMetaObject, Qt, Q_ARG
-                QMetaObject.invokeMethod(
-                    self, "_on_check_update_result",
-                    Qt.QueuedConnection,
-                    Q_ARG(str, latest_tag),
-                    Q_ARG(str, body),
-                )
-            except Exception as e:
-                from PySide6.QtCore import QMetaObject, Qt, Q_ARG
-                QMetaObject.invokeMethod(
-                    self, "_on_check_update_result",
-                    Qt.QueuedConnection,
-                    Q_ARG(str, ""),
-                    Q_ARG(str, str(e)),
-                )
-
-        threading.Thread(target=_fetch, daemon=True).start()
-
-    @Slot(str, str)
-    def _on_check_update_result(self, latest_tag, info):
-        """Handle update check result in main thread."""
-        self._check_update_btn.setEnabled(True)
-        self._check_update_btn.setText(tr("settings.checkUpdate"))
-        if not latest_tag:
-            QMessageBox.warning(self, tr("settings.checkUpdate"),
-                                t("settings.checkUpdateFailed", error=info))
-            return
-        if _is_version_newer(latest_tag, APP_VERSION):
-            QMessageBox.information(
-                self, tr("settings.checkUpdate"),
-                t("settings.newVersionAvailable", version=latest_tag, notes=info))
-        else:
-            QMessageBox.information(
-                self, tr("settings.checkUpdate"),
-                tr("settings.alreadyLatest"))
-
-    def _open_custom_fields_editor(self):
-        yaml_path = self.yaml_edit.text().strip()
-        if not yaml_path or not os.path.isfile(yaml_path):
-            QMessageBox.warning(self, tr("common.info"),
-                                t("main.fileNotFound", path=yaml_path))
-            return
-
-        try:
-            with open(yaml_path, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
-        except Exception:
-            data = {}
-
-        meta = data.get("meta", {})
-        existing = meta.get("custom_fields", [])
-        current_dk = meta.get("display_key")
-        current_ck = meta.get("color_key")
-        current_clo = meta.get("cell_line_options")
-        current_cl_required = bool(meta.get("cell_line_required", True))
-
-        dlg = CustomFieldsDialog(self, custom_fields=existing, display_key=current_dk,
-                                 color_key=current_ck, cell_line_options=current_clo,
-                                 cell_line_required=current_cl_required)
-        if dlg.exec() != QDialog.Accepted:
-            return
-
-        new_fields = dlg.get_custom_fields()
-        new_dk = dlg.get_display_key()
-        new_ck = dlg.get_color_key()
-        new_clo = dlg.get_cell_line_options()
-        new_cl_required = dlg.get_cell_line_required()
-        inventory = data.get("inventory") or []
-
-        # --- Step 1: handle renames (old_key -> new_key) ---
-        renames = {}  # old_key -> new_key
-        for f in new_fields:
-            orig = f.pop("_original_key", None)
-            if orig:
-                renames[orig] = f["key"]
-
-        if renames and inventory:
-            renames_with_data = {
-                old: new for old, new in renames.items()
-                if any(isinstance(r, dict) and r.get(old) is not None for r in inventory)
-            }
-            if renames_with_data:
-                for rec in inventory:
-                    if not isinstance(rec, dict):
-                        continue
-                    for old, new in renames_with_data.items():
-                        if old in rec:
-                            rec[new] = rec.pop(old)
-
-        # --- Step 2: handle pure deletes ---
-        new_keys = {f["key"] for f in new_fields}
-        old_keys = {f["key"] for f in existing if isinstance(f, dict) and f.get("key")}
-        # Keys that were renamed are not "deleted" — exclude them
-        renamed_old_keys = set(renames.keys())
-        removed_keys = old_keys - new_keys - renamed_old_keys
-
-        if removed_keys and inventory:
-            has_data = any(
-                rec.get(k) is not None
-                for rec in inventory
-                for k in removed_keys
-                if isinstance(rec, dict)
-            )
-            if has_data:
-                names = ", ".join(sorted(removed_keys))
-                msg = QMessageBox(self)
-                msg.setWindowTitle(tr("main.customFieldsTitle"))
-                msg.setText(t("main.cfRemoveDataPrompt", fields=names))
-                btn_clean = msg.addButton(tr("main.cfRemoveDataClean"), QMessageBox.DestructiveRole)
-                msg.addButton(QMessageBox.Cancel)
-                msg.setDefaultButton(msg.button(QMessageBox.Cancel))
-                msg.exec()
-                clicked = msg.clickedButton()
-                if clicked != btn_clean:
-                    return  # cancelled
-
-                # Second confirmation: require typing a phrase
-                confirm_phrase = "DELETE"
-                confirm_dlg = QDialog(self)
-                confirm_dlg.setWindowTitle(tr("main.customFieldsTitle"))
-                confirm_layout = QVBoxLayout(confirm_dlg)
-                confirm_label = QLabel(t("main.cfRemoveDataConfirm", phrase=confirm_phrase))
-                confirm_label.setWordWrap(True)
-                confirm_layout.addWidget(confirm_label)
-
-                class _NoPasteLineEdit(QLineEdit):
-                    """QLineEdit that blocks paste via keyboard, context menu, and middle-click."""
-                    def keyPressEvent(self, event):
-                        if event.matches(QKeySequence.Paste):
-                            return
-                        super().keyPressEvent(event)
-                    def contextMenuEvent(self, event):
-                        pass  # disable right-click menu entirely
-                    def mousePressEvent(self, event):
-                        if event.button() == Qt.MiddleButton:
-                            return
-                        super().mousePressEvent(event)
-                    def insertFromMimeData(self, source):
-                        pass  # block any remaining paste path
-
-                confirm_input = _NoPasteLineEdit()
-                confirm_input.setPlaceholderText(confirm_phrase)
-                confirm_layout.addWidget(confirm_input)
-                confirm_buttons = QDialogButtonBox()
-                ok_btn = QPushButton(tr("common.ok"))
-                ok_btn.setEnabled(False)
-                ok_btn.clicked.connect(confirm_dlg.accept)
-                confirm_buttons.addButton(ok_btn, QDialogButtonBox.AcceptRole)
-                cancel_btn = QPushButton(tr("common.cancel"))
-                cancel_btn.clicked.connect(confirm_dlg.reject)
-                confirm_buttons.addButton(cancel_btn, QDialogButtonBox.RejectRole)
-                confirm_input.textChanged.connect(
-                    lambda txt: ok_btn.setEnabled(txt.strip() == confirm_phrase)
-                )
-                confirm_layout.addWidget(confirm_buttons)
-
-                if confirm_dlg.exec() != QDialog.Accepted:
-                    return  # cancelled
-
-                for rec in inventory:
-                    if isinstance(rec, dict):
-                        for k in removed_keys:
-                            rec.pop(k, None)
-
-        # --- Step 3: save ---
-        meta["custom_fields"] = new_fields
-        if new_dk:
-            meta["display_key"] = new_dk
-        if new_ck:
-            meta["color_key"] = new_ck
-        if new_clo:
-            meta["cell_line_options"] = new_clo
-        elif "cell_line_options" in meta:
-            del meta["cell_line_options"]
-        meta["cell_line_required"] = bool(new_cl_required)
-        data["meta"] = meta
-        with open(yaml_path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
-        self._notify_data_changed(yaml_path=yaml_path, meta=meta)
-
-    def _open_manage_boxes(self):
-        if callable(self._on_manage_boxes):
-            self._on_manage_boxes(self.yaml_edit.text().strip())
-
-    def _open_import_prompt(self):
-        dlg = ImportPromptDialog(self)
-        dlg.exec()
-
-    def _on_provider_changed(self):
-        provider = self.ai_provider_combo.currentData()
-        cfg = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS[DEFAULT_PROVIDER])
-        self.ai_model_edit.setPlaceholderText(cfg["model"])
-        self.ai_model_edit.setText(cfg["model"])
-
-    def _build_locked_api_key_row(self, initial_value):
-        row_widget = QWidget()
-        row_layout = QHBoxLayout(row_widget)
-        row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.setSpacing(4)
-
-        key_edit = QLineEdit(initial_value or "")
-        key_edit.setEchoMode(QLineEdit.Password)
-        key_edit.setPlaceholderText("sk-...")
-        key_edit.setReadOnly(True)
-        row_layout.addWidget(key_edit, 1)
-
-        lock_btn = QPushButton("\U0001F512")
-        lock_btn.setObjectName("inlineLockBtn")
-        lock_btn.setFixedSize(16, 16)
-        lock_btn.setToolTip(tr("operations.edit"))
-        lock_btn.clicked.connect(
-            lambda _checked=False, edit=key_edit, btn=lock_btn: self._toggle_api_key_lock(edit, btn)
-        )
-        row_layout.addWidget(lock_btn)
-
-        return row_widget, key_edit, lock_btn
-
-    @staticmethod
-    def _toggle_api_key_lock(key_edit, lock_btn):
-        if key_edit.isReadOnly():
-            key_edit.setReadOnly(False)
-            key_edit.setEchoMode(QLineEdit.Normal)
-            lock_btn.setText("\U0001F513")
-            key_edit.setFocus()
-            key_edit.selectAll()
-            return
-
-        key_edit.setReadOnly(True)
-        key_edit.setEchoMode(QLineEdit.Password)
-        lock_btn.setText("\U0001F512")
-
-    def get_values(self):
-        provider = self.ai_provider_combo.currentData() or DEFAULT_PROVIDER
-        provider_cfg = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS[DEFAULT_PROVIDER])
-        api_keys = {}
-        for prov_id, edit in self._api_key_edits.items():
-            key_text = edit.text().strip()
-            if key_text:
-                api_keys[prov_id] = key_text
-        return {
-            "yaml_path": _normalize_inventory_yaml_path(self.yaml_edit.text().strip()),
-            "api_keys": api_keys,
-            "language": self.lang_combo.currentData(),
-            "theme": self.theme_combo.currentData(),
-            "ui_scale": self.scale_combo.currentData(),
-            "ai_provider": provider,
-            "ai_model": self.ai_model_edit.text().strip() or provider_cfg["model"],
-            "ai_max_steps": self.ai_max_steps.value(),
-            "ai_thinking_enabled": self.ai_thinking_enabled.isChecked(),
-            "ai_thinking_expanded": self.ai_thinking_expanded.isChecked(),
-            "ai_custom_prompt": self.ai_custom_prompt.toPlainText().strip(),
-        }
-
-
-_BOX_PRESETS = [
-    ("9 x 9  (81)", 9, 9),
-    ("10 x 10  (100)", 10, 10),
-    ("8 x 12  (96)", 8, 12),
-    ("5 x 5  (25)", 5, 5),
-]
-
-
-def _get_import_prompt():
-    return """你是数据清洗与结构化助手。请把我粘贴的 Excel/CSV/表格数据转换为 LN2 Inventory YAML。
-
-严格要求：
-1) 只输出 YAML 纯文本，不要 Markdown 代码块，不要解释。
-2) 顶层必须包含：
-meta:
-  box_layout:
-    rows: 9
-    cols: 9
-  custom_fields: []
-inventory: []
-3) meta 可选字段（导入时通常不需要）：
-    - inventory_instance_id: UUID（系统自动生成）
-    - cell_line_options: 细胞系选项列表
-    - display_key: 网格显示字段（默认 cell_line）
-    - color_key: 颜色分组字段（默认 cell_line）
-    - cell_line_required: 是否必填 cell_line（默认 false）
-    - custom_fields: 自定义字段列表，每项包含：
-        * key: 字段键名（必填，需符合标识符规则）
-        * label: 显示标签（必填）
-        * type: 数据类型，可选 str/int/float/date（默认 str）
-        * required: 是否必填（默认 false）
-        * default: 默认值（可选）
-4) 数据模型是 tube-level：一条 inventory 记录 = 一支物理冻存管。
-5) 每条记录的必填字段：
-    - id: 正整数，唯一
-    - box: 整数
-    - frozen_at: YYYY-MM-DD
-6) 每条记录的常用可选字段：
-    - position: 整数（如 12），在库时必须有值，取出后可为 null
-    - cell_line: 字符串（某些配置下可能必填）
-    - short_name: 短名称
-    - plasmid_name, plasmid_id: 质粒信息
-    - note: 备注
-    - thaw_events: 取出/复苏事件列表（通常导入时为 null）
-7) thaw_events 结构（如果需要导入历史事件）：
-    thaw_events:
-      - date: "YYYY-MM-DD"
-        action: "takeout"    # takeout/thaw/discard/move
-        positions: [1]       # 注意是 positions（复数），列表格式
-8) 字段映射：
-    - 若原表是 cell_line 列，直接映射
-    - 若有 quantity/tube_count>1，拆成多条记录，每条一个position
-9) 若位置是 A1/B3 形式，换算为整数 position：
-   position = (row_index-1)*cols + col_index，其中 A=1, B=2...
-10) 空值统一用 null；字符串去首尾空格；日期统一 YYYY-MM-DD。
-11) 如果缺少必填字段（尤其 id/box/frozen_at），先列出"缺失信息清单"，先不要输出 YAML。
-
-输出前自检：
-- 顶层只有 meta 和 inventory
-- inventory 是列表
-- 每条 position 是单个整数或 null
-- id 无重复
-- thaw_events 中的 positions 是列表（不是单个整数）
-
-下面是原始数据：
-<<<DATA
-（把 Excel 粘贴内容放这里）
-DATA"""
-
-
-def _get_yaml_example():
-    return """meta:
-  box_layout:
-    rows: 9
-    cols: 9
-  custom_fields:
-    - key: short_name
-      label: Short Name
-      type: str
-      required: true
-    - key: plasmid_name
-      label: Plasmid Name
-      type: str
-      default: unknown
-    - key: plasmid_id
-      label: Plasmid ID
-      type: str
-  display_key: cell_line
-  color_key: cell_line
-  cell_line_required: true
-
-inventory:
-  - id: 1
-    cell_line: NCCIT
-    short_name: NCCIT_ctrl_A
-    plasmid_name: pLenti-empty
-    plasmid_id: p0001
-    box: 1
-    position: 1
-    frozen_at: "2026-02-01"
-    note: baseline control clone
-    thaw_events: null
-
-  - id: 2
-    cell_line: HeLa
-    short_name: HeLa_test_B
-    plasmid_name: null
-    plasmid_id: null
-    box: 1
-    position: null
-    frozen_at: "2026-01-15"
-    note: already taken out
-    thaw_events:
-      - date: "2026-02-10"
-        action: takeout
-        positions: [2]"""
-
-
-class ImportPromptDialog(QDialog):
-    """Dialog showing import prompt for converting Excel/CSV to YAML."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(tr("main.importPromptTitle"))
-        self.setMinimumWidth(700)
-        self.setMinimumHeight(500)
-
-        layout = QVBoxLayout(self)
-
-        desc = QLabel(tr("main.importPromptDesc"))
-        desc.setWordWrap(True)
-        desc.setProperty("role", "dialogHint")
-        layout.addWidget(desc)
-
-        self.prompt_edit = QTextEdit()
-        self.prompt_edit.setPlainText(_get_import_prompt())
-        self.prompt_edit.setReadOnly(True)
-        self.prompt_edit.setFontFamily("monospace")
-        self.prompt_edit.setFontPointSize(FONT_SIZE_MONO)
-        layout.addWidget(self.prompt_edit, 1)
-
-        buttons = QDialogButtonBox()
-        copy_btn = QPushButton(tr("main.importPromptCopy"))
-        copy_btn.clicked.connect(self._copy_prompt)
-        buttons.addButton(copy_btn, QDialogButtonBox.ActionRole)
-
-        view_yaml_btn = QPushButton(tr("main.importPromptViewYaml"))
-        view_yaml_btn.clicked.connect(self._view_yaml_example)
-        buttons.addButton(view_yaml_btn, QDialogButtonBox.ActionRole)
-
-        close_btn = QPushButton(tr("common.close"))
-        close_btn.clicked.connect(self.reject)
-        buttons.addButton(close_btn, QDialogButtonBox.RejectRole)
-        layout.addWidget(buttons)
-
-    def _copy_prompt(self):
-        try:
-            QApplication.clipboard().setText(_get_import_prompt())
-            self.status_message = tr("main.importPromptCopied")
-            QMessageBox.information(self, tr("common.info"), tr("main.importPromptCopied"))
-        except Exception as e:
-            print(f"[ImportPrompt] Copy failed: {e}")
-
-    def _view_yaml_example(self):
-        dlg = QDialog(self)
-        dlg.setWindowTitle(tr("main.importPromptViewYamlTitle"))
-        dlg.setMinimumWidth(500)
-        dlg.setMinimumHeight(400)
-        layout = QVBoxLayout(dlg)
-        text_edit = QTextEdit()
-        text_edit.setPlainText(_get_yaml_example())
-        text_edit.setReadOnly(True)
-        text_edit.setFontFamily("monospace")
-        text_edit.setFontPointSize(FONT_SIZE_MONO)
-        layout.addWidget(text_edit)
-        close_btn = QDialogButtonBox()
-        close_button = QPushButton(tr("common.close"))
-        close_button.clicked.connect(dlg.reject)
-        close_btn.addButton(close_button, QDialogButtonBox.RejectRole)
-        layout.addWidget(close_btn)
-        dlg.exec()
-
-
-class NewDatasetDialog(QDialog):
-    """Dialog for choosing box layout when creating a new dataset."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(tr("main.newDatasetLayout"))
-        self.setMinimumWidth(360)
-
-        layout = QVBoxLayout(self)
-        form = QFormLayout()
-
-        self.preset_combo = QComboBox()
-        for label, _r, _c in _BOX_PRESETS:
-            self.preset_combo.addItem(label)
-        self.preset_combo.addItem(tr("main.custom"))
-        self.preset_combo.currentIndexChanged.connect(self._on_preset_changed)
-        form.addRow(tr("main.boxSize"), self.preset_combo)
-
-        self.rows_spin = QSpinBox()
-        self.rows_spin.setRange(1, 26)
-        self.rows_spin.setValue(9)
-        self.rows_spin.setEnabled(False)
-        form.addRow(tr("main.rows"), self.rows_spin)
-
-        self.cols_spin = QSpinBox()
-        self.cols_spin.setRange(1, 26)
-        self.cols_spin.setValue(9)
-        self.cols_spin.setEnabled(False)
-        form.addRow(tr("main.cols"), self.cols_spin)
-
-        self.box_count_spin = QSpinBox()
-        self.box_count_spin.setRange(1, 50)
-        self.box_count_spin.setValue(5)
-        form.addRow(tr("main.boxCount"), self.box_count_spin)
-
-        self.indexing_combo = QComboBox()
-        self.indexing_combo.addItem(tr("main.indexNumeric"), "numeric")
-        self.indexing_combo.addItem(tr("main.indexAlpha"), "alphanumeric")
-        form.addRow(tr("main.indexing"), self.indexing_combo)
-
-        layout.addLayout(form)
-
-        buttons = QDialogButtonBox()
-        ok_btn = QPushButton(tr("common.ok"))
-        ok_btn.clicked.connect(self.accept)
-        buttons.addButton(ok_btn, QDialogButtonBox.AcceptRole)
-        cancel_btn = QPushButton(tr("common.cancel"))
-        cancel_btn.clicked.connect(self.reject)
-        buttons.addButton(cancel_btn, QDialogButtonBox.RejectRole)
-        layout.addWidget(buttons)
-
-    def _on_preset_changed(self, index):
-        is_custom = index >= len(_BOX_PRESETS)
-        self.rows_spin.setEnabled(is_custom)
-        self.cols_spin.setEnabled(is_custom)
-        if not is_custom:
-            _, r, c = _BOX_PRESETS[index]
-            self.rows_spin.setValue(r)
-            self.cols_spin.setValue(c)
-
-    def get_layout(self):
-        result = {
-            "rows": self.rows_spin.value(),
-            "cols": self.cols_spin.value(),
-            "box_count": self.box_count_spin.value(),
-        }
-        indexing = self.indexing_combo.currentData()
-        if indexing and indexing != "numeric":
-            result["indexing"] = indexing
-        return result
-
-
-_FIELD_TYPES = ["str", "int", "float", "date"]
-
-
-class CustomFieldsDialog(QDialog):
-    """Visual editor for meta.custom_fields."""
-
-    def __init__(
-        self,
-        parent=None,
-        custom_fields=None,
-        display_key=None,
-        color_key=None,
-        cell_line_options=None,
-        cell_line_required=True,
-    ):
-        super().__init__(parent)
-        self.setWindowTitle(tr("main.customFieldsTitle"))
-        self.setMinimumWidth(620)
-        self.setMinimumHeight(400)
-
-        root = QVBoxLayout(self)
-
-        desc = QLabel(tr("main.customFieldsDesc"))
-        desc.setWordWrap(True)
-        desc.setProperty("role", "dialogHint")
-        root.addWidget(desc)
-
-        # Scrollable area for everything
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.NoFrame)
-        scroll_content = QWidget()
-        scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setContentsMargins(0, 0, 0, 0)
-        scroll_layout.setSpacing(8)
-        scroll.setWidget(scroll_content)
-        root.addWidget(scroll, 1)
-
-        # Unified fields area (structural + custom)
-        fields_group = QGroupBox(tr("main.cfFields"))
-        fields_layout = QVBoxLayout(fields_group)
-        fields_layout.setContentsMargins(8, 4, 8, 4)
-        fields_layout.setSpacing(6)
-
-        # Column header
-        header = QWidget()
-        header_l = QHBoxLayout(header)
-        header_l.setContentsMargins(0, 0, 0, 0)
-        header_l.setSpacing(4)
-        for text, width in [(tr("main.cfKey"), 140), (tr("main.cfLabel"), 120),
-                            (tr("main.cfType"), 70), (tr("main.cfDefault"), 100)]:
-            lbl = QLabel(text)
-            lbl.setFixedWidth(width)
-            lbl.setProperty("role", "cfHeaderLabel")
-            header_l.addWidget(lbl)
-        req_lbl = QLabel(tr("main.cfRequired"))
-        req_lbl.setProperty("role", "cfHeaderLabel")
-        header_l.addWidget(req_lbl)
-        action_lbl = QLabel()
-        action_lbl.setFixedWidth(60)
-        header_l.addWidget(action_lbl)
-        fields_layout.addWidget(header)
-
-        _STRUCTURAL_DISPLAY = [
-            ("id", "ID", "int"),
-            ("box", "Box", "int"),
-            ("position", "Position", "int"),
-            ("cell_line", "Cell Line", "str"),
-            ("frozen_at", "Frozen At", "date"),
-            ("thaw_events", "Thaw Events", "str"),
-        ]
-        self._cell_line_required_cb = None
-        for s_key, s_label, s_type in _STRUCTURAL_DISPLAY:
-            row_w = QWidget()
-            row_l = QHBoxLayout(row_w)
-            row_l.setContentsMargins(0, 0, 0, 0)
-            row_l.setSpacing(4)
-            k_edit = QLineEdit(s_key); k_edit.setFixedWidth(140); k_edit.setReadOnly(True); k_edit.setEnabled(False)
-            row_l.addWidget(k_edit)
-            l_edit = QLineEdit(s_label); l_edit.setFixedWidth(120); l_edit.setReadOnly(True); l_edit.setEnabled(False)
-            row_l.addWidget(l_edit)
-            t_combo = QComboBox(); t_combo.addItem(s_type); t_combo.setFixedWidth(70); t_combo.setEnabled(False)
-            row_l.addWidget(t_combo)
-            d_edit = QLineEdit(); d_edit.setFixedWidth(100); d_edit.setEnabled(False)
-            row_l.addWidget(d_edit)
-            r_cb = QCheckBox(tr("main.cfRequired"))
-            if s_key == "cell_line":
-                r_cb.setChecked(bool(cell_line_required))
-                r_cb.setEnabled(True)
-                self._cell_line_required_cb = r_cb
-            else:
-                r_cb.setChecked(True)
-                r_cb.setEnabled(False)
-            row_l.addWidget(r_cb)
-            spacer = QWidget(); spacer.setFixedWidth(60)
-            row_l.addWidget(spacer)
-            fields_layout.addWidget(row_w)
-
-        self._rows_layout = QVBoxLayout()
-        self._rows_layout.setContentsMargins(0, 0, 0, 0)
-        self._rows_layout.setSpacing(6)
-        fields_layout.addLayout(self._rows_layout)
-
-        self._field_rows = []
-
-        fields_to_show = custom_fields if custom_fields else []
-        for f in fields_to_show:
-            k = f.get("key", "")
-            self._add_row(k, f.get("label", ""),
-                          f.get("type", "str"), f.get("default"),
-                          required=f.get("required", False),
-                          original_key=k)
-
-        add_btn = QPushButton(tr("main.cfAdd"))
-        add_btn.clicked.connect(lambda: self._add_row())
-        fields_layout.addWidget(add_btn)
-
-        scroll_layout.addWidget(fields_group)
-
-        scroll_layout.addStretch()
-
-        # Display key selector
-        dk_row = QHBoxLayout()
-        dk_row.addWidget(QLabel(tr("main.cfDisplayKey")))
-        self._display_key_combo = QComboBox()
-        self._refresh_display_key_combo(display_key)
-        dk_row.addWidget(self._display_key_combo, 1)
-        root.addLayout(dk_row)
-
-        # Color key selector
-        ck_row = QHBoxLayout()
-        ck_row.addWidget(QLabel(tr("main.cfColorKey")))
-        self._color_key_combo = QComboBox()
-        self._refresh_color_key_combo(color_key)
-        ck_row.addWidget(self._color_key_combo, 1)
-        root.addLayout(ck_row)
-
-        # Cell line options editor
-        clo_row = QVBoxLayout()
-        clo_row.addWidget(QLabel(tr("main.cfCellLineOptions")))
-        self._cell_line_options_edit = QTextEdit()
-        self._cell_line_options_edit.setMaximumHeight(80)
-        self._cell_line_options_edit.setPlaceholderText(tr("main.cfCellLineOptionsPh"))
-        if cell_line_options:
-            self._cell_line_options_edit.setPlainText("\n".join(cell_line_options))
-        else:
-            from lib.custom_fields import DEFAULT_CELL_LINE_OPTIONS
-            self._cell_line_options_edit.setPlainText("\n".join(DEFAULT_CELL_LINE_OPTIONS))
-        root.addLayout(clo_row)
-        clo_row.addWidget(self._cell_line_options_edit)
-
-        buttons = QDialogButtonBox()
-        ok_btn = QPushButton(tr("common.ok"))
-        ok_btn.clicked.connect(self.accept)
-        buttons.addButton(ok_btn, QDialogButtonBox.AcceptRole)
-        cancel_btn = QPushButton(tr("common.cancel"))
-        cancel_btn.clicked.connect(self.reject)
-        buttons.addButton(cancel_btn, QDialogButtonBox.RejectRole)
-        root.addWidget(buttons)
-
-    def _refresh_display_key_combo(self, current_dk=None):
-        combo = self._display_key_combo
-        combo.clear()
-        # cell_line is always an option for display_key
-        combo.addItem("cell_line", "cell_line")
-        for entry in self._field_rows:
-            key = entry["key"].text().strip()
-            if key:
-                combo.addItem(key, key)
-        if current_dk:
-            idx = combo.findData(current_dk)
-            if idx >= 0:
-                combo.setCurrentIndex(idx)
-
-    def _refresh_color_key_combo(self, current_ck=None):
-        combo = self._color_key_combo
-        combo.clear()
-        # cell_line is always an option for color_key
-        combo.addItem("cell_line", "cell_line")
-        for entry in self._field_rows:
-            key = entry["key"].text().strip()
-            if key:
-                combo.addItem(key, key)
-        if current_ck:
-            idx = combo.findData(current_ck)
-            if idx >= 0:
-                combo.setCurrentIndex(idx)
-
-    def get_display_key(self):
-        return self._display_key_combo.currentData() or ""
-
-    def get_color_key(self):
-        return self._color_key_combo.currentData() or "cell_line"
-
-    def get_cell_line_options(self):
-        text = self._cell_line_options_edit.toPlainText().strip()
-        if not text:
-            return []
-        return [line.strip() for line in text.splitlines() if line.strip()]
-
-    def get_cell_line_required(self):
-        if self._cell_line_required_cb is None:
-            return True
-        return bool(self._cell_line_required_cb.isChecked())
-
-    def _add_row(self, key="", label="", ftype="str", default=None, *, required=False, original_key=None):
-        from lib.custom_fields import STRUCTURAL_FIELD_KEYS
-
-        row_widget = QWidget()
-        row_layout = QHBoxLayout(row_widget)
-        row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.setSpacing(4)
-
-        key_edit = QLineEdit(key)
-        key_edit.setPlaceholderText(tr("main.cfKeyPh"))
-        key_edit.setFixedWidth(140)
-        row_layout.addWidget(key_edit)
-
-        label_edit = QLineEdit(label)
-        label_edit.setPlaceholderText(tr("main.cfLabelPh"))
-        label_edit.setFixedWidth(120)
-        row_layout.addWidget(label_edit)
-
-        type_combo = QComboBox()
-        for t in _FIELD_TYPES:
-            type_combo.addItem(t, t)
-        idx = type_combo.findData(ftype)
-        if idx >= 0:
-            type_combo.setCurrentIndex(idx)
-        type_combo.setFixedWidth(70)
-        row_layout.addWidget(type_combo)
-
-        default_edit = QLineEdit(str(default) if default is not None else "")
-        default_edit.setPlaceholderText(tr("main.cfDefaultPh"))
-        default_edit.setFixedWidth(100)
-        row_layout.addWidget(default_edit)
-
-        required_cb = QCheckBox(tr("main.cfRequired"))
-        required_cb.setChecked(bool(required))
-        row_layout.addWidget(required_cb)
-
-        remove_btn = QPushButton(tr("main.cfRemove"))
-        remove_btn.setFixedWidth(60)
-        row_layout.addWidget(remove_btn)
-
-        entry = {
-            "widget": row_widget,
-            "key": key_edit,
-            "label": label_edit,
-            "type": type_combo,
-            "default": default_edit,
-            "required": required_cb,
-            "original_key": original_key,
-        }
-        self._field_rows.append(entry)
-        self._rows_layout.addWidget(row_widget)
-
-        remove_btn.clicked.connect(lambda: self._remove_row(entry))
-
-    def _remove_row(self, entry):
-        if entry not in self._field_rows:
-            return
-        key_name = entry["key"].text().strip() or "?"
-        reply = QMessageBox.question(
-            self,
-            tr("main.customFieldsTitle"),
-            t("main.cfRemoveConfirm", field=key_name),
-            QMessageBox.Yes | QMessageBox.Cancel,
-            QMessageBox.Cancel,
-        )
-        if reply != QMessageBox.Yes:
-            return
-        self._field_rows.remove(entry)
-        entry["widget"].setParent(None)
-        entry["widget"].deleteLater()
-
-    def get_custom_fields(self):
-        """Return validated list of custom field dicts.
-
-        Each dict has key/label/type/default/required plus an optional
-        ``_original_key`` when the key was renamed from an existing field.
-        """
-        from lib.custom_fields import STRUCTURAL_FIELD_KEYS
-
-        result = []
-        seen = set()
-        for entry in self._field_rows:
-            key = entry["key"].text().strip()
-            if not key or not key.isidentifier():
-                continue
-            if key in STRUCTURAL_FIELD_KEYS or key in seen:
-                continue
-            seen.add(key)
-            label = entry["label"].text().strip() or key
-            ftype = entry["type"].currentData() or "str"
-            default_text = entry["default"].text().strip()
-            default = default_text if default_text else None
-            req = entry["required"].isChecked()
-            item = {
-                "key": key,
-                "label": label,
-                "type": ftype,
-            }
-            if default is not None:
-                item["default"] = default
-            if req:
-                item["required"] = True
-            orig = entry.get("original_key")
-            if orig and orig != key:
-                item["_original_key"] = orig
-            result.append(item)
-        return result
-
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1279,6 +126,19 @@ class MainWindow(QMainWindow):
         self.current_yaml_path = configured_yaml or YAML_PATH
 
         self.setup_ui()
+        self._state_flow = WindowStateFlow(self)
+        self._startup_flow = StartupFlow(
+            self,
+            app_version=APP_VERSION,
+            release_url=APP_RELEASE_URL,
+            github_api_latest=_GITHUB_API_LATEST,
+            is_version_newer=_is_version_newer,
+            show_nonblocking_dialog=self._show_nonblocking_dialog,
+            import_prompt_dialog_cls=ImportPromptDialog,
+        )
+        self._settings_flow = SettingsFlow(self, normalize_yaml_path=_normalize_inventory_yaml_path)
+        self._dataset_flow = DatasetFlow(self)
+        self._boxes_flow = ManageBoxesFlow(self)
         self.connect_signals()
         self._setup_shortcuts()
         self.restore_ui_settings()
@@ -1452,23 +312,10 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(msg, timeout)
 
     def _update_stats_bar(self, stats):
-        """Update the stats bar with overview statistics."""
-        if not isinstance(stats, dict):
-            return
-        total = stats.get("total", 0)
-        occupied = stats.get("occupied", 0)
-        empty = stats.get("empty", 0)
-        rate = stats.get("rate", 0)
-        text = f"{tr('overview.totalRecords')}: {total}  |  {tr('overview.occupied')}: {occupied}  |  {tr('overview.empty')}: {empty}  |  {tr('overview.occupancyRate')}: {rate:.1f}%"
-        self.stats_bar.setText(text)
+        self._state_flow.update_stats_bar(stats)
 
     def _update_hover_stats(self, hover_text):
-        """Update the stats bar with hover information."""
-        if hover_text:
-            self.stats_bar.setText(hover_text)
-        else:
-            # Reset to overall stats (will be updated on next refresh)
-            self.stats_bar.setText("")
+        self._state_flow.update_hover_stats(hover_text)
 
     def _show_nonblocking_dialog(self, dialog):
         """Show dialog without modal lock and keep Python reference alive."""
@@ -1478,10 +325,8 @@ class MainWindow(QMainWindow):
         self._floating_dialog_refs.append(dialog)
 
         def _release_ref(_result=0):
-            try:
+            with suppress(ValueError):
                 self._floating_dialog_refs.remove(dialog)
-            except ValueError:
-                pass
 
         dialog.finished.connect(_release_ref)
         dialog.show()
@@ -1489,218 +334,25 @@ class MainWindow(QMainWindow):
         dialog.activateWindow()
 
     def _check_release_notice_once(self):
-        """Fetch latest release from GitHub in background and notify if newer."""
-        import threading
-
-        def _fetch_and_notify():
-            try:
-                import urllib.request
-                import json
-                req = urllib.request.Request(
-                    _GITHUB_API_LATEST,
-                    headers={"Accept": "application/vnd.github.v3+json",
-                             "User-Agent": "LN2InventoryAgent"},
-                )
-                with urllib.request.urlopen(req, timeout=8) as resp:
-                    data = json.loads(resp.read())
-                latest_tag = str(data.get("tag_name", "")).strip().lstrip("vV")
-                if not _is_version_newer(latest_tag, APP_VERSION):
-                    return
-                last_notified = self.gui_config.get("last_notified_release", "0.0.0")
-                if not _is_version_newer(latest_tag, last_notified):
-                    return
-                body = (data.get("body") or "")[:200]
-                from PySide6.QtCore import QMetaObject, Qt, Q_ARG
-                QMetaObject.invokeMethod(
-                    self, "_show_update_dialog",
-                    Qt.QueuedConnection,
-                    Q_ARG(str, latest_tag),
-                    Q_ARG(str, body),
-                )
-            except Exception as e:
-                print(f"[VersionCheck] {e}")
-
-        threading.Thread(target=_fetch_and_notify, daemon=True).start()
+        self._startup_flow.check_release_notice_once()
 
     @Slot(str, str)
     def _show_update_dialog(self, latest_tag, release_notes):
-        """Show update notification dialog (called from main thread)."""
-        try:
-            title = tr("main.newReleaseTitle")
-            message = t("main.newReleaseMessage", version=latest_tag, notes=release_notes or tr("main.releaseNotesDefault"))
-
-            msg_box = QMessageBox(self)
-            msg_box.setWindowTitle(title)
-            msg_box.setText(message)
-            msg_box.setIcon(QMessageBox.Information)
-
-            # Add automatic update button
-            update_btn = msg_box.addButton(tr("main.newReleaseUpdate"), QMessageBox.ActionRole)
-            copy_btn = msg_box.addButton(tr("main.newReleaseCopy"), QMessageBox.ActionRole)
-            open_btn = msg_box.addButton(tr("main.newReleaseOpen"), QMessageBox.ActionRole)
-            later_btn = msg_box.addButton(tr("main.newReleaseLater"), QMessageBox.RejectRole)
-
-            msg_box.setDefaultButton(update_btn)
-
-            def _mark_notified_once():
-                if self.gui_config.get("last_notified_release") == latest_tag:
-                    return
-                self.gui_config["last_notified_release"] = latest_tag
-                save_gui_config(self.gui_config)
-
-            def _handle_button(clicked):
-                if clicked == update_btn:
-                    # Start automatic update
-                    self._start_automatic_update(latest_tag, release_notes)
-                elif clicked == copy_btn:
-                    try:
-                        QApplication.clipboard().setText(APP_RELEASE_URL)
-                    except Exception as e:
-                        print(f"[VersionCheck] Copy to clipboard failed: {e}")
-                elif clicked == open_btn:
-                    try:
-                        from PySide6.QtCore import QUrl
-                        from PySide6.QtGui import QDesktopServices
-                        QDesktopServices.openUrl(QUrl(APP_RELEASE_URL))
-                    except Exception as e:
-                        print(f"[VersionCheck] Open URL failed: {e}")
-
-            msg_box.buttonClicked.connect(_handle_button)
-            msg_box.finished.connect(lambda _result: _mark_notified_once())
-            self._show_nonblocking_dialog(msg_box)
-
-        except Exception as e:
-            print(f"[VersionCheck] Dialog failed: {e}")
-
-    def _start_automatic_update(self, latest_tag, release_notes):
-        """Start automatic update process with progress dialog."""
-        from PySide6.QtWidgets import QProgressDialog, QApplication
-        from PySide6.QtCore import Qt
-
-        # Create progress dialog
-        progress = QProgressDialog(self)
-        progress.setWindowTitle(tr("main.updatingTitle"))
-        progress.setLabelText("Initializing...")
-        progress.setRange(0, 100)
-        progress.setWindowModality(Qt.ApplicationModal)
-        progress.setCancelButton(None)  # Can't cancel during update
-        progress.show()
-
-        updater = AutoUpdater(
-            latest_tag=latest_tag,
-            release_notes=release_notes,
-            on_progress=lambda p, msg: _on_progress(p, msg),
-            on_complete=lambda success, msg: _on_complete(success, msg),
-            on_error=lambda err: _on_error(err)
-        )
-
-        def _on_progress(progress_value, message):
-            # Update progress dialog from main thread
-            progress.setValue(progress_value)
-            progress.setLabelText(message)
-            QApplication.processEvents()
-
-        def _on_complete(success, message):
-            # Close progress dialog
-            progress.close()
-            if success:
-                # Show success message
-                success_box = QMessageBox(self)
-                success_box.setWindowTitle(tr("main.updateComplete"))
-                success_box.setText(message)
-                success_box.setIcon(QMessageBox.Information)
-                success_box.exec()
-            else:
-                # Show error message
-                error_box = QMessageBox(self)
-                error_box.setWindowTitle(tr("main.updateFailed"))
-                error_box.setText(f"Update failed: {message}")
-                error_box.setIcon(QMessageBox.Warning)
-                error_box.exec()
-
-        def _on_error(error_message):
-            # Close progress dialog and show error
-            progress.close()
-            error_box = QMessageBox(self)
-            error_box.setWindowTitle(tr("main.updateFailed"))
-            error_box.setText(error_message)
-            error_box.setIcon(QMessageBox.Warning)
-            error_box.exec()
-
-        # Start the update
-        updater.start_update()
+        self._startup_flow.show_update_dialog(latest_tag, release_notes)
 
     def _check_empty_inventory_prompt(self):
-        """Show import prompt if inventory is empty and user hasn't seen the prompt."""
-        try:
-            if self.gui_config.get("import_prompt_seen", False):
-                return
-
-            if not os.path.isfile(self.current_yaml_path):
-                return
-
-            try:
-                with open(self.current_yaml_path, "r", encoding="utf-8") as f:
-                    data = yaml.safe_load(f) or {}
-            except Exception:
-                return
-
-            inventory = data.get("inventory") if isinstance(data, dict) else None
-            if inventory and len(inventory) > 0:
-                return
-
-            title = tr("main.importStartupTitle")
-            message = tr("main.importStartupMessage")
-
-            msg_box = QMessageBox(self)
-            msg_box.setWindowTitle(title)
-            msg_box.setText(message)
-            msg_box.setIcon(QMessageBox.Information)
-
-            import_btn = msg_box.addButton(tr("main.importStartupAction"), QMessageBox.ActionRole)
-            new_btn = msg_box.addButton(tr("main.importPromptNewInventory"), QMessageBox.ActionRole)
-            later_btn = msg_box.addButton(QMessageBox.Close)
-            later_btn.setText(tr("main.newReleaseLater"))
-
-            msg_box.setDefaultButton(import_btn)
-
-            def _mark_prompt_seen_once():
-                if self.gui_config.get("import_prompt_seen", False):
-                    return
-                self.gui_config["import_prompt_seen"] = True
-                save_gui_config(self.gui_config)
-
-            def _handle_import_prompt(clicked):
-                _mark_prompt_seen_once()
-                if clicked == import_btn:
-                    dlg = ImportPromptDialog(self)
-                    dlg.exec()
-                elif clicked == new_btn:
-                    self.on_create_new_dataset()
-
-            msg_box.buttonClicked.connect(_handle_import_prompt)
-            msg_box.finished.connect(lambda _result: _mark_prompt_seen_once())
-            self._show_nonblocking_dialog(msg_box)
-
-        except Exception as e:
-            print(f"[ImportPrompt] Empty inventory check failed: {e}")
+        self._startup_flow.check_empty_inventory_prompt()
 
     def _wire_plan_store(self):
-        """Connect PlanStore.on_change to OperationsPanel refresh (thread-safe)."""
-        from PySide6.QtCore import QMetaObject, Qt as QtConst
-
-        ops = self.operations_panel
-
-        def _on_plan_changed():
-            QMetaObject.invokeMethod(ops, "_on_store_changed", QtConst.QueuedConnection)
-
-        self.plan_store._on_change = _on_plan_changed
+        self._state_flow.wire_plan_store()
 
     def on_operation_completed(self, success):
-        if success:
-            self.overview_panel.refresh()
+        self._state_flow.on_operation_completed(success)
 
     def _update_dataset_label(self):
+        if hasattr(self, "_state_flow"):
+            self._state_flow.update_dataset_label()
+            return
         self.dataset_label.setText(self.current_yaml_path)
 
     def on_open_settings(self):
@@ -1718,6 +370,13 @@ class MainWindow(QMainWindow):
             on_create_new_dataset=self.on_create_new_dataset,
             on_manage_boxes=self.on_manage_boxes,
             on_data_changed=self._on_settings_data_changed,
+            app_version=APP_VERSION,
+            app_release_url=APP_RELEASE_URL,
+            github_api_latest=_GITHUB_API_LATEST,
+            root_dir=ROOT,
+            import_prompt_dialog_cls=ImportPromptDialog,
+            custom_fields_dialog_cls=CustomFieldsDialog,
+            normalize_yaml_path=_normalize_inventory_yaml_path,
         )
         if dialog.exec() != QDialog.Accepted:
             return
@@ -1725,100 +384,16 @@ class MainWindow(QMainWindow):
         values = dialog.get_values()
         selected_yaml = _normalize_inventory_yaml_path(values["yaml_path"])
         self.current_yaml_path = selected_yaml or self.current_yaml_path or YAML_PATH
-        self.gui_config["api_keys"] = values.get("api_keys", {})
-
-        new_lang = values.get("language", "en")
-        if new_lang != self.gui_config.get("language"):
-            self.gui_config["language"] = new_lang
-            self._ask_restart(tr("main.languageChangedRestart"))
-
-        new_theme = values.get("theme", "dark")
-        if new_theme != self.gui_config.get("theme"):
-            self.gui_config["theme"] = new_theme
-            self._ask_restart(tr("main.themeChangedRestart"))
-
-        new_scale = values.get("ui_scale", 1.0)
-        if new_scale != self.gui_config.get("ui_scale"):
-            self.gui_config["ui_scale"] = new_scale
-            # For UI scale, show manual restart message (auto-restart has timing issues)
-            QMessageBox.information(
-                self,
-                tr("common.info"),
-                tr("main.scaleChangedManualRestart")
-            )
-
-        self.gui_config["ai"] = {
-            "provider": values.get("ai_provider", "deepseek"),
-            "model": values.get("ai_model", "deepseek-chat"),
-            "max_steps": values.get("ai_max_steps", 8),
-            "thinking_enabled": values.get("ai_thinking_enabled", True),
-            "thinking_expanded": values.get("ai_thinking_expanded", True),
-            "custom_prompt": values.get("ai_custom_prompt", ""),
-        }
-        self.bridge.set_api_keys(self.gui_config["api_keys"])
-        self.ai_panel.ai_provider.setText(self.gui_config["ai"]["provider"])
-        self.ai_panel.ai_model.setText(self.gui_config["ai"]["model"])
-        self.ai_panel.ai_steps.setValue(self.gui_config["ai"]["max_steps"])
-        self.ai_panel.ai_thinking_enabled.setChecked(self.gui_config["ai"]["thinking_enabled"])
-        self.ai_panel.ai_thinking_collapsed = not self.gui_config["ai"]["thinking_expanded"]
-        self.ai_panel.ai_custom_prompt = self.gui_config["ai"].get("custom_prompt", "")
+        self._settings_flow.apply_dialog_values(values)
 
         new_yaml_abs = os.path.abspath(str(self.current_yaml_path or ""))
         if previous_yaml_abs != new_yaml_abs:
             self.operations_panel.reset_for_dataset_switch()
 
-        self._update_dataset_label()
-        self.overview_panel.refresh()
-        self.operations_panel.apply_meta_update()
-        if not os.path.isfile(self.current_yaml_path):
-            self.statusBar().showMessage(
-                t("main.fileNotFound", path=self.current_yaml_path),
-                6000,
-            )
-        self.gui_config["yaml_path"] = self.current_yaml_path
-        save_gui_config(self.gui_config)
+        self._settings_flow.finalize_after_settings()
 
     def _on_settings_data_changed(self, *, yaml_path=None, meta=None):
-        """Apply settings metadata updates immediately for the active dataset."""
-        target_yaml = _normalize_inventory_yaml_path(yaml_path or self.current_yaml_path)
-        current_yaml = _normalize_inventory_yaml_path(self.current_yaml_path)
-        if target_yaml and current_yaml:
-            try:
-                if os.path.abspath(str(target_yaml)) != os.path.abspath(str(current_yaml)):
-                    return
-            except Exception:
-                return
-
-        self.operations_panel.apply_meta_update(meta if isinstance(meta, dict) else None)
-        self.overview_panel.refresh()
-
-    def _ask_restart(self, message):
-        box = QMessageBox(self)
-        box.setWindowTitle(tr("common.info"))
-        box.setText(message)
-        btn_restart = box.addButton(tr("main.restartNow"), QMessageBox.AcceptRole)
-        btn_later = box.addButton(tr("main.restartLater"), QMessageBox.RejectRole)
-        box.exec()
-        if box.clickedButton() == btn_restart:
-            self._restart_app()
-
-    def _restart_app(self):
-        save_gui_config(self.gui_config)
-        # Use QTimer to delay the restart, ensuring current app quits first
-        from PySide6.QtCore import QTimer
-        import subprocess
-
-        def delayed_restart():
-            # Start new instance after current app has begun quitting
-            if getattr(sys, 'frozen', False):
-                subprocess.Popen([sys.executable] + sys.argv[1:])
-            else:
-                subprocess.Popen([sys.executable] + sys.argv)
-
-        # Schedule restart after a short delay to ensure clean quit
-        QTimer.singleShot(100, delayed_restart)
-        # Quit current instance
-        QTimer.singleShot(150, QApplication.quit)
+        self._settings_flow.handle_data_changed(yaml_path=yaml_path, meta=meta)
 
     def on_open_audit_log(self):
         """Open audit log dialog."""
@@ -1832,261 +407,14 @@ class MainWindow(QMainWindow):
         dialog.exec()  # Modal dialog
 
     def on_manage_boxes(self, yaml_path_override=None):
-        request = self._prompt_manage_boxes_request(yaml_path_override=yaml_path_override)
-        if not request:
-            return
-        result = self.handle_manage_boxes_request(
-            request,
-            from_ai=False,
-            yaml_path_override=yaml_path_override,
-        )
-        if isinstance(result, dict) and result.get("ok"):
-            QMessageBox.information(
-                self,
-                tr("common.info"),
-                tr("main.boxAdjustSuccess"),
-            )
-        elif isinstance(result, dict) and result.get("error_code") != "user_cancelled":
-            QMessageBox.warning(
-                self,
-                tr("common.info"),
-                result.get("message") or tr("main.boxAdjustFailed"),
-            )
-
-    def _prompt_manage_boxes_request(self, yaml_path_override=None):
-        yaml_path = str(yaml_path_override or self.current_yaml_path)
-        if not yaml_path or not os.path.isfile(yaml_path):
-            QMessageBox.warning(self, tr("common.info"), t("main.fileNotFound", path=yaml_path))
-            return None
-
-        operation, ok = QInputDialog.getItem(
-            self,
-            tr("main.manageBoxes"),
-            tr("main.boxActionPrompt"),
-            [tr("main.boxOpAdd"), tr("main.boxOpRemove")],
-            0,
-            False,
-        )
-        if not ok:
-            return None
-
-        if operation == tr("main.boxOpAdd"):
-            count, ok = QInputDialog.getInt(
-                self,
-                tr("main.manageBoxes"),
-                tr("main.boxAddCountPrompt"),
-                1,
-                1,
-                20,
-                1,
-            )
-            if not ok:
-                return None
-            return {"operation": "add", "count": int(count)}
-
-        try:
-            data = load_yaml(yaml_path)
-            layout = (data or {}).get("meta", {}).get("box_layout", {})
-            box_numbers = get_box_numbers(layout)
-        except Exception as exc:
-            QMessageBox.warning(self, tr("common.info"), f"{tr('main.boxAdjustFailed')}: {exc}")
-            return None
-
-        if not box_numbers:
-            QMessageBox.warning(self, tr("common.info"), tr("main.boxNoAvailable"))
-            return None
-
-        box_text, ok = QInputDialog.getItem(
-            self,
-            tr("main.manageBoxes"),
-            tr("main.boxRemovePrompt"),
-            [str(box_num) for box_num in box_numbers],
-            0,
-            False,
-        )
-        if not ok:
-            return None
-        return {"operation": "remove", "box": int(box_text)}
-
-    def _ask_remove_mode(self, box_numbers, target_box, suggested_mode=None):
-        if not any(int(box_num) > int(target_box) for box_num in box_numbers):
-            if suggested_mode in {"keep_gaps", "renumber_contiguous"}:
-                return suggested_mode
-            return "keep_gaps"
-
-        message = t("main.boxRemoveMiddlePrompt", box=target_box)
-        if suggested_mode in {"keep_gaps", "renumber_contiguous"}:
-            mode_label = (
-                tr("main.boxDeleteKeepGaps")
-                if suggested_mode == "keep_gaps"
-                else tr("main.boxDeleteRenumber")
-            )
-            message += "\n" + t("main.boxAiSuggestedMode", mode=mode_label)
-
-        dlg = QMessageBox(self)
-        dlg.setWindowTitle(tr("main.manageBoxes"))
-        dlg.setIcon(QMessageBox.Warning)
-        dlg.setText(message)
-        keep_btn = dlg.addButton(tr("main.boxDeleteKeepGaps"), QMessageBox.AcceptRole)
-        renumber_btn = dlg.addButton(tr("main.boxDeleteRenumber"), QMessageBox.ActionRole)
-        dlg.addButton(QMessageBox.Cancel)
-        dlg.setDefaultButton(keep_btn)
-        dlg.exec()
-
-        clicked = dlg.clickedButton()
-        if clicked == keep_btn:
-            return "keep_gaps"
-        if clicked == renumber_btn:
-            return "renumber_contiguous"
-        return None
+        self._boxes_flow.manage_boxes(yaml_path_override=yaml_path_override)
 
     def handle_manage_boxes_request(self, request, from_ai=True, yaml_path_override=None):
-        if not isinstance(request, dict):
-            return {
-                "ok": False,
-                "error_code": "invalid_tool_input",
-                "message": "Invalid manage boxes request",
-            }
-
-        yaml_path = str(yaml_path_override or self.current_yaml_path)
-        if not yaml_path or not os.path.isfile(yaml_path):
-            return {
-                "ok": False,
-                "error_code": "load_failed",
-                "message": t("main.fileNotFound", path=yaml_path),
-            }
-
-        op = str(request.get("operation") or "").strip().lower()
-        if op not in {"add", "remove"}:
-            return {
-                "ok": False,
-                "error_code": "invalid_operation",
-                "message": "operation must be add/remove",
-            }
-
-        payload = {"operation": op}
-        mode = request.get("renumber_mode")
-        if mode not in (None, ""):
-            mode = str(mode).strip().lower()
-            alias = {
-                "keep": "keep_gaps",
-                "gaps": "keep_gaps",
-                "renumber": "renumber_contiguous",
-                "compact": "renumber_contiguous",
-            }
-            mode = alias.get(mode, mode)
-
-        if op == "add":
-            try:
-                payload["count"] = int(request.get("count", 1))
-            except Exception:
-                return {
-                    "ok": False,
-                    "error_code": "invalid_count",
-                    "message": "count must be a positive integer",
-                }
-            if payload["count"] <= 0:
-                return {
-                    "ok": False,
-                    "error_code": "invalid_count",
-                    "message": "count must be a positive integer",
-                }
-
-            reply = QMessageBox.question(
-                self,
-                tr("main.manageBoxes"),
-                t("main.boxConfirmAdd", count=payload["count"]),
-                QMessageBox.Yes | QMessageBox.Cancel,
-                QMessageBox.Cancel,
-            )
-            if reply != QMessageBox.Yes:
-                return {
-                    "ok": False,
-                    "error_code": "user_cancelled",
-                    "message": tr("main.boxCancelled"),
-                }
-
-        else:
-            try:
-                target_box = int(request.get("box"))
-            except Exception:
-                return {
-                    "ok": False,
-                    "error_code": "invalid_box",
-                    "message": "box must be an integer",
-                }
-            payload["box"] = target_box
-
-            try:
-                data = load_yaml(yaml_path)
-                layout = (data or {}).get("meta", {}).get("box_layout", {})
-                box_numbers = get_box_numbers(layout)
-            except Exception as exc:
-                return {
-                    "ok": False,
-                    "error_code": "load_failed",
-                    "message": str(exc),
-                }
-
-            chosen_mode = self._ask_remove_mode(box_numbers, target_box, suggested_mode=mode)
-            if chosen_mode is None:
-                return {
-                    "ok": False,
-                    "error_code": "user_cancelled",
-                    "message": tr("main.boxCancelled"),
-                }
-            payload["renumber_mode"] = chosen_mode
-
-            mode_label = (
-                tr("main.boxDeleteKeepGaps")
-                if chosen_mode == "keep_gaps"
-                else tr("main.boxDeleteRenumber")
-            )
-            reply = QMessageBox.question(
-                self,
-                tr("main.manageBoxes"),
-                t("main.boxConfirmRemove", box=target_box, mode=mode_label),
-                QMessageBox.Yes | QMessageBox.Cancel,
-                QMessageBox.Cancel,
-            )
-            if reply != QMessageBox.Yes:
-                return {
-                    "ok": False,
-                    "error_code": "user_cancelled",
-                    "message": tr("main.boxCancelled"),
-                }
-
-        response = self.bridge.adjust_box_count(
-            yaml_path=yaml_path,
-            execution_mode="execute",
-            **payload,
+        return self._boxes_flow.handle_request(
+            request,
+            from_ai=from_ai,
+            yaml_path_override=yaml_path_override,
         )
-
-        if response.get("ok"):
-            self.overview_panel.refresh()
-            self.on_operation_completed(True)
-        notice_level = "success" if response.get("ok") else "error"
-        notice_text = str(
-            response.get("message")
-            or (tr("main.boxAdjustSuccess") if response.get("ok") else tr("main.boxAdjustFailed"))
-        )
-        notice = build_system_notice(
-            code="box.layout.adjusted",
-            text=notice_text,
-            level=notice_level,
-            source="ai" if from_ai else "settings",
-            timeout_ms=3000,
-            data={
-                "operation": op,
-                "ok": bool(response.get("ok")),
-                "preview": response.get("preview") or response.get("result") or {},
-                "error_code": response.get("error_code"),
-            },
-        )
-        self.show_status(notice_text, 3000, notice_level)
-        self.operations_panel.emit_external_operation_event(notice)
-
-        return response
 
     def on_create_new_dataset(self, update_window=True):
         previous_yaml_abs = os.path.abspath(str(self.current_yaml_path or ""))
@@ -2108,42 +436,18 @@ class MainWindow(QMainWindow):
             return
 
         target_path = _normalize_inventory_yaml_path(target_path)
-
-        target_dir = os.path.dirname(target_path)
-        if target_dir and not os.path.isdir(target_dir):
-            os.makedirs(target_dir, exist_ok=True)
-
-        # Step 2: custom fields dialog
-        cf_dlg = CustomFieldsDialog(self)
-        if cf_dlg.exec() != QDialog.Accepted:
+        created_path = self._dataset_flow.create_dataset_file(
+            target_path=target_path,
+            box_layout=box_layout,
+            custom_fields_dialog_cls=CustomFieldsDialog,
+        )
+        if not created_path:
             return
-        custom_fields = cf_dlg.get_custom_fields()
-        display_key = cf_dlg.get_display_key()
-        cell_line_required = cf_dlg.get_cell_line_required()
-        cell_line_options = cf_dlg.get_cell_line_options()
-
-        meta = {
-            "version": "1.0",
-            "box_layout": box_layout,
-            "custom_fields": custom_fields,
-            "cell_line_required": bool(cell_line_required),
-        }
-        if display_key:
-            meta["display_key"] = display_key
-        if cell_line_options:
-            meta["cell_line_options"] = cell_line_options
-
-        new_payload = {
-            "meta": meta,
-            "inventory": [],
-        }
-        with open(target_path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(new_payload, f, allow_unicode=True, sort_keys=False)
 
         if not update_window:
-            return target_path
+            return created_path
 
-        self.current_yaml_path = target_path
+        self.current_yaml_path = created_path
         if previous_yaml_abs != os.path.abspath(str(self.current_yaml_path or "")):
             self.operations_panel.reset_for_dataset_switch()
         self._update_dataset_label()
@@ -2154,51 +458,14 @@ class MainWindow(QMainWindow):
             t("main.fileCreated", path=self.current_yaml_path),
             4000,
         )
-        return target_path
+        return created_path
 
     def restore_ui_settings(self):
-        geometry = self.settings.value("ui/geometry")
-        if geometry:
-            self.restoreGeometry(geometry)
-
-        # AI settings from unified config
-        ai_cfg = self.gui_config.get("ai", {})
-        provider = ai_cfg.get("provider") or DEFAULT_PROVIDER
-        provider_cfg = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS[DEFAULT_PROVIDER])
-        self.ai_panel.ai_provider.setText(provider)
-        self.ai_panel.ai_model.setText(ai_cfg.get("model") or provider_cfg["model"])
-        self.ai_panel.ai_steps.setValue(ai_cfg.get("max_steps", 8))
-        self.ai_panel.ai_thinking_enabled.setChecked(bool(ai_cfg.get("thinking_enabled", True)))
-        self.ai_panel.ai_thinking_collapsed = not bool(ai_cfg.get("thinking_expanded", True))
-        self.ai_panel.ai_custom_prompt = ai_cfg.get("custom_prompt", "")
+        self._state_flow.restore_ui_settings()
 
     def closeEvent(self, event):
-        if self.ai_panel.ai_run_inflight:
-            QMessageBox.warning(
-                self,
-                tr("main.aiBusyTitle"),
-                tr("main.aiBusyMessage"),
-            )
-            event.ignore()
+        if not self._state_flow.handle_close_event(event):
             return
-
-        # Window geometry to QSettings (binary blob)
-        self.settings.setValue("ui/geometry", self.saveGeometry())
-
-        # Everything else to unified config
-        provider = self.ai_panel.ai_provider.text().strip() or DEFAULT_PROVIDER
-        provider_cfg = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS[DEFAULT_PROVIDER])
-        self.gui_config["yaml_path"] = self.current_yaml_path
-        self.gui_config["ai"] = {
-            "provider": provider,
-            "model": self.ai_panel.ai_model.text().strip() or provider_cfg["model"],
-            "max_steps": self.ai_panel.ai_steps.value(),
-            "thinking_enabled": self.ai_panel.ai_thinking_enabled.isChecked(),
-            "thinking_expanded": not self.ai_panel.ai_thinking_collapsed,
-            "custom_prompt": self.ai_panel.ai_custom_prompt,
-        }
-        save_gui_config(self.gui_config)
-
         super().closeEvent(event)
 
 def main():
@@ -2236,10 +503,10 @@ def main():
 
     # Set icon color based on theme
     if theme == "light":
-        set_icon_color("#000000")  # Black icons for light theme
+        set_icon_color(resolve_theme_token("icon-default", mode="light", fallback="#000000"))
         apply_light_theme(app)
     else:
-        set_icon_color("#ffffff")  # White icons for dark theme
+        set_icon_color(resolve_theme_token("icon-default", mode="dark", fallback="#ffffff"))
         apply_dark_theme(app)
 
     window = MainWindow()
@@ -2248,3 +515,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

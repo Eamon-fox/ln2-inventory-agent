@@ -8,7 +8,6 @@ import json
 import tempfile
 import subprocess
 import shutil
-from pathlib import Path
 
 
 class AutoUpdater:

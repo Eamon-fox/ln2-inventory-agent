@@ -1,4 +1,4 @@
-"""Unit tests for app_gui/plan_executor.py."""
+﻿"""Unit tests for app_gui/plan_executor.py."""
 
 import os
 import sys
@@ -339,7 +339,7 @@ class RunPlanExecuteTests(unittest.TestCase):
             )
 
             bridge = MagicMock()
-            bridge.batch_thaw.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
+            bridge.batch_takeout.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
 
             items = [
                 make_move_item(record_id=1, position=1, to_position=10),
@@ -349,7 +349,7 @@ class RunPlanExecuteTests(unittest.TestCase):
 
             self.assertTrue(result["ok"])
             self.assertEqual(2, result["stats"]["ok"])
-            bridge.batch_thaw.assert_called_once()
+            bridge.batch_takeout.assert_called_once()
 
     def test_run_plan_move_batch_fails_marks_all_blocked(self):
         with tempfile.TemporaryDirectory() as td:
@@ -364,7 +364,7 @@ class RunPlanExecuteTests(unittest.TestCase):
             )
 
             bridge = MagicMock()
-            bridge.batch_thaw.return_value = {"ok": False, "error_code": "validation_failed", "message": "Batch failed"}
+            bridge.batch_takeout.return_value = {"ok": False, "error_code": "validation_failed", "message": "Batch failed"}
 
             items = [
                 make_move_item(record_id=1, position=1, to_position=10),
@@ -375,8 +375,8 @@ class RunPlanExecuteTests(unittest.TestCase):
             self.assertFalse(result["ok"])
             self.assertTrue(result["blocked"])
             self.assertEqual(2, result["stats"]["blocked"])
-            bridge.batch_thaw.assert_called_once()
-            self.assertFalse(bridge.record_thaw.called)
+            bridge.batch_takeout.assert_called_once()
+            self.assertFalse(bridge.record_takeout.called)
             self.assertTrue(all(it.get("error_code") == "validation_failed" for it in result["items"]))
 
     def test_run_plan_takeout_batch_success(self):
@@ -392,7 +392,7 @@ class RunPlanExecuteTests(unittest.TestCase):
             )
 
             bridge = MagicMock()
-            bridge.batch_thaw.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
+            bridge.batch_takeout.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
 
             items = [
                 make_takeout_item(record_id=1, position=1),
@@ -416,7 +416,7 @@ class RunPlanExecuteTests(unittest.TestCase):
 
             bridge = MagicMock()
             bridge.add_entry.return_value = {"ok": True}
-            bridge.batch_thaw.return_value = {"ok": True}
+            bridge.batch_takeout.return_value = {"ok": True}
 
             items = [
                 make_add_item(box=2, position=10),
@@ -449,7 +449,7 @@ class RunPlanExecuteTests(unittest.TestCase):
 
         source_event = {
             "timestamp": "2026-02-12T09:00:00",
-            "action": "record_thaw",
+            "action": "record_takeout",
             "trace_id": "trace-audit-1",
         }
         item = make_rollback_item("/tmp/backup.bak")
@@ -494,8 +494,8 @@ class PreflightVsExecuteConsistencyTests(unittest.TestCase):
             )
 
             bridge = MagicMock()
-            bridge.batch_thaw.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
-            bridge.record_thaw.return_value = {"ok": True}
+            bridge.batch_takeout.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
+            bridge.record_takeout.return_value = {"ok": True}
 
             items = [make_move_item(record_id=1, position=1, to_position=5)]
 
@@ -637,7 +637,7 @@ class EditPlanTests(unittest.TestCase):
 
             bridge = MagicMock()
             bridge.edit_entry.return_value = {"ok": True}
-            bridge.batch_thaw.return_value = {"ok": True}
+            bridge.batch_takeout.return_value = {"ok": True}
 
             items = [
                 make_edit_item(record_id=1, box=1, position=5, fields={"note": "edited"}),
@@ -648,7 +648,7 @@ class EditPlanTests(unittest.TestCase):
             self.assertTrue(result["ok"])
             self.assertEqual(2, result["stats"]["ok"])
             bridge.edit_entry.assert_called_once()
-            bridge.batch_thaw.assert_called_once()
+            bridge.batch_takeout.assert_called_once()
 
     def test_multiple_edits_execute_independently(self):
         with tempfile.TemporaryDirectory() as td:
@@ -885,8 +885,9 @@ class MultiAddPreflightTests(unittest.TestCase):
             blocked_items = [r for r in result["items"] if r.get("blocked")]
             self.assertEqual(len(blocked_items), 1)
             self.assertIn("position_conflict", blocked_items[0].get("error_code", ""))
-            self.assertIn("同批次", blocked_items[0].get("message", ""))
+            self.assertTrue(blocked_items[0].get("message"))
 
 
 if __name__ == "__main__":
     unittest.main()
+

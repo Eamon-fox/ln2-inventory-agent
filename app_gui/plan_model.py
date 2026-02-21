@@ -1,463 +1,26 @@
-"""Unified Operation Plan model: validation and printable rendering."""
+"""Grid-aware operation sheet rendering built on plan_model_sheet helpers."""
 
 from collections import defaultdict
 from datetime import date
-from typing import Dict, List, Optional
 
-from app_gui.ui.theme import FONT_SIZE_MONO, FONT_SIZE_XS, FONT_SIZE_SM, FONT_SIZE_MD, FONT_SIZE_XXL
-
-_VALID_ACTIONS = {"takeout", "thaw", "discard", "move", "add", "rollback", "edit"}
-
-
-def _pos_to_coord(pos, cols=9):
-    """Return position as-is (pure number format)."""
-    return str(pos) if isinstance(pos, int) else str(pos)
-
-
-def validate_plan_item(item: dict) -> Optional[str]:
-    """Return an error message if *item* is invalid, or ``None`` if OK."""
-    action = str(item.get("action", "")).lower()
-    if action not in _VALID_ACTIONS:
-        return f"Unknown action: {item.get('action')}"
-
-    if action == "rollback":
-        # rollback restores the whole YAML from backup; no box/position/record needed.
-        return None
-
-    box = item.get("box")
-    if not isinstance(box, int):
-        return "box must be an integer"
-    if box < 0:
-        return "box must be >= 0"
-
-    pos = item.get("position")
-    if not isinstance(pos, int):
-        return "position must be an integer"
-    if pos < 1:
-        return "position must be a positive integer"
-
-    if action == "move":
-        to = item.get("to_position")
-        if not isinstance(to, int) or to < 1:
-            return "to_position must be a positive integer for move"
-        if to == pos:
-            return "to_position must differ from position"
-        to_box = item.get("to_box")
-        if to_box is not None:
-            if not isinstance(to_box, int) or to_box < 1:
-                return "to_box must be a positive integer"
-
-    if action == "add":
-        # Keep this as lightweight schema validation.
-        # Full write validation is handled by the shared staging gate.
-        pass
-    elif action == "edit":
-        rid = item.get("record_id")
-        if not isinstance(rid, int) or rid < 1:
-            return "record_id must be a positive integer"
-    else:
-        rid = item.get("record_id")
-        if not isinstance(rid, int) or rid < 1:
-            return "record_id must be a positive integer"
-
-    return None
-
-
-def _get_action_display(action):
-    """Get display info for action type."""
-    action_map = {
-        "takeout": ("TAKEOUT", "#f59e0b", "Take out from tank"),
-        "thaw": ("THAW", "#10b981", "Thaw for use"),
-        "discard": ("DISCARD", "#ef4444", "Discard sample"),
-        "move": ("MOVE", "#3b82f6", "Relocate sample"),
-        "add": ("ADD", "#8b5cf6", "Add new sample"),
-        "edit": ("EDIT", "#06b6d4", "Edit record fields"),
-        "rollback": ("ROLLBACK", "#6b7280", "Restore from backup"),
-    }
-    return action_map.get(str(action).lower(), (str(action).upper(), "#6b7280", ""))
-
-
-def _extract_sample_info(item):
-    """Extract sample information from item for display."""
-    payload = item.get("payload") or {}
-    fields = payload.get("fields") or {}
-    # Collect all non-empty user field values for labelling
-    from lib.custom_fields import STRUCTURAL_FIELD_KEYS
-    user_vals = []
-    for k, v in fields.items():
-        if k not in STRUCTURAL_FIELD_KEYS:
-            text = str(v or "").strip()
-            if text:
-                user_vals.append(text)
-    # Fallback to top-level keys on item/payload (legacy compat)
-    if not user_vals:
-        for src in (item, payload):
-            for k in ("cell_line", "short_name"):
-                text = str(src.get(k) or "").strip()
-                if text and text not in user_vals:
-                    user_vals.append(text)
-    return {
-        "label": " / ".join(user_vals[:2]) if user_vals else "",
-        "frozen_at": fields.get("frozen_at") or item.get("frozen_at") or payload.get("frozen_at") or "",
-    }
-
-
-def render_operation_sheet(items):
-    """Generate a user-friendly printable HTML operation sheet."""
-    if not items:
-        return """<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>LN2 Operation Sheet</title>
-<style>body { font-family: Arial, sans-serif; margin: 40px; color: #666; }</style>
-</head><body><p>No operations to display.</p></body></html>"""
-
-    today = date.today().isoformat()
-    
-    by_action = defaultdict(list)
-    for item in items:
-        by_action[item.get("action", "unknown")].append(item)
-    
-    action_order = ["takeout", "thaw", "move", "discard", "add", "edit", "rollback"]
-    
-    sections = []
-    op_counter = 1
-    
-    for action in action_order:
-        if action not in by_action:
-            continue
-        
-        action_items = by_action[action]
-        action_name, action_color, action_desc = _get_action_display(action)
-        
-        action_rows = []
-        for item in sorted(action_items, key=lambda x: (x.get("box", 0), x.get("position", 0))):
-            box = item.get("box", 0)
-            pos = item.get("position", 0)
-            to_pos = item.get("to_position")
-            to_box = item.get("to_box")
-            
-            if action == "move" and to_pos:
-                if to_box and to_box != box:
-                    pos_display = f"Box{box}:{_pos_to_coord(pos)} &rarr; Box{to_box}:{_pos_to_coord(to_pos)}"
-                    warning = '<span class="warning">[CROSS-BOX]</span>'
-                else:
-                    pos_display = f"Box{box}:{_pos_to_coord(pos)} &rarr; {_pos_to_coord(to_pos)}"
-                    warning = ""
-            else:
-                pos_display = f"Box{box}:{_pos_to_coord(pos)}"
-                warning = ""
-            
-            sample = _extract_sample_info(item)
-            rid = item.get("record_id")
-            
-            sample_label = sample['label'] or item.get("label", "-")
-            
-            _payload = item.get("payload") or {}
-            _fields = _payload.get("fields") or {}
-            note = _fields.get("note", "") or ""
-            
-            action_rows.append(f"""
-            <tr class="op-row">
-                <td class="op-num">{op_counter}</td>
-                <td class="chk-cell"><input type="checkbox" id="op{op_counter}"></td>
-                <td class="pos-cell">{pos_display} {warning}</td>
-                <td class="sample-cell">
-                    <div class="sample-name">{sample_label}</div>
-                    <div class="sample-meta">ID: {rid if rid else 'NEW'}</div>
-                </td>
-                <td class="note-cell">{note}</td>
-                <td class="confirm-cell">
-                    <div class="confirm-line">Time: _______</div>
-                    <div class="confirm-line">Init: _______</div>
-                </td>
-            </tr>""")
-            op_counter += 1
-        
-        sections.append(f"""
-        <div class="action-section" style="border-left: 4px solid {action_color};">
-            <div class="action-header">
-                <span class="action-name" style="background-color: {action_color};">{action_name}</span>
-                <span class="action-count">{len(action_items)} operations</span>
-                <span class="action-desc">{action_desc}</span>
-            </div>
-            <table class="op-table">
-                <thead>
-                    <tr>
-                        <th class="col-num">#</th>
-                        <th class="col-chk">Done</th>
-                        <th class="col-pos">Location</th>
-                        <th class="col-sample">Sample</th>
-                        <th class="col-note">Notes</th>
-                        <th class="col-confirm">Confirmation</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {''.join(action_rows)}
-                </tbody>
-            </table>
-        </div>""")
-    
-    sections_html = "\n".join(sections)
-    
-    takeout_count = len(by_action.get("takeout", [])) + len(by_action.get("thaw", []))
-    move_count = len(by_action.get("move", []))
-    add_count = len(by_action.get("add", []))
-    discard_count = len(by_action.get("discard", []))
-    edit_count = len(by_action.get("edit", []))
-    rollback_count = len(by_action.get("rollback", []))
-    
-    return f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>LN2 Operation Sheet - {today}</title>
-    <style>
-        * {{ box-sizing: border-box; }}
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-            margin: 0;
-            padding: 20px;
-            font-size: {FONT_SIZE_SM}px;
-            color: #1f2937;
-            background: #fff;
-        }}
-        
-        .header {{
-            border-bottom: 2px solid #1f2937;
-            padding-bottom: 15px;
-            margin-bottom: 20px;
-        }}
-        
-        .header h1 {{
-            margin: 0 0 5px 0;
-            font-size: {FONT_SIZE_XXL}px;
-        }}
-        
-        .header-meta {{
-            display: flex;
-            gap: 30px;
-            color: #6b7280;
-            font-size: {FONT_SIZE_XS}px;
-        }}
-        
-        .header-meta span {{
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }}
-        
-        .summary {{
-            display: flex;
-            gap: 15px;
-            margin-bottom: 20px;
-            padding: 10px;
-            background: #f9fafb;
-            border-radius: 6px;
-        }}
-        
-        .summary-item {{
-            padding: 5px 12px;
-            border-radius: 4px;
-            font-weight: 600;
-        }}
-        
-        .action-section {{
-            margin-bottom: 25px;
-            padding-left: 10px;
-        }}
-        
-        .action-header {{
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 10px;
-            padding: 8px 0;
-        }}
-        
-        .action-name {{
-            padding: 4px 12px;
-            border-radius: 4px;
-            color: white;
-            font-weight: bold;
-            font-size: {FONT_SIZE_MD}px;
-        }}
-        
-        .action-count {{
-            color: #6b7280;
-            font-size: {FONT_SIZE_XS}px;
-        }}
-        
-        .action-desc {{
-            color: #9ca3af;
-            font-size: {FONT_SIZE_MONO}px;
-            font-style: italic;
-        }}
-        
-        .op-table {{
-            width: 100%;
-            border-collapse: collapse;
-            margin-bottom: 10px;
-        }}
-        
-        .op-table th {{
-            background: #f3f4f6;
-            padding: 8px;
-            text-align: left;
-            font-size: {FONT_SIZE_MONO}px;
-            text-transform: uppercase;
-            color: #6b7280;
-            border-bottom: 1px solid #e5e7eb;
-        }}
-        
-        .op-table td {{
-            padding: 10px 8px;
-            border-bottom: 1px solid #e5e7eb;
-            vertical-align: top;
-        }}
-        
-        .op-num {{
-            width: 30px;
-            font-weight: bold;
-            color: #9ca3af;
-            text-align: center;
-        }}
-        
-        .chk-cell {{
-            width: 40px;
-            text-align: center;
-        }}
-        
-        .chk-cell input {{
-            width: 16px;
-            height: 16px;
-        }}
-        
-        .pos-cell {{
-            font-family: 'SF Mono', 'Consolas', monospace;
-            font-weight: 600;
-            font-size: {FONT_SIZE_MD}px;
-            color: #1f2937;
-        }}
-        
-        .warning {{
-            color: #ef4444;
-            font-weight: bold;
-            font-size: {FONT_SIZE_MONO}px;
-            margin-left: 5px;
-        }}
-        
-        .sample-name {{
-            font-weight: 600;
-            color: #1f2937;
-        }}
-        
-        .sample-meta {{
-            font-size: {FONT_SIZE_MONO}px;
-            color: #6b7280;
-            margin-top: 2px;
-        }}
-        
-        .note-cell {{
-            color: #6b7280;
-            font-size: {FONT_SIZE_XS}px;
-            max-width: 150px;
-        }}
-        
-        .confirm-cell {{
-            width: 100px;
-        }}
-        
-        .confirm-line {{
-            font-size: {FONT_SIZE_MONO}px;
-            color: #9ca3af;
-            margin: 2px 0;
-        }}
-        
-        .footer {{
-            margin-top: 30px;
-            padding-top: 15px;
-            border-top: 1px solid #e5e7eb;
-            font-size: {FONT_SIZE_MONO}px;
-            color: #9ca3af;
-        }}
-        
-        .footer-row {{
-            display: flex;
-            gap: 40px;
-            margin-bottom: 10px;
-        }}
-        
-        .sign-box {{
-            border-bottom: 1px solid #d1d5db;
-            width: 200px;
-            display: inline-block;
-            margin-left: 5px;
-        }}
-        
-        .tips {{
-            background: #fef3c7;
-            border: 1px solid #f59e0b;
-            border-radius: 4px;
-            padding: 10px;
-            margin-bottom: 20px;
-            font-size: {FONT_SIZE_XS}px;
-        }}
-        
-        .tips-title {{
-            font-weight: bold;
-            color: #92400e;
-            margin-bottom: 5px;
-        }}
-        
-        .tips ul {{
-            margin: 0;
-            padding-left: 20px;
-            color: #78350f;
-        }}
-        
-        .tips li {{
-            margin: 2px 0;
-        }}
-        
-        @media print {{
-            body {{ padding: 10px; }}
-            .action-section {{ page-break-inside: avoid; }}
-            .op-table {{ page-break-inside: auto; }}
-            .op-row {{ page-break-inside: avoid; }}
-        }}
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>LN2 Tank Operation Sheet</h1>
-        <div class="header-meta">
-            <span>Date: <strong>{today}</strong></span>
-            <span>Total: <strong>{len(items)} operations</strong></span>
-        </div>
-    </div>
-    
-    <div class="summary">
-        <div class="summary-item" style="background: #fef3c7;">Takeout/Thaw: {takeout_count}</div>
-        <div class="summary-item" style="background: #dbeafe;">Move: {move_count}</div>
-        <div class="summary-item" style="background: #ede9fe;">Add: {add_count}</div>
-        <div class="summary-item" style="background: #fee2e2;">Discard: {discard_count}</div>
-        <div class="summary-item" style="background: #cffafe;">Edit: {edit_count}</div>
-        <div class="summary-item" style="background: #f3f4f6;">Rollback: {rollback_count}</div>
-    </div>
-    
-    {sections_html}
-    
-    <div class="footer">
-        <div class="footer-row">
-            <span>Completed by: <span class="sign-box"></span></span>
-            <span>Verified by: <span class="sign-box"></span></span>
-        </div>
-        <div class="footer-row">
-            <span>Notes: <span class="sign-box" style="width: 400px;"></span></span>
-        </div>
-    </div>
-</body>
-</html>"""
-
+from app_gui.ui.theme import (
+    FONT_SIZE_MONO,
+    FONT_SIZE_XS,
+    FONT_SIZE_SM,
+    FONT_SIZE_MD,
+    FONT_SIZE_XXL,
+    MONO_FONT_CSS_FAMILY,
+    resolve_theme_token,
+)
+from app_gui.plan_model_sheet import (
+    _sheet_color,
+    _apply_sheet_theme_tokens,
+    _pos_to_coord,
+    validate_plan_item,
+    _get_action_display,
+    _extract_sample_info,
+    render_operation_sheet,
+)
 
 def extract_grid_state_for_print(overview_panel):
     """Extract current grid state from overview panel for print view.
@@ -533,17 +96,28 @@ def apply_operation_markers_to_grid(grid_state, plan_items):
         Modified grid_state with operation markers
     """
     markers = {}
+    active_boxes = set()
     move_counter = 1
+
+    def _normalize_box(raw):
+        try:
+            value = int(raw)
+        except Exception:
+            return None
+        return value if value > 0 else None
 
     for item in plan_items:
         action = item.get("action", "").lower()
-        box = item.get("box")
+        box = _normalize_box(item.get("box"))
         position = item.get("position")
+
+        if box is not None:
+            active_boxes.add(box)
 
         if action == "add" and box and position:
             markers[(box, position)] = {"type": "add"}
 
-        elif action in ("takeout", "thaw", "discard") and box and position:
+        elif action == "takeout" and box and position:
             markers[(box, position)] = {"type": "takeout"}
 
         elif action == "move" and box and position:
@@ -552,7 +126,8 @@ def apply_operation_markers_to_grid(grid_state, plan_items):
 
             markers[(box, position)] = {"type": "move-source", "move_id": move_id}
 
-            to_box = item.get("to_box") or box
+            to_box = _normalize_box(item.get("to_box")) or box
+            active_boxes.add(to_box)
             to_pos = item.get("to_position")
             if to_pos:
                 markers[(to_box, to_pos)] = {"type": "move-target", "move_id": move_id}
@@ -566,6 +141,9 @@ def apply_operation_markers_to_grid(grid_state, plan_items):
                 if "move_id" in marker:
                     cell["move_id"] = marker["move_id"]
 
+    # Preserve explicit filter intent for render_grid_html:
+    # empty list means "show no boxes" (e.g., rollback-only plan).
+    grid_state["active_boxes"] = sorted(active_boxes)
     return grid_state
 
 
@@ -581,8 +159,28 @@ def render_grid_html(grid_state):
     if not grid_state or not grid_state.get("boxes"):
         return ""
 
+    has_active_filter = "active_boxes" in grid_state
+    active_boxes = set()
+    if has_active_filter:
+        for raw in (grid_state.get("active_boxes") or []):
+            try:
+                value = int(raw)
+            except Exception:
+                continue
+            if value > 0:
+                active_boxes.add(value)
+
     boxes_html = []
     for box_data in grid_state["boxes"]:
+        box_num = box_data.get("box_number")
+        try:
+            box_num_int = int(box_num)
+        except Exception:
+            box_num_int = None
+
+        if has_active_filter and box_num_int not in active_boxes:
+            continue
+
         cells_html = []
         for cell in box_data["cells"]:
             classes = ["cell"]
@@ -592,7 +190,7 @@ def render_grid_html(grid_state):
             if cell["is_occupied"]:
                 classes.append("cell-occupied")
                 content = cell["label"]
-                color = cell.get("color", "#36506d")
+                color = cell.get("color", _sheet_color("sheet-grid-border", "#36506d"))
                 attrs.append(f'style="background-color: {color};"')
             else:
                 classes.append("cell-empty")
@@ -608,9 +206,25 @@ def render_grid_html(grid_state):
             attr_str = " ".join(attrs)
             cells_html.append(f'<div class="{class_str}" {attr_str}>{content}</div>')
 
+        raw_label = str(box_data.get("box_label") or "").strip()
+        if not raw_label:
+            raw_label = str(box_num_int) if box_num_int is not None else str(box_num or "?")
+
+        # Avoid redundant "BOX Box1" style when layout labels already include "Box".
+        normalized_label = raw_label
+        if raw_label.lower().startswith("box"):
+            suffix = raw_label[3:].strip()
+            if suffix:
+                normalized_label = suffix
+
+        badge_num = str(box_num_int) if box_num_int is not None else normalized_label
+
         box_html = f"""
         <div class="box">
-            <div class="box-header">{box_data["box_label"]}</div>
+            <div class="box-header">
+                <span class="box-header-main">BOX {normalized_label}</span>
+                <span class="box-header-num">#{badge_num}</span>
+            </div>
             <div class="box-grid">
                 {"".join(cells_html)}
             </div>
@@ -618,10 +232,13 @@ def render_grid_html(grid_state):
         """
         boxes_html.append(box_html)
 
+    if not boxes_html:
+        return ""
+
     return f"""
-    <div class="grid-section">
+    <div class="grid-section print-grid-section">
         <h2>Visual Guide - Tank Layout</h2>
-        <div class="grid-container">
+        <div class="grid-container print-grid-container">
             {"".join(boxes_html)}
         </div>
     </div>
@@ -651,7 +268,7 @@ def render_operation_sheet_with_grid(items, grid_state=None):
     for item in items:
         by_action[item.get("action", "unknown")].append(item)
 
-    action_order = ["takeout", "thaw", "move", "discard", "add", "edit", "rollback"]
+    action_order = ["takeout", "move", "add", "edit", "rollback"]
 
     sections = []
     op_counter = 1
@@ -733,16 +350,15 @@ def render_operation_sheet_with_grid(items, grid_state=None):
 
     sections_html = "\n".join(sections)
 
-    takeout_count = len(by_action.get("takeout", [])) + len(by_action.get("thaw", []))
+    takeout_count = len(by_action.get("takeout", []))
     move_count = len(by_action.get("move", []))
     add_count = len(by_action.get("add", []))
-    discard_count = len(by_action.get("discard", []))
     edit_count = len(by_action.get("edit", []))
     rollback_count = len(by_action.get("rollback", []))
 
     grid_html = render_grid_html(grid_state)
 
-    return f"""<!DOCTYPE html>
+    html = f"""<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
@@ -752,10 +368,13 @@ def render_operation_sheet_with_grid(items, grid_state=None):
         body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
             margin: 0;
-            padding: 20px;
+            padding: 0;
             font-size: {FONT_SIZE_SM}px;
+            line-height: 1.3;
             color: #1f2937;
             background: #fff;
+            print-color-adjust: exact;
+            -webkit-print-color-adjust: exact;
         }}
 
         .header {{
@@ -783,8 +402,9 @@ def render_operation_sheet_with_grid(items, grid_state=None):
         }}
 
         .grid-section {{
-            margin-bottom: 30px;
-            page-break-inside: avoid;
+            margin-bottom: 8mm;
+            break-inside: auto;
+            page-break-inside: auto;
         }}
 
         .grid-section h2 {{
@@ -795,43 +415,75 @@ def render_operation_sheet_with_grid(items, grid_state=None):
 
         .grid-container {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 4mm;
+            margin-bottom: 6mm;
+            align-items: start;
         }}
 
         .box {{
-            border: 2px solid #36506d;
-            border-radius: 8px;
-            padding: 12px;
+            border: 0.4mm solid #36506d;
+            border-radius: 2mm;
+            padding: 2.5mm;
             background: #0f1a2a;
+            break-inside: avoid;
             page-break-inside: avoid;
         }}
 
         .box-header {{
-            font-size: {FONT_SIZE_SM}px;
-            font-weight: 600;
-            margin-bottom: 10px;
-            color: #c6dbf3;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1.4mm;
+            margin-bottom: 1.8mm;
+        }}
+
+        .box-header-main {{
+            font-size: 7px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: #9fc2e8;
+        }}
+
+        .box-header-num {{
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 0;
+            padding: 0.4mm 1.4mm;
+            border-radius: 999px;
+            border: 0.25mm solid #36506d;
+            background: rgba(15, 26, 42, 0.85);
+            color: #e6f1ff;
+            font-size: 8px;
+            font-weight: 800;
+            line-height: 1;
         }}
 
         .box-grid {{
             display: grid;
             grid-template-columns: repeat(9, 1fr);
-            gap: 2px;
+            gap: 0.6mm;
         }}
 
         .cell {{
-            aspect-ratio: 1;
+            aspect-ratio: auto;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 11px;
+            width: 7.2mm;
+            height: 7.2mm;
+            min-width: 7.2mm;
+            min-height: 7.2mm;
+            font-size: 8px;
+            line-height: 1;
             font-weight: 500;
-            border: 1px solid #36506d;
-            border-radius: 2px;
-            padding: 2px;
+            border: 0.3mm solid #36506d;
+            border-radius: 0.5mm;
+            padding: 0;
             position: relative;
+            overflow: hidden;
         }}
 
         .cell-occupied {{
@@ -841,19 +493,19 @@ def render_operation_sheet_with_grid(items, grid_state=None):
         .cell-empty {{
             background-color: #1a2a40;
             color: #86a0bb;
-            font-size: 8px;
+            font-size: 6px;
         }}
 
         .cell[data-operation="add"]::after {{
             content: "ADD";
             position: absolute;
-            bottom: 1px;
-            right: 1px;
-            font-size: 7px;
+            bottom: 0;
+            right: 0;
+            font-size: 6px;
             font-weight: bold;
             color: #22c55e;
             background: rgba(0, 0, 0, 0.7);
-            padding: 1px 2px;
+            padding: 0 1px;
             border-radius: 2px;
         }}
 
@@ -865,13 +517,13 @@ def render_operation_sheet_with_grid(items, grid_state=None):
         .cell[data-operation="takeout"]::after {{
             content: "OUT";
             position: absolute;
-            bottom: 1px;
-            right: 1px;
-            font-size: 7px;
+            bottom: 0;
+            right: 0;
+            font-size: 6px;
             font-weight: bold;
             color: #ef4444;
             background: rgba(0, 0, 0, 0.7);
-            padding: 1px 2px;
+            padding: 0 1px;
             border-radius: 2px;
         }}
 
@@ -881,15 +533,15 @@ def render_operation_sheet_with_grid(items, grid_state=None):
         }}
 
         .cell[data-operation="move-source"]::after {{
-            content: attr(data-move-id) "→";
+            content: "M" attr(data-move-id) "-FROM";
             position: absolute;
-            bottom: 1px;
-            right: 1px;
-            font-size: 9px;
+            bottom: 0;
+            right: 0;
+            font-size: 6px;
             font-weight: bold;
             color: #63b3ff;
             background: rgba(0, 0, 0, 0.7);
-            padding: 1px 2px;
+            padding: 0 1px;
             border-radius: 2px;
         }}
 
@@ -899,15 +551,15 @@ def render_operation_sheet_with_grid(items, grid_state=None):
         }}
 
         .cell[data-operation="move-target"]::after {{
-            content: "←" attr(data-move-id);
+            content: "M" attr(data-move-id) "-TO";
             position: absolute;
-            bottom: 1px;
-            right: 1px;
-            font-size: 9px;
+            bottom: 0;
+            right: 0;
+            font-size: 6px;
             font-weight: bold;
             color: #63b3ff;
             background: rgba(0, 0, 0, 0.7);
-            padding: 1px 2px;
+            padding: 0 1px;
             border-radius: 2px;
         }}
 
@@ -923,6 +575,8 @@ def render_operation_sheet_with_grid(items, grid_state=None):
             padding: 10px;
             background: #f9fafb;
             border-radius: 6px;
+            break-inside: avoid;
+            page-break-inside: avoid;
         }}
 
         .summary-item {{
@@ -934,6 +588,8 @@ def render_operation_sheet_with_grid(items, grid_state=None):
         .action-section {{
             margin-bottom: 25px;
             padding-left: 10px;
+            break-inside: avoid;
+            page-break-inside: avoid;
         }}
 
         .action-header {{
@@ -967,6 +623,8 @@ def render_operation_sheet_with_grid(items, grid_state=None):
             width: 100%;
             border-collapse: collapse;
             margin-bottom: 10px;
+            break-inside: auto;
+            page-break-inside: auto;
         }}
 
         .op-table th {{
@@ -983,6 +641,11 @@ def render_operation_sheet_with_grid(items, grid_state=None):
             padding: 10px 8px;
             border-bottom: 1px solid #e5e7eb;
             vertical-align: top;
+        }}
+
+        .op-row {{
+            break-inside: avoid;
+            page-break-inside: avoid;
         }}
 
         .op-num {{
@@ -1003,7 +666,7 @@ def render_operation_sheet_with_grid(items, grid_state=None):
         }}
 
         .pos-cell {{
-            font-family: 'SF Mono', 'Consolas', monospace;
+            font-family: {MONO_FONT_CSS_FAMILY};
             font-weight: 600;
             font-size: {FONT_SIZE_MD}px;
             color: #1f2937;
@@ -1064,13 +727,15 @@ def render_operation_sheet_with_grid(items, grid_state=None):
             margin-left: 5px;
         }}
 
-        @media print {{
-            body {{ padding: 10px; }}
-            .grid-section {{ page-break-inside: avoid; }}
-            .box {{ page-break-inside: avoid; }}
-            .action-section {{ page-break-inside: avoid; }}
-            .op-table {{ page-break-inside: auto; }}
-            .op-row {{ page-break-inside: avoid; }}
+        @page {{
+            size: A4 portrait;
+            margin: 10mm;
+        }}
+
+        @media (max-width: 180mm) {{
+            .print-grid-container {{
+                grid-template-columns: 1fr;
+            }}
         }}
     </style>
 </head>
@@ -1086,10 +751,9 @@ def render_operation_sheet_with_grid(items, grid_state=None):
     {grid_html}
 
     <div class="summary">
-        <div class="summary-item" style="background: #fef3c7;">Takeout/Thaw: {takeout_count}</div>
+        <div class="summary-item" style="background: #fef3c7;">Takeout: {takeout_count}</div>
         <div class="summary-item" style="background: #dbeafe;">Move: {move_count}</div>
         <div class="summary-item" style="background: #ede9fe;">Add: {add_count}</div>
-        <div class="summary-item" style="background: #fee2e2;">Discard: {discard_count}</div>
         <div class="summary-item" style="background: #cffafe;">Edit: {edit_count}</div>
         <div class="summary-item" style="background: #f3f4f6;">Rollback: {rollback_count}</div>
     </div>
@@ -1107,3 +771,6 @@ def render_operation_sheet_with_grid(items, grid_state=None):
     </div>
 </body>
 </html>"""
+    return _apply_sheet_theme_tokens(html)
+
+

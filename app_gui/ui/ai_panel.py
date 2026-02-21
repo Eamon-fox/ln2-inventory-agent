@@ -5,50 +5,44 @@ import random
 from PySide6.QtCore import Qt, Signal, QThread, QEvent, QSize
 from PySide6.QtGui import QTextCursor, QPalette, QMouseEvent
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QLineEdit, QComboBox,
+    QWidget, QVBoxLayout, QHBoxLayout,
+    QPushButton, QLineEdit,
     QTextEdit, QSpinBox, QCheckBox
 )
 from app_gui.ui.workers import AgentRunWorker
 from app_gui.ui.utils import compact_json
-from app_gui.ui.theme import FONT_SIZE_XS, FONT_SIZE_SM
+from app_gui.ui.theme import FONT_SIZE_XS, FONT_SIZE_SM, MONO_FONT_CSS_FAMILY, resolve_theme_token
 from app_gui.ui.icons import get_icon, Icons
 from app_gui.event_compactor import compact_operation_event_for_context
 from app_gui.system_notice import build_system_notice, coerce_system_notice
 from app_gui.i18n import tr
-from lib.config import AUDIT_LOG_FILE
-import os
+from app_gui.error_localizer import localize_error_payload
+from app_gui.ui import ai_panel_notice as _ai_notice
+from app_gui.ui import ai_panel_event_details as _ai_event_details
 import json
 
 
-_ROLE_COLORS = {
-    "dark": {
-        "Agent": "#38bdf8",
-        "You": "#a3e635",
-        "Tool": "#f59e0b",
-        "System": "#f97316",
-        "muted": "#9ca3af",
-        "link": "#60a5fa",
-    },
-    "light": {
-        "Agent": "#0284c7",
-        "You": "#4d7c0f",
-        "Tool": "#b45309",
-        "System": "#c2410c",
-        "muted": "#64748b",
-        "link": "#2563eb",
-    },
+_ROLE_COLOR_TOKENS = {
+    "Agent": "chat-role-agent",
+    "You": "chat-role-you",
+    "Tool": "chat-role-tool",
+    "System": "chat-role-system",
+    "muted": "chat-role-muted",
+    "link": "chat-role-link",
 }
 
 
 def _get_role_color(role, is_dark=True):
     theme = "dark" if is_dark else "light"
-    return _ROLE_COLORS.get(theme, {}).get(role, "#a3e635")
+    token_name = _ROLE_COLOR_TOKENS.get(str(role))
+    if not token_name:
+        return resolve_theme_token("chat-role-you", mode=theme, fallback="#a3e635")
+    return resolve_theme_token(token_name, mode=theme, fallback="#a3e635")
 
 
 PLACEHOLDER_EXAMPLES_EN = [
     "Find K562-related records and summarize count",
-    "List today's takeout/thaw events",
+    "List today's takeout events",
     "Recommend 2 consecutive empty slots",
     "Show all empty positions in box A1",
     "Add a new plasmid record",
@@ -141,7 +135,7 @@ class AIPanel(QWidget):
         self.ai_thinking_enabled = QCheckBox()
         self.ai_custom_prompt = ""
 
-        # ── Chat area (takes most space) ──
+        # 鈹€鈹€ Chat area (takes most space) 鈹€鈹€
         self.ai_chat = QTextEdit()
         self.ai_chat.setObjectName("aiChatArea")
         self.ai_chat.setReadOnly(True)
@@ -154,7 +148,7 @@ class AIPanel(QWidget):
         self.ai_chat.viewport().setCursor(Qt.ArrowCursor)
         layout.addWidget(self.ai_chat, 1)
 
-        # ── Bottom dock: prompt input + controls ──
+        # 鈹€鈹€ Bottom dock: prompt input + controls 鈹€鈹€
         dock = QWidget()
         dock.setObjectName("aiPromptDock")
         dock_layout = QVBoxLayout(dock)
@@ -179,21 +173,7 @@ class AIPanel(QWidget):
         action_bar.setContentsMargins(0, 0, 8, 0)
         action_bar.setSpacing(4)
 
-        self.ai_run_btn = QPushButton(tr("ai.runAgent"))
-        self.ai_run_btn.setIcon(get_icon(Icons.PLAY, color="#ffffff"))  # White icon for primary variant
-        self.ai_run_btn.setIconSize(QSize(16, 16))
-        self.ai_run_btn.setProperty("variant", "primary")
-        self.ai_run_btn.setMinimumWidth(60)
-        self.ai_run_btn.clicked.connect(self.on_run_ai_agent)
-        action_bar.addWidget(self.ai_run_btn)
-
-        self.ai_stop_btn = QPushButton(tr("ai.stop"))
-        self.ai_stop_btn.setIcon(get_icon(Icons.SQUARE))
-        self.ai_stop_btn.setIconSize(QSize(16, 16))
-        self.ai_stop_btn.setMinimumWidth(60)
-        self.ai_stop_btn.setEnabled(False)
-        self.ai_stop_btn.clicked.connect(self.on_stop_ai_agent)
-        action_bar.addWidget(self.ai_stop_btn)
+        action_bar.addStretch()
 
         ai_clear_btn = QPushButton(tr("ai.clear"))
         ai_clear_btn.setIcon(get_icon(Icons.X))
@@ -203,13 +183,13 @@ class AIPanel(QWidget):
         ai_clear_btn.clicked.connect(self.on_clear)
         action_bar.addWidget(ai_clear_btn)
 
-        action_bar.addStretch()
-
-        # Shortcut hint (subtle, right-aligned)
-        hint = QLabel("Enter ↵  Shift+Enter ⏎")
-        hint.setProperty("muted", True)
-        hint.setObjectName("aiInputHint")
-        action_bar.addWidget(hint)
+        self.ai_run_btn = QPushButton(tr("ai.runAgent"))
+        self.ai_run_btn.setIcon(get_icon(Icons.PLAY, color="#ffffff"))  # White icon for primary variant
+        self.ai_run_btn.setIconSize(QSize(16, 16))
+        self.ai_run_btn.setProperty("variant", "primary")
+        self.ai_run_btn.setMinimumWidth(60)
+        self.ai_run_btn.clicked.connect(self._on_run_stop_toggle)
+        action_bar.addWidget(self.ai_run_btn)
 
         ic_layout.addLayout(action_bar)
         dock_layout.addWidget(input_container)
@@ -312,23 +292,16 @@ class AIPanel(QWidget):
             new_end = cursor.position()
             block["end"] = new_end
             delta = new_end - end
-            for other_block in self.ai_message_blocks:
-                if other_block is block:
-                    continue
-                other_start = other_block.get("start")
-                other_end = other_block.get("end")
-                if other_start is not None and other_start > end:
-                    other_block["start"] = other_start + delta
-                if other_end is not None and other_end > end:
-                    other_block["end"] = other_end + delta
+            self._shift_block_ranges(
+                self.ai_message_blocks,
+                after_end=end,
+                delta=delta,
+                exclude=block,
+            )
             self._move_chat_cursor_to_end()
             return True
         except Exception:
             return False
-
-    def set_prompt(self, text):
-        self.ai_prompt.setPlainText(str(text or "").strip())
-        self.ai_prompt.setFocus()
 
     def refresh_placeholder(self):
         """Refresh placeholder with a random example (called once on init)."""
@@ -344,16 +317,6 @@ class AIPanel(QWidget):
         self.ai_stream_thought_buffer = ""
         self.ai_stream_thought_collapsed = False
         self.ai_stream_thought_id = None
-
-    def _update_thinking_collapse_btn_text(self):
-        if self.ai_thinking_collapsed:
-            self.ai_thinking_collapse_btn.setText(tr("ai.expandThinking"))
-        else:
-            self.ai_thinking_collapse_btn.setText(tr("ai.collapseThinking"))
-
-    def _toggle_thinking_collapse(self):
-        self.ai_thinking_collapsed = not self.ai_thinking_collapsed
-        self._update_thinking_collapse_btn_text()
 
     def on_clear(self):
         self.ai_chat.clear()
@@ -394,6 +357,37 @@ class AIPanel(QWidget):
         cursor.movePosition(QTextCursor.End)
         self.ai_chat.setTextCursor(cursor)
 
+    @staticmethod
+    def _escape_html_text(value):
+        return (
+            str(value or "")
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
+    def _shift_block_ranges(self, blocks, *, after_end, delta, exclude=None):
+        if not delta:
+            return
+        for other in blocks or []:
+            if other is exclude or not isinstance(other, dict):
+                continue
+            other_start = other.get("start")
+            other_end = other.get("end")
+            if other_start is not None and other_start > after_end:
+                other["start"] = other_start + delta
+            if other_end is not None and other_end > after_end:
+                other["end"] = other_end + delta
+
+    def _append_chat_markdown_block(self, role, text, *, is_dark=None):
+        if is_dark is None:
+            is_dark = _is_dark_mode(self)
+        header_html = self._build_header_html(role, is_dark=is_dark)
+        body_html = _md_to_html(str(text or ""), is_dark)
+        self._move_chat_cursor_to_end()
+        self.ai_chat.append(header_html)
+        self.ai_chat.append(body_html)
+
     def _should_use_compact(self):
         """Check if tool messages should be compact (attached to previous message)."""
         return self.ai_last_role in ("You", "Agent", "Tool")
@@ -406,18 +400,16 @@ class AIPanel(QWidget):
     def _append_chat(self, role, text, compact=False):
         """Append header then content."""
         is_dark = _is_dark_mode(self)
-        header_html = self._build_header_html(role, compact=compact, is_dark=is_dark)
-        self._move_chat_cursor_to_end()
         if compact:
+            header_html = self._build_header_html(role, compact=True, is_dark=is_dark)
+            self._move_chat_cursor_to_end()
             # Compact: single line, inline formatting only (no block elements)
             body = str(text or "")
             body = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', body)
             body = re.sub(r'`([^`]+)`', r'\1', body)
             self.ai_chat.append(header_html + body)
         else:
-            body_html = _md_to_html(str(text or ""), is_dark)
-            self.ai_chat.append(header_html)
-            self.ai_chat.append(body_html)
+            self._append_chat_markdown_block(role, text, is_dark=is_dark)
 
     def _begin_stream_chat(self, role="Agent"):
         if self.ai_streaming_active:
@@ -622,10 +614,17 @@ class AIPanel(QWidget):
         except Exception:
             return False
 
+    def _on_run_stop_toggle(self):
+        """Toggle between run and stop based on current state."""
+        if self.ai_run_inflight:
+            self.on_stop_ai_agent()
+        else:
+            self.on_run_ai_agent()
+
     def on_run_ai_agent(self):
         if self.ai_run_inflight:
             return
-        
+
         prompt = self.ai_prompt.toPlainText().strip()
         if not prompt:
             self.status_message.emit(tr("ai.enterPrompt"), 2000)
@@ -645,7 +644,7 @@ class AIPanel(QWidget):
         self.ai_stream_last_render_len = 0
         self._reset_stream_thought_state()
         self.status_message.emit(tr("ai.agentThinking"), 2000)
-        
+
         self.start_worker(prompt)
 
     def start_worker(self, prompt):
@@ -686,7 +685,7 @@ class AIPanel(QWidget):
         self.ai_run_thread.start()
 
     def _handle_question_event(self, event_data):
-        """Handle question event from agent — show dialog, unblock worker."""
+        """Handle question event from agent 鈥?show dialog, unblock worker."""
         if event_data.get("type") == "manage_boxes_confirm":
             return self._handle_manage_boxes_confirm(event_data)
 
@@ -744,7 +743,7 @@ class AIPanel(QWidget):
             self.ai_run_worker.set_answer(result)
 
     def _handle_max_steps_ask(self, event_data):
-        """System-level prompt when max_steps is reached — ask user to continue or stop."""
+        """System-level prompt when max_steps is reached 鈥?ask user to continue or stop."""
         from PySide6.QtWidgets import QMessageBox
 
         steps = event_data.get("steps", 0)
@@ -840,9 +839,21 @@ class AIPanel(QWidget):
 
     def set_busy(self, busy):
         self.ai_run_inflight = busy
-        self.ai_run_btn.setEnabled(not busy)
-        self.ai_run_btn.setText(tr("ai.running") if busy else tr("ai.runAgent"))
-        self.ai_stop_btn.setEnabled(busy)
+        if busy:
+            # Show stop button state - use default icon color (no color param)
+            self.ai_run_btn.setText(tr("ai.stop"))
+            self.ai_run_btn.setIcon(get_icon(Icons.SQUARE))
+            self.ai_run_btn.setProperty("variant", None)
+            self.ai_run_btn.style().unpolish(self.ai_run_btn)
+            self.ai_run_btn.style().polish(self.ai_run_btn)
+        else:
+            # Show run button state - white icon for primary variant
+            self.ai_run_btn.setText(tr("ai.runAgent"))
+            self.ai_run_btn.setIcon(get_icon(Icons.PLAY, color="#ffffff"))
+            self.ai_run_btn.setProperty("variant", "primary")
+            self.ai_run_btn.style().unpolish(self.ai_run_btn)
+            self.ai_run_btn.style().polish(self.ai_run_btn)
+        self.ai_run_btn.setEnabled(True)
 
     def on_progress(self, event):
         event_type = str(event.get("event") or event.get("type") or "").strip()
@@ -855,95 +866,107 @@ class AIPanel(QWidget):
         if self.ai_active_trace_id and trace_id and trace_id != self.ai_active_trace_id:
             return
 
-        if event_type == "tool_end":
-            data = event.get("data") or {}
-            name = str(data.get("name") or event.get("action") or "tool")
-            step = event.get("step")
-            raw_output = ((data.get("output") or {}).get("content"))
+        handlers = {
+            "tool_end": self._handle_progress_tool_end,
+            "tool_start": self._handle_progress_tool_start,
+            "chunk": self._handle_progress_chunk,
+            "error": self._handle_progress_error,
+            "stream_end": self._handle_progress_stream_end,
+            "step_end": self._handle_progress_step_end,
+            "max_steps": self._handle_progress_max_steps,
+        }
+        handler = handlers.get(event_type)
+        if callable(handler):
+            handler(event)
 
-            raw_obs = event.get("observation")
-            if not isinstance(raw_obs, dict):
-                if isinstance(raw_output, str):
-                    try:
-                        parsed = json.loads(raw_output)
-                        raw_obs = parsed if isinstance(parsed, dict) else {}
-                    except Exception:
-                        raw_obs = {}
-                else:
-                    raw_obs = {}
+    def _extract_progress_observation(self, event):
+        data = event.get("data") or {}
+        raw_output = (data.get("output") or {}).get("content")
+        raw_obs = event.get("observation")
+        if isinstance(raw_obs, dict):
+            return raw_obs
+        if isinstance(raw_output, str):
+            try:
+                parsed = json.loads(raw_output)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                pass
+        return {}
 
-            status = "OK" if raw_obs.get("ok") else "FAIL"
-            summary = raw_obs.get("message")
-            hint = raw_obs.get("_hint")
-            if not summary and raw_obs.get("result"):
-                summary = compact_json(raw_obs.get("result"), 120)
+    def _handle_progress_tool_end(self, event):
+        data = event.get("data") or {}
+        name = str(data.get("name") or event.get("action") or "tool")
+        raw_obs = self._extract_progress_observation(event)
+        status = "OK" if raw_obs.get("ok") else "FAIL"
+        hint = raw_obs.get("_hint")
 
-            line = f"Step {step}: {name} -> {status}"
-            if summary:
-                line += f" | {summary}"
-            if hint:
-                line += f" | hint: {hint}"
-            self._append_tool_message(f"`{name}` finished: **{status}**")
-            if hint:
-                self._append_tool_message(f"Hint: {hint}")
-            blocked_items = raw_obs.get("blocked_items")
-            if isinstance(blocked_items, list) and blocked_items:
-                summary_text = self._blocked_items_summary(name, blocked_items)
-                details_json = json.dumps(
-                    {
-                        "tool": name,
-                        "error_code": raw_obs.get("error_code"),
-                        "message": raw_obs.get("message"),
-                        "blocked_items": blocked_items,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                )
-                self._append_chat_with_collapsible("System", summary_text, details_json)
-            return
+        self._append_tool_message(f"`{name}` finished: **{status}**")
+        if hint:
+            self._append_tool_message(f"Hint: {hint}")
 
-        if event_type == "tool_start":
-            if self.ai_streaming_active:
-                self._end_stream_chat()
+        blocked_items = raw_obs.get("blocked_items")
+        if isinstance(blocked_items, list) and blocked_items:
+            summary_text = self._blocked_items_summary(name, blocked_items)
+            details_json = json.dumps(
+                {
+                    "tool": name,
+                    "error_code": raw_obs.get("error_code"),
+                    "message": raw_obs.get("message"),
+                    "blocked_items": blocked_items,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            self._append_chat_with_collapsible("System", summary_text, details_json)
 
-            data = event.get("data") or {}
-            name = str(data.get("name") or event.get("action") or "tool")
-            self._append_tool_message(f"Running `{name}`...")
-            return
+    def _handle_progress_tool_start(self, event):
+        if self.ai_streaming_active:
+            self._end_stream_chat()
 
-        if event_type == "chunk":
-            chunk = event.get("data")
-            channel = str(((event.get("meta") or {}).get("channel") or "answer")).strip().lower()
-            if isinstance(chunk, str) and chunk:
-                self._append_stream_chunk(chunk, channel=channel)
-            return
+        data = event.get("data") or {}
+        name = str(data.get("name") or event.get("action") or "tool")
+        self._append_tool_message(f"Running `{name}`...")
 
-        if event_type == "error":
-            err = event.get("data") or event.get("message") or "unknown error"
-            return
+    def _handle_progress_chunk(self, event):
+        chunk = event.get("data")
+        channel = str(((event.get("meta") or {}).get("channel") or "answer")).strip().lower()
+        if isinstance(chunk, str) and chunk:
+            self._append_stream_chunk(chunk, channel=channel)
 
-        if event_type == "stream_end":
-            status = (event.get("data") or {}).get("status")
-            return
+    def _handle_progress_step_end(self, event):
+        # Parse step_end payload for compatibility with legacy producer fields.
+        step = event.get("step")
+        action = str(event.get("action") or "tool")
+        raw_obs = event.get("observation") or {}
+        status = "OK" if raw_obs.get("ok") else "FAIL"
+        summary = raw_obs.get("message")
+        if not raw_obs.get("ok"):
+            summary = localize_error_payload(raw_obs, fallback=summary or "")
+        hint = raw_obs.get("_hint")
+        if not summary and raw_obs.get("result"):
+            summary = compact_json(raw_obs.get("result"), 120)
 
-        if event_type == "step_end":
-            step = event.get("step")
-            action = str(event.get("action") or "tool")
-            raw_obs = event.get("observation") or {}
-            status = "OK" if raw_obs.get("ok") else f"FAIL"
-            summary = raw_obs.get("message")
-            hint = raw_obs.get("_hint")
-            if not summary and raw_obs.get("result"):
-                summary = compact_json(raw_obs.get("result"), 120)
-            
-            line = f"Step {step}: {action} -> {status}"
-            if summary:
-                line += f" | {summary}"
-            if hint:
-                line += f" | hint: {hint}"
+        line = f"Step {step}: {action} -> {status}"
+        if summary:
+            line += f" | {summary}"
+        if hint:
+            line += f" | hint: {hint}"
+        _ = line
 
-        if event_type == "max_steps":
-            pass
+    @staticmethod
+    def _handle_progress_error(event):
+        err = event.get("data") or event.get("message") or "unknown error"
+        _ = err
+
+    @staticmethod
+    def _handle_progress_stream_end(event):
+        status = (event.get("data") or {}).get("status")
+        _ = status
+
+    @staticmethod
+    def _handle_progress_max_steps(_event):
+        return
 
     def on_finished(self, response):
         self.set_busy(False)
@@ -1005,376 +1028,16 @@ class AIPanel(QWidget):
         self.ai_run_thread = None
         self.ai_run_worker = None
 
-    @staticmethod
-    def _format_blocked_item(item):
-        action = str(item.get("action") or "?")
-        rid = item.get("record_id")
-        box = item.get("box")
-        pos = item.get("position")
-        to_pos = item.get("to_position")
-        to_box = item.get("to_box")
-
-        id_text = f"ID {rid}" if rid not in (None, "") else "NEW"
-        location = "unknown"
-        if box not in (None, "") and pos not in (None, ""):
-            location = f"Box {box}:{pos}"
-        elif pos not in (None, ""):
-            location = f"Pos {pos}"
-
-        if action == "move" and to_pos not in (None, ""):
-            if to_box not in (None, ""):
-                location = f"{location} -> Box {to_box}:{to_pos}"
-            else:
-                location = f"{location} -> {to_pos}"
-
-        return f"{action} ({id_text}, {location})"
-
-    def _blocked_items_summary(self, tool_name, blocked_items):
-        count = len(blocked_items)
-        lines = [f"**Tool blocked** `{tool_name}`: {count} item(s) failed validation"]
-        for item in blocked_items[:3]:
-            payload = item if isinstance(item, dict) else {}
-            desc = self._format_blocked_item(payload)
-            message = payload.get("message") or payload.get("error_code") or "Validation failed"
-            lines.append(f"- {desc}: {message}")
-        if count > 3:
-            lines.append(f"- ... and {count - 3} more")
-        return "\n".join(lines)
-
-    @staticmethod
-    def _single_line_text(value, limit=180):
-        text = str(value or "").strip()
-        text = " | ".join(part.strip() for part in text.splitlines() if part.strip())
-        if len(text) > limit:
-            return text[: max(0, limit - 3)] + "..."
-        return text
-
-    @staticmethod
-    def _trf(key, default, **kwargs):
-        """Translate and format with safe fallback when locale catalog is not loaded."""
-        text = tr(key, default=default)
-        if kwargs:
-            try:
-                return text.format(**kwargs)
-            except (KeyError, ValueError):
-                return text
-        return text
-
-    def _format_notice_operation(self, item, row=None):
-        payload = item.get("payload") if isinstance(item, dict) else {}
-        payload = payload if isinstance(payload, dict) else {}
-        fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
-
-        desc = self._format_blocked_item(item if isinstance(item, dict) else {})
-        cell_line = item.get("cell_line") if isinstance(item, dict) else None
-        short_name = item.get("short_name") if isinstance(item, dict) else None
-        if cell_line in (None, ""):
-            cell_line = fields.get("cell_line")
-        if short_name in (None, ""):
-            short_name = fields.get("short_name")
-
-        if isinstance(row, dict):
-            response = row.get("response") if isinstance(row.get("response"), dict) else {}
-            preview = response.get("preview") if isinstance(response.get("preview"), dict) else {}
-            operations = preview.get("operations") if isinstance(preview.get("operations"), list) else []
-            if operations and isinstance(operations[0], dict):
-                op0 = operations[0]
-                if cell_line in (None, ""):
-                    cell_line = op0.get("cell_line")
-                if short_name in (None, ""):
-                    short_name = op0.get("short_name")
-
-        tags = []
-        if cell_line not in (None, ""):
-            tags.append(f"cell_line={cell_line}")
-        if short_name not in (None, ""):
-            tags.append(f"short_name={short_name}")
-        if tags:
-            desc += " | " + ", ".join(tags)
-        return desc
-
-    def _extract_notice_operation_lines(self, code, data):
-        sample = data.get("sample") if isinstance(data.get("sample"), list) else []
-        sample_lines = [self._single_line_text(v, limit=180) for v in sample if str(v or "").strip()]
-        if sample_lines:
-            return sample_lines
-
-        if code == "record.edit.saved":
-            rid = data.get("record_id")
-            rid_text = f"ID {rid}" if rid not in (None, "") else "ID ?"
-            field = str(data.get("field") or "field")
-            before = self._single_line_text(data.get("before"), limit=80)
-            after = self._single_line_text(data.get("after"), limit=80)
-            return [f"edit ({rid_text}) | {field}: {before} -> {after}"]
-
-        if code == "plan.stage.blocked":
-            blocked_items = data.get("blocked_items") if isinstance(data.get("blocked_items"), list) else []
-            lines = []
-            for blocked in blocked_items[:8]:
-                payload = blocked if isinstance(blocked, dict) else {}
-                desc = self._format_notice_operation(payload)
-                message = payload.get("message") or payload.get("error_code")
-                if message:
-                    desc += f" | {self._single_line_text(message, limit=140)}"
-                lines.append(desc)
-            return lines
-
-        if code == "plan.execute.result":
-            report = data.get("report") if isinstance(data.get("report"), dict) else {}
-            report_items = report.get("items") if isinstance(report.get("items"), list) else []
-            lines = []
-            for row in report_items[:8]:
-                row_data = row if isinstance(row, dict) else {}
-                item = row_data.get("item") if isinstance(row_data.get("item"), dict) else {}
-                if not item:
-                    continue
-                is_ok = bool(row_data.get("ok"))
-                if is_ok:
-                    status = tr("ai.systemNotice.statusOk", default="OK")
-                elif row_data.get("blocked"):
-                    status = tr("ai.systemNotice.statusBlocked", default="BLOCKED")
-                else:
-                    status = tr("ai.systemNotice.statusFail", default="FAIL")
-                line = self._trf(
-                    "ai.systemNotice.operationStatusLine",
-                    default="{status}: {operation}",
-                    status=status,
-                    operation=self._format_notice_operation(item, row=row_data),
-                )
-                if not is_ok:
-                    message = row_data.get("message") or row_data.get("error_code")
-                    if not message:
-                        response = row_data.get("response") if isinstance(row_data.get("response"), dict) else {}
-                        message = response.get("message")
-                    if message:
-                        line += f" | {self._single_line_text(message, limit=140)}"
-                lines.append(line)
-            return lines
-
-        items = data.get("items") if isinstance(data.get("items"), list) else []
-        lines = []
-        for item in items[:8]:
-            if isinstance(item, dict):
-                lines.append(self._format_notice_operation(item))
-        return lines
-
-    def _format_system_notice_details(self, event):
-        """Render system_notice details with operations first and meta last."""
-        code = str(event.get("code") or "notice")
-        level = str(event.get("level") or "info")
-        text = str(event.get("text") or "").strip()
-        timestamp = event.get("timestamp")
-
-        lines = []
-        data = event.get("data") if isinstance(event.get("data"), dict) else {}
-        op_lines = self._extract_notice_operation_lines(code, data) if data else []
-        meta_lines = self._extract_notice_meta_lines(code, data) if data else []
-
-        details = event.get("details")
-        details_text = ""
-        if details and str(details).strip() and str(details).strip() != text:
-            details_text = self._single_line_text(details, limit=360)
-            if self._should_hide_notice_details_line(code, details_text, op_lines):
-                details_text = ""
-
-        if op_lines:
-            lines.append(
-                self._trf(
-                    "ai.systemNotice.operationsHeader",
-                    default="Operations ({count}):",
-                    count=len(op_lines),
-                )
-            )
-            for op in op_lines[:8]:
-                lines.append(f"- {op}")
-            if len(op_lines) > 8:
-                lines.append(
-                    "- "
-                    + self._trf(
-                        "ai.systemNotice.andMore",
-                        default="... and {count} more",
-                        count=len(op_lines) - 8,
-                    )
-                )
-
-        if details_text:
-            if lines:
-                lines.append("")
-            lines.append(
-                self._trf(
-                    "ai.systemNotice.detailsLine",
-                    default="Details: {details}",
-                    details=details_text,
-                )
-            )
-
-        if meta_lines:
-            if lines:
-                lines.append("")
-            lines.extend(meta_lines)
-
-        if not op_lines and not meta_lines and data:
-            scalar_lines = []
-            for key, value in sorted(data.items()):
-                if key == "legacy_event":
-                    continue
-                if isinstance(value, (str, int, float, bool)):
-                    scalar_lines.append(f"{key}: {value}")
-                elif isinstance(value, list):
-                    scalar_lines.append(f"{key}: <list {len(value)}>")
-                elif isinstance(value, dict):
-                    scalar_lines.append(f"{key}: <object {len(value)} keys>")
-            if scalar_lines:
-                if lines:
-                    lines.append("")
-                lines.append(tr("ai.systemNotice.dataHeader", default="Data:"))
-                lines.extend(scalar_lines[:8])
-
-        if not lines:
-            lines.append(text or code)
-
-        meta = [
-            f"{tr('ai.systemNotice.metaCode', default='code')}={code}",
-            f"{tr('ai.systemNotice.metaLevel', default='level')}={level}",
-        ]
-        if timestamp:
-            meta.append(f"{tr('ai.systemNotice.metaTime', default='time')}={timestamp}")
-        lines.append("")
-        lines.append(f"{tr('ai.systemNotice.metaHeader', default='Meta')}: " + ", ".join(meta))
-        return "\n".join(lines)
-
-    def _normalize_notice_lines_for_compare(self, values):
-        normalized = []
-        for value in values or []:
-            text = str(value or "")
-            for raw_line in text.splitlines():
-                line = " ".join(raw_line.strip().split())
-                if line:
-                    normalized.append(line)
-        return normalized
-
-    def _should_hide_notice_details_line(self, code, details_text, op_lines):
-        """Hide Details only when it duplicates operation lines for safe notice types."""
-        dedupe_allowed_codes = {
-            "plan.stage.accepted",
-            "plan.removed",
-            "plan.cleared",
-            "plan.restored",
-        }
-        if code not in dedupe_allowed_codes:
-            return False
-
-        op_norm = set(self._normalize_notice_lines_for_compare(op_lines))
-        if not op_norm:
-            return False
-
-        details_norm = self._normalize_notice_lines_for_compare([details_text])
-        if not details_norm:
-            return False
-
-        return all(line in op_norm for line in details_norm)
-
-    def _extract_notice_meta_lines(self, code, data):
-        lines = []
-        if code == "plan.stage.accepted":
-            lines.append(
-                self._trf(
-                    "ai.systemNotice.countsAdded",
-                    default="Counts: added={added}, total={total}",
-                    added=int(data.get("added_count") or 0),
-                    total=int(data.get("total_count") or 0),
-                )
-            )
-        elif code == "plan.removed":
-            lines.append(
-                self._trf(
-                    "ai.systemNotice.countsRemoved",
-                    default="Counts: removed={removed}, total={total}",
-                    removed=int(data.get("removed_count") or 0),
-                    total=int(data.get("total_count") or 0),
-                )
-            )
-        elif code == "plan.cleared":
-            lines.append(
-                self._trf(
-                    "ai.systemNotice.countsCleared",
-                    default="Counts: cleared={cleared}",
-                    cleared=int(data.get("cleared_count") or 0),
-                )
-            )
-        elif code == "plan.restored":
-            lines.append(
-                self._trf(
-                    "ai.systemNotice.countsRestored",
-                    default="Counts: restored={restored}",
-                    restored=int(data.get("restored_count") or 0),
-                )
-            )
-        elif code == "plan.stage.blocked":
-            blocked_items = data.get("blocked_items") if isinstance(data.get("blocked_items"), list) else []
-            stats = data.get("stats") if isinstance(data.get("stats"), dict) else {}
-            lines.append(
-                self._trf(
-                    "ai.systemNotice.countsBlocked",
-                    default="Counts: blocked={blocked}, total={total}",
-                    blocked=len(blocked_items),
-                    total=int(stats.get("total") or 0),
-                )
-            )
-        elif code == "plan.execute.result":
-            stats = data.get("stats") if isinstance(data.get("stats"), dict) else {}
-            lines.append(
-                self._trf(
-                    "ai.systemNotice.statsSummary",
-                    default="Stats: applied={applied}, failed={failed}, blocked={blocked}, remaining={remaining}, total={total}",
-                    applied=int(stats.get("applied") or 0),
-                    failed=int(stats.get("failed") or 0),
-                    blocked=int(stats.get("blocked") or 0),
-                    remaining=int(stats.get("remaining") or 0),
-                    total=int(stats.get("total") or 0),
-                )
-            )
-
-            rollback = data.get("rollback") if isinstance(data.get("rollback"), dict) else {}
-            if rollback:
-                if rollback.get("ok"):
-                    lines.append(
-                        tr(
-                            "ai.systemNotice.rollbackSucceeded",
-                            default="Rollback: succeeded",
-                        )
-                    )
-                elif rollback.get("attempted"):
-                    reason = self._single_line_text(rollback.get("message") or rollback.get("error_code"))
-                    lines.append(
-                        self._trf(
-                            "ai.systemNotice.rollbackFailed",
-                            default="Rollback: failed | {reason}",
-                            reason=reason,
-                        )
-                    )
-                else:
-                    reason = self._single_line_text(rollback.get("message") or rollback.get("error_code"))
-                    lines.append(
-                        self._trf(
-                            "ai.systemNotice.rollbackUnavailable",
-                            default="Rollback: unavailable | {reason}",
-                            reason=reason,
-                        )
-                    )
-
-            report = data.get("report") if isinstance(data.get("report"), dict) else {}
-            backup_path = report.get("backup_path")
-            if backup_path:
-                lines.append(
-                    self._trf(
-                        "ai.systemNotice.backupPath",
-                        default="Backup: {path}",
-                        path=backup_path,
-                    )
-                )
-
-        return lines
+    _format_blocked_item = staticmethod(_ai_notice._format_blocked_item)
+    _blocked_items_summary = _ai_notice._blocked_items_summary
+    _single_line_text = staticmethod(_ai_notice._single_line_text)
+    _trf = staticmethod(_ai_notice._trf)
+    _format_notice_operation = _ai_notice._format_notice_operation
+    _extract_notice_operation_lines = _ai_notice._extract_notice_operation_lines
+    _format_system_notice_details = _ai_notice._format_system_notice_details
+    _normalize_notice_lines_for_compare = _ai_notice._normalize_notice_lines_for_compare
+    _should_hide_notice_details_line = _ai_notice._should_hide_notice_details_line
+    _extract_notice_meta_lines = _ai_notice._extract_notice_meta_lines
 
     def _append_history(self, role, text):
         self.ai_history.append({"role": role, "content": text})
@@ -1413,165 +1076,18 @@ class AIPanel(QWidget):
 
         self._render_system_notice(notice)
 
-    def _format_event_details(self, details_json):
-        """Format event JSON as human-readable text."""
-        from app_gui.i18n import tr
-        try:
-            event = json.loads(str(details_json)) if isinstance(details_json, str) else details_json
-        except Exception:
-            return str(details_json or "")
-
-        if not isinstance(event, dict):
-            return str(event)
-
-        event_type = str(event.get("type", "unknown"))
-        lines = []
-
-        if event_type == "system_notice":
-            return self._format_system_notice_details(event)
-
-        # Translate event type
-        type_key = f"eventDetails.eventType.{event_type}" if event_type.startswith("plan_") or event_type == "box_layout_adjusted" else None
-        if type_key:
-            lines.append(f"{tr('eventDetails.type')}: {tr(type_key, default=event_type)}")
-        else:
-            lines.append(f"{tr('eventDetails.type')}: {event_type}")
-
-        ts = event.get("timestamp")
-        if ts:
-            lines.append(f"{tr('eventDetails.time')}: {ts}")
-
-        # Type-specific formatting
-        if event_type == "plan_staged":
-            added = event.get('added_count', 0)
-            lines.append(f"{tr('eventDetails.added')}: {added} {tr('eventDetails.items')}")
-            lines.append(f"{tr('eventDetails.totalInPlan')}: {event.get('total_count', 0)}")
-            action_counts = event.get("action_counts", {})
-            if action_counts:
-                lines.append(f"  {tr('eventDetails.actionLabel')}:")
-                for k, v in sorted(action_counts.items()):
-                    action_label = tr(f"eventDetails.action.{k}", default=k)
-                    lines.append(f"    - {action_label}: {v}")
-
-        elif event_type == "plan_cleared":
-            cleared = event.get('cleared_count', 0)
-            lines.append(f"{tr('eventDetails.cleared')}: {cleared} {tr('eventDetails.items')}")
-            action_counts = event.get("action_counts", {})
-            if action_counts:
-                lines.append(f"  {tr('eventDetails.actionLabel')}:")
-                for k, v in sorted(action_counts.items()):
-                    action_label = tr(f"eventDetails.action.{k}", default=k)
-                    lines.append(f"    - {action_label}: {v}")
-
-        elif event_type == "plan_removed":
-            removed = event.get('removed_count', 0)
-            lines.append(f"{tr('eventDetails.removed')}: {removed} {tr('eventDetails.items')}")
-            lines.append(f"{tr('eventDetails.remaining')}: {event.get('total_count', 0)}")
-
-        elif event_type == "plan_restored":
-            restored = event.get('restored_count', 0)
-            lines.append(f"{tr('eventDetails.restored')}: {restored} {tr('eventDetails.items')}")
-            lines.append(f"{tr('eventDetails.backupPath')}: {event.get('backup_path', 'N/A')}")
-
-        elif event_type == "box_layout_adjusted":
-            lines.append(f"{tr('eventDetails.operation')}: {event.get('operation', 'unknown')}")
-            preview = event.get("preview", {})
-            if preview:
-                before = preview.get('box_count_before', '?')
-                after = preview.get('box_count_after', '?')
-                lines.append(f"{tr('eventDetails.before')}: {before} {tr('eventDetails.boxes')}")
-                lines.append(f"{tr('eventDetails.after')}: {after} {tr('eventDetails.boxes')}")
-                added = preview.get("added_boxes", [])
-                if added:
-                    lines.append(f"{tr('eventDetails.addedBoxes')}: {', '.join(str(b) for b in added)}")
-                removed = preview.get("removed_box")
-                if removed:
-                    lines.append(f"{tr('eventDetails.removedBox')}: {removed}")
-                    lines.append(f"{tr('eventDetails.renumberMode')}: {preview.get('renumber_mode', '?')}")
-
-        elif event_type in ("plan_executed", "plan_execute_blocked"):
-            ok = event.get("ok", False)
-            lines.append(f"{tr('eventDetails.success')}: {ok}")
-            stats = event.get("stats", {})
-            if stats:
-                lines.append(f"{tr('eventDetails.total')}: {stats.get('total', 0)}")
-                lines.append(f"{tr('eventDetails.applied')}: {stats.get('applied', 0)}")
-                lines.append(f"{tr('eventDetails.blocked')}: {stats.get('blocked', 0)}")
-
-            report = event.get("report")
-            if isinstance(report, dict):
-                items = report.get("items", [])
-                if items:
-                    lines.append(f"\n{tr('eventDetails.itemsList')} ({len(items)}):")
-                    for item in items[:5]:
-                        action_key = item.get("action", "?")
-                        action_label = tr(f"eventDetails.action.{action_key}", default=action_key)
-                        rid = item.get("record_id", "?")
-                        box = item.get("box", "?")
-                        pos = item.get("position", "?")
-                        error = item.get("error") or item.get("message")
-                        item_line = f"  - [{action_label}] {tr('eventDetails.id')}: {rid}"
-                        if box != "?" and pos != "?":
-                            item_line += f" | {tr('eventDetails.box')}: {box}, {tr('eventDetails.position')}: {pos}"
-                        lines.append(item_line)
-                        if error:
-                            lines.append(f"    {tr('eventDetails.error')}: {error}")
-                    if len(items) > 5:
-                        more = tr('eventDetails.andMore', count=len(items) - 5)
-                        lines.append(f"  - ... {more}")
-
-                # Rollback info if present
-                rollback = event.get("rollback")
-                if rollback:
-                    lines.append(f"\n{tr('eventDetails.rollback')}:")
-                    if rollback.get("ok"):
-                        lines.append(f"  {tr('eventDetails.rollbackOk')}")
-                    elif rollback.get("failed"):
-                        lines.append(f"  {tr('eventDetails.rollbackFailed')}: {rollback.get('message', '?')}")
-                    else:
-                        lines.append(f"  {tr('eventDetails.rollBackUnavailable')}: {rollback.get('message', '?')}")
-
-                # Source event if present
-                source_event = event.get("source_event")
-                if source_event:
-                    lines.append(f"\n{tr('eventDetails.sourceEvent')}:")
-                    lines.append(f"  Timestamp: {source_event.get('timestamp', '?')}")
-                    lines.append(f"  {tr('eventDetails.actionLabel')}: {source_event.get('action', '?')}")
-
-        # Add hint if available
-        if "_hint" in event:
-            lines.append(f"\n{tr('eventDetails.hint')}: {event['_hint']}")
-
-        # If we couldn't format much, fall back to sorted key-value pairs
-        if len(lines) <= 2:
-            lines = []
-            for k in sorted(event.keys()):
-                if k in ("type", "timestamp", "_hint", "response_pool", "_compact_meta", "report", "preview"):
-                    continue
-                v = event[k]
-                if isinstance(v, (list, dict)):
-                    v = f"<{type(v).__name__} with {len(v)} {tr('eventDetails.items')}>"
-                lines.append(f"{k}: {v}")
-
-        return "\n".join(lines) if lines else str(event)
-
-    def _append_chat_message(self, role, content):
-        """Append a simple message without collapsible details."""
-        is_dark = _is_dark_mode(self)
-        header_html = self._build_header_html(role, is_dark=is_dark)
-        body_html = _md_to_html(str(content or ""), is_dark)
-        self._move_chat_cursor_to_end()
-        self.ai_chat.append(header_html)
-        self.ai_chat.append(body_html)
-        self.ai_chat.append("")  # Empty line for spacing
+    _format_event_details = _ai_event_details._format_event_details
+    _append_event_type_details = _ai_event_details._append_event_type_details
+    _append_plan_count_lines = _ai_event_details._append_plan_count_lines
+    _append_box_layout_lines = _ai_event_details._append_box_layout_lines
+    _append_plan_execution_lines = _ai_event_details._append_plan_execution_lines
+    _append_plan_execution_report = _ai_event_details._append_plan_execution_report
+    _append_plan_execution_rollback = _ai_event_details._append_plan_execution_rollback
+    _build_event_fallback_lines = staticmethod(_ai_event_details._build_event_fallback_lines)
 
     def _append_chat_with_collapsible(self, role, summary, details_json, collapsed_preview_lines=3):
         is_dark = _is_dark_mode(self)
-        header_html = self._build_header_html(role, is_dark=is_dark)
-        body_html = _md_to_html(str(summary or ""), is_dark)
-        self._move_chat_cursor_to_end()
-        self.ai_chat.append(header_html)
-        self.ai_chat.append(body_html)
+        self._append_chat_markdown_block(role, summary, is_dark=is_dark)
 
         # Format details as human-readable text instead of raw JSON
         details_text = self._format_event_details(details_json)
@@ -1606,25 +1122,20 @@ class AIPanel(QWidget):
 
     def _render_collapsible_details(self, block_id, content, collapsed=True, is_dark=True, preview_lines=3):
         """Render details as a collapsible code block with configurable collapsed preview."""
-        if is_dark:
-            bg = "#1f1f1f"
-            border = "rgba(255,255,255,0.08)"
-            text_color = "#c8c8c8"
-            link_color = "#38bdf8"
-        else:
-            bg = "#f5f5f5"
-            border = "rgba(0,0,0,0.08)"
-            text_color = "#3a3a3a"
-            link_color = "#2563eb"
+        mode = "dark" if is_dark else "light"
+        bg = resolve_theme_token("chat-panel-bg", mode=mode, fallback="#1f1f1f")
+        border = resolve_theme_token("chat-panel-border", mode=mode, fallback="rgba(255,255,255,0.08)")
+        text_color = resolve_theme_token("chat-code-text", mode=mode, fallback="#c8c8c8")
+        link_color = resolve_theme_token("chat-link", mode=mode, fallback="#38bdf8")
 
-        escaped = content.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        escaped = self._escape_html_text(content)
 
         if collapsed:
             lines = content.split('\n')
             preview_limit = max(0, int(preview_lines or 0))
             preview_lines = lines[:preview_limit] if preview_limit > 0 else []
             preview = '\n'.join(preview_lines)
-            preview_escaped = preview.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            preview_escaped = self._escape_html_text(preview)
             has_more = len(lines) > preview_limit
 
             if has_more:
@@ -1633,7 +1144,7 @@ class AIPanel(QWidget):
                     html = (
                         f'<table style="margin: 4px 0; border: 1px solid {border}; border-radius: 4px; '
                         f'background: {bg}; padding: 0; width: 100%; border-collapse: collapse;">'
-                        f'<tr><td style="padding: 6px 8px; font-family: monospace; font-size: {FONT_SIZE_SM}px; '
+                        f'<tr><td style="padding: 6px 8px; font-family: {MONO_FONT_CSS_FAMILY}; font-size: {FONT_SIZE_SM}px; '
                         f'color: {text_color}; white-space: pre-wrap;">'
                         f'<a href="{block_id}" style="color: {link_color}; font-size: {FONT_SIZE_XS}px; '
                         f'text-decoration: none;">&#9660; Expand ({len(lines)} lines)</a>'
@@ -1650,7 +1161,7 @@ class AIPanel(QWidget):
                 # No expand link needed if no content to show
                 html = (
                     f'<div style="margin: 4px 0; border: 1px solid {border}; border-radius: 4px; '
-                    f'background: {bg}; padding: 6px 8px; font-family: monospace; font-size: {FONT_SIZE_SM}px; '
+                    f'background: {bg}; padding: 6px 8px; font-family: {MONO_FONT_CSS_FAMILY}; font-size: {FONT_SIZE_SM}px; '
                     f'color: {text_color}; white-space: pre-wrap; overflow: hidden;">'
                 )
                 if preview:
@@ -1664,7 +1175,7 @@ class AIPanel(QWidget):
                     f'<a href="{block_id}" style="color: {link_color}; font-size: {FONT_SIZE_XS}px; '
                     f'text-decoration: none;">&#9650; Collapse</a>'
                     f'<div style="margin: 4px 0 0 0; border: 1px solid {border}; border-radius: 4px; '
-                    f'background: {bg}; padding: 6px 8px; font-family: monospace; font-size: {FONT_SIZE_SM}px; '
+                    f'background: {bg}; padding: 6px 8px; font-family: {MONO_FONT_CSS_FAMILY}; font-size: {FONT_SIZE_SM}px; '
                     f'color: {text_color}; white-space: pre-wrap; max-height: 300px; overflow-y: auto;">'
                     f'{escaped}</div>'
                 )
@@ -1676,7 +1187,7 @@ class AIPanel(QWidget):
                     f'<tr><td style="padding: 6px 8px; border-bottom: 1px solid {border};">'
                     f'<a href="{block_id}" style="color: {link_color}; font-size: {FONT_SIZE_XS}px; '
                     f'text-decoration: none;">&#9650; Collapse</a></td></tr>'
-                    f'<tr><td style="padding: 6px 8px; font-family: monospace; font-size: {FONT_SIZE_SM}px; '
+                    f'<tr><td style="padding: 6px 8px; font-family: {MONO_FONT_CSS_FAMILY}; font-size: {FONT_SIZE_SM}px; '
                     f'color: {text_color}; white-space: pre-wrap; max-height: 300px; overflow-y: auto;">'
                     f'{escaped}</td></tr>'
                     f'</table>'
@@ -1714,24 +1225,21 @@ class AIPanel(QWidget):
             new_end = cursor.position()
             delta = new_end - end
             block["end"] = new_end
-            # Shift subsequent blocks
-            for other in self.ai_collapsible_blocks:
-                if other is block:
-                    continue
-                if other["start"] > end:
-                    other["start"] += delta
-                if other["end"] > end:
-                    other["end"] += delta
-            # Also shift message blocks
-            for other in self.ai_message_blocks:
-                o_start = other.get("start")
-                o_end = other.get("end")
-                if o_start is not None and o_start > end:
-                    other["start"] = o_start + delta
-                if o_end is not None and o_end > end:
-                    other["end"] = o_end + delta
+            self._shift_block_ranges(
+                self.ai_collapsible_blocks,
+                after_end=end,
+                delta=delta,
+                exclude=block,
+            )
+            self._shift_block_ranges(
+                self.ai_message_blocks,
+                after_end=end,
+                delta=delta,
+            )
         except Exception:
             pass
 
     def _load_audit(self, trace_id, run_result):
         pass
+
+

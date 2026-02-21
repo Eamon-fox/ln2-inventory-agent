@@ -6,23 +6,17 @@ Tests for:
 - ui/utils.py: utility functions
 """
 
-import json
 import sys
-import tempfile
 import unittest
+import importlib.util
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# Try to import Qt components, skip if not available
-try:
-    from PySide6.QtCore import QObject, Signal
-    QT_AVAILABLE = True
-except ImportError:
-    QT_AVAILABLE = False
+# Try to import Qt components, skip if not available.
+QT_AVAILABLE = importlib.util.find_spec("PySide6.QtCore") is not None
 
 from app_gui.plan_model import validate_plan_item, render_operation_sheet
 
@@ -169,12 +163,11 @@ class PlanModelRenderingTests(unittest.TestCase):
         items = [
             {"action": "takeout", "box": 1, "position": 5, "record_id": 1, "label": "rec1"},
             {"action": "move", "box": 1, "position": 10, "to_position": 20, "record_id": 2, "label": "rec2"},
-            {"action": "thaw", "box": 2, "position": 3, "record_id": 3, "label": "rec3"},
+            {"action": "takeout", "box": 2, "position": 3, "record_id": 3, "label": "rec3"},
         ]
         html = render_operation_sheet(items)
         self.assertIn("Takeout", html)
         self.assertIn("Move", html)
-        self.assertIn("Thaw", html)
 
     def test_render_operation_sheet_empty_list(self):
         """Test rendering with empty items list."""

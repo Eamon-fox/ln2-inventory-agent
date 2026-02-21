@@ -1,16 +1,16 @@
 import json
 import os
-import tempfile
 from datetime import datetime
 from PySide6.QtCore import Qt, QDate, QSize
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QComboBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QAbstractItemView, QGroupBox,
+    QAbstractItemView, QGroupBox,
     QFormLayout, QDateEdit, QLineEdit
 )
 from app_gui.i18n import tr
 from app_gui.ui.icons import get_icon, Icons
+from app_gui.ui.utils import open_html_in_browser
 from app_gui.audit_guide import build_operation_guide_from_audit_events
 from app_gui.plan_model import render_operation_sheet
 from lib.yaml_ops import get_audit_log_path, get_legacy_audit_log_path
@@ -50,8 +50,8 @@ class AuditLogDialog(QDialog):
         self.audit_action_filter = QComboBox()
         self.audit_action_filter.addItem(tr("operations.all"), "All")
         self.audit_action_filter.addItem(tr("operations.auditActionAddEntry"), "add_entry")
-        self.audit_action_filter.addItem(tr("operations.auditActionRecordThaw"), "record_thaw")
-        self.audit_action_filter.addItem(tr("operations.auditActionBatchThaw"), "batch_thaw")
+        self.audit_action_filter.addItem(tr("operations.auditActionRecordTakeout"), "record_takeout")
+        self.audit_action_filter.addItem(tr("operations.auditActionBatchTakeout"), "batch_takeout")
         self.audit_action_filter.addItem(tr("operations.auditActionRollback"), "rollback")
         filter_form.addRow(tr("operations.auditAction"), self.audit_action_filter)
 
@@ -288,7 +288,7 @@ class AuditLogDialog(QDialog):
         backup_path = ev.get("backup_path") or ""
 
         title_color = "var(--status-success)" if status == "success" else "var(--status-error)"
-        lines = [f"<b style='color: {title_color};'>{tr('operations.audit')}：{action} ({status})</b>"]
+        lines = [f"<b style='color: {title_color};'>{tr('operations.audit')}: {action} ({status})</b>"]
         if ts:
             lines.append(f"<span style='color: var(--status-muted);'>{tr('operations.timeLabel')}</span> {ts}")
         if actor:
@@ -355,7 +355,6 @@ class AuditLogDialog(QDialog):
     def _apply_generated_audit_guide(self, guide, selected_count, print_now=False):
         items = list(guide.get("items") or [])
         warnings = list(guide.get("warnings") or [])
-        stats = dict(guide.get("stats") or {})
 
         if not items:
             lines = [
@@ -407,12 +406,7 @@ class AuditLogDialog(QDialog):
     def _print_operation_sheet(self, items, title):
         """Generate and open HTML operation sheet."""
         html = render_operation_sheet(items, title=title)
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".html", delete=False, encoding="utf-8") as f:
-            f.write(html)
-            temp_path = f.name
-        from PySide6.QtCore import QUrl
-        from PySide6.QtGui import QDesktopServices
-        QDesktopServices.openUrl(QUrl.fromLocalFile(temp_path))
+        open_html_in_browser(html)
 
     def on_generate_audit_guide(self):
         selected_events = self._get_selected_audit_events()
@@ -512,3 +506,4 @@ class AuditLogDialog(QDialog):
         # Notify parent to add plan item
         if hasattr(self.parent(), 'operations_panel'):
             self.parent().operations_panel.add_plan_items([item])
+

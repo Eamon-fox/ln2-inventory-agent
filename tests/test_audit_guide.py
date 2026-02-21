@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 import unittest
 from pathlib import Path
 
@@ -15,7 +15,7 @@ class AuditGuideBuilderTests(unittest.TestCase):
         events = [
             {
                 "timestamp": "2026-02-12T09:00:00",
-                "action": "record_thaw",
+                "action": "record_takeout",
                 "status": "success",
                 "details": {
                     "action": "move",
@@ -33,7 +33,7 @@ class AuditGuideBuilderTests(unittest.TestCase):
             },
             {
                 "timestamp": "2026-02-12T09:01:00",
-                "action": "record_thaw",
+                "action": "record_takeout",
                 "status": "success",
                 "details": {
                     "action": "move",
@@ -64,7 +64,7 @@ class AuditGuideBuilderTests(unittest.TestCase):
         events = [
             {
                 "timestamp": "2026-02-12T09:00:00",
-                "action": "record_thaw",
+                "action": "record_takeout",
                 "status": "success",
                 "details": {
                     "action": "move",
@@ -82,7 +82,7 @@ class AuditGuideBuilderTests(unittest.TestCase):
             },
             {
                 "timestamp": "2026-02-12T09:01:00",
-                "action": "record_thaw",
+                "action": "record_takeout",
                 "status": "success",
                 "details": {
                     "action": "discard",
@@ -114,7 +114,7 @@ class AuditGuideBuilderTests(unittest.TestCase):
             },
             {
                 "timestamp": "2026-02-12T09:03:00",
-                "action": "record_thaw",
+                "action": "record_takeout",
                 "status": "success",
                 "details": {
                     "action": "move",
@@ -146,7 +146,7 @@ class AuditGuideBuilderTests(unittest.TestCase):
         events = [
             {
                 "timestamp": "2026-02-12T09:00:00",
-                "action": "record_thaw",
+                "action": "record_takeout",
                 "status": "failed",
                 "details": {"record_id": 1},
             },
@@ -166,7 +166,7 @@ class AuditGuideBuilderTests(unittest.TestCase):
         events = [
             {
                 "timestamp": "2026-02-12T09:00:00",
-                "action": "batch_thaw",
+                "action": "batch_takeout",
                 "status": "success",
                 "details": {"action": "move"},
                 "tool_input": {
@@ -176,7 +176,7 @@ class AuditGuideBuilderTests(unittest.TestCase):
             },
             {
                 "timestamp": "2026-02-12T09:01:00",
-                "action": "batch_thaw",
+                "action": "batch_takeout",
                 "status": "success",
                 "details": {"action": "move"},
                 "tool_input": {
@@ -198,7 +198,7 @@ class AuditGuideBuilderTests(unittest.TestCase):
         events = [
             {
                 "timestamp": "2026-02-12T09:00:00",
-                "action": "record_thaw",
+                "action": "record_takeout",
                 "status": "success",
                 "details": {
                     "action": "take out",
@@ -221,3 +221,4 @@ class AuditGuideBuilderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

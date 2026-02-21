@@ -7,11 +7,11 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import os
 
-import yaml
 from lib.plan_item_factory import normalize_plan_action
+from lib.yaml_ops import load_yaml
 
 
-_OUT_ACTIONS = {"takeout", "thaw", "discard"}
+_OUT_ACTIONS = {"takeout"}
 
 
 @dataclass
@@ -87,10 +87,10 @@ def _extract_steps_from_event(
         return [], True
 
     lookup = _load_snapshot_lookup(event.get("backup_path"), snapshot_cache, warnings)
-    if action == "record_thaw":
-        return _parse_record_thaw(event, lookup, warnings), False
-    if action == "batch_thaw":
-        return _parse_batch_thaw(event, lookup, warnings), False
+    if action == "record_takeout":
+        return _parse_record_takeout(event, lookup, warnings), False
+    if action == "batch_takeout":
+        return _parse_batch_takeout(event, lookup, warnings), False
     if action == "add_entry":
         return _parse_add_entry(event, lookup, warnings), False
 
@@ -98,7 +98,7 @@ def _extract_steps_from_event(
     return [], True
 
 
-def _parse_record_thaw(
+def _parse_record_takeout(
     event: Dict[str, Any],
     lookup: Dict[int, Dict[str, Any]],
     warnings: List[str],
@@ -111,7 +111,7 @@ def _parse_record_thaw(
     if record_id is None:
         record_id = _as_int(details.get("record_id"))
     if record_id is None:
-        warnings.append(f"{timestamp} record_thaw: missing record_id, skipped")
+        warnings.append(f"{timestamp} record_takeout: missing record_id, skipped")
         return []
 
     action = _normalize_action(details.get("action") or tool_input.get("action") or "takeout")
@@ -119,7 +119,7 @@ def _parse_record_thaw(
     if src_pos is None:
         src_pos = _as_int(details.get("position"))
     if src_pos is None:
-        warnings.append(f"{timestamp} record_thaw#{record_id}: missing position, skipped")
+        warnings.append(f"{timestamp} record_takeout#{record_id}: missing position, skipped")
         return []
 
     src_box = _as_int(details.get("box"))
@@ -127,7 +127,7 @@ def _parse_record_thaw(
         src_box = _lookup_box(lookup, record_id)
     if src_box is None:
         src_box = 0
-        warnings.append(f"{timestamp} record_thaw#{record_id}: unknown source box, using 0")
+        warnings.append(f"{timestamp} record_takeout#{record_id}: unknown source box, using 0")
 
     target_loc: Optional[Tuple[int, int]] = None
     if action == "move":
@@ -135,7 +135,7 @@ def _parse_record_thaw(
         if dst_pos is None:
             dst_pos = _as_int(details.get("to_position"))
         if dst_pos is None:
-            warnings.append(f"{timestamp} record_thaw#{record_id}: move missing to_position, skipped")
+            warnings.append(f"{timestamp} record_takeout#{record_id}: move missing to_position, skipped")
             return []
 
         dst_box = _as_int(tool_input.get("to_box"))
@@ -158,7 +158,7 @@ def _parse_record_thaw(
     ]
 
 
-def _parse_batch_thaw(
+def _parse_batch_takeout(
     event: Dict[str, Any],
     lookup: Dict[int, Dict[str, Any]],
     warnings: List[str],
@@ -170,17 +170,17 @@ def _parse_batch_thaw(
 
     entries = tool_input.get("entries")
     if isinstance(entries, str):
-        warnings.append(f"{timestamp} batch_thaw: string entries are unsupported here, skipped")
+        warnings.append(f"{timestamp} batch_takeout: string entries are unsupported here, skipped")
         return []
     if not isinstance(entries, list):
-        warnings.append(f"{timestamp} batch_thaw: missing entries, skipped")
+        warnings.append(f"{timestamp} batch_takeout: missing entries, skipped")
         return []
 
     steps: List[_ParsedStep] = []
     for idx, entry in enumerate(entries, 1):
         parsed = _parse_batch_entry(entry)
         if parsed is None:
-            warnings.append(f"{timestamp} batch_thaw: invalid entry #{idx}, skipped")
+            warnings.append(f"{timestamp} batch_takeout: invalid entry #{idx}, skipped")
             continue
         record_id, src_pos, dst_pos, dst_box_hint, src_box_hint = parsed
 
@@ -189,12 +189,12 @@ def _parse_batch_thaw(
             src_box = _lookup_box(lookup, record_id)
         if src_box is None:
             src_box = 0
-            warnings.append(f"{timestamp} batch_thaw#{record_id}: unknown source box, using 0")
+            warnings.append(f"{timestamp} batch_takeout#{record_id}: unknown source box, using 0")
 
         target_loc: Optional[Tuple[int, int]] = None
         if action == "move":
             if dst_pos is None:
-                warnings.append(f"{timestamp} batch_thaw#{record_id}: move missing to_position, skipped")
+                warnings.append(f"{timestamp} batch_takeout#{record_id}: move missing to_position, skipped")
                 continue
             dst_box = dst_box_hint if dst_box_hint is not None else src_box
             target_loc = (dst_box, dst_pos)
@@ -388,7 +388,7 @@ def _collapse_steps_to_items(steps: List[_ParsedStep], warnings: List[str]) -> L
         if item is not None:
             items.append(item)
 
-    action_order = {"takeout": 0, "thaw": 0, "discard": 0, "move": 1, "add": 2}
+    action_order = {"takeout": 0, "move": 1, "add": 2}
     items.sort(
         key=lambda it: (
             action_order.get(str(it.get("action", "")), 9),
@@ -551,8 +551,7 @@ def _load_snapshot_lookup(
         return cache[path]
 
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
+        data = load_yaml(path) or {}
         records = data.get("inventory") if isinstance(data, dict) else None
         lookup: Dict[int, Dict[str, Any]] = {}
         if isinstance(records, list):
@@ -605,3 +604,4 @@ def _as_int(value: Any) -> Optional[int]:
         return int(value)
     except (TypeError, ValueError):
         return None
+

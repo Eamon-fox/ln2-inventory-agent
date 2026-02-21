@@ -79,15 +79,15 @@ class EventCompactorTests(unittest.TestCase):
 
     def test_plan_stage_blocked_notice_is_compacted_for_context(self):
         long_msg = (
-            "写入被阻止：库存完整性校验失败\n"
-            "- 记录 #16 (id=16): cell_line invalid\n"
-            "- 记录 #17 (id=17): cell_line invalid\n"
-            "- 记录 #18 (id=18): cell_line invalid"
+            "Write blocked: integrity validation failed\n"
+            "- Record #16 (id=16): cell_line invalid\n"
+            "- Record #17 (id=17): cell_line invalid\n"
+            "- Record #18 (id=18): cell_line invalid"
         )
         event = {
             "type": "system_notice",
             "code": "plan.stage.blocked",
-            "text": "计划被拒绝：" + long_msg,
+            "text": "Plan rejected: " + long_msg,
             "details": long_msg,
             "data": {
                 "blocked_items": [

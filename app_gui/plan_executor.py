@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import copy
 import os
 import tempfile
+from contextlib import suppress
 from datetime import date
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from lib.yaml_ops import load_yaml, write_yaml
 
@@ -32,6 +32,205 @@ def _make_ok_item(item: Dict[str, object], response: Dict[str, object]) -> Dict[
     }
 
 
+def _resolve_error_from_response(
+    response: Dict[str, object],
+    *,
+    fallback_error_code: str,
+    fallback_message: str,
+) -> Tuple[str, str]:
+    if not isinstance(response, dict):
+        return fallback_error_code, fallback_message
+    return (
+        response.get("error_code", fallback_error_code),
+        response.get("message", fallback_message),
+    )
+
+
+def _make_error_item_from_response(
+    item: Dict[str, object],
+    response: Dict[str, object],
+    *,
+    fallback_error_code: str,
+    fallback_message: str,
+) -> Dict[str, object]:
+    error_code, message = _resolve_error_from_response(
+        response,
+        fallback_error_code=fallback_error_code,
+        fallback_message=fallback_message,
+    )
+    return _make_error_item(item, error_code, message)
+
+
+def _fanout_batch_response(
+    items: List[Dict[str, object]],
+    response: Dict[str, object],
+    *,
+    fallback_error_code: str,
+    fallback_message: str,
+) -> Tuple[bool, List[Dict[str, object]]]:
+    """Convert one batch response into per-item reports."""
+    reports: List[Dict[str, object]] = []
+    if response.get("ok"):
+        for item in items:
+            reports.append(_make_ok_item(item, response))
+        return True, reports
+
+    for item in items:
+        reports.append(
+            _make_error_item_from_response(
+                item,
+                response,
+                fallback_error_code=fallback_error_code,
+                fallback_message=fallback_message,
+            )
+        )
+    return False, reports
+
+
+def _append_item_report(
+    reports: List[Dict[str, object]],
+    *,
+    item: Dict[str, object],
+    response: Dict[str, object],
+    fallback_error_code: str,
+    fallback_message: str,
+) -> bool:
+    """Append one per-item report and return whether it succeeded."""
+    if response.get("ok"):
+        reports.append(_make_ok_item(item, response))
+        return True
+    reports.append(
+        _make_error_item_from_response(
+            item,
+            response,
+            fallback_error_code=fallback_error_code,
+            fallback_message=fallback_message,
+        )
+    )
+    return False
+
+
+def _update_last_backup(
+    last_backup: Optional[str],
+    response: Dict[str, object],
+    *,
+    include_snapshot_before_rollback: bool = False,
+) -> Optional[str]:
+    """Extract backup path from one tool response and update running backup marker."""
+    if not isinstance(response, dict):
+        return last_backup
+
+    backup_path = response.get("backup_path")
+    if backup_path:
+        return backup_path
+
+    if include_snapshot_before_rollback:
+        snapshot = (response.get("result") or {}).get("snapshot_before_rollback")
+        if snapshot:
+            return snapshot
+
+    return last_backup
+
+
+def _consume_batch_successes(
+    remaining: List[Dict[str, object]],
+    batch_reports: List[Dict[str, object]],
+    last_backup: Optional[str],
+) -> Optional[str]:
+    """Remove successful batch items from remaining and advance backup marker."""
+    for report in batch_reports:
+        item = report.get("item")
+        if not report.get("ok") or item not in remaining:
+            continue
+        remaining.remove(item)
+        last_backup = _update_last_backup(last_backup, report.get("response") or {})
+    return last_backup
+
+
+def _append_and_consume_item_report(
+    reports: List[Dict[str, object]],
+    remaining: List[Dict[str, object]],
+    *,
+    item: Dict[str, object],
+    response: Dict[str, object],
+    fallback_error_code: str,
+    fallback_message: str,
+    last_backup: Optional[str],
+    include_snapshot_before_rollback: bool = False,
+) -> Optional[str]:
+    if not _append_item_report(
+        reports,
+        item=item,
+        response=response,
+        fallback_error_code=fallback_error_code,
+        fallback_message=fallback_message,
+    ):
+        return last_backup
+
+    if item in remaining:
+        remaining.remove(item)
+    return _update_last_backup(
+        last_backup,
+        response,
+        include_snapshot_before_rollback=include_snapshot_before_rollback,
+    )
+
+
+def _apply_batch_phase_reports(
+    reports: List[Dict[str, object]],
+    remaining: List[Dict[str, object]],
+    *,
+    phase_items: List[Dict[str, object]],
+    run_batch: Callable[[], Tuple[bool, List[Dict[str, object]]]],
+    last_backup: Optional[str],
+) -> Optional[str]:
+    if not phase_items:
+        return last_backup
+    _, batch_reports = run_batch()
+    reports.extend(batch_reports)
+    return _consume_batch_successes(remaining, batch_reports, last_backup)
+
+
+def _run_mode_call(
+    mode: str,
+    *,
+    run_preflight: Callable[[], Dict[str, object]],
+    run_execute: Callable[[], Dict[str, object]],
+) -> Dict[str, object]:
+    if mode == "preflight":
+        return run_preflight()
+    return run_execute()
+
+
+def _items_with_action(
+    items: List[Dict[str, object]],
+    action: str,
+    *,
+    case_insensitive: bool = False,
+) -> List[Dict[str, object]]:
+    if case_insensitive:
+        target = str(action or "").lower()
+        return [it for it in items if str(it.get("action") or "").lower() == target]
+    return [it for it in items if it.get("action") == action]
+
+
+def _build_preflight_blocked_result(
+    items: List[Dict[str, object]],
+    *,
+    error_code: str,
+    message: str,
+    summary: str,
+) -> Dict[str, object]:
+    reports = [_make_error_item(it, error_code, message) for it in items]
+    return {
+        "ok": False,
+        "blocked": True,
+        "items": reports,
+        "stats": {"total": len(items), "ok": 0, "blocked": len(reports)},
+        "summary": summary,
+    }
+
+
 def preflight_plan(
     yaml_path: str,
     items: List[Dict[str, object]],
@@ -53,24 +252,23 @@ def preflight_plan(
         }
 
     if not os.path.isfile(yaml_path):
-        return {
-            "ok": False,
-            "blocked": True,
-            "items": [_make_error_item(it, "yaml_not_found", f"YAML file not found: {yaml_path}") for it in items],
-            "stats": {"total": len(items), "ok": 0, "blocked": len(items)},
-            "summary": f"YAML file not found: {yaml_path}",
-        }
+        message = f"YAML file not found: {yaml_path}"
+        return _build_preflight_blocked_result(
+            items,
+            error_code="yaml_not_found",
+            message=message,
+            summary=message,
+        )
 
     try:
         data = load_yaml(yaml_path)
     except Exception as exc:
-        return {
-            "ok": False,
-            "blocked": True,
-            "items": [_make_error_item(it, "yaml_load_failed", str(exc)) for it in items],
-            "stats": {"total": len(items), "ok": 0, "blocked": len(items)},
-            "summary": f"Failed to load YAML: {exc}",
-        }
+        return _build_preflight_blocked_result(
+            items,
+            error_code="yaml_load_failed",
+            message=str(exc),
+            summary=f"Failed to load YAML: {exc}",
+        )
 
     with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False, mode="w", encoding="utf-8") as tmp:
         tmp_path = tmp.name
@@ -78,18 +276,14 @@ def preflight_plan(
     try:
         write_yaml(data, tmp_path, auto_backup=False, audit_meta={"action": "preflight", "source": "plan_executor"})
     except Exception as exc:
-        try:
+        with suppress(Exception):
             os.unlink(tmp_path)
-        except Exception:
-            pass
-        reports = [_make_error_item(it, "preflight_snapshot_invalid", str(exc)) for it in items]
-        return {
-            "ok": False,
-            "blocked": True,
-            "items": reports,
-            "stats": {"total": len(items), "ok": 0, "blocked": len(reports)},
-            "summary": f"Preflight blocked before simulation: {exc}",
-        }
+        return _build_preflight_blocked_result(
+            items,
+            error_code="preflight_snapshot_invalid",
+            message=str(exc),
+            summary=f"Preflight blocked before simulation: {exc}",
+        )
 
     try:
         result = run_plan(
@@ -101,10 +295,8 @@ def preflight_plan(
         )
         return result
     finally:
-        try:
+        with suppress(Exception):
             os.unlink(tmp_path)
-        except Exception:
-            pass
 
 
 def run_plan(
@@ -145,7 +337,7 @@ def run_plan(
     if mode not in ("execute", "preflight"):
         mode = "execute"
 
-    rollback_items = [it for it in items if it.get("action") == "rollback"]
+    rollback_items = _items_with_action(items, "rollback")
     if rollback_items and len(items) != 1:
         reports = [
             _make_error_item(
@@ -172,50 +364,47 @@ def run_plan(
     remaining = list(items)
 
     # Phase 0: rollback (must be executed alone, enforced above)
-    rollbacks = [it for it in remaining if it.get("action") == "rollback"]
+    rollbacks = _items_with_action(remaining, "rollback")
     for item in rollbacks:
         payload = dict(item.get("payload") or {})
         backup_path = payload.get("backup_path")
         source_event = payload.get("source_event")
 
-        if mode == "preflight":
-            response = _run_preflight_tool(
+        rollback_kwargs = {
+            "yaml_path": yaml_path,
+            "backup_path": backup_path,
+            "execution_mode": "execute",
+        }
+        if isinstance(source_event, dict) and source_event:
+            rollback_kwargs["source_event"] = source_event
+        response = _run_mode_call(
+            mode,
+            run_preflight=lambda: _run_preflight_tool(
                 bridge=bridge,
                 yaml_path=yaml_path,
                 tool_name="tool_rollback",
                 backup_path=backup_path,
                 source_event=source_event,
-            )
-        else:
-            rollback_kwargs = {
-                "yaml_path": yaml_path,
-                "backup_path": backup_path,
-                "execution_mode": "execute",
-            }
-            if isinstance(source_event, dict) and source_event:
-                rollback_kwargs["source_event"] = source_event
-            response = bridge.rollback(**rollback_kwargs)
+            ),
+            run_execute=lambda: bridge.rollback(**rollback_kwargs),
+        )
 
-        if response.get("ok"):
-            reports.append(_make_ok_item(item, response))
-            remaining.remove(item)
-            snapshot = response.get("backup_path") or (response.get("result") or {}).get("snapshot_before_rollback")
-            if snapshot:
-                last_backup = snapshot
-        else:
-            reports.append(
-                _make_error_item(
-                    item,
-                    response.get("error_code", "rollback_failed"),
-                    response.get("message", "Rollback failed"),
-                )
-            )
+        last_backup = _append_and_consume_item_report(
+            reports,
+            remaining,
+            item=item,
+            response=response,
+            fallback_error_code="rollback_failed",
+            fallback_message="Rollback failed",
+            last_backup=last_backup,
+            include_snapshot_before_rollback=True,
+        )
 
     # Phase 1: add operations (each add is independent)
-    adds = [it for it in remaining if it.get("action") == "add"]
+    adds = _items_with_action(remaining, "add")
 
     # Cross-item conflict detection: flag adds that target positions already
-    # claimed by an earlier add in the same batch.  Pure in-memory check —
+    # claimed by an earlier add in the same batch.  Pure in-memory check 鈥?
     # no file I/O, no side-effects.
     _add_claimed: set[tuple[int, int]] = set()  # (box, position)
     _add_blocked_ids: set[int] = set()
@@ -232,85 +421,89 @@ def run_plan(
 
     for item in adds:
         if id(item) in _add_blocked_ids:
-            reports.append(_make_error_item(item, "position_conflict", "位置冲突（同批次内重复）"))
+            reports.append(_make_error_item(item, "position_conflict", "Position conflict (duplicate target in the same batch)"))
             continue
 
         payload = dict(item.get("payload") or {})
-        if mode == "preflight":
-            response = _preflight_add_entry(bridge, yaml_path, payload)
-        else:
-            response = bridge.add_entry(yaml_path=yaml_path, execution_mode="execute", **payload)
+        response = _run_mode_call(
+            mode,
+            run_preflight=lambda: _preflight_add_entry(bridge, yaml_path, payload),
+            run_execute=lambda: bridge.add_entry(yaml_path=yaml_path, execution_mode="execute", **payload),
+        )
 
-        if response.get("ok"):
-            reports.append(_make_ok_item(item, response))
-            remaining.remove(item)
-            if response.get("backup_path"):
-                last_backup = response["backup_path"]
-        else:
-            reports.append(_make_error_item(item, response.get("error_code", "add_failed"), response.get("message", "Add failed")))
+        last_backup = _append_and_consume_item_report(
+            reports,
+            remaining,
+            item=item,
+            response=response,
+            fallback_error_code="add_failed",
+            fallback_message="Add failed",
+            last_backup=last_backup,
+        )
 
     # Phase 1.5: edit operations (each edit is independent)
-    edits = [it for it in remaining if it.get("action") == "edit"]
+    edits = _items_with_action(remaining, "edit")
     for item in edits:
         payload = dict(item.get("payload") or {})
-        if mode == "preflight":
-            response = _run_preflight_tool(
+        response = _run_mode_call(
+            mode,
+            run_preflight=lambda: _run_preflight_tool(
                 bridge=bridge,
                 yaml_path=yaml_path,
                 tool_name="tool_edit_entry",
                 record_id=payload.get("record_id"),
                 fields=payload.get("fields", {}),
-            )
-        else:
-            response = bridge.edit_entry(
+            ),
+            run_execute=lambda: bridge.edit_entry(
                 yaml_path=yaml_path,
                 record_id=payload.get("record_id"),
                 fields=payload.get("fields", {}),
                 execution_mode="execute",
-            )
+            ),
+        )
 
-        if response.get("ok"):
-            reports.append(_make_ok_item(item, response))
-            remaining.remove(item)
-            if response.get("backup_path"):
-                last_backup = response["backup_path"]
-        else:
-            reports.append(_make_error_item(item, response.get("error_code", "edit_failed"), response.get("message", "Edit failed")))
+        last_backup = _append_and_consume_item_report(
+            reports,
+            remaining,
+            item=item,
+            response=response,
+            fallback_error_code="edit_failed",
+            fallback_message="Edit failed",
+            last_backup=last_backup,
+        )
 
     # Phase 2: move operations (execute as a single batch)
-    moves = [it for it in remaining if it.get("action") == "move"]
-    if moves:
-        batch_ok, batch_reports = _execute_moves_batch(
+    moves = _items_with_action(remaining, "move")
+    last_backup = _apply_batch_phase_reports(
+        reports,
+        remaining,
+        phase_items=moves,
+        run_batch=lambda: _execute_moves_batch(
             yaml_path=yaml_path,
             items=moves,
             bridge=bridge,
             date_str=effective_date,
             mode=mode,
-        )
-        reports.extend(batch_reports)
-        for r in batch_reports:
-            if r.get("ok") and r.get("item") in remaining:
-                remaining.remove(r["item"])
-                if r.get("response", {}).get("backup_path"):
-                    last_backup = r["response"]["backup_path"]
+        ),
+        last_backup=last_backup,
+    )
 
-    # Phase 3: out operations (takeout/thaw/discard collapsed to Takeout)
-    out_items = [it for it in remaining if str(it.get("action") or "").lower() in {"takeout", "thaw", "discard"}]
-    if out_items:
-        batch_ok, batch_reports = _execute_thaw_batch(
+    # Phase 3: takeout operations
+    out_items = _items_with_action(remaining, "takeout", case_insensitive=True)
+    last_backup = _apply_batch_phase_reports(
+        reports,
+        remaining,
+        phase_items=out_items,
+        run_batch=lambda: _execute_takeout_batch(
             yaml_path=yaml_path,
             items=out_items,
             action_name="Takeout",
             bridge=bridge,
             date_str=effective_date,
             mode=mode,
-        )
-        reports.extend(batch_reports)
-        for r in batch_reports:
-            if r.get("ok") and r.get("item") in remaining:
-                remaining.remove(r["item"])
-                if r.get("response", {}).get("backup_path"):
-                    last_backup = r["response"]["backup_path"]
+        ),
+        last_backup=last_backup,
+    )
 
     # Finalize
     ok_count = sum(1 for r in reports if r.get("ok"))
@@ -382,16 +575,58 @@ def _preflight_add_entry(bridge: object, yaml_path: str, payload: Dict[str, obje
     )
 
 
-def _preflight_batch_thaw(bridge: object, yaml_path: str, payload: Dict[str, object]) -> Dict[str, object]:
-    """Validate batch_thaw with the same path as execute mode."""
+def _preflight_batch_takeout(bridge: object, yaml_path: str, payload: Dict[str, object]) -> Dict[str, object]:
+    """Validate batch_takeout with the same path as execute mode."""
     return _run_preflight_tool(
         bridge=bridge,
         yaml_path=yaml_path,
-        tool_name="tool_batch_thaw",
+        tool_name="tool_batch_takeout",
         entries=payload.get("entries", []),
         date_str=payload.get("date_str"),
         action=payload.get("action", "Takeout"),
     )
+
+
+def _build_batch_takeout_payload(
+    items: List[Dict[str, object]],
+    *,
+    date_str: str,
+    action_name: str,
+    include_target: bool = False,
+) -> Dict[str, object]:
+    """Build shared batch payload for takeout/move operations."""
+    entries = []
+    for item in items:
+        payload = item.get("payload") or {}
+        if include_target:
+            entry = (
+                payload.get("record_id"),
+                payload.get("position"),
+                payload.get("to_position"),
+            )
+            if payload.get("to_box") is not None:
+                entry = entry + (payload.get("to_box"),)
+        else:
+            entry = (payload.get("record_id"), payload.get("position"))
+        entries.append(entry)
+
+    first_payload = (items[0].get("payload") or {}) if items else {}
+    return {
+        "entries": entries,
+        "date_str": first_payload.get("date_str", date_str),
+        "action": action_name,
+    }
+
+
+def _run_batch_takeout(
+    bridge: object,
+    yaml_path: str,
+    batch_payload: Dict[str, object],
+    mode: str,
+) -> Dict[str, object]:
+    if mode == "preflight":
+        return _preflight_batch_takeout(bridge, yaml_path, batch_payload)
+    return bridge.batch_takeout(yaml_path=yaml_path, execution_mode="execute", **batch_payload)
 
 
 def _execute_moves_batch(
@@ -402,47 +637,24 @@ def _execute_moves_batch(
     mode: str,
 ) -> Tuple[bool, List[Dict[str, object]]]:
     """Execute move operations using a single batch strategy."""
-    reports: List[Dict[str, object]] = []
+    batch_payload = _build_batch_takeout_payload(
+        items,
+        date_str=date_str,
+        action_name="Move",
+        include_target=True,
+    )
 
-    entries = []
-    for item in items:
-        p = item.get("payload") or {}
-        entry = (p.get("record_id"), p.get("position"), p.get("to_position"))
-        if p.get("to_box") is not None:
-            entry = entry + (p.get("to_box"),)
-        entries.append(entry)
+    response = _run_batch_takeout(bridge, yaml_path, batch_payload, mode)
 
-    first_item = items[0] if items else {}
-    first_payload = first_item.get("payload") or {}
-    batch_payload = {
-        "entries": entries,
-        "date_str": first_payload.get("date_str", date_str),
-        "action": "Move",
-    }
-
-    if mode == "preflight":
-        response = _preflight_batch_thaw(bridge, yaml_path, batch_payload)
-    else:
-        response = bridge.batch_thaw(yaml_path=yaml_path, execution_mode="execute", **batch_payload)
-
-    if response.get("ok"):
-        for item in items:
-            reports.append(_make_ok_item(item, response))
-        return True, reports
-
-    # Batch failed - mark all as blocked (no fallback).
-    for item in items:
-        reports.append(
-            _make_error_item(
-                item,
-                response.get("error_code", "move_batch_failed"),
-                response.get("message", "Move batch failed"),
-            )
-        )
-    return False, reports
+    return _fanout_batch_response(
+        items,
+        response,
+        fallback_error_code="move_batch_failed",
+        fallback_message="Move batch failed",
+    )
 
 
-def _execute_thaw_batch(
+def _execute_takeout_batch(
     yaml_path: str,
     items: List[Dict[str, object]],
     action_name: str,
@@ -450,7 +662,7 @@ def _execute_thaw_batch(
     date_str: str,
     mode: str,
 ) -> Tuple[bool, List[Dict[str, object]]]:
-    """Execute takeout/thaw/discard operations.
+    """Execute takeout operations.
 
     - Preflight: validate each item individually for precise error reporting.
     - Execute: run as a single batch (no fallback).
@@ -470,49 +682,32 @@ def _execute_thaw_batch(
             response = _run_preflight_tool(
                 bridge=bridge,
                 yaml_path=yaml_path,
-                tool_name="tool_record_thaw",
+                tool_name="tool_record_takeout",
                 **single_payload,
             )
-            if response.get("ok"):
-                reports.append(_make_ok_item(item, response))
-            else:
-                reports.append(
-                    _make_error_item(
-                        item,
-                        response.get("error_code", "thaw_failed"),
-                        response.get("message", "Operation failed"),
-                    )
-                )
+            if not _append_item_report(
+                reports,
+                item=item,
+                response=response,
+                fallback_error_code="takeout_failed",
+                fallback_message="Operation failed",
+            ):
                 all_ok = False
         return all_ok, reports
 
-    entries = []
-    for item in items:
-        p = item.get("payload") or {}
-        entries.append((p.get("record_id"), p.get("position")))
+    batch_payload = _build_batch_takeout_payload(
+        items,
+        date_str=date_str,
+        action_name=action_name,
+        include_target=False,
+    )
 
-    first_item = items[0] if items else {}
-    first_payload = first_item.get("payload") or {}
-    batch_payload = {
-        "entries": entries,
-        "date_str": first_payload.get("date_str", date_str),
-        "action": action_name,
-    }
+    response = _run_batch_takeout(bridge, yaml_path, batch_payload, mode="execute")
 
-    response = bridge.batch_thaw(yaml_path=yaml_path, execution_mode="execute", **batch_payload)
+    return _fanout_batch_response(
+        items,
+        response,
+        fallback_error_code="takeout_batch_failed",
+        fallback_message="Batch operation failed",
+    )
 
-    if response.get("ok"):
-        for item in items:
-            reports.append(_make_ok_item(item, response))
-        return True, reports
-
-    # Batch failed - mark all as blocked (no fallback).
-    for item in items:
-        reports.append(
-            _make_error_item(
-                item,
-                response.get("error_code", "thaw_batch_failed"),
-                response.get("message", "Batch operation failed"),
-            )
-        )
-    return False, reports

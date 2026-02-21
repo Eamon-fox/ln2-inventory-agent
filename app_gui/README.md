@@ -1,4 +1,4 @@
-# GUI Scaffold (M2 starter)
+﻿# GUI Scaffold (M2 starter)
 
 This directory contains a minimal desktop GUI scaffold that calls the unified Tool API.
 
@@ -10,7 +10,7 @@ Current status:
 - Execution flow is shown in Plan/AI reporting panels (Plan details, execution result, and audit log)
 - `Overview` panel provides per-box grid visualization (9x9 style)
 - `AI Copilot` panel supports natural-language requests via ReAct runtime
-- AI Copilot provides quick prompts and structured output (`计划 -> 预览 -> 执行结果 -> 审计记录`)
+- AI Copilot provides quick prompts and structured output (`璁″垝 -> 棰勮 -> 鎵ц缁撴灉 -> 瀹¤璁板綍`)
 - AI Copilot keeps the chat input composer at the bottom, with advanced settings/report panels collapsed by default
 - AI composer supports `Enter` to send and `Shift+Enter` for newline
 - AI run executes in background; only send is blocked while waiting, input/editing stays responsive
@@ -23,19 +23,19 @@ Current status:
 - Overview supports filters (box/cell/keyword/show-empty) for focused browsing
 - Overview shows only keyword search by default; extra filters are behind a "More Filters" toggle
 - Removed redundant "Ask AI" quick button from Overview (AI panel is always visible on the right)
-- Quick actions (copy ID, prefill thaw form) are available from each slot's right-click menu
-- Overview cells support right-click context menu (copy location/ID, prefill thaw)
+- Quick actions (copy ID, prefill takeout form) are available from each slot's right-click menu
+- Overview cells support right-click context menu (copy location/ID, prefill takeout)
 - Settings dialog manages YAML path and actor ID (advanced options moved off main screen)
 - Query panel wired to `tool_query_inventory` / `tool_list_empty_positions`
 - Query results render in an interactive table (records and empty-slot views)
 - Query table can export current view to CSV
 - Query/backup tables support sorting; table widths and last operation mode are persisted across sessions
 - Add Entry panel wired to `tool_add_entry`
-- Single and batch thaw panels wired to `tool_record_thaw` / `tool_batch_thaw`
-- Thaw panel shows rich prefill context (cell/short/box/all positions/target check/frozen/plasmid/history/note)
-- Batch thaw operation is placed in an independent collapsible section in the Takeout panel
+- Single and batch takeout panels wired to `tool_record_takeout` / `tool_batch_takeout`
+- Takeout panel shows rich prefill context (cell/short/box/all positions/target check/frozen/plasmid/history/note)
+- Batch takeout operation is placed in an independent collapsible section in the Takeout panel
 - Inputs are typed widgets (spin boxes/date pickers/action dropdowns) to reduce format errors
-- Action dropdown supports Takeout / Thaw / Discard / Move (Move requires `To Position`; supports real relocation/swap)
+- Action dropdown supports Takeout / Move (Move requires `To Position`; supports real relocation/swap)
 - Manual operations are execute-only (no dry-run toggle in GUI)
 - Execute actions (Add/Single/Batch) are highlighted in red and require confirmation before write
 - Rollback panel supports backup listing and rollback by selected path/latest
@@ -65,3 +65,4 @@ Packaging notes:
 - Output installer: `dist/installer/LN2InventoryAgent-Setup-<version>.exe`
 
 The scaffold is intentionally minimal and exists to unblock M2 implementation.
+

@@ -1,7 +1,7 @@
 """Icon management for Lucide icons."""
 
 import os
-from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor
+from PySide6.QtGui import QIcon, QPixmap, QPainter
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtCore import QSize, Qt, QByteArray
 
@@ -68,23 +68,6 @@ def get_icon(name: str, size: int = 24, color: str = None) -> QIcon:
     return QIcon(pixmap)
 
 
-def get_themed_icon(name: str, size: int = 24, is_dark_theme: bool = True) -> QIcon:
-    """
-    Load a Lucide icon with theme-appropriate color.
-
-    Args:
-        name: Icon name (without .svg extension)
-        size: Icon size in pixels (default: 24)
-        is_dark_theme: Whether to use dark theme colors
-
-    Returns:
-        QIcon object
-    """
-    # Use appropriate color for theme
-    color = "#ffffff" if is_dark_theme else "#000000"
-    return get_icon(name, size, color)
-
-
 # Icon name constants for easy reference
 class Icons:
     """Lucide icon name constants."""
@@ -110,11 +93,4 @@ class Icons:
     MAXIMIZE = "maximize"
     MINIMIZE = "minimize"
     SCAN = "scan"
-    ZOOM_IN = "zoom-in"
-    ZOOM_OUT = "zoom-out"
-    TABLE = "table"
-    CHEVRON_DOWN = "chevron-down"
-    CHEVRON_UP = "chevron-up"
-    X = "x"
-    ZOOM_IN = "zoom-in"
-    ZOOM_OUT = "zoom-out"
+    FILTER = "filter"

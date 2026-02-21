@@ -7,10 +7,27 @@ import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MAIN_FILE = ROOT / "app_gui" / "main.py"
+FLOW_FILE = ROOT / "app_gui" / "main_window_flows.py"
+DIALOG_FILES = [
+    ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog.py",
+    ROOT / "app_gui" / "ui" / "dialogs" / "import_prompt_dialog.py",
+    ROOT / "app_gui" / "ui" / "dialogs" / "new_dataset_dialog.py",
+    ROOT / "app_gui" / "ui" / "dialogs" / "custom_fields_dialog.py",
+]
 
 
 def _source_text() -> str:
     return MAIN_FILE.read_text(encoding="utf-8")
+
+
+def _combined_source_text() -> str:
+    text = _source_text()
+    if FLOW_FILE.exists():
+        text += "\n" + FLOW_FILE.read_text(encoding="utf-8")
+    for dialog_file in DIALOG_FILES:
+        if dialog_file.exists():
+            text += "\n" + dialog_file.read_text(encoding="utf-8")
+    return text
 
 
 def test_quick_start_code_paths_removed():
@@ -39,13 +56,13 @@ def test_main_preserves_user_selected_inventory_filename_on_create():
 
 
 def test_settings_new_dataset_switches_immediately():
-    text = _source_text()
+    text = _combined_source_text()
 
     assert "self._on_create_new_dataset(update_window=True)" in text
 
 
 def test_settings_dialog_enforces_existing_yaml_file_before_ok():
-    text = _source_text()
+    text = _combined_source_text()
 
     assert "def _is_valid_inventory_file_path(path_text):" in text
     assert "suffix not in {\".yaml\", \".yml\"}" in text
@@ -104,11 +121,11 @@ def test_tr_not_called_with_keyword_args():
 
 
 def test_app_version_constant_exists_and_about_uses_it():
-    text = _source_text()
+    text = _combined_source_text()
 
     assert "APP_VERSION = " in text
     assert re.search(r'APP_VERSION\s*=\s*"[\d.]+"', text)
-    assert re.search(r'v\{APP_VERSION\}', text)
+    assert re.search(r'v\{APP_VERSION\}', text) or re.search(r'v\{self\._app_version\}', text)
     assert "APP_RELEASE_URL" in text
     assert "_check_release_notice_once" in text
     assert "_is_version_newer" in text or "_parse_version" in text
@@ -124,7 +141,7 @@ def test_startup_checks_are_deferred_until_window_show():
 
 
 def test_startup_dialogs_use_non_blocking_open_and_fixed_tag_parsing():
-    text = _source_text()
+    text = _combined_source_text()
 
     assert "def _show_nonblocking_dialog(" in text
     assert "dialog.setWindowModality(Qt.NonModal)" in text

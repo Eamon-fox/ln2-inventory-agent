@@ -1,43 +1,45 @@
-import json
 import os
-import tempfile
-from datetime import date, datetime
-from PySide6.QtCore import Qt, Signal, Slot, QDate, QEvent, QTimer, QUrl, QSize, QSortFilterProxyModel
+from contextlib import suppress
+from datetime import datetime
+from PySide6.QtCore import Qt, Signal, Slot, QDate, QSize, QSortFilterProxyModel
 from PySide6.QtGui import QDesktopServices, QValidator, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QLineEdit, QComboBox, QCompleter,
-    QStackedWidget, QTableWidget, QTableWidgetItem,
+    QStackedWidget, QTableWidget,
     QHeaderView, QFileDialog, QMessageBox, QGroupBox,
-    QAbstractItemView, QSizePolicy,
-    QFormLayout, QDateEdit, QSpinBox, QDoubleSpinBox, QScrollArea, QTextBrowser
+    QFormLayout, QDateEdit, QSpinBox, QDoubleSpinBox, QTextBrowser
 )
-from app_gui.ui.utils import positions_to_text, cell_color
-from app_gui.ui.theme import get_theme_color, FONT_SIZE_XS, FONT_SIZE_SM, FONT_SIZE_MD, FONT_SIZE_LG
+from app_gui.ui.theme import (
+    get_theme_color,
+    resolve_theme_token,
+)
 from app_gui.ui.icons import get_icon, Icons
 from app_gui.gui_config import load_gui_config
 from app_gui.i18n import tr
-from app_gui.plan_model import render_operation_sheet
-from app_gui.plan_gate import validate_stage_request
-from app_gui.plan_outcome import summarize_plan_execution
-from app_gui.plan_executor import preflight_plan, run_plan
-from app_gui.system_notice import build_system_notice, coerce_system_notice
+from app_gui.error_localizer import localize_error_payload
 from lib.tool_api import parse_batch_entries
 from lib.plan_item_factory import (
     build_add_plan_item,
     build_record_plan_item,
-    build_rollback_plan_item,
     iter_batch_entries,
     resolve_record_box,
 )
 from lib.validators import parse_positions
 from lib.position_fmt import display_to_pos, pos_to_display
 from lib.plan_store import PlanStore
+from app_gui.ui import operations_panel_execution as _ops_exec
+from app_gui.ui import operations_panel_actions as _ops_actions
+from app_gui.ui import operations_panel_plan_table as _ops_plan_table
+from app_gui.ui import operations_panel_results as _ops_results
+from app_gui.ui import operations_panel_plan_store as _ops_plan_store
+
+# Keep these Qt symbols imported here as stable monkeypatch targets used by
+# operations_panel_actions and related tests.
+_MONKEYPATCH_EXPORTS = (QDesktopServices, QFileDialog)
 
 _ACTION_I18N_KEY = {
     "takeout": "overview.takeout",
-    "thaw": "overview.thaw",
-    "discard": "overview.discard",
     "move": "operations.move",
     "add": "operations.add",
     "edit": "operations.edit",
@@ -138,14 +140,13 @@ class OperationsPanel(QWidget):
         self._overview_panel_ref = overview_panel  # Store reference for grid state extraction
 
         self.records_cache = {}
-        self.current_operation_mode = "thaw"
+        self.current_operation_mode = "takeout"
         self.t_prefill_source = None
         self._default_date_anchor = QDate.currentDate()
         self._last_operation_backup = None
         self._last_executed_plan = []
         self._plan_preflight_report = None
         self._plan_validation_by_key = {}
-        self._plan_hover_row = None
         self._undo_timer = None
         self._undo_remaining = 0
         self._current_custom_fields = []
@@ -164,19 +165,31 @@ class OperationsPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 4)
         layout.setSpacing(6)
 
-        # Mode Selection
+        layout.addLayout(self._build_mode_row())
+        layout.addWidget(self._build_operation_stack(), 2)
+        layout.addLayout(self._build_feedback_row())
+        # Plan Queue is always visible to reduce context switching.
+        self.plan_panel = self._build_plan_tab()
+        layout.addWidget(self.plan_panel, 3)
+        layout.addLayout(self._build_result_row())
+
+        self._sync_result_actions()
+        self.set_mode("takeout")
+
+    def _build_mode_row(self):
+        mode_row = QHBoxLayout()
+        mode_row.setContentsMargins(9, 0, 9, 0)
+
         self.op_mode_combo = QComboBox()
         self.op_mode_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         modes = [
-            ("thaw", tr("operations.thaw")),
+            ("takeout", tr("overview.takeout")),
             ("move", tr("operations.move")),
             ("add", tr("operations.add")),
         ]
         for mode_key, mode_label in modes:
             self.op_mode_combo.addItem(mode_label, mode_key)
         self.op_mode_combo.currentIndexChanged.connect(self.on_mode_changed)
-        mode_row = QHBoxLayout()
-        mode_row.setContentsMargins(9, 0, 9, 0)
 
         self.quick_add_btn = QPushButton(tr("overview.quickAdd"))
         self.quick_add_btn.setIcon(get_icon(Icons.PLUS))
@@ -193,33 +206,31 @@ class OperationsPanel(QWidget):
 
         mode_row.addStretch()
         mode_row.addWidget(self.op_mode_combo)
-        layout.addLayout(mode_row)
+        return mode_row
 
-        # Stack
+    def _build_operation_stack(self):
         self.op_stack = QStackedWidget()
         self.op_mode_indexes = {
             "add": self.op_stack.addWidget(self._build_add_tab()),
-            "thaw": self.op_stack.addWidget(self._build_thaw_tab()),
+            "takeout": self.op_stack.addWidget(self._build_takeout_tab()),
             "move": self.op_stack.addWidget(self._build_move_tab()),
         }
-        layout.addWidget(self.op_stack, 2)
+        return self.op_stack
 
+    def _build_feedback_row(self):
         # Inline feedback near operation forms (more visible than status bar).
         self.plan_feedback_label = QLabel("")
         self.plan_feedback_label.setObjectName("operationsPlanFeedback")
         self.plan_feedback_label.setProperty("level", "info")
         self.plan_feedback_label.setWordWrap(True)
         self.plan_feedback_label.setVisible(False)
+
         feedback_row = QHBoxLayout()
         feedback_row.setContentsMargins(9, 0, 9, 0)
         feedback_row.addWidget(self.plan_feedback_label)
-        layout.addLayout(feedback_row)
+        return feedback_row
 
-        # Plan Queue is always visible to reduce context switching.
-        self.plan_panel = self._build_plan_tab()
-        layout.addWidget(self.plan_panel, 3)
-
-        # Result Summary Card
+    def _build_result_row(self):
         self.result_card = QWidget()
         self.result_card.setObjectName("resultCard")
         self.result_card.setProperty("state", "default")
@@ -268,11 +279,7 @@ class OperationsPanel(QWidget):
         result_row = QHBoxLayout()
         result_row.setContentsMargins(9, 0, 9, 0)
         result_row.addWidget(self.result_card)
-        layout.addLayout(result_row)
-
-        self._sync_result_actions()
-
-        self.set_mode("thaw")
+        return result_row
 
     def _is_dark_theme(self):
         return load_gui_config().get("theme", "dark") != "light"
@@ -296,6 +303,16 @@ class OperationsPanel(QWidget):
             html = html.replace(token, color_hex)
 
         self.result_summary.setText(html)
+
+    def _set_result_card_state(self, state):
+        self.result_card.setProperty("state", str(state or "default"))
+        self.result_card.style().unpolish(self.result_card)
+        self.result_card.style().polish(self.result_card)
+        self.result_card.setVisible(True)
+
+    def _show_result_card(self, lines, state):
+        self._set_result_summary_html(lines)
+        self._set_result_card_state(state)
 
     def _on_hide_result_card(self):
         """Hide last result card and dismiss quick actions."""
@@ -321,7 +338,7 @@ class OperationsPanel(QWidget):
 
     def set_mode(self, mode):
         self._ensure_today_defaults()
-        target = mode if mode in self.op_mode_indexes else "thaw"
+        target = mode if mode in self.op_mode_indexes else "takeout"
         self.op_stack.setCurrentIndex(self.op_mode_indexes[target])
         self.current_operation_mode = target
 
@@ -365,13 +382,12 @@ class OperationsPanel(QWidget):
                 continue
 
         self.records_cache = normalized
-        self._refresh_thaw_record_context()
+        self._refresh_takeout_record_context()
         self._refresh_move_record_context()
         self._refresh_custom_fields()
 
     def _refresh_custom_fields(self):
         """Reload custom field definitions from YAML meta and rebuild dynamic forms."""
-        from lib.custom_fields import get_effective_fields
         from lib.yaml_ops import load_yaml
         try:
             yaml_path = self.yaml_path_getter()
@@ -400,7 +416,7 @@ class OperationsPanel(QWidget):
         custom_fields = get_effective_fields(meta)
         self._current_custom_fields = custom_fields
         self._rebuild_custom_add_fields(custom_fields)
-        self._rebuild_ctx_user_fields("thaw", custom_fields)
+        self._rebuild_ctx_user_fields("takeout", custom_fields)
         self._rebuild_ctx_user_fields("move", custom_fields)
         # Refresh cell_line dropdown options
         self._refresh_cell_line_options(meta)
@@ -663,18 +679,24 @@ class OperationsPanel(QWidget):
                     show_all_popup=True,
                 )
 
+    def _takeout_record_id(self):
+        return self.t_id.value()
+
+    def _move_record_id(self):
+        return self.m_id.value()
+
     def _rebuild_ctx_user_fields(self, prefix, custom_fields):
-        """Rebuild user field context rows in thaw/move form."""
-        if prefix == "thaw":
-            form = getattr(self, "_thaw_ctx_form", None)
-            widgets = getattr(self, "_thaw_ctx_widgets", {})
-            rid_fn = lambda: self.t_id.value()
-            refresh_fn = lambda: self._refresh_thaw_record_context()
+        """Rebuild user field context rows in takeout/move form."""
+        if prefix == "takeout":
+            form = getattr(self, "_takeout_ctx_form", None)
+            widgets = getattr(self, "_takeout_ctx_widgets", {})
+            rid_fn = self._takeout_record_id
+            refresh_fn = self._refresh_takeout_record_context
         else:
             form = getattr(self, "_move_ctx_form", None)
             widgets = getattr(self, "_move_ctx_widgets", {})
-            rid_fn = lambda: self.m_id.value()
-            refresh_fn = lambda: self._refresh_move_record_context()
+            rid_fn = self._move_record_id
+            refresh_fn = self._refresh_move_record_context
         if form is None:
             return
         # Remove old user field rows
@@ -688,8 +710,8 @@ class OperationsPanel(QWidget):
             container, lbl_widget = self._make_editable_field(key, rid_fn, refresh_fn)
             form.insertRow(form.rowCount(), flabel, container)
             widgets[key] = (container, lbl_widget)
-        if prefix == "thaw":
-            self._thaw_ctx_widgets = widgets
+        if prefix == "takeout":
+            self._takeout_ctx_widgets = widgets
         else:
             self._move_ctx_widgets = widgets
 
@@ -705,9 +727,7 @@ class OperationsPanel(QWidget):
             widget = self._add_custom_widgets.get(key)
             if widget is None:
                 continue
-            if isinstance(widget, QSpinBox):
-                raw = widget.value()
-            elif isinstance(widget, QDoubleSpinBox):
+            if isinstance(widget, (QSpinBox, QDoubleSpinBox)):
                 raw = widget.value()
             elif isinstance(widget, QDateEdit):
                 raw = widget.date().toString("yyyy-MM-dd")
@@ -745,7 +765,7 @@ class OperationsPanel(QWidget):
     def _positions_to_display_text(self, positions):
         return ",".join(self._position_to_display(pos) for pos in (positions or []))
 
-    def _apply_thaw_prefill(self, source_info, switch_mode=True):
+    def _apply_takeout_prefill(self, source_info):
         payload = dict(source_info or {})
         self.t_prefill_source = payload
 
@@ -761,15 +781,14 @@ class OperationsPanel(QWidget):
         if "position" in payload:
             self.t_from_position.setText(self._position_to_display(payload["position"]))
         self.t_action.setCurrentIndex(0)
-        self._refresh_thaw_record_context()
-        if switch_mode:
-            self.set_mode("thaw")
+        self._refresh_takeout_record_context()
+        self.set_mode("takeout")
 
     def set_prefill(self, source_info):
-        self._apply_thaw_prefill(source_info, switch_mode=True)
+        self.set_prefill_background(source_info)
 
     def set_prefill_background(self, source_info):
-        self._apply_thaw_prefill(source_info, switch_mode=True)
+        self._apply_takeout_prefill(source_info)
 
     def set_move_prefill(self, source_info):
         self._m_prefill_position = source_info.get("position")
@@ -787,22 +806,21 @@ class OperationsPanel(QWidget):
         self._refresh_move_record_context()
         self.set_mode("move")
 
-    def _apply_add_prefill(self, source_info, switch_mode=True):
+    def _apply_add_prefill(self, source_info):
         payload = dict(source_info or {})
         if "box" in payload:
             self.a_box.setValue(int(payload["box"]))
         if "position" in payload:
             self.a_positions.setText(self._position_to_display(payload["position"]))
-        if switch_mode:
-            self.set_mode("add")
+        self.set_mode("add")
 
     def set_add_prefill(self, source_info):
         """Pre-fill the Add Entry form with box and position from overview."""
-        self._apply_add_prefill(source_info, switch_mode=True)
+        self.set_add_prefill_background(source_info)
 
     def set_add_prefill_background(self, source_info):
         """Pre-fill the Add Entry form and switch to Add mode."""
-        self._apply_add_prefill(source_info, switch_mode=True)
+        self._apply_add_prefill(source_info)
 
     def _setup_table(self, table, headers, sortable=True):
         table.setRowCount(0)
@@ -836,7 +854,7 @@ class OperationsPanel(QWidget):
             record_id_getter: callable returning current record ID (int).
             refresh_callback: callable to restore original value on cancel.
         Returns:
-            (container_widget, field_widget) — add container to form, use field for setText.
+            (container_widget, field_widget) - add container to form, use field for setText.
         """
         container = QWidget()
         row = QHBoxLayout(container)
@@ -848,13 +866,13 @@ class OperationsPanel(QWidget):
         field.setProperty("role", "contextEditable")
         row.addWidget(field, 1)
 
-        lock_btn = QPushButton("\U0001F512")  # 🔒
+        lock_btn = QPushButton("\U0001F512")  # lock icon
         lock_btn.setObjectName("inlineLockBtn")
         lock_btn.setFixedSize(16, 16)
         lock_btn.setToolTip(tr("operations.edit"))
         row.addWidget(lock_btn)
 
-        confirm_btn = QPushButton("\u2713")  # ✓
+        confirm_btn = QPushButton("\u2713")  # confirm icon
         confirm_btn.setObjectName("inlineConfirmBtn")
         confirm_btn.setFixedSize(16, 16)
         confirm_btn.setVisible(False)
@@ -900,15 +918,13 @@ class OperationsPanel(QWidget):
                 # Unlock
                 _apply_choices()
                 field.setReadOnly(False)
-                lock_btn.setText("\U0001F513")  # 🔓
-                confirm_btn.setVisible(True)
+                lock_btn.setText("\U0001F513")  # 濡絽鍟弲?                confirm_btn.setVisible(True)
                 field.setFocus()
                 field.selectAll()
             else:
                 # Re-lock without saving
                 field.setReadOnly(True)
-                lock_btn.setText("\U0001F512")  # 🔒
-                confirm_btn.setVisible(False)
+                lock_btn.setText("\U0001F512")  # 濡絽鍟弲?                confirm_btn.setVisible(False)
                 # Restore original value
                 if refresh_callback:
                     refresh_callback()
@@ -962,16 +978,17 @@ class OperationsPanel(QWidget):
                 )
                 self.operation_completed.emit(True)
             else:
+                error_text = localize_error_payload(result)
                 self._publish_system_notice(
                     code="record.edit.failed",
-                    text=tr("operations.editFieldFailed", error=result.get("message", "?")),
+                    text=tr("operations.editFieldFailed", error=error_text),
                     level="error",
                     timeout=5000,
                     data={
                         "record_id": rid,
                         "field": field_name,
                         "error_code": result.get("error_code"),
-                        "message": result.get("message"),
+                        "message": error_text,
                     },
                 )
 
@@ -1024,7 +1041,7 @@ class OperationsPanel(QWidget):
         form.addRow(tr("operations.cellLine"), self.a_cell_line)
         form.addRow(tr("operations.note"), self.a_note)
 
-        # User fields placeholder — populated by _rebuild_custom_add_fields()
+        # User fields placeholder -?populated by _rebuild_custom_add_fields()
         self._add_custom_form = form
         self._add_custom_widgets = {}
 
@@ -1059,19 +1076,15 @@ class OperationsPanel(QWidget):
                 widget = QSpinBox()
                 widget.setRange(-999999, 999999)
                 if default is not None:
-                    try:
+                    with suppress(ValueError, TypeError):
                         widget.setValue(int(default))
-                    except (ValueError, TypeError):
-                        pass
             elif ftype == "float":
                 widget = QDoubleSpinBox()
                 widget.setRange(-999999.0, 999999.0)
                 widget.setDecimals(3)
                 if default is not None:
-                    try:
+                    with suppress(ValueError, TypeError):
                         widget.setValue(float(default))
-                    except (ValueError, TypeError):
-                        pass
             elif ftype == "date":
                 widget = QDateEdit()
                 widget.setCalendarPopup(True)
@@ -1087,8 +1100,8 @@ class OperationsPanel(QWidget):
             form.insertRow(btn_row_idx, label, widget)
             self._add_custom_widgets[key] = widget
 
-    # --- THAW TAB ---
-    def _build_thaw_tab(self):
+    # --- TAKEOUT TAB ---
+    def _build_takeout_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
@@ -1103,7 +1116,7 @@ class OperationsPanel(QWidget):
         self.t_from_box = QSpinBox()
         self.t_from_box.setRange(1, 99)
         self.t_from_box.setFixedWidth(60)
-        self.t_from_box.valueChanged.connect(self._refresh_thaw_record_context)
+        self.t_from_box.valueChanged.connect(self._refresh_takeout_record_context)
         source_row.addWidget(self.t_from_box)
 
         colon_label = QLabel(":")
@@ -1112,7 +1125,7 @@ class OperationsPanel(QWidget):
 
         self.t_from_position = QLineEdit()
         self.t_from_position.setFixedWidth(60)
-        self.t_from_position.textChanged.connect(self._refresh_thaw_record_context)
+        self.t_from_position.textChanged.connect(self._refresh_takeout_record_context)
         source_row.addWidget(self.t_from_position)
 
         source_row.addStretch()
@@ -1124,12 +1137,12 @@ class OperationsPanel(QWidget):
         self.t_id.setRange(1, 999999)
         self.t_id.setVisible(False)
         # Connect signal to refresh context when ID is changed (for reverse lookup)
-        self.t_id.valueChanged.connect(self._refresh_thaw_record_context)
+        self.t_id.valueChanged.connect(self._refresh_takeout_record_context)
 
-        _t_rid = lambda: self.t_id.value()
-        _t_refresh = lambda: self._refresh_thaw_record_context()
+        _t_rid = self._takeout_record_id
+        _t_refresh = self._refresh_takeout_record_context
 
-        # Editable context fields — frozen_at/note are core fields.
+        # Editable context fields -?frozen_at/note are core fields.
         t_frozen_w, self.t_ctx_frozen = self._make_editable_field("frozen_at", _t_rid, _t_refresh)
         t_note_w, self.t_ctx_note = self._make_editable_field("note", _t_rid, _t_refresh)
         t_cell_line_w, self.t_ctx_cell_line = self._make_editable_field(
@@ -1139,9 +1152,9 @@ class OperationsPanel(QWidget):
             choices_provider=self._cell_line_choice_config,
         )
 
-        # Dynamic user field context widgets (populated by _rebuild_thaw_ctx_fields)
-        self._thaw_ctx_form = form
-        self._thaw_ctx_widgets = {}  # key -> (container_widget, label_widget)
+        # Dynamic user field context widgets (populated by _rebuild_takeout_ctx_fields)
+        self._takeout_ctx_form = form
+        self._takeout_ctx_widgets = {}  # key -> (container_widget, label_widget)
 
         # Read-only context fields (not editable via inline edit) - kept for compatibility
         self.t_ctx_box = self._make_readonly_field()
@@ -1149,8 +1162,8 @@ class OperationsPanel(QWidget):
         self.t_ctx_events = self._make_readonly_history_label()
         self.t_ctx_source = self._make_readonly_field()
 
-        # User fields placeholder — will be rebuilt dynamically
-        self._thaw_ctx_insert_row = form.rowCount()
+        # User fields placeholder -?will be rebuilt dynamically
+        self._takeout_ctx_insert_row = form.rowCount()
 
         form.addRow(tr("overview.ctxFrozen"), t_frozen_w)
         form.addRow(tr("operations.note"), t_note_w)
@@ -1185,7 +1198,7 @@ class OperationsPanel(QWidget):
         # Action button at bottom
         self.t_takeout_btn, btn_row = self._build_stage_action_button(
             tr("overview.takeout"),
-            lambda: self._record_thaw_with_action("Takeout"),
+            lambda: self._record_takeout_with_action("Takeout"),
         )
         # Keep t_apply_btn as alias for the first button (compat)
         self.t_apply_btn = self.t_takeout_btn
@@ -1194,7 +1207,7 @@ class OperationsPanel(QWidget):
         layout.addLayout(form)
 
         # Keep batch controls instantiated for programmatic/API paths, but hide from manual UI.
-        self._init_hidden_batch_thaw_controls(tab)
+        self._init_hidden_batch_takeout_controls(tab)
         layout.addStretch(1)
         return tab
 
@@ -1258,10 +1271,10 @@ class OperationsPanel(QWidget):
         self.m_id.setRange(1, 999999)
         self.m_id.setVisible(False)
 
-        _m_rid = lambda: self.m_id.value()
-        _m_refresh = lambda: self._refresh_move_record_context()
+        _m_rid = self._move_record_id
+        _m_refresh = self._refresh_move_record_context
 
-        # Editable context fields — frozen_at/note are core fields.
+        # Editable context fields -?frozen_at/note are core fields.
         m_frozen_w, self.m_ctx_frozen = self._make_editable_field("frozen_at", _m_rid, _m_refresh)
         m_note_w, self.m_ctx_note = self._make_editable_field("note", _m_rid, _m_refresh)
         m_cell_line_w, self.m_ctx_cell_line = self._make_editable_field(
@@ -1280,7 +1293,7 @@ class OperationsPanel(QWidget):
         self.m_ctx_position = self._make_readonly_field()
         self.m_ctx_events = self._make_readonly_history_label()
 
-        # User fields placeholder — will be rebuilt dynamically
+        # User fields placeholder -?will be rebuilt dynamically
         self._move_ctx_insert_row = form.rowCount()
 
         form.addRow(tr("overview.ctxFrozen"), m_frozen_w)
@@ -1320,7 +1333,7 @@ class OperationsPanel(QWidget):
         layout.addStretch(1)
         return tab
 
-    def _init_hidden_batch_thaw_controls(self, parent):
+    def _init_hidden_batch_takeout_controls(self, parent):
         self.t_batch_toggle_btn = QPushButton(tr("operations.showBatch"), parent)
         self.t_batch_toggle_btn.setCheckable(True)
         self.t_batch_toggle_btn.toggled.connect(self.on_toggle_batch_section)
@@ -1343,7 +1356,7 @@ class OperationsPanel(QWidget):
         self.b_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.b_table.setRowCount(1)
         self.b_apply_btn = QPushButton(tr("operations.addPlan"), self.t_batch_group)
-        self.b_apply_btn.clicked.connect(self.on_batch_thaw)
+        self.b_apply_btn.clicked.connect(self.on_batch_takeout)
 
         batch_form.addRow(tr("operations.entriesText"), self.b_entries)
         batch_form.addRow(tr("operations.orUseTable"), self.b_table)
@@ -1394,7 +1407,6 @@ class OperationsPanel(QWidget):
         self.plan_table = QTableWidget()
         self.plan_table.setObjectName("operationsPlanTable")
         self.plan_table.setMouseTracking(True)
-        self.plan_table.cellEntered.connect(self._on_plan_cell_entered)
         self._setup_table(
             self.plan_table,
             [
@@ -1402,12 +1414,10 @@ class OperationsPanel(QWidget):
                 tr("operations.colPosition"),
                 tr("operations.date"),
                 tr("operations.colChanges"),
-                tr("operations.colNote"),
                 tr("operations.colStatus"),
             ],
             sortable=False,
         )
-        self.plan_table.viewport().installEventFilter(self)
         self.plan_table.setVisible(False)
         self.plan_table.selectionModel().selectionChanged.connect(
             lambda *_args: self._refresh_plan_toolbar_state()
@@ -1423,7 +1433,12 @@ class OperationsPanel(QWidget):
         toolbar.addWidget(self.plan_remove_selected_btn)
 
         self.plan_exec_btn = QPushButton(tr("operations.executeAll"))
-        self.plan_exec_btn.setIcon(get_icon(Icons.PLAY, color="#ffffff"))  # White icon for danger variant
+        self.plan_exec_btn.setIcon(
+            get_icon(
+                Icons.PLAY,
+                color=resolve_theme_token("icon-on-danger", fallback="#ffffff"),
+            )
+        )
         self.plan_exec_btn.setIconSize(QSize(16, 16))
         self._style_execute_button(self.plan_exec_btn)
         self.plan_exec_btn.clicked.connect(self.execute_plan)
@@ -1513,7 +1528,54 @@ class OperationsPanel(QWidget):
         except (ValueError, TypeError):
             return None
 
-    def _refresh_thaw_record_context(self):
+    @staticmethod
+    def _clear_context_label_groups(base_labels, extra_widgets):
+        for lbl in base_labels or []:
+            lbl.setText("-")
+        for _key, widget_pair in (extra_widgets or {}).items():
+            if isinstance(widget_pair, (tuple, list)) and len(widget_pair) >= 2:
+                widget_pair[1].setText("-")
+
+    def _populate_record_context_labels(
+        self,
+        *,
+        record,
+        box_label,
+        position_label,
+        frozen_label,
+        note_label,
+        cell_line_label,
+        extra_widgets,
+    ):
+        box = str(record.get("box") or "-")
+        position = record.get("position")
+        box_label.setText(box)
+        position_label.setText(self._position_to_display(position) if position is not None else "-")
+        frozen_label.setText(str(record.get("frozen_at") or "-"))
+        note_label.setText(str(record.get("note") or "-"))
+        cell_line_label.setText(str(record.get("cell_line") or "-"))
+        for key, widget_pair in (extra_widgets or {}).items():
+            if isinstance(widget_pair, (tuple, list)) and len(widget_pair) >= 2:
+                widget_pair[1].setText(str(record.get(key) or "-"))
+        return box, position
+
+    def _set_last_event_summary_label(self, label_widget, events):
+        event_list = events or []
+        if event_list:
+            last = event_list[-1]
+            label_widget.setText(
+                tr(
+                    "operations.historySummary",
+                    count=len(event_list),
+                    date=str(last.get("date") or "-"),
+                    action=str(last.get("action") or "-"),
+                    positions=str(last.get("position") or "-"),
+                )
+            )
+            return
+        label_widget.setText(tr("operations.noHistory"))
+
+    def _refresh_takeout_record_context(self):
         # Lookup record by box + position, or by ID if box/position not set
         from_box = self.t_from_box.value()
         from_pos = self._parse_position_text(self.t_from_position.text(), allow_empty=True)
@@ -1570,26 +1632,30 @@ class OperationsPanel(QWidget):
             self.t_ctx_status.setProperty("role", "statusWarning")
             self.t_ctx_status.setVisible(True)
             self.t_position.clear()
-            for lbl in [self.t_ctx_box, self.t_ctx_position, self.t_ctx_frozen, self.t_ctx_note,
-                        self.t_ctx_cell_line, self.t_ctx_events]:
-                lbl.setText("-")
-            for key, (container, lbl) in self._thaw_ctx_widgets.items():
-                lbl.setText("-")
+            self._clear_context_label_groups(
+                [
+                    self.t_ctx_box,
+                    self.t_ctx_position,
+                    self.t_ctx_frozen,
+                    self.t_ctx_note,
+                    self.t_ctx_cell_line,
+                    self.t_ctx_events,
+                ],
+                self._takeout_ctx_widgets,
+            )
             return
 
         self.t_ctx_status.setVisible(False)
 
-        box = str(record.get("box") or "-")
-        position = record.get("position")
-
-        self.t_ctx_box.setText(box)
-        self.t_ctx_position.setText(self._position_to_display(position) if position is not None else "-")
-        self.t_ctx_frozen.setText(str(record.get("frozen_at") or "-"))
-        self.t_ctx_note.setText(str(record.get("note") or "-"))
-        self.t_ctx_cell_line.setText(str(record.get("cell_line") or "-"))
-        # Populate dynamic user field context
-        for key, (container, lbl) in self._thaw_ctx_widgets.items():
-            lbl.setText(str(record.get(key) or "-"))
+        _box, position = self._populate_record_context_labels(
+            record=record,
+            box_label=self.t_ctx_box,
+            position_label=self.t_ctx_position,
+            frozen_label=self.t_ctx_frozen,
+            note_label=self.t_ctx_note,
+            cell_line_label=self.t_ctx_cell_line,
+            extra_widgets=self._takeout_ctx_widgets,
+        )
 
         # Set single position (hidden combo, kept for compat)
         self.t_position.blockSignals(True)
@@ -1599,34 +1665,26 @@ class OperationsPanel(QWidget):
             self.t_position.setCurrentIndex(0)
         self.t_position.blockSignals(False)
 
-        # History
-        events = record.get("thaw_events") or []
-        if events:
-            last = events[-1]
-            last_date = str(last.get("date") or "-")
-            last_action = str(last.get("action") or "-")
-            last_pos = str(last.get("position") or "-")
-            self.t_ctx_events.setText(
-                tr(
-                    "operations.historySummary",
-                    count=len(events),
-                    date=last_date,
-                    action=last_action,
-                    positions=last_pos,
-                )
-            )
-        else:
-            self.t_ctx_events.setText(tr("operations.noHistory"))
+        self._set_last_event_summary_label(self.t_ctx_events, record.get("thaw_events"))
 
-    def _confirm_execute(self, title, details):
+    def _confirm_warning_dialog(self, *, title, text, informative_text, detailed_text=None):
         msg = QMessageBox(self)
         msg.setIcon(QMessageBox.Warning)
         msg.setWindowTitle(title)
-        msg.setText(tr("operations.confirmModify"))
-        msg.setInformativeText(details)
+        msg.setText(text)
+        msg.setInformativeText(informative_text)
+        if detailed_text:
+            msg.setDetailedText(detailed_text)
         msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         msg.setDefaultButton(QMessageBox.No)
         return msg.exec() == QMessageBox.Yes
+
+    def _confirm_execute(self, title, details):
+        return self._confirm_warning_dialog(
+            title=title,
+            text=tr("operations.confirmModify"),
+            informative_text=details,
+        )
 
     @staticmethod
     def _format_size_bytes(size_bytes):
@@ -1687,6 +1745,9 @@ class OperationsPanel(QWidget):
             )
         return lines
 
+    def _emit_exception_status(self, exc, timeout, level="error"):
+        self.status_message.emit(str(exc), int(timeout), str(level))
+
     def on_add_entry(self):
         self._ensure_today_defaults()
         positions_text = self.a_positions.text().strip()
@@ -1694,7 +1755,7 @@ class OperationsPanel(QWidget):
         try:
             positions = parse_positions(positions_text, layout=self._current_layout)
         except ValueError as exc:
-            self.status_message.emit(str(exc), 5000, "error")
+            self._emit_exception_status(exc, 5000)
             return
 
         # Collect all user field values into a single dict
@@ -1717,37 +1778,33 @@ class OperationsPanel(QWidget):
         )
         self.add_plan_items([item])
 
-    def _record_thaw_with_action(self, action_text):
-        action_alias = {"Thaw": "Takeout", "Discard": "Takeout"}
-        action_text = action_alias.get(str(action_text), str(action_text or "Takeout"))
+    def _record_takeout_with_action(self, action_text):
+        action_text = str(action_text or "Takeout")
         idx = self.t_action.findData(action_text)
         if idx >= 0:
             self.t_action.setCurrentIndex(idx)
         else:
             self.t_action.setCurrentText(str(action_text))
-        self.on_record_thaw()
+        self.on_record_takeout()
 
-    def on_record_thaw(self):
+    def on_record_takeout(self):
         self._ensure_today_defaults()
         action_text = self.t_action.currentData() or self.t_action.currentText()
 
-        record = self._lookup_record(self.t_id.value())
         fallback_box = int((self.t_prefill_source or {}).get("box", 0) or 0)
-        box = resolve_record_box(record, fallback_box=fallback_box)
 
         position = self.t_position.currentData()
         if position is None:
             self._show_error(tr("operations.positionRequired"))
             return
 
-        item = build_record_plan_item(
+        item = self._build_human_record_plan_item(
             action=action_text,
             record_id=self.t_id.value(),
             position=position,
-            box=box,
             date_str=self.t_date.date().toString("yyyy-MM-dd"),
-            source="human",
             payload_action=action_text,
+            fallback_box=fallback_box,
         )
 
         self.add_plan_items([item])
@@ -1764,7 +1821,7 @@ class OperationsPanel(QWidget):
         try:
             to_pos = self._parse_position_text(self.m_to_position.text())
         except ValueError as exc:
-            self.status_message.emit(str(exc), 4000, "error")
+            self._emit_exception_status(exc, 4000)
             return
         to_box = self.m_to_box.value()
 
@@ -1776,37 +1833,40 @@ class OperationsPanel(QWidget):
         # Only set to_box if different from source
         to_box_param = to_box if to_box != from_box else None
 
-        item = build_record_plan_item(
+        item = self._build_human_record_plan_item(
             action="move",
             record_id=self.m_id.value(),
             position=from_pos,
-            box=from_box,
             date_str=self.m_date.date().toString("yyyy-MM-dd"),
+            payload_action="Move",
             to_position=to_pos,
             to_box=to_box_param,
-            source="human",
-            payload_action="Move",
+            fallback_box=from_box,
         )
         self.add_plan_items([item])
+
+    @staticmethod
+    def _read_required_table_texts(table, row, required_columns):
+        texts = []
+        for col in required_columns:
+            cell_item = table.item(row, col)
+            if not cell_item:
+                return None
+            cell_text = str(cell_item.text() or "").strip()
+            if not cell_text:
+                return None
+            texts.append(cell_text)
+        return texts
 
     def _collect_move_batch_from_table(self):
         """Collect move entries from the move batch table. Returns list of 3- or 4-tuples or None."""
         entries = []
         for row in range(self.bm_table.rowCount()):
-            id_item = self.bm_table.item(row, 0)
-            from_item = self.bm_table.item(row, 1)
-            to_item = self.bm_table.item(row, 2)
+            required_texts = self._read_required_table_texts(self.bm_table, row, (0, 1, 2))
+            if not required_texts:
+                continue
+            id_text, from_text, to_text = required_texts
             to_box_item = self.bm_table.item(row, 3)
-
-            if not id_item or not from_item or not to_item:
-                continue
-
-            id_text = id_item.text().strip()
-            from_text = from_item.text().strip()
-            to_text = to_item.text().strip()
-
-            if not id_text or not from_text or not to_text:
-                continue
 
             try:
                 entry = (
@@ -1829,47 +1889,16 @@ class OperationsPanel(QWidget):
     def on_batch_move(self):
         self._ensure_today_defaults()
 
-        try:
-            entries = self._collect_move_batch_from_table()
-        except ValueError as exc:
-            self.status_message.emit(str(exc), 3000, "error")
+        entries = self._resolve_batch_entries_with_fallback(
+            table_collector=self._collect_move_batch_from_table,
+            raw_entries_text=self.bm_entries.text(),
+            timeout=3000,
+        )
+        if entries is None:
             return
 
-        if entries is None:
-            entries_text = self.bm_entries.text().strip()
-            try:
-                entries = parse_batch_entries(entries_text, layout=self._current_layout)
-            except ValueError as exc:
-                self.status_message.emit(str(exc), 3000, "error")
-                return
-
         date_str = self.bm_date.date().toString("yyyy-MM-dd")
-
-        items = []
-        for normalized in iter_batch_entries(entries):
-            rid = int(normalized.get("record_id", 0) or 0)
-            from_pos = int(normalized.get("position", 0) or 0)
-            to_pos = normalized.get("to_position")
-            to_box = normalized.get("to_box")
-            if to_pos is None:
-                continue
-
-            record = self._lookup_record(rid)
-            box = resolve_record_box(record, fallback_box=0)
-            items.append(
-                build_record_plan_item(
-                    action="move",
-                    record_id=rid,
-                    position=from_pos,
-                    box=box,
-                    date_str=date_str,
-                    to_position=to_pos,
-                    to_box=to_box,
-                    source="human",
-                    payload_action="Move",
-                )
-            )
-
+        items = self._build_move_batch_plan_items(entries, date_str=date_str)
         self.add_plan_items(items)
 
     def _on_move_source_changed(self):
@@ -1906,17 +1935,22 @@ class OperationsPanel(QWidget):
             self.m_ctx_status.setText(tr("operations.recordNotFound"))
             self.m_ctx_status.setProperty("role", "statusWarning")
             self.m_ctx_status.setVisible(True)
-            for lbl in [self.m_ctx_box, self.m_ctx_position, self.m_ctx_frozen, self.m_ctx_note,
-                        self.m_ctx_cell_line, self.m_ctx_events]:
-                lbl.setText("-")
-            for key, (container, lbl) in self._move_ctx_widgets.items():
-                lbl.setText("-")
+            self._clear_context_label_groups(
+                [
+                    self.m_ctx_box,
+                    self.m_ctx_position,
+                    self.m_ctx_frozen,
+                    self.m_ctx_note,
+                    self.m_ctx_cell_line,
+                    self.m_ctx_events,
+                ],
+                self._move_ctx_widgets,
+            )
             return
 
         self.m_ctx_status.setVisible(False)
 
         box = str(record.get("box") or "-")
-        position = record.get("position")
 
         # Auto-fill target box with source box (only if not user-specified)
         if not getattr(self, "_m_to_box_user_specified", False):
@@ -1928,48 +1962,25 @@ class OperationsPanel(QWidget):
             except (ValueError, TypeError):
                 pass
 
-        self.m_ctx_box.setText(box)
-        self.m_ctx_position.setText(self._position_to_display(position) if position is not None else "-")
-        self.m_ctx_frozen.setText(str(record.get("frozen_at") or "-"))
-        self.m_ctx_note.setText(str(record.get("note") or "-"))
-        self.m_ctx_cell_line.setText(str(record.get("cell_line") or "-"))
-        # Populate dynamic user field context
-        for key, (container, lbl) in self._move_ctx_widgets.items():
-            lbl.setText(str(record.get(key) or "-"))
-
-        events = record.get("thaw_events") or []
-        if events:
-            last = events[-1]
-            last_date = str(last.get("date") or "-")
-            last_action = str(last.get("action") or "-")
-            last_pos = str(last.get("position") or "-")
-            self.m_ctx_events.setText(
-                tr(
-                    "operations.historySummary",
-                    count=len(events),
-                    date=last_date,
-                    action=last_action,
-                    positions=last_pos,
-                )
-            )
-        else:
-            self.m_ctx_events.setText(tr("operations.noHistory"))
+        self._populate_record_context_labels(
+            record=record,
+            box_label=self.m_ctx_box,
+            position_label=self.m_ctx_position,
+            frozen_label=self.m_ctx_frozen,
+            note_label=self.m_ctx_note,
+            cell_line_label=self.m_ctx_cell_line,
+            extra_widgets=self._move_ctx_widgets,
+        )
+        self._set_last_event_summary_label(self.m_ctx_events, record.get("thaw_events"))
 
     def _collect_batch_from_table(self):
         """Collect entries from the mini-table. Returns list of tuples or None if empty."""
         entries = []
         for row in range(self.b_table.rowCount()):
-            id_item = self.b_table.item(row, 0)
-            pos_item = self.b_table.item(row, 1)
-
-            if not id_item or not pos_item:
+            required_texts = self._read_required_table_texts(self.b_table, row, (0, 1))
+            if not required_texts:
                 continue
-
-            id_text = id_item.text().strip()
-            pos_text = pos_item.text().strip()
-
-            if not id_text or not pos_text:
-                continue
+            id_text, pos_text = required_texts
 
             try:
                 entries.append((int(id_text), self._parse_position_text(pos_text)))
@@ -1980,201 +1991,131 @@ class OperationsPanel(QWidget):
 
         return entries if entries else None
 
-    def on_batch_thaw(self):
-        self._ensure_today_defaults()
-
-        # Try table first, fall back to text input
+    def _resolve_batch_entries_with_fallback(
+        self,
+        *,
+        table_collector,
+        raw_entries_text,
+        timeout=3000,
+    ):
+        """Collect batch entries from table first, then fallback to text parser."""
         try:
-            entries = self._collect_batch_from_table()
+            entries = table_collector()
         except ValueError as exc:
-            self.status_message.emit(str(exc), 3000, "error")
-            return
+            self._emit_exception_status(exc, timeout)
+            return None
 
-        if entries is None:
-            entries_text = self.b_entries.text().strip()
-            try:
-                entries = parse_batch_entries(entries_text, layout=self._current_layout)
-            except ValueError as exc:
-                self.status_message.emit(str(exc), 3000, "error")
-                return
+        if entries is not None:
+            return entries
 
-        action_text = self.b_action.currentText()
-        date_str = self.b_date.date().toString("yyyy-MM-dd")
+        try:
+            return parse_batch_entries(
+                str(raw_entries_text or "").strip(),
+                layout=self._current_layout,
+            )
+        except ValueError as exc:
+            self._emit_exception_status(exc, timeout)
+            return None
 
+    def _build_human_record_plan_item(
+        self,
+        *,
+        action,
+        record_id,
+        position,
+        date_str,
+        payload_action,
+        to_position=None,
+        to_box=None,
+        fallback_box=0,
+    ):
+        record = self._lookup_record(int(record_id))
+        box = resolve_record_box(record, fallback_box=int(fallback_box or 0))
+        payload = {
+            "action": action,
+            "record_id": int(record_id),
+            "position": int(position),
+            "box": box,
+            "date_str": date_str,
+            "source": "human",
+            "payload_action": payload_action,
+        }
+        if to_position is not None:
+            payload["to_position"] = to_position
+            payload["to_box"] = to_box
+        return build_record_plan_item(**payload)
+
+    def _build_move_batch_plan_items(self, entries, *, date_str):
+        """Build staged move plan items from normalized batch entries."""
+        items = []
+        for normalized in iter_batch_entries(entries):
+            rid = int(normalized.get("record_id", 0) or 0)
+            from_pos = int(normalized.get("position", 0) or 0)
+            to_pos = normalized.get("to_position")
+            to_box = normalized.get("to_box")
+            if to_pos is None:
+                continue
+
+            items.append(
+                self._build_human_record_plan_item(
+                    action="move",
+                    record_id=rid,
+                    position=from_pos,
+                    date_str=date_str,
+                    payload_action="Move",
+                    to_position=to_pos,
+                    to_box=to_box,
+                )
+            )
+        return items
+
+    def _build_takeout_batch_plan_items(self, entries, *, date_str, action_text):
+        """Build staged takeout plan items from normalized batch entries."""
         items = []
         for normalized in iter_batch_entries(entries):
             rid = int(normalized.get("record_id", 0) or 0)
             pos = int(normalized.get("position", 0) or 0)
-            record = self._lookup_record(rid)
-            box = resolve_record_box(record, fallback_box=0)
             items.append(
-                build_record_plan_item(
+                self._build_human_record_plan_item(
                     action=action_text,
                     record_id=rid,
                     position=pos,
-                    box=box,
                     date_str=date_str,
-                    source="human",
                     payload_action=action_text,
                 )
             )
+        return items
 
+    def on_batch_takeout(self):
+        self._ensure_today_defaults()
+
+        entries = self._resolve_batch_entries_with_fallback(
+            table_collector=self._collect_batch_from_table,
+            raw_entries_text=self.b_entries.text(),
+            timeout=3000,
+        )
+        if entries is None:
+            return
+
+        action_text = self.b_action.currentText()
+        date_str = self.b_date.date().toString("yyyy-MM-dd")
+        items = self._build_takeout_batch_plan_items(
+            entries,
+            date_str=date_str,
+            action_text=action_text,
+        )
         self.add_plan_items(items)
 
-    def _handle_response(self, response, context, *, notice_code=None, notice_data=None):
-        payload = response if isinstance(response, dict) else {}
-        self._display_result_summary(response, context)
-
-        ok = payload.get("ok", False)
-        msg = payload.get("message", tr("operations.unknownResult"))
-        code = str(notice_code or ("operation.success" if ok else "operation.failed"))
-
-        if ok:
-            self._publish_system_notice(
-                code=code,
-                text=tr("operations.contextSuccess", context=context),
-                level="success",
-                timeout=3000,
-                data=notice_data if isinstance(notice_data, dict) else None,
-            )
-            self.operation_completed.emit(True)
-            # Enable undo if backup_path available
-            backup_path = payload.get("backup_path")
-            if backup_path:
-                self._last_operation_backup = backup_path
-                self._enable_undo(timeout_sec=30)
-        else:
-            self._publish_system_notice(
-                code=code,
-                text=tr("operations.contextFailed", context=context, error=msg),
-                level="error",
-                timeout=5000,
-                data=notice_data if isinstance(notice_data, dict) else {"message": msg, "error_code": payload.get("error_code")},
-            )
-            self.operation_completed.emit(False)
-
-    def _display_result_summary(self, response, context):
-        """Show a human-readable summary card for the operation result."""
-        payload = response if isinstance(response, dict) else {}
-        ok = payload.get("ok", False)
-        preview = payload.get("preview", {}) or {}
-        result = payload.get("result", {}) or {}
-
-        if ok:
-            lines = [f"<b style='color: var(--status-success);'>{tr('operations.contextResultSuccess', context=context)}</b>"]
-
-            if context == "Add Entry":
-                new_ids = result.get("new_ids") or []
-                new_id = result.get("new_id", "?")
-                fields = preview.get("fields") or {}
-                from lib.custom_fields import get_display_key
-                dk = get_display_key(None)
-                cell = str(fields.get("cell_line", ""))
-                short = str(fields.get(dk, ""))
-                box = preview.get("box", "")
-                positions = preview.get("positions", [])
-                pos_text = self._positions_to_display_text(positions)
-                if new_ids:
-                    ids_text = ", ".join(str(i) for i in new_ids)
-                    lines.append(
-                        tr(
-                            "operations.addedTubesSummary",
-                            count=len(new_ids),
-                            ids=ids_text,
-                            cell=cell,
-                            short=short,
-                            box=box,
-                            positions=pos_text,
-                        )
-                    )
-                else:
-                    lines.append(
-                        tr(
-                            "operations.addedTubeSummary",
-                            id=new_id,
-                            cell=cell,
-                            short=short,
-                            box=box,
-                            positions=pos_text,
-                        )
-                    )
-
-            elif context == "Single Operation":
-                rid = preview.get("record_id", "?")
-                action = preview.get("action_en", preview.get("action_cn", ""))
-                pos = self._position_to_display(preview.get("position", "?"))
-                to_pos = preview.get("to_position")
-                before = preview.get("positions_before", [])
-                after = preview.get("positions_after", [])
-                if to_pos is not None:
-                    lines.append(
-                        tr(
-                            "operations.operationRowActionWithTarget",
-                            rid=rid,
-                            action=action,
-                            pos=pos,
-                            to_pos=self._position_to_display(to_pos),
-                        )
-                    )
-                else:
-                    lines.append(
-                        tr("operations.operationRowActionWithPosition", rid=rid, action=action, pos=pos)
-                    )
-                if before or after:
-                    lines.append(
-                        tr(
-                            "operations.operationPositionsTransition",
-                            before=self._positions_to_display_text(before),
-                            after=self._positions_to_display_text(after),
-                        )
-                    )
-
-            elif context == "Batch Operation":
-                count = result.get("count", preview.get("count", 0))
-                ids = result.get("record_ids", [])
-                lines.append(
-                    tr(
-                        "operations.processedBatchEntries",
-                        count=count,
-                        ids=", ".join(str(i) for i in ids),
-                    )
-                )
-
-            elif context == "Rollback" or context == "Undo":
-                restored = result.get("restored_from", "?")
-                lines.append(
-                    tr("operations.restoredFrom", path=os.path.basename(str(restored)))
-                )
-
-            self._set_result_summary_html(lines)
-            self.result_card.setProperty("state", "success")
-            self.result_card.style().unpolish(self.result_card)
-            self.result_card.style().polish(self.result_card)
-        else:
-            msg = payload.get("message", tr("operations.unknownError"))
-            error_code = payload.get("error_code", "")
-            lines = [f"<b style='color: var(--status-error);'>{tr('operations.contextResultFailed', context=context)}</b>"]
-            lines.append(str(msg))
-            if error_code:
-                lines.append(f"<span style='color: var(--status-muted);'>{tr('operations.codeLabel', code=error_code)}</span>")
-            self._set_result_summary_html(lines)
-            self.result_card.setProperty("state", "error")
-            self.result_card.style().unpolish(self.result_card)
-            self.result_card.style().polish(self.result_card)
-
-        self.result_card.setVisible(True)
+    _handle_response = _ops_results._handle_response
+    _result_header_html = staticmethod(_ops_results._result_header_html)
+    _build_add_entry_result_lines = _ops_results._build_add_entry_result_lines
+    _build_single_operation_result_lines = _ops_results._build_single_operation_result_lines
+    _build_batch_operation_result_lines = staticmethod(_ops_results._build_batch_operation_result_lines)
+    _build_restore_result_lines = staticmethod(_ops_results._build_restore_result_lines)
+    _build_success_result_lines = _ops_results._build_success_result_lines
+    _display_result_summary = _ops_results._display_result_summary
 
     # --- PLAN OPERATIONS ---
-
-    def eventFilter(self, obj, event):
-        """Handle plan table hover-leave to clear Overview execution preview."""
-        try:
-            if hasattr(self, "plan_table") and obj is self.plan_table.viewport():
-                if event.type() == QEvent.Leave:
-                    pass  # Preview system removed
-        except Exception:
-            pass
-        return super().eventFilter(obj, event)
 
     def _get_selected_plan_rows(self):
         if not hasattr(self, "plan_table") or self.plan_table is None:
@@ -2196,43 +2137,18 @@ class OperationsPanel(QWidget):
         rows = self._get_selected_plan_rows()
         has_selected = bool(rows)
         has_items = bool(self._plan_store.count())
-        first = rows[0] if has_selected else -1
-        last = rows[-1] if has_selected else -1
-
-        if not has_selected:
-            self.plan_remove_selected_btn.setEnabled(False)
-        else:
-            self.plan_remove_selected_btn.setEnabled(True)
-
+        self.plan_remove_selected_btn.setEnabled(has_selected)
         self.plan_clear_btn.setEnabled(has_items)
-
-    def _select_plan_rows(self, rows):
-        if not hasattr(self, "plan_table"):
-            return
-
-        self.plan_table.clearSelection()
-        for row in sorted(set(rows)):
-            if 0 <= row < self.plan_table.rowCount():
-                self.plan_table.selectRow(row)
 
     @Slot()
     def _on_store_changed(self):
         """Slot invoked (via QueuedConnection) when PlanStore mutates from any thread."""
-        self._refresh_after_plan_items_changed(emit_preview=True)
+        self._refresh_after_plan_items_changed()
 
-    def _refresh_after_plan_items_changed(self, emit_preview=True):
-        self._plan_hover_row = None
+    def _refresh_after_plan_items_changed(self):
         self._refresh_plan_table()
         self._update_execute_button_state()
         self._refresh_plan_toolbar_state()
-
-    def _on_plan_cell_entered(self, row, _col):
-        if row < 0 or row >= self._plan_store.count():
-            return
-        if row == self._plan_hover_row:
-            return
-        self._plan_hover_row = row
-        # Preview system removed
 
     def remove_selected_plan_items(self):
         rows = self._get_selected_plan_rows()
@@ -2247,1079 +2163,66 @@ class OperationsPanel(QWidget):
             self.status_message.emit(tr("operations.planNoRemoved"), 2000, "warning")
             return
 
-        action_counts, sample = self._collect_notice_action_counts_and_sample(removed_items)
-
-        self._publish_system_notice(
+        self._publish_plan_items_notice(
             code="plan.removed",
             text=tr("operations.planRemovedCount", count=removed_count),
             level="info",
             timeout=2000,
-            details="\n".join(sample[:8]) if sample else None,
-            data={
-                "removed_count": removed_count,
-                "total_count": self._plan_store.count(),
-                "action_counts": action_counts,
-                "sample": sample,
-            },
+            items=removed_items,
+            count_key="removed_count",
+            count_value=removed_count,
+            include_total_count=True,
         )
 
-    def _remove_plan_rows(self, rows):
-        if not rows:
-            return 0
-        removed_count = self._plan_store.remove_by_indices(rows)
-        return removed_count
+    _plan_item_key = _ops_plan_store._plan_item_key
+    _build_notice_plan_item_desc = _ops_plan_store._build_notice_plan_item_desc
+    _collect_notice_action_counts_and_sample = _ops_plan_store._collect_notice_action_counts_and_sample
+    _collect_plan_notice_summary = _ops_plan_store._collect_plan_notice_summary
+    _publish_plan_items_notice = _ops_plan_store._publish_plan_items_notice
+    _apply_preflight_report = _ops_plan_store._apply_preflight_report
+    _reset_plan_feedback_and_validation = _ops_plan_store._reset_plan_feedback_and_validation
+    add_plan_items = _ops_plan_store.add_plan_items
+    _run_plan_preflight = _ops_plan_store._run_plan_preflight
+    _update_execute_button_state = _ops_plan_store._update_execute_button_state
+
+    _plan_value_text = staticmethod(_ops_plan_table._plan_value_text)
+    _summarize_change_parts = staticmethod(_ops_plan_table._summarize_change_parts)
+    _build_plan_action_text = _ops_plan_table._build_plan_action_text
+    _build_plan_target_text = _ops_plan_table._build_plan_target_text
+    _build_plan_date_text = _ops_plan_table._build_plan_date_text
+    _build_plan_changes = _ops_plan_table._build_plan_changes
+    _build_plan_status = _ops_plan_table._build_plan_status
+    _refresh_plan_table = _ops_plan_table._refresh_plan_table
+
+    execute_plan = _ops_exec.execute_plan
+    _build_execute_confirmation_lines = _ops_exec._build_execute_confirmation_lines
+    _confirm_execute_plan = _ops_exec._confirm_execute_plan
+    _collect_execution_results = staticmethod(_ops_exec._collect_execution_results)
+    _finalize_plan_store_after_execution = _ops_exec._finalize_plan_store_after_execution
+    _build_execution_result_sample = _ops_exec._build_execution_result_sample
+    _attempt_atomic_rollback = _ops_exec._attempt_atomic_rollback
+    _emit_operation_event = _ops_exec._emit_operation_event
+    _publish_system_notice = _ops_exec._publish_system_notice
+    emit_external_operation_event = _ops_exec.emit_external_operation_event
+    _build_execution_summary_text = _ops_exec._build_execution_summary_text
+    _build_execution_rollback_notice = _ops_exec._build_execution_rollback_notice
+    _build_execution_failure_lines = _ops_exec._build_execution_failure_lines
+    _show_plan_result = _ops_exec._show_plan_result
+    print_plan = _ops_actions.print_plan
+    print_last_executed = _ops_actions.print_last_executed
+    _print_items_with_grid = _ops_actions._print_items_with_grid
+    _build_print_grid_state = _ops_actions._build_print_grid_state
+    _print_operation_sheet_with_grid = _ops_actions._print_operation_sheet_with_grid
+    clear_plan = _ops_actions.clear_plan
+    reset_for_dataset_switch = _ops_actions.reset_for_dataset_switch
+    on_export_inventory_csv = _ops_actions.on_export_inventory_csv
+    _enable_undo = _ops_actions._enable_undo
+    _update_undo_button_text = _ops_actions._update_undo_button_text
+    _undo_tick = _ops_actions._undo_tick
+    _disable_undo = _ops_actions._disable_undo
+    on_undo_last = _ops_actions.on_undo_last
 
-    def _plan_item_key(self, item):
-        """Generate a unique key for plan item deduplication."""
-        return PlanStore.item_key(item)
 
-    def _build_notice_plan_item_desc(self, item):
-        """Build a compact action/target summary for notices."""
-        payload = item.get("payload") if isinstance(item, dict) else {}
-        payload = payload if isinstance(payload, dict) else {}
 
-        action = str((item or {}).get("action") or "?")
-        label = (item or {}).get("label")
-        record_id = (item or {}).get("record_id")
-        subject = "-"
-        if label not in (None, ""):
-            subject = str(label)
-        elif record_id not in (None, ""):
-            subject = str(record_id)
 
-        desc = f"{action} {subject}"
-        box = (item or {}).get("box")
-        pos = (item or {}).get("position")
-        positions = payload.get("positions") if isinstance(payload.get("positions"), list) else []
-        if box not in (None, "") and pos not in (None, ""):
-            desc += f" @ Box {box}:{self._position_to_display(pos)}"
-        elif box not in (None, "") and positions:
-            preview = ",".join(self._position_to_display(p) for p in positions[:4])
-            if len(positions) > 4:
-                preview += f",+{len(positions) - 4}"
-            desc += f" @ Box {box}:{preview}"
 
-        to_pos = (item or {}).get("to_position")
-        to_box = (item or {}).get("to_box")
-        if to_pos not in (None, ""):
-            if to_box not in (None, ""):
-                desc += f" -> Box {to_box}:{self._position_to_display(to_pos)}"
-            else:
-                desc += f" -> {self._position_to_display(to_pos)}"
-        return desc
-
-    def _collect_notice_action_counts_and_sample(self, items, max_sample=8):
-        """Return (action_counts, sample_lines) for notice payloads."""
-        action_counts = {}
-        sample = []
-        for item in items or []:
-            action = str(item.get("action") or "?")
-            action_counts[action] = action_counts.get(action, 0) + 1
-            if len(sample) < max_sample:
-                sample.append(self._build_notice_plan_item_desc(item))
-        return action_counts, sample
-
-    def add_plan_items(self, items):
-        """Validate and add items to the plan staging area atomically."""
-        incoming = list(items or [])
-        if not incoming:
-            return
-
-        self._set_plan_feedback("")
-
-        gate = validate_stage_request(
-            existing_items=self._plan_store.list_items(),
-            incoming_items=incoming,
-            yaml_path=self.yaml_path_getter(),
-            bridge=self.bridge,
-            run_preflight=True,
-        )
-
-        report = gate.get("preflight_report")
-        self._plan_preflight_report = report if isinstance(report, dict) else None
-        self._plan_validation_by_key = {}
-        if isinstance(self._plan_preflight_report, dict):
-            for report_item in self._plan_preflight_report.get("items") or []:
-                item = report_item.get("item") if isinstance(report_item, dict) else None
-                if not isinstance(item, dict):
-                    continue
-                key = self._plan_item_key(item)
-                self._plan_validation_by_key[key] = {
-                    "ok": report_item.get("ok"),
-                    "blocked": report_item.get("blocked"),
-                    "error_code": report_item.get("error_code"),
-                    "message": report_item.get("message"),
-                }
-
-        blocked_messages = []
-        for blocked in gate.get("blocked_items", []):
-            err = blocked.get("message") or blocked.get("error_code") or "invalid plan item"
-            if err not in blocked_messages:
-                blocked_messages.append(str(err))
-
-        if blocked_messages:
-            first = blocked_messages[0]
-            user_text = tr("operations.planRejected", error=first)
-            preview = blocked_messages[:3]
-            feedback = "\n".join(f"- {msg}" for msg in preview)
-            if len(blocked_messages) > 3:
-                feedback += f"\n... +{len(blocked_messages) - 3}"
-            self._set_plan_feedback(feedback, level="error")
-            self._publish_system_notice(
-                code="plan.stage.blocked",
-                text=user_text,
-                level="error",
-                timeout=5000,
-                details=feedback,
-                data={
-                    "blocked_items": gate.get("blocked_items") if isinstance(gate.get("blocked_items"), list) else [],
-                    "errors": gate.get("errors") if isinstance(gate.get("errors"), list) else [],
-                    "stats": gate.get("stats") if isinstance(gate.get("stats"), dict) else {},
-                    "incoming_items": incoming,
-                },
-            )
-            return
-
-        accepted = list(gate.get("accepted_items") or [])
-        if not accepted:
-            return
-
-        added = self._plan_store.add(accepted)
-
-        if added:
-            self._refresh_after_plan_items_changed(emit_preview=False)
-            self._set_plan_feedback("")
-
-            action_counts, sample = self._collect_notice_action_counts_and_sample(accepted)
-
-            self._publish_system_notice(
-                code="plan.stage.accepted",
-                text=tr("operations.planAddedCount", count=added),
-                level="info",
-                timeout=2000,
-                details="\n".join(sample[:8]) if sample else None,
-                data={
-                    "added_count": added,
-                    "total_count": self._plan_store.count(),
-                    "action_counts": action_counts,
-                    "sample": sample,
-                    "items": accepted,
-                },
-            )
-
-    def _run_plan_preflight(self, trigger="manual"):
-        """Run preflight validation on current plan items."""
-        self._plan_validation_by_key = {}
-        plan_items = self._plan_store.list_items()
-        if not plan_items:
-            self._plan_preflight_report = None
-            return
-
-        yaml_path = self.yaml_path_getter()
-        if not os.path.isfile(yaml_path):
-            self._plan_preflight_report = {"ok": True, "blocked": False, "items": [], "stats": {"total": len(plan_items), "ok": len(plan_items), "blocked": 0}}
-            return
-
-        report = preflight_plan(yaml_path, plan_items, self.bridge)
-
-        self._plan_preflight_report = report
-        report_items = report.get("items") if isinstance(report.get("items"), list) else []
-        for r in report_items:
-            item = r.get("item")
-            if item:
-                key = self._plan_item_key(item)
-                self._plan_validation_by_key[key] = {
-                    "ok": r.get("ok"),
-                    "blocked": r.get("blocked"),
-                    "error_code": r.get("error_code"),
-                    "message": r.get("message"),
-                }
-
-    def _update_execute_button_state(self):
-        """Enable/disable Execute button based on preflight results."""
-        if not self._plan_store.count():
-            self.plan_exec_btn.setEnabled(False)
-            return
-
-        has_blocked = any(
-            v.get("blocked") for v in self._plan_validation_by_key.values()
-        )
-        self.plan_exec_btn.setEnabled(not has_blocked)
-        if has_blocked:
-            blocked_count = sum(1 for v in self._plan_validation_by_key.values() if v.get("blocked"))
-            self.plan_exec_btn.setText(
-                tr("operations.executePlanBlocked", count=blocked_count)
-            )
-        else:
-            self.plan_exec_btn.setText(tr("operations.executeAll"))
-
-    @staticmethod
-    def _plan_value_text(value):
-        """Render field values in table-friendly text form."""
-        if value is None:
-            return ""
-        if isinstance(value, (dict, list, tuple, set)):
-            try:
-                return json.dumps(value, ensure_ascii=False, sort_keys=True)
-            except Exception:
-                return str(value)
-        return str(value)
-
-    @staticmethod
-    def _summarize_change_parts(parts, max_parts=None):
-        """Build summary + full detail for the Changes column.
-
-        With interactive column resizing, we no longer need to truncate the summary.
-        All parts are shown in the cell, with full detail in tooltip.
-        """
-        cleaned = [str(part).strip() for part in parts if str(part).strip()]
-        if not cleaned:
-            return "-", ""
-
-        # Show all parts (no truncation) since users can resize columns
-        summary = "; ".join(cleaned)
-        return summary, "\n".join(cleaned)
-
-    def _build_plan_action_text(self, action_norm, item):
-        record_id = item.get("record_id")
-        if action_norm == "rollback":
-            return tr("operations.rollback")
-        if action_norm == "add":
-            return tr("operations.add")
-
-        action_label = _localized_action(str(item.get("action", "") or ""))
-        return f"{action_label} (ID {record_id})" if record_id else action_label
-
-    def _build_plan_target_text(self, action_norm, item, payload):
-        if action_norm == "rollback":
-            return "-"
-
-        box = item.get("box", "")
-        pos = item.get("position", "")
-        pos_text = self._position_to_display(pos)
-        box_text = box if box not in (None, "") else "?"
-        box_prefix = f"Box {box_text}"
-
-        if action_norm == "add":
-            positions = payload.get("positions") if isinstance(payload.get("positions"), list) else []
-            if not positions:
-                return f"{box_prefix}: ?"
-            shown = ", ".join(self._position_to_display(p) for p in positions[:6])
-            suffix = f", ... +{len(positions) - 6}" if len(positions) > 6 else ""
-            return f"{box_prefix}: [{shown}{suffix}]"
-
-        to_pos = item.get("to_position")
-        to_box = item.get("to_box")
-        to_pos_text = self._position_to_display(to_pos)
-        if to_pos and (to_box is None or to_box == box):
-            return f"{box_prefix}:{pos_text} -> {box_prefix}:{to_pos_text}"
-        if to_pos and to_box:
-            return f"{box_prefix}:{pos_text} -> Box {to_box}:{to_pos_text}"
-        return f"{box_prefix}:{pos_text}"
-
-    def _build_plan_date_text(self, action_norm, payload):
-        if action_norm == "rollback":
-            source_event = payload.get("source_event") if isinstance(payload, dict) else None
-            if isinstance(source_event, dict) and source_event.get("timestamp"):
-                return str(source_event.get("timestamp"))
-            return ""
-        if action_norm == "add":
-            return str(payload.get("frozen_at", ""))
-        return str(payload.get("date_str", ""))
-
-    def _build_plan_changes(self, action_norm, item, payload, custom_fields):
-        record_id = item.get("record_id")
-        record = self.records_cache.get(record_id) if record_id in self.records_cache else {}
-        label_map = {
-            str(fdef.get("key")): str(fdef.get("label") or fdef.get("key"))
-            for fdef in custom_fields
-            if isinstance(fdef, dict) and fdef.get("key")
-        }
-        # Keep human-friendly labels for common built-in keys even when
-        # custom_fields is empty.
-        label_map.setdefault("short_name", tr("operations.shortName"))
-        label_map.setdefault("cell_line", tr("operations.cellLine"))
-        label_map.setdefault("frozen_at", tr("operations.frozenDate"))
-        label_map.setdefault("box", tr("operations.box"))
-        label_map.setdefault("position", tr("operations.position"))
-        label_map.setdefault("note", tr("operations.note"))
-
-        parts = []
-        detail_parts = []  # For tooltip
-
-        if action_norm == "rollback":
-            source_event = payload.get("source_event") if isinstance(payload, dict) else None
-            if isinstance(source_event, dict) and source_event:
-                parts.append(
-                    tr(
-                        "operations.planRollbackSourceEvent",
-                        timestamp=str(source_event.get("timestamp") or "-"),
-                        action=str(source_event.get("action") or "-"),
-                        trace_id=str(source_event.get("trace_id") or "-"),
-                    )
-                )
-            backup_path = payload.get("backup_path") if isinstance(payload, dict) else None
-            if backup_path:
-                parts.append(tr("operations.planRollbackBackupPath", path=os.path.basename(str(backup_path))))
-                # Add backup file metadata to tooltip
-                backup_abs = os.path.abspath(str(backup_path))
-                try:
-                    stat = os.stat(backup_abs)
-                    mtime = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
-                    size = self._format_size_bytes(stat.st_size)
-                    detail_parts.append(tr("operations.planRollbackBackupMeta", mtime=mtime, size=size))
-                except Exception:
-                    detail_parts.append(tr("operations.planRollbackBackupMissing", path=backup_abs))
-
-        elif action_norm == "add":
-            fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
-            for key, value in fields.items():
-                value_text = self._plan_value_text(value)
-                if not value_text:
-                    continue
-                label = label_map.get(str(key), str(key))
-                parts.append(f"{label}={value_text}")
-
-        elif action_norm == "edit":
-            fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
-            for key, new_value in fields.items():
-                label = label_map.get(str(key), str(key))
-                old_value = record.get(key, "") if isinstance(record, dict) else ""
-                old_text = self._plan_value_text(old_value)
-                new_text = self._plan_value_text(new_value)
-                if old_text == new_text:
-                    parts.append(f"{label}: {new_text}")
-                else:
-                    parts.append(f"{label}: {old_text} -> {new_text}")
-
-        else:
-            if isinstance(record, dict) and record:
-                cell_line = self._plan_value_text(record.get("cell_line", ""))
-                if cell_line:
-                    parts.append(f"cell_line={cell_line}")
-                for fdef in custom_fields:
-                    key = str((fdef or {}).get("key") or "")
-                    if not key or key == "note":
-                        continue
-                    value_text = self._plan_value_text(record.get(key, ""))
-                    if value_text:
-                        label = str((fdef or {}).get("label") or key)
-                        parts.append(f"{label}={value_text}")
-
-        summary, base_detail = self._summarize_change_parts(parts)
-        # Combine base detail with additional detail parts
-        if detail_parts:
-            combined_detail = base_detail + "\n" + "\n".join(detail_parts) if base_detail else "\n".join(detail_parts)
-            return summary, combined_detail
-        return summary, base_detail
-
-    def _build_plan_note(self, action_norm, payload, yaml_path_for_rollback):
-        if action_norm != "rollback":
-            return "", ""
-
-        backup_path = payload.get("backup_path") if isinstance(payload, dict) else None
-        source_event = payload.get("source_event") if isinstance(payload, dict) else None
-        note = ""
-        if isinstance(source_event, dict) and source_event:
-            note = tr(
-                "operations.planRollbackSourceEvent",
-                timestamp=str(source_event.get("timestamp") or "-"),
-                action=str(source_event.get("action") or "-"),
-                trace_id=str(source_event.get("trace_id") or "-"),
-            )
-        elif backup_path:
-            backup_abs = os.path.abspath(str(backup_path))
-            try:
-                stat = os.stat(backup_abs)
-                mtime = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
-                size = self._format_size_bytes(stat.st_size)
-                note = tr("operations.planRollbackBackupMeta", mtime=mtime, size=size)
-            except Exception:
-                note = tr("operations.planRollbackBackupMissing", path=backup_abs)
-
-        tooltip = ""
-        if backup_path or source_event:
-            rollback_lines = self._build_rollback_confirmation_lines(
-                backup_path=backup_path,
-                yaml_path=yaml_path_for_rollback,
-                source_event=source_event,
-                include_action_prefix=False,
-            )
-            tooltip = "\n".join(rollback_lines)
-        return str(note), tooltip
-
-    def _build_plan_status(self, item):
-        validation = self._plan_validation_by_key.get(self._plan_item_key(item)) or {}
-        if validation.get("blocked"):
-            return tr("operations.planStatusBlocked"), str(validation.get("message") or "")
-        return tr("operations.planStatusReady"), str(validation.get("message") or "")
-
-    def _refresh_plan_table(self):
-        from lib.custom_fields import get_color_key
-        from PySide6.QtGui import QColor
-
-        has_items = bool(self._plan_store.count())
-        self.plan_empty_label.setVisible(not has_items)
-        self.plan_table.setVisible(has_items)
-        self._plan_hover_row = None
-
-        # Unified mixed-action preview table: fixed columns + Changes summary.
-        custom_fields = self._current_custom_fields
-        meta = self._current_meta
-        color_key = get_color_key(meta)
-        headers = [
-            tr("operations.colAction"),
-            tr("operations.colPosition"),
-            tr("operations.date"),
-            tr("operations.colChanges"),
-            tr("operations.colStatus"),
-        ]
-
-        self._setup_table(
-            self.plan_table,
-            headers,
-            sortable=False,
-        )
-
-        header = self.plan_table.horizontalHeader()
-        # Set header alignment to left
-        header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        # Will set to Interactive after auto-sizing columns based on content
-
-        plan_items = self._plan_store.list_items()
-        yaml_path_for_rollback = os.path.abspath(str(self.yaml_path_getter()))
-        for row, item in enumerate(plan_items):
-            self.plan_table.insertRow(row)
-            action_text = str(item.get("action", "") or "")
-            action_norm = action_text.lower()
-            payload = item.get("payload") or {}
-
-            action_item = QTableWidgetItem(self._build_plan_action_text(action_norm, item))
-            self.plan_table.setItem(row, 0, action_item)
-
-            target_item = QTableWidgetItem(self._build_plan_target_text(action_norm, item, payload))
-            self.plan_table.setItem(row, 1, target_item)
-
-            date_item = QTableWidgetItem(self._build_plan_date_text(action_norm, payload))
-            self.plan_table.setItem(row, 2, date_item)
-
-            changes_summary, changes_detail = self._build_plan_changes(action_norm, item, payload, custom_fields)
-            changes_item = QTableWidgetItem(changes_summary)
-            if changes_detail and changes_detail != changes_summary:
-                changes_item.setToolTip(changes_detail)
-            self.plan_table.setItem(row, 3, changes_item)
-
-            status_text, status_detail = self._build_plan_status(item)
-            status_item = QTableWidgetItem(status_text)
-            if status_detail:
-                status_item.setToolTip(status_detail)
-            self.plan_table.setItem(row, 4, status_item)
-
-            # Set row background color based on color_key field (same as overview grid)
-            record_id = item.get("record_id")
-            if record_id:
-                record = self.records_cache.get(record_id)
-                if record:
-                    color_value = record.get(color_key, "")
-                    row_color = cell_color(color_value if color_value else None)
-                    qcolor = QColor(row_color)
-                    for col in range(self.plan_table.columnCount()):
-                        cell_item = self.plan_table.item(row, col)
-                        if cell_item:
-                            cell_item.setBackground(qcolor)
-
-        # Auto-resize columns based on content, then enable interactive resizing
-        for col in range(self.plan_table.columnCount()):
-            self.plan_table.resizeColumnToContents(col)
-        # Enable interactive column resizing after auto-sizing
-        header.setSectionResizeMode(QHeaderView.Interactive)
-
-        self._refresh_plan_toolbar_state()
-
-    def execute_plan(self):
-        """Execute all staged plan items after user confirmation."""
-        if not self._plan_store.count():
-            msg = tr("operations.planNoItemsToExecute")
-            self._set_plan_feedback(msg, level="warning")
-            self._publish_system_notice(
-                code="plan.execute.empty",
-                text=msg,
-                level="error",
-                timeout=3000,
-                data={"total_count": 0},
-            )
-            return
-
-        # Validation happens at button click time, proceed directly to execution.
-        # Backend validation will catch any edge cases for safety.
-        yaml_path = os.path.abspath(str(self.yaml_path_getter()))
-        summary_lines = []
-        plan_items = self._plan_store.list_items()
-        for item in plan_items:
-            action = item.get("action", "?")
-            label = item.get("label", "?")
-            pos = item.get("position", "?")
-            if str(action).lower() == "rollback":
-                payload = item.get("payload") or {}
-                summary_lines.extend(
-                    self._build_rollback_confirmation_lines(
-                        backup_path=payload.get("backup_path"),
-                        yaml_path=yaml_path,
-                        source_event=payload.get("source_event"),
-                        include_action_prefix=True,
-                    )
-                )
-                continue
-
-            line = f"  {action}: {label} @ Box {item.get('box', '?')}:{self._position_to_display(pos)}"
-            to_pos = item.get("to_position")
-            to_box = item.get("to_box")
-            if to_pos:
-                if to_box:
-                    line += f" \u2192 Box {to_box}:{self._position_to_display(to_pos)}"
-                else:
-                    line += f" \u2192 {self._position_to_display(to_pos)}"
-            summary_lines.append(line)
-
-        msg = QMessageBox(self)
-        msg.setIcon(QMessageBox.Warning)
-        msg.setWindowTitle(tr("operations.executePlanTitle"))
-        msg.setText(tr("operations.executePlanConfirm", count=len(plan_items)))
-        msg.setInformativeText("\n".join(summary_lines[:20]))
-        if len(summary_lines) > 20:
-            msg.setDetailedText("\n".join(summary_lines))
-        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg.setDefaultButton(QMessageBox.No)
-        if msg.exec() != QMessageBox.Yes:
-            return
-
-        original_plan = list(plan_items)
-        report = run_plan(yaml_path, plan_items, self.bridge, mode="execute")
-
-        report_items = report.get("items") if isinstance(report.get("items"), list) else []
-        results = []
-        for r in report_items:
-            status = "OK" if r.get("ok") else "FAIL"
-            info = r.get("response") or {}
-            if status == "FAIL":
-                info = {
-                    "message": r.get("message"),
-                    "error_code": r.get("error_code"),
-                }
-            results.append((status, r.get("item"), info))
-
-        remaining = report.get("remaining_items") if isinstance(report.get("remaining_items"), list) else []
-        fail_count = sum(1 for r in results if r[0] == "FAIL")
-        rollback_info = None
-
-        if fail_count:
-            rollback_info = self._attempt_atomic_rollback(yaml_path, results)
-            self._plan_store.replace_all(original_plan)
-        elif remaining:
-            self._plan_store.replace_all(remaining)
-        else:
-            self._plan_store.clear()
-
-        self._run_plan_preflight(trigger="post_execute")
-        self._refresh_plan_table()
-        self._update_execute_button_state()
-        execution_stats = summarize_plan_execution(report, rollback_info)
-        self._show_plan_result(
-            results,
-            remaining,
-            report=report,
-            rollback_info=rollback_info,
-        )
-
-        executed_items = [r[1] for r in results if r[0] == "OK"]
-        if execution_stats.get("rollback_ok"):
-            executed_items = []
-        self._last_executed_plan = list(executed_items)
-
-        if report.get("ok") and any(r[0] == "OK" for r in results):
-            self.operation_completed.emit(True)
-        elif fail_count:
-            self.operation_completed.emit(False)
-
-        last_backup = report.get("backup_path")
-        if last_backup and executed_items:
-            self._last_operation_backup = last_backup
-            self._enable_undo(timeout_sec=30)
-        else:
-            self._disable_undo(clear_last_executed=not bool(executed_items))
-
-        summary_text = self._build_execution_summary_text(execution_stats)
-        notice_level = "success"
-        if execution_stats.get("fail_count", 0) > 0:
-            notice_level = "warning" if execution_stats.get("rollback_ok") else "error"
-        base_stats = report.get("stats") if isinstance(report.get("stats"), dict) else {}
-        stats_payload = dict(base_stats) if isinstance(base_stats, dict) else {}
-        stats_payload["applied"] = execution_stats.get("applied_count", 0)
-        stats_payload["failed"] = execution_stats.get("fail_count", 0)
-        stats_payload["rolled_back"] = bool(execution_stats.get("rollback_ok"))
-        result_sample = []
-        for status, plan_item, info in results:
-            if not isinstance(plan_item, dict):
-                continue
-            line = f"{status}: {self._build_notice_plan_item_desc(plan_item)}"
-            if status != "OK" and isinstance(info, dict):
-                msg = info.get("message") or info.get("error_code")
-                if msg:
-                    line += f" | {str(msg)}"
-            result_sample.append(line)
-            if len(result_sample) >= 8:
-                break
-        self._publish_system_notice(
-            code="plan.execute.result",
-            text=summary_text,
-            level=notice_level,
-            timeout=5000,
-            details=summary_text,
-            data={
-                "ok": bool(report.get("ok")),
-                "stats": stats_payload,
-                "report": report,
-                "rollback": rollback_info,
-                "sample": result_sample,
-            },
-        )
-
-    def _attempt_atomic_rollback(self, yaml_path, results):
-        """Best-effort rollback to the first backup of this execute run."""
-        first_backup = None
-        for status, _item, info in results:
-            if status != "OK" or not isinstance(info, dict):
-                continue
-            backup_path = info.get("backup_path")
-            if backup_path:
-                first_backup = backup_path
-                break
-
-        if not first_backup:
-            return {
-                "attempted": False,
-                "ok": False,
-                "message": tr("operations.noRollbackBackup"),
-            }
-
-        rollback_fn = getattr(self.bridge, "rollback", None)
-        if not callable(rollback_fn):
-            return {
-                "attempted": False,
-                "ok": False,
-                "message": tr("operations.bridgeNoRollback"),
-                "backup_path": first_backup,
-            }
-
-        try:
-            response = rollback_fn(yaml_path=yaml_path, backup_path=first_backup)
-        except Exception as exc:
-            return {
-                "attempted": True,
-                "ok": False,
-                "message": tr("operations.rollbackException", error=exc),
-                "backup_path": first_backup,
-            }
-
-        payload = response if isinstance(response, dict) else {}
-        if payload.get("ok"):
-            return {
-                "attempted": True,
-                "ok": True,
-                "message": tr("operations.executionRolledBack"),
-                "backup_path": first_backup,
-            }
-
-        return {
-            "attempted": True,
-            "ok": False,
-            "message": payload.get("message", tr("operations.rollbackUnknown")),
-            "error_code": payload.get("error_code"),
-            "backup_path": first_backup,
-        }
-
-    def _emit_operation_event(self, event):
-        """Emit a normalized operation event for AI panel/context consumers."""
-        payload = coerce_system_notice(event) if isinstance(event, dict) else None
-        if payload is None:
-            payload = dict(event) if isinstance(event, dict) else {}
-        payload["timestamp"] = payload.get("timestamp") or datetime.now().isoformat()
-        self.operation_event.emit(payload)
-
-    def _publish_system_notice(
-        self,
-        *,
-        code,
-        text,
-        level="info",
-        timeout=2000,
-        details=None,
-        data=None,
-        source="operations_panel",
-    ):
-        """Single-path publisher for user-facing status + AI-visible system notice."""
-        message = str(text or "")
-        self.status_message.emit(message, int(timeout), str(level))
-        notice = build_system_notice(
-            code=str(code or "notice"),
-            text=message,
-            level=str(level or "info"),
-            source=str(source or "operations_panel"),
-            timeout_ms=int(timeout),
-            details=str(details) if details else None,
-            data=data if isinstance(data, dict) else None,
-        )
-        self._emit_operation_event(notice)
-        return notice
-
-    def emit_external_operation_event(self, event):
-        """Public helper for non-plan modules to emit operation events."""
-        if not isinstance(event, dict):
-            return
-        self._emit_operation_event(dict(event))
-
-    def _build_execution_summary_text(self, execution_stats):
-        """Build a user-facing summary for execution event payloads."""
-        if execution_stats.get("fail_count", 0) <= 0:
-            applied = execution_stats.get("applied_count", 0)
-            total = execution_stats.get("total_count", 0)
-            return tr("operations.planExecutionSuccessSummary", applied=applied, total=total)
-
-        total = execution_stats.get("total_count", 0)
-        fail = execution_stats.get("fail_count", 0)
-        applied = execution_stats.get("applied_count", 0)
-        if execution_stats.get("rollback_ok"):
-            return tr("operations.planExecutionAtomicRollback", fail=fail, total=total)
-
-        rollback_message = execution_stats.get("rollback_message", "")
-        if execution_stats.get("rollback_attempted"):
-            suffix = tr("operations.rollbackFailedSuffix", reason=rollback_message) if rollback_message else ""
-        elif rollback_message:
-            suffix = tr("operations.rollbackUnavailableSuffix", reason=rollback_message)
-        else:
-            suffix = ""
-        return tr(
-            "operations.planExecutionFailedSummary",
-            fail=fail,
-            total=total,
-            applied=applied,
-            suffix=suffix,
-        )
-
-    def _show_plan_result(self, results, remaining, report=None, rollback_info=None):
-        execution_stats = summarize_plan_execution(report, rollback_info)
-        ok_count = execution_stats.get("ok_count", sum(1 for r in results if r[0] == "OK"))
-        fail_count = execution_stats.get("fail_count", sum(1 for r in results if r[0] == "FAIL"))
-        applied_count = execution_stats.get("applied_count", ok_count)
-
-        if fail_count:
-            fail_item = [r for r in results if r[0] == "FAIL"][-1]
-            error_msg = fail_item[2].get("message", "Unknown error")
-            title_html = f"<b style='color: var(--status-error);'>{tr('operations.planExecutionStopped')}</b>"
-            if execution_stats.get("rollback_ok"):
-                title_html = f"<b style='color: var(--status-warning);'>{tr('operations.planExecutionRolledBack')}</b>"
-            lines = [
-                title_html,
-                tr(
-                    "operations.planExecutionStats",
-                    attempted_ok=ok_count,
-                    failed=fail_count,
-                    applied=applied_count,
-                ),
-                tr("operations.planExecutionError", error=error_msg),
-                f"<span style='color: var(--status-muted);'>{tr('operations.planExecutionRetry')}</span>",
-            ]
-            if isinstance(rollback_info, dict) and rollback_info:
-                if execution_stats.get("rollback_ok"):
-                    lines.append(
-                        f"<span style='color: var(--status-success);'>{tr('operations.planExecutionRollbackApplied')}</span>"
-                    )
-                elif execution_stats.get("rollback_attempted"):
-                    lines.append(
-                        f"<span style='color: var(--status-error);'>{tr('operations.planExecutionRollbackFailed', reason=rollback_info.get('message', 'unknown error'))}</span>"
-                    )
-                elif execution_stats.get("rollback_message"):
-                    lines.append(
-                        f"<span style='color: var(--status-warning);'>{tr('operations.planExecutionRollbackUnavailable', reason=execution_stats.get('rollback_message'))}</span>"
-                    )
-            self._set_result_summary_html(lines)
-            self.result_card.setProperty("state", "warning" if execution_stats.get("rollback_ok") else "error")
-            self.result_card.style().unpolish(self.result_card)
-            self.result_card.style().polish(self.result_card)
-        else:
-            lines = [
-                f"<b style='color: var(--status-success);'>{tr('operations.planExecutionSuccess')}</b>",
-                tr("operations.planExecutionSuccessSummary", applied=applied_count, total=applied_count),
-            ]
-            self._set_result_summary_html(lines)
-            self.result_card.setProperty("state", "success")
-            self.result_card.style().unpolish(self.result_card)
-            self.result_card.style().polish(self.result_card)
-
-        self.result_card.setVisible(True)
-        self._sync_result_actions()
-
-    def print_plan(self):
-        """Print current staged plan (not yet executed)."""
-        items_to_print = self._plan_store.list_items()
-        if not items_to_print:
-            self.status_message.emit(tr("operations.noCurrentPlanToPrint"), 3000, "error")
-            return
-
-        # Get grid state from overview panel
-        grid_state = None
-        if hasattr(self, '_overview_panel_ref') and self._overview_panel_ref:
-            try:
-                from app_gui.plan_model import extract_grid_state_for_print, apply_operation_markers_to_grid
-                grid_state = extract_grid_state_for_print(self._overview_panel_ref)
-                grid_state = apply_operation_markers_to_grid(grid_state, items_to_print)
-            except Exception as e:
-                print(f"Warning: Could not extract grid state: {e}")
-
-        self._print_operation_sheet_with_grid(items_to_print, grid_state, opened_message=tr("operations.planPrintOpened"))
-
-    def print_last_executed(self):
-        """Print the last successfully applied execution result."""
-        items_to_print = self._last_executed_plan
-        if not items_to_print:
-            self.status_message.emit(tr("operations.noLastExecutedToPrint"), 3000, "error")
-            return
-
-        # Get grid state from overview panel
-        grid_state = None
-        if hasattr(self, '_overview_panel_ref') and self._overview_panel_ref:
-            try:
-                from app_gui.plan_model import extract_grid_state_for_print, apply_operation_markers_to_grid
-                grid_state = extract_grid_state_for_print(self._overview_panel_ref)
-                grid_state = apply_operation_markers_to_grid(grid_state, items_to_print)
-            except Exception as e:
-                print(f"Warning: Could not extract grid state: {e}")
-
-        self._print_operation_sheet_with_grid(items_to_print, grid_state, opened_message=tr("operations.guideOpened"))
-
-    def print_last_plan(self):
-        """Backward-compatible alias for printing last executed result."""
-        self.print_last_executed()
-
-    def _print_operation_sheet_with_grid(self, items, grid_state, opened_message=None):
-        """Print operation sheet with grid visualization."""
-        if opened_message is None:
-            opened_message = tr("operations.operationSheetOpened")
-
-        from app_gui.plan_model import render_operation_sheet_with_grid
-        html = render_operation_sheet_with_grid(items, grid_state)
-
-        tmp = tempfile.NamedTemporaryFile(
-            suffix=".html", delete=False, mode="w", encoding="utf-8"
-        )
-        tmp.write(html)
-        tmp.close()
-        QDesktopServices.openUrl(QUrl.fromLocalFile(tmp.name))
-        self.status_message.emit(opened_message, 2000, "info")
-
-    def _print_operation_sheet(self, items, opened_message=None):
-        if opened_message is None:
-            opened_message = tr("operations.operationSheetOpened")
-        html = render_operation_sheet(items)
-        tmp = tempfile.NamedTemporaryFile(
-            suffix=".html", delete=False, mode="w", encoding="utf-8"
-        )
-        tmp.write(html)
-        tmp.close()
-        QDesktopServices.openUrl(QUrl.fromLocalFile(tmp.name))
-        self.status_message.emit(opened_message, 2000, "info")
-
-    def clear_plan(self):
-        cleared_items = self._plan_store.clear()
-        self._set_plan_feedback("")
-        self._plan_validation_by_key = {}
-        self._plan_preflight_report = None
-        self._refresh_plan_table()
-        self._update_execute_button_state()
-        action_counts, sample = self._collect_notice_action_counts_and_sample(cleared_items)
-
-        self._publish_system_notice(
-            code="plan.cleared",
-            text=tr("operations.planCleared"),
-            level="info",
-            timeout=2000,
-            details="\n".join(sample[:8]) if sample else None,
-            data={
-                "cleared_count": len(cleared_items),
-                "action_counts": action_counts,
-                "sample": sample,
-            },
-        )
-
-    def reset_for_dataset_switch(self):
-        """Clear transient plan/undo/audit state when switching datasets."""
-        self._plan_store.clear()
-        self._set_plan_feedback("")
-        self._plan_validation_by_key = {}
-        self._plan_preflight_report = None
-        self._disable_undo(clear_last_executed=True)
-
-        self._refresh_plan_table()
-        self._update_execute_button_state()
-
-    def on_export_inventory_csv(self):
-        yaml_path = self.yaml_path_getter()
-        default_name = f"inventory_full_{date.today().isoformat()}.csv"
-        suggested_path = default_name
-        if yaml_path:
-            yaml_abs = os.path.abspath(os.fspath(yaml_path))
-            base_name = os.path.splitext(os.path.basename(yaml_abs))[0] or "inventory"
-            suggested_path = os.path.join(
-                os.path.dirname(yaml_abs),
-                f"{base_name}_full_{date.today().isoformat()}.csv",
-            )
-
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            tr("operations.exportDialogTitle"),
-            suggested_path,
-            tr("operations.exportCsvFilter"),
-        )
-        if not path:
-            return
-
-        if not str(path).lower().endswith(".csv"):
-            path = f"{path}.csv"
-
-        response = self.bridge.export_inventory_csv(
-            yaml_path,
-            output_path=path,
-        )
-        payload = response if isinstance(response, dict) else {}
-        if payload.get("ok"):
-            result = payload.get("result", {})
-            exported_path = result.get("path") if isinstance(result, dict) else None
-            count = result.get("count") if isinstance(result, dict) else None
-            if isinstance(count, int):
-                self._publish_system_notice(
-                    code="inventory.export.success",
-                    text=tr("operations.exportedToWithCount", count=count, path=exported_path or path),
-                    level="success",
-                    timeout=3000,
-                    data={"path": exported_path or path, "count": count},
-                )
-            else:
-                self._publish_system_notice(
-                    code="inventory.export.success",
-                    text=tr("operations.exportedTo", path=exported_path or path),
-                    level="success",
-                    timeout=3000,
-                    data={"path": exported_path or path},
-                )
-            return
-
-        self._publish_system_notice(
-            code="inventory.export.failed",
-            text=tr(
-                "operations.exportFailed",
-                error=payload.get("message", tr("operations.unknownError")),
-            ),
-            level="error",
-            timeout=5000,
-            data={
-                "error_code": payload.get("error_code"),
-                "message": payload.get("message"),
-                "path": path,
-            },
-        )
-
-    # --- UNDO ---
-
-    def _enable_undo(self, timeout_sec=30):
-        """Enable undo countdown while keeping last-result print available."""
-        if not self._last_operation_backup:
-            self._sync_result_actions()
-            return
-
-        # Start countdown timer
-        self._undo_remaining = timeout_sec
-        if self._undo_timer is not None:
-            self._undo_timer.stop()
-
-        self._undo_timer = QTimer(self)
-        self._undo_timer.timeout.connect(self._undo_tick)
-        self._undo_timer.start(1000)
-        self._sync_result_actions()
-
-    def _update_undo_button_text(self):
-        """Update undo button text with countdown."""
-        self.undo_btn.setText(
-            tr(
-                "operations.undoLastWithCountdown",
-                operation=tr("operations.undoLast"),
-                seconds=self._undo_remaining,
-            )
-        )
-
-    def _undo_tick(self):
-        self._undo_remaining -= 1
-        if self._undo_remaining <= 0:
-            self._disable_undo()
-        else:
-            self._update_undo_button_text()
-
-    def _disable_undo(self, *, clear_last_executed=False):
-        """Disable undo countdown and optionally clear last executed context."""
-        if self._undo_timer is not None:
-            self._undo_timer.stop()
-            self._undo_timer = None
-
-        self._undo_remaining = 0
-        self._last_operation_backup = None
-        if clear_last_executed:
-            self._last_executed_plan = []
-        self._sync_result_actions()
-
-    def on_undo_last(self):
-        if not self._last_operation_backup:
-            self._publish_system_notice(
-                code="undo.unavailable",
-                text=tr("operations.noOperationToUndo"),
-                level="error",
-                timeout=3000,
-            )
-            return
-
-        yaml_path = os.path.abspath(str(self.yaml_path_getter()))
-        confirm_lines = self._build_rollback_confirmation_lines(
-            backup_path=self._last_operation_backup,
-            yaml_path=yaml_path,
-            include_action_prefix=False,
-        )
-        if not self._confirm_execute(
-            tr("operations.undo"),
-            "\n".join(confirm_lines),
-        ):
-            return
-
-        executed_plan_backup = list(self._last_executed_plan)
-        response = self.bridge.rollback(
-            self.yaml_path_getter(),
-            backup_path=self._last_operation_backup,
-            execution_mode="execute",
-        )
-        self._disable_undo(clear_last_executed=True)
-
-        restored_data = None
-        if response.get("ok") and executed_plan_backup:
-            action_counts, sample = self._collect_notice_action_counts_and_sample(executed_plan_backup)
-            restored_data = {
-                "restored_count": len(executed_plan_backup),
-                "action_counts": action_counts,
-                "sample": sample,
-            }
-
-        self._handle_response(
-            response,
-            tr("operations.undo"),
-            notice_code="plan.restored" if restored_data else "undo.result",
-            notice_data=restored_data,
-        )
-        if response.get("ok") and executed_plan_backup:
-            self._plan_store.replace_all(executed_plan_backup)
-            self._refresh_plan_table()

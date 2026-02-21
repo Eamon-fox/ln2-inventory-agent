@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from contextlib import suppress
 from typing import Any, Dict, List, Mapping
 
 
@@ -41,10 +42,8 @@ def _extract_record_ids(*values: Any) -> List[int]:
                 ids.update(nested)
                 continue
             for raw in re.findall(r"id\s*=\s*(\d+)", str(item), flags=re.IGNORECASE):
-                try:
+                with suppress(Exception):
                     ids.add(int(raw))
-                except Exception:
-                    pass
     return sorted(ids)
 
 

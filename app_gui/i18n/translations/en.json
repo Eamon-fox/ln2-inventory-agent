@@ -129,7 +129,8 @@
     "importPromptNewInventory": "New Inventory",
     "importStartupTitle": "Welcome! First Time Setup",
     "importStartupMessage": "To import your existing Excel/CSV inventory data, you can use an AI to convert it to YAML format.",
-    "importStartupAction": "Get Import Prompt"
+    "importStartupAction": "Get Import Prompt",
+    "importPromptTemplate": "You are a data-cleaning and structuring assistant.\nConvert my pasted Excel/CSV/table data into LN2 inventory YAML.\n\nRules:\n1) Output YAML only. Do not add explanations.\n2) Top-level keys must be exactly: meta, inventory.\n3) Always include:\nmeta:\n  box_layout:\n    rows: 9\n    cols: 9\n  custom_fields: []\ninventory: []\n4) Data model is tube-level: each inventory item is one physical tube.\n5) Required fields for each inventory item: id, box, frozen_at.\n6) Optional fields: position, cell_line, short_name, plasmid_name, plasmid_id, note, thaw_events.\n7) If a value is missing/unknown, use null.\n8) Dates must use YYYY-MM-DD.\n9) id must be unique positive integers.\n10) If source uses positions like A1/B3, convert to numeric position:\n    position = (row_index-1)*cols + col_index, where A=1, B=2...\n11) thaw_events format:\n    thaw_events:\n      - date: \"YYYY-MM-DD\"\n        action: \"takeout\"   # takeout/move\n        positions: [1]\n12) Do not invent fields not present in source.\n\nInput data:\n<<<DATA\n[paste Excel/CSV/table data here]\nDATA"
   },
   "overview": {
     "title": "Overview",
@@ -167,8 +168,6 @@
     "previewAdd": "ADD",
     "previewOut": "OUT",
     "takeout": "Takeout",
-    "thaw": "Thaw",
-    "discard": "Discard",
     "boxLabel": "Box {box}",
     "occupiedCount": "Occupied {occupied}/{total} | Empty {empty}",
     "filteredCount": "Filtered: Occupied {occupied} | Empty {empty}",
@@ -178,6 +177,7 @@
     "loadFailed": "Failed to load overview: {error}",
     "previewEmpty": "Box {box} Pos {pos} | Empty slot",
     "previewRecord": "Box {box}:{pos} | ID {id} | {cell} / {short}",
+    "previewRecordSingle": "Box {box}:{pos} | ID {id} | {value}",
     "ctxStatus": "Status",
     "ctxSource": "Source",
     "ctxId": "ID",
@@ -202,7 +202,16 @@
     "tooltipId": "ID",
     "tooltipPos": "Pos",
     "tooltipCellLine": "Cell Line",
-    "tooltipDate": "Date"
+    "tooltipDate": "Date",
+    "filterColumn": "Filter: {column}",
+    "selectAll": "Select All",
+    "searchText": "Search Text",
+    "enterSearchText": "Enter search text...",
+    "numberRange": "Number Range",
+    "min": "Min",
+    "max": "Max",
+    "dateRange": "Date Range",
+    "activeFilters": "Active Filters: {count} columns"
   },
   "operations": {
     "title": "Operations",
@@ -216,7 +225,6 @@
     "clear": "Clear",
     "add": "Add Entry",
     "edit": "Edit",
-    "thaw": "Takeout",
     "move": "Move",
     "rollback": "Rollback",
     "auditLog": "Audit Log",
@@ -400,16 +408,14 @@
     "foundBackups": "Found {count} backups.",
     "noBackupsFound": "No backups found. Click \"Refresh Backups\" first.",
     "selectBackupPathFirst": "Please select a backup path first.",
-    "from": "From",
-    "to": "To",
     "auditAction": "Action",
     "auditStatus": "Status",
     "auditStatusSuccess": "Success",
     "auditStatusFailed": "Failed",
     "loadAuditLog": "Load Audit Log",
     "auditActionAddEntry": "Add Entry",
-    "auditActionRecordThaw": "Record Thaw",
-    "auditActionBatchThaw": "Batch Thaw",
+    "auditActionRecordTakeout": "Record Takeout",
+    "auditActionBatchTakeout": "Batch Takeout",
     "auditActionRollback": "Rollback",
     "auditGuideFromSelected": "Guide from Selected",
     "auditPrintSelectedGuide": "Print Selected Guide",
@@ -521,6 +527,61 @@
     "cancel": "Cancel",
     "close": "Close"
   },
+  "errors": {
+    "unknown": "Unknown error",
+    "code": {
+      "backup_load_failed": "Failed to load backup file.",
+      "backup_not_found": "Backup file not found.",
+      "box_not_empty": "Box is not empty.",
+      "empty_entries": "At least one entry is required.",
+      "empty_positions": "At least one position is required.",
+      "export_failed": "Export failed.",
+      "forbidden_fields": "Some fields are not editable.",
+      "integrity_validation_failed": "Write blocked: integrity validation failed.",
+      "invalid_action": "Invalid action.",
+      "invalid_box": "Invalid box.",
+      "invalid_box_layout": "Invalid box layout metadata.",
+      "invalid_cell_line": "Invalid cell line.",
+      "invalid_cell_line_options": "Cell line options are not configured.",
+      "invalid_count": "Count must be greater than 0.",
+      "invalid_date": "Invalid date format. Use YYYY-MM-DD.",
+      "invalid_execution_mode": "Invalid execution mode.",
+      "invalid_max_steps": "Invalid max_steps value.",
+      "invalid_meta": "Invalid metadata format.",
+      "invalid_mode": "Invalid mode. Use fuzzy/exact/keywords.",
+      "invalid_move_target": "Invalid move target.",
+      "invalid_operation": "Invalid operation.",
+      "invalid_output_path": "Invalid output path.",
+      "invalid_position": "Invalid position.",
+      "invalid_record_id": "Invalid record ID.",
+      "invalid_renumber_mode": "Invalid renumber mode.",
+      "invalid_tool_input": "Invalid input.",
+      "invalid_agent_result": "Invalid agent response payload.",
+      "agent_runtime_failed": "Agent runtime failed.",
+      "api_key_required": "API key is required.",
+      "empty_query": "Query cannot be empty.",
+      "load_failed": "Failed to load YAML file.",
+      "min_box_count": "At least one box must remain.",
+      "missing_required_fields": "Missing required fields.",
+      "no_backups": "No backups available.",
+      "no_plan_store": "Plan storage is not available.",
+      "no_fields": "At least one field must be provided.",
+      "not_found": "Requested records were not found.",
+      "plan_preflight_failed": "Plan preflight failed.",
+      "plan_validation_failed": "Plan validation failed.",
+      "position_conflict": "Position conflict.",
+      "position_not_found": "Position not found in record.",
+      "record_not_found": "Record not found.",
+      "renumber_mode_required": "renumber_mode is required when removing a middle box.",
+      "rollback_backup_invalid": "Selected backup is invalid for current dataset.",
+      "rollback_failed": "Rollback failed.",
+      "unknown_tool": "Unknown tool.",
+      "validation_failed": "Validation failed.",
+      "write_failed": "Failed to write YAML file.",
+      "write_requires_execute_mode": "Writes are only allowed during plan execution."
+    },
+    "qtFontFaceFromHdcFailed": "Font rendering warning: failed to load \"{family}\" via DirectWrite (DPI {dpi}). The app will use a fallback font."
+  },
   "eventDetails": {
     "type": "Type",
     "time": "Time",
@@ -561,8 +622,6 @@
       "add": "Add",
       "takeout": "Takeout",
       "move": "Move",
-      "thaw": "Thaw",
-      "discard": "Discard",
       "edit": "Edit"
     },
     "recordId": "Record ID",
@@ -586,5 +645,161 @@
     "statusOk": "Status: OK",
     "statusBlocked": "Status: Blocked",
     "errorDetails": "Error details"
+  },
+  "agentToolRunner": {
+    "errors": {
+      "entriesRequiredCannotBeEmpty": "entries is required and cannot be empty",
+      "fieldMustBeInteger": "{key} must be an integer",
+      "fieldsMustBeNonEmptyObject": "fields must be a non-empty object",
+      "invalidBatchEntryMissingRecordId": "Invalid batch entry (missing record_id): {entry}",
+      "invalidPositionField": "{field_name} is invalid: {value}",
+      "missingRequiredIntegerField": "Missing required integer field: {key}",
+      "modeMustBeOneOf": "mode must be one of: fuzzy, exact, keywords",
+      "operationMustBeAddOrRemove": "operation must be add or remove",
+      "positionMissingCannotInfer": "position is missing and cannot be inferred for record_id={record_id}. record has no position (may be consumed).",
+      "recordIdMustBeInteger": "record_id must be an integer: {error}",
+      "recordIdRequired": "record_id is required",
+      "unknownError": "Unknown error",
+      "unknownTool": "Unknown tool: {tool_name}"
+    },
+    "hint": {
+      "adjustInputByToolSpecs": "Adjust `{tool_name}` inputs according to `tool_specs`, then retry.",
+      "boxNotEmpty": "Remove all active tubes from that box first, then retry remove operation.",
+      "emptyPositionsOrEntries": "Provide at least one target position or entry before retrying.",
+      "invalidAction": "Use a supported action value: takeout / move.",
+      "invalidBoxOrPositionOrRecordId": "Provide valid box IDs and valid positions in the current layout (e.g. 12 or A1).",
+      "invalidDate": "Use date format `YYYY-MM-DD` (for example: 2026-02-10).",
+      "invalidMode": "For `search_records`, use mode: fuzzy / exact / keywords.",
+      "invalidMoveTarget": "For move operations, provide a valid `to_position` different from source position.",
+      "invalidToolInput": "Check `{tool_name}` input fields. Required: {required_text}. Optional: {optional_text}.",
+      "minBoxCount": "At least one box must remain; do not remove the last box.",
+      "noBackups": "No backups exist yet; investigate write history first and confirm rollback intent with `question` tool before choosing a backup_path.",
+      "pathOrPermission": "Verify yaml_path exists and file permissions are correct, then retry.",
+      "planPreflightFailedNoIds": "One or more write operations are invalid against current inventory state. Review blocked details, then retry only corrected operations.",
+      "planPreflightFailedWithIds": "Preflight failed due to baseline integrity issues. Fetch affected records with `get_raw_entries` ids=[{ids_text}], then repair invalid fields via `edit_entry` (for example, normalize `cell_line` to configured options), and retry staging.",
+      "positionConflict": "Choose free slots via `list_empty_positions` or `recommend_positions`, then retry.",
+      "positionNotFound": "Use a position that belongs to the target record.",
+      "recordNotFound": "Call `search_records` first and use a valid `record_id` from results.",
+      "renumberModeRequired": "When removing a middle box, choose renumber_mode: keep_gaps or renumber_contiguous.",
+      "retryWithCorrectedInput": "Retry with corrected tool input.",
+      "unknownTool": "Use one of available tools: {available_text}.",
+      "userCancelled": "User cancelled the confirmation dialog.",
+      "validationOrRollbackInvalid": "Rollback target is invalid for current file state. Re-check backup_path against audit/timeline and ask user confirmation with `question` if needed before retrying.",
+      "writeRequiresExecuteMode": "Write tools are execute-gated. Stage operations first, then let a human run Execute in GUI Plan tab. Use dry_run for preview-only checks."
+    },
+    "input": {
+      "allHistoryOnlyForSummary": "all_history is only valid when view=summary",
+      "backupPathRequired": "backup_path must be a non-empty string",
+      "boxNotAllowedWhenAdd": "box is not allowed when operation=add",
+      "boxRequiredWhenRemove": "box is required when operation=remove",
+      "countNotAllowedWhenRemove": "count is not allowed when operation=remove",
+      "countRequiredWhenAdd": "count is required when operation=add",
+      "manageStagedIndexOrKeyNotBoth": "Provide either index OR action+record_id+position, not both",
+      "manageStagedNeedActionRecordPosition": "action, record_id, and position are required when removing by key",
+      "manageStagedNeedIndexOrKey": "Provide either index OR action+record_id+position",
+      "manageStagedSelectorOnlyForRemove": "index/action/record_id/position are only valid when operation=remove",
+      "recentCannotMixSearchFields": "recent_* filters cannot be mixed with text/structured search fields",
+      "renumberOnlyForRemove": "renumber_mode is only valid when operation=remove",
+      "summaryViewAllowedFields": "view=summary only supports: view, days, all_history",
+      "toPositionRequiredWhenMove": "to_position is required when action=move",
+      "useEitherRecentDaysOrCount": "Use either recent_days or recent_count, not both"
+    },
+    "itemDesc": {
+      "default": "{action} {label} @ Box {box}:{pos}{target}",
+      "moveTarget": " -> {to_pos}",
+      "moveTargetWithBox": " -> Box {to_box}:{to_pos}",
+      "rollbackLatest": "rollback latest-backup",
+      "rollbackWithPath": "rollback {name} ({backup_path})"
+    },
+    "manageBoxes": {
+      "awaitingUserConfirmation": "Awaiting user confirmation in GUI."
+    },
+    "manageStaged": {
+      "clearedCount": "Cleared {count} staged item(s).",
+      "indexOutOfRange": "Index {idx} out of range (0..{max_idx}).",
+      "noMatchingItem": "No matching staged item found.",
+      "noPlanStoreAvailableList": "No plan store available.",
+      "planStoreNotAvailable": "Plan store not available.",
+      "removedByIndex": "Removed item at index {idx}: {desc}",
+      "removedMatchingCount": "Removed {count} matching item(s)."
+    },
+    "question": {
+      "atLeastOneRequired": "At least one question is required.",
+      "missingHeaderOrQuestion": "Question {index} missing 'header' or 'question'.",
+      "mustBeDict": "Question {index} must be a dict."
+    },
+    "response": {
+      "nonDict": "Tool `{tool_name}` returned non-dict response."
+    },
+    "stage": {
+      "allRejectedByValidation": "All operations rejected by validation: {detail}",
+      "moreBlockedItems": "; ... and {count} more",
+      "planStoreNotAvailable": "Plan store not available.",
+      "stagedForHumanApproval": "Staged {count} operation(s) for human approval in Plan tab: {summary}"
+    },
+    "toolContracts": {
+      "add_entry": {
+        "description": "Add new frozen tube records.",
+        "notes": "Provide all sample metadata through fields object (e.g. fields.short_name, fields.cell_line)."
+      },
+      "batch_takeout": {
+        "description": "Record takeout or move for multiple tubes.",
+        "notes": "entries supports parsed string formats from parse_batch_entries and structured array rows."
+      },
+      "defaultDescription": "LN2 inventory tool: {name}",
+      "edit_entry": {
+        "description": "Edit metadata fields of an existing record."
+      },
+      "generate_stats": {
+        "description": "Generate inventory statistics."
+      },
+      "get_raw_entries": {
+        "description": "Fetch raw inventory records by ID list."
+      },
+      "list_empty_positions": {
+        "description": "List empty positions, optionally within one box."
+      },
+      "manage_boxes": {
+        "description": "Safely add or remove inventory boxes."
+      },
+      "manage_staged": {
+        "description": "List, remove, or clear staged plan items."
+      },
+      "query_takeout_events": {
+        "description": "Query takeout/move events, or timeline summary via view=summary."
+      },
+      "question": {
+        "description": "Ask user clarifying questions when required values are unknown.",
+        "notes": "question tool is not a write tool and must run alone."
+      },
+      "recommend_positions": {
+        "description": "Recommend empty positions for new tubes."
+      },
+      "record_takeout": {
+        "description": "Record takeout or move for one tube."
+      },
+      "rollback": {
+        "description": "Rollback inventory YAML to a backup snapshot using explicit backup_path.",
+        "notes": "Always provide explicit backup_path."
+      },
+      "search_records": {
+        "description": "Search inventory records, or list recently frozen records via recent_* filters."
+      }
+    },
+    "validation": {
+      "doesNotMatchAllowedSchema": "{label} does not match any allowed schema",
+      "missingRequiredField": "Missing required field: {field}",
+      "mustBeArray": "{label} must be an array",
+      "mustBeBoolean": "{label} must be a boolean",
+      "mustBeGreaterEqual": "{label} must be >= {minimum}",
+      "mustBeInteger": "{label} must be an integer",
+      "mustBeObject": "{label} must be an object",
+      "mustBeOneOf": "{label} must be one of: {values}",
+      "mustBeString": "{label} must be a string",
+      "mustContainAtLeastFields": "{label} must contain at least {min_props} field(s)",
+      "mustContainAtLeastItems": "{label} must contain at least {min_items} item(s)",
+      "mustContainAtMostItems": "{label} must contain at most {max_items} item(s)",
+      "unexpectedFields": "Unexpected field(s): {fields}"
+    }
   }
 }

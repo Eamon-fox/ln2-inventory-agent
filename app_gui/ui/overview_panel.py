@@ -1,12 +1,14 @@
-from datetime import date, datetime
+from datetime import datetime
 import os
-from PySide6.QtCore import Qt, Signal, QEvent, QMimeData, QPoint, QRect, QEasingCurve, QPropertyAnimation, QTimer, QSize
-from PySide6.QtGui import QColor, QDrag, QDropEvent, QDragEnterEvent, QDragMoveEvent, QIcon, QPalette
+from contextlib import suppress
+from PySide6.QtCore import Qt, Signal, QEvent, QMimeData, QRect, QEasingCurve, QPropertyAnimation, QTimer, QSize
+from PySide6.QtGui import QColor, QDrag, QPalette
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QPushButton, QLineEdit, QComboBox, QCheckBox, QScrollArea,
     QSizePolicy, QGroupBox, QMenu, QStackedWidget, QButtonGroup,
-    QTableWidget, QTableWidgetItem, QHeaderView, QStyledItemDelegate, QStyle, QApplication
+    QTableWidget, QTableWidgetItem, QHeaderView, QStyledItemDelegate, QStyle, QApplication,
+    QDialog, QDialogButtonBox, QDateEdit
 )
 from app_gui.ui.utils import cell_color, build_color_palette
 from lib.position_fmt import pos_to_display, box_to_display, get_box_count
@@ -14,16 +16,18 @@ from lib.csv_export import build_export_rows
 from app_gui.ui.theme import (
     cell_occupied_style,
     cell_empty_style,
+    resolve_theme_token,
     FONT_SIZE_CELL,
-    FONT_SIZE_XS,
-    FONT_SIZE_MD,
-    FONT_SIZE_XL,
 )
 from app_gui.i18n import tr, t
 from app_gui.ui.icons import get_icon, Icons
+from app_gui.ui import overview_panel_filters as _ov_filters
+from app_gui.ui import overview_panel_interactions as _ov_interactions
+from app_gui.ui import overview_panel_zoom as _ov_zoom
 
 MIME_TYPE_MOVE = "application/x-ln2-move"
 TABLE_ROW_TINT_ROLE = Qt.UserRole + 41
+_MONKEYPATCH_EXPORTS = (QMenu, FONT_SIZE_CELL)
 
 
 class _OverviewTableTintDelegate(QStyledItemDelegate):
@@ -48,6 +52,320 @@ class _OverviewTableTintDelegate(QStyledItemDelegate):
         painter.save()
         painter.fillRect(option.rect, tint)
         painter.restore()
+
+
+class _FilterableHeaderView(QHeaderView):
+    """Custom header view with filter icons in each column."""
+
+    filterClicked = Signal(int, str)  # column_index, column_name
+
+    def __init__(self, orientation, parent=None):
+        super().__init__(orientation, parent)
+        self._filtered_columns = set()  # Set of column indices with active filters
+        self._hover_section = -1
+        self.setMouseTracking(True)
+        self.setSectionsClickable(True)
+
+    def set_column_filtered(self, column_index, filtered):
+        """Mark a column as filtered or not filtered."""
+        if filtered:
+            self._filtered_columns.add(column_index)
+        else:
+            self._filtered_columns.discard(column_index)
+        self.viewport().update()
+
+    def paintSection(self, painter, rect, logicalIndex):
+        """Paint section with filter icon."""
+        super().paintSection(painter, rect, logicalIndex)
+
+        # Draw filter icon on the right side of the header
+        icon_size = 14
+        icon_margin = 6
+        icon_x = rect.right() - icon_size - icon_margin
+        icon_y = rect.center().y() - icon_size // 2
+        icon_rect = QRect(icon_x, icon_y, icon_size, icon_size)
+
+        # Determine icon color based on filter state
+        is_filtered = logicalIndex in self._filtered_columns
+        is_hovered = logicalIndex == self._hover_section
+
+        if is_filtered:
+            # Blue color for filtered columns
+            icon_color = resolve_theme_token("primary", fallback="#3b82f6")
+        elif is_hovered:
+            # Lighter color on hover
+            icon_color = resolve_theme_token("text-primary", fallback="#e5e7eb")
+        else:
+            # Muted color for normal state
+            icon_color = resolve_theme_token("text-muted", fallback="#9ca3af")
+
+        # Draw filter icon
+        icon = get_icon(Icons.FILTER, size=icon_size, color=icon_color)
+        icon.paint(painter, icon_rect)
+
+    def mouseMoveEvent(self, event):
+        """Track hover state for visual feedback."""
+        logical_index = self.logicalIndexAt(event.pos())
+        if logical_index != self._hover_section:
+            self._hover_section = logical_index
+            self.viewport().update()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        """Clear hover state when mouse leaves."""
+        if self._hover_section != -1:
+            self._hover_section = -1
+            self.viewport().update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        """Handle clicks on filter icons."""
+        if event.button() == Qt.LeftButton:
+            logical_index = self.logicalIndexAt(event.pos())
+            if logical_index >= 0:
+                # Check if click is on the filter icon area
+                section_rect = self.sectionViewportPosition(logical_index)
+                section_width = self.sectionSize(logical_index)
+                icon_size = 14
+                icon_margin = 6
+                icon_x_start = section_rect + section_width - icon_size - icon_margin * 2
+
+                if event.pos().x() >= icon_x_start:
+                    # Click on filter icon
+                    column_name = self.model().headerData(logical_index, Qt.Horizontal)
+                    self.filterClicked.emit(logical_index, str(column_name))
+                    return
+
+        super().mousePressEvent(event)
+
+
+class _ColumnFilterDialog(QDialog):
+    """Dialog for filtering a specific column."""
+
+    def __init__(self, parent, column_name, filter_type, unique_values=None, current_filter=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("overview.filterColumn").format(column=column_name))
+        self.setMinimumWidth(300)
+        self.setMinimumHeight(400)
+
+        self.column_name = column_name
+        self.filter_type = filter_type
+        self.filter_config = current_filter or {}
+
+        layout = QVBoxLayout(self)
+
+        if filter_type == "list":
+            self._setup_list_filter(layout, unique_values)
+        elif filter_type == "text":
+            self._setup_text_filter(layout)
+        elif filter_type == "number":
+            self._setup_number_filter(layout, unique_values)
+        elif filter_type == "date":
+            self._setup_date_filter(layout)
+
+        # Buttons
+        button_box = QDialogButtonBox()
+        clear_btn = button_box.addButton(tr("overview.clearFilter"), QDialogButtonBox.ResetRole)
+        clear_btn.clicked.connect(self._on_clear)
+        button_box.addButton(QDialogButtonBox.Cancel)
+        button_box.addButton(QDialogButtonBox.Ok)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+    def _setup_list_filter(self, layout, unique_values):
+        """Setup list-based filter with checkboxes."""
+        # Search box
+        search_label = QLabel(tr("overview.search"))
+        layout.addWidget(search_label)
+
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText(tr("overview.searchPlaceholder"))
+        self.search_box.textChanged.connect(self._filter_checkbox_list)
+        layout.addWidget(self.search_box)
+
+        # Select all checkbox
+        self.select_all_cb = QCheckBox(tr("overview.selectAll"))
+        self.select_all_cb.stateChanged.connect(self._on_select_all_changed)
+        layout.addWidget(self.select_all_cb)
+
+        # Scrollable checkbox list
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll_content = QWidget()
+        self.checkbox_layout = QVBoxLayout(scroll_content)
+        self.checkbox_layout.setContentsMargins(0, 0, 0, 0)
+        self.checkbox_layout.setSpacing(2)
+        scroll.setWidget(scroll_content)
+        layout.addWidget(scroll, 1)
+
+        # Create checkboxes for each unique value
+        self.value_checkboxes = []
+        current_values = set(self.filter_config.get("values", []))
+
+        for value, count in unique_values:
+            cb = QCheckBox(f"{value} ({count})")
+            cb.setProperty("filter_value", value)
+            cb.setChecked(not current_values or value in current_values)
+            cb.stateChanged.connect(self._on_checkbox_changed)
+            self.checkbox_layout.addWidget(cb)
+            self.value_checkboxes.append(cb)
+
+        # Add stretch at the end to push checkboxes to the top
+        self.checkbox_layout.addStretch()
+
+        self._update_select_all_state()
+
+    def _setup_text_filter(self, layout):
+        """Setup text search filter."""
+        label = QLabel(tr("overview.searchText"))
+        layout.addWidget(label)
+
+        self.text_input = QLineEdit()
+        self.text_input.setText(self.filter_config.get("text", ""))
+        self.text_input.setPlaceholderText(tr("overview.enterSearchText"))
+        layout.addWidget(self.text_input)
+
+        layout.addStretch()
+
+    def _setup_number_filter(self, layout, unique_values):
+        """Setup number range filter."""
+        if unique_values and len(unique_values) <= 20:
+            # Use list filter for small number of unique values
+            self._setup_list_filter(layout, unique_values)
+        else:
+            # Use range filter
+            label = QLabel(tr("overview.numberRange"))
+            layout.addWidget(label)
+
+            range_layout = QHBoxLayout()
+            self.min_input = QLineEdit()
+            self.min_input.setPlaceholderText(tr("overview.min"))
+            self.min_input.setText(str(self.filter_config.get("min", "")))
+            range_layout.addWidget(self.min_input)
+
+            range_layout.addWidget(QLabel("-"))
+
+            self.max_input = QLineEdit()
+            self.max_input.setPlaceholderText(tr("overview.max"))
+            self.max_input.setText(str(self.filter_config.get("max", "")))
+            range_layout.addWidget(self.max_input)
+
+            layout.addLayout(range_layout)
+            layout.addStretch()
+
+    def _setup_date_filter(self, layout):
+        """Setup date range filter."""
+        label = QLabel(tr("overview.dateRange"))
+        layout.addWidget(label)
+
+        range_layout = QHBoxLayout()
+        self.date_from = QDateEdit()
+        self.date_from.setCalendarPopup(True)
+        self.date_from.setDisplayFormat("yyyy-MM-dd")
+        range_layout.addWidget(self.date_from)
+
+        range_layout.addWidget(QLabel("-"))
+
+        self.date_to = QDateEdit()
+        self.date_to.setCalendarPopup(True)
+        self.date_to.setDisplayFormat("yyyy-MM-dd")
+        range_layout.addWidget(self.date_to)
+
+        layout.addLayout(range_layout)
+        layout.addStretch()
+
+    def _filter_checkbox_list(self, text):
+        """Filter checkbox list based on search text."""
+        text = text.lower()
+        for cb in self.value_checkboxes:
+            value = str(cb.property("filter_value") or "").lower()
+            cb.setVisible(not text or text in value)
+
+    def _on_select_all_changed(self, state):
+        """Handle select all checkbox state change."""
+        checked = state == Qt.Checked
+        for cb in self.value_checkboxes:
+            if cb.isVisible():
+                cb.setChecked(checked)
+
+    def _on_checkbox_changed(self):
+        """Handle individual checkbox state change."""
+        self._update_select_all_state()
+
+    def _update_select_all_state(self):
+        """Update select all checkbox state based on individual checkboxes."""
+        visible_checkboxes = [cb for cb in self.value_checkboxes if cb.isVisible()]
+        if not visible_checkboxes:
+            return
+
+        all_checked = all(cb.isChecked() for cb in visible_checkboxes)
+        any_checked = any(cb.isChecked() for cb in visible_checkboxes)
+
+        self.select_all_cb.blockSignals(True)
+        if all_checked:
+            self.select_all_cb.setCheckState(Qt.Checked)
+        elif any_checked:
+            self.select_all_cb.setCheckState(Qt.PartiallyChecked)
+        else:
+            self.select_all_cb.setCheckState(Qt.Unchecked)
+        self.select_all_cb.blockSignals(False)
+
+    def _on_clear(self):
+        """Clear the filter."""
+        self.filter_config = {}
+        self.reject()
+
+    def get_filter_config(self):
+        """Get the filter configuration."""
+        if self.filter_type == "list":
+            selected_values = [
+                cb.property("filter_value")
+                for cb in self.value_checkboxes
+                if cb.isChecked()
+            ]
+            if not selected_values or len(selected_values) == len(self.value_checkboxes):
+                return None  # No filter (all selected)
+            return {"type": "list", "values": selected_values}
+
+        elif self.filter_type == "text":
+            text = self.text_input.text().strip()
+            if not text:
+                return None
+            return {"type": "text", "text": text}
+
+        elif self.filter_type == "number":
+            if hasattr(self, "value_checkboxes"):
+                # List-based number filter
+                selected_values = [
+                    cb.property("filter_value")
+                    for cb in self.value_checkboxes
+                    if cb.isChecked()
+                ]
+                if not selected_values or len(selected_values) == len(self.value_checkboxes):
+                    return None
+                return {"type": "list", "values": selected_values}
+            else:
+                # Range-based number filter
+                min_val = self.min_input.text().strip()
+                max_val = self.max_input.text().strip()
+                if not min_val and not max_val:
+                    return None
+                return {
+                    "type": "number",
+                    "min": float(min_val) if min_val else None,
+                    "max": float(max_val) if max_val else None,
+                }
+
+        elif self.filter_type == "date":
+            return {
+                "type": "date",
+                "from": self.date_from.date().toString("yyyy-MM-dd"),
+                "to": self.date_to.date().toString("yyyy-MM-dd"),
+            }
+
+        return None
+
 
 class CellButton(QPushButton):
     doubleClicked = Signal(int, int)
@@ -270,6 +588,7 @@ class OverviewPanel(QWidget):
         self._table_row_records = []
         self._hover_warmed = False
         self._show_summary_cards = True  # Can be set to False to hide cards
+        self._column_filters = {}  # {column_name: filter_config}
 
         # Animation objects for smooth zoom and scroll transitions
         self._zoom_animation = None
@@ -504,6 +823,11 @@ class OverviewPanel(QWidget):
         self.ov_table.setItemDelegate(_OverviewTableTintDelegate(self.ov_table))
         self.ov_table.cellClicked.connect(self.on_table_row_double_clicked)
 
+        # Replace horizontal header with filterable header
+        self.ov_table_header = _FilterableHeaderView(Qt.Horizontal, self.ov_table)
+        self.ov_table.setHorizontalHeader(self.ov_table_header)
+        self.ov_table_header.filterClicked.connect(self._on_column_filter_clicked)
+
         self.ov_view_stack = QStackedWidget()
         self.ov_view_stack.addWidget(self.ov_scroll)  # grid
         self.ov_view_stack.addWidget(self.ov_table)   # table
@@ -532,11 +856,12 @@ class OverviewPanel(QWidget):
     def _update_view_toggle_icons(self):
         """Update view toggle button icons based on checked state and theme."""
         is_dark = self._is_dark_theme()
+        mode = "dark" if is_dark else "light"
 
         # Unchecked buttons use theme color (black for light, white for dark)
         # Checked buttons always use white (because of blue background)
-        unchecked_color = "#ffffff" if is_dark else "#000000"
-        checked_color = "#ffffff"
+        unchecked_color = resolve_theme_token("icon-default", mode=mode, fallback="#ffffff" if is_dark else "#000000")
+        checked_color = resolve_theme_token("icon-on-primary", mode=mode, fallback="#ffffff")
 
         # Update grid button icon
         grid_color = checked_color if self.ov_view_grid_btn.isChecked() else unchecked_color
@@ -626,10 +951,8 @@ class OverviewPanel(QWidget):
             # Get box from record (not from values, since we merged box:position into location)
             box_number = None
             if isinstance(record, dict):
-                try:
+                with suppress(TypeError, ValueError):
                     box_number = int(record.get("box"))
-                except (TypeError, ValueError):
-                    pass
 
             color_value = ""
             if isinstance(record, dict):
@@ -679,10 +1002,8 @@ class OverviewPanel(QWidget):
 
                 # Set numeric data for proper sorting of numeric columns
                 if column == "id":
-                    try:
+                    with suppress(ValueError, TypeError):
                         item.setData(Qt.UserRole, int(value))
-                    except (ValueError, TypeError):
-                        pass
                 elif column == "location":
                     # Parse "box:position" for sorting (e.g., "1:2" -> 1002)
                     try:
@@ -726,25 +1047,48 @@ class OverviewPanel(QWidget):
             return
 
         self._set_selected_cell(box_num, position)
-        self.request_prefill_background.emit(
-            {
-                "box": box_num,
-                "position": position,
-                "record_id": record_id,
-            }
+        self._emit_takeout_prefill_background(box_num, position, record_id)
+
+    def _emit_takeout_prefill_background(self, box_num, position, record_id):
+        payload = {
+            "box": int(box_num),
+            "position": int(position),
+            "record_id": int(record_id),
+        }
+        self.request_prefill_background.emit(payload)
+        self.status_message.emit(t("overview.prefillTakeoutAuto", id=payload["record_id"]), 2000)
+
+    def _emit_add_prefill_background(self, box_num, position):
+        payload = {
+            "box": int(box_num),
+            "position": int(position),
+        }
+        self.request_add_prefill_background.emit(payload)
+        self.status_message.emit(
+            t("overview.prefillAddAuto", box=payload["box"], position=payload["position"]),
+            2000,
         )
-        self.status_message.emit(t("overview.prefillTakeoutAuto", id=record_id), 2000)
+
+    def _emit_add_prefill(self, box_num, position):
+        payload = {
+            "box": int(box_num),
+            "position": int(position),
+        }
+        self.request_add_prefill.emit(payload)
+        self.status_message.emit(
+            t("overview.prefillAdd", box=payload["box"], position=payload["position"]),
+            2000,
+        )
 
     def eventFilter(self, obj, event):
         # Ctrl+Wheel zoom on scroll area
-        if obj is self.ov_scroll and event.type() == QEvent.Wheel:
-            if event.modifiers() & Qt.ControlModifier:
-                delta = event.angleDelta().y()
-                if delta > 0:
-                    self._set_zoom(self._zoom_level + 0.1)
-                elif delta < 0:
-                    self._set_zoom(self._zoom_level - 0.1)
-                return True  # consume event
+        if obj is self.ov_scroll and event.type() == QEvent.Wheel and event.modifiers() & Qt.ControlModifier:
+            delta = event.angleDelta().y()
+            if delta > 0:
+                self._set_zoom(self._zoom_level + 0.1)
+            elif delta < 0:
+                self._set_zoom(self._zoom_level - 0.1)
+            return True  # consume event
         if event.type() in (QEvent.Enter, QEvent.HoverEnter, QEvent.HoverMove, QEvent.MouseMove):
             box_num = obj.property("overview_box")
             position = obj.property("overview_position")
@@ -752,209 +1096,17 @@ class OverviewPanel(QWidget):
                 self.on_cell_hovered(int(box_num), int(position))
         return super().eventFilter(obj, event)
 
-    def _set_zoom(self, level, animated=False):
-        """Set zoom level with optional animation."""
-        target_level = max(0.2, min(3.0, round(level, 1)))
 
-        if not animated or abs(target_level - self._zoom_level) < 0.05:
-            # Direct set without animation for small changes or when animation disabled
-            self._zoom_level = target_level
-            self._zoom_label.setText(f"{int(self._zoom_level * 100)}%")
-            self._apply_zoom()
-            return
-
-        # Animated zoom transition
-        if self._zoom_animation is not None:
-            self._zoom_animation.stop()
-
-        # Create a dummy property animation using a QLabel as proxy
-        # We'll update zoom level in the valueChanged callback
-        if not hasattr(self, '_zoom_proxy'):
-            self._zoom_proxy = QLabel()
-            self._zoom_proxy.setProperty("zoom_value", int(self._zoom_level * 100))
-
-        self._zoom_animation = QPropertyAnimation(self._zoom_proxy, b"zoom_value")
-        self._zoom_animation.setDuration(300)  # 300ms animation
-        self._zoom_animation.setEasingCurve(QEasingCurve.OutCubic)
-        self._zoom_animation.setStartValue(int(self._zoom_level * 100))
-        self._zoom_animation.setEndValue(int(target_level * 100))
-
-        def update_zoom(value):
-            self._zoom_level = value / 100.0
-            self._zoom_label.setText(f"{value}%")
-            self._apply_zoom()
-
-        self._zoom_animation.valueChanged.connect(update_zoom)
-        self._zoom_animation.start()
-
-    def _apply_zoom(self):
-        """Resize all existing cell buttons and repaint with scaled font."""
-        cell_size = max(12, int(self._base_cell_size * self._zoom_level))
-        # Scale font with zoom, baseline matches FONT_SIZE_CELL increase
-        font_size_occupied = max(9, int(FONT_SIZE_CELL * self._zoom_level))
-        font_size_empty = max(8, int((FONT_SIZE_CELL - 1) * self._zoom_level))
-        self._current_font_sizes = (font_size_occupied, font_size_empty)
-        for button in self.overview_cells.values():
-            if isinstance(button, CellButton):
-                button.reset_hover_state(clear_base=True)
-            button.setFixedSize(cell_size, cell_size)
-        # Repaint all cells with current data
-        self._repaint_all_cells()
-
-    def _animate_scroll_to(self, target_h=None, target_v=None, duration=400):
-        """Animate scroll bars to target positions."""
-        h_bar = self.ov_scroll.horizontalScrollBar()
-        v_bar = self.ov_scroll.verticalScrollBar()
-
-        # Stop any existing scroll animations
-        if self._scroll_h_animation is not None:
-            self._scroll_h_animation.stop()
-            self._scroll_h_animation = None
-        if self._scroll_v_animation is not None:
-            self._scroll_v_animation.stop()
-            self._scroll_v_animation = None
-
-        # Animate horizontal scroll
-        if target_h is not None and h_bar.value() != target_h:
-            self._scroll_h_animation = QPropertyAnimation(h_bar, b"value", self)
-            self._scroll_h_animation.setDuration(duration)
-            self._scroll_h_animation.setEasingCurve(QEasingCurve.OutCubic)
-            self._scroll_h_animation.setStartValue(h_bar.value())
-            self._scroll_h_animation.setEndValue(int(target_h))
-            self._scroll_h_animation.start()
-
-        # Animate vertical scroll
-        if target_v is not None and v_bar.value() != target_v:
-            self._scroll_v_animation = QPropertyAnimation(v_bar, b"value", self)
-            self._scroll_v_animation.setDuration(duration)
-            self._scroll_v_animation.setEasingCurve(QEasingCurve.OutCubic)
-            self._scroll_v_animation.setStartValue(v_bar.value())
-            self._scroll_v_animation.setEndValue(int(target_v))
-            self._scroll_v_animation.start()
-
-    def _fit_one_box(self):
-        """Smart zoom: fit first box to 90% of viewport with animation."""
-        if not self.overview_box_groups:
-            return
-
-        # Get first box group
-        box_numbers = sorted(self.overview_box_groups.keys())
-        if not box_numbers:
-            return
-
-        first_box = self.overview_box_groups[box_numbers[0]]
-        viewport = self.ov_scroll.viewport()
-
-        # Calculate zoom level to fit first box to 90% of viewport
-        box_width = first_box.sizeHint().width()
-        box_height = first_box.sizeHint().height()
-        viewport_width = viewport.width()
-        viewport_height = viewport.height()
-
-        if box_width <= 0 or box_height <= 0:
-            return
-
-        # Calculate zoom to fit 90% of viewport (use smaller dimension)
-        zoom_w = (viewport_width * 0.9) / box_width * self._zoom_level
-        zoom_h = (viewport_height * 0.9) / box_height * self._zoom_level
-        target_zoom = min(zoom_w, zoom_h)
-
-        # Animate zoom
-        self._set_zoom(target_zoom, animated=True)
-
-        # Calculate scroll position to center the first box
-        # Wait for zoom animation to complete before scrolling
-        def scroll_to_box():
-            box_pos = first_box.pos()
-            target_h = max(0, box_pos.x() - (viewport_width - first_box.width()) // 2)
-            target_v = max(0, box_pos.y() - (viewport_height - first_box.height()) // 2)
-            self._animate_scroll_to(target_h, target_v)
-
-        QTimer.singleShot(320, scroll_to_box)  # Slightly after zoom animation
-
-    def _fit_all_boxes(self):
-        """Smart zoom: fit all boxes in viewport with animation."""
-        if not self.overview_box_groups:
-            return
-
-        viewport = self.ov_scroll.viewport()
-        content = self.ov_boxes_widget
-
-        # Calculate zoom level to fit all content in viewport
-        content_width = content.sizeHint().width()
-        content_height = content.sizeHint().height()
-        viewport_width = viewport.width()
-        viewport_height = viewport.height()
-
-        if content_width <= 0 or content_height <= 0:
-            return
-
-        # Calculate zoom to fit all boxes (use smaller dimension, with 95% margin)
-        zoom_w = (viewport_width * 0.95) / content_width * self._zoom_level
-        zoom_h = (viewport_height * 0.95) / content_height * self._zoom_level
-        target_zoom = min(zoom_w, zoom_h)
-
-        # Animate zoom
-        self._set_zoom(target_zoom, animated=True)
-
-        # Animate scroll to top-left
-        QTimer.singleShot(320, lambda: self._animate_scroll_to(0, 0))
-
-    def _update_box_navigation(self, box_numbers):
-        """Update box quick navigation buttons."""
-        # Clear existing buttons
-        while self._box_nav_layout.count():
-            item = self._box_nav_layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
-
-        # Add navigation buttons for each box
-        for box_num in box_numbers:
-            btn = QPushButton(str(box_num))
-            btn.setFixedSize(24, 24)
-            btn.setObjectName("overviewBoxNavButton")
-            btn.setToolTip(t("overview.jumpToBox", box=box_num))
-            btn.clicked.connect(lambda checked=False, b=box_num: self._jump_to_box(b))
-            self._box_nav_layout.addWidget(btn)
-
-    def _jump_to_box(self, box_num):
-        """Jump to specific box with animated scroll and zoom."""
-        box_group = self.overview_box_groups.get(box_num)
-        if not box_group:
-            return
-
-        viewport = self.ov_scroll.viewport()
-        box_width = box_group.sizeHint().width()
-        box_height = box_group.sizeHint().height()
-        viewport_width = viewport.width()
-        viewport_height = viewport.height()
-
-        # Calculate zoom to fit this box to 85% of viewport
-        if box_width > 0 and box_height > 0:
-            zoom_w = (viewport_width * 0.85) / box_width * self._zoom_level
-            zoom_h = (viewport_height * 0.85) / box_height * self._zoom_level
-            target_zoom = min(zoom_w, zoom_h)
-
-            # Only adjust zoom if current zoom is significantly different
-            if abs(target_zoom - self._zoom_level) > 0.15:
-                # Animate zoom
-                self._set_zoom(target_zoom, animated=True)
-
-                # Calculate scroll position after zoom
-                def scroll_to_box():
-                    box_pos = box_group.pos()
-                    target_h = max(0, box_pos.x() - (viewport_width - box_group.width()) // 2)
-                    target_v = max(0, box_pos.y() - (viewport_height - box_group.height()) // 2)
-                    self._animate_scroll_to(target_h, target_v)
-
-                QTimer.singleShot(320, scroll_to_box)
-            else:
-                # Just scroll without zoom change
-                box_pos = box_group.pos()
-                target_h = max(0, box_pos.x() - (viewport_width - box_group.width()) // 2)
-                target_v = max(0, box_pos.y() - (viewport_height - box_group.height()) // 2)
-                self._animate_scroll_to(target_h, target_v)
+    _set_zoom = _ov_zoom._set_zoom
+    _apply_zoom = _ov_zoom._apply_zoom
+    _animate_scroll_to = _ov_zoom._animate_scroll_to
+    _calc_fit_zoom = staticmethod(_ov_zoom._calc_fit_zoom)
+    _calc_center_scroll_targets = staticmethod(_ov_zoom._calc_center_scroll_targets)
+    _schedule_center_scroll = _ov_zoom._schedule_center_scroll
+    _fit_one_box = _ov_zoom._fit_one_box
+    _fit_all_boxes = _ov_zoom._fit_all_boxes
+    _update_box_navigation = _ov_zoom._update_box_navigation
+    _jump_to_box = _ov_zoom._jump_to_box
 
     def _repaint_all_cells(self):
         """Repaint all cell buttons using cached data."""
@@ -1026,10 +1178,10 @@ class OverviewPanel(QWidget):
         
         self.overview_records_by_id = {}
         for rec in records:
-            if not isinstance(rec, dict): continue
-            try:
+            if not isinstance(rec, dict):
+                continue
+            with suppress(ValueError, TypeError):
                 self.overview_records_by_id[int(rec.get("id"))] = rec
-            except (ValueError, TypeError): pass
         
         self.data_loaded.emit(self.overview_records_by_id)
 
@@ -1041,7 +1193,7 @@ class OverviewPanel(QWidget):
         rows = int(layout.get("rows", 9))
         cols = int(layout.get("cols", 9))
         self._current_layout = layout
-        box_numbers = sorted([int(k) for k in box_stats.keys()], key=int)
+        box_numbers = sorted([int(k) for k in box_stats], key=int)
         if not box_numbers:
             box_count = get_box_count(layout)
             box_numbers = list(range(1, box_count + 1))
@@ -1122,7 +1274,8 @@ class OverviewPanel(QWidget):
         while self.ov_boxes_layout.count():
             item = self.ov_boxes_layout.takeAt(0)
             widget = item.widget()
-            if widget: widget.deleteLater()
+            if widget:
+                widget.deleteLater()
 
         self.overview_cells = {}
         self.overview_box_live_labels = {}
@@ -1227,7 +1380,7 @@ class OverviewPanel(QWidget):
 
             button.setToolTip("\n".join(tt))
             button.setStyleSheet(cell_occupied_style(color, is_selected, font_size=fs_occ))
-            # Dynamic search text — include cell_line + all user fields
+            # Dynamic search text 鈥?include cell_line + all user fields
             parts = [str(record.get("id", "")), str(box_num), str(position),
                      str(record.get("cell_line") or ""),
                      str(record.get("note") or ""),
@@ -1274,313 +1427,35 @@ class OverviewPanel(QWidget):
                 rec = self.overview_pos_map.get(key)
                 self._paint_cell(button, key[0], key[1], rec)
 
-    def _refresh_filter_options(self, records, box_numbers):
-        from lib.custom_fields import get_color_key
-        prev_box = self.ov_filter_box.currentData()
-        prev_cell = self.ov_filter_cell.currentData()
 
-        self.ov_filter_box.blockSignals(True)
-        self.ov_filter_box.clear()
-        self.ov_filter_box.addItem(tr("overview.allBoxes"), None)
-        for box_num in box_numbers:
-            self.ov_filter_box.addItem(t("overview.boxLabel", box=box_num), box_num)
-        index = self.ov_filter_box.findData(prev_box)
-        self.ov_filter_box.setCurrentIndex(index if index >= 0 else 0)
-        self.ov_filter_box.blockSignals(False)
+    _refresh_filter_options = _ov_filters._refresh_filter_options
+    _apply_filters = _ov_filters._apply_filters
+    _apply_filters_grid = _ov_filters._apply_filters_grid
+    _apply_filters_table = _ov_filters._apply_filters_table
+    on_toggle_filters = _ov_filters.on_toggle_filters
+    on_clear_filters = _ov_filters.on_clear_filters
+    _on_column_filter_clicked = _ov_filters._on_column_filter_clicked
+    _detect_column_type = _ov_filters._detect_column_type
+    _get_unique_column_values = _ov_filters._get_unique_column_values
+    _match_column_filter = _ov_filters._match_column_filter
 
-        meta = getattr(self, "_current_meta", {})
-        ck = get_color_key(meta)
-        values = sorted({str(rec.get(ck)) for rec in records if rec.get(ck)})
-        self.ov_filter_cell.blockSignals(True)
-        self.ov_filter_cell.clear()
-        self.ov_filter_cell.addItem(tr("overview.allCells"), None)
-        for val in values:
-            self.ov_filter_cell.addItem(val, val)
-        index = self.ov_filter_cell.findData(prev_cell)
-        self.ov_filter_cell.setCurrentIndex(index if index >= 0 else 0)
-        self.ov_filter_cell.blockSignals(False)
 
-    def _apply_filters(self):
-        keyword = self.ov_filter_keyword.text().strip().lower()
-        selected_box = self.ov_filter_box.currentData()
-        selected_cell = self.ov_filter_cell.currentData()
-        show_empty = self.ov_filter_show_empty.isChecked()
-
-        if self._overview_view_mode == "table":
-            self._apply_filters_table(
-                keyword=keyword,
-                selected_box=selected_box,
-                selected_cell=selected_cell,
-            )
-            return
-
-        self._apply_filters_grid(
-            keyword=keyword,
-            selected_box=selected_box,
-            selected_cell=selected_cell,
-            show_empty=show_empty,
-        )
-
-    def _apply_filters_grid(self, keyword, selected_box, selected_cell, show_empty):
-        visible_boxes = 0
-        visible_slots = 0
-        per_box = {box: {"occ": 0, "emp": 0} for box in self.overview_box_groups.keys()}
-
-        for (box_num, position), button in self.overview_cells.items():
-            record = self.overview_pos_map.get((box_num, position))
-            is_empty = record is None
-            match_box = selected_box is None or box_num == selected_box
-            match_cell = selected_cell is None or (record and str(button.property("color_key_value") or "") == selected_cell)
-            match_empty = show_empty or not is_empty
-
-            if keyword:
-                search_text = str(button.property("search_text") or "")
-                match_keyword = keyword in search_text
-            else:
-                match_keyword = True
-
-            visible = bool(match_box and match_cell and match_empty and match_keyword)
-            button.setVisible(visible)
-
-            if visible:
-                visible_slots += 1
-                if is_empty:
-                    per_box.setdefault(box_num, {"occ": 0, "emp": 0})["emp"] += 1
-                else:
-                    per_box.setdefault(box_num, {"occ": 0, "emp": 0})["occ"] += 1
-
-        for box_num, group in self.overview_box_groups.items():
-            stat = per_box.get(box_num, {"occ": 0, "emp": 0})
-            total_visible = stat["occ"] + stat["emp"]
-            group.setVisible(total_visible > 0)
-            if total_visible > 0:
-                visible_boxes += 1
-
-            live = self.overview_box_live_labels.get(box_num)
-            if live:
-                live.setText(t("overview.filteredCount", occupied=stat['occ'], empty=stat['emp']))
-
-        if self.overview_selected_key:
-            selected_button = self.overview_cells.get(self.overview_selected_key)
-            if selected_button and not selected_button.isVisible():
-                self._clear_selected_cell()
-                self._reset_detail()
-
-        self.ov_status.setText(
-            t(
-                "overview.filterStatus",
-                slots=visible_slots,
-                boxes=visible_boxes,
-                time=datetime.now().strftime("%H:%M:%S"),
-            )
-        )
-
-    def _apply_filters_table(self, keyword, selected_box, selected_cell):
-        matched_rows = []
-        matched_boxes = set()
-
-        for row_data in self._table_rows:
-            box_num = row_data.get("box")
-            color_value = str(row_data.get("color_value") or "")
-
-            match_box = selected_box is None or box_num == selected_box
-            match_cell = selected_cell is None or color_value == selected_cell
-
-            if keyword:
-                match_keyword = keyword in str(row_data.get("search_text") or "")
-            else:
-                match_keyword = True
-
-            if not (match_box and match_cell and match_keyword):
-                continue
-
-            matched_rows.append(row_data)
-            if box_num is not None:
-                matched_boxes.add(box_num)
-
-        self._render_table_rows(matched_rows)
-        self.ov_status.setText(
-            t(
-                "overview.filterStatusTable",
-                records=len(matched_rows),
-                boxes=len(matched_boxes),
-                time=datetime.now().strftime("%H:%M:%S"),
-            )
-        )
-
-    def on_toggle_filters(self, checked):
-        self.ov_filter_advanced_widget.setVisible(bool(checked))
-        self.ov_filter_toggle_btn.setText(tr("overview.hideFilters") if checked else tr("overview.moreFilters"))
-        # Update icon based on state
-        icon_name = Icons.CHEVRON_UP if checked else Icons.CHEVRON_DOWN
-        self.ov_filter_toggle_btn.setIcon(get_icon(icon_name))
-
-    def on_clear_filters(self):
-        self.ov_filter_keyword.clear()
-        self.ov_filter_box.setCurrentIndex(0)
-        self.ov_filter_cell.setCurrentIndex(0)
-        self.ov_filter_show_empty.setChecked(True)
-        if self.ov_filter_toggle_btn.isChecked():
-            self.ov_filter_toggle_btn.setChecked(False)
-        self._apply_filters()
-
-    def on_cell_clicked(self, box_num, position):
-        self.on_cell_double_clicked(box_num, position)
-
-    def on_cell_double_clicked(self, box_num, position):
-        record = self.overview_pos_map.get((box_num, position))
-        self._set_selected_cell(box_num, position)
-        self.on_cell_hovered(box_num, position, force=True)
-
-        # Double click should be low-friction: just prefill common forms, no popup menu.
-        if record:
-            rec_id = int(record.get("id"))
-            self.request_prefill_background.emit({
-                "box": int(box_num),
-                "position": int(position),
-                "record_id": rec_id,
-            })
-            self.status_message.emit(t("overview.prefillTakeoutAuto", id=rec_id), 2000)
-        else:
-            self.request_add_prefill_background.emit({
-                "box": int(box_num),
-                "position": int(position),
-            })
-            self.status_message.emit(
-                t("overview.prefillAddAuto", box=box_num, position=position),
-                2000,
-            )
-
-    def on_cell_hovered(self, box_num, position, force=False):
-        hover_key = (box_num, position)
-        if not force and self.overview_hover_key == hover_key:
-            return
-        button = self.overview_cells.get((box_num, position))
-        if button is not None and not button.isVisible():
-            return
-        record = self.overview_pos_map.get((box_num, position))
-        self.overview_hover_key = hover_key
-        self._show_detail(box_num, position, record)
-        # Emit hover stats for status bar
-        self._emit_hover_stats(box_num, position, record)
-
-    def _reset_detail(self):
-        self.overview_hover_key = None
-        self.ov_hover_hint.setText(tr("overview.hoverHint"))
-        # Emit empty hover stats to reset status bar
-        self.hover_stats_changed.emit("")
-
-    def _emit_hover_stats(self, box_num, position, record):
-        """Emit formatted hover stats for status bar display."""
-        if not record:
-            self.hover_stats_changed.emit(t("overview.previewEmpty", box=box_num, pos=position))
-            return
-
-        from lib.custom_fields import get_display_key
-        meta = getattr(self, "_current_meta", {})
-        dk = get_display_key(meta)
-        rec_id = str(record.get("id", "-"))
-        dk_val = str(record.get(dk, "-"))
-        frozen_at = str(record.get("frozen_at", "-"))
-        # Compact format for status bar
-        self.hover_stats_changed.emit(
-            f"ID {rec_id} | {box_num}:{position} | {dk_val} | {tr('operations.frozenDate')}: {frozen_at}"
-        )
-
-    def _show_detail(self, box_num, position, record):
-        if not record:
-            self.ov_hover_hint.setText(t("overview.previewEmpty", box=box_num, pos=position))
-            return
-
-        from lib.custom_fields import get_display_key
-        meta = getattr(self, "_current_meta", {})
-        dk = get_display_key(meta)
-        rec_id = str(record.get("id", "-"))
-        dk_val = str(record.get(dk, "-"))
-        self.ov_hover_hint.setText(
-            t("overview.previewRecord", box=box_num, pos=position, id=rec_id, cell=dk_val, short=dk_val)
-        )
-
-    def on_cell_context_menu(self, box_num, position, global_pos):
-        record = self.overview_pos_map.get((box_num, position))
-        self._set_selected_cell(box_num, position)
-        self.on_cell_hovered(box_num, position, force=True)
-
-        menu = QMenu(self)
-        act_add = None
-        act_takeout = None
-
-        if record:
-            # 只保留"取出"选项
-            act_takeout = menu.addAction(tr("overview.takeout"))
-        else:
-            act_add = menu.addAction(tr("operations.add"))
-
-        selected = menu.exec(global_pos)
-        if selected is None:
-            return
-
-        if selected == act_add:
-            # 空格子：保持原有的添加逻辑（预填充表单）
-            self.request_add_prefill.emit({
-                "box": int(box_num),
-                "position": int(position),
-            })
-            self.status_message.emit(
-                t("overview.prefillAdd", box=box_num, position=position),
-                2000,
-            )
-            return
-
-        if not record:
-            return
-
-        # 有记录：直接创建取出 plan item
-        rec_id = int(record.get("id"))
-        if selected == act_takeout:
-            self._create_takeout_plan_item(rec_id, box_num, position, record)
-
-    def _create_takeout_plan_item(self, record_id, box_num, position, record):
-        """Create a takeout plan item directly from overview context menu."""
-        from lib.plan_item_factory import build_record_plan_item, resolve_record_box
-        from datetime import date
-
-        # 构建 plan item（使用 Takeout 动作）
-        item = build_record_plan_item(
-            action="Takeout",
-            record_id=record_id,
-            position=position,
-            box=resolve_record_box(record, fallback_box=box_num),
-            date_str=date.today().isoformat(),
-            source="context_menu",  # 标记来源
-            payload_action="Takeout",
-        )
-
-        # 发送到 plan 列表（会自动触发 preflight 校验）
-        self.plan_items_requested.emit([item])
-
-        # 状态提示
-        self.status_message.emit(
-            t("overview.takeoutAdded", id=record_id),
-            2000,
-        )
-
-    def _on_cell_drop(self, from_box, from_pos, to_box, to_pos, record_id):
-        if from_box == to_box and from_pos == to_pos:
-            return
-
-        # Prefill to Move form (same as right-click menu)
-        self.request_move_prefill.emit({
-            "box": from_box,
-            "position": from_pos,
-            "record_id": record_id,
-            "to_box": to_box,
-            "to_position": to_pos,
-        })
-        target_desc = f"Box {to_box}:{to_pos}" if to_box != from_box else f"Pos {to_pos}"
-        self.status_message.emit(t("overview.prefillMove", id=record_id), 2000)
+    on_cell_clicked = _ov_interactions.on_cell_clicked
+    on_cell_double_clicked = _ov_interactions.on_cell_double_clicked
+    on_cell_hovered = _ov_interactions.on_cell_hovered
+    _reset_detail = _ov_interactions._reset_detail
+    _normalize_preview_value = staticmethod(_ov_interactions._normalize_preview_value)
+    _resolve_preview_values = _ov_interactions._resolve_preview_values
+    _emit_hover_stats = _ov_interactions._emit_hover_stats
+    _show_detail = _ov_interactions._show_detail
+    on_cell_context_menu = _ov_interactions.on_cell_context_menu
+    _create_takeout_plan_item = _ov_interactions._create_takeout_plan_item
+    _on_cell_drop = _ov_interactions._on_cell_drop
 
     def set_summary_cards_visible(self, visible):
         """Show or hide the summary cards (used when displaying stats in status bar instead)."""
         self._show_summary_cards = visible
         self._summary_container.setVisible(visible)
+
+
+
