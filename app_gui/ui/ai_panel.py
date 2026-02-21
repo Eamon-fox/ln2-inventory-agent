@@ -151,6 +151,7 @@ class AIPanel(QWidget):
             "p { margin-top: 2px; margin-bottom: 2px; }"
         )
         self.ai_chat.viewport().installEventFilter(self)
+        self.ai_chat.viewport().setCursor(Qt.ArrowCursor)
         layout.addWidget(self.ai_chat, 1)
 
         # ── Bottom dock: prompt input + controls ──
@@ -238,13 +239,13 @@ class AIPanel(QWidget):
     def _handle_chat_anchor_click(self, event):
         if not isinstance(event, QMouseEvent):
             return
-        pos = event.pos()
         doc = self.ai_chat.document()
-        cursor = self.ai_chat.cursorForPosition(pos)
-        anchor = cursor.charFormat().anchorHref()
+        anchor = doc.documentLayout().anchorAt(event.pos())
+        if not anchor:
+            return
         if anchor == "toggle_thought":
             self._toggle_current_thought_collapsed()
-        elif anchor and anchor.startswith("toggle_details_"):
+        elif anchor.startswith("toggle_details_"):
             self._toggle_collapsible_block(anchor)
 
     def _toggle_current_thought_collapsed(self):
@@ -1048,6 +1049,17 @@ class AIPanel(QWidget):
             return text[: max(0, limit - 3)] + "..."
         return text
 
+    @staticmethod
+    def _trf(key, default, **kwargs):
+        """Translate and format with safe fallback when locale catalog is not loaded."""
+        text = tr(key, default=default)
+        if kwargs:
+            try:
+                return text.format(**kwargs)
+            except (KeyError, ValueError):
+                return text
+        return text
+
     def _format_notice_operation(self, item, row=None):
         payload = item.get("payload") if isinstance(item, dict) else {}
         payload = payload if isinstance(payload, dict) else {}
@@ -1116,9 +1128,20 @@ class AIPanel(QWidget):
                 item = row_data.get("item") if isinstance(row_data.get("item"), dict) else {}
                 if not item:
                     continue
-                status = "OK" if row_data.get("ok") else ("BLOCKED" if row_data.get("blocked") else "FAIL")
-                line = f"{status}: {self._format_notice_operation(item, row=row_data)}"
-                if status != "OK":
+                is_ok = bool(row_data.get("ok"))
+                if is_ok:
+                    status = tr("ai.systemNotice.statusOk", default="OK")
+                elif row_data.get("blocked"):
+                    status = tr("ai.systemNotice.statusBlocked", default="BLOCKED")
+                else:
+                    status = tr("ai.systemNotice.statusFail", default="FAIL")
+                line = self._trf(
+                    "ai.systemNotice.operationStatusLine",
+                    default="{status}: {operation}",
+                    status=status,
+                    operation=self._format_notice_operation(item, row=row_data),
+                )
+                if not is_ok:
                     message = row_data.get("message") or row_data.get("error_code")
                     if not message:
                         response = row_data.get("response") if isinstance(row_data.get("response"), dict) else {}
@@ -1151,18 +1174,39 @@ class AIPanel(QWidget):
         details_text = ""
         if details and str(details).strip() and str(details).strip() != text:
             details_text = self._single_line_text(details, limit=360)
+            if self._should_hide_notice_details_line(code, details_text, op_lines):
+                details_text = ""
 
         if op_lines:
-            lines.append(f"Operations ({len(op_lines)}):")
+            lines.append(
+                self._trf(
+                    "ai.systemNotice.operationsHeader",
+                    default="Operations ({count}):",
+                    count=len(op_lines),
+                )
+            )
             for op in op_lines[:8]:
                 lines.append(f"- {op}")
             if len(op_lines) > 8:
-                lines.append(f"- ... and {len(op_lines) - 8} more")
+                lines.append(
+                    "- "
+                    + self._trf(
+                        "ai.systemNotice.andMore",
+                        default="... and {count} more",
+                        count=len(op_lines) - 8,
+                    )
+                )
 
         if details_text:
             if lines:
                 lines.append("")
-            lines.append(f"Details: {details_text}")
+            lines.append(
+                self._trf(
+                    "ai.systemNotice.detailsLine",
+                    default="Details: {details}",
+                    details=details_text,
+                )
+            )
 
         if meta_lines:
             if lines:
@@ -1183,67 +1227,152 @@ class AIPanel(QWidget):
             if scalar_lines:
                 if lines:
                     lines.append("")
-                lines.append("Data:")
+                lines.append(tr("ai.systemNotice.dataHeader", default="Data:"))
                 lines.extend(scalar_lines[:8])
 
         if not lines:
             lines.append(text or code)
 
-        meta = [f"code={code}", f"level={level}"]
+        meta = [
+            f"{tr('ai.systemNotice.metaCode', default='code')}={code}",
+            f"{tr('ai.systemNotice.metaLevel', default='level')}={level}",
+        ]
         if timestamp:
-            meta.append(f"time={timestamp}")
+            meta.append(f"{tr('ai.systemNotice.metaTime', default='time')}={timestamp}")
         lines.append("")
-        lines.append("Meta: " + ", ".join(meta))
+        lines.append(f"{tr('ai.systemNotice.metaHeader', default='Meta')}: " + ", ".join(meta))
         return "\n".join(lines)
+
+    def _normalize_notice_lines_for_compare(self, values):
+        normalized = []
+        for value in values or []:
+            text = str(value or "")
+            for raw_line in text.splitlines():
+                line = " ".join(raw_line.strip().split())
+                if line:
+                    normalized.append(line)
+        return normalized
+
+    def _should_hide_notice_details_line(self, code, details_text, op_lines):
+        """Hide Details only when it duplicates operation lines for safe notice types."""
+        dedupe_allowed_codes = {
+            "plan.stage.accepted",
+            "plan.removed",
+            "plan.cleared",
+            "plan.restored",
+        }
+        if code not in dedupe_allowed_codes:
+            return False
+
+        op_norm = set(self._normalize_notice_lines_for_compare(op_lines))
+        if not op_norm:
+            return False
+
+        details_norm = self._normalize_notice_lines_for_compare([details_text])
+        if not details_norm:
+            return False
+
+        return all(line in op_norm for line in details_norm)
 
     def _extract_notice_meta_lines(self, code, data):
         lines = []
         if code == "plan.stage.accepted":
             lines.append(
-                f"Counts: added={int(data.get('added_count') or 0)}, total={int(data.get('total_count') or 0)}"
+                self._trf(
+                    "ai.systemNotice.countsAdded",
+                    default="Counts: added={added}, total={total}",
+                    added=int(data.get("added_count") or 0),
+                    total=int(data.get("total_count") or 0),
+                )
             )
         elif code == "plan.removed":
             lines.append(
-                f"Counts: removed={int(data.get('removed_count') or 0)}, total={int(data.get('total_count') or 0)}"
+                self._trf(
+                    "ai.systemNotice.countsRemoved",
+                    default="Counts: removed={removed}, total={total}",
+                    removed=int(data.get("removed_count") or 0),
+                    total=int(data.get("total_count") or 0),
+                )
             )
         elif code == "plan.cleared":
-            lines.append(f"Counts: cleared={int(data.get('cleared_count') or 0)}")
+            lines.append(
+                self._trf(
+                    "ai.systemNotice.countsCleared",
+                    default="Counts: cleared={cleared}",
+                    cleared=int(data.get("cleared_count") or 0),
+                )
+            )
         elif code == "plan.restored":
-            lines.append(f"Counts: restored={int(data.get('restored_count') or 0)}")
+            lines.append(
+                self._trf(
+                    "ai.systemNotice.countsRestored",
+                    default="Counts: restored={restored}",
+                    restored=int(data.get("restored_count") or 0),
+                )
+            )
         elif code == "plan.stage.blocked":
             blocked_items = data.get("blocked_items") if isinstance(data.get("blocked_items"), list) else []
             stats = data.get("stats") if isinstance(data.get("stats"), dict) else {}
             lines.append(
-                f"Counts: blocked={len(blocked_items)}, total={int(stats.get('total') or 0)}"
+                self._trf(
+                    "ai.systemNotice.countsBlocked",
+                    default="Counts: blocked={blocked}, total={total}",
+                    blocked=len(blocked_items),
+                    total=int(stats.get("total") or 0),
+                )
             )
         elif code == "plan.execute.result":
             stats = data.get("stats") if isinstance(data.get("stats"), dict) else {}
             lines.append(
-                "Stats: "
-                f"applied={int(stats.get('applied') or 0)}, "
-                f"failed={int(stats.get('failed') or 0)}, "
-                f"blocked={int(stats.get('blocked') or 0)}, "
-                f"remaining={int(stats.get('remaining') or 0)}, "
-                f"total={int(stats.get('total') or 0)}"
+                self._trf(
+                    "ai.systemNotice.statsSummary",
+                    default="Stats: applied={applied}, failed={failed}, blocked={blocked}, remaining={remaining}, total={total}",
+                    applied=int(stats.get("applied") or 0),
+                    failed=int(stats.get("failed") or 0),
+                    blocked=int(stats.get("blocked") or 0),
+                    remaining=int(stats.get("remaining") or 0),
+                    total=int(stats.get("total") or 0),
+                )
             )
 
             rollback = data.get("rollback") if isinstance(data.get("rollback"), dict) else {}
             if rollback:
                 if rollback.get("ok"):
-                    lines.append("Rollback: succeeded")
-                elif rollback.get("attempted"):
                     lines.append(
-                        f"Rollback: failed | {self._single_line_text(rollback.get('message') or rollback.get('error_code'))}"
+                        tr(
+                            "ai.systemNotice.rollbackSucceeded",
+                            default="Rollback: succeeded",
+                        )
+                    )
+                elif rollback.get("attempted"):
+                    reason = self._single_line_text(rollback.get("message") or rollback.get("error_code"))
+                    lines.append(
+                        self._trf(
+                            "ai.systemNotice.rollbackFailed",
+                            default="Rollback: failed | {reason}",
+                            reason=reason,
+                        )
                     )
                 else:
+                    reason = self._single_line_text(rollback.get("message") or rollback.get("error_code"))
                     lines.append(
-                        f"Rollback: unavailable | {self._single_line_text(rollback.get('message') or rollback.get('error_code'))}"
+                        self._trf(
+                            "ai.systemNotice.rollbackUnavailable",
+                            default="Rollback: unavailable | {reason}",
+                            reason=reason,
+                        )
                     )
 
             report = data.get("report") if isinstance(data.get("report"), dict) else {}
             backup_path = report.get("backup_path")
             if backup_path:
-                lines.append(f"Backup: {backup_path}")
+                lines.append(
+                    self._trf(
+                        "ai.systemNotice.backupPath",
+                        default="Backup: {path}",
+                        path=backup_path,
+                    )
+                )
 
         return lines
 
@@ -1497,31 +1626,61 @@ class AIPanel(QWidget):
             preview = '\n'.join(preview_lines)
             preview_escaped = preview.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
             has_more = len(lines) > preview_limit
-            html = (
-                f'<div style="margin: 4px 0; border: 1px solid {border}; border-radius: 4px; '
-                f'background: {bg}; padding: 6px 8px; font-family: monospace; font-size: {FONT_SIZE_SM}px; '
-                f'color: {text_color}; white-space: pre-wrap; overflow: hidden;">'
-            )
-            if preview:
-                html += f'{preview_escaped}'
+
             if has_more:
                 if preview:
-                    html += '<br/>'
-                html += (
-                    f'<a href="{block_id}" style="color: {link_color}; font-size: {FONT_SIZE_XS}px; '
-                    f'text-decoration: none;">&#9660; Expand ({len(lines)} lines)</a>'
+                    # Keep preview in a framed block when preview lines are requested.
+                    html = (
+                        f'<table style="margin: 4px 0; border: 1px solid {border}; border-radius: 4px; '
+                        f'background: {bg}; padding: 0; width: 100%; border-collapse: collapse;">'
+                        f'<tr><td style="padding: 6px 8px; font-family: monospace; font-size: {FONT_SIZE_SM}px; '
+                        f'color: {text_color}; white-space: pre-wrap;">'
+                        f'<a href="{block_id}" style="color: {link_color}; font-size: {FONT_SIZE_XS}px; '
+                        f'text-decoration: none;">&#9660; Expand ({len(lines)} lines)</a>'
+                        f'<br/>{preview_escaped}'
+                        f'</td></tr></table>'
+                    )
+                else:
+                    # With zero preview lines, use inline link to avoid occupying an extra row.
+                    html = (
+                        f'<a href="{block_id}" style="color: {link_color}; font-size: {FONT_SIZE_XS}px; '
+                        f'text-decoration: none;">&#9660; Expand ({len(lines)} lines)</a>'
+                    )
+            else:
+                # No expand link needed if no content to show
+                html = (
+                    f'<div style="margin: 4px 0; border: 1px solid {border}; border-radius: 4px; '
+                    f'background: {bg}; padding: 6px 8px; font-family: monospace; font-size: {FONT_SIZE_SM}px; '
+                    f'color: {text_color}; white-space: pre-wrap; overflow: hidden;">'
                 )
-            html += '</div>'
+                if preview:
+                    html += f'{preview_escaped}'
+                html += '</div>'
         else:
-            html = (
-                f'<div style="margin: 4px 0; border: 1px solid {border}; border-radius: 4px; '
-                f'background: {bg}; padding: 6px 8px; font-family: monospace; font-size: {FONT_SIZE_SM}px; '
-                f'color: {text_color}; white-space: pre-wrap; max-height: 300px; overflow-y: auto;">'
-                f'<a href="{block_id}" style="color: {link_color}; font-size: {FONT_SIZE_XS}px; '
-                f'text-decoration: none;">&#9650; Collapse</a>'
-                f'<br/>{escaped}'
-                f'</div>'
-            )
+            preview_limit = max(0, int(preview_lines or 0))
+            if preview_limit <= 0:
+                # Keep toggle link at the same anchor position as collapsed state.
+                html = (
+                    f'<a href="{block_id}" style="color: {link_color}; font-size: {FONT_SIZE_XS}px; '
+                    f'text-decoration: none;">&#9650; Collapse</a>'
+                    f'<div style="margin: 4px 0 0 0; border: 1px solid {border}; border-radius: 4px; '
+                    f'background: {bg}; padding: 6px 8px; font-family: monospace; font-size: {FONT_SIZE_SM}px; '
+                    f'color: {text_color}; white-space: pre-wrap; max-height: 300px; overflow-y: auto;">'
+                    f'{escaped}</div>'
+                )
+            else:
+                # Use table structure to completely isolate link from content
+                html = (
+                    f'<table style="margin: 4px 0; border: 1px solid {border}; border-radius: 4px; '
+                    f'background: {bg}; padding: 0; width: 100%; border-collapse: collapse;">'
+                    f'<tr><td style="padding: 6px 8px; border-bottom: 1px solid {border};">'
+                    f'<a href="{block_id}" style="color: {link_color}; font-size: {FONT_SIZE_XS}px; '
+                    f'text-decoration: none;">&#9650; Collapse</a></td></tr>'
+                    f'<tr><td style="padding: 6px 8px; font-family: monospace; font-size: {FONT_SIZE_SM}px; '
+                    f'color: {text_color}; white-space: pre-wrap; max-height: 300px; overflow-y: auto;">'
+                    f'{escaped}</td></tr>'
+                    f'</table>'
+                )
         return html
 
     def _toggle_collapsible_block(self, block_id):
