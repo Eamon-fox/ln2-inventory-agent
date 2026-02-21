@@ -1,4 +1,4 @@
-"""Missing unit tests for agent/ layer modules.
+﻿"""Missing unit tests for agent/ layer modules.
 
 Tests for:
 - tool_runner.py: plan staging, normalization, hints
@@ -6,13 +6,12 @@ Tests for:
 - llm_client.py: client behavior
 """
 
-import json
 import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock, patch
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,7 +20,7 @@ if str(ROOT) not in sys.path:
 
 from agent.tool_runner import AgentToolRunner
 from agent.llm_client import DeepSeekLLMClient
-from lib.yaml_ops import create_yaml_backup, load_yaml, write_yaml
+from lib.yaml_ops import create_yaml_backup, write_yaml
 
 
 def make_record(rec_id=1, box=1, position=None):
@@ -42,7 +41,7 @@ def make_data(records):
     }
 
 
-# ── tool_runner.py Tests ──────────────────────────────────────────
+# 鈹€鈹€ tool_runner.py Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class ToolRunnerNormalizationTests(unittest.TestCase):
@@ -150,16 +149,16 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertEqual("add", self.plan_store.list_items()[0]["action"])
         self.assertEqual(1, self.plan_store.list_items()[0]["box"])
 
-    def test_stage_to_plan_record_thaw(self):
-        """Test staging record_thaw operation."""
+    def test_stage_to_plan_record_takeout(self):
+        """Test staging record_takeout operation."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
-            "record_thaw",
+            "record_takeout",
             {
                 "record_id": 1,
                 "position": 5,
                 "date": "2026-02-10",
-                "action": "取出",
+                "action": "takeout",
             },
         )
         self.assertTrue(result["ok"])
@@ -168,27 +167,27 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertEqual("takeout", self.plan_store.list_items()[0]["action"])
         self.assertEqual(5, self.plan_store.list_items()[0]["position"])
 
-    def test_stage_to_plan_record_thaw_rejects_legacy_action_alias(self):
-        """Legacy alias 解冻 should be rejected by strict schema."""
+    def test_stage_to_plan_record_takeout_rejects_legacy_action_alias(self):
+        """Legacy alias 瑙ｅ喕 should be rejected by strict schema."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
-            "record_thaw",
+            "record_takeout",
             {
                 "record_id": 1,
                 "position": 5,
                 "date": "2026-02-10",
-                "action": "解冻",
+                "action": "瑙ｅ喕",
             },
         )
         self.assertFalse(result["ok"])
         self.assertEqual("invalid_tool_input", result["error_code"])
         self.assertEqual(0, len(self.plan_store.list_items()))
 
-    def test_stage_to_plan_record_thaw_move(self):
-        """Test staging record_thaw with move action."""
+    def test_stage_to_plan_record_takeout_move(self):
+        """Test staging record_takeout with move action."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
-            "record_thaw",
+            "record_takeout",
             {
                 "record_id": 1,
                 "position": 5,
@@ -202,26 +201,26 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertEqual("move", self.plan_store.list_items()[0]["action"])
         self.assertEqual(10, self.plan_store.list_items()[0]["to_position"])
 
-    def test_stage_to_plan_batch_thaw(self):
-        """Test staging batch_thaw operation."""
+    def test_stage_to_plan_batch_takeout(self):
+        """Test staging batch_takeout operation."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
-            "batch_thaw",
+            "batch_takeout",
             {
                 "entries": [[1, 5], [2, 10]],
                 "date": "2026-02-10",
-                "action": "取出",
+                "action": "takeout",
             },
         )
         self.assertTrue(result["ok"])
         self.assertTrue(result.get("staged"))
         self.assertEqual(2, len(self.plan_store.list_items()))
 
-    def test_stage_to_plan_batch_thaw_move(self):
-        """Test staging batch_thaw with move entries."""
+    def test_stage_to_plan_batch_takeout_move(self):
+        """Test staging batch_takeout with move entries."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
-            "batch_thaw",
+            "batch_takeout",
             {
                 "entries": [[1, 5, 10]],
                 "date": "2026-02-10",
@@ -254,7 +253,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=5)])
         runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
-            "record_thaw",
+            "record_takeout",
             {
                 "record_id": 999,
                 "position": 5,
@@ -279,7 +278,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         yaml_path = self._seed_yaml(records)
         runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
-            "batch_thaw",
+            "batch_takeout",
             {
                 "entries": [[1, 5], [999, 5]],
                 "date": "2026-02-10",
@@ -300,7 +299,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=5)])
         runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
-            "batch_thaw",
+            "batch_takeout",
             {
                 "entries": [
                     [1, 5],
@@ -445,7 +444,7 @@ class ToolRunnerHintTests(unittest.TestCase):
         """Test hint for record_not_found."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
         payload = {"error_code": "record_not_found"}
-        hint = runner._hint_for_error("record_thaw", payload)
+        hint = runner._hint_for_error("record_takeout", payload)
         self.assertIn("search_records", hint)
 
     def test_hint_for_error_position_conflict(self):
@@ -459,7 +458,7 @@ class ToolRunnerHintTests(unittest.TestCase):
         """Test hint for invalid_move_target."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
         payload = {"error_code": "invalid_move_target"}
-        hint = runner._hint_for_error("record_thaw", payload)
+        hint = runner._hint_for_error("record_takeout", payload)
         self.assertIn("to_position", hint)
 
     def test_hint_for_error_no_backups(self):
@@ -481,7 +480,7 @@ class ToolRunnerHintTests(unittest.TestCase):
         """Test hint for plan_preflight_failed."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
         payload = {"error_code": "plan_preflight_failed"}
-        hint = runner._hint_for_error("record_thaw", payload)
+        hint = runner._hint_for_error("record_takeout", payload)
         self.assertIn("invalid", hint.lower())
         self.assertIn("retry", hint.lower())
 
@@ -499,12 +498,11 @@ class DeepSeekLLMClientMockTests(unittest.TestCase):
 
     def test_deepseek_client_requires_api_key(self):
         """Test DeepSeekLLMClient requires API key."""
-        with patch.dict("os.environ", {}, clear=True):
-            with self.assertRaises(RuntimeError):
-                DeepSeekLLMClient()
+        with patch.dict("os.environ", {}, clear=True), self.assertRaises(RuntimeError):
+            DeepSeekLLMClient()
 
 
-# ── react_agent.py Tests (Unit Tests) ───────────────────────────
+# 鈹€鈹€ react_agent.py Tests (Unit Tests) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class ReactAgentHistoryTests(unittest.TestCase):
@@ -666,7 +664,7 @@ class ReactAgentParsingTests(unittest.TestCase):
         self.assertEqual("max_steps", result3["data"]["status"])
 
 
-# ── ReactAgent run() Behavior Tests ────────────────────────────
+# 鈹€鈹€ ReactAgent run() Behavior Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 
 class ReactAgentRunBehaviorTests(unittest.TestCase):
@@ -699,3 +697,4 @@ class ReactAgentRunBehaviorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

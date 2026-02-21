@@ -1,4 +1,4 @@
-"""ReAct loop implementation for LN2 inventory agent."""
+﻿"""ReAct loop implementation for LN2 inventory agent."""
 
 import json
 import re
@@ -20,13 +20,13 @@ Rules:
 4) If enough information is available, answer directly and clearly.
 5) Keep responses concise and operationally accurate.
 6) For greetings/chitchat/clarification-only turns, answer directly without calling tools.
-7) For move operations: to change a tube's box, use `to_box` parameter in record_thaw or batch_thaw.
+7) For move operations: to change a tube's box, use `to_box` parameter in record_takeout or batch_takeout.
    Inventory is tube-level (one record == one physical tube; positions length <= 1).
-   batch_thaw entries format for cross-box: '4:5->4:1' (id:from->to:target_box).
+   batch_takeout entries format for cross-box: '4:5->4:1' (id:from->to:target_box).
 8) Before asking user for missing details, first call inventory tools (e.g., query/search/list-empty) to understand current warehouse state and infer likely targets.
    For single-slot checks (e.g., "box 2 position 15"), prefer `search_records` with structured filters (`box`, `position`) instead of inferring from `list_empty_positions`.
-9) IMPORTANT: After staging operations (e.g., via record_thaw, batch_thaw, add_entry), do NOT try to execute them. Only stage the operations and tell the user "已暂存，请人工确认执行" (staged, please confirm manually). Only the human user can execute staged operations.
-10) You have a `question` tool to ask the user clarifying questions. Use it ONLY when you cannot determine the answer from inventory data. Always try query/search tools first before asking the user. Call `question` alone — never in parallel with other tools.
+9) IMPORTANT: After staging operations (e.g., via record_takeout, batch_takeout, add_entry), do NOT try to execute them. Only stage the operations and tell the user "宸叉殏瀛橈紝璇蜂汉宸ョ‘璁ゆ墽琛? (staged, please confirm manually). Only the human user can execute staged operations.
+10) You have a `question` tool to ask the user clarifying questions. Use it ONLY when you cannot determine the answer from inventory data. Always try query/search tools first before asking the user. Call `question` alone 鈥?never in parallel with other tools.
 11) You do NOT have permission to add, remove, or rename inventory fields. Field management (custom fields, display key, required settings) can only be done by the user through Settings > Manage Fields. If the user asks you to modify field definitions, tell them to go to Settings and remind them to be careful with data safety when deleting fields.
 12) You can inspect and manage the staging area via one tool: `manage_staged`.
     - operation=`list`: see what's currently queued for human approval
@@ -34,7 +34,7 @@ Rules:
     - operation=`clear`: clear all staged items
     Use this to verify staging results or correct mistakes before the user executes.
 13) To add/remove LN2 boxes, use `manage_boxes`. This tool requires a GUI confirmation step by the human user before execution.
-14) `query_thaw_events` has two modes: view=`events` (event records) and view=`summary` (timeline summary).
+14) `query_takeout_events` has two modes: view=`events` (event records) and view=`summary` (timeline summary).
 15) Rollback is high impact. Before staging rollback, investigate context using inventory/audit/timeline tools. If backup choice is ambiguous, ask the user via `question` tool and then stage only the confirmed rollback target.
 """
 
@@ -129,11 +129,11 @@ class ReactAgent:
             return options
 
         for raw_line in str(text).splitlines():
-            line = re.sub(r"^\s*[-*•]\s*", "", raw_line).strip()
+            line = re.sub(r"^\s*[-*\u2022\u2023\u2043\u2219]+\s*", "", raw_line).strip()
             if not line:
                 continue
 
-            match = re.match(r"^(\d{1,2})\s*(?:[\uFE0F]?\u20E3|[).、:：\-])\s*(.+)$", line)
+            match = re.match(r"^(\d{1,2})\s*(?:[\uFE0F]?\u20E3|[).,\u3001\uFF0C:\uFF1A-])\s*(.+)$", line)
             if not match:
                 continue
 
@@ -153,7 +153,11 @@ class ReactAgent:
         if not text:
             return text
 
-        match = re.match(r"^(?:option|opt|select|choose|选项|选择|选)?\s*(\d{1,2})\s*[).]?$", text, flags=re.IGNORECASE)
+        match = re.match(
+            r"^(?:(?:option|opt|select|choose|\u9009\u9879|\u9009\u62e9)\s*)?(\d{1,2})\s*[).]?$",
+            text,
+            flags=re.IGNORECASE,
+        )
         if not match:
             return text
 
@@ -906,3 +910,4 @@ class ReactAgent:
             "final": final_text,
             "conversation_history_used": len(memory),
         }
+

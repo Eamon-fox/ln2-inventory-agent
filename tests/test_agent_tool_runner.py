@@ -1,3 +1,4 @@
+﻿import ast
 import json
 import sys
 import tempfile
@@ -11,6 +12,70 @@ if str(ROOT) not in sys.path:
 
 from agent.tool_runner import AgentToolRunner
 from lib.yaml_ops import load_yaml, read_audit_events, write_yaml
+
+
+def _collect_agent_tool_runner_i18n_keys():
+    source = (ROOT / "agent" / "tool_runner.py").read_text(encoding="utf-8")
+    module = ast.parse(source)
+    keys = set()
+
+    for node in ast.walk(module):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "_msg"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            keys.add(node.args[0].value)
+
+    for node in module.body:
+        if not (
+            isinstance(node, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "_TOOL_CONTRACTS" for t in node.targets)
+            and isinstance(node.value, ast.Dict)
+        ):
+            continue
+
+        for name_node, contract_node in zip(node.value.keys, node.value.values):
+            if not (
+                isinstance(name_node, ast.Constant)
+                and isinstance(name_node.value, str)
+                and isinstance(contract_node, ast.Dict)
+            ):
+                continue
+
+            tool_name = name_node.value
+            has_description = False
+            has_notes = False
+            for key_node, _value_node in zip(contract_node.keys, contract_node.values):
+                if isinstance(key_node, ast.Constant) and key_node.value == "description":
+                    has_description = True
+                if isinstance(key_node, ast.Constant) and key_node.value == "notes":
+                    has_notes = True
+
+            if has_description:
+                keys.add(f"toolContracts.{tool_name}.description")
+            if has_notes:
+                keys.add(f"toolContracts.{tool_name}.notes")
+        break
+
+    return keys
+
+
+def _flatten_leaf_keys(node, prefix=""):
+    if not isinstance(node, dict):
+        return {prefix} if prefix else set()
+
+    flattened = set()
+    for key, value in node.items():
+        path = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, dict):
+            flattened |= _flatten_leaf_keys(value, path)
+        else:
+            flattened.add(path)
+    return flattened
 
 
 def make_record(rec_id=1, box=1, position=None):
@@ -37,7 +102,7 @@ class AgentToolRunnerTests(unittest.TestCase):
         names = set(runner.list_tools())
         self.assertIn("search_records", names)
         self.assertIn("add_entry", names)
-        self.assertIn("record_thaw", names)
+        self.assertIn("record_takeout", names)
         self.assertIn("manage_boxes", names)
         self.assertIn("manage_staged", names)
         self.assertNotIn("recent_frozen", names)
@@ -102,7 +167,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             self.assertEqual("failed", last.get("status"))
             self.assertEqual("write_requires_execute_mode", (last.get("error") or {}).get("error_code"))
 
-    def test_record_thaw_requires_integer_fields(self):
+    def test_record_takeout_requires_integer_fields(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_bad_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -112,7 +177,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             )
 
             runner = AgentToolRunner(yaml_path=str(yaml_path))
-            response = runner.run("record_thaw", {"position": 1, "date": "2026-02-10"})
+            response = runner.run("record_takeout", {"position": 1, "date": "2026-02-10"})
             self.assertFalse(response["ok"])
             self.assertEqual("invalid_tool_input", response["error_code"])
             self.assertTrue(response.get("_hint"))
@@ -267,7 +332,7 @@ class AgentToolRunnerTests(unittest.TestCase):
         self.assertFalse(response["ok"])
         self.assertEqual("invalid_tool_input", response["error_code"])
 
-    def test_query_thaw_events_summary_mode_replaces_collect_timeline(self):
+    def test_query_takeout_events_summary_mode_replaces_collect_timeline(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_timeline_summary_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -286,14 +351,14 @@ class AgentToolRunnerTests(unittest.TestCase):
             )
 
             runner = AgentToolRunner(yaml_path=str(yaml_path))
-            response = runner.run("query_thaw_events", {"view": "summary", "all_history": True})
+            response = runner.run("query_takeout_events", {"view": "summary", "all_history": True})
 
             self.assertTrue(response["ok"])
             self.assertIn("summary", response["result"])
 
-    def test_query_thaw_events_summary_rejects_event_filters(self):
+    def test_query_takeout_events_summary_rejects_event_filters(self):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
-        response = runner.run("query_thaw_events", {"view": "summary", "action": "takeout"})
+        response = runner.run("query_takeout_events", {"view": "summary", "action": "takeout"})
 
         self.assertFalse(response["ok"])
         self.assertEqual("invalid_tool_input", response["error_code"])
@@ -326,7 +391,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             records = current.get("inventory", [])
             self.assertEqual(1, len(records))
 
-    def test_record_thaw_rejects_id_and_pos_alias(self):
+    def test_record_takeout_rejects_id_and_pos_alias(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_thaw_alias_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -337,18 +402,18 @@ class AgentToolRunnerTests(unittest.TestCase):
 
             runner = AgentToolRunner(yaml_path=str(yaml_path))
             response = runner.run(
-                "record_thaw",
+                "record_takeout",
                 {
                     "id": 1,
                     "pos": 1,
                     "thaw_date": "2026-02-10",
-                    "action": "取出",
+                    "action": "takeout",
                 },
             )
             self.assertFalse(response["ok"])
             self.assertEqual("invalid_tool_input", response["error_code"])
 
-    def test_record_thaw_move_rejects_target_position_alias(self):
+    def test_record_takeout_move_rejects_target_position_alias(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_move_alias_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -359,7 +424,7 @@ class AgentToolRunnerTests(unittest.TestCase):
 
             runner = AgentToolRunner(yaml_path=str(yaml_path))
             response = runner.run(
-                "record_thaw",
+                "record_takeout",
                 {
                     "id": 1,
                     "pos": 1,
@@ -374,7 +439,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             current = load_yaml(str(yaml_path))
             self.assertEqual(1, current["inventory"][0]["position"])
 
-    def test_record_thaw_move_missing_target_returns_hint(self):
+    def test_record_takeout_move_missing_target_returns_hint(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_move_hint_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -385,7 +450,7 @@ class AgentToolRunnerTests(unittest.TestCase):
 
             runner = AgentToolRunner(yaml_path=str(yaml_path))
             response = runner.run(
-                "record_thaw",
+                "record_takeout",
                 {
                     "record_id": 1,
                     "position": 1,
@@ -402,17 +467,17 @@ class AgentToolRunnerTests(unittest.TestCase):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
         payload = {
             "error_code": "plan_preflight_failed",
-            "message": "写入被阻止：库存完整性校验失败\n- 记录 #16 (id=16): invalid cell_line",
+            "message": "Write blocked: integrity validation failed\n- Record #16 (id=16): invalid cell_line",
             "blocked_items": [
                 {
                     "action": "takeout",
                     "record_id": 21,
-                    "message": "写入被阻止：库存完整性校验失败\n- 记录 #16 (id=16): invalid cell_line",
+                    "message": "Write blocked: integrity validation failed\n- Record #16 (id=16): invalid cell_line",
                 }
             ],
         }
 
-        hint = runner._hint_for_error("record_thaw", payload)
+        hint = runner._hint_for_error("record_takeout", payload)
         self.assertIn("get_raw_entries", hint)
         self.assertIn("edit_entry", hint)
         self.assertIn("16", hint)
@@ -447,8 +512,8 @@ class AgentToolRunnerTests(unittest.TestCase):
         self.assertIn("manage_staged", specs)
         self.assertIn("operation", specs["manage_staged"].get("required", []))
 
-        self.assertIn("record_thaw", specs)
-        self.assertIn("to_position", specs["record_thaw"].get("optional", []))
+        self.assertIn("record_takeout", specs)
+        self.assertIn("to_position", specs["record_takeout"].get("optional", []))
 
         schemas = runner.tool_schemas()
         search_schema = next(
@@ -520,6 +585,21 @@ class AgentToolRunnerTests(unittest.TestCase):
 
         self.assertFalse(response["ok"])
         self.assertEqual("invalid_tool_input", response["error_code"])
+
+
+    def test_agent_tool_runner_i18n_keys_covered_in_en_and_zh(self):
+        required_keys = _collect_agent_tool_runner_i18n_keys()
+        i18n_dir = ROOT / "app_gui" / "i18n" / "translations"
+
+        for locale in ("en.json", "zh-CN.json"):
+            data = json.loads((i18n_dir / locale).read_text(encoding="utf-8"))
+            available = _flatten_leaf_keys(data.get("agentToolRunner", {}))
+            missing = sorted(required_keys - available)
+            self.assertEqual(
+                [],
+                missing,
+                f"{locale} missing agentToolRunner keys: {missing}",
+            )
 
     def test_removed_tools_are_unknown(self):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
@@ -623,3 +703,4 @@ class EditEntryToolRunnerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
