@@ -1,20 +1,13 @@
 meta:
+  version: '1.0'
   box_layout:
-    rows: 9
-    cols: 9
-  inventory_instance_id: 7ee520f7-5ce0-4e0e-8017-43a8d1e54c11
-  custom_fields:
-  - key: short_name
-    label: Short Name
-    type: str
-  - key: plasmid_name
-    label: Plasmid Name
-    type: str
-  - key: plasmid_id
-    label: Plasmid ID
-    type: str
+    rows: 10
+    cols: 10
+    box_count: 5
+    indexing: alphanumeric
+  custom_fields: []
+  cell_line_required: true
   display_key: cell_line
-  color_key: cell_line
   cell_line_options:
   - Unknown
   - K562
@@ -42,340 +35,55 @@ meta:
   - THP-1
   - MDA-MB-231
   - mESC
-  cell_line_required: true
+  inventory_instance_id: cd4ba640-6354-41db-9d22-6bf7fbad6593
+  instance_origin_path: D:\github_repo\ln2-inventory-agent\demo\ln2_inventory.demo.yaml
+  instance_last_seen_at: '2026-02-22T20:09:27'
 inventory:
 - id: 1
-  cell_line: NCCIT
-  short_name: NCCIT_ctrl_A
-  plasmid_name: pLenti-empty
-  plasmid_id: p0001
-  box: 1
-  frozen_at: '2026-02-01'
-  note: baseline control clone
-  thaw_events:
-  - date: '2026-02-16'
-    action: takeout
-    positions:
-    - 1
-  position: null
-- id: 2
-  cell_line: NCCIT
-  short_name: NCCIT_ctrl_A
-  plasmid_name: pLenti-empty
-  plasmid_id: p0001
-  box: 1
-  frozen_at: '2026-02-01'
-  note: baseline control clone
-  thaw_events: null
-  position: 2
-- id: 3
-  cell_line: NCCIT
-  short_name: NCCIT_DesMCP_APEX2
-  plasmid_name: pDesMCP-APEX2
-  plasmid_id: p260109-3
-  box: 1
-  frozen_at: '2026-02-02'
-  note: engineered derivative line
-  thaw_events: null
-  position: 3
-- id: 4
-  cell_line: NCCIT
-  short_name: NCCIT_DesMCP_APEX2
-  plasmid_name: pDesMCP-APEX2
-  plasmid_id: p260109-3
-  box: 1
-  frozen_at: '2026-02-02'
-  note: engineered derivative line
-  thaw_events: null
-  position: 4
-- id: 5
-  cell_line: NCCIT
-  short_name: NCCIT_DesMCP_APEX2
-  plasmid_name: pDesMCP-APEX2
-  plasmid_id: p260109-3
-  box: 1
-  frozen_at: '2026-02-02'
-  note: engineered derivative line
-  thaw_events: null
-  position: 5
-- id: 6
-  cell_line: NCCIT
-  short_name: NCCIT_1
-  plasmid_name: null
-  plasmid_id: null
-  box: 1
-  frozen_at: '2025-04-10'
-  note: null
-  thaw_events: null
-  position: 6
-- id: 7
-  cell_line: NCCIT
-  short_name: NCCIT_1
-  plasmid_name: null
-  plasmid_id: null
-  box: 1
-  frozen_at: '2025-04-10'
-  note: null
-  thaw_events: null
-  position: 7
-- id: 8
-  cell_line: NCCIT
-  short_name: NCCIT_1
-  plasmid_name: null
-  plasmid_id: null
-  box: 1
-  frozen_at: '2026-02-11'
-  note: null
-  thaw_events: null
-  position: 8
-- id: 9
   cell_line: K562
-  short_name: K562_RTCB_dTAG_clone2
-  plasmid_name: pGEMT-N-RTCB-dTAG
-  plasmid_id: p260101-1
+  note: 示例数据1：慢性髓系白血病细胞系
   box: 1
-  frozen_at: '2026-02-03'
-  note: validation clone
-  thaw_events: null
-  position: 9
-- id: 10
-  cell_line: K562
-  short_name: K562_RTCB_dTAG_clone12
-  plasmid_name: pGEMT-N-RTCB-dTAG
-  plasmid_id: p260101-1
-  box: 1
-  frozen_at: '2026-02-03'
-  note: validation clone
-  thaw_events: null
-  position: 10
-- id: 11
-  cell_line: K562
-  short_name: K562_RTCB_KO_pool
-  plasmid_name: pX330-RTCB
-  plasmid_id: p260102-7
-  box: 1
-  frozen_at: '2026-02-08'
-  note: CRISPR knockout pool
-  thaw_events: null
-  position: 11
-- id: 12
-  cell_line: K562
-  short_name: K562_RTCB_KO_pool
-  plasmid_name: pX330-RTCB
-  plasmid_id: p260102-7
-  box: 1
-  frozen_at: '2026-02-08'
-  note: CRISPR knockout pool
-  thaw_events: null
-  position: 12
-- id: 13
-  cell_line: K562
-  short_name: K562_NUP107_hit
-  plasmid_name: hit-validation
-  plasmid_id: hit-nup107
-  box: 1
-  frozen_at: '2026-02-08'
-  note: stitchR hit validation
-  thaw_events: null
-  position: 13
-- id: 14
-  cell_line: K562
-  short_name: K562_RTCB_hit
-  plasmid_name: hit-validation
-  plasmid_id: hit-rtcb
-  box: 1
-  frozen_at: '2026-02-08'
-  note: high-priority rescue line
-  thaw_events: null
-  position: 14
-- id: 15
-  cell_line: HEK293T
-  short_name: HEK293T_reporter36
-  plasmid_name: StitchR-reporter-v2
-  plasmid_id: rep-036
-  box: 1
-  frozen_at: '2026-02-08'
-  note: reporter stable line
-  thaw_events:
-  - date: '2026-02-16'
-    action: move
-    positions:
-    - 15
-    from_position: 15
-    to_position: 20
-    note: Drag from Overview
-  - date: '2026-02-16'
-    action: move
-    positions:
-    - 20
-    from_position: 20
-    to_position: 1
-    note: Drag from Overview
   position: 1
-- id: 16
-  cell_line: HEK293T
-  short_name: HEK293T
-  plasmid_name: null
-  plasmid_id: null
-  box: 1
-  frozen_at: '2025-04-10'
-  note: null
-  thaw_events: null
-  position: 16
-- id: 17
-  cell_line: U2OS
-  short_name: U2OS_backup_stock
-  plasmid_name: null
-  plasmid_id: null
-  box: 1
-  frozen_at: '2026-02-04'
-  note: long-term backup stock
-  thaw_events:
-  - date: '2026-02-20'
-    action: takeout
-    positions:
-    - 17
-  position: null
-- id: 18
-  cell_line: U2OS
-  short_name: U2OS_backup_stock
-  plasmid_name: null
-  plasmid_id: null
-  box: 1
-  frozen_at: '2026-02-04'
-  note: long-term backup stock
-  thaw_events:
-  - date: '2026-02-22'
-    action: move
-    positions:
-    - 18
-    from_position: 18
-    to_position: 17
-  position: 17
-- id: 19
-  cell_line: U2OS
-  short_name: U2OS_backup_stock
-  plasmid_name: null
-  plasmid_id: null
-  box: 1
-  frozen_at: '2026-02-04'
-  note: long-term backup stock
-  thaw_events:
-  - date: '2026-02-16'
-    action: move
-    positions:
-    - 19
-    from_position: 19
-    to_position: 15
-    note: Drag from Overview
-  position: 15
-- id: 20
-  cell_line: K562
-  short_name: K562_RTCB_KO_pool
-  plasmid_name: pX330-RTCB
-  plasmid_id: p260102-7
-  box: 2
-  frozen_at: '2026-01-20'
-  note: CRISPR knockout pool (original stock)
-  thaw_events:
-  - date: '2026-01-28'
-    action: takeout
-    positions:
-    - 17
-    note: recovery culture
-  position: 15
-- id: 21
-  cell_line: K562
-  short_name: K562_RTCB_KO_pool
-  plasmid_name: pX330-RTCB
-  plasmid_id: p260102-7
-  box: 2
-  frozen_at: '2026-01-20'
-  note: CRISPR knockout pool (original stock)
-  thaw_events:
-  - date: '2026-02-20'
-    action: takeout
-    positions:
-    - 16
-  position: null
-- id: 22
-  cell_line: HeLa
-  short_name: HeLa_archive_C
-  plasmid_name: null
-  plasmid_id: null
-  box: 3
-  frozen_at: '2025-12-20'
-  note: archive stock
-  thaw_events: null
-  position: 21
-- id: 23
-  cell_line: HeLa
-  short_name: HeLa_archive_C
-  plasmid_name: null
-  plasmid_id: null
-  box: 3
-  frozen_at: '2025-12-20'
-  note: archive stock
-  thaw_events: null
-  position: 22
-- id: 24
-  cell_line: K562
-  short_name: K562_NUP107_hit
-  plasmid_name: hit-validation
-  plasmid_id: hit-nup107
-  box: 4
-  frozen_at: '2026-02-06'
-  note: stitchR hit validation
-  thaw_events: null
-  position: 20
-- id: 25
-  cell_line: K562
-  short_name: K562_RTCB_hit
-  plasmid_name: hit-validation
-  plasmid_id: hit-rtcb
-  box: 5
-  frozen_at: '2026-02-06'
-  note: high-priority rescue line
-  thaw_events: null
-  position: 40
-- id: 26
-  cell_line: K562
-  short_name: K562_RTCB_hit
-  plasmid_name: hit-validation
-  plasmid_id: hit-rtcb
-  box: 5
-  frozen_at: '2026-02-06'
-  note: high-priority rescue line
-  thaw_events: null
-  position: 41
-- id: 27
-  cell_line: HCT116
-  short_name: HCT116_ctrl_pool
-  plasmid_name: pLenti-empty
-  plasmid_id: p0001
-  box: 5
-  frozen_at: '2026-01-29'
-  note: non-targeting control pool
-  thaw_events: null
-  position: 65
-- id: 28
-  cell_line: K562
-  box: 1
-  position: 27
-  frozen_at: '2026-01-20'
-  thaw_events:
-  - date: '2026-02-22'
-    action: move
-    positions:
-    - 14
-    from_position: 14
-    to_position: 27
-    from_box: 2
-    to_box: 1
-- id: 29
-  cell_line: HeLa
-  note: null
-  box: 3
-  position: 19
   frozen_at: '2026-02-22'
-  short_name: RTCB-dTAG
+- id: 2
+  cell_line: K562
+  note: 示例数据1：慢性髓系白血病细胞系
+  box: 1
+  position: 2
+  frozen_at: '2026-02-22'
+- id: 3
+  cell_line: K562
+  note: 示例数据1：慢性髓系白血病细胞系
+  box: 1
+  position: 3
+  frozen_at: '2026-02-22'
+- id: 4
+  cell_line: HeLa
+  note: 示例数据2：宫颈癌细胞系，经典永流传
+  box: 1
+  position: 4
+  frozen_at: '2026-02-22'
+- id: 5
+  cell_line: HeLa
+  note: 示例数据2：宫颈癌细胞系，经典永流传
+  box: 1
+  position: 5
+  frozen_at: '2026-02-22'
+- id: 6
+  cell_line: HEK293T
+  note: 示例数据3：人胚肾细胞，转染效率高
+  box: 1
+  position: 6
+  frozen_at: '2026-02-22'
+- id: 7
+  cell_line: HEK293T
+  note: 示例数据3：人胚肾细胞，转染效率高
+  box: 1
+  position: 7
+  frozen_at: '2026-02-22'
+- id: 8
+  cell_line: HEK293T
+  note: 示例数据3：人胚肾细胞，转染效率高
+  box: 1
+  position: 8
+  frozen_at: '2026-02-22'

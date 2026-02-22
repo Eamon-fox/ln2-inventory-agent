@@ -1,0 +1,16 @@
+{
+  "bundle_version": "1.1",
+  "created_at_utc": "2026-02-22T13:42:43Z",
+  "required_output_path": "output/ln2_inventory.yaml",
+  "source_count": 1,
+  "source_files": [
+    {
+      "source_path": "D:\\Seafile\\樊一鸣\\我的资料库\\私人资料库\\文档\\我是博士生\\液氮罐索引\\樊一鸣的液氮罐索引表.xlsx",
+      "bundle_path": "inputs/樊一鸣的液氮罐索引表.xlsx",
+      "size_bytes": 25665,
+      "sha256": "685106660f71ec3c719c1f80304ebe75d556df3cec3fcc6a8f9b1707914469b5"
+    }
+  ],
+  "options": {},
+  "warnings": []
+}

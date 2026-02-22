@@ -1,0 +1,52 @@
+meta:
+  box_layout:
+    rows: 9
+    cols: 9
+    box_count: 2
+    indexing: numeric
+  custom_fields:
+    - key: batch
+      label: Batch
+      type: str
+      required: false
+    - key: operator
+      label: Operator
+      type: str
+      required: false
+
+inventory:
+  - id: 1
+    box: 1
+    position: 1
+    frozen_at: "2024-01-10"
+    cell_line: K562
+    note: "active tube"
+    batch: "BATCH-001"
+    operator: "alice"
+    thaw_events: null
+
+  - id: 2
+    box: 1
+    position: null
+    frozen_at: "2023-11-08"
+    cell_line: HeLa
+    note: "taken out"
+    batch: "BATCH-002"
+    operator: "bob"
+    thaw_events:
+      - action: takeout
+        date: "2024-06-17"
+        positions: [14]
+
+  - id: 3
+    box: 2
+    position: 20
+    frozen_at: "2024-03-02"
+    cell_line: U2OS
+    note: null
+    batch: "BATCH-003"
+    operator: "alice"
+    thaw_events:
+      - action: move
+        date: "2024-04-01"
+        positions: [11]

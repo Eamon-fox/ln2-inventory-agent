@@ -1,0 +1,42 @@
+# Conversion Report
+
+- Source file: 樊一鸣的液氮罐索引表.xlsx
+- Source rows (data rows): 187
+- Output records (tube-level): 500
+- Active records: 408
+- Records with takeout history: 92
+- Parsing errors: 0
+- Active slot conflicts: 31
+
+## Active Slot Conflicts
+- Box 1 Position 62: id=118 conflicts with id=158
+- Box 1 Position 64: id=119 conflicts with id=159
+- Box 1 Position 65: id=120 conflicts with id=160
+- Box 1 Position 69: id=122 conflicts with id=162
+- Box 1 Position 73: id=124 conflicts with id=168
+- Box 1 Position 70: id=123 conflicts with id=252
+- Box 1 Position 23: id=164 conflicts with id=287
+- Box 4 Position 34: id=350 conflicts with id=351
+- Box 1 Position 41: id=289 conflicts with id=434
+- Box 1 Position 44: id=290 conflicts with id=436
+- Box 4 Position 53: id=381 conflicts with id=438
+- Box 4 Position 54: id=382 conflicts with id=439
+- Box 4 Position 75: id=383 conflicts with id=440
+- Box 5 Position 31: id=432 conflicts with id=454
+- Box 5 Position 32: id=442 conflicts with id=455
+- Box 5 Position 33: id=443 conflicts with id=456
+- Box 5 Position 34: id=444 conflicts with id=457
+- Box 5 Position 35: id=445 conflicts with id=458
+- Box 5 Position 36: id=446 conflicts with id=459
+- Box 5 Position 37: id=447 conflicts with id=460
+- Box 5 Position 38: id=448 conflicts with id=461
+- Box 5 Position 39: id=449 conflicts with id=462
+- Box 5 Position 40: id=450 conflicts with id=463
+- Box 5 Position 41: id=451 conflicts with id=464
+- Box 5 Position 42: id=452 conflicts with id=465
+- Box 5 Position 43: id=453 conflicts with id=466
+- Box 1 Position 22: id=286 conflicts with id=489
+- Box 1 Position 23: id=164 conflicts with id=490
+- Box 1 Position 41: id=289 conflicts with id=492
+- Box 1 Position 43: id=435 conflicts with id=494
+- Box 1 Position 44: id=290 conflicts with id=495

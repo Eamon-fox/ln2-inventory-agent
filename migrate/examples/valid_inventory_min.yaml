@@ -1,0 +1,14 @@
+meta:
+  box_layout:
+    rows: 9
+    cols: 9
+  custom_fields: []
+
+inventory:
+  - id: 1
+    box: 1
+    position: 1
+    frozen_at: "2024-01-01"
+    cell_line: K562
+    note: null
+    thaw_events: null
