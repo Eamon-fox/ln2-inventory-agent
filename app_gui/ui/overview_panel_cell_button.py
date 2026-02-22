@@ -2,7 +2,7 @@
 
 from PySide6.QtCore import QEasingCurve, QMimeData, QPropertyAnimation, QRect, Qt, Signal
 from PySide6.QtGui import QDrag
-from PySide6.QtWidgets import QPushButton
+from PySide6.QtWidgets import QLabel, QPushButton
 
 MIME_TYPE_MOVE = "application/x-ln2-move"
 
@@ -26,6 +26,12 @@ class CellButton(QPushButton):
         self._hover_anim = None
         self._hover_anim_on_finished = None
         self._hover_proxy = None
+        self._operation_marker = ""
+        self._operation_move_id = None
+        self._operation_badge = QLabel(self)
+        self._operation_badge.setObjectName("OverviewCellOperationBadge")
+        self._operation_badge.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._operation_badge.hide()
 
     def set_record_id(self, record_id):
         self.record_id = record_id
@@ -67,6 +73,66 @@ class CellButton(QPushButton):
         proxy.setToolTip(self.toolTip())
         proxy.setFont(self.font())
         proxy.setGeometry(self._base_rect)
+
+    @staticmethod
+    def _badge_text_and_color(marker_type, move_id=None):
+        marker = str(marker_type or "").strip().lower()
+        if marker == "add":
+            return "ADD", "#22c55e"
+        if marker == "takeout":
+            return "OUT", "#ef4444"
+        if marker == "edit":
+            return "EDT", "#06b6d4"
+        if marker == "move-source":
+            suffix = f"{int(move_id)}" if move_id not in (None, "") else "?"
+            return f"M{suffix}F", "#63b3ff"
+        if marker == "move-target":
+            suffix = f"{int(move_id)}" if move_id not in (None, "") else "?"
+            return f"M{suffix}T", "#63b3ff"
+        return "", ""
+
+    def _reposition_operation_badge(self):
+        if self._operation_badge is None or not self._operation_badge.isVisible():
+            return
+        self._operation_badge.adjustSize()
+        margin = 1
+        x = max(margin, self.width() - self._operation_badge.width() - margin)
+        y = max(margin, self.height() - self._operation_badge.height() - margin)
+        self._operation_badge.move(x, y)
+
+    def set_operation_marker(self, marker_type=None, move_id=None):
+        marker = str(marker_type or "").strip().lower()
+        self._operation_marker = marker
+        try:
+            self._operation_move_id = int(move_id) if move_id is not None else None
+        except Exception:
+            self._operation_move_id = None
+
+        badge_text, badge_color = self._badge_text_and_color(marker, self._operation_move_id)
+        if not badge_text:
+            self._operation_badge.hide()
+            self.setProperty("operation_marker", "")
+            self.setProperty("operation_badge_text", "")
+            return
+
+        self.setProperty("operation_marker", marker)
+        self.setProperty("operation_badge_text", badge_text)
+        self._operation_badge.setText(badge_text)
+        self._operation_badge.setStyleSheet(
+            f"""
+            QLabel#OverviewCellOperationBadge {{
+                font-size: 7px;
+                font-weight: 700;
+                color: {badge_color};
+                background-color: rgba(0, 0, 0, 180);
+                border-radius: 2px;
+                padding: 0px 2px;
+            }}
+            """
+        )
+        self._operation_badge.show()
+        self._operation_badge.raise_()
+        self._reposition_operation_badge()
 
     def _animate_proxy_to(self, rect, on_finished=None):
         proxy = self._hover_proxy
@@ -143,6 +209,10 @@ class CellButton(QPushButton):
     def hideEvent(self, event):
         self.reset_hover_state()
         super().hideEvent(event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reposition_operation_badge()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:

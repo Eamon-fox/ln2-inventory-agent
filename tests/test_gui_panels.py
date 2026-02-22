@@ -1,4 +1,4 @@
-﻿import os
+import os
 import sys
 import unittest
 from types import SimpleNamespace
@@ -625,6 +625,103 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual(1, len(status_messages))
         # Button uses CSS variables for styling; verify it has a stylesheet applied
         self.assertTrue(len(button.styleSheet()) > 0)
+
+    def test_overview_plan_markers_render_badge_and_border(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
+        record = {
+            "id": 5,
+            "cell_line": "K562",
+            "short_name": "K562_test",
+            "box": 1,
+            "position": 1,
+            "frozen_at": "2026-02-10",
+        }
+        panel._current_records = [record]
+        panel.overview_pos_map = {(1, 1): record}
+
+        panel._set_plan_markers_from_items([_make_takeout_item(record_id=5, position=1, box=1)])
+
+        button = panel.overview_cells[(1, 1)]
+        self.assertEqual("takeout", str(button.property("operation_marker")))
+        self.assertEqual("OUT", str(button.property("operation_badge_text")))
+        self.assertIn("#ef4444", button.styleSheet())
+
+    def test_overview_plan_markers_clear_when_plan_empty(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
+        record = {
+            "id": 7,
+            "cell_line": "HeLa",
+            "short_name": "HeLa_test",
+            "box": 1,
+            "position": 1,
+            "frozen_at": "2026-02-10",
+        }
+        panel._current_records = [record]
+        panel.overview_pos_map = {(1, 1): record}
+
+        panel._set_plan_markers_from_items([_make_takeout_item(record_id=7, position=1, box=1)])
+        button = panel.overview_cells[(1, 1)]
+        self.assertEqual("takeout", str(button.property("operation_marker")))
+
+        panel._set_plan_markers_from_items([])
+        self.assertIn(button.property("operation_marker"), ("", None))
+        self.assertIn(button.property("operation_badge_text"), ("", None))
+
+    def test_overview_add_plan_markers_cover_all_payload_positions(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=3, box_numbers=[1])
+        panel._current_records = []
+        panel.overview_pos_map = {}
+
+        add_item = {
+            "action": "add",
+            "box": 1,
+            "position": 1,
+            "record_id": None,
+            "payload": {
+                "positions": [1, 3],
+                "fields": {"short_name": "clone-x"},
+            },
+        }
+        panel._set_plan_markers_from_items([add_item])
+
+        button_1 = panel.overview_cells[(1, 1)]
+        button_2 = panel.overview_cells[(1, 2)]
+        button_3 = panel.overview_cells[(1, 3)]
+        self.assertEqual("add", str(button_1.property("operation_marker")))
+        self.assertEqual("ADD", str(button_1.property("operation_badge_text")))
+        self.assertIn(button_2.property("operation_marker"), ("", None))
+        self.assertEqual("add", str(button_3.property("operation_marker")))
+
+    def test_overview_edit_plan_marker_uses_edit_badge_and_color(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
+        record = {
+            "id": 21,
+            "cell_line": "A549",
+            "short_name": "A549-x",
+            "box": 1,
+            "position": 1,
+            "frozen_at": "2026-02-10",
+        }
+        panel._current_records = [record]
+        panel.overview_pos_map = {(1, 1): record}
+
+        edit_item = {
+            "action": "edit",
+            "box": 1,
+            "position": 1,
+            "record_id": 21,
+            "payload": {"fields": {"note": "updated"}},
+        }
+        panel._set_plan_markers_from_items([edit_item])
+
+        button = panel.overview_cells[(1, 1)]
+        self.assertEqual("edit", str(button.property("operation_marker")))
+        self.assertEqual("EDT", str(button.property("operation_badge_text")))
+        self.assertIn("#06b6d4", button.styleSheet())
 
     def test_overview_hover_scales_cell_without_shifting_neighbors(self):
         panel = self._new_overview_panel()
@@ -1381,7 +1478,8 @@ class ToolRunnerPlanSinkTests(unittest.TestCase):
         runner = self._make_runner()
         result = runner.run("record_takeout", {
             "record_id": 5,
-            "from": {"box": 1, "position": 10},
+            "from_box": 1,
+            "from_position": 10,
             "date": "2026-02-10",
         })
         self.assertTrue(result.get("staged"))
@@ -1410,7 +1508,7 @@ class ToolRunnerPlanSinkTests(unittest.TestCase):
         self.assertEqual(0, self.store.count())
 
 
-# 鈹€鈹€ Regression tests: plan dedup + execute fallback 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- Regression tests: plan dedup + execute fallback ---
 
 
 def _make_move_item(record_id, position, to_position, to_box=None, label="test"):
@@ -1472,8 +1570,8 @@ class _ConfigurableBridge(_FakeOperationsBridge):
             return {
                 "ok": False,
                 "error_code": "validation_failed",
-                "message": "鎵归噺鎿嶄綔鍙傛暟鏍￠獙澶辫触",
-                "errors": ["绗?鏉? mock error"],
+                "message": "Batch validation failed",
+                "errors": ["mock error"],
             }
         return super().batch_takeout(yaml_path, **payload)
 
@@ -1567,7 +1665,7 @@ class PlanDedupRegressionTests(unittest.TestCase):
         self.assertEqual(2, len(panel.plan_items))
 
     def test_mass_restage_same_items_no_growth(self):
-        """Simulates AI re-staging 10 items 鈥?plan should not grow past 10."""
+        """Simulates AI re-staging 10 items - plan should not grow past 10."""
         panel = self._new_panel()
         items = [_make_move_item(record_id=i, position=i, to_position=i + 10) for i in range(1, 11)]
 
@@ -1721,7 +1819,7 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
         self.assertEqual(2, len(panel.plan_items))
 
     def test_dedup_then_execute_end_to_end_with_preserved_plan(self):
-        """Full scenario: stage 鈫?execute partial fail (plan preserved) 鈫?use undo + re-stage 鈫?execute succeeds."""
+        """Full scenario: stage -> execute partial fail (plan preserved) -> use undo + re-stage -> execute succeeds."""
         bridge = _ConfigurableBridge()
         bridge.batch_should_fail = True
         bridge.record_takeout_fail_ids = {2}
@@ -1749,7 +1847,7 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
         # For this test, just clear and re-add with fix
         panel.clear_plan()
         
-        # Now execute again 鈥?this time all succeed
+        # --- Now execute again ?this time all succeed ---
         bridge.batch_should_fail = False
         bridge.record_takeout_fail_ids.clear()
         bridge.batch_move_calls.clear()
@@ -2697,7 +2795,7 @@ class OperationEventFeedTests(unittest.TestCase):
             "timestamp": "2026-02-20T15:05:55.645887",
             "code": "record.edit.saved",
             "level": "success",
-            "text": "瀛楁 'cell_line' 宸叉洿鏂帮細U2OS 鈫?NCCIT",
+            "text": "Field \'cell_line\' updated: U2OS -> NCCIT",
             "data": {
                 "record_id": 18,
                 "field": "cell_line",
@@ -2931,7 +3029,7 @@ class ExecuteFailurePreservesPlanTests(unittest.TestCase):
         self.assertEqual(original_ids, preserved_ids)
 
     def test_execute_partial_failure_attempts_atomic_rollback(self):
-        """When batch fails, all items are blocked 鈥?no partial success, no rollback needed."""
+        """When batch fails, all items are blocked - no partial success, no rollback needed."""
         bridge = _RollbackAwareBridge()
         bridge.batch_should_fail = True
         bridge.record_takeout_fail_ids = {2}
@@ -2947,7 +3045,7 @@ class ExecuteFailurePreservesPlanTests(unittest.TestCase):
         with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
             panel.execute_plan()
 
-        # With new executor, batch failure marks all items blocked 鈥?no partial success
+        # --- With new executor, batch failure marks all items blocked ?no partial success ---
         # so no rollback is attempted (no backup_path from any OK item)
         self.assertFalse(bridge.rollback_called)
         # Plan is preserved on failure
@@ -3005,15 +3103,19 @@ class CellLineDropdownTests(unittest.TestCase):
 
     def test_refresh_cell_line_options_populates_combo(self):
         """_refresh_cell_line_options should populate from meta."""
+        from lib.custom_fields import is_cell_line_required
+
         panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
         meta = {"cell_line_options": ["K562", "HeLa", "NCCIT"]}
         panel._refresh_cell_line_options(meta)
         hints = self._hint_lines()
-        # 1 empty + 3 options + hint lines
-        self.assertEqual(4 + len(hints), panel.a_cell_line.count())
-        self.assertEqual("K562", panel.a_cell_line.itemText(1))
-        self.assertEqual("HeLa", panel.a_cell_line.itemText(2))
-        self.assertEqual("NCCIT", panel.a_cell_line.itemText(3))
+        required = is_cell_line_required(meta)
+        option_start = 0 if required else 1
+        expected_count = len(meta["cell_line_options"]) + (0 if required else 1) + len(hints)
+        self.assertEqual(expected_count, panel.a_cell_line.count())
+        self.assertEqual("K562", panel.a_cell_line.itemText(option_start))
+        self.assertEqual("HeLa", panel.a_cell_line.itemText(option_start + 1))
+        self.assertEqual("NCCIT", panel.a_cell_line.itemText(option_start + 2))
 
         model = panel.a_cell_line.model()
         for i, hint in enumerate(hints):
@@ -3024,10 +3126,13 @@ class CellLineDropdownTests(unittest.TestCase):
 
     def test_refresh_cell_line_options_preserves_selection(self):
         """Refreshing options should preserve the current selection."""
+        from lib.custom_fields import is_cell_line_required
+
         panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
         meta = {"cell_line_options": ["K562", "HeLa"]}
         panel._refresh_cell_line_options(meta)
-        panel.a_cell_line.setCurrentIndex(2)  # HeLa
+        hella_index = 1 if is_cell_line_required(meta) else 2
+        panel.a_cell_line.setCurrentIndex(hella_index)  # HeLa
         self.assertEqual("HeLa", panel.a_cell_line.currentText())
 
         # Refresh again with same options
@@ -3036,12 +3141,14 @@ class CellLineDropdownTests(unittest.TestCase):
 
     def test_refresh_cell_line_options_defaults_when_no_meta(self):
         """Without meta options, should use DEFAULT_CELL_LINE_OPTIONS."""
-        from lib.custom_fields import DEFAULT_CELL_LINE_OPTIONS
+        from lib.custom_fields import DEFAULT_CELL_LINE_OPTIONS, is_cell_line_required
+
         panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
         panel._refresh_cell_line_options({})
         hints = self._hint_lines()
-        # 1 empty + len(defaults) + hint lines
-        self.assertEqual(1 + len(DEFAULT_CELL_LINE_OPTIONS) + len(hints), panel.a_cell_line.count())
+        required = is_cell_line_required({})
+        expected_count = len(DEFAULT_CELL_LINE_OPTIONS) + (0 if required else 1) + len(hints)
+        self.assertEqual(expected_count, panel.a_cell_line.count())
 
     def test_apply_meta_update_switches_required_mode_immediately(self):
         """Changing cell_line_required should update add-form combo immediately."""

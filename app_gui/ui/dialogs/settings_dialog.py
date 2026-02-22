@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from agent.llm_client import DEFAULT_PROVIDER, PROVIDER_DEFAULTS
+from app_gui.gui_config import DEFAULT_MAX_STEPS
 from app_gui.i18n import t, tr
 from app_gui.ui.icons import Icons, get_icon
 from lib.import_acceptance import validate_candidate_yaml
@@ -234,7 +235,7 @@ class SettingsDialog(QDialog):
 
         self.ai_max_steps = _NoWheelSpinBox()
         self.ai_max_steps.setRange(1, 20)
-        self.ai_max_steps.setValue(ai_advanced.get("max_steps", 8))
+        self.ai_max_steps.setValue(ai_advanced.get("max_steps", DEFAULT_MAX_STEPS))
         ai_layout.addRow(tr("settings.aiMaxSteps"), self.ai_max_steps)
 
         self.ai_thinking_enabled = QCheckBox()
@@ -562,7 +563,7 @@ class SettingsDialog(QDialog):
         # --- Step 2: handle pure deletes ---
         new_keys = {f["key"] for f in new_fields}
         old_keys = {f["key"] for f in existing if isinstance(f, dict) and f.get("key")}
-        # Keys that were renamed are not "deleted" 鈥?exclude them
+        # Keys that were renamed are not "deleted" - exclude them
         renamed_old_keys = set(renames.keys())
         removed_keys = old_keys - new_keys - renamed_old_keys
 

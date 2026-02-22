@@ -21,6 +21,7 @@ else:
 from app_gui.tool_bridge import GuiToolBridge
 from app_gui.gui_config import (
     DEFAULT_CONFIG_FILE,
+    DEFAULT_MAX_STEPS,
     load_gui_config,
     save_gui_config,
 )
@@ -114,7 +115,7 @@ class MainWindow(QMainWindow):
         migrated_once = self.settings.value("migration/unified_config_done", False, type=bool)
         if (not os.path.isfile(DEFAULT_CONFIG_FILE)) and (not migrated_once):
             migrated_model = self.settings.value("ai/model", "", type=str)
-            migrated_steps = self.settings.value("ai/max_steps", 8, type=int)
+            migrated_steps = self.settings.value("ai/max_steps", DEFAULT_MAX_STEPS, type=int)
             self.gui_config["ai"] = {
                 "model": migrated_model or "deepseek-chat",
                 "max_steps": migrated_steps,

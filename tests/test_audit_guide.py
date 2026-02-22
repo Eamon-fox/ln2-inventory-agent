@@ -218,6 +218,54 @@ class AuditGuideBuilderTests(unittest.TestCase):
         self.assertEqual(1, len(guide["items"]))
         self.assertEqual("takeout", guide["items"][0]["action"])
 
+    def test_add_entry_preserves_new_ids_to_positions_order(self):
+        events = [
+            {
+                "timestamp": "2026-02-12T09:00:00",
+                "action": "add_entry",
+                "status": "success",
+                "details": {
+                    "new_ids": [201, 202],
+                    "box": 1,
+                    "positions": [10, 5],
+                    "short_name": "BATCH",
+                },
+                "tool_input": {
+                    "box": 1,
+                    "positions": [10, 5],
+                    "fields": {"short_name": "BATCH"},
+                },
+            },
+            {
+                "timestamp": "2026-02-12T09:01:00",
+                "action": "record_takeout",
+                "status": "success",
+                "details": {
+                    "action": "move",
+                    "record_id": 201,
+                    "box": 1,
+                    "position": 10,
+                    "to_position": 12,
+                },
+                "tool_input": {
+                    "record_id": 201,
+                    "position": 10,
+                    "to_position": 12,
+                    "action": "Move",
+                },
+            },
+        ]
+
+        guide = build_operation_guide_from_audit_events(events)
+        items = guide["items"]
+
+        self.assertEqual(2, len(items))
+        self.assertTrue(all(item.get("action") == "add" for item in items))
+
+        by_id = {item.get("record_id"): item for item in items}
+        self.assertEqual(12, by_id[201]["position"])
+        self.assertEqual(5, by_id[202]["position"])
+
 
 if __name__ == "__main__":
     unittest.main()

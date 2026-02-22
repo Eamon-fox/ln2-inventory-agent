@@ -126,7 +126,7 @@ def _grid_state_with_markers():
     }
 
 
-# 鈹€鈹€ validate_plan_item 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- validate_plan_item ---
 
 
 class ValidateActionTests(unittest.TestCase):
@@ -254,7 +254,7 @@ class ValidateAddPayloadTests(unittest.TestCase):
         self.assertIsNone(validate_plan_item(item))
 
 
-# ── render_operation_sheet ────────────────────────────────────
+# --- render_operation_sheet ---
 
 
 class RenderOperationSheetTests(unittest.TestCase):
@@ -324,6 +324,12 @@ class RenderOperationSheetWithGridTests(unittest.TestCase):
         self.assertIn('content: "M" attr(data-move-id) "-TO";', html)
         self.assertNotIn('content: "M" attr(data-move-id) "->";', html)
         self.assertNotIn("\u2192", html)
+
+    def test_edit_marker_css_exists_in_print_preview(self):
+        html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
+        self.assertIn('.cell[data-operation="edit"]::after', html)
+        self.assertIn('content: "EDIT";', html)
+        self.assertIn('.cell[data-operation="edit"] {', html)
 
     def test_grid_html_has_print_specific_classes(self):
         html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
@@ -431,8 +437,42 @@ class RenderOperationSheetWithGridTests(unittest.TestCase):
         ]
         out = apply_operation_markers_to_grid(grid_state, items)
         self.assertEqual([1, 2, 3], out.get("active_boxes"))
+        box3_cells = out.get("boxes", [])[2].get("cells", [])
+        self.assertEqual("edit", box3_cells[0].get("operation_marker"))
 
-# 鈹€鈹€ to_box validation for move 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    def test_apply_operation_markers_marks_all_add_payload_positions(self):
+        grid_state = {
+            "rows": 1,
+            "cols": 3,
+            "boxes": [
+                {
+                    "box_number": 1,
+                    "box_label": "1",
+                    "cells": [
+                        {"box": 1, "position": 1, "display_pos": "1", "is_occupied": False},
+                        {"box": 1, "position": 2, "display_pos": "2", "is_occupied": False},
+                        {"box": 1, "position": 3, "display_pos": "3", "is_occupied": False},
+                    ],
+                }
+            ],
+        }
+        items = [
+            _add_item(
+                box=1,
+                position=1,
+                payload={
+                    "positions": [1, 3],
+                    "fields": {"parent_cell_line": "K562", "short_name": "clone-1"},
+                },
+            )
+        ]
+        out = apply_operation_markers_to_grid(grid_state, items)
+        cells = out.get("boxes", [])[0].get("cells", [])
+        self.assertEqual("add", cells[0].get("operation_marker"))
+        self.assertIsNone(cells[1].get("operation_marker"))
+        self.assertEqual("add", cells[2].get("operation_marker"))
+
+# --- to_box validation for move ---
 
 
 class ValidateToBoxTests(unittest.TestCase):
@@ -463,7 +503,7 @@ class ValidateToBoxTests(unittest.TestCase):
         self.assertIsNone(validate_plan_item(item))
 
 
-# 鈹€鈹€ cross-box move rendering 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- cross-box move rendering ---
 
 
 class CrossBoxMoveRenderTests(unittest.TestCase):
@@ -495,7 +535,7 @@ class CrossBoxMoveRenderTests(unittest.TestCase):
         self.assertIn("cross-test", html)
 
 
-# 鈹€鈹€ edit action validation 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- edit action validation ---
 
 
 def _edit_item(**overrides):
@@ -550,7 +590,7 @@ class ValidateRollbackSkipsBoxPositionTests(unittest.TestCase):
         self.assertIsNone(validate_plan_item(_rollback_item(record_id=None)))
 
 
-# 鈹€鈹€ edit/rollback rendering 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- edit/rollback rendering ---
 
 
 class RenderEditRollbackTests(unittest.TestCase):
@@ -585,7 +625,7 @@ class RenderEditRollbackTests(unittest.TestCase):
             self.assertIn(action_name, html)
 
 
-# 鈹€鈹€ factory 鈫?validate round-trip 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- factory ?validate round-trip ---
 
 
 class FactoryValidateRoundTripTests(unittest.TestCase):

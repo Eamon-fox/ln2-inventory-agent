@@ -10,7 +10,7 @@ Current status:
 - Execution flow is shown in Plan/AI reporting panels (Plan details, execution result, and audit log)
 - `Overview` panel provides per-box grid visualization (9x9 style)
 - `AI Copilot` panel supports natural-language requests via ReAct runtime
-- AI Copilot provides quick prompts and structured output (`璁″垝 -> 棰勮 -> 鎵ц缁撴灉 -> 瀹¤璁板綍`)
+- AI Copilot provides quick prompts and structured output (`plan -> preview -> execution result -> audit log`)
 - AI Copilot keeps the chat input composer at the bottom, with advanced settings/report panels collapsed by default
 - AI composer supports `Enter` to send and `Shift+Enter` for newline
 - AI run executes in background; only send is blocked while waiting, input/editing stays responsive

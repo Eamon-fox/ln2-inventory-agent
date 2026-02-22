@@ -247,6 +247,156 @@ class PlanTableColumnsTests(unittest.TestCase):
         self.assertIn("new-name", cell_text)
         self.assertIn("HeLa", cell_text)
 
+    def test_plan_table_edit_without_effective_change_has_clear_summary(self):
+        panel = self._new_operations_panel()
+        panel.update_records_cache(
+            {
+                8: {
+                    "id": 8,
+                    "cell_line": "K562",
+                    "short_name": "same-name",
+                    "box": 1,
+                    "position": 3,
+                    "frozen_at": "2025-01-01",
+                }
+            }
+        )
+
+        panel.add_plan_items(
+            [
+                {
+                    "action": "edit",
+                    "record_id": 8,
+                    "box": 1,
+                    "position": 3,
+                    "payload": {"record_id": 8, "fields": {"short_name": "same-name"}},
+                }
+            ]
+        )
+
+        headers = [
+            panel.plan_table.horizontalHeaderItem(i).text()
+            for i in range(panel.plan_table.columnCount())
+        ]
+        changes_col = headers.index(tr("operations.colChanges"))
+        changes_item = panel.plan_table.item(0, changes_col)
+        self.assertEqual(
+            tr("operations.planSummaryNoEffectiveEdit", default="No effective field change"),
+            changes_item.text(),
+        )
+
+    def test_plan_table_move_summary_is_deduped_and_cross_box(self):
+        panel = self._new_operations_panel()
+        panel.update_records_cache(
+            {
+                9: {
+                    "id": 9,
+                    "cell_line": "HeLa",
+                    "short_name": "clone-A",
+                    "box": 1,
+                    "position": 5,
+                    "frozen_at": "2025-01-01",
+                }
+            }
+        )
+
+        panel.add_plan_items(
+            [
+                {
+                    "action": "move",
+                    "record_id": 9,
+                    "box": 1,
+                    "position": 5,
+                    "to_box": 2,
+                    "to_position": 8,
+                    "payload": {"date_str": "2025-02-19"},
+                }
+            ]
+        )
+
+        headers = [
+            panel.plan_table.horizontalHeaderItem(i).text()
+            for i in range(panel.plan_table.columnCount())
+        ]
+        changes_col = headers.index(tr("operations.colChanges"))
+        cell_text = panel.plan_table.item(0, changes_col).text()
+
+        self.assertIn(tr("operations.planSummaryCrossBox", default="Cross-box"), cell_text)
+        self.assertIn("HeLa", cell_text)
+        self.assertNotIn("Box", cell_text)
+        self.assertNotIn("->", cell_text)
+
+    def test_plan_table_add_summary_is_sample_centric(self):
+        panel = self._new_operations_panel()
+        panel.add_plan_items(
+            [
+                {
+                    "action": "add",
+                    "box": 1,
+                    "position": 1,
+                    "payload": {
+                        "frozen_at": "2025-02-19",
+                        "positions": [1],
+                        "fields": {
+                            "cell_line": "K562",
+                            "short_name": "clone-1",
+                            "note": "frozen",
+                        },
+                    },
+                }
+            ]
+        )
+
+        headers = [
+            panel.plan_table.horizontalHeaderItem(i).text()
+            for i in range(panel.plan_table.columnCount())
+        ]
+        changes_col = headers.index(tr("operations.colChanges"))
+        cell_text = panel.plan_table.item(0, changes_col).text()
+
+        self.assertIn("K562", cell_text)
+        self.assertIn("clone-1", cell_text)
+        self.assertNotIn("Box", cell_text)
+        self.assertNotIn("2025-02-19", cell_text)
+
+    def test_plan_table_takeout_summary_is_sample_centric(self):
+        panel = self._new_operations_panel()
+        panel.update_records_cache(
+            {
+                10: {
+                    "id": 10,
+                    "cell_line": "A549",
+                    "short_name": "batch-x",
+                    "box": 3,
+                    "position": 7,
+                    "frozen_at": "2025-01-01",
+                }
+            }
+        )
+
+        panel.add_plan_items(
+            [
+                {
+                    "action": "takeout",
+                    "record_id": 10,
+                    "box": 3,
+                    "position": 7,
+                    "payload": {"date_str": "2025-02-19"},
+                }
+            ]
+        )
+
+        headers = [
+            panel.plan_table.horizontalHeaderItem(i).text()
+            for i in range(panel.plan_table.columnCount())
+        ]
+        changes_col = headers.index(tr("operations.colChanges"))
+        cell_text = panel.plan_table.item(0, changes_col).text()
+
+        self.assertIn("A549", cell_text)
+        self.assertIn("batch-x", cell_text)
+        self.assertNotIn("Box", cell_text)
+
 
 if __name__ == "__main__":
     unittest.main()

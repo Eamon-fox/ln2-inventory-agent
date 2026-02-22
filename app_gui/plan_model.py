@@ -114,10 +114,26 @@ def apply_operation_markers_to_grid(grid_state, plan_items):
             active_boxes.add(box)
 
         if action == "add" and box and position:
-            markers[(box, position)] = {"type": "add"}
+            payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+            raw_positions = payload.get("positions") if isinstance(payload.get("positions"), list) else []
+            add_positions = []
+            for raw_pos in raw_positions:
+                try:
+                    normalized_pos = int(raw_pos)
+                except Exception:
+                    continue
+                if normalized_pos > 0:
+                    add_positions.append(normalized_pos)
+            if not add_positions:
+                add_positions = [position]
+            for add_pos in add_positions:
+                markers[(box, add_pos)] = {"type": "add"}
 
         elif action == "takeout" and box and position:
             markers[(box, position)] = {"type": "takeout"}
+
+        elif action == "edit" and box and position:
+            markers[(box, position)] = {"type": "edit"}
 
         elif action == "move" and box and position:
             move_id = move_counter
@@ -613,6 +629,24 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
         .cell[data-operation="takeout"] {{
             border: 2px solid #ef4444;
             box-shadow: inset 0 0 0 2px rgba(239, 68, 68, 0.25);
+        }}
+
+        .cell[data-operation="edit"]::after {{
+            content: "EDIT";
+            position: absolute;
+            bottom: 0;
+            right: 0;
+            font-size: 6px;
+            font-weight: bold;
+            color: #06b6d4;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 0 1px;
+            border-radius: 2px;
+        }}
+
+        .cell[data-operation="edit"] {{
+            border: 2px solid #06b6d4;
+            box-shadow: inset 0 0 0 2px rgba(6, 182, 212, 0.28);
         }}
 
         .cell[data-operation="move-source"]::after {{

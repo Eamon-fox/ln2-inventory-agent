@@ -1,7 +1,6 @@
-from PySide6.QtCore import Qt, Signal, QEvent
+from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import QWidget, QMenu
 from app_gui.ui.theme import FONT_SIZE_CELL
-from app_gui.i18n import tr
 from app_gui.ui import overview_panel_filters as _ov_filters
 from app_gui.ui import overview_panel_grid as _ov_grid
 from app_gui.ui import overview_panel_interactions as _ov_interactions
@@ -11,7 +10,13 @@ from app_gui.ui import overview_panel_widgets as _ov_widgets
 from app_gui.ui import overview_panel_cell_button as _ov_cell_button
 from app_gui.ui import overview_panel_ui as _ov_ui
 from app_gui.ui import overview_panel_refresh as _ov_refresh
+from app_gui.ui import overview_panel_runtime as _ov_runtime
 
+# Module map for maintainers:
+# - _ov_ui: widget tree setup and static UI wiring.
+# - _ov_grid/_ov_table: grid/table rendering and data projection.
+# - _ov_interactions/_ov_zoom: interaction handlers and zoom behavior.
+# - _ov_refresh/_ov_runtime: refresh pipelines and runtime glue logic.
 MIME_TYPE_MOVE = _ov_cell_button.MIME_TYPE_MOVE
 TABLE_ROW_TINT_ROLE = Qt.UserRole + 41
 _MONKEYPATCH_EXPORTS = (QMenu, FONT_SIZE_CELL)
@@ -62,6 +67,8 @@ class OverviewPanel(QWidget):
         self._hover_warmed = False
         self._show_summary_cards = True  # Can be set to False to hide cards
         self._column_filters = {}  # {column_name: filter_config}
+        self._plan_store_ref = None
+        self._operation_markers = {}
 
         # Animation objects for smooth zoom and scroll transitions
         self._zoom_animation = None
@@ -75,33 +82,7 @@ class OverviewPanel(QWidget):
     _is_dark_theme = _ov_ui._is_dark_theme
     _update_view_toggle_icons = _ov_ui._update_view_toggle_icons
 
-    def _on_view_mode_changed(self, mode):
-        if mode not in {"grid", "table"}:
-            mode = "grid"
-
-        # Update button states
-        self.ov_view_grid_btn.setChecked(mode == "grid")
-        self.ov_view_table_btn.setChecked(mode == "table")
-
-        # Update icons based on checked state
-        self._update_view_toggle_icons()
-
-        self._overview_view_mode = mode
-        self.ov_view_stack.setCurrentIndex(0 if mode == "grid" else 1)
-
-        is_table_mode = mode == "table"
-        self.ov_filter_show_empty.setEnabled(not is_table_mode)
-        self.ov_filter_show_empty.setToolTip(
-            tr("overview.showEmptyGridOnly") if is_table_mode else ""
-        )
-
-        # Show/hide zoom controls and box navigation based on view mode
-        # Only show in grid mode, hide in table mode
-        is_grid_mode = mode == "grid"
-        self._zoom_container.setVisible(is_grid_mode)
-        self._box_nav_container.setVisible(is_grid_mode)
-
-        self._apply_filters()
+    _on_view_mode_changed = _ov_runtime._on_view_mode_changed
 
 
     _set_table_columns = _ov_table._set_table_columns
@@ -118,22 +99,14 @@ class OverviewPanel(QWidget):
     _paint_cell = _ov_grid._paint_cell
     _set_selected_cell = _ov_grid._set_selected_cell
     _clear_selected_cell = _ov_grid._clear_selected_cell
+    _set_plan_store_ref = _ov_grid._set_plan_store_ref
+    _set_plan_markers_from_items = _ov_grid._set_plan_markers_from_items
 
-    def eventFilter(self, obj, event):
-        # Ctrl+Wheel zoom on scroll area
-        if obj is self.ov_scroll and event.type() == QEvent.Wheel and event.modifiers() & Qt.ControlModifier:
-            delta = event.angleDelta().y()
-            if delta > 0:
-                self._set_zoom(self._zoom_level + 0.1)
-            elif delta < 0:
-                self._set_zoom(self._zoom_level - 0.1)
-            return True  # consume event
-        if event.type() in (QEvent.Enter, QEvent.HoverEnter, QEvent.HoverMove, QEvent.MouseMove):
-            box_num = obj.property("overview_box")
-            position = obj.property("overview_position")
-            if box_num is not None and position is not None:
-                self.on_cell_hovered(int(box_num), int(position))
-        return super().eventFilter(obj, event)
+    eventFilter = _ov_runtime.eventFilter
+
+    @Slot()
+    def _on_plan_store_changed(self):
+        _ov_grid._on_plan_store_changed(self)
 
 
     _set_zoom = _ov_zoom._set_zoom

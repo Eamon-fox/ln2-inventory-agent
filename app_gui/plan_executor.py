@@ -404,7 +404,7 @@ def run_plan(
     adds = _items_with_action(remaining, "add")
 
     # Cross-item conflict detection: flag adds that target positions already
-    # claimed by an earlier add in the same batch.  Pure in-memory check 鈥?
+    # claimed by an earlier add in the same batch. Pure in-memory check:
     # no file I/O, no side-effects.
     _add_claimed: set[tuple[int, int]] = set()  # (box, position)
     _add_blocked_ids: set[int] = set()

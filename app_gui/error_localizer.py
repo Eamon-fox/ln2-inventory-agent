@@ -5,11 +5,13 @@ from app_gui.i18n import tr
 
 
 _LEGACY_MOJIBAKE_MAP = {
-    "鍐欏叆琚樆姝細搴撳瓨瀹屾暣鎬ф牎楠屽け璐": "Write blocked: integrity validation failed",
-    "璁板綍": "Record",
-    "閲嶅鐨": "Duplicate",
-    "浣嶇疆鍐茬獊": "Position conflict",
+    # Legacy mojibake payloads preserved for backward-compatible sanitization.
+    "\u9350\u6b0f\u53c6\u741a\ue0a6\u6a06\u59dd\ue76e\u7d30\u6434\u64b3\u74e8\u7039\u5c7e\u66a3\u93ac\u0444\u724e\u6960\u5c7d\u3051\u7490": "Write blocked: integrity validation failed",
+    "\u7481\u677f\u7d8d": "Record",
+    "\u95b2\u5d85\ue632\u9428": "Duplicate",
+    "\u6d63\u5d87\u7586\u9350\u832c\u734a": "Position conflict",
 }
+
 
 
 

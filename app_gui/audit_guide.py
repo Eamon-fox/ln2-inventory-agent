@@ -272,9 +272,15 @@ def _parse_add_entry(
     )
 
     steps = []
-    sorted_positions = sorted(set(positions))
-    if record_ids and len(record_ids) == len(sorted_positions):
-        for rid, position in zip(record_ids, sorted_positions):
+    ordered_positions = []
+    seen_positions = set()
+    for position in positions:
+        if position in seen_positions:
+            continue
+        seen_positions.add(position)
+        ordered_positions.append(position)
+    if record_ids and len(record_ids) == len(ordered_positions):
+        for rid, position in zip(record_ids, ordered_positions):
             steps.append(
                 _ParsedStep(
                     record_id=rid,
@@ -286,7 +292,7 @@ def _parse_add_entry(
                 )
             )
     else:
-        for position in sorted_positions:
+        for position in ordered_positions:
             steps.append(
                 _ParsedStep(
                     record_id=record_id,

@@ -1,6 +1,7 @@
 import json
 import os
 from datetime import datetime
+from html import escape as _escape_html
 from PySide6.QtCore import Qt, QDate, QSize
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
@@ -13,8 +14,12 @@ from app_gui.ui.icons import get_icon, Icons
 from app_gui.ui.utils import open_html_in_browser
 from app_gui.audit_guide import build_operation_guide_from_audit_events
 from app_gui.plan_model import render_operation_sheet
-from lib.yaml_ops import get_audit_log_path, get_legacy_audit_log_path
+from lib.yaml_ops import get_audit_log_paths, read_audit_events
 from lib.plan_item_factory import build_rollback_plan_item
+
+
+def _safe_html(value):
+    return _escape_html(str(value or ""), quote=True)
 
 
 class AuditLogDialog(QDialog):
@@ -192,16 +197,11 @@ class AuditLogDialog(QDialog):
     def on_load_audit(self):
         """Load and display audit events from JSONL file."""
         yaml_path = self.yaml_path_getter()
-        yaml_abs = os.path.abspath(yaml_path)
-        audit_path = get_audit_log_path(yaml_abs)
-        if not os.path.isfile(audit_path):
-            # Backward compatibility for logs written by older versions.
-            legacy_path = get_legacy_audit_log_path(yaml_abs)
-            if os.path.isfile(legacy_path):
-                audit_path = legacy_path
-
-        if not os.path.isfile(audit_path):
-            self.audit_info.setText(tr("operations.auditFileNotFound", path=audit_path))
+        yaml_abs = os.path.abspath(str(yaml_path or ""))
+        candidate_paths = get_audit_log_paths(yaml_abs)
+        if not any(os.path.isfile(path) for path in candidate_paths):
+            hint_path = candidate_paths[0] if candidate_paths else ""
+            self.audit_info.setText(tr("operations.auditFileNotFound", path=hint_path))
             return
 
         start = self.audit_start_date.date().toString("yyyy-MM-dd")
@@ -211,31 +211,19 @@ class AuditLogDialog(QDialog):
 
         events = []
         try:
-            with open(audit_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        ev = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-
-                    ts = ev.get("timestamp", "")[:10]
-                    if ts < start or ts > end:
-                        continue
-                    if action_filter != "All" and ev.get("action") != action_filter:
-                        continue
-                    if status_filter != "All" and ev.get("status") != status_filter:
-                        continue
-
-                    events.append(ev)
+            for ev in read_audit_events(yaml_abs):
+                ts = str(ev.get("timestamp") or "")[:10]
+                if ts and (ts < start or ts > end):
+                    continue
+                if action_filter != "All" and str(ev.get("action") or "") != action_filter:
+                    continue
+                if status_filter != "All" and str(ev.get("status") or "") != status_filter:
+                    continue
+                events.append(ev)
         except Exception as exc:
             self.audit_info.setText(tr("operations.failedToLoadAudit", error=exc))
             return
 
-        # Newest first
-        events.reverse()
         self._audit_events = events
 
         self._setup_table(
@@ -256,14 +244,18 @@ class AuditLogDialog(QDialog):
             ts_item.setData(Qt.UserRole, row)
             self.audit_table.setItem(row, 0, ts_item)
             self.audit_table.setItem(row, 1, QTableWidgetItem(ev.get("action", "")))
-            self.audit_table.setItem(row, 2, QTableWidgetItem(ev.get("actor_type", "")))
+            actor_text = str(ev.get("actor_id") or ev.get("actor_type") or "")
+            self.audit_table.setItem(row, 2, QTableWidgetItem(actor_text))
             self.audit_table.setItem(row, 3, QTableWidgetItem(ev.get("status", "")))
             self.audit_table.setItem(row, 4, QTableWidgetItem(ev.get("channel", "")))
 
             details = ev.get("details") or {}
             error = ev.get("error") or {}
             if ev.get("status") == "failed":
-                summary = str(error.get("message", ""))[:80] if error else str(details)[:80]
+                if isinstance(error, dict):
+                    summary = str(error.get("message", ""))[:80] if error else str(details)[:80]
+                else:
+                    summary = str(error)[:80] if error else str(details)[:80]
             else:
                 summary = json.dumps(details, ensure_ascii=False)[:80] if details else ""
             self.audit_table.setItem(row, 5, QTableWidgetItem(summary))
@@ -272,11 +264,25 @@ class AuditLogDialog(QDialog):
             tr("operations.auditEventsShown", count=len(events), start=start, end=end)
         )
 
+    def _event_index_for_table_row(self, row):
+        if row < 0:
+            return None
+        item = self.audit_table.item(row, 0)
+        source_idx = item.data(Qt.UserRole) if item is not None else row
+        try:
+            event_idx = int(source_idx)
+        except (TypeError, ValueError):
+            event_idx = row
+        if 0 <= event_idx < len(self._audit_events):
+            return event_idx
+        return None
+
     def _on_audit_row_clicked(self, row, _col):
         """Show summary of selected audit event."""
-        if row >= len(self._audit_events):
+        event_idx = self._event_index_for_table_row(row)
+        if event_idx is None:
             return
-        ev = self._audit_events[row]
+        ev = self._audit_events[event_idx]
         action = str(ev.get("action") or "")
         status = str(ev.get("status") or "")
         actor = str(ev.get("actor_id") or "")
@@ -288,31 +294,43 @@ class AuditLogDialog(QDialog):
         backup_path = ev.get("backup_path") or ""
 
         title_color = "var(--status-success)" if status == "success" else "var(--status-error)"
-        lines = [f"<b style='color: {title_color};'>{tr('operations.audit')}: {action} ({status})</b>"]
+        lines = [
+            f"<b style='color: {title_color};'>{_safe_html(tr('operations.audit'))}: "
+            f"{_safe_html(action)} ({_safe_html(status)})</b>"
+        ]
         if ts:
-            lines.append(f"<span style='color: var(--status-muted);'>{tr('operations.timeLabel')}</span> {ts}")
+            lines.append(
+                f"<span style='color: var(--status-muted);'>{_safe_html(tr('operations.timeLabel'))}</span> "
+                f"{_safe_html(ts)}"
+            )
         if actor:
             lines.append(
-                f"<span style='color: var(--status-muted);'>{tr('operations.actorLabel')}</span> {actor} ({channel})"
+                f"<span style='color: var(--status-muted);'>{_safe_html(tr('operations.actorLabel'))}</span> "
+                f"{_safe_html(actor)} ({_safe_html(channel)})"
             )
         if backup_path:
             lines.append(
-                f"<span style='color: var(--status-muted);'>{tr('operations.backupLabel')}</span> {os.path.basename(str(backup_path))}"
+                f"<span style='color: var(--status-muted);'>{_safe_html(tr('operations.backupLabel'))}</span> "
+                f"{_safe_html(os.path.basename(str(backup_path)))}"
             )
 
         if status == "failed" and isinstance(error, dict) and error:
             if error.get("error_code"):
                 lines.append(
-                    f"<span style='color: var(--status-muted);'>{tr('operations.errorLabel')}</span> {error.get('error_code')}"
+                    f"<span style='color: var(--status-muted);'>{_safe_html(tr('operations.errorLabel'))}</span> "
+                    f"{_safe_html(error.get('error_code'))}"
                 )
             if error.get("message"):
-                lines.append(str(error.get("message")))
+                lines.append(_safe_html(error.get("message")))
         elif isinstance(details, dict) and details:
             try:
                 preview = json.dumps(details, ensure_ascii=False)
             except Exception:
                 preview = str(details)
-            lines.append(f"<span style='color: var(--status-muted);'>{tr('operations.detailsLabel')}</span> {preview}")
+            lines.append(
+                f"<span style='color: var(--status-muted);'>{_safe_html(tr('operations.detailsLabel'))}</span> "
+                f"{_safe_html(preview)}"
+            )
 
         self.event_detail.setText("<br/>".join(lines))
         self.event_detail.setProperty("state", "success" if status == "success" else "error")
@@ -326,14 +344,8 @@ class AuditLogDialog(QDialog):
             return []
         selected = []
         for idx in model.selectedRows():
-            row = idx.row()
-            item = self.audit_table.item(row, 0)
-            source_idx = item.data(Qt.UserRole) if item is not None else row
-            try:
-                event_idx = int(source_idx)
-            except (TypeError, ValueError):
-                event_idx = row
-            if 0 <= event_idx < len(self._audit_events):
+            event_idx = self._event_index_for_table_row(idx.row())
+            if event_idx is not None:
                 selected.append((event_idx, self._audit_events[event_idx]))
 
         dedup = {}
@@ -358,18 +370,19 @@ class AuditLogDialog(QDialog):
 
         if not items:
             lines = [
-                f"<b style='color: var(--status-error);'>{tr('operations.noPrintableFromSelection')}</b>",
-                tr("operations.selectedEvents", count=selected_count),
+                f"<b style='color: var(--status-error);'>{_safe_html(tr('operations.noPrintableFromSelection'))}</b>",
+                _safe_html(tr("operations.selectedEvents", count=selected_count)),
             ]
             if warnings:
-                preview = "<br/>".join(str(w) for w in warnings[:3])
+                preview = "<br/>".join(_safe_html(w) for w in warnings[:3])
                 more = (
-                    f"<br/><span style='color: var(--status-muted);'>{tr('operations.moreWarnings', count=len(warnings) - 3)}</span>"
+                    f"<br/><span style='color: var(--status-muted);'>"
+                    f"{_safe_html(tr('operations.moreWarnings', count=len(warnings) - 3))}</span>"
                     if len(warnings) > 3
                     else ""
                 )
                 lines.append(
-                    f"{tr('operations.warningsLabel')} {len(warnings)}<br/>{preview}{more}"
+                    f"{_safe_html(tr('operations.warningsLabel'))} {len(warnings)}<br/>{preview}{more}"
                 )
             self.event_detail.setText("<br/>".join(lines))
             self.event_detail.setProperty("state", "error")
@@ -380,19 +393,20 @@ class AuditLogDialog(QDialog):
 
         self._last_printable_plan = list(items)
         lines = [
-            f"<b style='color: var(--status-success);'>{tr('operations.auditGuideGenerated')}</b>",
-            tr("operations.selectedEvents", count=selected_count),
-            tr("operations.finalOperations", count=len(items)),
+            f"<b style='color: var(--status-success);'>{_safe_html(tr('operations.auditGuideGenerated'))}</b>",
+            _safe_html(tr("operations.selectedEvents", count=selected_count)),
+            _safe_html(tr("operations.finalOperations", count=len(items))),
         ]
         if warnings:
-            preview = "<br/>".join(str(w) for w in warnings[:3])
+            preview = "<br/>".join(_safe_html(w) for w in warnings[:3])
             more = (
-                f"<br/><span style='color: var(--status-muted);'>{tr('operations.moreWarnings', count=len(warnings) - 3)}</span>"
+                f"<br/><span style='color: var(--status-muted);'>"
+                f"{_safe_html(tr('operations.moreWarnings', count=len(warnings) - 3))}</span>"
                 if len(warnings) > 3
                 else ""
             )
             lines.append(
-                f"{tr('operations.warningsLabel')} {len(warnings)}<br/>{preview}{more}"
+                f"{_safe_html(tr('operations.warningsLabel'))} {len(warnings)}<br/>{preview}{more}"
             )
         self.event_detail.setText("<br/>".join(lines))
         self.event_detail.setProperty("state", "success")

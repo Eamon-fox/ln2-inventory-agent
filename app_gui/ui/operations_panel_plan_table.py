@@ -43,18 +43,25 @@ def _plan_value_text(value):
 
 
 def _summarize_change_parts(parts, max_parts=None):
-    """Build summary + full detail for the Changes column.
-
-    With interactive column resizing, we no longer need to truncate the summary.
-    All parts are shown in the cell, with full detail in tooltip.
-    """
-    _ = max_parts  # Reserved for future use.
+    """Build summary + full detail for the Operation Summary column."""
     cleaned = [str(part).strip() for part in parts if str(part).strip()]
     if not cleaned:
         return "-", ""
 
+    detail = "\n".join(cleaned)
+    limit = None
+    try:
+        limit = int(max_parts) if max_parts is not None else None
+    except Exception:
+        limit = None
+
+    if limit and limit > 0 and len(cleaned) > limit:
+        summary = "; ".join(cleaned[:limit])
+        summary = f"{summary}; +{len(cleaned) - limit}"
+        return summary, detail
+
     summary = "; ".join(cleaned)
-    return summary, "\n".join(cleaned)
+    return summary, detail
 
 
 def _build_plan_action_text(self, action_norm, item):
@@ -126,6 +133,7 @@ def _build_plan_changes(self, action_norm, item, payload, custom_fields):
 
     parts = []
     detail_parts = []
+    summary_limit = 2
 
     def _collect_sample_tokens(*sources):
         tokens = []
@@ -155,6 +163,7 @@ def _build_plan_changes(self, action_norm, item, payload, custom_fields):
         source_event = payload.get("source_event") if isinstance(payload, dict) else None
         backup_path = payload.get("backup_path") if isinstance(payload, dict) else None
         rollback_target = os.path.basename(str(backup_path)) if backup_path else _tr("operations.planRollbackLatest")
+        summary_limit = None
         parts.append(
             _trf(
                 "operations.planChangeRollbackCore",
@@ -185,32 +194,11 @@ def _build_plan_changes(self, action_norm, item, payload, custom_fields):
 
     elif action_norm == "add":
         fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
-        box = payload.get("box", item.get("box", "?"))
-        positions = payload.get("positions") if isinstance(payload.get("positions"), list) else []
-        if not positions:
-            fallback_pos = item.get("position")
-            if fallback_pos not in (None, ""):
-                positions = [fallback_pos]
-        count = len(positions)
-        positions_text = self._positions_to_display_text(positions) if positions else "?"
-        parts.append(
-            _trf(
-                "operations.planChangeAddCore",
-                default="Add {count} tube(s) -> Box {box}: [{positions}]",
-                count=count,
-                box=box,
-                positions=positions_text,
-            )
-        )
         sample_tokens = _collect_sample_tokens(fields)
         if sample_tokens:
-            parts.append(
-                _trf(
-                    "operations.planChangeSample",
-                    default="Sample: {sample}",
-                    sample=" / ".join(sample_tokens),
-                )
-            )
+            parts.append(" / ".join(sample_tokens))
+        else:
+            parts.append(_tr("operations.add"))
         for key, value in fields.items():
             value_text = self._plan_value_text(value)
             if not value_text:
@@ -225,55 +213,29 @@ def _build_plan_changes(self, action_norm, item, payload, custom_fields):
             old_value = record.get(key, "") if isinstance(record, dict) else ""
             old_text = self._plan_value_text(old_value)
             new_text = self._plan_value_text(new_value)
-            if old_text == new_text:
-                parts.append(f"{label}: {new_text}")
-            else:
+            if old_text != new_text:
                 parts.append(f"{label}: {old_text} -> {new_text}")
+        if not parts:
+            parts.append(_tr("operations.planSummaryNoEffectiveEdit", default="No effective field change"))
 
     else:
-        box = item.get("box", "?")
-        pos = self._position_to_display(item.get("position", "?"))
         if action_norm == "move":
+            box = item.get("box", "?")
             to_box = item.get("to_box")
             if to_box in (None, ""):
                 to_box = box
-            to_pos = item.get("to_position")
-            to_pos_text = self._position_to_display(to_pos if to_pos not in (None, "") else "?")
-            suffix = ""
             if to_box not in (None, "", box):
-                suffix = _tr("operations.planChangeMoveCrossBoxTag", default=" (cross-box)")
-            parts.append(
-                _trf(
-                    "operations.planChangeMoveCore",
-                    default="Move: Box {from_box}:{from_pos} -> Box {to_box}:{to_pos}{suffix}",
-                    from_box=box,
-                    from_pos=pos,
-                    to_box=to_box,
-                    to_pos=to_pos_text,
-                    suffix=suffix,
-                )
-            )
-        else:
-            parts.append(
-                _trf(
-                    "operations.planChangeTakeoutCore",
-                    default="Takeout: Box {box}:{pos} -> taken out",
-                    box=box,
-                    pos=pos,
-                )
-            )
+                parts.append(_tr("operations.planSummaryCrossBox", default="Cross-box"))
 
         sample_tokens = _collect_sample_tokens(record)
         if sample_tokens:
-            parts.append(
-                _trf(
-                    "operations.planChangeSample",
-                    default="Sample: {sample}",
-                    sample=" / ".join(sample_tokens),
-                )
-            )
+            parts.append(" / ".join(sample_tokens))
+        elif action_norm == "move":
+            parts.append(_tr("operations.move"))
+        else:
+            parts.append(_tr("overview.takeout", default="Takeout"))
 
-    summary, base_detail = self._summarize_change_parts(parts)
+    summary, base_detail = self._summarize_change_parts(parts, max_parts=summary_limit)
     if detail_parts:
         combined_detail = base_detail + "\n" + "\n".join(detail_parts) if base_detail else "\n".join(detail_parts)
         return summary, combined_detail

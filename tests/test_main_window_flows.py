@@ -226,6 +226,80 @@ def test_manage_boxes_flow_add_request_executes_and_emits_notice():
         window.operations_panel.emit_external_operation_event.assert_called_once()
 
 
+def test_manage_boxes_flow_add_requires_explicit_count():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yaml_path = os.path.join(tmpdir, "inventory.yaml")
+        Path(yaml_path).write_text("meta: {}\ninventory: []\n", encoding="utf-8")
+
+        adjust_mock = MagicMock(return_value={"ok": True})
+        window = SimpleNamespace(
+            current_yaml_path=yaml_path,
+            bridge=SimpleNamespace(adjust_box_count=adjust_mock),
+            overview_panel=SimpleNamespace(refresh=MagicMock()),
+            on_operation_completed=MagicMock(),
+            operations_panel=SimpleNamespace(emit_external_operation_event=MagicMock()),
+            show_status=MagicMock(),
+        )
+        flow = ManageBoxesFlow(window)
+
+        result = flow.handle_request(
+            {"operation": "add"},
+            from_ai=True,
+            yaml_path_override=yaml_path,
+        )
+
+        assert result["ok"] is False
+        assert result["error_code"] == "invalid_count"
+        adjust_mock.assert_not_called()
+        window.overview_panel.refresh.assert_not_called()
+        window.on_operation_completed.assert_not_called()
+        window.operations_panel.emit_external_operation_event.assert_not_called()
+        window.show_status.assert_not_called()
+
+
+def test_manage_boxes_flow_remove_invalid_box_fails_before_confirm():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yaml_path = os.path.join(tmpdir, "inventory.yaml")
+        Path(yaml_path).write_text(
+            (
+                "meta:\n"
+                "  box_layout:\n"
+                "    rows: 9\n"
+                "    cols: 9\n"
+                "    box_count: 2\n"
+                "inventory: []\n"
+            ),
+            encoding="utf-8",
+        )
+
+        adjust_mock = MagicMock(return_value={"ok": True})
+        window = SimpleNamespace(
+            current_yaml_path=yaml_path,
+            bridge=SimpleNamespace(adjust_box_count=adjust_mock),
+            overview_panel=SimpleNamespace(refresh=MagicMock()),
+            on_operation_completed=MagicMock(),
+            operations_panel=SimpleNamespace(emit_external_operation_event=MagicMock()),
+            show_status=MagicMock(),
+        )
+        flow = ManageBoxesFlow(window)
+
+        with patch("app_gui.main_window_flows.QMessageBox.question") as confirm_mock:
+            result = flow.handle_request(
+                {"operation": "remove", "box": 99},
+                from_ai=True,
+                yaml_path_override=yaml_path,
+            )
+
+        assert result["ok"] is False
+        assert result["error_code"] == "invalid_box"
+        confirm_mock.assert_not_called()
+        adjust_mock.assert_not_called()
+        window.overview_panel.refresh.assert_not_called()
+        window.on_operation_completed.assert_not_called()
+        window.operations_panel.emit_external_operation_event.assert_not_called()
+        window.show_status.assert_not_called()
+
+
 def test_window_state_flow_restore_and_label_and_stats():
     stats_bar = SimpleNamespace(setText=MagicMock())
     dataset_label = SimpleNamespace(setText=MagicMock())
@@ -271,6 +345,31 @@ def test_window_state_flow_restore_and_label_and_stats():
     assert window.ai_panel.ai_custom_prompt == "abc"
     dataset_label.setText.assert_called_once_with("D:/tmp/inventory.yaml")
     assert stats_bar.setText.call_count >= 3
+
+
+def test_window_state_flow_wire_plan_store_refreshes_overview_and_operations():
+    plan_store = SimpleNamespace(_on_change=None)
+    ops_panel = SimpleNamespace()
+    overview_panel = SimpleNamespace(
+        _set_plan_store_ref=MagicMock(),
+        _on_plan_store_changed=MagicMock(),
+    )
+    window = SimpleNamespace(
+        plan_store=plan_store,
+        operations_panel=ops_panel,
+        overview_panel=overview_panel,
+    )
+    flow = WindowStateFlow(window)
+
+    with patch("PySide6.QtCore.QMetaObject.invokeMethod") as invoke_mock:
+        flow.wire_plan_store()
+        overview_panel._set_plan_store_ref.assert_called_once_with(plan_store)
+        assert callable(plan_store._on_change)
+        plan_store._on_change()
+
+    called_pairs = [(call.args[0], call.args[1]) for call in invoke_mock.call_args_list]
+    assert (ops_panel, "_on_store_changed") in called_pairs
+    assert (overview_panel, "_on_plan_store_changed") in called_pairs
 
 
 def test_window_state_flow_close_event_busy_and_persist():

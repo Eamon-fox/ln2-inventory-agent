@@ -350,7 +350,7 @@
     "colSource": "来源",
     "colAction": "操作",
     "colPosition": "位置",
-    "colChanges": "变更",
+    "colChanges": "操作摘要",
     "colBox": "盒子",
     "colPos": "位置",
     "colToPos": "→位置",
@@ -406,6 +406,8 @@
     "planExecutionStats": "已尝试成功：{attempted_ok}，失败：{failed}，已应用：{applied}",
     "planExecutionError": "错误：{error}",
     "planExecutionRetry": "原计划已保留，可重试。",
+    "planSummaryNoEffectiveEdit": "无实际字段变更",
+    "planSummaryCrossBox": "跨箱",
     "planExecutionRollbackApplied": "已应用回滚：部分变更已恢复。",
     "planExecutionRollbackFailed": "回滚失败：{reason}",
     "planExecutionRollbackUnavailable": "回滚不可用：{reason}",
@@ -831,3 +833,4 @@
     }
   }
 }
+

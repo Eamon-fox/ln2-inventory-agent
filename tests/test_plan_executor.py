@@ -18,7 +18,10 @@ from lib.yaml_ops import write_yaml
 
 def make_data(records):
     return {
-        "meta": {"box_layout": {"rows": 9, "cols": 9}},
+        "meta": {
+            "box_layout": {"rows": 9, "cols": 9},
+            "cell_line_required": False,
+        },
         "inventory": records,
     }
 

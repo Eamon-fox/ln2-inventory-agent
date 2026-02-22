@@ -1,5 +1,6 @@
 """Extracted workflows for MainWindow to reduce UI-class bloat."""
 
+from contextlib import suppress
 import os
 import subprocess
 import sys
@@ -10,7 +11,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QInputDialog
 
 from agent.llm_client import DEFAULT_PROVIDER, PROVIDER_DEFAULTS
-from app_gui.gui_config import save_gui_config
+from app_gui.gui_config import DEFAULT_MAX_STEPS, save_gui_config
 from app_gui.i18n import t, tr
 from app_gui.system_notice import build_system_notice
 from lib.position_fmt import get_box_numbers
@@ -264,14 +265,20 @@ class WindowStateFlow:
         self._window = window
 
     def wire_plan_store(self):
-        """Connect PlanStore.on_change to OperationsPanel refresh (thread-safe)."""
+        """Connect PlanStore.on_change to Operations/Overview refresh (thread-safe)."""
         from PySide6.QtCore import QMetaObject, Qt as QtConst
 
         window = self._window
         ops = window.operations_panel
+        overview = getattr(window, "overview_panel", None)
+        if overview is not None and hasattr(overview, "_set_plan_store_ref"):
+            with suppress(Exception):
+                overview._set_plan_store_ref(window.plan_store)
 
         def _on_plan_changed():
             QMetaObject.invokeMethod(ops, "_on_store_changed", QtConst.QueuedConnection)
+            if overview is not None and hasattr(overview, "_on_plan_store_changed"):
+                QMetaObject.invokeMethod(overview, "_on_plan_store_changed", QtConst.QueuedConnection)
 
         window.plan_store._on_change = _on_plan_changed
 
@@ -320,7 +327,7 @@ class WindowStateFlow:
         provider_cfg = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS[DEFAULT_PROVIDER])
         window.ai_panel.ai_provider.setText(provider)
         window.ai_panel.ai_model.setText(ai_cfg.get("model") or provider_cfg["model"])
-        window.ai_panel.ai_steps.setValue(ai_cfg.get("max_steps", 8))
+        window.ai_panel.ai_steps.setValue(ai_cfg.get("max_steps", DEFAULT_MAX_STEPS))
         window.ai_panel.ai_thinking_enabled.setChecked(bool(ai_cfg.get("thinking_enabled", True)))
         window.ai_panel.ai_thinking_collapsed = not bool(ai_cfg.get("thinking_expanded", True))
         window.ai_panel.ai_custom_prompt = ai_cfg.get("custom_prompt", "")
@@ -386,7 +393,7 @@ class SettingsFlow:
         window.gui_config["ai"] = {
             "provider": values.get("ai_provider", DEFAULT_PROVIDER),
             "model": values.get("ai_model", PROVIDER_DEFAULTS[DEFAULT_PROVIDER]["model"]),
-            "max_steps": values.get("ai_max_steps", 8),
+            "max_steps": values.get("ai_max_steps", DEFAULT_MAX_STEPS),
             "thinking_enabled": values.get("ai_thinking_enabled", True),
             "thinking_expanded": values.get("ai_thinking_expanded", True),
             "custom_prompt": values.get("ai_custom_prompt", ""),
@@ -633,8 +640,10 @@ class ManageBoxesFlow:
         mode = self._normalize_mode_alias(request.get("renumber_mode"))
 
         if op == "add":
+            if "count" not in request:
+                return self._invalid_count_response()
             try:
-                payload["count"] = int(request.get("count", 1))
+                payload["count"] = int(request.get("count"))
             except Exception:
                 return self._invalid_count_response()
             if payload["count"] <= 0:
@@ -659,6 +668,11 @@ class ManageBoxesFlow:
                 box_numbers = get_box_numbers(layout)
             except Exception as exc:
                 return self._error_response("load_failed", str(exc))
+            if target_box not in box_numbers:
+                return self._error_response(
+                    "invalid_box",
+                    "box does not exist in current layout",
+                )
 
             chosen_mode = self.ask_remove_mode(box_numbers, target_box, suggested_mode=mode)
             if chosen_mode is None:

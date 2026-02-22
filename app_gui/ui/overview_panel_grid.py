@@ -10,6 +10,113 @@ from app_gui.ui.utils import cell_color
 from lib.position_fmt import box_to_display, pos_to_display
 
 
+def _normalize_positive_int(raw):
+    try:
+        value = int(raw)
+    except Exception:
+        return None
+    return value if value > 0 else None
+
+
+def _marker_border_color(marker_type):
+    marker = str(marker_type or "").strip().lower()
+    if marker == "add":
+        return "#22c55e"
+    if marker == "takeout":
+        return "#ef4444"
+    if marker == "edit":
+        return "#06b6d4"
+    if marker in {"move-source", "move-target"}:
+        return "#63b3ff"
+    return ""
+
+
+def _marker_css_overlay(marker_type):
+    color = _marker_border_color(marker_type)
+    if not color:
+        return ""
+    return (
+        "\n"
+        "QPushButton {\n"
+        f"    border: 2px solid {color};\n"
+        "}\n"
+        "QPushButton:hover {\n"
+        f"    border: 2px solid {color};\n"
+        "}\n"
+    )
+
+
+def _build_operation_marker_map(plan_items):
+    marker_map = {}
+    move_counter = 1
+    for item in list(plan_items or []):
+        if not isinstance(item, dict):
+            continue
+        action = str(item.get("action") or "").strip().lower()
+        box = _normalize_positive_int(item.get("box"))
+        pos = _normalize_positive_int(item.get("position"))
+        if box is None or pos is None:
+            continue
+
+        if action == "add":
+            payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+            positions = payload.get("positions") if isinstance(payload.get("positions"), list) else []
+            add_positions = []
+            for raw_pos in positions:
+                normalized_pos = _normalize_positive_int(raw_pos)
+                if normalized_pos is not None:
+                    add_positions.append(normalized_pos)
+            if not add_positions:
+                add_positions = [pos]
+            for add_pos in add_positions:
+                marker_map[(box, add_pos)] = {"type": "add"}
+            continue
+
+        if action == "takeout":
+            marker_map[(box, pos)] = {"type": "takeout"}
+            continue
+
+        if action == "edit":
+            marker_map[(box, pos)] = {"type": "edit"}
+            continue
+
+        if action != "move":
+            continue
+
+        move_id = move_counter
+        move_counter += 1
+        marker_map[(box, pos)] = {"type": "move-source", "move_id": move_id}
+
+        to_box = _normalize_positive_int(item.get("to_box")) or box
+        to_pos = _normalize_positive_int(item.get("to_position"))
+        if to_pos is not None:
+            marker_map[(to_box, to_pos)] = {"type": "move-target", "move_id": move_id}
+
+    return marker_map
+
+
+def _set_plan_store_ref(self, plan_store):
+    self._plan_store_ref = plan_store
+    self._on_plan_store_changed()
+
+
+def _set_plan_markers_from_items(self, plan_items):
+    self._operation_markers = _build_operation_marker_map(plan_items)
+    if self.overview_cells:
+        self._repaint_all_cells()
+
+
+def _on_plan_store_changed(self):
+    plan_items = []
+    store = getattr(self, "_plan_store_ref", None)
+    if store is not None and hasattr(store, "list_items"):
+        try:
+            plan_items = store.list_items()
+        except Exception:
+            plan_items = []
+    self._set_plan_markers_from_items(plan_items)
+
+
 def _repaint_all_cells(self):
     """Repaint all cell buttons using cached data."""
     records = getattr(self, "_current_records", [])
@@ -153,7 +260,8 @@ def _paint_cell(self, button, box_num, position, record):
         tt.append(f"{tr('overview.tooltipDate')}: {record.get('frozen_at', '-')}")
 
         button.setToolTip("\n".join(tt))
-        button.setStyleSheet(cell_occupied_style(color, is_selected, font_size=fs_occ))
+        base_style = cell_occupied_style(color, is_selected, font_size=fs_occ)
+        button.setStyleSheet(base_style)
         parts = [
             str(record.get("id", "")),
             str(box_num),
@@ -173,11 +281,22 @@ def _paint_cell(self, button, box_num, position, record):
     else:
         button.setText(display_pos)
         button.setToolTip(t("overview.emptyCellTooltip", box=box_num, position=position))
-        button.setStyleSheet(cell_empty_style(is_selected, font_size=fs_empty))
+        base_style = cell_empty_style(is_selected, font_size=fs_empty)
+        button.setStyleSheet(base_style)
         button.setProperty("search_text", f"empty box {box_num} position {position}".lower())
         button.setProperty("color_key_value", "")
         button.setProperty("is_empty", True)
         button.set_record_id(None)
+
+    marker_map = getattr(self, "_operation_markers", {}) or {}
+    marker = marker_map.get((box_num, position)) if isinstance(marker_map, dict) else None
+    marker_type = str((marker or {}).get("type") or "").strip().lower()
+    move_id = (marker or {}).get("move_id")
+    if marker_type:
+        button.setStyleSheet((button.styleSheet() or "") + _marker_css_overlay(marker_type))
+
+    if hasattr(button, "set_operation_marker"):
+        button.set_operation_marker(marker_type if marker_type else None, move_id if marker_type else None)
 
 
 def _set_selected_cell(self, box_num, position):
