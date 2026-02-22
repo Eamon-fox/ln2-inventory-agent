@@ -114,6 +114,7 @@ def _persist_batch_nonmove_plan(
     action_en,
     date_str,
     auto_backup,
+    request_backup_path,
 ):
     details = build_batch_write_details(operations=operations, action_en=action_en, date_str=date_str)
     try:
@@ -174,6 +175,7 @@ def _persist_batch_nonmove_plan(
             candidate_data,
             yaml_path,
             auto_backup=auto_backup,
+            backup_path=request_backup_path,
             audit_meta=api._build_audit_meta(
                 action=audit_action,
                 source=source,

@@ -49,17 +49,11 @@ def _is_middle_box(box_numbers, target_box):
 
 
 def build_actor_context(
-    actor_type="human",
-    channel="cli",
     session_id=None,
     trace_id=None,
 ):
-    """Build normalized actor context for unified audit records."""
-    at = actor_type or "human"
+    """Build trace/session context for unified audit records."""
     return {
-        "actor_type": at,
-        "actor_id": at,
-        "channel": channel or "cli",
         "session_id": session_id or _DEFAULT_SESSION_ID,
         "trace_id": trace_id,
     }
@@ -115,22 +109,19 @@ def _build_move_event(
 
 
 def _build_audit_meta(action, source, tool_name, actor_context=None, details=None, tool_input=None):
-    actor = dict(build_actor_context())
-    actor.update(actor_context or {})
-    if not actor.get("trace_id"):
-        actor["trace_id"] = f"trace-{uuid.uuid4().hex}"
-    if not actor.get("session_id"):
-        actor["session_id"] = _DEFAULT_SESSION_ID
+    ctx = dict(build_actor_context())
+    ctx.update(actor_context or {})
+    if not ctx.get("trace_id"):
+        ctx["trace_id"] = f"trace-{uuid.uuid4().hex}"
+    if not ctx.get("session_id"):
+        ctx["session_id"] = _DEFAULT_SESSION_ID
 
     return {
         "action": action,
         "source": source,
         "tool_name": tool_name,
-        "actor_type": actor.get("actor_type", "human"),
-        "actor_id": actor.get("actor_type", "human"),
-        "channel": actor.get("channel", "cli"),
-        "session_id": actor.get("session_id"),
-        "trace_id": actor.get("trace_id"),
+        "session_id": ctx.get("session_id"),
+        "trace_id": ctx.get("trace_id"),
         "status": "success",
         "details": details,
         "tool_input": tool_input,
@@ -262,6 +253,7 @@ def validate_write_tool_call(
     actor_context=None,
     before_data=None,
     auto_backup=True,
+    request_backup_path=None,
 ):
     return _write_validation.validate_write_tool_call(
         yaml_path=yaml_path,
@@ -275,6 +267,7 @@ def validate_write_tool_call(
         actor_context=actor_context,
         before_data=before_data,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
         failure_result_fn=_failure_result,
     )
 
@@ -290,6 +283,7 @@ def tool_add_entry(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     response = _tool_add_entry_impl(
         yaml_path=yaml_path,
@@ -302,6 +296,7 @@ def tool_add_entry(
         actor_context=actor_context,
         source=source,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
     return _format_tool_response_positions(response, yaml_path=yaml_path)
 
@@ -317,6 +312,7 @@ def _tool_add_entry_impl(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     from .tool_api_impl import write_ops as _write_ops
 
@@ -331,6 +327,7 @@ def _tool_add_entry_impl(
         actor_context=actor_context,
         source=source,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
     return _format_tool_response_positions(response, yaml_path=yaml_path)
 
@@ -353,6 +350,7 @@ def tool_edit_entry(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     from .tool_api_impl import write_ops as _write_ops
 
@@ -365,6 +363,7 @@ def tool_edit_entry(
         actor_context=actor_context,
         source=source,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
     return _format_tool_response_positions(response, yaml_path=yaml_path)
 
@@ -392,6 +391,7 @@ def tool_rollback(
     source="tool_api",
     auto_backup=True,
     source_event=None,
+    request_backup_path=None,
 ):
     from .tool_api_impl import write_ops as _write_ops
 
@@ -404,6 +404,7 @@ def tool_rollback(
         source=source,
         auto_backup=auto_backup,
         source_event=source_event,
+        request_backup_path=request_backup_path,
     )
     return _format_tool_response_positions(response, yaml_path=yaml_path)
 
@@ -419,6 +420,7 @@ def tool_adjust_box_count(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     response = _tool_adjust_box_count_impl(
         yaml_path=yaml_path,
@@ -431,6 +433,7 @@ def tool_adjust_box_count(
         actor_context=actor_context,
         source=source,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
     return _format_tool_response_positions(response, yaml_path=yaml_path)
 
@@ -446,6 +449,7 @@ def _tool_adjust_box_count_impl(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     from .tool_api_impl import write_ops as _write_ops
 
@@ -460,6 +464,7 @@ def _tool_adjust_box_count_impl(
         actor_context=actor_context,
         source=source,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
     return _format_tool_response_positions(response, yaml_path=yaml_path)
 
@@ -497,7 +502,7 @@ def tool_search_records(
     box=None,
     position=None,
     record_id=None,
-    active_only=None,
+    active_only=True,
 ):
     from .tool_api_impl import read_ops as _read_ops
 
@@ -653,11 +658,13 @@ def tool_recommend_positions(yaml_path, count, box_preference=None, strategy="co
     return _format_tool_response_positions(response, yaml_path=yaml_path)
 
 
-def tool_generate_stats(yaml_path):
+def tool_generate_stats(yaml_path, box=None, include_inactive=False):
     from .tool_api_impl import read_ops as _read_ops
 
     response = _read_ops.tool_generate_stats(
         yaml_path=yaml_path,
+        box=box,
+        include_inactive=include_inactive,
     )
     return _format_tool_response_positions(response, yaml_path=yaml_path)
 

@@ -20,6 +20,7 @@ def tool_rollback(
     source="tool_api",
     auto_backup=True,
     source_event=None,
+    request_backup_path=None,
 ):
     """Rollback inventory YAML using shared tool flow."""
 
@@ -45,6 +46,7 @@ def tool_rollback(
         "backup_path": backup_path,
         "dry_run": bool(dry_run),
         "execution_mode": execution_mode,
+        "request_backup_path": request_backup_path,
     }
     if normalized_source_event:
         tool_input["source_event"] = dict(normalized_source_event)
@@ -60,6 +62,7 @@ def tool_rollback(
         execution_mode=execution_mode,
         actor_context=actor_context,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
     if not validation.get("ok"):
         return validation
@@ -71,6 +74,10 @@ def tool_rollback(
         current_data = None
 
     backups = list_yaml_backups(yaml_path)
+    request_snapshot = str(request_backup_path or "").strip()
+    if request_snapshot:
+        request_snapshot = os.path.abspath(request_snapshot)
+        backups = [p for p in backups if os.path.abspath(str(p)) != request_snapshot]
     if not backups and not backup_path:
         payload = {
             "ok": False,
@@ -169,6 +176,7 @@ def tool_rollback(
         result = rollback_yaml(
             path=yaml_path,
             backup_path=target,
+            request_backup_path=request_backup_path,
             audit_meta=api._build_audit_meta(
                 action=audit_action,
                 source=source,
@@ -196,6 +204,5 @@ def tool_rollback(
         "ok": True,
         "dry_run": False,
         "result": result,
-        # Expose pre-rollback snapshot so Plan executor can offer an Undo path.
-        "backup_path": result.get("snapshot_before_rollback"),
+        "backup_path": request_backup_path or result.get("snapshot_before_rollback"),
     }

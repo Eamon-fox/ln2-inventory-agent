@@ -17,6 +17,7 @@ def tool_rollback(
     source="tool_api",
     auto_backup=True,
     source_event=None,
+    request_backup_path=None,
 ):
     return _rollback_ops.tool_rollback(
         yaml_path=yaml_path,
@@ -27,6 +28,7 @@ def tool_rollback(
         source=source,
         auto_backup=auto_backup,
         source_event=source_event,
+        request_backup_path=request_backup_path,
     )
 
 
@@ -41,6 +43,7 @@ def _tool_adjust_box_count_impl(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     return _box_ops._tool_adjust_box_count_impl(
         yaml_path=yaml_path,
@@ -53,4 +56,5 @@ def _tool_adjust_box_count_impl(
         actor_context=actor_context,
         source=source,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )

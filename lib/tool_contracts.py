@@ -59,7 +59,7 @@ TOOL_CONTRACTS = {
         },
     },
     "search_records": {
-        "description": "Search inventory records via text and structured filters.",
+        "description": "Search inventory records via text and structured filters (active records by default).",
         "parameters": {
             "type": "object",
             "properties": {
@@ -79,7 +79,7 @@ TOOL_CONTRACTS = {
                 "record_id": {"type": "integer", "minimum": 1},
                 "active_only": {"type": "boolean"},
             },
-            "required": [],
+            "required": ["query"],
             "additionalProperties": False,
         },
     },
@@ -139,10 +139,13 @@ TOOL_CONTRACTS = {
         },
     },
     "generate_stats": {
-        "description": "Generate inventory statistics.",
+        "description": "Generate inventory statistics (active records by default).",
         "parameters": {
             "type": "object",
-            "properties": {},
+            "properties": {
+                "box": {"type": "integer", "minimum": 1},
+                "include_inactive": {"type": "boolean"},
+            },
             "required": [],
             "additionalProperties": False,
         },
@@ -164,7 +167,7 @@ TOOL_CONTRACTS = {
     },
     "add_entry": {
         "description": "Add new frozen tube records.",
-        "notes": "Provide all sample metadata through fields object (e.g. fields.short_name, fields.cell_line).",
+        "notes": "Provide sample metadata through fields object using declared keys (e.g. fields.cell_line, fields.note, fields.<custom_field>).",
         "parameters": {
             "type": "object",
             "properties": {
@@ -313,39 +316,20 @@ TOOL_CONTRACTS = {
         },
     },
     "question": {
-        "description": "Ask user clarifying questions when required values are unknown.",
+        "description": "Ask one clarifying question with explicit options.",
         "notes": "question tool is not a write tool and must run alone.",
         "parameters": {
             "type": "object",
             "properties": {
-                "questions": {
+                "question": {"type": "string"},
+                "options": {
                     "type": "array",
-                    "minItems": 1,
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "header": {"type": "string"},
-                            "question": {"type": "string"},
-                            "options": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "label": {"type": "string"},
-                                        "description": {"type": "string"},
-                                    },
-                                    "required": ["label"],
-                                    "additionalProperties": False,
-                                },
-                            },
-                            "multiple": {"type": "boolean"},
-                        },
-                        "required": ["header", "question"],
-                        "additionalProperties": False,
-                    },
-                }
+                    "minItems": 2,
+                    "maxItems": 5,
+                    "items": {"type": "string"},
+                },
             },
-            "required": ["questions"],
+            "required": ["question", "options"],
             "additionalProperties": False,
         },
     },

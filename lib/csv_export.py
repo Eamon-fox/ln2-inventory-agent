@@ -36,18 +36,24 @@ def _record_sort_key(record):
     )
 
 
-def build_export_columns(meta=None):
-    """Build stable CSV column order for full inventory export.
+def build_export_columns(meta=None, *, split_location=False):
+    """Build stable column order for inventory export and table views.
 
     Columns are dynamically generated from:
     - Structural fields (id, location, frozen_at, thaw_events, cell_line)
     - User-defined custom fields (from meta.custom_fields)
 
-    Note: location column shows "box:position" format
+    Args:
+        meta: Inventory metadata.
+        split_location: When True, emit separate ``box`` and ``position``
+            columns (CSV-friendly). When False, emit merged ``location``.
     """
-    STRUCTURAL_COLUMNS = ["id", "location", "frozen_at", "cell_line", "note", "thaw_events"]
+    if split_location:
+        structural_columns = ["id", "box", "position", "frozen_at", "cell_line", "note", "thaw_events"]
+    else:
+        structural_columns = ["id", "location", "frozen_at", "cell_line", "note", "thaw_events"]
 
-    columns = list(STRUCTURAL_COLUMNS)
+    columns = list(structural_columns)
 
     for field_def in get_effective_fields(meta or {}):
         key = str(field_def.get("key") or "").strip()
@@ -60,8 +66,8 @@ def build_export_columns(meta=None):
     return columns
 
 
-def _row_value(record, column):
-    if column == "location":
+def _row_value(record, column, *, split_location=False):
+    if column == "location" and not split_location:
         # Merge box:position format
         box = record.get("box")
         position = record.get("position")
@@ -97,20 +103,26 @@ def _row_value(record, column):
     return value
 
 
-def build_export_rows(records, meta=None):
+def build_export_rows(records, meta=None, *, split_location=False):
     """Build normalized rows for inventory export/display reuse.
 
     Args:
         records: List of inventory records
         meta: Metadata dict with custom_fields
+        split_location: Whether to output separate box/position columns.
     """
     normalized_records = [record for record in (records or []) if isinstance(record, dict)]
     normalized_records.sort(key=_record_sort_key)
 
-    columns = build_export_columns(meta)
+    columns = build_export_columns(meta, split_location=split_location)
     rows = []
     for record in normalized_records:
-        rows.append({column: _row_value(record, column) for column in columns})
+        rows.append(
+            {
+                column: _row_value(record, column, split_location=split_location)
+                for column in columns
+            }
+        )
 
     return {
         "columns": columns,
@@ -118,16 +130,18 @@ def build_export_rows(records, meta=None):
     }
 
 
-def build_export_rows_from_data(data):
+def build_export_rows_from_data(data, *, split_location=False):
     """Build normalized export rows from loaded YAML payload."""
     inventory = data.get("inventory", []) if isinstance(data, dict) else []
     meta = data.get("meta", {}) if isinstance(data, dict) else {}
-    return build_export_rows(inventory, meta=meta)
+    return build_export_rows(inventory, meta=meta, split_location=split_location)
 
 
 def export_inventory_to_csv(data, output_path):
     """Write full inventory records to CSV and return export metadata."""
-    payload = build_export_rows_from_data(data)
+    # CSV export uses split box/position columns to avoid Excel/WPS
+    # auto-coercing values like "5:65" into time serial numbers.
+    payload = build_export_rows_from_data(data, split_location=True)
     columns = payload["columns"]
     rows = payload["rows"]
 

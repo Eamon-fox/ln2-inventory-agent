@@ -30,8 +30,13 @@ class PlanStore:
 
     @staticmethod
     def item_key(item):
-        """Dedup key: (action, record_id, position)."""
-        return (item.get("action"), item.get("record_id"), item.get("position"))
+        """Dedup key: (action, record_id, box, position)."""
+        return (
+            item.get("action"),
+            item.get("record_id"),
+            item.get("box"),
+            item.get("position"),
+        )
 
     # ---- Read ----
 
@@ -99,15 +104,26 @@ class PlanStore:
             self._notify()
         return count
 
-    def remove_by_key(self, action, record_id, position):
-        """Remove items matching the (action, record_id, position) key.
+    def remove_by_key(self, action, record_id, position, box=None):
+        """Remove items matching action/record_id/position, optionally box.
 
         Returns count removed.
         """
-        key = (action, record_id, position)
+
+        def _matches(item):
+            if item.get("action") != action:
+                return False
+            if item.get("record_id") != record_id:
+                return False
+            if item.get("position") != position:
+                return False
+            if box is None:
+                return True
+            return item.get("box") == box
+
         with self._lock:
             before = len(self._items)
-            self._items = [it for it in self._items if self.item_key(it) != key]
+            self._items = [it for it in self._items if not _matches(it)]
             count = before - len(self._items)
         if count:
             self._notify()

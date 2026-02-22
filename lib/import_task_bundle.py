@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Tuple
 
 
-_BUNDLE_VERSION = "1.0"
+_BUNDLE_VERSION = "1.1"
 _REQUIRED_OUTPUT_PATH = "output/ln2_inventory.yaml"
 
 
@@ -157,57 +157,123 @@ The generated file **must** be `output/ln2_inventory.yaml`.
 
 - `position` may be integer or null.
 - If `position` is null, record must include valid takeout history in `thaw_events`.
-- Active records must not conflict on `(box, position)`.
+- Active records must not conflict on `(box, position)`. Any active-position conflict is a blocking failure.
+
+## Metadata rules
+
+- `meta.custom_fields` is optional.
+- If present, each item should be a structured object (for example with `name` and `type`), not a loose scalar value.
 
 ## Date rules
 
 - `frozen_at` and thaw-event dates must be `YYYY-MM-DD`.
 - Future dates are invalid.
 
+## Ambiguity rules
+
+- Do not invent missing records, dates, positions, or metadata.
+- If source material is ambiguous for required fields, ask clarifying questions before finalizing output.
+
 ## Recommended workflow for external agent
 
-1. Parse source files from `inputs/`.
-2. Ask clarifying questions when source content is ambiguous.
-3. Produce final YAML at `output/ln2_inventory.yaml`.
-4. (Optional) Write transformation notes in `output/conversion_report.md`.
+1. Read `manifest.json` and parse files listed in `source_files`.
+2. Follow `templates/runbook_en.md` in order.
+3. Run checks from `templates/acceptance_checklist_en.md`.
+4. Produce final YAML at `output/ln2_inventory.yaml` only after blocking checks pass.
 """
 
 
 def _build_prompt_en() -> str:
     return """# Task: Convert source materials to LN2 inventory YAML
 
-You are given source files under `inputs/`.
+You are given raw source files under `inputs/`.
 
-Goal:
-- Produce a valid `output/ln2_inventory.yaml` file that satisfies:
-  - `schema/ln2_import_schema.json`
-  - `schema/validation_rules.md`
+Authoritative context:
+- Treat `manifest.json` as the source of truth.
+- Enumerate input files from `manifest.json` -> `source_files`.
+- Final output path is exactly `output/ln2_inventory.yaml`.
 
-Requirements:
-- Ask clarification questions when source records are ambiguous.
-- Do not invent tube records.
-- Keep one inventory item per physical tube.
-- Use `null` only when it is allowed by validation rules.
-- Return only final YAML file in the required path.
+Hard requirements:
+- Keep one inventory item per physical tube (tube-level model).
+- Do not invent records, fields, dates, or positions.
+- Use `null` only when allowed by `schema/validation_rules.md`.
+- Keep active tubes unique on `(box, position)`.
+- If required fields are ambiguous, ask clarifying questions before final output.
+- If clarification is unavailable, write blockers in `output/conversion_report.md` and avoid fake completion.
+
+Execution discipline:
+1. Follow `templates/runbook_en.md` step by step.
+2. Complete all blocking checks in `templates/acceptance_checklist_en.md`.
+3. Deliver final YAML only after all blocking checks pass.
 """
 
 
-def _build_prompt_zh() -> str:
-    return """# 任务：将源材料转换为 LN2 库存 YAML
+def _build_runbook_en() -> str:
+    return """# LN2 Import Runbook (English)
 
-你将收到 `inputs/` 目录中的原始文件。
+Follow every phase in order. Do not skip validation.
 
-目标：
-- 生成 `output/ln2_inventory.yaml`，并满足：
-  - `schema/ln2_import_schema.json`
-  - `schema/validation_rules.md`
+## Phase 1 - Read task context
 
-要求：
-- 源数据有歧义时，先提问再生成结果。
-- 不要凭空编造记录。
-- 数据模型是 tube-level：每条 inventory 代表一支物理冻存管。
-- 仅在规则允许时使用 `null`。
-- 最终交付必须放在指定路径。
+1. Open `manifest.json`.
+2. Build the exact source file list from `source_files`.
+3. Confirm required output path: `output/ln2_inventory.yaml`.
+
+## Phase 2 - Inspect source structure
+
+1. Inspect each listed source file.
+2. Identify how required fields map to YAML fields (`id`, `box`, `position`, `frozen_at`).
+3. Record unresolved ambiguities before transformation.
+
+## Phase 3 - Design field mapping
+
+1. Define deterministic mapping rules for required fields.
+2. Define mapping for optional/custom fields without inventing values.
+3. Note assumptions explicitly.
+
+## Phase 4 - Transform data
+
+1. Convert source records into tube-level `inventory[]` records.
+2. Normalize dates to `YYYY-MM-DD`.
+3. Keep source traceability for uncertain conversions.
+
+## Phase 5 - Validate draft output
+
+1. Run all checks in `templates/acceptance_checklist_en.md`.
+2. Fix blocking issues before final delivery.
+3. If a blocker cannot be resolved from source data, stop and request clarification.
+
+## Phase 6 - Finalize delivery
+
+1. Write final YAML to `output/ln2_inventory.yaml`.
+2. Optionally write `output/conversion_report.md` with assumptions and unresolved blockers.
+"""
+
+
+def _build_acceptance_checklist_en() -> str:
+    return """# LN2 Import Acceptance Checklist (English)
+
+Use this checklist before final delivery. Any failed blocking check means output is not ready.
+
+## Blocking checks
+
+- [ ] Output file path is exactly `output/ln2_inventory.yaml`.
+- [ ] Top-level keys are exactly `meta` and `inventory`.
+- [ ] `meta.box_layout.rows` and `meta.box_layout.cols` are positive integers.
+- [ ] Every inventory record has required fields: `id`, `box`, `frozen_at`.
+- [ ] `id` values are unique positive integers.
+- [ ] Active tubes do not conflict on `(box, position)`.
+- [ ] `frozen_at` and thaw-event dates use `YYYY-MM-DD` and are not future dates.
+- [ ] `position` is integer or `null`; `null` is only used when rules allow it.
+- [ ] `meta.custom_fields`, if present, uses structured objects (for example `name` and `type`) instead of loose scalar entries.
+- [ ] No invented records or fabricated values were introduced.
+- [ ] No unresolved ambiguity remains for required fields.
+
+## Recommended report content (optional)
+
+- Mapping summary from source fields to output fields.
+- Assumptions made during conversion.
+- Any non-blocking caveats for downstream review.
 """
 
 
@@ -308,7 +374,11 @@ def build_import_task_bundle(
 
         _write_text(os.path.join(bundle_root, "schema", "validation_rules.md"), _build_rules_markdown())
         _write_text(os.path.join(bundle_root, "templates", "prompt_en.md"), _build_prompt_en())
-        _write_text(os.path.join(bundle_root, "templates", "prompt_cn.md"), _build_prompt_zh())
+        _write_text(os.path.join(bundle_root, "templates", "runbook_en.md"), _build_runbook_en())
+        _write_text(
+            os.path.join(bundle_root, "templates", "acceptance_checklist_en.md"),
+            _build_acceptance_checklist_en(),
+        )
         _write_text(os.path.join(bundle_root, "examples", "valid_inventory_min.yaml"), _build_example_yaml())
         _write_text(
             os.path.join(bundle_root, "output", "README.md"),

@@ -234,6 +234,7 @@ def _tool_batch_takeout_impl(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     """Record batch takeout/move operations via shared tool flow."""
     audit_action = "batch_takeout"
@@ -244,6 +245,7 @@ def _tool_batch_takeout_impl(
         "action": action,
         "dry_run": bool(dry_run),
         "execution_mode": execution_mode,
+        "request_backup_path": request_backup_path,
     }
 
     validation = api.validate_write_tool_call(
@@ -257,6 +259,7 @@ def _tool_batch_takeout_impl(
         execution_mode=execution_mode,
         actor_context=actor_context,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
     if not validation.get("ok"):
         return validation
@@ -334,6 +337,7 @@ def _tool_batch_takeout_impl(
                 "action_en": action_en,
                 "date_str": date_str,
                 "auto_backup": auto_backup,
+                "request_backup_path": request_backup_path,
             },
         )
 
@@ -372,6 +376,7 @@ def _tool_batch_takeout_impl(
             "action_en": action_en,
             "date_str": date_str,
             "auto_backup": auto_backup,
+            "request_backup_path": request_backup_path,
         },
     )
 

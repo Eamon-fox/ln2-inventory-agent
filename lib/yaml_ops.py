@@ -37,6 +37,9 @@ _COMMON_CJK_CHARS = set(
 
 _MOJIBAKE_SOURCE_ENCODINGS = ("gb18030", "gbk", "cp936")
 _MOJIBAKE_MARKER_CHARS = set("\u95c4\u7039\u951b\u9350\u93b4\u935a\u7ec9\u93bf\u7481\u9286\u93c4\u9225\u7f01\u9428\u5a13\u9359\u5bee\u6fb6\u6d63")
+_AUDIT_SCHEMA_VERSION = "trace-session-v1"
+_AUDIT_SCHEMA_MARKER_FILE = os.path.join(AUDIT_DIR, ".audit_schema_version")
+_AUDIT_SCHEMA_READY = False
 
 
 def _ensure_inventory_integrity(data, prefix="完整性校验失败"):
@@ -139,6 +142,67 @@ def get_instance_audit_path(yaml_path):
 def _abs_path(path):
     """Return absolute filesystem path."""
     return os.path.abspath(os.fspath(path if path is not None else YAML_PATH))
+
+
+def _normalize_path_for_guard(path):
+    """Normalize path for guard comparisons across case/slash variants."""
+    return os.path.normcase(os.path.normpath(_abs_path(path)))
+
+
+def _apply_instance_guard(meta, current_path):
+    """Apply copy/rename guard to instance identity metadata.
+
+    Returns:
+        tuple: (updated_meta, guard_info)
+    """
+    current_abs = _abs_path(current_path)
+    current_norm = _normalize_path_for_guard(current_abs)
+
+    updated_meta = dict(meta or {})
+    raw_instance_id = str(updated_meta.get("inventory_instance_id") or "").strip()
+    old_instance_id = raw_instance_id or None
+
+    raw_origin = str(updated_meta.get("instance_origin_path") or "").strip()
+    origin_abs = _abs_path(raw_origin) if raw_origin else ""
+    origin_norm = _normalize_path_for_guard(origin_abs) if origin_abs else ""
+
+    decision = "stable"
+    new_instance_id = old_instance_id
+    origin_before = origin_abs or ""
+    origin_after = current_abs
+
+    if not old_instance_id:
+        new_instance_id = str(uuid.uuid4())
+        updated_meta["inventory_instance_id"] = new_instance_id
+        updated_meta["instance_origin_path"] = current_abs
+    elif not origin_abs:
+        # Legacy metadata without origin path: backfill from current path.
+        updated_meta["instance_origin_path"] = current_abs
+    elif origin_norm == current_norm:
+        # Keep stored path fresh even if case/separator changed.
+        updated_meta["instance_origin_path"] = current_abs
+    else:
+        if os.path.exists(origin_abs):
+            # Source still exists -> treat as copied dataset and fork identity.
+            decision = "forked_copy"
+            new_instance_id = str(uuid.uuid4())
+            updated_meta["inventory_instance_id"] = new_instance_id
+            updated_meta["instance_origin_path"] = current_abs
+        else:
+            # Source missing -> treat as rename/move and keep identity.
+            decision = "adopted_rename"
+            updated_meta["instance_origin_path"] = current_abs
+
+    updated_meta["instance_last_seen_at"] = datetime.now().isoformat(timespec="seconds")
+
+    guard_info = {
+        "decision": decision,
+        "old_instance_id": old_instance_id or "",
+        "new_instance_id": str(new_instance_id or ""),
+        "origin_before": origin_before,
+        "origin_after": origin_after,
+    }
+    return updated_meta, guard_info
 
 
 def _text_readability_score(text: str) -> float:
@@ -256,8 +320,10 @@ def load_yaml(path=YAML_PATH):
     return _repair_mojibake_values(data)
 
 
-def _backup_dir(yaml_path):
+def _backup_dir(yaml_path, instance_id_override=None):
     """Return the backup directory for a YAML file (instance-based)."""
+    if instance_id_override:
+        return os.path.join(BACKUP_DIR, str(instance_id_override))
     return get_instance_backup_dir(yaml_path)
 
 
@@ -298,7 +364,7 @@ def list_yaml_backups(yaml_path=YAML_PATH, limit=None):
     return backups
 
 
-def create_yaml_backup(yaml_path=YAML_PATH, keep=BACKUP_KEEP_COUNT):
+def create_yaml_backup(yaml_path=YAML_PATH, keep=BACKUP_KEEP_COUNT, instance_id_override=None):
     """Create timestamped backup for current YAML file.
 
     Returns:
@@ -308,7 +374,7 @@ def create_yaml_backup(yaml_path=YAML_PATH, keep=BACKUP_KEEP_COUNT):
     if not os.path.exists(src):
         return None
 
-    backup_dir = _backup_dir(src)
+    backup_dir = _backup_dir(src, instance_id_override=instance_id_override)
     os.makedirs(backup_dir, exist_ok=True)
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -335,102 +401,76 @@ def _audit_log_path(yaml_path):
     return get_audit_log_path(yaml_path)
 
 
-def get_legacy_audit_log_path(yaml_path=YAML_PATH):
-    """Return legacy shared audit path (for backward-compatible reads)."""
-    yaml_abs = _abs_path(yaml_path)
-    return os.path.join(os.path.dirname(yaml_abs), AUDIT_LOG_FILE)
+def _ensure_audit_schema_ready():
+    """Hard-cut audit schema and clear legacy rows when version changes."""
+    global _AUDIT_SCHEMA_READY
+    if _AUDIT_SCHEMA_READY:
+        return
+
+    os.makedirs(AUDIT_DIR, exist_ok=True)
+
+    existing_version = ""
+    with suppress(OSError, UnicodeDecodeError):
+        with open(_AUDIT_SCHEMA_MARKER_FILE, "r", encoding="utf-8") as f:
+            existing_version = str(f.read() or "").strip()
+
+    if existing_version != _AUDIT_SCHEMA_VERSION:
+        with suppress(OSError):
+            for entry in os.listdir(AUDIT_DIR):
+                candidate = os.path.join(AUDIT_DIR, entry)
+                if not os.path.isfile(candidate):
+                    continue
+                if entry.endswith(".audit.jsonl") or entry == AUDIT_LOG_FILE:
+                    with suppress(OSError):
+                        os.remove(candidate)
+        with suppress(OSError):
+            with open(_AUDIT_SCHEMA_MARKER_FILE, "w", encoding="utf-8") as f:
+                f.write(_AUDIT_SCHEMA_VERSION)
+
+    _AUDIT_SCHEMA_READY = True
 
 
 def get_audit_log_path(yaml_path=YAML_PATH):
-    """Return per-inventory audit log path in centralized audit directory.
-    
-    Uses instance-based path from get_instance_audit_path(). Also checks
-    legacy location for backward compatibility.
-    """
+    """Return per-inventory audit log path in centralized audit directory."""
+    _ensure_audit_schema_ready()
     return get_instance_audit_path(yaml_path)
 
 
 def get_audit_log_paths(yaml_path=YAML_PATH):
-    """Return all candidate audit log paths for reads (new + legacy)."""
-    yaml_abs = _abs_path(yaml_path)
-    stem = os.path.splitext(os.path.basename(yaml_abs))[0] or "inventory"
-    instance_id = None
-    with suppress(Exception):
-        instance_id = resolve_instance_id(yaml_abs, mode="read")
-
-    candidates = [
-        get_instance_audit_path(yaml_abs),
-    ]
-    # Only legacy files without inventory_instance_id should probe the old
-    # stem-only centralized path. Including it for instance-based datasets would
-    # cause cross-dataset contamination for common names like inventory.yaml.
-    if not instance_id:
-        candidates.append(os.path.join(AUDIT_DIR, f"legacy-{stem}.audit.jsonl"))
-
-    # Old colocated per-directory audit log.
-    candidates.append(get_legacy_audit_log_path(yaml_abs))
-
-    unique_paths = []
-    seen = set()
-    for path in candidates:
-        if path in seen:
-            continue
-        seen.add(path)
-        unique_paths.append(path)
-    return unique_paths
+    """Return canonical audit log path list for the active schema."""
+    return [get_audit_log_path(yaml_path)]
 
 
 def read_audit_events(yaml_path=YAML_PATH, limit=None):
-    """Read audit events for a YAML file from both new and legacy locations.
-    
-    Reads from instance-based audit path first, then falls back to legacy
-    location if not found.
-    
-    Returns:
-        list: Audit events (dicts), newest first
-    """
+    """Read audit events for a YAML file from the active schema path."""
     yaml_abs = _abs_path(yaml_path)
-    
-    candidate_paths = get_audit_log_paths(yaml_abs)
 
     events = []
-    seen_events = set()
-    for path in candidate_paths:
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
+    path = get_audit_log_path(yaml_abs)
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except Exception:
+                        continue
+                    event_yaml = event.get("yaml_path")
+                    if isinstance(event_yaml, str) and event_yaml.strip():
                         try:
-                            event = json.loads(line)
-                        except Exception:
-                            continue
-                        event_yaml = event.get("yaml_path")
-                        if isinstance(event_yaml, str) and event_yaml.strip():
-                            try:
-                                if _abs_path(event_yaml) != yaml_abs:
-                                    continue
-                            except Exception:
+                            if _abs_path(event_yaml) != yaml_abs:
                                 continue
-                        try:
-                            signature = json.dumps(
-                                event,
-                                ensure_ascii=False,
-                                sort_keys=True,
-                                separators=(",", ":"),
-                            )
                         except Exception:
-                            signature = str(event)
-                        if signature in seen_events:
                             continue
-                        seen_events.add(signature)
-                        events.append(event)
-            except Exception:
-                pass
-    
-    events.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
+                    events.append(event)
+        except Exception:
+            pass
+
+    # Keep chronological order so callers can reliably use events[-1] as latest.
+    events.sort(key=lambda e: str(e.get("timestamp", "")))
     if limit is not None:
         return events[: max(0, int(limit))]
     return events
@@ -633,10 +673,13 @@ def _build_audit_event(
 
     meta = dict(audit_meta or {})
     details = meta.get("details")
+    after_meta = after_data.get("meta", {}) if isinstance(after_data, dict) else {}
+    before_meta = before_data.get("meta", {}) if isinstance(before_data, dict) else {}
+    inventory_instance_id = (
+        (after_meta.get("inventory_instance_id") if isinstance(after_meta, dict) else None)
+        or (before_meta.get("inventory_instance_id") if isinstance(before_meta, dict) else None)
+    )
 
-    actor_type = meta.get("actor_type") or "human"
-    actor_id = meta.get("actor_id") or actor_type
-    channel = meta.get("channel") or "unknown"
     session_id = meta.get("session_id") or f"session-{datetime.now().strftime('%Y%m%d%H%M%S')}"
     trace_id = meta.get("trace_id") or f"trace-{uuid.uuid4().hex}"
     tool_name = meta.get("tool_name")
@@ -650,11 +693,9 @@ def _build_audit_event(
         "host": socket.gethostname(),
         "action": meta.get("action", "write_yaml"),
         "source": meta.get("source", "lib.yaml_ops.write_yaml"),
-        "actor_type": actor_type,
-        "actor_id": actor_id,
-        "channel": channel,
         "session_id": session_id,
         "trace_id": trace_id,
+        "inventory_instance_id": inventory_instance_id,
         "tool_name": tool_name,
         "tool_input": tool_input,
         "status": status,
@@ -697,6 +738,7 @@ def write_yaml(
     data,
     path=YAML_PATH,
     auto_backup=True,
+    backup_path=None,
     audit_meta=None,
 ):
     """Write data to YAML file.
@@ -705,9 +747,12 @@ def write_yaml(
         data: Inventory data dict
         path: YAML output path
         auto_backup: Whether to create backup before overwrite
+        backup_path: Optional pre-created backup path reference. When provided,
+            no new backup is created by this function and this path is attached
+            to audit events/return payload.
         audit_meta: Optional dict for audit fields.
-            Common keys: action/source/details, plus actor_type, actor_id,
-            channel, session_id, trace_id, tool_name, tool_input, status, error.
+            Common keys: action/source/details, plus session_id, trace_id,
+            tool_name, tool_input, status, error.
     """
     yaml_abs = _abs_path(path)
 
@@ -722,25 +767,33 @@ def write_yaml(
         except Exception as exc:
             print(f"warning: failed to load existing YAML before write: {exc}", file=sys.stderr)
 
-    instance_id = existing_instance_id
-    if not instance_id:
-        instance_id = str(uuid.uuid4())
-
     if not isinstance(data, dict):
         data = {"meta": {}, "inventory": []}
     meta = data.get("meta", {})
     if not isinstance(meta, dict):
         meta = {}
-    if "inventory_instance_id" not in meta:
-        meta["inventory_instance_id"] = instance_id
-        data["meta"] = meta
 
-    backup_path = None
-    if auto_backup:
+    # Prefer identity from current file on disk when present; this keeps normal
+    # in-place writes stable even if caller omitted metadata.
+    if existing_instance_id and not str(meta.get("inventory_instance_id") or "").strip():
+        meta["inventory_instance_id"] = str(existing_instance_id)
+
+    meta, guard_info = _apply_instance_guard(meta, yaml_abs)
+    data["meta"] = meta
+    instance_id = str(meta.get("inventory_instance_id") or "").strip()
+
+    effective_backup_path = None
+    raw_backup = str(backup_path or "").strip()
+    if raw_backup:
+        effective_backup_path = _abs_path(raw_backup)
+    elif auto_backup:
         try:
-            backup_path = create_yaml_backup(yaml_abs)
-            if backup_path:
-                print(f"backup created: {backup_path}")
+            effective_backup_path = create_yaml_backup(
+                yaml_abs,
+                instance_id_override=instance_id,
+            )
+            if effective_backup_path:
+                print(f"backup created: {effective_backup_path}")
         except Exception as exc:
             print(f"warning: failed to create backup: {exc}", file=sys.stderr)
 
@@ -753,24 +806,39 @@ def write_yaml(
     if size_warning:
         warnings.append(size_warning)
 
+    effective_audit_meta = dict(audit_meta or {})
+    if guard_info.get("decision") in {"forked_copy", "adopted_rename"}:
+        details = dict(effective_audit_meta.get("details") or {})
+        details.update(
+            {
+                "instance_guard_decision": guard_info.get("decision"),
+                "instance_guard_old_id": guard_info.get("old_instance_id"),
+                "instance_guard_new_id": guard_info.get("new_instance_id"),
+                "instance_guard_origin_path_before": guard_info.get("origin_before"),
+                "instance_guard_origin_path_after": guard_info.get("origin_after"),
+            }
+        )
+        effective_audit_meta["details"] = details
+
     try:
         append_audit_event(
             yaml_path=yaml_abs,
             before_data=before_data,
             after_data=data,
-            backup_path=backup_path,
+            backup_path=effective_backup_path,
             warnings=warnings,
-            audit_meta=audit_meta,
+            audit_meta=effective_audit_meta,
         )
     except Exception as exc:
         print(f"warning: failed to append audit log: {exc}", file=sys.stderr)
 
-    return backup_path
+    return effective_backup_path
 
 
 def rollback_yaml(
     path=YAML_PATH,
     backup_path=None,
+    request_backup_path=None,
     audit_meta=None,
 ):
     """Rollback YAML to latest (or specified) backup.
@@ -801,8 +869,9 @@ def rollback_yaml(
 
     before_data = load_yaml(yaml_abs)
 
-    # Backup current file again before rollback for safety.
-    pre_rollback_snapshot = create_yaml_backup(yaml_abs)
+    pre_rollback_snapshot = str(request_backup_path or "").strip() or None
+    if pre_rollback_snapshot:
+        pre_rollback_snapshot = _abs_path(pre_rollback_snapshot)
     shutil.copy2(target_backup, yaml_abs)
 
     after_data = load_yaml(yaml_abs)

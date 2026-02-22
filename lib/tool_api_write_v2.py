@@ -1,5 +1,6 @@
 """V2 write-entry handlers for record/batch takeout and move."""
 
+from .position_fmt import pos_to_display
 from .validators import validate_box
 from .yaml_ops import load_yaml
 
@@ -14,6 +15,7 @@ def tool_record_takeout(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     """V2 takeout API requiring explicit source slot."""
     from . import tool_api as api
@@ -95,7 +97,7 @@ def tool_record_takeout(
     response = _tool_record_takeout_impl(
         yaml_path=yaml_path,
         record_id=record_id,
-        position=from_pos,
+        position=pos_to_display(from_pos, layout),
         date_str=date_str,
         action="takeout",
         to_position=None,
@@ -105,6 +107,7 @@ def tool_record_takeout(
         actor_context=actor_context,
         source=source,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
     return api._format_tool_response_positions(response, layout=layout)
 
@@ -120,6 +123,7 @@ def tool_record_move(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     """V2 move API requiring explicit source and target slots."""
     from . import tool_api as api
@@ -215,16 +219,17 @@ def tool_record_move(
     response = _tool_record_takeout_impl(
         yaml_path=yaml_path,
         record_id=record_id,
-        position=from_pos,
+        position=pos_to_display(from_pos, layout),
         date_str=date_str,
         action="move",
-        to_position=to_pos,
+        to_position=pos_to_display(to_pos, layout),
         to_box=to_box,
         dry_run=dry_run,
         execution_mode=execution_mode,
         actor_context=actor_context,
         source=source,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
     return api._format_tool_response_positions(response, layout=layout)
 
@@ -242,6 +247,7 @@ def _tool_record_takeout_impl(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     from . import tool_api as api
     from .tool_api_impl import write_ops as _write_ops
@@ -259,6 +265,7 @@ def _tool_record_takeout_impl(
         actor_context=actor_context,
         source=source,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
     return api._format_tool_response_positions(response, yaml_path=yaml_path)
 
@@ -272,6 +279,7 @@ def tool_batch_takeout(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     """V2 batch takeout API using explicit source slots."""
     from . import tool_api as api
@@ -389,7 +397,7 @@ def tool_batch_takeout(
                 before_data=data,
                 details={"entry_index": idx, **(issue.get("details") or {})},
             )
-        normalized_entries.append((rid, from_pos))
+        normalized_entries.append((rid, pos_to_display(from_pos, layout)))
 
     response = _tool_batch_takeout_impl(
         yaml_path=yaml_path,
@@ -401,6 +409,7 @@ def tool_batch_takeout(
         actor_context=actor_context,
         source=source,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
     return api._format_tool_response_positions(response, layout=layout)
 
@@ -414,6 +423,7 @@ def tool_batch_move(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     """V2 batch move API using explicit source and target slots."""
     from . import tool_api as api
@@ -549,7 +559,14 @@ def tool_batch_move(
                 before_data=data,
                 details={"entry_index": idx, **(issue.get("details") or {})},
             )
-        normalized_entries.append((rid, from_pos, to_pos, to_box))
+        normalized_entries.append(
+            (
+                rid,
+                pos_to_display(from_pos, layout),
+                pos_to_display(to_pos, layout),
+                to_box,
+            )
+        )
 
     response = _tool_batch_takeout_impl(
         yaml_path=yaml_path,
@@ -561,6 +578,7 @@ def tool_batch_move(
         actor_context=actor_context,
         source=source,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
     return api._format_tool_response_positions(response, layout=layout)
 
@@ -575,6 +593,7 @@ def _tool_batch_takeout_impl(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     from . import tool_api as api
     from .tool_api_impl import write_ops as _write_ops
@@ -589,5 +608,6 @@ def _tool_batch_takeout_impl(
         actor_context=actor_context,
         source=source,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
     return api._format_tool_response_positions(response, yaml_path=yaml_path)

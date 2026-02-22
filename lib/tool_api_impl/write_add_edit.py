@@ -22,6 +22,7 @@ def _tool_add_entry_impl(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     return _add_ops._tool_add_entry_impl(
         yaml_path=yaml_path,
@@ -34,6 +35,7 @@ def _tool_add_entry_impl(
         actor_context=actor_context,
         source=source,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
 
 
@@ -46,6 +48,7 @@ def tool_edit_entry(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     return _edit_ops.tool_edit_entry(
         yaml_path=yaml_path,
@@ -56,4 +59,5 @@ def tool_edit_entry(
         actor_context=actor_context,
         source=source,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )

@@ -31,6 +31,7 @@ def tool_edit_entry(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     """Edit metadata fields of an existing record."""
     action = "edit_entry"
@@ -40,6 +41,7 @@ def tool_edit_entry(
         "fields": dict(fields or {}),
         "dry_run": bool(dry_run),
         "execution_mode": execution_mode,
+        "request_backup_path": request_backup_path,
     }
 
     validation = api.validate_write_tool_call(
@@ -53,6 +55,7 @@ def tool_edit_entry(
         execution_mode=execution_mode,
         actor_context=actor_context,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
     if not validation.get("ok"):
         return validation
@@ -186,6 +189,7 @@ def tool_edit_entry(
             candidate_data,
             yaml_path,
             auto_backup=auto_backup,
+            backup_path=request_backup_path,
             audit_meta=api._build_audit_meta(
                 action=action,
                 source=source,
@@ -217,4 +221,3 @@ def tool_edit_entry(
         },
         "backup_path": _backup_path,
     }
-

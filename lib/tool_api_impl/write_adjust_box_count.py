@@ -294,6 +294,7 @@ def _persist_adjust_box_count(
     tool_input,
     preview,
     auto_backup,
+    request_backup_path,
     before_data,
 ):
     try:
@@ -301,6 +302,7 @@ def _persist_adjust_box_count(
             candidate_data,
             yaml_path,
             auto_backup=auto_backup,
+            backup_path=request_backup_path,
             audit_meta=api._build_audit_meta(
                 action=audit_action,
                 source=source,
@@ -338,6 +340,7 @@ def _tool_adjust_box_count_impl(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     """Safely add/remove boxes without changing rows/cols/indexing."""
     audit_action = "adjust_box_count"
@@ -349,6 +352,7 @@ def _tool_adjust_box_count_impl(
         "renumber_mode": renumber_mode,
         "dry_run": bool(dry_run),
         "execution_mode": execution_mode,
+        "request_backup_path": request_backup_path,
     }
 
     validation = api.validate_write_tool_call(
@@ -362,6 +366,7 @@ def _tool_adjust_box_count_impl(
         execution_mode=execution_mode,
         actor_context=actor_context,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
     if not validation.get("ok"):
         return validation
@@ -451,6 +456,7 @@ def _tool_adjust_box_count_impl(
         tool_input=tool_input,
         preview=preview,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
         before_data=context["data"],
     )
     if failure:

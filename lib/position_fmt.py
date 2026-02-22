@@ -45,9 +45,6 @@ def display_to_pos(display, layout=None):
 
     Raises ``ValueError`` on invalid input.
     """
-    if isinstance(display, int) and not isinstance(display, bool):
-        return int(display)
-
     text = str(display).strip()
     if not text:
         raise ValueError("Position cannot be empty")

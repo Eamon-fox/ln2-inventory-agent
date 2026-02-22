@@ -208,7 +208,7 @@ class PositionConsistencyTests(unittest.TestCase):
                 yaml_path=yp,
                 box=2, positions=[10, 11, 12],
                 frozen_at="2026-02-10",
-                fields={"parent_cell_line": "K562", "short_name": "clone-new"},
+                fields={"cell_line": "K562"},
             )
             self.assertTrue(result["ok"])
             data = load_yaml(yp)
@@ -225,7 +225,7 @@ class PositionConsistencyTests(unittest.TestCase):
                 yaml_path=yp,
                 box=1, positions=[5],
                 frozen_at="2026-02-10",
-                fields={"parent_cell_line": "K562", "short_name": "conflict"},
+                fields={"cell_line": "K562"},
             )
             self.assertFalse(result["ok"])
 
@@ -338,7 +338,7 @@ class AuditTrailTests(unittest.TestCase):
                 yaml_path=yp,
                 box=1, positions=[1],
                 frozen_at="2026-02-10",
-                fields={"parent_cell_line": "K562", "short_name": "audit-test"},
+                fields={"cell_line": "K562"},
             )
             rows = _read_audit(td)
             add_rows = [r for r in rows if r.get("action") == "add_entry"]
@@ -384,7 +384,7 @@ class AuditTrailTests(unittest.TestCase):
                 yaml_path=yp,
                 box=99, positions=[1],  # invalid box
                 frozen_at="2026-02-10",
-                fields={"parent_cell_line": "K562", "short_name": "x"},
+                fields={"cell_line": "K562"},
             )
             rows = _read_audit(td)
             failed = [r for r in rows if r.get("status") == "failed"]
@@ -452,14 +452,14 @@ class BoundaryValueTests(unittest.TestCase):
             r1 = tool_add_entry(
                 yaml_path=yp,
                 box=1, positions=[1], frozen_at="2026-02-10",
-                fields={"parent_cell_line": "K562", "short_name": "box1"},
+                fields={"cell_line": "K562"},
             )
             self.assertTrue(r1["ok"])
 
             r5 = tool_add_entry(
                 yaml_path=yp,
                 box=5, positions=[1], frozen_at="2026-02-10",
-                fields={"parent_cell_line": "K562", "short_name": "box5"},
+                fields={"cell_line": "K562"},
             )
             self.assertTrue(r5["ok"])
 
@@ -469,7 +469,7 @@ class BoundaryValueTests(unittest.TestCase):
             result = tool_add_entry(
                 yaml_path=yp,
                 box=0, positions=[1], frozen_at="2026-02-10",
-                fields={"parent_cell_line": "K562", "short_name": "x"},
+                fields={"cell_line": "K562"},
             )
             self.assertFalse(result["ok"])
 
@@ -479,7 +479,7 @@ class BoundaryValueTests(unittest.TestCase):
             result = tool_add_entry(
                 yaml_path=yp,
                 box=6, positions=[1], frozen_at="2026-02-10",
-                fields={"parent_cell_line": "K562", "short_name": "x"},
+                fields={"cell_line": "K562"},
             )
             self.assertFalse(result["ok"])
 
@@ -551,8 +551,8 @@ class ErrorPathTests(unittest.TestCase):
         )
         self.assertFalse(result["ok"])
 
-    def test_add_with_empty_short_name_is_allowed_without_preset(self):
-        """When no custom fields are required, empty short_name should not block add."""
+    def test_add_rejects_short_name_when_not_declared(self):
+        """Undeclared fields must be rejected even when value is empty."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [])
             result = tool_add_entry(
@@ -560,9 +560,10 @@ class ErrorPathTests(unittest.TestCase):
                 box=1, positions=[1], frozen_at="2026-02-10",
                 fields={"short_name": ""},
             )
-            self.assertTrue(result["ok"])
+            self.assertFalse(result["ok"])
+            self.assertEqual("forbidden_fields", result.get("error_code"))
 
-    def test_add_with_empty_short_name_and_other_fields_is_allowed(self):
+    def test_add_rejects_mixed_declared_and_undeclared_fields(self):
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [])
             result = tool_add_entry(
@@ -570,7 +571,8 @@ class ErrorPathTests(unittest.TestCase):
                 box=1, positions=[1], frozen_at="2026-02-10",
                 fields={"parent_cell_line": "K562", "short_name": ""},
             )
-            self.assertTrue(result["ok"])
+            self.assertFalse(result["ok"])
+            self.assertEqual("forbidden_fields", result.get("error_code"))
 
 
 # --- Cross-box move tests ---

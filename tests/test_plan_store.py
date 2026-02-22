@@ -47,6 +47,12 @@ class TestPlanStoreBasic(unittest.TestCase):
         store.add([_item(record_id=1), _item(record_id=2)])
         self.assertEqual(2, store.count())
 
+    def test_dedup_same_position_different_box_keeps_both(self):
+        store = PlanStore()
+        store.add([_item(action="add", record_id=None, box=1, position=1)])
+        store.add([_item(action="add", record_id=None, box=2, position=1)])
+        self.assertEqual(2, store.count())
+
     def test_add_no_dedup(self):
         store = PlanStore()
         store.add([_item()], deduplicate=False)
@@ -155,10 +161,10 @@ class TestPlanStoreItemKey(unittest.TestCase):
 
     def test_item_key(self):
         item = _item(action="move", record_id=3, position=7)
-        self.assertEqual(("move", 3, 7), PlanStore.item_key(item))
+        self.assertEqual(("move", 3, 1, 7), PlanStore.item_key(item))
 
     def test_item_key_missing_fields(self):
-        self.assertEqual((None, None, None), PlanStore.item_key({}))
+        self.assertEqual((None, None, None, None), PlanStore.item_key({}))
 
 
 class TestPlanStoreThreadSafety(unittest.TestCase):

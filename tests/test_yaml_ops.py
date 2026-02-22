@@ -1,4 +1,5 @@
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -12,6 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from lib.yaml_ops import (
+    create_yaml_backup,
     get_audit_log_path,
     get_audit_log_paths,
     list_yaml_backups,
@@ -147,10 +149,11 @@ class YamlOpsSafetyTests(unittest.TestCase):
             self.assertEqual("tests", last["source"])
             self.assertIn(2, last["changed_ids"]["added"])
             self.assertTrue(last["backup_path"])
-            self.assertIn("actor_type", last)
-            self.assertIn("channel", last)
             self.assertTrue(last.get("session_id"))
             self.assertTrue(last.get("trace_id"))
+            self.assertNotIn("actor_type", last)
+            self.assertNotIn("actor_id", last)
+            self.assertNotIn("channel", last)
             self.assertEqual("success", last.get("status"))
 
     def test_audit_logs_are_isolated_per_yaml_file(self):
@@ -201,7 +204,7 @@ class YamlOpsSafetyTests(unittest.TestCase):
 
             self.assertNotEqual(str(audit_a), str(audit_b))
 
-    def test_read_audit_events_merges_all_candidate_paths(self):
+    def test_read_audit_events_reads_only_canonical_path(self):
         with tempfile.TemporaryDirectory(prefix="ln2_audit_merge_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -211,21 +214,188 @@ class YamlOpsSafetyTests(unittest.TestCase):
             )
 
             candidates = get_audit_log_paths(str(yaml_path))
-            self.assertGreaterEqual(len(candidates), 2)
-            legacy_shared_path = Path(candidates[-1])
-            legacy_shared_path.parent.mkdir(parents=True, exist_ok=True)
-            legacy_event = {
+            self.assertEqual(1, len(candidates))
+            canonical_path = Path(candidates[0])
+            canonical_event = {
                 "timestamp": "2026-02-20T08:00:00",
                 "action": "record_takeout",
                 "status": "success",
-                "source": "legacy-tests",
+                "source": "tests",
             }
-            legacy_shared_path.write_text(json.dumps(legacy_event, ensure_ascii=False) + "\n", encoding="utf-8")
+            canonical_path.write_text(
+                json.dumps(canonical_event, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
 
             events = read_audit_events(str(yaml_path))
             actions = [str(ev.get("action") or "") for ev in events]
-            self.assertIn("seed", actions)
             self.assertIn("record_takeout", actions)
+
+    def test_instance_guard_stable_on_same_path(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_instance_guard_stable_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+            first = load_yaml(str(yaml_path))
+            first_meta = dict(first.get("meta") or {})
+            first_id = str(first_meta.get("inventory_instance_id") or "")
+            self.assertTrue(first_id)
+
+            data2 = make_data([make_record(1, box=1, position=2)])
+            data2["meta"]["inventory_instance_id"] = first_id
+            write_yaml(
+                data2,
+                path=str(yaml_path),
+                audit_meta={"action": "update", "source": "tests"},
+            )
+
+            second = load_yaml(str(yaml_path))
+            second_meta = dict(second.get("meta") or {})
+            self.assertEqual(first_id, str(second_meta.get("inventory_instance_id") or ""))
+            self.assertEqual(str(yaml_path.resolve()), str(Path(second_meta.get("instance_origin_path")).resolve()))
+
+            rows = read_audit_events(str(yaml_path))
+            last = rows[-1]
+            details = last.get("details") or {}
+            self.assertNotIn("instance_guard_decision", details)
+
+    def test_instance_guard_copy_forks_identity_when_origin_exists(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_instance_guard_copy_") as temp_dir:
+            src_path = Path(temp_dir) / "inventory.yaml"
+            dst_path = Path(temp_dir) / "inventory_copy.yaml"
+
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(src_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+            src_id = str((load_yaml(str(src_path)).get("meta") or {}).get("inventory_instance_id") or "")
+            self.assertTrue(src_id)
+
+            shutil.copy2(src_path, dst_path)
+            dst_data = load_yaml(str(dst_path))
+            dst_data["inventory"][0]["position"] = 2
+            write_yaml(
+                dst_data,
+                path=str(dst_path),
+                audit_meta={"action": "edit_copy", "source": "tests"},
+            )
+
+            src_after = load_yaml(str(src_path))
+            dst_after = load_yaml(str(dst_path))
+            src_after_id = str((src_after.get("meta") or {}).get("inventory_instance_id") or "")
+            dst_after_meta = dict(dst_after.get("meta") or {})
+            dst_after_id = str(dst_after_meta.get("inventory_instance_id") or "")
+
+            self.assertEqual(src_id, src_after_id)
+            self.assertNotEqual(src_after_id, dst_after_id)
+            self.assertEqual(str(dst_path.resolve()), str(Path(dst_after_meta.get("instance_origin_path")).resolve()))
+
+            rows = read_audit_events(str(dst_path))
+            last = rows[-1]
+            details = last.get("details") or {}
+            self.assertEqual("forked_copy", details.get("instance_guard_decision"))
+            self.assertEqual(src_after_id, details.get("instance_guard_old_id"))
+            self.assertEqual(dst_after_id, details.get("instance_guard_new_id"))
+            self.assertEqual(str(src_path.resolve()), details.get("instance_guard_origin_path_before"))
+            self.assertEqual(str(dst_path.resolve()), details.get("instance_guard_origin_path_after"))
+            self.assertEqual(dst_after_id, last.get("inventory_instance_id"))
+            backup_path = str(last.get("backup_path") or "")
+            self.assertIn(dst_after_id, backup_path)
+
+    def test_instance_guard_copy_then_delete_origin_is_treated_as_rename(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_instance_guard_copy_del_") as temp_dir:
+            src_path = Path(temp_dir) / "inventory.yaml"
+            dst_path = Path(temp_dir) / "inventory_copy.yaml"
+
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(src_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+            original_id = str((load_yaml(str(src_path)).get("meta") or {}).get("inventory_instance_id") or "")
+            shutil.copy2(src_path, dst_path)
+            src_path.unlink()
+
+            dst_data = load_yaml(str(dst_path))
+            dst_data["inventory"][0]["position"] = 3
+            write_yaml(
+                dst_data,
+                path=str(dst_path),
+                audit_meta={"action": "touch", "source": "tests"},
+            )
+
+            dst_after = load_yaml(str(dst_path))
+            dst_meta = dict(dst_after.get("meta") or {})
+            self.assertEqual(original_id, str(dst_meta.get("inventory_instance_id") or ""))
+            self.assertEqual(str(dst_path.resolve()), str(Path(dst_meta.get("instance_origin_path")).resolve()))
+
+            rows = read_audit_events(str(dst_path))
+            last = rows[-1]
+            details = last.get("details") or {}
+            self.assertEqual("adopted_rename", details.get("instance_guard_decision"))
+            self.assertEqual(original_id, details.get("instance_guard_old_id"))
+            self.assertEqual(original_id, details.get("instance_guard_new_id"))
+
+    def test_instance_guard_rename_keeps_identity_and_updates_origin(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_instance_guard_rename_") as temp_dir:
+            old_path = Path(temp_dir) / "inventory.yaml"
+            new_path = Path(temp_dir) / "renamed_inventory.yaml"
+
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(old_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+            original_id = str((load_yaml(str(old_path)).get("meta") or {}).get("inventory_instance_id") or "")
+            old_path.rename(new_path)
+
+            renamed_data = load_yaml(str(new_path))
+            renamed_data["inventory"][0]["position"] = 4
+            write_yaml(
+                renamed_data,
+                path=str(new_path),
+                audit_meta={"action": "rename_touch", "source": "tests"},
+            )
+
+            renamed_after = load_yaml(str(new_path))
+            renamed_meta = dict(renamed_after.get("meta") or {})
+            self.assertEqual(original_id, str(renamed_meta.get("inventory_instance_id") or ""))
+            self.assertEqual(str(new_path.resolve()), str(Path(renamed_meta.get("instance_origin_path")).resolve()))
+
+            rows = read_audit_events(str(new_path))
+            last = rows[-1]
+            details = last.get("details") or {}
+            self.assertEqual("adopted_rename", details.get("instance_guard_decision"))
+
+    def test_instance_guard_backfills_missing_origin_without_fork(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_instance_guard_backfill_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            payload = make_data([make_record(1, box=1, position=1)])
+            payload["meta"]["inventory_instance_id"] = "instance-legacy-no-origin"
+            with open(yaml_path, "w", encoding="utf-8") as handle:
+                yaml.safe_dump(payload, handle, allow_unicode=True, sort_keys=False, width=120)
+
+            loaded = load_yaml(str(yaml_path))
+            loaded["inventory"][0]["position"] = 2
+            write_yaml(
+                loaded,
+                path=str(yaml_path),
+                audit_meta={"action": "legacy_touch", "source": "tests"},
+            )
+
+            after = load_yaml(str(yaml_path))
+            meta = dict(after.get("meta") or {})
+            self.assertEqual("instance-legacy-no-origin", str(meta.get("inventory_instance_id") or ""))
+            self.assertEqual(str(yaml_path.resolve()), str(Path(meta.get("instance_origin_path")).resolve()))
+
+            rows = read_audit_events(str(yaml_path))
+            last = rows[-1]
+            details = last.get("details") or {}
+            self.assertNotIn("instance_guard_decision", details)
 
     def test_rollback_yaml_restores_latest_backup(self):
         with tempfile.TemporaryDirectory(prefix="ln2_rollback_") as temp_dir:
@@ -236,19 +406,23 @@ class YamlOpsSafetyTests(unittest.TestCase):
 
             write_yaml(data_v1, path=str(yaml_path))
             write_yaml(data_v2, path=str(yaml_path))
+            restore_target = list_yaml_backups(str(yaml_path))[0]
 
             current = load_yaml(str(yaml_path))
             self.assertEqual(9, current["inventory"][0]["position"])
 
+            request_backup_path = create_yaml_backup(str(yaml_path))
             result = rollback_yaml(
                 path=str(yaml_path),
+                backup_path=str(restore_target),
+                request_backup_path=str(request_backup_path),
                 audit_meta={"source": "tests"},
             )
 
             restored = load_yaml(str(yaml_path))
             self.assertEqual(1, restored["inventory"][0]["position"])
             self.assertTrue(Path(result["restored_from"]).exists())
-            self.assertTrue(Path(result["snapshot_before_rollback"]).exists())
+            self.assertEqual(str(Path(request_backup_path).resolve()), str(Path(result["snapshot_before_rollback"]).resolve()))
 
     def test_write_yaml_rejects_invalid_inventory(self):
         with tempfile.TemporaryDirectory(prefix="ln2_write_guard_") as temp_dir:

@@ -172,6 +172,11 @@ _WRITE_REQUEST_VALIDATORS = {
 }
 
 
+def _source_is_plan_preflight(source):
+    src = str(source or "").strip().lower()
+    return src.startswith("plan_executor.preflight")
+
+
 def validate_write_tool_call(
     *,
     yaml_path,
@@ -185,6 +190,7 @@ def validate_write_tool_call(
     actor_context=None,
     before_data=None,
     auto_backup=True,
+    request_backup_path=None,
     failure_result_fn,
 ):
     """Unified write-tool validation gate.
@@ -213,6 +219,27 @@ def validate_write_tool_call(
             details=gate_issue.get("details"),
             extra=gate_issue.get("extra"),
         )
+
+    requires_backup_ref = (
+        (not bool(dry_run))
+        and normalized_mode == "execute"
+        and not _source_is_plan_preflight(source)
+    )
+    if requires_backup_ref:
+        backup_ref = str(request_backup_path or "").strip()
+        if not backup_ref:
+            return failure_result_fn(
+                yaml_path=yaml_path,
+                action=action,
+                source=source,
+                tool_name=tool_name,
+                error_code="missing_backup_path",
+                message="Execute-mode write requires request_backup_path.",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=before_data,
+                details={"execution_mode": normalized_mode, "source": source},
+            )
 
     validator = _WRITE_REQUEST_VALIDATORS.get(tool_name)
     if callable(validator):
@@ -244,7 +271,8 @@ def validate_write_tool_call(
         migration_result = migrate_cell_line_policy(
             yaml_path=yaml_path,
             dry_run=False,
-            auto_backup=bool(auto_backup),
+            auto_backup=False,
+            request_backup_path=request_backup_path,
             audit_source="tool_api.validate_write_tool_call",
         )
         if not migration_result.get("ok"):

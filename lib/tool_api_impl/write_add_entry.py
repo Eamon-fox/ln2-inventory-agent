@@ -3,8 +3,8 @@
 from copy import deepcopy
 
 from ..custom_fields import (
-    STRUCTURAL_FIELD_KEYS,
     get_cell_line_options,
+    get_effective_fields,
     get_required_field_keys,
     is_cell_line_required,
 )
@@ -13,6 +13,21 @@ from ..position_fmt import get_position_range
 from ..validators import validate_box, validate_position
 from ..yaml_ops import load_yaml, write_yaml
 from .write_common import api
+
+
+_ADD_STRUCTURAL_FIELDS = {"cell_line", "note"}
+
+
+def _get_addable_field_keys(meta):
+    """Return (allowed_keys, user_field_keys) for add_entry fields payload."""
+    user_field_keys = {
+        str(field.get("key"))
+        for field in get_effective_fields(meta)
+        if isinstance(field, dict) and field.get("key")
+    }
+    allowed_keys = set(_ADD_STRUCTURAL_FIELDS) | user_field_keys
+    return allowed_keys, user_field_keys
+
 
 def _validate_add_entry_request_data(
     *,
@@ -105,6 +120,22 @@ def _validate_add_entry_request_data(
         )
 
     meta = data.get("meta", {})
+    allowed_field_keys, user_field_keys = _get_addable_field_keys(meta)
+    bad_keys = sorted(set(fields.keys()) - allowed_field_keys)
+    if bad_keys:
+        return None, api._failure_result(
+            yaml_path=yaml_path,
+            action=action,
+            source=source,
+            tool_name=tool_name,
+            error_code="forbidden_fields",
+            message=f"These fields are not allowed for add_entry: {', '.join(bad_keys)}",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+            details={"forbidden": bad_keys, "allowed": sorted(allowed_field_keys)},
+        )
+
     required_keys = get_required_field_keys(meta)
     missing = [k for k in sorted(required_keys) if not fields.get(k)]
 
@@ -160,10 +191,11 @@ def _validate_add_entry_request_data(
         "positions": normalized_positions,
         "records": records,
         "fields": fields,
+        "user_field_keys": user_field_keys,
     }, None
 
 
-def _build_add_entry_records(records, *, box, positions, frozen_at, fields):
+def _build_add_entry_records(records, *, box, positions, frozen_at, fields, user_field_keys):
     # Tube-level model: one record == one physical tube.
     # Add multiple tubes by creating multiple records, one per position.
     next_id = get_next_id(records)
@@ -187,7 +219,7 @@ def _build_add_entry_records(records, *, box, positions, frozen_at, fields):
             "frozen_at": frozen_at,
         }
         for key, value in fields.items():
-            if key not in STRUCTURAL_FIELD_KEYS:
+            if key in user_field_keys:
                 rec[key] = value
         new_records.append(rec)
         created.append({"id": tube_id, "box": box, "position": int(pos)})
@@ -227,6 +259,7 @@ def _persist_add_entry(
     actor_context,
     tool_input,
     auto_backup,
+    request_backup_path,
 ):
     try:
         candidate_data = deepcopy(data)
@@ -281,6 +314,7 @@ def _persist_add_entry(
             candidate_data,
             yaml_path,
             auto_backup=auto_backup,
+            backup_path=request_backup_path,
             audit_meta=api._build_audit_meta(
                 action=action,
                 source=source,
@@ -333,11 +367,12 @@ def _tool_add_entry_impl(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     """Add a new frozen entry using the shared tool flow.
 
     Args:
-        fields: dict of user-configurable field values (e.g. cell_line, short_name, etc.)
+        fields: dict of user-configurable field values (e.g. cell_line, note, and keys in meta.custom_fields)
     """
     action = "add_entry"
     tool_name = "tool_add_entry"
@@ -349,6 +384,7 @@ def _tool_add_entry_impl(
         "fields": fields,
         "dry_run": bool(dry_run),
         "execution_mode": execution_mode,
+        "request_backup_path": request_backup_path,
     }
 
     validation = api.validate_write_tool_call(
@@ -362,6 +398,7 @@ def _tool_add_entry_impl(
         execution_mode=execution_mode,
         actor_context=actor_context,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
     if not validation.get("ok"):
         return validation
@@ -399,6 +436,7 @@ def _tool_add_entry_impl(
     positions = prepared["positions"]
     records = prepared["records"]
     fields = prepared["fields"]
+    user_field_keys = prepared["user_field_keys"]
 
     built = _build_add_entry_records(
         records,
@@ -406,6 +444,7 @@ def _tool_add_entry_impl(
         positions=positions,
         frozen_at=frozen_at,
         fields=fields,
+        user_field_keys=user_field_keys,
     )
     new_records = built["new_records"]
     created = built["created"]
@@ -441,6 +480,7 @@ def _tool_add_entry_impl(
         actor_context=actor_context,
         tool_input=tool_input,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
     if failure:
         return failure

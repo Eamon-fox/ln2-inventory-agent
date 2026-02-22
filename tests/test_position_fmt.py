@@ -95,8 +95,9 @@ class TestAlphanumericMode:
         with pytest.raises(ValueError):
             display_to_pos("5", self.LAYOUT_9x9)
 
-    def test_integer_input_allowed_in_alphanumeric_mode(self):
-        assert display_to_pos(5, self.LAYOUT_9x9) == 5
+    def test_integer_input_rejected_in_alphanumeric_mode(self):
+        with pytest.raises(ValueError):
+            display_to_pos(5, self.LAYOUT_9x9)
 
 
 class TestBoxDisplay:

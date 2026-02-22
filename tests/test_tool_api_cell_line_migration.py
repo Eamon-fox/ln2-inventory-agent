@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
 
 from lib.custom_fields import DEFAULT_UNKNOWN_CELL_LINE
 from lib.tool_api import validate_write_tool_call
-from lib.yaml_ops import load_yaml, write_yaml
+from lib.yaml_ops import create_yaml_backup, load_yaml, write_yaml
 
 
 def _seed_yaml(path, data):
@@ -54,6 +54,7 @@ class TestWriteGateCellLineMigration(unittest.TestCase):
                 dry_run=False,
                 execution_mode="execute",
                 auto_backup=False,
+                request_backup_path=str(create_yaml_backup(str(yaml_path))),
             )
             self.assertTrue(result["ok"])
 
@@ -83,6 +84,7 @@ class TestWriteGateCellLineMigration(unittest.TestCase):
                 dry_run=False,
                 execution_mode="execute",
                 auto_backup=False,
+                request_backup_path=str(create_yaml_backup(str(yaml_path))),
             )
             self.assertTrue(result["ok"])
 

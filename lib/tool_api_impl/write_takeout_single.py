@@ -536,6 +536,7 @@ def _persist_record_takeout(
     date_str,
     ctx,
     auto_backup,
+    request_backup_path,
 ):
     details = _single_takeout_details(
         record_id=record_id,
@@ -603,6 +604,7 @@ def _persist_record_takeout(
             candidate_data,
             ctx["yaml_path"],
             auto_backup=auto_backup,
+            backup_path=request_backup_path,
             audit_meta=api._build_audit_meta(
                 action=ctx["audit_action"],
                 source=ctx["source"],
@@ -657,6 +659,7 @@ def _tool_record_takeout_impl(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     """Record one takeout/move operation via shared tool flow."""
     audit_action = "record_takeout"
@@ -670,6 +673,7 @@ def _tool_record_takeout_impl(
         "action": action,
         "dry_run": bool(dry_run),
         "execution_mode": execution_mode,
+        "request_backup_path": request_backup_path,
     }
     ctx = {
         "yaml_path": yaml_path,
@@ -691,6 +695,7 @@ def _tool_record_takeout_impl(
         execution_mode=execution_mode,
         actor_context=actor_context,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
     if not validation.get("ok"):
         return validation
@@ -792,6 +797,7 @@ def _tool_record_takeout_impl(
         date_str=date_str,
         ctx=ctx,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
     if failure:
         return failure

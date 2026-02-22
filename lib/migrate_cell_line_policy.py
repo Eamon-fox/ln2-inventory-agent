@@ -39,6 +39,7 @@ def migrate_cell_line_policy(
     *,
     dry_run: bool = False,
     auto_backup: bool = True,
+    request_backup_path: Optional[str] = None,
     audit_source: str = "migration",
 ) -> Dict[str, Any]:
     """Normalize ``cell_line`` policy defaults and legacy record values.
@@ -161,6 +162,7 @@ def migrate_cell_line_policy(
             candidate,
             yaml_path,
             auto_backup=auto_backup,
+            backup_path=request_backup_path,
             audit_meta={
                 "action": "migrate_cell_line_policy",
                 "source": audit_source,

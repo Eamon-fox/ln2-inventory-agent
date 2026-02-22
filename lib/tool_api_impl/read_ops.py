@@ -24,6 +24,8 @@ class _ApiProxy:
 
 api = _ApiProxy()
 
+INVENTORY_PREVIEW_LIMIT = 100
+
 
 def tool_export_inventory_csv(yaml_path, output_path):
     """Export full inventory records to a CSV file."""
@@ -118,7 +120,7 @@ def tool_search_records(
     box=None,
     position=None,
     record_id=None,
-    active_only=None,
+    active_only=True,
 ):
     """Search records by text and/or structured filters."""
     try:
@@ -128,6 +130,13 @@ def tool_search_records(
             "ok": False,
             "error_code": "load_failed",
             "message": f"Failed to load YAML file: {exc}",
+        }
+
+    if query is None or str(query).strip() == "":
+        return {
+            "ok": False,
+            "error_code": "invalid_tool_input",
+            "message": "未输入检索词",
         }
 
     records = data.get("inventory", [])
@@ -186,7 +195,7 @@ def tool_search_records(
                 "message": f"position must be between {pos_lo}-{pos_hi}",
             }
 
-    normalized_active_only = None
+    normalized_active_only = True
     if active_only not in (None, ""):
         if isinstance(active_only, bool):
             normalized_active_only = active_only
@@ -661,7 +670,7 @@ def tool_recommend_positions(yaml_path, count, box_preference=None, strategy="co
     }
 
 
-def tool_generate_stats(yaml_path):
+def tool_generate_stats(yaml_path, box=None, include_inactive=False):
     """Generate inventory statistics and occupancy maps."""
     try:
         data = load_yaml(yaml_path)
@@ -672,10 +681,47 @@ def tool_generate_stats(yaml_path):
             "message": f"Failed to load YAML file: {exc}",
         }
 
-    records = data.get("inventory", [])
+    all_records = data.get("inventory", [])
+    include_inactive_flag = False
+    if isinstance(include_inactive, bool):
+        include_inactive_flag = include_inactive
+    elif include_inactive in (None, ""):
+        include_inactive_flag = False
+    elif isinstance(include_inactive, (int, float)):
+        include_inactive_flag = bool(include_inactive)
+    else:
+        value = str(include_inactive).strip().lower()
+        if value in {"1", "true", "yes", "y", "on"}:
+            include_inactive_flag = True
+        elif value in {"0", "false", "no", "n", "off"}:
+            include_inactive_flag = False
+        else:
+            return {
+                "ok": False,
+                "error_code": "invalid_tool_input",
+                "message": "include_inactive must be a boolean",
+            }
+    records = list(all_records) if include_inactive_flag else [rec for rec in all_records if rec.get("position") is not None]
     layout = api._get_layout(data)
+    target_box = None
+    if box not in (None, ""):
+        try:
+            target_box = int(display_to_box(box, layout))
+        except Exception:
+            return {
+                "ok": False,
+                "error_code": "invalid_box",
+                "message": "Validation failed",
+            }
+        if not validate_box(target_box, layout):
+            return {
+                "ok": False,
+                "error_code": "invalid_box",
+                "message": "Validation failed",
+            }
+
     total_slots = get_total_slots(layout)
-    occupancy = compute_occupancy(records)
+    occupancy = compute_occupancy(all_records)
     box_numbers = get_box_numbers(layout)
     total_boxes = len(box_numbers)
 
@@ -697,8 +743,7 @@ def tool_generate_stats(yaml_path):
 
     cell_lines = defaultdict(int)
     for rec in records:
-        if rec.get("position") is not None:
-            cell_lines[rec.get("cell_line", "Unknown")] += 1
+        cell_lines[rec.get("cell_line", "Unknown")] += 1
 
     # Flatten the stats structure for easier access, but keep nested structure for backward compatibility
     stats_nested = {
@@ -713,8 +758,9 @@ def tool_generate_stats(yaml_path):
     }
 
     stats_result = {
-        # Backward compatibility: keep nested structure
-        "data": data,
+        # Keep `data` key for compatibility, but do not expose full inventory here.
+        "data": {"meta": (data or {}).get("meta", {})},
+        "meta": (data or {}).get("meta", {}),
         "layout": layout,
         "occupancy": occupancy,
         "stats": stats_nested,
@@ -728,7 +774,50 @@ def tool_generate_stats(yaml_path):
         "boxes": box_stats,
         "cell_lines": dict(sorted(cell_lines.items(), key=lambda x: x[1], reverse=True)),
         "record_count": len(records),
+        "include_inactive": include_inactive_flag,
     }
+
+    if len(records) <= INVENTORY_PREVIEW_LIMIT:
+        stats_result["inventory_preview"] = records
+        stats_result["inventory_omitted"] = False
+        stats_result["inventory_limit"] = INVENTORY_PREVIEW_LIMIT
+    else:
+        stats_result["inventory_omitted"] = True
+        stats_result["inventory_omitted_reason"] = "record_count_exceeds_limit"
+        stats_result["inventory_limit"] = INVENTORY_PREVIEW_LIMIT
+        stats_result["next_actions"] = [
+            "Call generate_stats with box=<box_id> to inspect one box.",
+            "Use search_records with a non-empty query and structured filters for targeted lookup.",
+        ]
+
+    if target_box is not None:
+        box_records = []
+        for rec in records:
+            try:
+                rec_box = int(rec.get("box"))
+            except (TypeError, ValueError):
+                continue
+            if rec_box != target_box:
+                continue
+            box_records.append(rec)
+
+        def _record_sort_key(record):
+            pos_raw = record.get("position")
+            rid_raw = record.get("id")
+            try:
+                position_value = int(pos_raw)
+            except (TypeError, ValueError):
+                position_value = 10**9
+            try:
+                rid_value = int(rid_raw)
+            except (TypeError, ValueError):
+                rid_value = 10**9
+            return position_value, rid_value
+
+        box_records.sort(key=_record_sort_key)
+        stats_result["box"] = target_box
+        stats_result["box_record_count"] = len(box_records)
+        stats_result["box_records"] = box_records
 
     return {
         "ok": True,

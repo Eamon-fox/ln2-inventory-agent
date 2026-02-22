@@ -21,6 +21,7 @@ def _tool_add_entry_impl(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     return write_add_edit._tool_add_entry_impl(
         yaml_path=yaml_path,
@@ -33,6 +34,7 @@ def _tool_add_entry_impl(
         actor_context=actor_context,
         source=source,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
 
 
@@ -45,6 +47,7 @@ def tool_edit_entry(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     return write_add_edit.tool_edit_entry(
         yaml_path=yaml_path,
@@ -55,6 +58,7 @@ def tool_edit_entry(
         actor_context=actor_context,
         source=source,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
 
 
@@ -71,6 +75,7 @@ def tool_rollback(
     source="tool_api",
     auto_backup=True,
     source_event=None,
+    request_backup_path=None,
 ):
     return write_rollback_box.tool_rollback(
         yaml_path=yaml_path,
@@ -81,6 +86,7 @@ def tool_rollback(
         source=source,
         auto_backup=auto_backup,
         source_event=source_event,
+        request_backup_path=request_backup_path,
     )
 
 
@@ -97,6 +103,7 @@ def _tool_record_takeout_impl(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     return write_takeout_single._tool_record_takeout_impl(
         yaml_path=yaml_path,
@@ -111,6 +118,7 @@ def _tool_record_takeout_impl(
         actor_context=actor_context,
         source=source,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
 
 
@@ -124,6 +132,7 @@ def _tool_batch_takeout_impl(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     return write_takeout_batch._tool_batch_takeout_impl(
         yaml_path=yaml_path,
@@ -135,6 +144,7 @@ def _tool_batch_takeout_impl(
         actor_context=actor_context,
         source=source,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )
 
 
@@ -149,6 +159,7 @@ def _tool_adjust_box_count_impl(
     actor_context=None,
     source="tool_api",
     auto_backup=True,
+    request_backup_path=None,
 ):
     return write_rollback_box._tool_adjust_box_count_impl(
         yaml_path=yaml_path,
@@ -161,4 +172,5 @@ def _tool_adjust_box_count_impl(
         actor_context=actor_context,
         source=source,
         auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
     )

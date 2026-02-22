@@ -364,6 +364,7 @@ def _persist_batch_move_plan(
     action_en,
     date_str,
     auto_backup,
+    request_backup_path,
 ):
     operations = plan["operations"]
     touched_indices = plan["touched_indices"]
@@ -430,6 +431,7 @@ def _persist_batch_move_plan(
             candidate_data,
             yaml_path,
             auto_backup=auto_backup,
+            backup_path=request_backup_path,
             audit_meta=api._build_audit_meta(
                 action=audit_action,
                 source=source,
