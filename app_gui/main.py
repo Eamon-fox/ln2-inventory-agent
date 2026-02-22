@@ -262,7 +262,6 @@ class MainWindow(QMainWindow):
         self.overview_panel.request_prefill_background.connect(self.operations_panel.set_prefill_background)
         self.overview_panel.request_add_prefill.connect(self.operations_panel.set_add_prefill)
         self.overview_panel.request_add_prefill_background.connect(self.operations_panel.set_add_prefill_background)
-        self.overview_panel.request_move_prefill.connect(self.operations_panel.set_move_prefill)
         self.overview_panel.data_loaded.connect(self.operations_panel.update_records_cache)
 
         # Operations -> Overview (refresh after execution)

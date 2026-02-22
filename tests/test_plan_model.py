@@ -202,6 +202,12 @@ class ValidateMoveTests(unittest.TestCase):
     def test_to_position_equals_position(self):
         self.assertIn("differ", validate_plan_item(_move_item(to_position=1)))
 
+    def test_to_position_equals_position_allowed_for_cross_box_move(self):
+        self.assertIsNone(validate_plan_item(_move_item(position=1, to_position=1, to_box=2)))
+
+    def test_to_position_equals_position_rejected_for_same_box_move(self):
+        self.assertIn("differ", validate_plan_item(_move_item(position=1, to_position=1, to_box=1)))
+
     def test_to_position_zero(self):
         self.assertIn("to_position", validate_plan_item(_move_item(to_position=0)))
 
@@ -315,7 +321,18 @@ class RenderOperationSheetWithGridTests(unittest.TestCase):
     def test_default_css_uses_a4_grid_dimensions(self):
         html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
         self.assertIn("aspect-ratio: auto;", html)
-        self.assertIn("width: 7.2mm;", html)
+        self.assertIn("width: var(--cell-size, 7.2mm);", html)
+        self.assertIn("column-gap: var(--cell-gap, 0.6mm);", html)
+        self.assertIn("row-gap: var(--cell-gap, 0.6mm);", html)
+        self.assertIn("justify-items: start;", html)
+        self.assertIn("justify-content: start;", html)
+        self.assertIn("align-content: start;", html)
+        self.assertIn("justify-self: start;", html)
+        self.assertIn("align-self: start;", html)
+        self.assertIn("--cell-gap: var(--cell-gap-screen-px, 2px);", html)
+        self.assertIn("--cell-gap: var(--cell-gap-print-mm, 0.6mm);", html)
+        self.assertIn("--cell-size: var(--cell-size-screen-px, 27px);", html)
+        self.assertIn("--cell-size: var(--cell-size-print-mm, 7.2mm);", html)
         self.assertNotIn("aspect-ratio: 1;", html)
 
     def test_move_marker_text_is_ascii_safe(self):
@@ -404,6 +421,47 @@ class RenderOperationSheetWithGridTests(unittest.TestCase):
         html = render_grid_html(grid_state)
         self.assertIn('class="box-header-main">BOX 2</span>', html)
         self.assertNotIn('class="box-header-main">BOX 1</span>', html)
+
+    def test_render_grid_html_uses_layout_cols_for_box_grid(self):
+        grid_state = {
+            "rows": 2,
+            "cols": 5,
+            "boxes": [
+                {
+                    "box_number": 1,
+                    "box_label": "1",
+                    "cells": [
+                        {"box": 1, "position": i, "display_pos": str(i), "is_occupied": False}
+                        for i in range(1, 11)
+                    ],
+                }
+            ],
+        }
+        html = render_grid_html(grid_state)
+        self.assertIn('class="box-grid" style="grid-template-columns: repeat(5, var(--cell-size, 7.2mm));', html)
+        self.assertIn("--cell-gap-print-mm: 0.60mm;", html)
+        self.assertIn("--cell-gap-screen-px: 2px;", html)
+
+    def test_render_grid_html_scales_cell_size_for_dense_layout(self):
+        grid_state = {
+            "rows": 9,
+            "cols": 12,
+            "boxes": [
+                {
+                    "box_number": 1,
+                    "box_label": "1",
+                    "cells": [
+                        {"box": 1, "position": i, "display_pos": str(i), "is_occupied": False}
+                        for i in range(1, 13)
+                    ],
+                }
+            ],
+        }
+        html = render_grid_html(grid_state)
+        self.assertIn("repeat(12, var(--cell-size, 7.2mm))", html)
+        self.assertIn("--cell-size-print-mm: 5.25mm;", html)
+        self.assertIn("--cell-size-screen-px: 20px;", html)
+        self.assertIn("--cell-marker-font-size: 4px;", html)
 
     def test_render_grid_html_returns_empty_when_no_active_boxes(self):
         grid_state = {

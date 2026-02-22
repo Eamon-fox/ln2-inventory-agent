@@ -76,65 +76,37 @@ class BoxPositionLookupTests(unittest.TestCase):
         # Context should show record info
         self.assertEqual("HeLa", panel.t_ctx_cell_line.text())
 
-    def test_move_prefill_sets_source_and_target(self):
-        """Move prefill should set both source and target box/position."""
+    def test_move_source_change_autofills_target_box(self):
+        """Move source selection should auto-fill target box to the same box."""
         panel = self._new_operations_panel()
         panel.update_records_cache({
             10: {"id": 10, "cell_line": "K562", "box": 1, "position": 5},
         })
 
-        panel.set_move_prefill({
-            "box": 1,
-            "position": 5,
-            "to_box": 2,
-            "to_position": 8,
-        })
+        panel.m_from_box.setValue(1)
+        panel.m_from_position.setText("5")
+        panel._refresh_move_record_context()
 
         self.assertEqual(1, panel.m_from_box.value())
         self.assertEqual("5", panel.m_from_position.text())
-        self.assertEqual(2, panel.m_to_box.value())
-        self.assertEqual("8", panel.m_to_position.text())
-
-    def test_move_drag_target_box_not_overwritten(self):
-        """Dragging to different box should preserve target box."""
-        panel = self._new_operations_panel()
-        panel.update_records_cache({
-            20: {"id": 20, "cell_line": "K562", "box": 2, "position": 10},
-        })
-
-        # Simulate drag from Box 2 to Box 1
-        panel.set_move_prefill({
-            "box": 2,
-            "position": 10,
-            "to_box": 1,
-            "to_position": 15,
-        })
-
-        # Target box should remain 1, not be overwritten to 2
         self.assertEqual(1, panel.m_to_box.value())
-        self.assertEqual("15", panel.m_to_position.text())
 
-    def test_move_manual_source_change_resets_target_box(self):
-        """Manually changing source should allow target box auto-fill."""
+    def test_move_source_change_resyncs_target_box(self):
+        """Changing source box should resync target box to source box."""
         panel = self._new_operations_panel()
         panel.update_records_cache({
             30: {"id": 30, "cell_line": "K562", "box": 3, "position": 5},
         })
 
-        # First, drag sets user-specified flag
-        panel.set_move_prefill({
-            "box": 2,
-            "position": 1,
-            "to_box": 1,
-            "to_position": 10,
-        })
+        panel.m_from_box.setValue(2)
+        panel.m_from_position.setText("1")
+        panel._refresh_move_record_context()
+        panel.m_to_box.setValue(1)
         self.assertEqual(1, panel.m_to_box.value())
 
-        # Then user manually changes source
         panel.m_from_box.setValue(3)
         panel.m_from_position.setText("5")
 
-        # Target box should auto-fill to source box (3)
         self.assertEqual(3, panel.m_to_box.value())
 
 
@@ -194,7 +166,12 @@ class PlanTableColumnsTests(unittest.TestCase):
             "record_id": 2,
             "box": 2,
             "position": 10,
-            "payload": {"date_str": "2025-02-19", "action": "takeout"},
+            "payload": {
+                "record_id": 2,
+                "position": 10,
+                "date_str": "2025-02-19",
+                "action": "takeout",
+            },
         }])
 
         # Find date and changes column indices
@@ -309,7 +286,13 @@ class PlanTableColumnsTests(unittest.TestCase):
                     "position": 5,
                     "to_box": 2,
                     "to_position": 8,
-                    "payload": {"date_str": "2025-02-19"},
+                    "payload": {
+                        "record_id": 9,
+                        "position": 5,
+                        "to_box": 2,
+                        "to_position": 8,
+                        "date_str": "2025-02-19",
+                    },
                 }
             ]
         )
@@ -335,6 +318,7 @@ class PlanTableColumnsTests(unittest.TestCase):
                     "box": 1,
                     "position": 1,
                     "payload": {
+                        "box": 1,
                         "frozen_at": "2025-02-19",
                         "positions": [1],
                         "fields": {
@@ -381,7 +365,11 @@ class PlanTableColumnsTests(unittest.TestCase):
                     "record_id": 10,
                     "box": 3,
                     "position": 7,
-                    "payload": {"date_str": "2025-02-19"},
+                    "payload": {
+                        "record_id": 10,
+                        "position": 7,
+                        "date_str": "2025-02-19",
+                    },
                 }
             ]
         )

@@ -11,9 +11,6 @@ from PySide6.QtWidgets import (
 )
 from app_gui.i18n import tr
 from app_gui.ui.icons import get_icon, Icons
-from app_gui.ui.utils import open_html_in_browser
-from app_gui.audit_guide import build_operation_guide_from_audit_events
-from app_gui.plan_model import render_operation_sheet
 from lib.yaml_ops import get_audit_log_paths, read_audit_events
 from lib.plan_item_factory import build_rollback_plan_item
 
@@ -23,14 +20,13 @@ def _safe_html(value):
 
 
 class AuditLogDialog(QDialog):
-    """Independent audit log viewer with filtering, guide generation, and rollback."""
+    """Independent audit log viewer with filtering and rollback staging."""
 
     def __init__(self, parent, yaml_path_getter, bridge):
         super().__init__(parent)
         self.yaml_path_getter = yaml_path_getter
         self.bridge = bridge
         self._audit_events = []
-        self._last_printable_plan = []
 
         self.setWindowTitle(tr("operations.auditLog"))
         self.resize(1000, 700)
@@ -76,14 +72,6 @@ class AuditLogDialog(QDialog):
         load_btn.clicked.connect(self.on_load_audit)
         btn_row.addWidget(load_btn)
 
-        self.audit_guide_btn = QPushButton(tr("operations.auditGuideFromSelected"))
-        self.audit_guide_btn.clicked.connect(self.on_generate_audit_guide)
-        btn_row.addWidget(self.audit_guide_btn)
-
-        self.audit_print_selected_btn = QPushButton(tr("operations.auditPrintSelectedGuide"))
-        self.audit_print_selected_btn.clicked.connect(self.on_print_selected_audit_guide)
-        btn_row.addWidget(self.audit_print_selected_btn)
-
         self.audit_rollback_selected_btn = QPushButton(tr("operations.auditRollbackFromSelected"))
         self.audit_rollback_selected_btn.setIcon(get_icon(Icons.ROTATE_CCW))
         self.audit_rollback_selected_btn.setIconSize(QSize(16, 16))
@@ -113,8 +101,12 @@ class AuditLogDialog(QDialog):
         layout.addWidget(self.audit_table, 1)
         self._setup_table(
             self.audit_table,
-            [tr("operations.colTimestamp"), tr("operations.colAction"), tr("operations.colActor"),
-             tr("operations.colStatus"), tr("operations.colChannel"), tr("operations.colDetails")],
+            [
+                tr("operations.colTimestamp"),
+                tr("operations.colAction"),
+                tr("operations.colStatus"),
+                tr("operations.colDetails"),
+            ],
             sortable=True,
         )
         self.audit_table.cellClicked.connect(self._on_audit_row_clicked)
@@ -224,6 +216,7 @@ class AuditLogDialog(QDialog):
             self.audit_info.setText(tr("operations.failedToLoadAudit", error=exc))
             return
 
+        events.sort(key=lambda ev: str(ev.get("timestamp") or ""), reverse=True)
         self._audit_events = events
 
         self._setup_table(
@@ -231,9 +224,7 @@ class AuditLogDialog(QDialog):
             [
                 tr("operations.colTimestamp"),
                 tr("operations.colAction"),
-                tr("operations.colActor"),
                 tr("operations.colStatus"),
-                tr("operations.colChannel"),
                 tr("operations.colDetails"),
             ],
             sortable=True,
@@ -244,10 +235,7 @@ class AuditLogDialog(QDialog):
             ts_item.setData(Qt.UserRole, row)
             self.audit_table.setItem(row, 0, ts_item)
             self.audit_table.setItem(row, 1, QTableWidgetItem(ev.get("action", "")))
-            actor_text = str(ev.get("actor_id") or ev.get("actor_type") or "")
-            self.audit_table.setItem(row, 2, QTableWidgetItem(actor_text))
-            self.audit_table.setItem(row, 3, QTableWidgetItem(ev.get("status", "")))
-            self.audit_table.setItem(row, 4, QTableWidgetItem(ev.get("channel", "")))
+            self.audit_table.setItem(row, 2, QTableWidgetItem(ev.get("status", "")))
 
             details = ev.get("details") or {}
             error = ev.get("error") or {}
@@ -258,7 +246,10 @@ class AuditLogDialog(QDialog):
                     summary = str(error)[:80] if error else str(details)[:80]
             else:
                 summary = json.dumps(details, ensure_ascii=False)[:80] if details else ""
-            self.audit_table.setItem(row, 5, QTableWidgetItem(summary))
+            self.audit_table.setItem(row, 3, QTableWidgetItem(summary))
+
+        if self.audit_table.rowCount() > 0:
+            self.audit_table.sortItems(0, Qt.DescendingOrder)
 
         self.audit_info.setText(
             tr("operations.auditEventsShown", count=len(events), start=start, end=end)
@@ -285,8 +276,6 @@ class AuditLogDialog(QDialog):
         ev = self._audit_events[event_idx]
         action = str(ev.get("action") or "")
         status = str(ev.get("status") or "")
-        actor = str(ev.get("actor_id") or "")
-        channel = str(ev.get("channel") or "")
         ts = str(ev.get("timestamp") or "")
 
         details = ev.get("details") or {}
@@ -302,11 +291,6 @@ class AuditLogDialog(QDialog):
             lines.append(
                 f"<span style='color: var(--status-muted);'>{_safe_html(tr('operations.timeLabel'))}</span> "
                 f"{_safe_html(ts)}"
-            )
-        if actor:
-            lines.append(
-                f"<span style='color: var(--status-muted);'>{_safe_html(tr('operations.actorLabel'))}</span> "
-                f"{_safe_html(actor)} ({_safe_html(channel)})"
             )
         if backup_path:
             lines.append(
@@ -358,85 +342,11 @@ class AuditLogDialog(QDialog):
         if not isinstance(event, dict):
             return {}
         source_event = {}
-        for key in ("timestamp", "action", "trace_id", "session_id", "actor_id", "channel"):
+        for key in ("timestamp", "action", "trace_id", "session_id"):
             value = event.get(key)
             if value not in (None, ""):
                 source_event[str(key)] = value
         return source_event
-
-    def _apply_generated_audit_guide(self, guide, selected_count, print_now=False):
-        items = list(guide.get("items") or [])
-        warnings = list(guide.get("warnings") or [])
-
-        if not items:
-            lines = [
-                f"<b style='color: var(--status-error);'>{_safe_html(tr('operations.noPrintableFromSelection'))}</b>",
-                _safe_html(tr("operations.selectedEvents", count=selected_count)),
-            ]
-            if warnings:
-                preview = "<br/>".join(_safe_html(w) for w in warnings[:3])
-                more = (
-                    f"<br/><span style='color: var(--status-muted);'>"
-                    f"{_safe_html(tr('operations.moreWarnings', count=len(warnings) - 3))}</span>"
-                    if len(warnings) > 3
-                    else ""
-                )
-                lines.append(
-                    f"{_safe_html(tr('operations.warningsLabel'))} {len(warnings)}<br/>{preview}{more}"
-                )
-            self.event_detail.setText("<br/>".join(lines))
-            self.event_detail.setProperty("state", "error")
-            self.event_detail.style().unpolish(self.event_detail)
-            self.event_detail.style().polish(self.event_detail)
-            self.event_detail.setVisible(True)
-            return
-
-        self._last_printable_plan = list(items)
-        lines = [
-            f"<b style='color: var(--status-success);'>{_safe_html(tr('operations.auditGuideGenerated'))}</b>",
-            _safe_html(tr("operations.selectedEvents", count=selected_count)),
-            _safe_html(tr("operations.finalOperations", count=len(items))),
-        ]
-        if warnings:
-            preview = "<br/>".join(_safe_html(w) for w in warnings[:3])
-            more = (
-                f"<br/><span style='color: var(--status-muted);'>"
-                f"{_safe_html(tr('operations.moreWarnings', count=len(warnings) - 3))}</span>"
-                if len(warnings) > 3
-                else ""
-            )
-            lines.append(
-                f"{_safe_html(tr('operations.warningsLabel'))} {len(warnings)}<br/>{preview}{more}"
-            )
-        self.event_detail.setText("<br/>".join(lines))
-        self.event_detail.setProperty("state", "success")
-        self.event_detail.style().unpolish(self.event_detail)
-        self.event_detail.style().polish(self.event_detail)
-        self.event_detail.setVisible(True)
-
-        if print_now:
-            self._print_operation_sheet(items, tr("operations.auditGuideOpened"))
-
-    def _print_operation_sheet(self, items, title):
-        """Generate and open HTML operation sheet."""
-        html = render_operation_sheet(items, title=title)
-        open_html_in_browser(html)
-
-    def on_generate_audit_guide(self):
-        selected_events = self._get_selected_audit_events()
-        if not selected_events:
-            self.audit_info.setText(tr("operations.selectAuditRowsFirst"))
-            return
-        guide = build_operation_guide_from_audit_events(selected_events)
-        self._apply_generated_audit_guide(guide, selected_count=len(selected_events), print_now=False)
-
-    def on_print_selected_audit_guide(self):
-        selected_events = self._get_selected_audit_events()
-        if not selected_events:
-            self.audit_info.setText(tr("operations.selectAuditRowsFirst"))
-            return
-        guide = build_operation_guide_from_audit_events(selected_events)
-        self._apply_generated_audit_guide(guide, selected_count=len(selected_events), print_now=True)
 
     def on_stage_rollback_from_selected_audit(self):
         selected_events = self._get_selected_audit_events()

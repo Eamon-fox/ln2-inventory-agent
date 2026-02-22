@@ -2,6 +2,23 @@
 
 from app_gui.i18n import tr
 
+
+def _coerce_int_or_none(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _record_matches_slot(record, box, position):
+    if not isinstance(record, dict):
+        return False
+    return (
+        _coerce_int_or_none(record.get("box")) == _coerce_int_or_none(box)
+        and _coerce_int_or_none(record.get("position")) == _coerce_int_or_none(position)
+    )
+
+
 def _takeout_record_id(self):
     return self.t_id.value()
 
@@ -62,9 +79,17 @@ def _populate_record_context_labels(
     cell_line_label,
     extra_widgets,
 ):
-    box = str(record.get("box") or "-")
-    position = record.get("position")
-    box_label.setText(box)
+    box = self._normalize_box_value(
+        record.get("box"),
+        field_name="box",
+        allow_empty=True,
+    )
+    position = self._normalize_position_value(
+        record.get("position"),
+        field_name="position",
+        allow_empty=True,
+    )
+    box_label.setText(str(box) if box is not None else "-")
     position_label.setText(self._position_to_display(position) if position is not None else "-")
     frozen_label.setText(str(record.get("frozen_at") or "-"))
     note_label.setText(str(record.get("note") or "-"))
@@ -102,7 +127,7 @@ def _refresh_takeout_record_context(self):
     # First try lookup by box + position
     if from_box > 0 and from_pos is not None:
         for rid, rec in self.records_cache.items():
-            if rec.get("box") == from_box and rec.get("position") == from_pos:
+            if _record_matches_slot(rec, from_box, from_pos):
                 record = rec
                 record_id = rid
                 break
@@ -113,8 +138,16 @@ def _refresh_takeout_record_context(self):
         record = self.records_cache.get(record_id)
         if record:
             # Update box/position fields from record
-            rec_box = record.get("box")
-            rec_pos = record.get("position")
+            rec_box = self._normalize_box_value(
+                record.get("box"),
+                field_name="box",
+                allow_empty=True,
+            )
+            rec_pos = self._normalize_position_value(
+                record.get("position"),
+                field_name="position",
+                allow_empty=True,
+            )
             if rec_box is not None:
                 self.t_from_box.blockSignals(True)
                 self.t_from_box.setValue(int(rec_box))
@@ -184,8 +217,6 @@ def _refresh_takeout_record_context(self):
 
 def _on_move_source_changed(self):
     """Called when user manually changes source box/position."""
-    # Reset user-specified flag so target box can auto-fill
-    self._m_to_box_user_specified = False
     self._refresh_move_record_context()
 
 def _refresh_move_record_context(self):
@@ -201,7 +232,7 @@ def _refresh_move_record_context(self):
     record_id = None
     if from_pos is not None:
         for rid, rec in self.records_cache.items():
-            if rec.get("box") == from_box and rec.get("position") == from_pos:
+            if _record_matches_slot(rec, from_box, from_pos):
                 record = rec
                 record_id = rid
                 break
@@ -231,17 +262,16 @@ def _refresh_move_record_context(self):
 
     self.m_ctx_status.setVisible(False)
 
-    box = str(record.get("box") or "-")
-
-    # Auto-fill target box with source box (only if not user-specified)
-    if not getattr(self, "_m_to_box_user_specified", False):
-        try:
-            box_num = int(box)
-            self.m_to_box.blockSignals(True)
-            self.m_to_box.setValue(box_num)
-            self.m_to_box.blockSignals(False)
-        except (ValueError, TypeError):
-            pass
+    # Keep target box aligned with source box by default.
+    box_num = self._normalize_box_value(
+        record.get("box"),
+        field_name="box",
+        allow_empty=True,
+    )
+    if box_num is not None:
+        self.m_to_box.blockSignals(True)
+        self.m_to_box.setValue(int(box_num))
+        self.m_to_box.blockSignals(False)
 
     self._populate_record_context_labels(
         record=record,

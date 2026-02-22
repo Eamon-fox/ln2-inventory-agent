@@ -26,6 +26,12 @@ def make_data(records):
     }
 
 
+def make_data_alphanumeric(records):
+    data = make_data(records)
+    data["meta"]["box_layout"]["indexing"] = "alphanumeric"
+    return data
+
+
 def make_record(rec_id=1, box=1, position=None, **extra):
     base = {
         "id": rec_id,
@@ -54,8 +60,8 @@ def make_add_item(box=1, positions=None, position=None, **extra):
             "positions": positions or [1],
             "frozen_at": "2026-02-10",
             "fields": {
-                "parent_cell_line": "K562",
-                "short_name": "clone-test",
+                "cell_line": "K562",
+                "note": "clone-test",
             },
         },
     }
@@ -173,6 +179,22 @@ class PreflightPlanTests(unittest.TestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
                 make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            result = preflight_plan(str(yaml_path), [make_add_item(box=1, position=5)], bridge=bridge)
+
+            self.assertTrue(result["ok"])
+            self.assertFalse(result["blocked"])
+            self.assertEqual(1, result["stats"]["ok"])
+
+    def test_preflight_add_alphanumeric_internal_positions_succeed(self):
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data_alphanumeric([]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
@@ -310,6 +332,55 @@ class RunPlanExecuteTests(unittest.TestCase):
             self.assertEqual(0, result["stats"]["blocked"])
             self.assertTrue(bridge.add_entry.called)
 
+    def test_run_plan_add_uses_single_plan_backup_for_undo_anchor(self):
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            bridge.add_entry.side_effect = [
+                {"ok": True, "backup_path": "/tmp/backup-first.bak"},
+                {"ok": True, "backup_path": "/tmp/backup-second.bak"},
+            ]
+
+            items = [
+                make_add_item(box=1, position=1),
+                make_add_item(box=1, position=2),
+            ]
+            result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(2, result["stats"]["ok"])
+            self.assertTrue(str(result.get("backup_path") or "").strip())
+            self.assertEqual(2, bridge.add_entry.call_count)
+            kwargs = bridge.add_entry.call_args.kwargs
+            self.assertEqual(result.get("backup_path"), kwargs.get("request_backup_path"))
+            self.assertFalse(kwargs.get("auto_backup", True))
+
+    def test_run_plan_add_converts_positions_for_alphanumeric_layout(self):
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data_alphanumeric([]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            bridge.add_entry.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
+
+            items = [make_add_item(box=1, position=5)]
+            result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
+
+            self.assertTrue(result["ok"])
+            bridge.add_entry.assert_called_once()
+            kwargs = bridge.add_entry.call_args.kwargs
+            self.assertEqual(["A5"], kwargs.get("positions"))
+
     def test_run_plan_add_blocked(self):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
@@ -354,6 +425,37 @@ class RunPlanExecuteTests(unittest.TestCase):
             self.assertEqual(2, result["stats"]["ok"])
             bridge.batch_move.assert_called_once()
 
+    def test_run_plan_move_batch_converts_positions_for_alphanumeric_layout(self):
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data_alphanumeric(
+                    [
+                        make_record(1, box=1, position=1),
+                        make_record(2, box=1, position=2),
+                    ]
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            bridge.batch_move.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
+
+            items = [
+                make_move_item(record_id=1, position=1, to_position=3),
+                make_move_item(record_id=2, position=2, to_position=4),
+            ]
+            result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
+
+            self.assertTrue(result["ok"])
+            bridge.batch_move.assert_called_once()
+            kwargs = bridge.batch_move.call_args.kwargs
+            self.assertEqual("A1", kwargs["entries"][0]["from"]["position"])
+            self.assertEqual("A3", kwargs["entries"][0]["to"]["position"])
+            self.assertEqual("A2", kwargs["entries"][1]["from"]["position"])
+            self.assertEqual("A4", kwargs["entries"][1]["to"]["position"])
+
     def test_run_plan_move_batch_fails_marks_all_blocked(self):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
@@ -382,6 +484,41 @@ class RunPlanExecuteTests(unittest.TestCase):
             self.assertFalse(bridge.record_takeout.called)
             self.assertTrue(all(it.get("error_code") == "validation_failed" for it in result["items"]))
 
+    def test_run_plan_move_batch_fails_maps_errors_per_record_id(self):
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([
+                    make_record(1, box=1, position=1),
+                    make_record(2, box=1, position=2),
+                ]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            bridge.batch_move.return_value = {
+                "ok": False,
+                "error_code": "validation_failed",
+                "message": "Batch operation parameter validation failed",
+                "errors": [
+                    "Row 1 ID 1: source and target positions must differ for move",
+                    "Row 2 ID 2: source and target positions must differ for move",
+                ],
+            }
+
+            items = [
+                make_move_item(record_id=1, position=1, to_position=10),
+                make_move_item(record_id=2, position=2, to_position=20),
+            ]
+            result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
+
+            self.assertFalse(result["ok"])
+            self.assertTrue(result["blocked"])
+            self.assertEqual(2, result["stats"]["blocked"])
+            self.assertEqual("Row 1 ID 1: source and target positions must differ for move", result["items"][0]["message"])
+            self.assertEqual("Row 2 ID 2: source and target positions must differ for move", result["items"][1]["message"])
+
     def test_run_plan_takeout_batch_success(self):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
@@ -395,7 +532,7 @@ class RunPlanExecuteTests(unittest.TestCase):
             )
 
             bridge = MagicMock()
-            bridge.batch_move.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
+            bridge.batch_takeout.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
 
             items = [
                 make_takeout_item(record_id=1, position=1),
@@ -405,6 +542,35 @@ class RunPlanExecuteTests(unittest.TestCase):
 
             self.assertTrue(result["ok"])
             self.assertEqual(2, result["stats"]["ok"])
+
+    def test_run_plan_takeout_batch_converts_positions_for_alphanumeric_layout(self):
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data_alphanumeric(
+                    [
+                        make_record(1, box=1, position=5),
+                        make_record(2, box=1, position=6),
+                    ]
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            bridge.batch_takeout.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
+
+            items = [
+                make_takeout_item(record_id=1, position=5),
+                make_takeout_item(record_id=2, position=6),
+            ]
+            result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
+
+            self.assertTrue(result["ok"])
+            bridge.batch_takeout.assert_called_once()
+            kwargs = bridge.batch_takeout.call_args.kwargs
+            self.assertEqual("A5", kwargs["entries"][0]["from"]["position"])
+            self.assertEqual("A6", kwargs["entries"][1]["from"]["position"])
 
     def test_run_plan_mixed_actions(self):
         with tempfile.TemporaryDirectory() as td:
@@ -419,6 +585,7 @@ class RunPlanExecuteTests(unittest.TestCase):
 
             bridge = MagicMock()
             bridge.add_entry.return_value = {"ok": True}
+            bridge.batch_move.return_value = {"ok": True}
             bridge.batch_takeout.return_value = {"ok": True}
 
             items = [
@@ -432,41 +599,72 @@ class RunPlanExecuteTests(unittest.TestCase):
             self.assertEqual(3, result["stats"]["ok"])
 
     def test_run_plan_rollback_success(self):
-        bridge = MagicMock()
-        bridge.rollback.return_value = {
-            "ok": True,
-            "result": {"snapshot_before_rollback": "/tmp/snap.bak"},
-        }
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+            manual_backup = Path(td) / "manual_backup.bak"
+            write_yaml(
+                make_data([make_record(2, box=1, position=2)]),
+                path=str(manual_backup),
+                auto_backup=False,
+                audit_meta={"action": "seed_backup", "source": "tests"},
+            )
 
-        items = [make_rollback_item("/tmp/backup.bak")]
-        result = run_plan("/tmp/test.yaml", items, bridge=bridge, mode="execute")
+            bridge = MagicMock()
+            bridge.rollback.return_value = {
+                "ok": True,
+                "result": {"snapshot_before_rollback": "/tmp/snap.bak"},
+            }
 
-        self.assertTrue(result["ok"])
-        self.assertEqual(1, result["stats"]["ok"])
-        bridge.rollback.assert_called_once()
-        self.assertEqual("/tmp/snap.bak", result.get("backup_path"))
+            items = [make_rollback_item(str(manual_backup))]
+            result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(1, result["stats"]["ok"])
+            bridge.rollback.assert_called_once()
+            self.assertTrue(str(result.get("backup_path") or "").strip())
 
     def test_run_plan_rollback_passes_source_event(self):
-        bridge = MagicMock()
-        bridge.rollback.return_value = {"ok": True, "result": {}}
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+            manual_backup = Path(td) / "manual_backup.bak"
+            write_yaml(
+                make_data([make_record(2, box=1, position=2)]),
+                path=str(manual_backup),
+                auto_backup=False,
+                audit_meta={"action": "seed_backup", "source": "tests"},
+            )
 
-        source_event = {
-            "timestamp": "2026-02-12T09:00:00",
-            "action": "record_takeout",
-            "trace_id": "trace-audit-1",
-        }
-        item = make_rollback_item("/tmp/backup.bak")
-        item["payload"]["source_event"] = dict(source_event)
+            bridge = MagicMock()
+            bridge.rollback.return_value = {"ok": True, "result": {}}
 
-        result = run_plan("/tmp/test.yaml", [item], bridge=bridge, mode="execute")
+            source_event = {
+                "timestamp": "2026-02-12T09:00:00",
+                "action": "record_takeout",
+                "trace_id": "trace-audit-1",
+            }
+            item = make_rollback_item(str(manual_backup))
+            item["payload"]["source_event"] = dict(source_event)
 
-        self.assertTrue(result["ok"])
-        bridge.rollback.assert_called_once_with(
-            yaml_path="/tmp/test.yaml",
-            backup_path="/tmp/backup.bak",
-            execution_mode="execute",
-            source_event=source_event,
-        )
+            result = run_plan(str(yaml_path), [item], bridge=bridge, mode="execute")
+
+            self.assertTrue(result["ok"])
+            bridge.rollback.assert_called_once()
+            kwargs = bridge.rollback.call_args.kwargs
+            self.assertEqual(str(yaml_path), kwargs.get("yaml_path"))
+            self.assertEqual(str(manual_backup), kwargs.get("backup_path"))
+            self.assertEqual("execute", kwargs.get("execution_mode"))
+            self.assertEqual(source_event, kwargs.get("source_event"))
+            self.assertEqual(result.get("backup_path"), kwargs.get("request_backup_path"))
 
     def test_run_plan_rollback_must_be_alone_blocks(self):
         bridge = MagicMock()
@@ -497,7 +695,7 @@ class PreflightVsExecuteConsistencyTests(unittest.TestCase):
             )
 
             bridge = MagicMock()
-            bridge.batch_takeout.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
+            bridge.batch_move.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
             bridge.record_takeout.return_value = {"ok": True}
 
             items = [make_move_item(record_id=1, position=1, to_position=5)]

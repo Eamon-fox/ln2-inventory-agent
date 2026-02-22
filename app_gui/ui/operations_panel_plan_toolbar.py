@@ -21,10 +21,8 @@ def _refresh_plan_toolbar_state(self):
     if not hasattr(self, "plan_table"):
         return
 
-    rows = self._get_selected_plan_rows()
-    has_selected = bool(rows)
     has_items = bool(self._plan_store.count())
-    self.plan_remove_selected_btn.setEnabled(has_selected)
+    self.plan_print_btn.setEnabled(has_items)
     self.plan_clear_btn.setEnabled(has_items)
 
 
@@ -57,3 +55,26 @@ def remove_selected_plan_items(self):
         count_value=removed_count,
         include_total_count=True,
     )
+
+
+def on_plan_table_context_menu(self, pos):
+    if not hasattr(self, "plan_table") or self.plan_table is None:
+        return
+
+    item = self.plan_table.itemAt(pos)
+    if item is None:
+        return
+
+    row = item.row()
+    selected_rows = self._get_selected_plan_rows()
+    if row not in selected_rows:
+        self.plan_table.clearSelection()
+        self.plan_table.selectRow(row)
+
+    from app_gui.ui import operations_panel as _ops_panel
+
+    menu = _ops_panel.QMenu(self)
+    remove_action = menu.addAction(tr("operations.removeSelected"))
+    chosen_action = menu.exec(self.plan_table.viewport().mapToGlobal(pos))
+    if chosen_action == remove_action:
+        self.remove_selected_plan_items()

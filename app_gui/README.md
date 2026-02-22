@@ -40,7 +40,7 @@ Current status:
 - Execute actions (Add/Single/Batch) are highlighted in red and require confirmation before write
 - Rollback panel supports backup listing and rollback by selected path/latest
 - Rollback now requires explicit confirmation with backup path/time/size
-- GUI calls go through `GuiToolBridge` with `channel="gui"`
+- GUI calls go through `GuiToolBridge` with shared `session_id` context
 - AI tool traces are mapped to audit events by `trace_id`
 
 Run:

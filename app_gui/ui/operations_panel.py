@@ -3,7 +3,7 @@ from PySide6.QtGui import QDesktopServices, QValidator, QStandardItem, QStandard
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QLineEdit, QComboBox, QCompleter,
-    QStackedWidget, QFileDialog,
+    QStackedWidget, QFileDialog, QMenu,
     QDateEdit, QSpinBox, QDoubleSpinBox, QTextBrowser
 )
 from app_gui.ui.theme import (
@@ -28,7 +28,7 @@ from app_gui.ui import operations_panel_plan_toolbar as _ops_plan_toolbar
 
 # Keep these Qt symbols imported here as stable monkeypatch targets used by
 # operations_panel_actions and related tests.
-_MONKEYPATCH_EXPORTS = (QDesktopServices, QFileDialog)
+_MONKEYPATCH_EXPORTS = (QDesktopServices, QFileDialog, QMenu)
 
 _ACTION_I18N_KEY = {
     "takeout": "overview.takeout",
@@ -351,6 +351,9 @@ class OperationsPanel(QWidget):
             self.t_batch_toggle_btn.setText(tr("operations.hideBatch") if visible else tr("operations.showBatch"))
 
     def update_records_cache(self, records_dict):
+        # Keep layout current before normalizing incoming record positions.
+        self._refresh_custom_fields()
+
         normalized = {}
 
         if isinstance(records_dict, dict):
@@ -369,14 +372,34 @@ class OperationsPanel(QWidget):
 
             rid = key if key is not None else record.get("id")
             try:
-                normalized[int(rid)] = record
+                rid_int = int(rid)
             except (TypeError, ValueError):
                 continue
+
+            normalized_record = dict(record)
+            try:
+                normalized_record["box"] = self._normalize_box_value(
+                    normalized_record.get("box"),
+                    field_name="box",
+                    allow_empty=True,
+                )
+            except ValueError:
+                normalized_record["box"] = None
+
+            try:
+                normalized_record["position"] = self._normalize_position_value(
+                    normalized_record.get("position"),
+                    field_name="position",
+                    allow_empty=True,
+                )
+            except ValueError:
+                normalized_record["position"] = None
+
+            normalized[rid_int] = normalized_record
 
         self.records_cache = normalized
         self._refresh_takeout_record_context()
         self._refresh_move_record_context()
-        self._refresh_custom_fields()
 
     def _refresh_custom_fields(self):
         """Reload custom field definitions from YAML meta and rebuild dynamic forms."""
@@ -709,6 +732,58 @@ class OperationsPanel(QWidget):
         except Exception:
             return str(position)
 
+    def _normalize_box_value(self, value, *, field_name="box", allow_empty=False):
+        if value in (None, ""):
+            if allow_empty:
+                return None
+            raise ValueError(f"{field_name} is required")
+        if isinstance(value, bool):
+            if allow_empty:
+                return None
+            raise ValueError(f"Invalid {field_name}: {value}")
+        if isinstance(value, int):
+            return int(value)
+        try:
+            return int(_tool_parsers.display_to_box(value, self._current_layout))
+        except Exception as exc:
+            if allow_empty:
+                return None
+            raise ValueError(f"Invalid {field_name}: {value}") from exc
+
+    def _normalize_position_value(self, value, *, field_name="position", allow_empty=False):
+        if value in (None, ""):
+            if allow_empty:
+                return None
+            raise ValueError(f"{field_name} is required")
+        if isinstance(value, bool):
+            if allow_empty:
+                return None
+            raise ValueError(f"Invalid {field_name}: {value}")
+        if isinstance(value, int):
+            if value > 0:
+                return int(value)
+            if allow_empty:
+                return None
+            raise ValueError(f"Invalid {field_name}: {value}")
+        if isinstance(value, float) and value.is_integer():
+            if value > 0:
+                return int(value)
+            if allow_empty:
+                return None
+            raise ValueError(f"Invalid {field_name}: {value}")
+        try:
+            return int(
+                _tool_parsers._coerce_position_value(
+                    value,
+                    layout=self._current_layout,
+                    field_name=field_name,
+                )
+            )
+        except Exception as exc:
+            if allow_empty:
+                return None
+            raise ValueError(f"Invalid {field_name}: {value}") from exc
+
     def _parse_position_text(self, raw_text, *, allow_empty=False):
         text = str(raw_text or "").strip()
         if not text:
@@ -716,14 +791,12 @@ class OperationsPanel(QWidget):
                 return None
             raise ValueError("Position is required")
         try:
-            return int(
-                _tool_parsers._coerce_position_value(
-                    text,
-                    layout=self._current_layout,
-                    field_name="position",
-                )
+            return self._normalize_position_value(
+                text,
+                field_name="position",
+                allow_empty=False,
             )
-        except Exception as exc:
+        except ValueError as exc:
             if allow_empty:
                 return None
             raise ValueError(f"Invalid position: {text}") from exc
@@ -755,22 +828,6 @@ class OperationsPanel(QWidget):
 
     def set_prefill_background(self, source_info):
         self._apply_takeout_prefill(source_info)
-
-    def set_move_prefill(self, source_info):
-        self._m_prefill_position = source_info.get("position")
-        # Fill source box + position (will auto-lookup record ID)
-        if "box" in source_info:
-            self.m_from_box.setValue(int(source_info["box"]))
-        if "position" in source_info:
-            self.m_from_position.setText(self._position_to_display(source_info["position"]))
-        # Fill target box + position (mark as user-specified)
-        if "to_box" in source_info:
-            self._m_to_box_user_specified = True
-            self.m_to_box.setValue(int(source_info["to_box"]))
-        if "to_position" in source_info:
-            self.m_to_position.setText(self._position_to_display(source_info["to_position"]))
-        self._refresh_move_record_context()
-        self.set_mode("move")
 
     def _apply_add_prefill(self, source_info):
         payload = dict(source_info or {})
@@ -869,6 +926,7 @@ class OperationsPanel(QWidget):
 
     _refresh_after_plan_items_changed = _ops_plan_toolbar._refresh_after_plan_items_changed
     remove_selected_plan_items = _ops_plan_toolbar.remove_selected_plan_items
+    on_plan_table_context_menu = _ops_plan_toolbar.on_plan_table_context_menu
 
     _plan_item_key = _ops_plan_store._plan_item_key
     _build_notice_plan_item_desc = _ops_plan_store._build_notice_plan_item_desc

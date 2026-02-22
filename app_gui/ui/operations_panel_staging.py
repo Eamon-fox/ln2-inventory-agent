@@ -56,7 +56,7 @@ def on_record_takeout(self):
 
     position = self.t_position.currentData()
     if position is None:
-        self._show_error(tr("operations.positionRequired"))
+        self.status_message.emit(tr("operations.positionRequired"), 4000, "error")
         return
 
     item = self._build_human_record_plan_item(
@@ -75,10 +75,48 @@ def on_record_move(self):
 
     record = self._lookup_record(self.m_id.value())
     if not record:
+        from_box = self.m_from_box.value()
+        from_pos = self._parse_position_text(self.m_from_position.text(), allow_empty=True)
+        if from_pos is not None:
+            for rid, rec in self.records_cache.items():
+                rec_box = self._normalize_box_value(
+                    rec.get("box"),
+                    field_name="box",
+                    allow_empty=True,
+                )
+                rec_pos = self._normalize_position_value(
+                    rec.get("position"),
+                    field_name="position",
+                    allow_empty=True,
+                )
+                if rec_box is None or rec_pos is None:
+                    continue
+                if rec_box == int(from_box) and rec_pos == int(from_pos):
+                    record = rec
+                    self.m_id.blockSignals(True)
+                    self.m_id.setValue(int(rid))
+                    self.m_id.blockSignals(False)
+                    break
+
+    if not record:
+        self.status_message.emit(tr("operations.recordNotFound"), 4000, "error")
         return
 
     from_pos = record.get("position")
+    if from_pos is None:
+        self.status_message.emit(tr("operations.positionRequired"), 4000, "error")
+        return
+
     from_box = resolve_record_box(record, fallback_box=0)
+    from_pos = self._normalize_position_value(
+        from_pos,
+        field_name="position",
+        allow_empty=True,
+    )
+    if from_pos is None:
+        self.status_message.emit(tr("operations.positionRequired"), 4000, "error")
+        return
+
     try:
         to_pos = self._parse_position_text(self.m_to_position.text())
     except ValueError as exc:
@@ -215,20 +253,38 @@ def _build_human_record_plan_item(
     to_box=None,
     fallback_box=0,
 ):
-    record = self._lookup_record(int(record_id))
+    record_id_int = int(record_id)
+    record = self._lookup_record(record_id_int)
     box = resolve_record_box(record, fallback_box=int(fallback_box or 0))
+    position_int = self._normalize_position_value(
+        position,
+        field_name="position",
+        allow_empty=False,
+    )
+
     payload = {
         "action": action,
-        "record_id": int(record_id),
-        "position": int(position),
+        "record_id": record_id_int,
+        "position": position_int,
         "box": box,
         "date_str": date_str,
         "source": "human",
         "payload_action": payload_action,
     }
     if to_position is not None:
-        payload["to_position"] = to_position
-        payload["to_box"] = to_box
+        payload["to_position"] = self._normalize_position_value(
+            to_position,
+            field_name="to_position",
+            allow_empty=False,
+        )
+        if to_box not in (None, ""):
+            payload["to_box"] = self._normalize_box_value(
+                to_box,
+                field_name="to_box",
+                allow_empty=False,
+            )
+        else:
+            payload["to_box"] = None
     return build_record_plan_item(**payload)
 
 def _build_move_batch_plan_items(self, entries, *, date_str):

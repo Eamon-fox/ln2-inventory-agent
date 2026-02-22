@@ -12,7 +12,15 @@ def _tr(key, **kwargs):
     return _ops_panel.tr(key, **kwargs)
 
 
-def _handle_response(self, response, context, *, notice_code=None, notice_data=None):
+def _handle_response(
+    self,
+    response,
+    context,
+    *,
+    notice_code=None,
+    notice_data=None,
+    allow_undo_from_backup=True,
+):
     payload = response if isinstance(response, dict) else {}
     self._display_result_summary(response, context)
 
@@ -30,7 +38,7 @@ def _handle_response(self, response, context, *, notice_code=None, notice_data=N
         )
         self.operation_completed.emit(True)
         backup_path = payload.get("backup_path")
-        if backup_path:
+        if backup_path and allow_undo_from_backup:
             self._last_operation_backup = backup_path
             self._enable_undo(timeout_sec=30)
     else:

@@ -82,15 +82,16 @@ class CustomFieldsDialog(QDialog):
         fields_layout.addWidget(header)
 
         _STRUCTURAL_DISPLAY = [
-            ("id", "ID", "int"),
-            ("box", "Box", "int"),
-            ("position", "Position", "int"),
-            ("cell_line", "Cell Line", "str"),
-            ("frozen_at", "Frozen At", "date"),
-            ("thaw_events", "Takeout Events", "str"),
+            ("id", "ID", "int", True),
+            ("box", "Box", "int", True),
+            ("position", "Position", "int", True),
+            ("cell_line", "Cell Line", "str", None),
+            ("note", "Note", "str", False),
+            ("frozen_at", "Frozen At", "date", True),
+            ("thaw_events", "Takeout Events", "str", True),
         ]
         self._cell_line_required_cb = None
-        for s_key, s_label, s_type in _STRUCTURAL_DISPLAY:
+        for s_key, s_label, s_type, s_required in _STRUCTURAL_DISPLAY:
             row_w = QWidget()
             row_l = QHBoxLayout(row_w)
             row_l.setContentsMargins(0, 0, 0, 0)
@@ -109,7 +110,7 @@ class CustomFieldsDialog(QDialog):
                 r_cb.setEnabled(True)
                 self._cell_line_required_cb = r_cb
             else:
-                r_cb.setChecked(True)
+                r_cb.setChecked(bool(s_required))
                 r_cb.setEnabled(False)
             row_l.addWidget(r_cb)
             spacer = QWidget(); spacer.setFixedWidth(60)

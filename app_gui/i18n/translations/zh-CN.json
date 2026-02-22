@@ -39,7 +39,7 @@
     "checkUpdateFailed": "检查更新失败：{error}",
     "newVersionAvailable": "发现新版本 v{version}！\n\n{notes}\n\n请前往 GitHub Releases 页面下载。",
     "alreadyLatest": "当前已是最新版本。",
-    "apiKeyMissing": "缺少 {provider} API 密钥。请通过以下方式配置：\n1) 设置对话框（自动保存到 ~/.ln2agent/config.yaml）\n2) 环境变量：{env_key}"
+    "apiKeyMissing": "缺少 {provider} API Key。\n别担心，按下面步骤操作：\n1) 打开浏览器，访问：{help_url}\n2) 注册/登录后，进入“API Keys（API 密钥）”页面\n3) 点击“Create API Key（创建密钥）”，复制新生成的密钥（通常以 sk- 开头）\n4) 回到本软件，点击“设置”\n5) 在 {provider} API Key 输入框中粘贴密钥\n6) 点击“保存”，然后再试一次"
   },
   "main": {
     "settings": "设置",
@@ -120,41 +120,35 @@
     "updatingTitle": "正在更新 SnowFox",
     "updateComplete": "更新完成！",
     "updateFailed": "更新失败",
-    "importPromptTitle": "从 Excel/CSV 导入数据",
-    "importPromptDesc": "复制下方提示词并发送给 AI（如 ChatGPT、Claude、DeepSeek）。AI 会将您的 Excel/CSV 数据转换为本软件可导入的 YAML 格式。",
-    "importPromptCopy": "复制提示词",
-    "importPromptCopied": "提示词已复制到剪贴板！",
-    "importPromptViewYaml": "查看 YAML 示例",
-    "importPromptViewYamlTitle": "YAML 示例",
-    "importPromptNewInventory": "新建库存",
-    "importStartupTitle": "欢迎！首次设置",
-    "importStartupMessage": "要导入现有的 Excel/CSV 库存数据，您可以使用 AI 将其转换为 YAML 格式。",
-    "importStartupAction": "获取导入提示词",
-    "importPromptTemplate": "You are a data-cleaning and structuring assistant.\nConvert my pasted Excel/CSV/table data into LN2 inventory YAML.\n\nRules:\n1) Output YAML only. Do not add explanations.\n2) Top-level keys must be exactly: meta, inventory.\n3) Always include:\nmeta:\n  box_layout:\n    rows: 9\n    cols: 9\n  custom_fields: []\ninventory: []\n4) Data model is tube-level: each inventory item is one physical tube.\n5) Required fields for each inventory item: id, box, frozen_at.\n6) Optional fields: position, cell_line, short_name, plasmid_name, plasmid_id, note, thaw_events.\n7) If a value is missing/unknown, use null.\n8) Dates must use YYYY-MM-DD.\n9) id must be unique positive integers.\n10) If source uses positions like A1/B3, convert to numeric position:\n    position = (row_index-1)*cols + col_index, where A=1, B=2...\n11) thaw_events format:\n    thaw_events:\n      - date: \"YYYY-MM-DD\"\n        action: \"takeout\"   # takeout/move\n        positions: [1]\n12) Do not invent fields not present in source.\n\nInput data:\n<<<DATA\n[paste Excel/CSV/table data here]\nDATA",
-    "exportTaskBundleTitle": "导出任务包",
-    "exportTaskBundleDesc": "生成可交给外部代理（Codex/Claude Code）的 ZIP 任务包，包含原始文件、Schema 与转换约束。",
+    "importStartupTitle": "欢迎！导入设置",
+    "importStartupMessage": "当前数据集为空。你可以先“从其他格式导入”（把你原有液氮罐/冻存盒管理的土法、杂乱索引记录打包给外部编码代理处理），或导入外部生成并通过严格校验的 YAML。",
+    "exportTaskBundleTitle": "从其他格式导入",
+    "exportTaskBundleDesc": "这个模块用于把用户原有的液氮罐/冻存盒管理索引（包括土法、杂乱格式）通过标准流程转换为可导入 YAML。你先打包原始索引记录，再交给外部编码代理规范化。",
+    "exportTaskBundleGuide": "使用说明：\n1) 在“原始索引文件”中添加你现有的液氮罐/冻存盒管理索引（手工 Excel、CSV、截图、照片、PDF、文本笔记等，土法或杂乱格式都可以）。\n2) 导出 ZIP 并发送给外部代理（Codex/Claude Code）。\n3) 让代理在任务上下文内生成 output/ln2_inventory.yaml。\n4) 回到本应用，使用“导入已验证 YAML”。\n\n说明：\n- 支持将文件直接拖拽到来源框中。\n- 这个对话框只打包原始索引资料，不是最终 YAML 导入文件。",
     "exportTaskBundleAction": "导出任务包",
-    "exportTaskBundleSuccess": "任务包已导出：\n{path}",
+    "exportTaskBundleSuccess": "任务包已导出：\n{path}\n\n下一步：\n1) 把这个 ZIP 发给 Codex/Claude Code。\n2) 让它产出 output/ln2_inventory.yaml。\n3) 回到本应用使用“导入已验证 YAML”。",
     "exportTaskBundleFailed": "导出任务包失败。",
     "exportTaskBundleWarnings": "警告：\n{warnings}",
-    "exportBundleSources": "源文件：",
+    "exportBundleSources": "原始索引文件（液氮罐/冻存盒管理记录，供外部 AI 处理）：",
     "exportBundleOutput": "任务包 ZIP：",
-    "exportBundleNoSources": "尚未选择源文件。",
-    "selectSourceFiles": "选择源文件",
-    "selectSourceFolder": "选择源文件夹",
+    "exportBundleNoSources": "尚未添加原始索引记录。\n请点击“添加原始索引文件”。\n也可以将文件拖拽到此框中。",
+    "selectSourceFiles": "添加原始索引文件",
     "allFilesFilter": "所有文件 (*)",
     "zipFilesFilter": "ZIP 文件 (*.zip)",
     "importValidatedTitle": "导入已验证 YAML",
-    "importValidatedDesc": "对外部生成的 YAML 执行本地严格校验，通过后再导入为数据集。",
-    "importValidateAction": "校验 YAML",
-    "importValidatedAction": "导入数据集",
-    "importValidationResultPlaceholder": "这里将显示校验结果。",
-    "importValidationFailed": "校验未通过，请先修复错误后再导入。",
+    "importValidatedDesc": "对外部生成的 YAML 先执行本地严格校验，再导入。校验不通过不会写入。",
+    "importValidatedGuide": "请准备外部代理生成的 output/ln2_inventory.yaml。\n\n步骤：\n1) 选择“候选 YAML”（外部代理输出）。\n2) 选择“目标数据集 YAML”（本应用保存位置）。\n3) 先点击“执行严格校验”。\n4) 校验通过后再点击“导入数据集（通过后）”。\n\n结果区域会显示 errors/warnings。严格模式下，只要 errors > 0 或 warnings > 0 都会阻止导入。",
+    "importValidateAction": "执行严格校验",
+    "importValidatedAction": "导入数据集（通过后）",
+    "importValidationResultPlaceholder": "这里会显示严格校验结果（errors/warnings；任一非 0 都会阻止导入）。",
+    "importValidationFailed": "严格校验未通过（warnings 也会阻止导入）。请先修复后再导入。",
     "importValidatedFailed": "导入已验证 YAML 失败。",
     "importValidatedSuccess": "已导入到：\n{path}",
-    "importCandidateYaml": "候选 YAML：",
-    "importTargetYaml": "目标数据集路径：",
-    "importTargetExistsConfirm": "目标文件已存在：\n{path}\n\n是否覆盖？"
+    "importCandidateYaml": "候选 YAML（外部输出，例如 output/ln2_inventory.yaml）：",
+    "importTargetYaml": "目标数据集 YAML（导入后保存到这里）：",
+    "importTargetExistsConfirm": "目标文件已存在：\n{path}\n\n是否覆盖？",
+    "datasetYamlValidationBlocked": "所选库存文件未通过严格校验：\n{message}",
+    "datasetYamlValidationHint": "请先用“导入已验证 YAML”修复/校验后，再设置为当前数据集。"
   },
   "overview": {
     "title": "概览",
@@ -176,7 +170,7 @@
     "allBoxes": "所有盒子",
     "allCells": "所有细胞系",
     "showEmpty": "显示空闲",
-    "showEmptyGridOnly": "仅对格子视图生效",
+    "showTakenOut": "显示已取出",
     "clearFilter": "清除筛选",
     "hoverHint": "悬停格子查看详情。",
     "emptyHint": "[空] 暂无样品。单击格子存入第一条记录。",
@@ -186,7 +180,6 @@
     "prefillAddAuto": "已自动预填存入（盒 {box} 位置 {position}）。",
     "prefillAdd": "预填存入（盒 {box} 位置 {position}）",
     "prefillThaw": "预填取出（ID {id}）",
-    "prefillMove": "预填移动（ID {id}）",
     "prefillQuery": "查询 ID {id}",
     "emptyCellTooltip": "盒子 {box} 位置 {position}：空位",
     "previewAdd": "存入",
@@ -223,6 +216,7 @@
     "fitAllBoxes": "显示所有盒子",
     "jumpToBox": "跳转到盒子 {box}",
     "takeoutAdded": "已添加取出操作（ID {id}）到计划列表",
+    "moveAdded": "已添加移动操作（ID {id}）到计划列表：盒 {from_box}:{from_pos} -> 盒 {to_box}:{to_pos}",
     "tooltipId": "ID",
     "tooltipPos": "位置",
     "tooltipCellLine": "细胞系",
@@ -240,7 +234,7 @@
   "operations": {
     "title": "操作",
     "mode": "模式",
-    "executeAll": "执行全部",
+    "executeAll": "执行",
     "removeSelected": "移除所选",
     "moveUp": "上移",
     "moveDown": "下移",
@@ -359,8 +353,6 @@
     "colNote": "备注",
     "colStatus": "状态",
     "colTimestamp": "时间戳",
-    "colActor": "操作者",
-    "colChannel": "通道",
     "colDetails": "详情",
     "planNoSelection": "未选择计划项。",
     "planNoRemoved": "未移除任何计划项。",
@@ -414,13 +406,10 @@
     "planExecutionSuccess": "计划执行成功",
     "noCurrentPlanToPrint": "当前计划为空，无法打印。",
     "noLastExecutedToPrint": "暂无最近执行记录可打印。",
-    "noPlanToPrint": "没有可打印的计划或最近执行历史。",
-    "planEmptyPrintingLast": "计划为空，打开最近一次执行的操作清单。",
     "planPrintOpened": "已打开计划操作清单。",
     "operationSheetOpened": "已打开操作清单（浏览器）。",
     "printLastResult": "打印上次执行",
-    "printGuide": "打印指南",
-    "guideOpened": "操作指南已在浏览器中打开",
+    "lastExecutedPrintOpened": "已打开上次执行操作清单。",
     "planCleared": "已清空计划。",
     "rollbackUnknown": "回滚失败。",
     "exportedTo": "已导出到 {path}",
@@ -442,8 +431,6 @@
     "auditActionRecordTakeout": "单条取出",
     "auditActionBatchTakeout": "批量取出",
     "auditActionRollback": "回滚",
-    "auditGuideFromSelected": "从所选生成导引",
-    "auditPrintSelectedGuide": "打印所选导引",
     "auditRollbackFromSelected": "从所选回滚",
     "auditRollbackAdvanced": "高级回滚（按备份）",
     "showAdvancedRollback": "显示备份回滚",
@@ -454,19 +441,9 @@
     "auditEventsShown": "共显示 {count} 条审计事件（{start} 到 {end}）。",
     "audit": "审计",
     "timeLabel": "时间：",
-    "actorLabel": "操作者：",
     "backupLabel": "备份：",
     "errorLabel": "错误：",
     "detailsLabel": "详情：",
-    "noPrintableFromSelection": "所选审计行无法生成可打印操作",
-    "selectedEvents": "所选事件：{count}",
-    "warningsLabel": "警告：",
-    "moreWarnings": "... 另有 {count} 条",
-    "noPrintableAuditGuide": "所选审计行未生成可打印导引。",
-    "auditGuideGenerated": "已生成所选审计行导引",
-    "finalOperations": "最终操作：{count}",
-    "generatedFinalOperations": "已从审计选择中生成 {count} 条最终操作。",
-    "auditGuideOpened": "所选审计导引已在浏览器中打开。",
     "selectAuditRowsFirst": "请先选择一条或多条审计行。",
     "selectSingleAuditRow": "回滚请只选择一条审计行。",
     "selectedAuditNoBackup": "所选审计行缺少备份路径，无法回滚。",
@@ -561,7 +538,7 @@
       "empty_entries": "至少需要一条条目。",
       "empty_positions": "至少需要一个位置。",
       "export_failed": "导出失败。",
-      "forbidden_fields": "包含不可编辑字段。",
+      "forbidden_fields": "包含当前操作不允许的字段。",
       "integrity_validation_failed": "写入被阻止：完整性校验失败。",
       "invalid_action": "操作类型无效。",
       "invalid_box": "盒子编号无效。",
@@ -688,29 +665,29 @@
       "unknownTool": "未知工具：{tool_name}"
     },
     "hint": {
-      "adjustInputByToolSpecs": "根据 `tool_specs` 调整 `{tool_name}` 输入，然后重试。",
-      "boxNotEmpty": "首先重新move 该盒子中的所有活动管，然后重试 remove 操作。",
-      "emptyPositionsOrEntries": "重试之前至少提供一个目标位置或条目。",
-      "invalidAction": "使用支持的操作值：takeout / move。",
-      "invalidBoxOrPositionOrRecordId": "提供当前布局中的有效框 ID 和有效位置（例如 12 或 A1）。",
-      "invalidDate": "使用日期格式 `YYYY-MM-DD`（例如：2026-02-10）。",
-      "invalidMode": "对于 `search_records`，使用模式：fuzzy / exact / keywords。",
-      "invalidMoveTarget": "对于 move 操作，请提供与源位置不同的有效 `to_position`。",
-      "invalidToolInput": "检查 `{tool_name}` 输入字段。必需：{required_text}。可选：{optional_text}。",
-      "minBoxCount": "至少必须保留一盒；不要remove最后一个盒子。",
-      "noBackups": "尚无备份；在选择 backup_path 之前，首先调查写入历史记录并使用 `question` 工具确认回滚意图。",
-      "pathOrPermission": "验证 yaml_path 是否存在并且文件权限是否正确，然后重试。",
-      "planPreflightFailedNoIds": "一项或多项写入操作对于当前清单状态无效。查看被阻止的详细信息，然后仅重试已更正的操作。",
-      "planPreflightFailedWithIds": "由于基线完整性问题，预检失败。使用 `get_raw_entries` ids=[{ids_text}] 获取受影响的记录，然后通过 `edit_entry` 修复无效字段（例如，将 `cell_line` 规范化为配置的选项），然后重试暂存。",
-      "positionConflict": "通过 `list_empty_positions` 或 `recommend_positions` 选择空闲插槽，然后重试。",
-      "positionNotFound": "使用属于目标记录的位置。",
-      "recordNotFound": "首先调用 `search_records` 并使用结果中的有效 `record_id` 。",
-      "renumberModeRequired": "拆除中间盒时，选择renumber_mode：keep_gaps 或renumber_contiguous。",
-      "retryWithCorrectedInput": "使用更正的工具输入重试。",
-      "unknownTool": "使用可用工具之一：{available_text}。",
-      "userCancelled": "用户取消了确认对话框。",
-      "validationOrRollbackInvalid": "回滚目标对于当前文件状态无效。根据审核/时间线重新检查 backup_path，并在重试之前根据需要要求用户使用 `question` 进行确认。",
-      "writeRequiresExecuteMode": "写入工具是执行门控的。首先进行阶段操作，然后让人员在 GUI Plan 选项卡中运行 Execute。使用 dry_run 进行仅预览检查。"
+      "adjustInputByToolSchema": "Adjust `{tool_name}` inputs according to the tool schema, then retry.",
+      "boxNotEmpty": "Remove all active tubes from that box first, then retry remove operation.",
+      "emptyPositionsOrEntries": "Provide at least one target position or entry before retrying.",
+      "invalidAction": "Use a supported action value: takeout / move.",
+      "invalidBoxOrPositionOrRecordId": "Provide valid box IDs and valid positions in the current layout (e.g. 12 or A1).",
+      "invalidDate": "Use date format `YYYY-MM-DD` (for example: 2026-02-10).",
+      "invalidMode": "For `search_records`, use mode: fuzzy / exact / keywords.",
+      "invalidMoveTarget": "For move operations, provide a valid `to_position` different from source position.",
+      "invalidToolInput": "Input does not match `{tool_name}` schema. Fix field names/types first, then retry. Required: {required_text}. Optional: {optional_text}.",
+      "minBoxCount": "At least one box must remain; do not remove the last box.",
+      "noBackups": "No backups exist yet; investigate write history first and confirm rollback intent with `question` tool before choosing a backup_path.",
+      "pathOrPermission": "Verify yaml_path exists and file permissions are correct, then retry.",
+      "planPreflightFailedNoIds": "One or more write operations are invalid against current inventory state. Review blocked details, then retry only corrected operations.",
+      "planPreflightFailedWithIds": "Preflight failed due to baseline integrity issues. Fetch affected records with `get_raw_entries` ids=[{ids_text}], then repair invalid fields via `edit_entry` (for example, normalize `cell_line` to configured options), and retry staging.",
+      "positionConflict": "Choose free slots via `list_empty_positions` or `recommend_positions`, then retry.",
+      "positionNotFound": "Use a position that belongs to the target record.",
+      "recordNotFound": "Call `search_records` first and use a valid `record_id` from results.",
+      "renumberModeRequired": "When removing a middle box, choose renumber_mode: keep_gaps or renumber_contiguous.",
+      "retryWithCorrectedInput": "Retry with corrected tool input.",
+      "unknownTool": "Use one of available tools: {available_text}.",
+      "userCancelled": "User cancelled the confirmation dialog.",
+      "validationOrRollbackInvalid": "Rollback target is invalid for current file state. Re-check backup_path against audit/timeline and ask user confirmation with `question` if needed before retrying.",
+      "writeRequiresExecuteMode": "Write tools are execute-gated. Stage operations first, then let a human run Execute in GUI Plan tab."
     },
     "input": {
       "allHistoryOnlyForSummary": "all_history 仅在 view=summary 时有效",
@@ -723,6 +700,7 @@
       "manageStagedNeedActionRecordPosition": "通过钥匙移除时需要动作、record_id 和位置",
       "manageStagedNeedIndexOrKey": "提供索引或操作+record_id+位置",
       "manageStagedSelectorOnlyForRemove": "索引/动作/record_id/位置仅在操作=remove时有效",
+      "searchQueryRequired": "未输入检索词",
       "recentCannotMixSearchFields": "centre_* 过滤器不能与文本/结构化搜索字段混合",
       "renumberOnlyForRemove": "renumber_mode仅在操作=remove时有效",
       "summaryViewAllowedFields": "view=summary 仅支持：视图、天数、all_history",
@@ -749,9 +727,11 @@
       "removedMatchingCount": "Removed {count} 匹配项目。"
     },
     "question": {
-      "atLeastOneRequired": "至少需要一个 question。",
-      "missingHeaderOrQuestion": "问题 {index} 缺少“标题”或“question”。",
-      "mustBeDict": "问题 {index} 必须是一个字典。"
+      "nonEmptyQuestionRequired": "question 必须是非空字符串。",
+      "optionMustBeNonEmpty": "options[{index}] 必须是非空字符串。",
+      "optionMustBeString": "options[{index}] 必须是字符串。",
+      "optionsCountRange": "options 必须包含 2 到 5 个选项。",
+      "optionsMustBeArray": "options 必须是由非空字符串组成的数组。"
     },
     "response": {
       "nonDict": "工具 `{tool_name}` 返回非字典响应。"
@@ -760,60 +740,81 @@
       "allRejectedByValidation": "所有操作均被验证拒绝：{detail}",
       "moreBlockedItems": "; ...以及 {count} 更多",
       "planStoreNotAvailable": "计划商店不可用。",
-      "stagedForHumanApproval": "在 Plan 选项卡中上演 {count} 操作以供人工批准：{summary}"
+      "stagedForHumanApproval": "\u5df2\u6682\u5b58 {count} \u6761\u64cd\u4f5c\uff0c\u8bf7\u5728\u201c\u8ba1\u5212\u201d\u9875\u7b7e\u624b\u52a8\u786e\u8ba4\u6267\u884c\uff1a{summary}"
     },
     "toolContracts": {
       "add_entry": {
-        "description": "添加新的冷冻管记录。",
-        "notes": "通过 fields 对象提供所有示例元数据（例如 fields.short_name、fields.cell_line）。"
+        "description": "Add new frozen tube records.",
+        "notes": "Provide sample metadata through fields object using declared keys (e.g. fields.cell_line, fields.note, fields.<custom_field>)."
       },
       "batch_takeout": {
-        "description": "?? takeout??????? from ???"
+        "description": "Record takeout for multiple tubes in one call (single tube: record_takeout)."
       },
-      "defaultDescription": "LN2 库存工具：{name}",
+      "defaultDescription": "LN2 inventory tool: {name}",
       "edit_entry": {
-        "description": "编辑现有记录的元数据字段。"
+        "description": "Edit metadata fields of an existing record."
       },
       "generate_stats": {
-        "description": "生成库存统计数据。"
+        "description": "Generate inventory statistics."
       },
       "get_raw_entries": {
-        "description": "通过ID列表获取原始库存记录。"
+        "description": "Fetch raw inventory records by ID list."
       },
       "list_empty_positions": {
-        "description": "列出空缺职位，可以选择在一个框中列出。"
+        "description": "List empty positions, optionally within one box."
       },
       "manage_boxes": {
-        "description": "安全地使用 add 或 remove 库存箱。"
+        "description": "Safely add or remove inventory boxes."
+      },
+      "manage_boxes_add": {
+        "description": "Safely add inventory boxes."
+      },
+      "manage_boxes_remove": {
+        "description": "Safely remove one inventory box."
       },
       "manage_staged": {
-        "description": "列出remove，或明确分阶段计划项目。"
+        "description": "List, remove, or clear staged plan items."
       },
       "query_takeout_events": {
-        "description": "通过view=summary查询takeout/move事件，或时间线摘要。"
+        "description": "Query takeout/move event records (detailed events only)."
+      },
+      "query_takeout_summary": {
+        "description": "Query aggregated timeline summary (use query_takeout_events for detailed event rows)."
       },
       "question": {
-        "description": "当所需值未知时，要求用户澄清 ​​questions。",
-        "notes": "question 工具不是写入工具，必须单独运行。"
+        "description": "Ask one clarifying question with explicit options.",
+        "notes": "question tool is not a write tool and must run alone."
+      },
+      "recent_frozen": {
+        "description": "List recently frozen records by a basis/value selector."
       },
       "recommend_positions": {
-        "description": "推荐新管的空位置。"
+        "description": "Recommend empty positions for new tubes."
       },
       "record_takeout": {
-        "description": "?? takeout??????? from ???"
+        "description": "Record takeout for one tube only (use batch_takeout for multiple tubes)."
       },
       "rollback": {
-        "description": "使用显式 backup_path 将清单 YAML 回滚到备份快照。",
-        "notes": "始终提供明确的 backup_path。"
+        "description": "Rollback inventory YAML to a backup snapshot using explicit backup_path.",
+        "notes": "Always provide explicit backup_path."
       },
       "search_records": {
-        "description": "搜索库存记录，或通过recent_*过滤器列出最近冻结的记录。"
+        "description": "Search inventory records using a non-empty query and optional structured filters."
       },
       "batch_move": {
-        "description": "?? move??????? from/to ???"
+        "description": "Record move for multiple tubes in one call (single tube: record_move)."
       },
       "record_move": {
-        "description": "?? move??????? from/to ???"
+        "description": "Record move for one tube only (use batch_move for multiple tubes)."
+      },
+      "staged_clear": {
+        "description": "Clear all staged plan items."
+      },
+      "staged_list": {
+        "description": "List staged plan items."
+      },
+      "staged_remove": {
+        "description": "Remove one staged plan item by index."
       }
     },
     "validation": {

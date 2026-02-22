@@ -612,6 +612,33 @@ def _get_common_qss():
         QWidget#aiPromptDock {{ background-color: transparent; }}
         QWidget#aiInputContainer {{ background-color: var(--background-raised); border: 1px solid var(--border-weak); }}
         QTextEdit#aiPromptInput {{ border: none; border-radius: var(--space-2); background-color: transparent; padding: var(--space-1) var(--space-1); font-size: {FONT_SIZE_MD}px; color: var(--text-strong); }}
+        QTextEdit#exportTaskSourcePreview[state="empty"] {{ color: var(--text-muted); }}
+        QTextEdit#exportTaskSourcePreview[state="filled"] {{ color: var(--text-strong); }}
+        QPushButton#aiModelSwitchBtn {{
+            min-width: 18px;
+            max-width: 18px;
+            min-height: 18px;
+            max-height: 18px;
+            padding: 0;
+            border: none;
+            border-radius: 0;
+            background-color: transparent;
+            color: var(--text-strong);
+            font-size: {FONT_SIZE_SM}px;
+            font-weight: {FONT_WEIGHT_MEDIUM};
+        }}
+        QPushButton#aiModelSwitchBtn:hover {{
+            background-color: transparent;
+            color: var(--accent);
+        }}
+        QPushButton#aiModelSwitchBtn:focus {{
+            border: none;
+            outline: none;
+        }}
+        QPushButton#aiModelSwitchBtn:disabled {{
+            color: var(--text-muted);
+            opacity: 0.6;
+        }}
         QPushButton[class="quick-prompt-btn"] {{ padding: 3px 10px; font-size: {FONT_SIZE_XS}px; border-radius: 10px; background-color: var(--quick-prompt-bg); border: none; color: var(--quick-prompt-color); }}
         QPushButton[class="quick-prompt-btn"]:hover {{ background-color: var(--quick-prompt-hover-bg); color: var(--quick-prompt-hover-color); }}
         QWidget#OverviewPanel {{ background-color: var(--overview-bg); }}

@@ -23,6 +23,102 @@ def _blocked_item_payload(error: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _is_positive_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _validate_item_payload_schema(item: Dict[str, Any]) -> Optional[str]:
+    action = str(item.get("action") or "").lower()
+    payload = item.get("payload")
+    if not isinstance(payload, dict):
+        return "payload must be an object"
+
+    if action == "rollback":
+        backup_path = payload.get("backup_path")
+        if not isinstance(backup_path, str) or not backup_path.strip():
+            return "payload.backup_path is required"
+        source_event = payload.get("source_event")
+        if source_event is not None and not isinstance(source_event, dict):
+            return "payload.source_event must be an object"
+        return None
+
+    if action == "add":
+        positions = payload.get("positions")
+        if not isinstance(positions, list) or not positions:
+            return "payload.positions must be a non-empty list"
+        for idx, position in enumerate(positions):
+            if not _is_positive_int(position):
+                return f"payload.positions[{idx}] must be a positive integer"
+
+        payload_box = payload.get("box")
+        if not _is_positive_int(payload_box):
+            return "payload.box must be a positive integer"
+        if int(item.get("box")) != payload_box:
+            return "payload.box must match item.box"
+
+        if item.get("position") not in positions:
+            return "item.position must be included in payload.positions"
+
+        frozen_at = payload.get("frozen_at")
+        if not isinstance(frozen_at, str) or not frozen_at.strip():
+            return "payload.frozen_at is required"
+
+        fields = payload.get("fields")
+        if not isinstance(fields, dict):
+            return "payload.fields must be an object"
+        return None
+
+    if action == "edit":
+        payload_record_id = payload.get("record_id")
+        if not _is_positive_int(payload_record_id):
+            return "payload.record_id must be a positive integer"
+        if int(item.get("record_id")) != payload_record_id:
+            return "payload.record_id must match item.record_id"
+
+        fields = payload.get("fields")
+        if not isinstance(fields, dict) or not fields:
+            return "payload.fields must be a non-empty object"
+        return None
+
+    payload_record_id = payload.get("record_id")
+    if not _is_positive_int(payload_record_id):
+        return "payload.record_id must be a positive integer"
+    if int(item.get("record_id")) != payload_record_id:
+        return "payload.record_id must match item.record_id"
+
+    payload_position = payload.get("position")
+    if not _is_positive_int(payload_position):
+        return "payload.position must be a positive integer"
+    if int(item.get("position")) != payload_position:
+        return "payload.position must match item.position"
+
+    date_str = payload.get("date_str")
+    if not isinstance(date_str, str) or not date_str.strip():
+        return "payload.date_str is required"
+
+    if action == "move":
+        payload_to_position = payload.get("to_position")
+        if not _is_positive_int(payload_to_position):
+            return "payload.to_position must be a positive integer"
+        if int(item.get("to_position")) != payload_to_position:
+            return "payload.to_position must match item.to_position"
+
+        source_box = int(item.get("box"))
+        payload_to_box = payload.get("to_box")
+        target_box = source_box
+        if payload_to_box not in (None, ""):
+            if not _is_positive_int(payload_to_box):
+                return "payload.to_box must be a positive integer"
+            target_box = int(payload_to_box)
+            item_to_box = item.get("to_box")
+            if item_to_box not in (None, "") and int(item_to_box) != payload_to_box:
+                return "payload.to_box must match item.to_box"
+        if target_box == source_box and payload_to_position == payload_position:
+            return "payload.to_position must differ from payload.position"
+
+    return None
+
+
 def validate_plan_batch(
     *,
     items: List[Dict[str, Any]],
@@ -43,6 +139,18 @@ def validate_plan_batch(
                     "item": item,
                     "error_code": "plan_validation_failed",
                     "message": err,
+                }
+            )
+            continue
+
+        payload_err = _validate_item_payload_schema(item)
+        if payload_err:
+            schema_errors.append(
+                {
+                    "kind": "schema",
+                    "item": item,
+                    "error_code": "plan_validation_failed",
+                    "message": payload_err,
                 }
             )
         else:

@@ -12,6 +12,18 @@ from app_gui.ui.utils import compact_json
 from app_gui.ui.workers import AgentRunWorker
 
 
+def _append_assistant_history_once(panel, text):
+    content = str(text or "").strip()
+    if not content:
+        return
+    if panel.ai_history:
+        last = panel.ai_history[-1]
+        if isinstance(last, dict):
+            if str(last.get("role") or "") == "assistant" and str(last.get("content") or "").strip() == content:
+                return
+    panel._append_history("assistant", content)
+
+
 def _on_run_stop_toggle(self):
     """Toggle between run and stop based on current state."""
     if self.ai_run_inflight:
@@ -23,6 +35,12 @@ def _on_run_stop_toggle(self):
 def on_run_ai_agent(self):
     if self.ai_run_inflight:
         return
+    if self.ai_stop_requested:
+        thread = getattr(self, "ai_run_thread", None)
+        if thread is not None and thread.isRunning():
+            self.status_message.emit(tr("ai.aiRunStopped"), 1500)
+            return
+        self.ai_stop_requested = False
 
     prompt = self.ai_prompt.toPlainText().strip()
     if not prompt:
@@ -48,6 +66,7 @@ def on_run_ai_agent(self):
 
 
 def start_worker(self, prompt):
+    self.ai_stop_requested = False
     model = self.ai_model.text().strip() or None
     history = [dict(item) for item in self.ai_history if isinstance(item, dict)]
 
@@ -87,14 +106,25 @@ def start_worker(self, prompt):
 
 def _handle_question_event(self, event_data):
     """Handle question event from agent: show dialog and unblock worker."""
+    if self.ai_stop_requested:
+        if self.ai_run_worker:
+            self.ai_run_worker.cancel_answer()
+        return
+
     if event_data.get("type") == "manage_boxes_confirm":
         return self._handle_manage_boxes_confirm(event_data)
 
     if event_data.get("type") == "max_steps_ask":
         return self._handle_max_steps_ask(event_data)
 
-    questions = event_data.get("questions", [])
-    if not questions:
+    question_text = str(event_data.get("question") or "").strip()
+    options_raw = event_data.get("options") or []
+    options = [
+        str(item).strip()
+        for item in options_raw
+        if isinstance(item, str) and str(item).strip()
+    ]
+    if not question_text or len(options) < 2:
         if self.ai_run_worker:
             self.ai_run_worker.cancel_answer()
         return
@@ -103,11 +133,11 @@ def _handle_question_event(self, event_data):
         self._end_stream_chat()
     self._append_tool_message(tr("ai.questionAsking"))
 
-    answers = self._show_question_dialog(questions)
+    answer = self._show_question_dialog(question_text, options)
 
-    if answers is not None:
+    if answer is not None:
         if self.ai_run_worker:
-            self.ai_run_worker.set_answer(answers)
+            self.ai_run_worker.set_answer(answer)
     else:
         if self.ai_run_worker:
             self.ai_run_worker.cancel_answer()
@@ -168,15 +198,13 @@ def _handle_max_steps_ask(self, event_data):
         self.ai_run_worker.cancel_answer()
 
 
-def _show_question_dialog(self, questions):
-    """Modal dialog for user to answer agent questions."""
+def _show_question_dialog(self, question_text, options):
+    """Modal dialog for one clarifying question with single-choice options."""
     from PySide6.QtWidgets import (
-        QCheckBox,
         QComboBox,
         QDialog,
         QDialogButtonBox,
         QLabel,
-        QLineEdit,
         QVBoxLayout,
     )
 
@@ -185,34 +213,13 @@ def _show_question_dialog(self, questions):
     dialog.setMinimumWidth(400)
     layout = QVBoxLayout(dialog)
 
-    answer_widgets = []
+    label = QLabel(str(question_text or ""))
+    label.setWordWrap(True)
+    layout.addWidget(label)
 
-    for q in questions:
-        header = q.get("header", "")
-        question_text = q.get("question", "")
-        options = q.get("options", [])
-        multiple = q.get("multiple", False)
-
-        label = QLabel(f"<b>{header}</b>: {question_text}")
-        label.setWordWrap(True)
-        layout.addWidget(label)
-
-        if options and multiple:
-            checkbox_group = []
-            for opt in options:
-                cb = QCheckBox(opt)
-                layout.addWidget(cb)
-                checkbox_group.append(cb)
-            answer_widgets.append(("checkbox_group", checkbox_group))
-        elif options:
-            combo = QComboBox()
-            combo.addItems(options)
-            layout.addWidget(combo)
-            answer_widgets.append(("combo", combo))
-        else:
-            edit = QLineEdit()
-            layout.addWidget(edit)
-            answer_widgets.append(("text", edit))
+    combo = QComboBox()
+    combo.addItems(list(options or []))
+    layout.addWidget(combo)
 
     buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
     buttons.accepted.connect(dialog.accept)
@@ -220,27 +227,27 @@ def _show_question_dialog(self, questions):
     layout.addWidget(buttons)
 
     if dialog.exec() == QDialog.Accepted:
-        answers = []
-        for widget_type, widget in answer_widgets:
-            if widget_type == "checkbox_group":
-                answers.append([cb.text() for cb in widget if cb.isChecked()])
-            elif widget_type == "combo":
-                answers.append(widget.currentText())
-            else:
-                answers.append(widget.text())
-        return answers
+        return combo.currentText()
     return None
 
 
 def on_stop_ai_agent(self):
-    if self.ai_run_thread and self.ai_run_thread.isRunning():
-        # Terminate is harsh, but ReactAgent is sync.
-        # We will just detach signals and kill it.
-        # Ideally we have a 'stop' flag in worker, but worker is running a blocking call.
-        self.ai_run_thread.terminate()
-        self.set_busy(False)
-        self._append_chat("System", tr("ai.runStopped"))
-        self.status_message.emit(tr("ai.aiRunStopped"), 3000)
+    if not self.ai_run_inflight:
+        return
+
+    self.ai_stop_requested = True
+    if self.ai_run_worker is not None and hasattr(self.ai_run_worker, "request_stop"):
+        try:
+            self.ai_run_worker.request_stop()
+        except Exception:
+            pass
+
+    if self.ai_streaming_active:
+        self._end_stream_chat()
+    self._append_chat("System", tr("ai.runStopped"))
+    self.status_message.emit(tr("ai.aiRunStopped"), 3000)
+    # Keep worker alive for cooperative shutdown; ignore late progress/final callbacks.
+    self.set_busy(False)
 
 
 def set_busy(self, busy):
@@ -260,9 +267,14 @@ def set_busy(self, busy):
         self.ai_run_btn.style().unpolish(self.ai_run_btn)
         self.ai_run_btn.style().polish(self.ai_run_btn)
     self.ai_run_btn.setEnabled(True)
+    if hasattr(self, "ai_model_switch_btn"):
+        self.ai_model_switch_btn.setEnabled((not busy) and bool(self._iter_model_switch_options()))
 
 
 def on_progress(self, event):
+    if self.ai_stop_requested:
+        return
+
     event_type = str(event.get("event") or event.get("type") or "").strip()
     trace_id = event.get("trace_id")
 
@@ -382,6 +394,36 @@ def _handle_progress_max_steps(_event):
 
 
 def on_finished(self, response):
+    if self.ai_stop_requested:
+        response = response if isinstance(response, dict) else {}
+        raw_result = response.get("result")
+        if not isinstance(raw_result, dict):
+            raw_result = {}
+
+        stop_note = str(raw_result.get("final") or response.get("message") or tr("ai.runStopped")).strip()
+        stop_note = stop_note.replace("**", "").strip()
+
+        streamed_text = self.ai_stream_buffer.strip()
+        if self.ai_streaming_active:
+            self._end_stream_chat()
+            streamed_text = str((self.ai_last_stream_block or {}).get("text") or "").strip()
+
+        if streamed_text:
+            _append_assistant_history_once(self, streamed_text)
+        if stop_note:
+            _append_assistant_history_once(self, stop_note)
+
+        self.set_busy(False)
+        self.ai_streaming_active = False
+        self.ai_stream_buffer = ""
+        self.ai_stream_start_pos = None
+        self.ai_last_stream_block = None
+        self.ai_stream_last_render_ts = 0.0
+        self.ai_stream_last_render_len = 0
+        self._reset_stream_thought_state()
+        self.operation_completed.emit(False)
+        return
+
     self.set_busy(False)
     response = response if isinstance(response, dict) else {}
 
@@ -438,5 +480,6 @@ def on_finished(self, response):
 
 
 def on_thread_finished(self):
+    self.ai_stop_requested = False
     self.ai_run_thread = None
     self.ai_run_worker = None

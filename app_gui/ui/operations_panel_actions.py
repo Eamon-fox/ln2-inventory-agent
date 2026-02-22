@@ -39,7 +39,7 @@ def print_last_executed(self):
     self._print_items_with_grid(
         self._last_executed_plan,
         empty_message=tr("operations.noLastExecutedToPrint"),
-        opened_message=tr("operations.guideOpened"),
+        opened_message=tr("operations.lastExecutedPrintOpened"),
     )
 
 
@@ -291,6 +291,7 @@ def on_undo_last(self):
         tr("operations.undo"),
         notice_code="plan.restored" if restored_data else "undo.result",
         notice_data=restored_data,
+        allow_undo_from_backup=False,
     )
     if response.get("ok") and executed_plan_backup:
         self._plan_store.replace_all(executed_plan_backup)

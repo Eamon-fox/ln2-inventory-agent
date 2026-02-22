@@ -78,10 +78,10 @@ def setup_ui(self):
     self.ov_filter_cell.currentIndexChanged.connect(self._apply_filters)
     advanced_filter_row.addWidget(self.ov_filter_cell, 1)
 
-    self.ov_filter_show_empty = QCheckBox(tr("overview.showEmpty"))
-    self.ov_filter_show_empty.setChecked(True)
-    self.ov_filter_show_empty.stateChanged.connect(self._apply_filters)
-    advanced_filter_row.addWidget(self.ov_filter_show_empty)
+    self.ov_filter_secondary_toggle = QCheckBox(tr("overview.showEmpty"))
+    self.ov_filter_secondary_toggle.setChecked(True)
+    self.ov_filter_secondary_toggle.stateChanged.connect(self._apply_filters)
+    advanced_filter_row.addWidget(self.ov_filter_secondary_toggle)
 
     # Clear filter button with icon
     clear_filter_btn = QPushButton(tr("overview.clearFilter"))

@@ -162,17 +162,48 @@ def _create_takeout_plan_item(self, record_id, box_num, position, record):
     )
 
 
+def _create_move_plan_item(self, *, record_id, from_box, from_pos, to_box, to_pos, record):
+    """Create a move plan item directly from overview drag-and-drop."""
+    from datetime import date
+    from lib.plan_item_factory import build_record_plan_item, resolve_record_box
+
+    resolved_box = resolve_record_box(record, fallback_box=from_box)
+    to_box_param = int(to_box) if int(to_box) != int(resolved_box) else None
+    item = build_record_plan_item(
+        action="move",
+        record_id=int(record_id),
+        position=int(from_pos),
+        box=int(resolved_box),
+        date_str=date.today().isoformat(),
+        to_position=int(to_pos),
+        to_box=to_box_param,
+        source="overview_drag",
+        payload_action="Move",
+    )
+    self.plan_items_requested.emit([item])
+    self.status_message.emit(
+        t(
+            "overview.moveAdded",
+            id=record_id,
+            from_box=from_box,
+            from_pos=from_pos,
+            to_box=to_box,
+            to_pos=to_pos,
+        ),
+        2000,
+    )
+
+
 def _on_cell_drop(self, from_box, from_pos, to_box, to_pos, record_id):
     if from_box == to_box and from_pos == to_pos:
         return
 
-    self.request_move_prefill.emit(
-        {
-            "box": from_box,
-            "position": from_pos,
-            "record_id": record_id,
-            "to_box": to_box,
-            "to_position": to_pos,
-        }
+    record = self.overview_pos_map.get((from_box, from_pos))
+    self._create_move_plan_item(
+        record_id=record_id,
+        from_box=from_box,
+        from_pos=from_pos,
+        to_box=to_box,
+        to_pos=to_pos,
+        record=record,
     )
-    self.status_message.emit(t("overview.prefillMove", id=record_id), 2000)

@@ -13,8 +13,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 try:
-    from PySide6.QtCore import QDate, Qt
-    from PySide6.QtGui import QValidator
+    from PySide6.QtCore import QDate, Qt, QEvent, QPointF
+    from PySide6.QtGui import QValidator, QMouseEvent
     from PySide6.QtWidgets import QApplication, QMessageBox, QCompleter, QPushButton, QLineEdit
 
     from app_gui.ui.ai_panel import AIPanel
@@ -28,7 +28,10 @@ try:
 except Exception:
     QDate = None
     Qt = None
+    QEvent = None
+    QPointF = None
     QValidator = None
+    QMouseEvent = None
     QApplication = None
     QMessageBox = None
     QCompleter = None
@@ -112,7 +115,7 @@ class _FakeOperationsBridge:
     def batch_move(self, yaml_path, **payload):
         return self.batch_takeout(yaml_path, **payload)
 
-    def generate_stats(self, yaml_path):
+    def generate_stats(self, yaml_path, box=None, include_inactive=False):
         return {"ok": True, "result": {"total_records": 0, "total_slots": 405, "occupied_slots": 0, "boxes": {}}}
 
     def search_records(self, yaml_path, **kwargs):
@@ -194,6 +197,59 @@ class GuiPanelRegressionTests(unittest.TestCase):
         record = panel._lookup_record(1)
         self.assertIsInstance(record, dict)
         self.assertEqual(1, int(record.get("id")))
+
+    def test_operations_panel_cache_normalizes_alphanumeric_positions(self):
+        panel = self._new_operations_panel()
+        panel._refresh_custom_fields = lambda: None
+        panel._current_layout = {"rows": 9, "cols": 9, "indexing": "alphanumeric"}
+        panel.update_records_cache(
+            {
+                "1": {
+                    "id": 1,
+                    "parent_cell_line": "K562",
+                    "short_name": "k562-a",
+                    "box": 1,
+                    "position": "B4",
+                    "frozen_at": "2026-02-10",
+                }
+            }
+        )
+
+        record = panel._lookup_record(1)
+        self.assertIsInstance(record, dict)
+        self.assertEqual(1, record.get("box"))
+        self.assertEqual(13, record.get("position"))
+
+    def test_operations_panel_takeout_accepts_alphanumeric_position_without_crash(self):
+        panel = self._new_operations_panel()
+        panel._refresh_custom_fields = lambda: None
+        panel._current_layout = {"rows": 9, "cols": 9, "indexing": "alphanumeric"}
+        panel.update_records_cache(
+            {
+                "1": {
+                    "id": 1,
+                    "parent_cell_line": "K562",
+                    "short_name": "k562-a",
+                    "box": 1,
+                    "position": "B4",
+                    "frozen_at": "2026-02-10",
+                }
+            }
+        )
+
+        panel.t_id.setValue(1)
+        panel.t_from_box.setValue(1)
+        panel.t_from_position.setText("B4")
+        panel._refresh_takeout_record_context()
+
+        self.assertEqual(13, panel.t_position.currentData())
+
+        panel.on_record_takeout()
+
+        self.assertEqual(1, len(panel.plan_items))
+        item = panel.plan_items[0]
+        self.assertEqual(13, item.get("position"))
+        self.assertEqual(13, (item.get("payload") or {}).get("position"))
 
     def test_operations_panel_add_entry_parses_positions_text(self):
         panel = self._new_operations_panel()
@@ -339,6 +395,28 @@ class GuiPanelRegressionTests(unittest.TestCase):
         values = dialog.get_values()
         self.assertEqual("sk-updated", values["api_keys"][provider_id])
 
+    def test_settings_dialog_ai_model_is_editable_and_persisted(self):
+        from app_gui.main import SettingsDialog, PROVIDER_DEFAULTS
+
+        provider_id = next(iter(PROVIDER_DEFAULTS))
+        default_model = PROVIDER_DEFAULTS[provider_id]["model"]
+        dialog = SettingsDialog(config={"ai": {"provider": provider_id, "model": default_model}})
+
+        self.assertTrue(dialog.ai_model_edit.isEnabled())
+        dialog.ai_model_edit.setEditText("custom-model-id")
+
+        values = dialog.get_values()
+        self.assertEqual("custom-model-id", values["ai_model"])
+
+    def test_settings_dialog_provider_switch_updates_model_dropdown_options(self):
+        from app_gui.main import SettingsDialog
+
+        dialog = SettingsDialog(config={"ai": {"provider": "zhipu", "model": "glm-5"}})
+        options = [dialog.ai_model_edit.itemText(i) for i in range(dialog.ai_model_edit.count())]
+
+        self.assertIn("glm-5", options)
+        self.assertIn("glm-4.7", options)
+
     def test_operations_panel_action_dropdown_supports_move(self):
         panel = self._new_operations_panel()
 
@@ -391,6 +469,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
             yaml_path_getter=lambda: "/tmp/inventory.yaml",
             plan_store=store,
         )
+        self.assertFalse(panel.plan_print_btn.isEnabled())
 
         def _on_change():
             QMetaObject.invokeMethod(panel, "_on_store_changed", Qt.QueuedConnection)
@@ -403,6 +482,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
 
         self.assertEqual(1, store.count())
         self.assertEqual(1, panel.plan_table.rowCount())
+        self.assertTrue(panel.plan_print_btn.isEnabled())
         self.assertTrue(panel.plan_clear_btn.isEnabled())
 
         store.clear()
@@ -412,7 +492,55 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual(0, store.count())
         self.assertEqual(0, panel.plan_table.rowCount())
         self.assertFalse(panel.plan_table.isVisible())
+        self.assertFalse(panel.plan_print_btn.isEnabled())
         self.assertFalse(panel.plan_clear_btn.isEnabled())
+
+    def test_plan_table_context_menu_remove_deletes_clicked_row(self):
+        panel = self._new_operations_panel()
+        panel.add_plan_items([
+            _make_takeout_item(record_id=101, position=1),
+            _make_takeout_item(record_id=102, position=2),
+        ])
+        self.assertEqual(2, panel._plan_store.count())
+
+        row_item = panel.plan_table.item(0, 0)
+        row_center = panel.plan_table.visualItemRect(row_item).center()
+
+        with patch("app_gui.ui.operations_panel.QMenu") as menu_cls:
+            fake_menu = menu_cls.return_value
+            remove_action = object()
+            fake_menu.addAction.return_value = remove_action
+            fake_menu.exec.return_value = remove_action
+
+            panel.on_plan_table_context_menu(row_center)
+
+        self.assertEqual(1, panel._plan_store.count())
+        self.assertEqual(102, panel.plan_items[0]["record_id"])
+
+    def test_plan_table_context_menu_click_unselected_row_switches_selection(self):
+        panel = self._new_operations_panel()
+        panel.add_plan_items([
+            _make_takeout_item(record_id=201, position=1),
+            _make_takeout_item(record_id=202, position=2),
+        ])
+
+        panel.plan_table.clearSelection()
+        panel.plan_table.selectRow(0)
+        self.assertEqual([0], panel._get_selected_plan_rows())
+
+        row_item = panel.plan_table.item(1, 0)
+        row_center = panel.plan_table.visualItemRect(row_item).center()
+
+        with patch("app_gui.ui.operations_panel.QMenu") as menu_cls:
+            fake_menu = menu_cls.return_value
+            remove_action = object()
+            fake_menu.addAction.return_value = remove_action
+            fake_menu.exec.return_value = None
+
+            panel.on_plan_table_context_menu(row_center)
+
+        self.assertEqual([1], panel._get_selected_plan_rows())
+        self.assertEqual(2, panel._plan_store.count())
 
     def test_operations_panel_move_tab_has_from_and_to_position(self):
         panel = self._new_operations_panel()
@@ -442,6 +570,39 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual(8, item["to_position"])
         self.assertEqual(5, item["position"])
         self.assertEqual(8, item["payload"]["to_position"])
+
+    def test_operations_panel_move_requires_active_source_position(self):
+        panel = self._new_operations_panel()
+        panel.update_records_cache({
+            31: {
+                "id": 31,
+                "parent_cell_line": "K562",
+                "short_name": "K562-consumed",
+                "box": 2,
+                "position": None,
+            },
+        })
+        messages = []
+        panel.status_message.connect(lambda msg, _timeout, _level: messages.append(str(msg)))
+
+        panel.m_id.setValue(31)
+        panel.m_to_position.setText("8")
+        panel.on_record_move()
+
+        self.assertEqual([], panel.plan_items)
+        self.assertTrue(messages)
+        self.assertIn(tr("operations.positionRequired"), messages[-1])
+
+    def test_operations_panel_takeout_requires_position(self):
+        panel = self._new_operations_panel()
+        messages = []
+        panel.status_message.connect(lambda msg, _timeout, _level: messages.append(str(msg)))
+
+        panel.on_record_takeout()
+
+        self.assertEqual([], panel.plan_items)
+        self.assertTrue(messages)
+        self.assertIn(tr("operations.positionRequired"), messages[-1])
 
     def test_operations_panel_batch_move_table_collects_triples(self):
         panel = self._new_operations_panel()
@@ -514,18 +675,64 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertFalse(panel.t_ctx_status.isHidden())
         self.assertEqual(tr("operations.recordNotFound"), panel.t_ctx_status.text())
 
-    def test_operations_panel_set_move_prefill_fills_move_form(self):
+    def test_operations_panel_move_source_change_updates_record_id_and_target_box(self):
         panel = self._new_operations_panel()
         panel.update_records_cache({
-            7: {"id": 7, "parent_cell_line": "K562", "short_name": "K562_move",
-                "box": 2, "position": 15},
+            7: {
+                "id": 7,
+                "parent_cell_line": "K562",
+                "short_name": "K562_move",
+                "box": "2",
+                "position": "15",
+            },
         })
 
-        panel.set_move_prefill({"box": 2, "position": 15, "record_id": 7})
+        panel.m_from_box.setValue(2)
+        panel.m_from_position.setText("15")
+        panel._refresh_move_record_context()
 
         self.assertEqual(7, panel.m_id.value())
-        # from_position is now inferred from record, not a separate widget
-        self.assertEqual("move", panel.current_operation_mode)
+        self.assertEqual(2, panel.m_to_box.value())
+
+    def test_operations_panel_move_lookup_matches_string_slot_values(self):
+        panel = self._new_operations_panel()
+        panel.update_records_cache({
+            18: {
+                "id": 18,
+                "parent_cell_line": "K562",
+                "short_name": "K562_move",
+                "box": "3",
+                "position": "21",
+            },
+        })
+
+        panel.m_from_box.setValue(3)
+        panel.m_from_position.setText("21")
+        panel._refresh_move_record_context()
+
+        self.assertEqual(18, panel.m_id.value())
+        self.assertTrue(panel.m_ctx_status.isHidden())
+
+    def test_operations_panel_move_falls_back_to_source_slot_when_id_missing(self):
+        panel = self._new_operations_panel()
+        panel.update_records_cache({
+            19: {
+                "id": 19,
+                "parent_cell_line": "K562",
+                "short_name": "K562_move",
+                "box": "4",
+                "position": "9",
+            },
+        })
+
+        panel.m_id.setValue(0)
+        panel.m_from_box.setValue(4)
+        panel.m_from_position.setText("9")
+        panel.m_to_position.setText("10")
+        panel.on_record_move()
+
+        self.assertEqual(1, len(panel.plan_items))
+        self.assertEqual(19, panel.plan_items[0]["record_id"])
 
     def test_operations_panel_batch_section_collapsed_by_default(self):
         panel = self._new_operations_panel()
@@ -578,10 +785,8 @@ class GuiPanelRegressionTests(unittest.TestCase):
         panel._paint_cell(button, 1, 1, record)
 
         emitted_thaw = []
-        emitted_move = []
         emitted_add = []
         panel.request_prefill.connect(lambda payload: emitted_thaw.append(payload))
-        panel.request_move_prefill.connect(lambda payload: emitted_move.append(payload))
         panel.request_add_prefill.connect(lambda payload: emitted_add.append(payload))
 
         emitted_bg_add = []
@@ -596,7 +801,6 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual([], emitted_bg_add)
         self.assertEqual([{"box": 1, "position": 1, "record_id": 5}], emitted_bg_thaw)
         self.assertEqual([], emitted_thaw)
-        self.assertEqual([], emitted_move)
         self.assertEqual([], emitted_add)
 
     def test_overview_click_empty_slot_prefills_add_background_only(self):
@@ -668,6 +872,30 @@ class GuiPanelRegressionTests(unittest.TestCase):
         panel._set_plan_markers_from_items([])
         self.assertIn(button.property("operation_marker"), ("", None))
         self.assertIn(button.property("operation_badge_text"), ("", None))
+
+    def test_overview_plan_markers_repaint_keeps_occupied_when_slot_values_are_strings(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
+        record = {
+            "id": 9,
+            "cell_line": "A375",
+            "short_name": "A375_test",
+            "box": "1",
+            "position": "1",
+            "frozen_at": "2026-02-10",
+        }
+        panel._current_records = [record]
+        # Simulate stale/missing pos-map cache before marker repaint.
+        panel.overview_pos_map = {}
+
+        button = panel.overview_cells[(1, 1)]
+        panel._paint_cell(button, 1, 1, record)
+        self.assertFalse(bool(button.property("is_empty")))
+
+        panel._set_plan_markers_from_items([_make_takeout_item(record_id=9, position=1, box=1)])
+
+        self.assertFalse(bool(button.property("is_empty")))
+        self.assertEqual("takeout", str(button.property("operation_marker")))
 
     def test_overview_add_plan_markers_cover_all_payload_positions(self):
         panel = self._new_overview_panel()
@@ -913,7 +1141,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertEqual("takeout", staged_items[0].get("action"))
         self.assertEqual(5, staged_items[0].get("record_id"))
 
-    def test_overview_context_menu_record_does_not_emit_move_prefill(self):
+    def test_overview_context_menu_record_does_not_add_move_plan_item(self):
         panel = self._new_overview_panel()
         panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
 
@@ -928,8 +1156,8 @@ class GuiPanelRegressionTests(unittest.TestCase):
         button = panel.overview_cells[(1, 1)]
         panel._paint_cell(button, 1, 1, record)
 
-        emitted_move = []
-        panel.request_move_prefill.connect(lambda payload: emitted_move.append(payload))
+        staged_items = []
+        panel.plan_items_requested.connect(lambda payload: staged_items.extend(payload))
 
         from unittest.mock import patch, MagicMock
         with patch("app_gui.ui.overview_panel.QMenu") as MockMenu:
@@ -941,7 +1169,51 @@ class GuiPanelRegressionTests(unittest.TestCase):
             panel.on_cell_context_menu(1, 1, button.mapToGlobal(button.rect().center()))
 
         self.assertEqual((1, 1), panel.overview_selected_key)
-        self.assertEqual([], emitted_move)
+        self.assertEqual(1, len(staged_items))
+        self.assertEqual("takeout", staged_items[0].get("action"))
+
+    def test_overview_drag_drop_record_adds_move_plan_item(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=2, box_numbers=[1, 2])
+
+        record = {
+            "id": 5,
+            "parent_cell_line": "K562",
+            "short_name": "K562_test",
+            "box": 1,
+            "position": 1,
+        }
+        panel.overview_pos_map = {(1, 1): record}
+        source_button = panel.overview_cells[(1, 1)]
+        panel._paint_cell(source_button, 1, 1, record)
+
+        staged_items = []
+        status_messages = []
+        panel.plan_items_requested.connect(lambda payload: staged_items.extend(payload))
+        panel.status_message.connect(lambda msg, timeout: status_messages.append((str(msg), int(timeout))))
+
+        panel._on_cell_drop(1, 1, 2, 2, 5)
+
+        self.assertEqual(1, len(staged_items))
+        item = staged_items[0]
+        self.assertEqual("move", item.get("action"))
+        self.assertEqual(5, item.get("record_id"))
+        self.assertEqual(1, item.get("box"))
+        self.assertEqual(1, item.get("position"))
+        self.assertEqual(2, item.get("to_box"))
+        self.assertEqual(2, item.get("to_position"))
+        self.assertTrue(status_messages)
+        self.assertEqual(
+            tr(
+                "overview.moveAdded",
+                id=5,
+                from_box=1,
+                from_pos=1,
+                to_box=2,
+                to_pos=2,
+            ),
+            status_messages[-1][0],
+        )
 
     def test_overview_context_menu_empty_slot_emits_add_prefill(self):
         panel = self._new_overview_panel()
@@ -1136,7 +1408,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertNotIn("action", bridge.last_batch_payload)
         self.assertEqual(10, bridge.last_batch_payload["entries"][0]["record_id"])
         self.assertEqual(1, bridge.last_batch_payload["entries"][0]["from"]["box"])
-        self.assertEqual(5, bridge.last_batch_payload["entries"][0]["from"]["position"])
+        self.assertEqual("5", bridge.last_batch_payload["entries"][0]["from"]["position"])
         self.assertEqual(0, len(panel.plan_items))
         self.assertEqual([True], emitted)
 
@@ -1181,6 +1453,54 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertIsNotNone(panel.ai_model)
         self.assertIsNotNone(panel.ai_thinking_enabled)
         self.assertFalse(panel.ai_stream_has_thought)
+
+    def test_ai_panel_model_badge_shows_current_model_id(self):
+        panel = self._new_ai_panel()
+
+        panel.ai_provider.setText("deepseek")
+        panel.ai_model.setText("deepseek-chat")
+        panel._refresh_model_badge()
+
+        self.assertEqual("deepseek-chat", panel.ai_model_id_label.text())
+        self.assertEqual("deepseek:deepseek-chat", panel.ai_model_id_label.toolTip())
+
+    def test_ai_panel_model_switch_options_include_zhipu_glm_4_7(self):
+        panel = self._new_ai_panel()
+
+        options = panel._iter_model_switch_options()
+        option_pairs = {
+            (str(item.get("provider") or ""), str(item.get("model") or ""))
+            for item in options
+            if isinstance(item, dict)
+        }
+
+        self.assertIn(("zhipu", "glm-4.7"), option_pairs)
+
+    def test_ai_panel_model_switch_menu_updates_provider_and_model(self):
+        panel = self._new_ai_panel()
+        panel.ai_provider.setText("deepseek")
+        panel.ai_model.setText("deepseek-chat")
+
+        with patch("app_gui.ui.ai_panel.QMenu") as menu_cls:
+            fake_menu = menu_cls.return_value
+            deepseek_action = MagicMock()
+            zhipu_action = MagicMock()
+
+            def _add_action(label):
+                if "glm-5" in str(label):
+                    return zhipu_action
+                return deepseek_action
+
+            fake_menu.addAction.side_effect = _add_action
+            fake_menu.exec.return_value = zhipu_action
+
+            panel._open_model_switch_menu()
+
+        self.assertTrue(deepseek_action.setActionGroup.called)
+        self.assertTrue(zhipu_action.setActionGroup.called)
+        self.assertEqual("zhipu", panel.ai_provider.text())
+        self.assertEqual("glm-5", panel.ai_model.text())
+        self.assertEqual("glm-5", panel.ai_model_id_label.text())
 
     def test_ai_panel_thought_chunk_renders_inline_with_answer_stream(self):
         panel = self._new_ai_panel()
@@ -1431,6 +1751,50 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertTrue(messages)
         self.assertIn("api key", messages[-1][0].lower())
 
+    def test_ai_panel_stop_blocks_late_progress_updates(self):
+        panel = self._new_ai_panel()
+        panel.ai_run_inflight = True
+
+        class _StopWorker:
+            def __init__(self):
+                self.called = False
+
+            def request_stop(self):
+                self.called = True
+
+        worker = _StopWorker()
+        panel.ai_run_worker = worker
+
+        panel.on_progress({"event": "run_start", "trace_id": "trace-stop"})
+        panel.on_progress({"event": "chunk", "trace_id": "trace-stop", "data": "before stop"})
+        before_text = panel.ai_chat.toPlainText()
+
+        panel.on_stop_ai_agent()
+        self.assertTrue(worker.called)
+        self.assertTrue(panel.ai_stop_requested)
+        self.assertFalse(panel.ai_run_inflight)
+        stopped_text = panel.ai_chat.toPlainText()
+        self.assertIn("run", stopped_text.lower())
+
+        panel.on_progress({"event": "chunk", "trace_id": "trace-stop", "data": " after stop"})
+        after_text = panel.ai_chat.toPlainText()
+        self.assertEqual(stopped_text, after_text)
+
+    def test_ai_panel_finished_persists_stop_history_after_stop_request(self):
+        panel = self._new_ai_panel()
+        panel.ai_stop_requested = True
+        panel.ai_run_inflight = True
+        completed = []
+        panel.operation_completed.connect(lambda ok: completed.append(bool(ok)))
+
+        history_len_before = len(panel.ai_history)
+        panel.on_finished({"ok": True, "result": {"final": "should not render"}})
+
+        self.assertGreater(len(panel.ai_history), history_len_before)
+        self.assertEqual("assistant", panel.ai_history[-1]["role"])
+        self.assertIn("should not render", panel.ai_history[-1]["content"])
+        self.assertEqual([False], completed)
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -1464,7 +1828,6 @@ class ToolRunnerPlanSinkTests(unittest.TestCase):
             "frozen_at": "2026-02-10",
             "fields": {
                 "cell_line": "K562",
-                "short_name": "K562_test",
             },
         })
         self.assertTrue(result.get("staged"))
@@ -1501,7 +1864,6 @@ class ToolRunnerPlanSinkTests(unittest.TestCase):
             "frozen_at": "2026-02-10",
             "fields": {
                 "cell_line": "K562",
-                "short_name": "test",
             },
         })
         self.assertFalse(result.get("staged", False))
@@ -1549,6 +1911,26 @@ def _make_takeout_item(record_id, position, box=1, label="test"):
             "date_str": "2026-02-10",
             "action": "Takeout",
             "note": None,
+        },
+    }
+
+
+def _make_add_item(box, position, cell_line="K562", short_name="add-test"):
+    """Helper to create a valid add plan item."""
+    return {
+        "action": "add",
+        "box": box,
+        "position": position,
+        "record_id": None,
+        "source": "ai",
+        "payload": {
+            "box": box,
+            "positions": [position],
+            "frozen_at": "2026-02-10",
+            "fields": {
+                "cell_line": cell_line,
+                "short_name": short_name,
+            },
         },
     }
 
@@ -1623,7 +2005,7 @@ class _RollbackAwareBridge(_ConfigurableBridge):
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
 class PlanDedupRegressionTests(unittest.TestCase):
-    """Regression: add_plan_items should deduplicate by (action, record_id, position)."""
+    """Regression: add_plan_items should deduplicate by stable item identity."""
 
     @classmethod
     def setUpClass(cls):
@@ -1663,6 +2045,18 @@ class PlanDedupRegressionTests(unittest.TestCase):
 
         panel.add_plan_items([move_item, takeout_item])
         self.assertEqual(2, len(panel.plan_items))
+
+    def test_same_display_position_different_box_are_not_deduped(self):
+        """Same position in different boxes should coexist in staged plan."""
+        panel = self._new_panel()
+        add_box1 = _make_add_item(box=1, position=1, short_name="add-b1-a1")
+        add_box2 = _make_add_item(box=2, position=1, short_name="add-b2-a1")
+
+        panel.add_plan_items([add_box1])
+        panel.add_plan_items([add_box2])
+
+        self.assertEqual(2, len(panel.plan_items))
+        self.assertEqual([1, 2], sorted(int(item.get("box")) for item in panel.plan_items))
 
     def test_mass_restage_same_items_no_growth(self):
         """Simulates AI re-staging 10 items - plan should not grow past 10."""
@@ -1981,6 +2375,38 @@ class UndoRestoresPlanRegressionTests(unittest.TestCase):
 
         self.assertTrue(bridge.rollback_called)
         self.assertEqual(0, len(panel.plan_items))
+
+    def test_undo_does_not_rearm_itself(self):
+        """Undo response backup should not create another undo window."""
+        bridge = _UndoBridge()
+        panel = self._new_panel(bridge)
+
+        panel._last_operation_backup = "/tmp/backup.yaml"
+        panel._enable_undo(timeout_sec=30)
+
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.on_undo_last()
+
+        self.assertTrue(bridge.rollback_called)
+        self.assertIsNone(panel._last_operation_backup)
+        self.assertFalse(panel.undo_btn.isEnabled())
+
+    def test_execute_rollback_plan_does_not_enable_undo(self):
+        """Rollback plan execution should not arm undo, avoiding looped rollback/undo cycles."""
+        from lib.plan_item_factory import build_rollback_plan_item
+
+        bridge = _UndoBridge()
+        panel = self._new_panel(bridge)
+        panel.add_plan_items([build_rollback_plan_item(backup_path="/tmp/backup.yaml", source="tests")])
+
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        self.assertTrue(bridge.rollback_called)
+        self.assertIsNone(panel._last_operation_backup)
+        self.assertFalse(panel.undo_btn.isEnabled())
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
@@ -2303,189 +2729,6 @@ class PrintPlanRegressionTests(unittest.TestCase):
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
-@unittest.skip("Audit functionality has been refactored/removed from OperationsPanel")
-class AuditGuideSelectionRegressionTests(unittest.TestCase):
-    """Regression: selected audit rows can generate one merged guide."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls._app = QApplication.instance() or QApplication([])
-
-    def _new_panel(self):
-        return OperationsPanel(bridge=_FakeOperationsBridge(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
-
-    def _seed_audit_rows(self, panel, events):
-        from PySide6.QtCore import Qt
-        from PySide6.QtWidgets import QTableWidgetItem
-
-        panel._audit_events = list(events)
-        panel._setup_table(
-            panel.audit_table,
-            ["Timestamp", "Action", "Actor", "Status", "Channel", "Details"],
-            sortable=True,
-        )
-        for row, event in enumerate(events):
-            panel.audit_table.insertRow(row)
-            ts_item = QTableWidgetItem(event.get("timestamp", ""))
-            ts_item.setData(Qt.UserRole, row)
-            panel.audit_table.setItem(row, 0, ts_item)
-            panel.audit_table.setItem(row, 1, QTableWidgetItem(event.get("action", "")))
-            panel.audit_table.setItem(row, 2, QTableWidgetItem(event.get("actor_id", "gui-user")))
-            panel.audit_table.setItem(row, 3, QTableWidgetItem(event.get("status", "")))
-            panel.audit_table.setItem(row, 4, QTableWidgetItem(event.get("channel", "gui")))
-            panel.audit_table.setItem(row, 5, QTableWidgetItem(""))
-
-    def test_generate_audit_guide_requires_selection(self):
-        panel = self._new_panel()
-
-        messages = []
-        panel.status_message.connect(lambda msg, _timeout, _level: messages.append(msg))
-        panel.on_generate_audit_guide()
-
-        self.assertTrue(any(tr("operations.selectAuditRowsFirst") in msg for msg in messages))
-
-    def test_selected_audit_rows_generate_merged_printable_guide(self):
-        panel = self._new_panel()
-
-        events = [
-            {
-                "timestamp": "2026-02-12T09:01:00",
-                "action": "record_takeout",
-                "status": "success",
-                "details": {
-                    "action": "move",
-                    "record_id": 9,
-                    "box": 1,
-                    "position": 20,
-                    "to_position": 30,
-                },
-                "tool_input": {
-                    "record_id": 9,
-                    "position": 20,
-                    "to_position": 30,
-                    "action": "Move",
-                },
-            },
-            {
-                "timestamp": "2026-02-12T09:00:00",
-                "action": "record_takeout",
-                "status": "success",
-                "details": {
-                    "action": "move",
-                    "record_id": 9,
-                    "box": 1,
-                    "position": 10,
-                    "to_position": 20,
-                },
-                "tool_input": {
-                    "record_id": 9,
-                    "position": 10,
-                    "to_position": 20,
-                    "action": "Move",
-                },
-            },
-        ]
-        self._seed_audit_rows(panel, events)
-        panel.audit_table.selectAll()
-
-        panel.on_generate_audit_guide()
-
-        self.assertEqual(1, len(panel._last_printable_plan))
-        item = panel._last_printable_plan[0]
-        self.assertEqual("move", item["action"])
-        self.assertEqual(10, item["position"])
-        self.assertEqual(30, item["to_position"])
-
-        from unittest.mock import patch
-        with patch("app_gui.ui.operations_panel.QDesktopServices.openUrl", return_value=True) as open_url:
-            panel.on_print_selected_audit_guide()
-
-        open_url.assert_called_once()
-
-    def test_stage_rollback_from_selected_audit_requires_single_row(self):
-        panel = self._new_panel()
-        events = [
-            {
-                "timestamp": "2026-02-12T09:00:00",
-                "action": "record_takeout",
-                "status": "success",
-                "backup_path": "/tmp/inventory.yaml.20260212-090000.bak",
-            },
-            {
-                "timestamp": "2026-02-12T09:01:00",
-                "action": "batch_takeout",
-                "status": "success",
-                "backup_path": "/tmp/inventory.yaml.20260212-090100.bak",
-            },
-        ]
-        self._seed_audit_rows(panel, events)
-        panel.audit_table.selectAll()
-
-        messages = []
-        panel.status_message.connect(lambda msg, _timeout, _level: messages.append(msg))
-        panel.on_stage_rollback_from_selected_audit()
-
-        self.assertEqual(0, len(panel.plan_items))
-        self.assertTrue(any(tr("operations.selectSingleAuditRow") in msg for msg in messages))
-
-    def test_stage_rollback_from_selected_audit_requires_backup_path(self):
-        panel = self._new_panel()
-        events = [
-            {
-                "timestamp": "2026-02-12T09:00:00",
-                "action": "record_takeout",
-                "status": "success",
-                "backup_path": "",
-            }
-        ]
-        self._seed_audit_rows(panel, events)
-        panel.audit_table.selectRow(0)
-
-        messages = []
-        panel.status_message.connect(lambda msg, _timeout, _level: messages.append(msg))
-        panel.on_stage_rollback_from_selected_audit()
-
-        self.assertEqual(0, len(panel.plan_items))
-        self.assertTrue(any(tr("operations.selectedAuditNoBackup") in msg for msg in messages))
-
-    def test_stage_rollback_from_selected_audit_stages_plan_item(self):
-        panel = self._new_panel()
-        backup_path = "/tmp/inventory.yaml.20260212-090000.bak"
-        events = [
-            {
-                "timestamp": "2026-02-12T09:00:00",
-                "action": "record_takeout",
-                "status": "success",
-                "trace_id": "trace-audit-1",
-                "session_id": "session-audit-1",
-                "actor_id": "gui-user",
-                "channel": "gui",
-                "backup_path": backup_path,
-            }
-        ]
-        self._seed_audit_rows(panel, events)
-        panel.audit_table.selectRow(0)
-
-        messages = []
-        panel.status_message.connect(lambda msg, _timeout, _level: messages.append(msg))
-        panel.on_stage_rollback_from_selected_audit()
-
-        self.assertEqual(1, len(panel.plan_items))
-        item = panel.plan_items[0]
-        self.assertEqual("rollback", item.get("action"))
-        payload = item.get("payload") or {}
-        self.assertEqual(backup_path, payload.get("backup_path"))
-
-        source_event = payload.get("source_event") or {}
-        self.assertEqual("2026-02-12T09:00:00", source_event.get("timestamp"))
-        self.assertEqual("record_takeout", source_event.get("action"))
-        self.assertEqual("trace-audit-1", source_event.get("trace_id"))
-
-        expected = tr("operations.auditRollbackStaged", backup=os.path.basename(backup_path))
-        self.assertTrue(any(expected in msg for msg in messages))
-
-
-@unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
 class PlanPreflightGuardTests(unittest.TestCase):
     """Regression: preflight should block execution of invalid plans."""
 
@@ -2683,6 +2926,18 @@ class OperationEventFeedTests(unittest.TestCase):
     def _new_ai_panel(self):
         from app_gui.ui.ai_panel import AIPanel
         return AIPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+
+    @staticmethod
+    def _make_mouse_release_event(x=6.0, y=6.0):
+        local_pos = QPointF(float(x), float(y))
+        return QMouseEvent(
+            QEvent.Type.MouseButtonRelease,
+            local_pos,
+            local_pos,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
 
     def test_ai_panel_receives_operation_events(self):
         """AI panel should normalize operation events to system notices."""
@@ -2970,6 +3225,36 @@ class OperationEventFeedTests(unittest.TestCase):
         self.assertNotIn("<table", expanded_html)
         self.assertIn("<div", expanded_html)
         self.assertLess(expanded_html.find("Collapse"), expanded_html.find("<div"))
+
+    def test_ai_panel_anchor_click_routes_toggle_thought(self):
+        panel = self._new_ai_panel()
+        event = self._make_mouse_release_event()
+        with patch.object(panel.ai_chat, "anchorAt", return_value="toggle_thought") as anchor_mock:
+            with patch.object(panel, "_toggle_current_thought_collapsed") as toggle_mock:
+                handled = panel._handle_chat_anchor_click(event)
+
+        self.assertTrue(handled)
+        anchor_mock.assert_called_once()
+        toggle_mock.assert_called_once_with()
+
+    def test_ai_panel_event_filter_consumes_toggle_details_anchor_click(self):
+        panel = self._new_ai_panel()
+        event = self._make_mouse_release_event()
+        with patch.object(panel.ai_chat, "anchorAt", return_value="toggle_details_0") as anchor_mock:
+            with patch.object(panel, "_toggle_collapsible_block") as toggle_mock:
+                handled = panel.eventFilter(panel.ai_chat.viewport(), event)
+
+        self.assertTrue(handled)
+        anchor_mock.assert_called_once()
+        toggle_mock.assert_called_once_with("toggle_details_0")
+
+    def test_ai_panel_event_filter_does_not_consume_non_anchor_click(self):
+        panel = self._new_ai_panel()
+        event = self._make_mouse_release_event()
+        with patch.object(panel.ai_chat, "anchorAt", return_value=""):
+            handled = panel._handle_chat_anchor_click(event)
+
+        self.assertFalse(handled)
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
@@ -3337,6 +3622,30 @@ class OverviewColorKeyFilterTests(unittest.TestCase):
         finally:
             self._cleanup(tmpdir)
 
+    def test_refresh_maps_alphanumeric_stats_positions_to_internal_indices(self):
+        records = [
+            {
+                "id": 1,
+                "cell_line": "K562",
+                "short_name": "A",
+                "box": 1,
+                "position": 2,
+                "frozen_at": "2025-01-01",
+            },
+        ]
+        yaml_path, tmpdir = self._seed_yaml(
+            records,
+            meta_extra={"box_layout": {"rows": 9, "cols": 9, "indexing": "alphanumeric"}},
+        )
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self.assertIn((1, 2), panel.overview_pos_map)
+        finally:
+            self._cleanup(tmpdir)
+
     def test_color_key_custom_field(self):
         """color_key can be set to a user field like short_name."""
         records = [
@@ -3630,7 +3939,7 @@ class OverviewTableViewTests(unittest.TestCase):
         finally:
             self._cleanup(tmpdir)
 
-    def test_table_mode_disables_show_empty_toggle(self):
+    def test_table_mode_switches_show_empty_toggle_to_show_taken_out(self):
         records = [
             {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
         ]
@@ -3641,12 +3950,51 @@ class OverviewTableViewTests(unittest.TestCase):
             panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
             panel.refresh()
 
-            self.assertTrue(panel.ov_filter_show_empty.isEnabled())
+            self.assertTrue(panel.ov_filter_secondary_toggle.isEnabled())
+            self.assertEqual(tr("overview.showEmpty"), panel.ov_filter_secondary_toggle.text())
+            self.assertTrue(panel.ov_filter_secondary_toggle.isChecked())
+
             self._switch_to_table(panel)
-            self.assertFalse(panel.ov_filter_show_empty.isEnabled())
+            self.assertTrue(panel.ov_filter_secondary_toggle.isEnabled())
+            self.assertEqual(tr("overview.showTakenOut"), panel.ov_filter_secondary_toggle.text())
+            self.assertFalse(panel.ov_filter_secondary_toggle.isChecked())
 
             self._switch_to_grid(panel)
-            self.assertTrue(panel.ov_filter_show_empty.isEnabled())
+            self.assertTrue(panel.ov_filter_secondary_toggle.isEnabled())
+            self.assertEqual(tr("overview.showEmpty"), panel.ov_filter_secondary_toggle.text())
+            self.assertTrue(panel.ov_filter_secondary_toggle.isChecked())
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_table_mode_show_taken_out_toggle_controls_inactive_rows(self):
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+            {
+                "id": 2,
+                "cell_line": "K562",
+                "short_name": "taken-out",
+                "box": 1,
+                "position": None,
+                "frozen_at": "2025-01-02",
+                "thaw_events": [{"date": "2025-01-03", "action": "takeout", "positions": [1]}],
+            },
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records)
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            self.assertEqual(1, panel.ov_table.rowCount())
+            self.assertFalse(panel.ov_filter_secondary_toggle.isChecked())
+
+            panel.ov_filter_secondary_toggle.setChecked(True)
+            self.assertEqual(2, panel.ov_table.rowCount())
+
+            panel.ov_filter_secondary_toggle.setChecked(False)
+            self.assertEqual(1, panel.ov_table.rowCount())
         finally:
             self._cleanup(tmpdir)
 

@@ -1,3 +1,5 @@
+import threading
+
 from PySide6.QtCore import QObject, Signal
 
 class AgentRunWorker(QObject):
@@ -19,10 +21,16 @@ class AgentRunWorker(QObject):
         self._plan_store = plan_store
         self._provider = provider
         self._tool_runner = None
+        self._llm_client = None
+        self._stop_event = threading.Event()
 
     def _receive_runner(self, runner):
         """Callback from bridge to capture tool_runner reference."""
         self._tool_runner = runner
+
+    def _receive_llm(self, llm_client):
+        """Callback from bridge to capture active llm client reference."""
+        self._llm_client = llm_client
 
     def set_answer(self, answers):
         """Thread-safe: called from GUI main thread to provide user answers."""
@@ -32,6 +40,18 @@ class AgentRunWorker(QObject):
     def cancel_answer(self):
         """Thread-safe: called from GUI main thread when user cancels."""
         if self._tool_runner:
+            self._tool_runner._cancel_answer()
+
+    def request_stop(self):
+        """Thread-safe cooperative stop requested by GUI."""
+        self._stop_event.set()
+        if self._llm_client and hasattr(self._llm_client, "request_stop"):
+            try:
+                self._llm_client.request_stop()
+            except Exception:
+                pass
+        if self._tool_runner:
+            # Unblock any pending question wait immediately.
             self._tool_runner._cancel_answer()
 
     def run(self):
@@ -47,7 +67,9 @@ class AgentRunWorker(QObject):
                 thinking_enabled=self._thinking_enabled,
                 custom_prompt=self._custom_prompt,
                 _expose_runner=self._receive_runner,
+                _expose_llm=self._receive_llm,
                 provider=self._provider,
+                stop_event=self._stop_event,
             )
             if not isinstance(payload, dict):
                 payload = {"ok": False, "message": "Unexpected response"}
@@ -61,6 +83,8 @@ class AgentRunWorker(QObject):
         self.finished.emit(payload)
 
     def _emit_progress(self, event):
+        if self._stop_event.is_set():
+            return
         if not isinstance(event, dict):
             return
         if event.get("type") in ("question", "max_steps_ask", "manage_boxes_confirm"):

@@ -625,16 +625,11 @@ def _build_plan_tab(self):
     self.plan_table.selectionModel().selectionChanged.connect(
         lambda *_args: self._refresh_plan_toolbar_state()
     )
+    self.plan_table.setContextMenuPolicy(Qt.CustomContextMenu)
+    self.plan_table.customContextMenuRequested.connect(self.on_plan_table_context_menu)
     layout.addWidget(self.plan_table, 1)
 
     toolbar = QHBoxLayout()
-    self.plan_remove_selected_btn = QPushButton(tr("operations.removeSelected"))
-    self.plan_remove_selected_btn.setIcon(get_icon(Icons.TRASH))
-    self.plan_remove_selected_btn.setIconSize(QSize(16, 16))
-    self.plan_remove_selected_btn.setEnabled(False)
-    self.plan_remove_selected_btn.clicked.connect(self.remove_selected_plan_items)
-    toolbar.addWidget(self.plan_remove_selected_btn)
-
     self.plan_exec_btn = QPushButton(tr("operations.executeAll"))
     self.plan_exec_btn.setIcon(
         get_icon(
@@ -650,6 +645,7 @@ def _build_plan_tab(self):
 
     self.plan_print_btn = QPushButton(tr("operations.print"))
     self.plan_print_btn.clicked.connect(self.print_plan)
+    self.plan_print_btn.setEnabled(False)
     toolbar.addWidget(self.plan_print_btn)
 
     self.plan_clear_btn = QPushButton(tr("operations.clear"))

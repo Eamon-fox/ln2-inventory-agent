@@ -41,9 +41,14 @@ def _apply_filters(self):
     keyword = self.ov_filter_keyword.text().strip().lower()
     selected_box = self.ov_filter_box.currentData()
     selected_cell = self.ov_filter_cell.currentData()
-    show_empty = self.ov_filter_show_empty.isChecked()
+    toggle_checked = bool(self.ov_filter_secondary_toggle.isChecked())
 
     if self._overview_view_mode == "table":
+        self._table_include_inactive = toggle_checked
+        include_inactive_loaded = bool(getattr(self, "_stats_include_inactive_loaded", False))
+        if self._table_include_inactive != include_inactive_loaded:
+            self.refresh()
+            return
         self._apply_filters_table(
             keyword=keyword,
             selected_box=selected_box,
@@ -51,15 +56,16 @@ def _apply_filters(self):
         )
         return
 
+    self._grid_include_empty_slots = toggle_checked
     self._apply_filters_grid(
         keyword=keyword,
         selected_box=selected_box,
         selected_cell=selected_cell,
-        show_empty=show_empty,
+        include_empty_slots=self._grid_include_empty_slots,
     )
 
 
-def _apply_filters_grid(self, keyword, selected_box, selected_cell, show_empty):
+def _apply_filters_grid(self, keyword, selected_box, selected_cell, include_empty_slots):
     visible_boxes = 0
     visible_slots = 0
     per_box = {box: {"occ": 0, "emp": 0} for box in self.overview_box_groups}
@@ -71,7 +77,7 @@ def _apply_filters_grid(self, keyword, selected_box, selected_cell, show_empty):
         match_cell = selected_cell is None or (
             record and str(button.property("color_key_value") or "") == selected_cell
         )
-        match_empty = show_empty or not is_empty
+        match_empty = include_empty_slots or not is_empty
 
         if keyword:
             search_text = str(button.property("search_text") or "")
@@ -176,7 +182,14 @@ def on_clear_filters(self):
     self.ov_filter_keyword.clear()
     self.ov_filter_box.setCurrentIndex(0)
     self.ov_filter_cell.setCurrentIndex(0)
-    self.ov_filter_show_empty.setChecked(True)
+    self.ov_filter_secondary_toggle.blockSignals(True)
+    if self._overview_view_mode == "table":
+        self._table_include_inactive = False
+        self.ov_filter_secondary_toggle.setChecked(False)
+    else:
+        self._grid_include_empty_slots = True
+        self.ov_filter_secondary_toggle.setChecked(True)
+    self.ov_filter_secondary_toggle.blockSignals(False)
     if self.ov_filter_toggle_btn.isChecked():
         self.ov_filter_toggle_btn.setChecked(False)
 

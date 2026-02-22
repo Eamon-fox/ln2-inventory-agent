@@ -230,8 +230,7 @@ class TestToolAddEntryCustomData(unittest.TestCase):
                 box=1,
                 positions=[2],
                 frozen_at="2026-02-10",
-                fields={"cell_line": "K562", "parent_cell_line": "K562", "short_name": "K562_test",
-                        "passage_number": 5, "medium": "10% DMSO"},
+                fields={"cell_line": "K562", "passage_number": 5, "medium": "10% DMSO"},
                 source="test_custom_fields",
             )
 
@@ -260,7 +259,7 @@ class TestToolAddEntryCustomData(unittest.TestCase):
                 box=1,
                 positions=[2],
                 frozen_at="2026-02-10",
-                fields={"cell_line": "K562", "parent_cell_line": "K562", "short_name": "K562_plain"},
+                fields={"cell_line": "K562"},
                 source="test_custom_fields",
             )
 
@@ -269,8 +268,59 @@ class TestToolAddEntryCustomData(unittest.TestCase):
             new_rec = data["inventory"][-1]
             self.assertNotIn("passage_number", new_rec)
 
-    def test_custom_data_cannot_overwrite_core_fields(self):
-        """fields keys that collide with structural fields should be ignored."""
+    def test_add_rejects_short_name_after_field_removed_from_custom_fields(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_cf_add_removed_short_name_") as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [make_record(1, box=1, position=1)],
+                    custom_fields=[
+                        {"key": "short_name", "label": "Short", "type": "str"},
+                    ],
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            first = tool_add_entry(
+                yaml_path=str(yaml_path),
+                box=1,
+                positions=[2],
+                frozen_at="2026-02-10",
+                fields={"cell_line": "K562", "short_name": "allowed-before-removal"},
+                source="test_custom_fields",
+            )
+            self.assertTrue(first["ok"])
+
+            data = load_yaml(str(yaml_path))
+            data.setdefault("meta", {})["custom_fields"] = []
+            write_yaml(
+                data,
+                path=str(yaml_path),
+                audit_meta={"action": "remove_custom_field", "source": "tests"},
+            )
+
+            second = tool_add_entry(
+                yaml_path=str(yaml_path),
+                box=1,
+                positions=[3],
+                frozen_at="2026-02-11",
+                fields={"cell_line": "K562", "short_name": "must-fail-now"},
+                source="test_custom_fields",
+            )
+            self.assertFalse(second["ok"])
+            self.assertEqual("forbidden_fields", second.get("error_code"))
+
+            # Existing historical values are not auto-cleaned.
+            refreshed = load_yaml(str(yaml_path))
+            has_historical_short_name = any(
+                isinstance(rec, dict) and rec.get("short_name") == "allowed-before-removal"
+                for rec in refreshed.get("inventory", [])
+            )
+            self.assertTrue(has_historical_short_name)
+
+    def test_add_rejects_undeclared_fields(self):
+        """fields keys not declared in schema should be rejected."""
         with tempfile.TemporaryDirectory(prefix="ln2_cf_add_core_") as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
@@ -284,18 +334,14 @@ class TestToolAddEntryCustomData(unittest.TestCase):
                 box=1,
                 positions=[2],
                 frozen_at="2026-02-10",
-                fields={"cell_line": "K562", "parent_cell_line": "K562", "short_name": "K562_core",
-                        "box": 999, "note": "hacked", "virus_titer": "high"},
+                fields={"cell_line": "K562", "box": 999, "virus_titer": "high"},
                 source="test_custom_fields",
             )
 
-            self.assertTrue(result["ok"])
+            self.assertFalse(result["ok"])
+            self.assertEqual("forbidden_fields", result.get("error_code"))
             data = load_yaml(str(yaml_path))
-            new_rec = data["inventory"][-1]
-            # Structural fields should NOT be overwritten
-            self.assertEqual(1, new_rec["box"])
-            # Non-structural field should be written
-            self.assertEqual("high", new_rec["virus_titer"])
+            self.assertEqual(1, len(data["inventory"]))
 
 
 # ===========================================================================
@@ -646,7 +692,7 @@ class TestCellLineAddEntry(unittest.TestCase):
                 box=1,
                 positions=[2],
                 frozen_at="2026-02-10",
-                fields={"cell_line": "K562", "short_name": "clone-cl"},
+                fields={"cell_line": "K562"},
                 source="test_cell_line",
             )
 
@@ -657,7 +703,14 @@ class TestCellLineAddEntry(unittest.TestCase):
             self.assertEqual("K562", new_rec["cell_line"])
             # cell_line should NOT remain as a user field key
             # (it's a structural field, stored at top level)
-            self.assertNotIn("cell_line", {k for k in new_rec if k not in STRUCTURAL_FIELD_KEYS and k not in ("id", "box", "positions", "frozen_at", "thaw_events", "cell_line", "short_name")})
+            self.assertNotIn(
+                "cell_line",
+                {
+                    k
+                    for k in new_rec
+                    if k not in STRUCTURAL_FIELD_KEYS and k not in ("id", "box", "position", "frozen_at")
+                },
+            )
 
     def test_add_without_cell_line_stores_empty(self):
         with tempfile.TemporaryDirectory(prefix="ln2_cl_add_empty_") as td:
@@ -680,7 +733,7 @@ class TestCellLineAddEntry(unittest.TestCase):
                 box=1,
                 positions=[2],
                 frozen_at="2026-02-10",
-                fields={"short_name": "no-cl"},
+                fields={},
                 source="test_cell_line",
             )
 
@@ -712,7 +765,7 @@ class TestCellLineAddEntry(unittest.TestCase):
                 box=1,
                 positions=[2],
                 frozen_at="2026-02-10",
-                fields={"short_name": "no-cl"},
+                fields={},
                 source="test_cell_line",
             )
 
@@ -740,7 +793,7 @@ class TestCellLineAddEntry(unittest.TestCase):
                 box=1,
                 positions=[2],
                 frozen_at="2026-02-10",
-                fields={"cell_line": "CustomCell", "short_name": "bad-cl"},
+                fields={"cell_line": "CustomCell"},
                 source="test_cell_line",
             )
 

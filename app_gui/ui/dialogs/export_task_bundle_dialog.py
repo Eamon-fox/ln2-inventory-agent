@@ -2,6 +2,7 @@
 
 import os
 
+from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -19,6 +20,51 @@ from PySide6.QtWidgets import (
 
 from app_gui.i18n import t, tr
 from lib.import_task_bundle import build_import_task_bundle
+
+
+class _SourceDropTextEdit(QTextEdit):
+    """Read-only preview box that accepts drag-and-drop of local files only."""
+
+    def __init__(self, on_files_dropped, parent=None):
+        super().__init__(parent)
+        self._on_files_dropped = on_files_dropped
+        self.setAcceptDrops(True)
+
+    @staticmethod
+    def _extract_local_file_paths(mime_data):
+        urls = list(mime_data.urls()) if mime_data is not None and mime_data.hasUrls() else []
+        paths = []
+        for url in urls:
+            if not isinstance(url, QUrl) or not url.isLocalFile():
+                continue
+            path = os.path.abspath(os.path.normpath(url.toLocalFile()))
+            if os.path.isfile(path):
+                paths.append(path)
+        return paths
+
+    def dragEnterEvent(self, event):
+        files = self._extract_local_file_paths(event.mimeData())
+        if files:
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def dragMoveEvent(self, event):
+        files = self._extract_local_file_paths(event.mimeData())
+        if files:
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def dropEvent(self, event):
+        files = self._extract_local_file_paths(event.mimeData())
+        if not files:
+            event.ignore()
+            return
+        callback = self._on_files_dropped
+        if callable(callback):
+            callback(files)
+        event.acceptProposedAction()
 
 
 class ExportTaskBundleDialog(QDialog):
@@ -52,10 +98,6 @@ class ExportTaskBundleDialog(QDialog):
         add_files_btn.clicked.connect(self._add_files)
         source_toolbar.addWidget(add_files_btn)
 
-        add_dir_btn = QPushButton(tr("main.selectSourceFolder"))
-        add_dir_btn.clicked.connect(self._add_folder)
-        source_toolbar.addWidget(add_dir_btn)
-
         clear_btn = QPushButton(tr("ai.clear"))
         clear_btn.clicked.connect(self._clear_sources)
         source_toolbar.addWidget(clear_btn)
@@ -63,7 +105,8 @@ class ExportTaskBundleDialog(QDialog):
 
         source_form.addRow(tr("main.exportBundleSources"), source_toolbar)
 
-        self.source_preview = QTextEdit()
+        self.source_preview = _SourceDropTextEdit(self._append_source_files)
+        self.source_preview.setObjectName("exportTaskSourcePreview")
         self.source_preview.setReadOnly(True)
         self.source_preview.setMinimumHeight(140)
         source_form.addRow("", self.source_preview)
@@ -97,10 +140,21 @@ class ExportTaskBundleDialog(QDialog):
 
     def _render_source_preview(self):
         if not self._source_paths:
+            self._set_source_preview_state("empty")
             self.source_preview.setPlainText(tr("main.exportBundleNoSources"))
             return
+        self._set_source_preview_state("filled")
         lines = [str(path) for path in self._source_paths]
         self.source_preview.setPlainText("\n".join(lines))
+
+    def _set_source_preview_state(self, state):
+        state_text = str(state or "")
+        if self.source_preview.property("state") == state_text:
+            return
+        self.source_preview.setProperty("state", state_text)
+        style = self.source_preview.style()
+        style.unpolish(self.source_preview)
+        style.polish(self.source_preview)
 
     def _add_files(self):
         paths, _ = QFileDialog.getOpenFileNames(
@@ -111,24 +165,33 @@ class ExportTaskBundleDialog(QDialog):
         )
         if not paths:
             return
-        seen = set(self._source_paths)
-        for path in paths:
-            if path not in seen:
-                self._source_paths.append(path)
-                seen.add(path)
-        self._render_source_preview()
+        self._append_source_files(paths)
 
-    def _add_folder(self):
-        folder = QFileDialog.getExistingDirectory(
-            self,
-            tr("main.selectSourceFolder"),
-            "",
-        )
-        if not folder:
-            return
-        if folder not in self._source_paths:
-            self._source_paths.append(folder)
-        self._render_source_preview()
+    def _append_source_files(self, paths):
+        normalized = []
+        for path in paths or []:
+            p = os.path.abspath(os.path.normpath(str(path or "").strip()))
+            if not p:
+                continue
+            if not os.path.isfile(p):
+                continue
+            normalized.append(p)
+
+        if not normalized:
+            return 0
+
+        seen = {os.path.normcase(os.path.abspath(p)) for p in self._source_paths}
+        added = 0
+        for path in normalized:
+            key = os.path.normcase(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            self._source_paths.append(path)
+            added += 1
+        if added:
+            self._render_source_preview()
+        return added
 
     def _clear_sources(self):
         self._source_paths = []

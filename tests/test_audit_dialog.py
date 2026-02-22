@@ -48,7 +48,7 @@ class AuditDialogTests(unittest.TestCase):
         dialog._test_parent_ref = parent
         return dialog
 
-    def test_on_load_audit_merges_instance_and_legacy_shared_logs(self):
+    def test_on_load_audit_reads_canonical_log_only(self):
         with tempfile.TemporaryDirectory(prefix="ln2_audit_dialog_merge_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -69,18 +69,6 @@ class AuditDialogTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
-            candidate_paths = get_audit_log_paths(str(yaml_path))
-            legacy_shared_path = Path(candidate_paths[-1])
-            legacy_shared_path.parent.mkdir(parents=True, exist_ok=True)
-            legacy_event = {
-                "timestamp": "2026-02-20T09:00:00",
-                "action": "record_takeout",
-                "status": "success",
-                "channel": "gui",
-                "details": {"note": "legacy"},
-            }
-            legacy_shared_path.write_text(json.dumps(legacy_event, ensure_ascii=False) + "\n", encoding="utf-8")
-
             dialog = self._new_dialog(yaml_path)
             dialog.audit_start_date.setDate(QDate(2000, 1, 1))
             dialog.audit_end_date.setDate(QDate(2099, 12, 31))
@@ -88,7 +76,56 @@ class AuditDialogTests(unittest.TestCase):
 
             actions = [dialog.audit_table.item(row, 1).text() for row in range(dialog.audit_table.rowCount())]
             self.assertIn("seed", actions)
-            self.assertIn("record_takeout", actions)
+
+    def test_on_load_audit_shows_newest_events_first(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_audit_dialog_sort_") as temp_dir:
+            yaml_path = Path(temp_dir) / "sort_case.yaml"
+            yaml_path.write_text(
+                "\n".join(
+                    [
+                        "meta:",
+                        "  inventory_instance_id: sort-test",
+                        "  box_layout:",
+                        "    rows: 9",
+                        "    cols: 9",
+                        "inventory: []",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            audit_path = Path(get_audit_log_paths(str(yaml_path))[0])
+            audit_path.parent.mkdir(parents=True, exist_ok=True)
+            older = {
+                "timestamp": "2026-02-20T09:00:00",
+                "action": "record_takeout",
+                "status": "success",
+            }
+            newer = {
+                "timestamp": "2026-02-21T09:00:00",
+                "action": "batch_takeout",
+                "status": "success",
+            }
+            audit_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps(older, ensure_ascii=False),
+                        json.dumps(newer, ensure_ascii=False),
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            dialog = self._new_dialog(yaml_path)
+            dialog.audit_start_date.setDate(QDate(2000, 1, 1))
+            dialog.audit_end_date.setDate(QDate(2099, 12, 31))
+            dialog.on_load_audit()
+
+            self.assertGreaterEqual(dialog.audit_table.rowCount(), 2)
+            self.assertEqual("2026-02-21T09:00:00", dialog.audit_table.item(0, 0).text())
+            self.assertEqual("batch_takeout", dialog.audit_table.item(0, 1).text())
 
     def test_click_row_uses_source_index_after_sort(self):
         dialog = self._new_dialog("D:/tmp/inventory.yaml")
@@ -97,20 +134,16 @@ class AuditDialogTests(unittest.TestCase):
                 "timestamp": "2026-02-10T09:00:00",
                 "action": "older-event",
                 "status": "success",
-                "actor_id": "u1",
-                "channel": "gui",
             },
             {
                 "timestamp": "2026-02-20T09:00:00",
                 "action": "newer-event",
                 "status": "success",
-                "actor_id": "u2",
-                "channel": "gui",
             },
         ]
         dialog._setup_table(
             dialog.audit_table,
-            ["timestamp", "action", "actor", "status", "channel", "details"],
+            ["timestamp", "action", "status", "details"],
             sortable=True,
         )
         for idx, event in enumerate(dialog._audit_events):
@@ -119,10 +152,8 @@ class AuditDialogTests(unittest.TestCase):
             ts_item.setData(Qt.UserRole, idx)
             dialog.audit_table.setItem(idx, 0, ts_item)
             dialog.audit_table.setItem(idx, 1, QTableWidgetItem(event.get("action", "")))
-            dialog.audit_table.setItem(idx, 2, QTableWidgetItem(event.get("actor_id", "")))
-            dialog.audit_table.setItem(idx, 3, QTableWidgetItem(event.get("status", "")))
-            dialog.audit_table.setItem(idx, 4, QTableWidgetItem(event.get("channel", "")))
-            dialog.audit_table.setItem(idx, 5, QTableWidgetItem(""))
+            dialog.audit_table.setItem(idx, 2, QTableWidgetItem(event.get("status", "")))
+            dialog.audit_table.setItem(idx, 3, QTableWidgetItem(""))
 
         dialog.audit_table.sortItems(0, Qt.DescendingOrder)
         displayed_action = dialog.audit_table.item(0, 1).text()
@@ -137,14 +168,12 @@ class AuditDialogTests(unittest.TestCase):
                 "timestamp": "2026-02-20T09:00:00",
                 "action": "record_takeout",
                 "status": "success",
-                "actor_id": "u1",
-                "channel": "gui",
                 "details": {"note": "<script>alert(1)</script>"},
             }
         ]
         dialog._setup_table(
             dialog.audit_table,
-            ["timestamp", "action", "actor", "status", "channel", "details"],
+            ["timestamp", "action", "status", "details"],
             sortable=True,
         )
         dialog.audit_table.insertRow(0)
@@ -152,10 +181,8 @@ class AuditDialogTests(unittest.TestCase):
         ts_item.setData(Qt.UserRole, 0)
         dialog.audit_table.setItem(0, 0, ts_item)
         dialog.audit_table.setItem(0, 1, QTableWidgetItem("record_takeout"))
-        dialog.audit_table.setItem(0, 2, QTableWidgetItem("u1"))
-        dialog.audit_table.setItem(0, 3, QTableWidgetItem("success"))
-        dialog.audit_table.setItem(0, 4, QTableWidgetItem("gui"))
-        dialog.audit_table.setItem(0, 5, QTableWidgetItem(""))
+        dialog.audit_table.setItem(0, 2, QTableWidgetItem("success"))
+        dialog.audit_table.setItem(0, 3, QTableWidgetItem(""))
 
         dialog._on_audit_row_clicked(0, 0)
         detail_html = dialog.event_detail.text()

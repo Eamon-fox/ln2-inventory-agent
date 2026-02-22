@@ -119,15 +119,20 @@ def _on_plan_store_changed(self):
 
 def _repaint_all_cells(self):
     """Repaint all cell buttons using cached data."""
-    records = getattr(self, "_current_records", [])
     record_map = {}
-    for rec in records:
-        if not isinstance(rec, dict):
-            continue
-        box = rec.get("box")
-        pos = rec.get("position")
-        if box is not None and pos is not None:
-            record_map[(box, pos)] = rec
+    cached_map = getattr(self, "overview_pos_map", None)
+    if isinstance(cached_map, dict) and cached_map:
+        record_map = cached_map
+    else:
+        records = getattr(self, "_current_records", [])
+        for rec in records:
+            if not isinstance(rec, dict):
+                continue
+            box = _normalize_positive_int(rec.get("box"))
+            pos = _normalize_positive_int(rec.get("position"))
+            if box is not None and pos is not None:
+                record_map[(box, pos)] = rec
+
     for (box_num, position), button in self.overview_cells.items():
         record = record_map.get((box_num, position))
         self._paint_cell(button, box_num, position, record)

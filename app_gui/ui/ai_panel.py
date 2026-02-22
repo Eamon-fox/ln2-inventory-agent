@@ -3,12 +3,13 @@ import time
 import re
 import random
 from PySide6.QtCore import Qt, Signal, QEvent, QSize
-from PySide6.QtGui import QTextCursor, QPalette, QMouseEvent
+from PySide6.QtGui import QTextCursor, QPalette, QMouseEvent, QActionGroup
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLineEdit,
+    QPushButton, QLineEdit, QLabel, QMenu,
     QTextEdit, QSpinBox, QCheckBox
 )
+from agent.llm_client import DEFAULT_PROVIDER, PROVIDER_DEFAULTS
 from app_gui.ui.theme import FONT_SIZE_XS, FONT_SIZE_SM, MONO_FONT_CSS_FAMILY, resolve_theme_token
 from app_gui.ui.icons import get_icon, Icons
 from app_gui.system_notice import build_system_notice, coerce_system_notice
@@ -95,6 +96,7 @@ class AIPanel(QWidget):
         self.ai_history = []
         self.ai_operation_events = []
         self.ai_run_inflight = False
+        self.ai_stop_requested = False
         self.ai_run_thread = None
         self.ai_run_worker = None
         self.ai_active_trace_id = None
@@ -130,6 +132,9 @@ class AIPanel(QWidget):
         self.ai_steps.setRange(1, 20)
         self.ai_thinking_enabled = QCheckBox()
         self.ai_custom_prompt = ""
+        provider_cfg = PROVIDER_DEFAULTS.get(DEFAULT_PROVIDER, {})
+        self.ai_provider.setText(DEFAULT_PROVIDER)
+        self.ai_model.setText(str(provider_cfg.get("model") or "").strip())
 
         # Chat area (takes most space)
         self.ai_chat = QTextEdit()
@@ -166,8 +171,21 @@ class AIPanel(QWidget):
 
         # Action bar inside input container
         action_bar = QHBoxLayout()
-        action_bar.setContentsMargins(0, 0, 8, 0)
+        action_bar.setContentsMargins(8, 0, 8, 0)
         action_bar.setSpacing(4)
+
+        self.ai_model_id_label = QLabel("")
+        self.ai_model_id_label.setObjectName("aiModelIdLabel")
+        self.ai_model_id_label.setProperty("role", "mutedInline")
+        action_bar.addWidget(self.ai_model_id_label)
+
+        self.ai_model_switch_btn = QPushButton("^")
+        self.ai_model_switch_btn.setObjectName("aiModelSwitchBtn")
+        self.ai_model_switch_btn.setFixedSize(18, 18)
+        self.ai_model_switch_btn.setProperty("variant", "ghost")
+        self.ai_model_switch_btn.setToolTip(tr("settings.aiModel"))
+        self.ai_model_switch_btn.clicked.connect(self._open_model_switch_menu)
+        action_bar.addWidget(self.ai_model_switch_btn)
 
         action_bar.addStretch()
 
@@ -191,6 +209,84 @@ class AIPanel(QWidget):
         dock_layout.addWidget(input_container)
 
         layout.addWidget(dock)
+        self.ai_provider.textChanged.connect(self._refresh_model_badge)
+        self.ai_model.textChanged.connect(self._refresh_model_badge)
+        self._refresh_model_badge()
+
+    def _iter_model_switch_options(self):
+        options = []
+        seen = set()
+
+        current_provider = self.ai_provider.text().strip() or DEFAULT_PROVIDER
+        current_model = self.ai_model.text().strip()
+        if current_model:
+            key = (current_provider, current_model)
+            seen.add(key)
+            options.append({
+                "provider": current_provider,
+                "model": current_model,
+            })
+
+        for provider_id, provider_cfg in PROVIDER_DEFAULTS.items():
+            cfg = provider_cfg if isinstance(provider_cfg, dict) else {}
+            candidates = []
+            for raw_model in cfg.get("models") or []:
+                model_id = str(raw_model or "").strip()
+                if model_id:
+                    candidates.append(model_id)
+            default_model = str(cfg.get("model") or "").strip()
+            if default_model:
+                candidates.append(default_model)
+
+            for model_id in candidates:
+                key = (provider_id, model_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                options.append({
+                    "provider": provider_id,
+                    "model": model_id,
+                })
+        return options
+
+    def _refresh_model_badge(self):
+        model_id = self.ai_model.text().strip() or "-"
+        provider_id = self.ai_provider.text().strip() or DEFAULT_PROVIDER
+        self.ai_model_id_label.setText(model_id)
+        self.ai_model_id_label.setToolTip(f"{provider_id}:{model_id}")
+        self.ai_model_switch_btn.setEnabled((not self.ai_run_inflight) and bool(self._iter_model_switch_options()))
+
+    def _open_model_switch_menu(self):
+        if self.ai_run_inflight:
+            return
+        options = self._iter_model_switch_options()
+        if not options:
+            return
+
+        current_provider = self.ai_provider.text().strip() or DEFAULT_PROVIDER
+        current_model = self.ai_model.text().strip()
+
+        menu = QMenu(self)
+        single_select_group = QActionGroup(self)
+        single_select_group.setExclusive(True)
+        action_to_option = {}
+        for option in options:
+            provider_id = str(option.get("provider") or "").strip()
+            model_id = str(option.get("model") or "").strip()
+            text = f"{model_id} ({provider_id})"
+            action = menu.addAction(text)
+            action.setCheckable(True)
+            action.setActionGroup(single_select_group)
+            action.setChecked(provider_id == current_provider and model_id == current_model)
+            action_to_option[action] = option
+
+        chosen = menu.exec(self.ai_model_switch_btn.mapToGlobal(self.ai_model_switch_btn.rect().bottomLeft()))
+        selected = action_to_option.get(chosen)
+        if not selected:
+            return
+
+        self.ai_provider.setText(str(selected.get("provider") or "").strip())
+        self.ai_model.setText(str(selected.get("model") or "").strip())
 
     def eventFilter(self, obj, event):
         if (
@@ -209,20 +305,23 @@ class AIPanel(QWidget):
             event.type() == QEvent.MouseButtonRelease
             and obj is self.ai_chat.viewport()
         ):
-            self._handle_chat_anchor_click(event)
+            if self._handle_chat_anchor_click(event):
+                return True
         return super().eventFilter(obj, event)
 
     def _handle_chat_anchor_click(self, event):
         if not isinstance(event, QMouseEvent):
-            return
-        doc = self.ai_chat.document()
-        anchor = doc.documentLayout().anchorAt(event.pos())
+            return False
+        anchor = self.ai_chat.anchorAt(event.position().toPoint())
         if not anchor:
-            return
+            return False
         if anchor == "toggle_thought":
             self._toggle_current_thought_collapsed()
         elif anchor.startswith("toggle_details_"):
             self._toggle_collapsible_block(anchor)
+        else:
+            return False
+        return True
 
     def _toggle_current_thought_collapsed(self):
         if self.ai_streaming_active:

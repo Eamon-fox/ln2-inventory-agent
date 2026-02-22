@@ -39,7 +39,7 @@
     "checkUpdateFailed": "Failed to check for updates: {error}",
     "newVersionAvailable": "New version v{version} is available!\n\n{notes}\n\nVisit the GitHub Releases page to download.",
     "alreadyLatest": "You are already on the latest version.",
-    "apiKeyMissing": "{provider} API key is missing. Configure one of the following:\n1) Settings dialog (saved to ~/.ln2agent/config.yaml)\n2) Environment variable: {env_key}"
+    "apiKeyMissing": "{provider} API key is missing.\nNo worries — follow these steps:\n1) Open your browser and visit: {help_url}\n2) Sign up / log in, then open the \"API Keys\" page\n3) Click \"Create API Key\" and copy the generated key (usually starts with \"sk-\")\n4) Return to this app and click \"Settings\"\n5) Paste the key into the {provider} API Key field\n6) Click \"Save\", then run again"
   },
   "main": {
     "settings": "Settings",
@@ -124,16 +124,15 @@
     "importStartupMessage": "Your current dataset is empty. You can either export a task bundle for an external coding agent, or import an externally generated YAML after strict validation.",
     "exportTaskBundleTitle": "Import from Other Formats",
     "exportTaskBundleDesc": "This module converts users' existing LN2 tank/cryobox tracking indexes (even ad-hoc, messy records) into importable YAML through a standard workflow. You first package those raw index records, then let an external coding agent normalize them.",
-    "exportTaskBundleGuide": "How to use:\n1) Add your existing LN2 tank/cryobox tracking records in \"Raw Index Files/Folders\" (hand-made Excel, CSV, screenshots, photos, PDF, text notes, etc.).\n2) Export the ZIP and send it to an external agent (Codex/Claude Code).\n3) Ask the agent to generate output/ln2_inventory.yaml inside the task context.\n4) Return to this app and use \"Import Validated YAML\".\n\nNotes:\n- Adding a folder packages files recursively.\n- This dialog packages raw tracking indexes, not the final YAML import file.",
+    "exportTaskBundleGuide": "How to use:\n1) Add your existing LN2 tank/cryobox tracking records in \"Raw Index Files\" (hand-made Excel, CSV, screenshots, photos, PDF, text notes, etc.).\n2) Export the ZIP and send it to an external agent (Codex/Claude Code).\n3) Ask the agent to generate output/ln2_inventory.yaml inside the task context.\n4) Return to this app and use \"Import Validated YAML\".\n\nNotes:\n- You can drag files directly into the source box.\n- This dialog packages raw tracking indexes, not the final YAML import file.",
     "exportTaskBundleAction": "Export Bundle",
     "exportTaskBundleSuccess": "Task bundle exported:\n{path}\n\nNext:\n1) Send this ZIP to Codex/Claude Code.\n2) Ask it to produce output/ln2_inventory.yaml.\n3) Use \"Import Validated YAML\" in this app.",
     "exportTaskBundleFailed": "Failed to export task bundle.",
     "exportTaskBundleWarnings": "Warnings:\n{warnings}",
-    "exportBundleSources": "Raw Index Files/Folders (LN2 tank/cryobox logs, for external AI):",
+    "exportBundleSources": "Raw Index Files (LN2 tank/cryobox logs, for external AI):",
     "exportBundleOutput": "Bundle ZIP Output Path:",
-    "exportBundleNoSources": "No raw index records added yet.\nClick \"Add Raw Index Files\" or \"Add Raw Index Folder (Recursive)\".",
+    "exportBundleNoSources": "No raw index records added yet.\nClick \"Add Raw Index Files\".\nYou can also drag files into this box.",
     "selectSourceFiles": "Add Raw Index Files",
-    "selectSourceFolder": "Add Raw Index Folder (Recursive)",
     "allFilesFilter": "All Files (*)",
     "zipFilesFilter": "ZIP Files (*.zip)",
     "importValidatedTitle": "Import Validated YAML",
@@ -171,7 +170,7 @@
     "allBoxes": "All boxes",
     "allCells": "All cells",
     "showEmpty": "Show Empty",
-    "showEmptyGridOnly": "Only applies to grid view",
+    "showTakenOut": "Show Taken-out",
     "clearFilter": "Clear Filter",
     "hoverHint": "Hover a slot to preview details.",
     "emptyHint": "[EMPTY] No samples yet. Click a slot to add your first entry.",
@@ -181,7 +180,6 @@
     "prefillAddAuto": "Auto-prefilled Add Entry (Box {box} Pos {position}).",
     "prefillAdd": "Prefill Add Entry (Box {box} Pos {position})",
     "prefillThaw": "Prefill Thaw for ID {id}",
-    "prefillMove": "Prefill Move for ID {id}",
     "prefillQuery": "Query ID {id}",
     "emptyCellTooltip": "Box {box} Position {position}: empty",
     "previewAdd": "ADD",
@@ -218,6 +216,7 @@
     "fitAllBoxes": "Fit All Boxes",
     "jumpToBox": "Jump to Box {box}",
     "takeoutAdded": "Added takeout operation (ID {id}) to plan list",
+    "moveAdded": "Added move operation (ID {id}) to plan list: Box {from_box}:{from_pos} -> Box {to_box}:{to_pos}",
     "tooltipId": "ID",
     "tooltipPos": "Pos",
     "tooltipCellLine": "Cell Line",
@@ -235,7 +234,7 @@
   "operations": {
     "title": "Operations",
     "mode": "Mode",
-    "executeAll": "Execute All",
+    "executeAll": "Execute",
     "removeSelected": "Remove Selected",
     "moveUp": "Move Up",
     "moveDown": "Move Down",
@@ -355,8 +354,6 @@
     "colNote": "Note",
     "colStatus": "Status",
     "colTimestamp": "Timestamp",
-    "colActor": "Actor",
-    "colChannel": "Channel",
     "colDetails": "Details",
     "planNoSelection": "No plan items selected.",
     "planNoRemoved": "No plan items removed.",
@@ -416,13 +413,10 @@
     "planExecutionSuccess": "Plan executed successfully",
     "noCurrentPlanToPrint": "No staged plan to print.",
     "noLastExecutedToPrint": "No recent executed result to print.",
-    "noPlanToPrint": "No plan or recent execution to print.",
-    "planEmptyPrintingLast": "Plan empty. Printing last executed operation sheet.",
     "planPrintOpened": "Plan operation sheet opened in browser.",
     "operationSheetOpened": "Operation sheet opened in browser.",
     "printLastResult": "Print Last Executed",
-    "printGuide": "Print Guide",
-    "guideOpened": "Operation guide opened in browser",
+    "lastExecutedPrintOpened": "Last executed operation sheet opened in browser.",
     "planCleared": "Plan cleared.",
     "rollbackUnknown": "Rollback failed.",
     "exportedTo": "Exported to {path}",
@@ -444,8 +438,6 @@
     "auditActionRecordTakeout": "Record Takeout",
     "auditActionBatchTakeout": "Batch Takeout",
     "auditActionRollback": "Rollback",
-    "auditGuideFromSelected": "Guide from Selected",
-    "auditPrintSelectedGuide": "Print Selected Guide",
     "auditRollbackFromSelected": "Rollback from Selected",
     "auditRollbackAdvanced": "Advanced rollback (from backups)",
     "showAdvancedRollback": "Show Backup Rollback",
@@ -456,19 +448,9 @@
     "auditEventsShown": "Showing {count} audit events ({start} to {end})",
     "audit": "Audit",
     "timeLabel": "Time:",
-    "actorLabel": "Actor:",
     "backupLabel": "Backup:",
     "errorLabel": "Error:",
     "detailsLabel": "Details:",
-    "noPrintableFromSelection": "Selected audit rows produced no printable operations",
-    "selectedEvents": "Selected events: {count}",
-    "warningsLabel": "Warnings:",
-    "moreWarnings": "... and {count} more",
-    "noPrintableAuditGuide": "No printable guide generated from selected audit rows.",
-    "auditGuideGenerated": "Guide generated from selected audit rows",
-    "finalOperations": "Final operations: {count}",
-    "generatedFinalOperations": "Generated {count} final operation(s) from audit selection.",
-    "auditGuideOpened": "Selected audit guide opened in browser.",
     "selectAuditRowsFirst": "Select one or more audit rows first.",
     "selectSingleAuditRow": "Select exactly one audit row for rollback.",
     "selectedAuditNoBackup": "Selected audit row has no backup path for rollback.",
@@ -563,7 +545,7 @@
       "empty_entries": "At least one entry is required.",
       "empty_positions": "At least one position is required.",
       "export_failed": "Export failed.",
-      "forbidden_fields": "Some fields are not editable.",
+      "forbidden_fields": "Some fields are not allowed for this operation.",
       "integrity_validation_failed": "Write blocked: integrity validation failed.",
       "invalid_action": "Invalid action.",
       "invalid_box": "Invalid box.",
@@ -690,7 +672,7 @@
       "unknownTool": "Unknown tool: {tool_name}"
     },
     "hint": {
-      "adjustInputByToolSpecs": "Adjust `{tool_name}` inputs according to `tool_specs`, then retry.",
+      "adjustInputByToolSchema": "Adjust `{tool_name}` inputs according to the tool schema, then retry.",
       "boxNotEmpty": "Remove all active tubes from that box first, then retry remove operation.",
       "emptyPositionsOrEntries": "Provide at least one target position or entry before retrying.",
       "invalidAction": "Use a supported action value: takeout / move.",
@@ -698,7 +680,7 @@
       "invalidDate": "Use date format `YYYY-MM-DD` (for example: 2026-02-10).",
       "invalidMode": "For `search_records`, use mode: fuzzy / exact / keywords.",
       "invalidMoveTarget": "For move operations, provide a valid `to_position` different from source position.",
-      "invalidToolInput": "Check `{tool_name}` input fields. Required: {required_text}. Optional: {optional_text}.",
+      "invalidToolInput": "Input does not match `{tool_name}` schema. Fix field names/types first, then retry. Required: {required_text}. Optional: {optional_text}.",
       "minBoxCount": "At least one box must remain; do not remove the last box.",
       "noBackups": "No backups exist yet; investigate write history first and confirm rollback intent with `question` tool before choosing a backup_path.",
       "pathOrPermission": "Verify yaml_path exists and file permissions are correct, then retry.",
@@ -712,7 +694,7 @@
       "unknownTool": "Use one of available tools: {available_text}.",
       "userCancelled": "User cancelled the confirmation dialog.",
       "validationOrRollbackInvalid": "Rollback target is invalid for current file state. Re-check backup_path against audit/timeline and ask user confirmation with `question` if needed before retrying.",
-      "writeRequiresExecuteMode": "Write tools are execute-gated. Stage operations first, then let a human run Execute in GUI Plan tab. Use dry_run for preview-only checks."
+      "writeRequiresExecuteMode": "Write tools are execute-gated. Stage operations first, then let a human run Execute in GUI Plan tab."
     },
     "input": {
       "allHistoryOnlyForSummary": "all_history is only valid when view=summary",
@@ -725,6 +707,7 @@
       "manageStagedNeedActionRecordPosition": "action, record_id, and position are required when removing by key",
       "manageStagedNeedIndexOrKey": "Provide either index OR action+record_id+position",
       "manageStagedSelectorOnlyForRemove": "index/action/record_id/position are only valid when operation=remove",
+      "searchQueryRequired": "未输入检索词",
       "recentCannotMixSearchFields": "recent_* filters cannot be mixed with text/structured search fields",
       "renumberOnlyForRemove": "renumber_mode is only valid when operation=remove",
       "summaryViewAllowedFields": "view=summary only supports: view, days, all_history",
@@ -751,9 +734,11 @@
       "removedMatchingCount": "Removed {count} matching item(s)."
     },
     "question": {
-      "atLeastOneRequired": "At least one question is required.",
-      "missingHeaderOrQuestion": "Question {index} missing 'header' or 'question'.",
-      "mustBeDict": "Question {index} must be a dict."
+      "nonEmptyQuestionRequired": "question must be a non-empty string.",
+      "optionMustBeNonEmpty": "options[{index}] must be a non-empty string.",
+      "optionMustBeString": "options[{index}] must be a string.",
+      "optionsCountRange": "options must contain 2 to 5 items.",
+      "optionsMustBeArray": "options must be an array of non-empty strings."
     },
     "response": {
       "nonDict": "Tool `{tool_name}` returned non-dict response."
@@ -762,18 +747,18 @@
       "allRejectedByValidation": "All operations rejected by validation: {detail}",
       "moreBlockedItems": "; ... and {count} more",
       "planStoreNotAvailable": "Plan store not available.",
-      "stagedForHumanApproval": "Staged {count} operation(s) for human approval in Plan tab: {summary}"
+      "stagedForHumanApproval": "Staged {count} operation(s). Please confirm manually in Plan tab: {summary}"
     },
     "toolContracts": {
       "add_entry": {
         "description": "Add new frozen tube records.",
-        "notes": "Provide all sample metadata through fields object (e.g. fields.short_name, fields.cell_line)."
+        "notes": "Provide sample metadata through fields object using declared keys (e.g. fields.cell_line, fields.note, fields.<custom_field>)."
       },
       "batch_move": {
-        "description": "Record move for multiple tubes using explicit source and target slots."
+        "description": "Record move for multiple tubes in one call (single tube: record_move)."
       },
       "batch_takeout": {
-        "description": "Record takeout for multiple tubes using explicit source slots."
+        "description": "Record takeout for multiple tubes in one call (single tube: record_takeout)."
       },
       "defaultDescription": "LN2 inventory tool: {name}",
       "edit_entry": {
@@ -791,31 +776,52 @@
       "manage_boxes": {
         "description": "Safely add or remove inventory boxes."
       },
+      "manage_boxes_add": {
+        "description": "Safely add inventory boxes."
+      },
+      "manage_boxes_remove": {
+        "description": "Safely remove one inventory box."
+      },
       "manage_staged": {
         "description": "List, remove, or clear staged plan items."
       },
       "query_takeout_events": {
-        "description": "Query takeout/move events, or timeline summary via view=summary."
+        "description": "Query takeout/move event records (detailed events only)."
+      },
+      "query_takeout_summary": {
+        "description": "Query aggregated timeline summary (use query_takeout_events for detailed event rows)."
       },
       "question": {
-        "description": "Ask user clarifying questions when required values are unknown.",
+        "description": "Ask one clarifying question with explicit options.",
         "notes": "question tool is not a write tool and must run alone."
+      },
+      "recent_frozen": {
+        "description": "List recently frozen records by a basis/value selector."
       },
       "recommend_positions": {
         "description": "Recommend empty positions for new tubes."
       },
       "record_takeout": {
-        "description": "Record takeout for one tube using explicit source slot."
+        "description": "Record takeout for one tube only (use batch_takeout for multiple tubes)."
       },
       "record_move": {
-        "description": "Record move for one tube using explicit source and target slots."
+        "description": "Record move for one tube only (use batch_move for multiple tubes)."
       },
       "rollback": {
         "description": "Rollback inventory YAML to a backup snapshot using explicit backup_path.",
         "notes": "Always provide explicit backup_path."
       },
       "search_records": {
-        "description": "Search inventory records, or list recently frozen records via recent_* filters."
+        "description": "Search inventory records using a non-empty query and optional structured filters."
+      },
+      "staged_clear": {
+        "description": "Clear all staged plan items."
+      },
+      "staged_list": {
+        "description": "List staged plan items."
+      },
+      "staged_remove": {
+        "description": "Remove one staged plan item by index."
       }
     },
     "validation": {

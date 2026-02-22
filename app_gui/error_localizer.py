@@ -23,13 +23,14 @@ _QT_FONT_FACE_FROM_HDC_RE = re.compile(
 
 
 _ERROR_DEFAULTS_EN = {
+    "backup_create_failed": "Failed to create backup before write.",
     "backup_load_failed": "Failed to load backup file.",
     "backup_not_found": "Backup file not found.",
     "box_not_empty": "Box is not empty.",
     "empty_entries": "At least one entry is required.",
     "empty_positions": "At least one position is required.",
     "export_failed": "Export failed.",
-    "forbidden_fields": "Some fields are not editable.",
+    "forbidden_fields": "Some fields are not allowed for this operation.",
     "integrity_validation_failed": "Write blocked: integrity validation failed.",
     "invalid_action": "Invalid action.",
     "invalid_box": "Invalid box.",
@@ -56,6 +57,7 @@ _ERROR_DEFAULTS_EN = {
     "load_failed": "Failed to load YAML file.",
     "min_box_count": "At least one box must remain.",
     "missing_required_fields": "Missing required fields.",
+    "missing_backup_path": "Execute-mode write requires request backup path.",
     "no_backups": "No backups available.",
     "no_plan_store": "Plan storage is not available.",
     "no_fields": "At least one field must be provided.",

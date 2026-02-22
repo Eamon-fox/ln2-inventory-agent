@@ -35,7 +35,6 @@ class OverviewPanel(QWidget):
     request_quick_add = Signal()
     request_add_prefill = Signal(dict)
     request_add_prefill_background = Signal(dict)
-    request_move_prefill = Signal(dict)
     # Use object to preserve non-string dict keys (Qt map coercion can drop int keys).
     data_loaded = Signal(object)
     plan_items_requested = Signal(list)
@@ -61,6 +60,9 @@ class OverviewPanel(QWidget):
         self._current_records = []
         self._current_font_sizes = (9, 8)
         self._overview_view_mode = "grid"
+        self._grid_include_empty_slots = True
+        self._table_include_inactive = False
+        self._stats_include_inactive_loaded = False
         self._table_rows = []
         self._table_columns = []
         self._table_row_records = []
@@ -144,6 +146,7 @@ class OverviewPanel(QWidget):
     _show_detail = _ov_interactions._show_detail
     on_cell_context_menu = _ov_interactions.on_cell_context_menu
     _create_takeout_plan_item = _ov_interactions._create_takeout_plan_item
+    _create_move_plan_item = _ov_interactions._create_move_plan_item
     _on_cell_drop = _ov_interactions._on_cell_drop
 
     def set_summary_cards_visible(self, visible):

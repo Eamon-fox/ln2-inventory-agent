@@ -45,6 +45,11 @@ def _resolve_execution_rollback_state(execution_stats):
     return "none", ""
 
 
+def _is_undo_eligible_item(item):
+    action = str((item or {}).get("action") or "").lower()
+    return action != "rollback"
+
+
 def execute_plan(self):
     """Execute all staged plan items after user confirmation."""
     if not self._plan_store.count():
@@ -96,7 +101,8 @@ def execute_plan(self):
         self.operation_completed.emit(False)
 
     last_backup = report.get("backup_path")
-    if last_backup and executed_items:
+    undo_eligible_items = [it for it in executed_items if _is_undo_eligible_item(it)]
+    if last_backup and undo_eligible_items:
         self._last_operation_backup = last_backup
         self._enable_undo(timeout_sec=30)
     else:
@@ -185,7 +191,7 @@ def _finalize_plan_store_after_execution(self, report, results, original_plan, y
     rollback_info = None
 
     if fail_count:
-        rollback_info = self._attempt_atomic_rollback(yaml_path, results)
+        rollback_info = self._attempt_atomic_rollback(yaml_path, results, report=report)
         self._plan_store.replace_all(original_plan)
     elif remaining:
         self._plan_store.replace_all(remaining)
@@ -209,16 +215,27 @@ def _build_execution_result_sample(self, results):
             break
     return sample
 
-def _attempt_atomic_rollback(self, yaml_path, results):
+def _attempt_atomic_rollback(self, yaml_path, results, report=None):
     """Best-effort rollback to the first backup of this execute run."""
+    has_success = any(status == "OK" for status, _item, _info in results)
+    if not has_success:
+        return _build_rollback_outcome(
+            attempted=False,
+            ok=False,
+            message=tr("operations.noRollbackBackup"),
+        )
+
     first_backup = None
-    for status, _item, info in results:
-        if status != "OK" or not isinstance(info, dict):
-            continue
-        backup_path = info.get("backup_path")
-        if backup_path:
-            first_backup = backup_path
-            break
+    if isinstance(report, dict):
+        first_backup = str(report.get("backup_path") or "").strip() or None
+    if not first_backup:
+        for status, _item, info in results:
+            if status != "OK" or not isinstance(info, dict):
+                continue
+            backup_path = info.get("backup_path")
+            if backup_path:
+                first_backup = backup_path
+                break
 
     if not first_backup:
         return _build_rollback_outcome(
@@ -237,7 +254,21 @@ def _attempt_atomic_rollback(self, yaml_path, results):
         )
 
     try:
-        response = rollback_fn(yaml_path=yaml_path, backup_path=first_backup)
+        try:
+            response = rollback_fn(
+                yaml_path=yaml_path,
+                backup_path=first_backup,
+                execution_mode="execute",
+                request_backup_path=first_backup,
+            )
+        except TypeError:
+            # Backward-compatible path for test doubles that do not accept
+            # request_backup_path yet.
+            response = rollback_fn(
+                yaml_path=yaml_path,
+                backup_path=first_backup,
+                execution_mode="execute",
+            )
     except Exception as exc:
         return _build_rollback_outcome(
             attempted=True,

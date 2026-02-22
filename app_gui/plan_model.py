@@ -174,6 +174,43 @@ def render_grid_html(grid_state):
     if not grid_state or not grid_state.get("boxes"):
         return ""
 
+    def _resolve_grid_metrics(state):
+        """Compute grid geometry for both screen preview and print output."""
+        try:
+            cols = int(state.get("cols") or 0)
+        except Exception:
+            cols = 0
+        if cols <= 0:
+            cols = 9
+
+        # Keep 9x9 appearance as baseline and scale with layout columns.
+        cell_gap_mm = 0.6
+        baseline_cols = 9
+        baseline_cell_mm = 7.2
+        baseline_grid_width_mm = baseline_cols * baseline_cell_mm + (baseline_cols - 1) * cell_gap_mm
+        raw_cell_mm = (baseline_grid_width_mm - (cols - 1) * cell_gap_mm) / float(cols)
+
+        # Cap growth for sparse layouts; allow shrink for dense layouts.
+        cell_mm = max(2.6, min(8.8, raw_cell_mm))
+        # Use whole pixels in preview to avoid axis-specific subpixel rounding differences.
+        mm_to_px = 96.0 / 25.4
+        cell_px = max(10, int(round(cell_mm * mm_to_px)))
+        cell_gap_px = max(1, int(round(cell_gap_mm * mm_to_px)))
+        cell_font_px = max(6, min(8, int(round(cell_mm + 0.8))))
+        cell_empty_font_px = max(5, cell_font_px - 2)
+        marker_font_px = max(4, cell_font_px - 2)
+
+        return {
+            "cols": cols,
+            "cell_mm": cell_mm,
+            "cell_gap_mm": cell_gap_mm,
+            "cell_px": cell_px,
+            "cell_gap_px": cell_gap_px,
+            "cell_font_px": cell_font_px,
+            "cell_empty_font_px": cell_empty_font_px,
+            "marker_font_px": marker_font_px,
+        }
+
     has_active_filter = "active_boxes" in grid_state
     active_boxes = set()
     if has_active_filter:
@@ -184,6 +221,16 @@ def render_grid_html(grid_state):
                 continue
             if value > 0:
                 active_boxes.add(value)
+
+    grid_metrics = _resolve_grid_metrics(grid_state)
+    grid_cols = grid_metrics["cols"]
+    grid_cell_mm = grid_metrics["cell_mm"]
+    grid_cell_gap_mm = grid_metrics["cell_gap_mm"]
+    grid_cell_px = grid_metrics["cell_px"]
+    grid_cell_gap_px = grid_metrics["cell_gap_px"]
+    grid_cell_font_px = grid_metrics["cell_font_px"]
+    grid_cell_empty_font_px = grid_metrics["cell_empty_font_px"]
+    grid_marker_font_px = grid_metrics["marker_font_px"]
 
     boxes_html = []
     for box_data in grid_state["boxes"]:
@@ -233,6 +280,16 @@ def render_grid_html(grid_state):
                 normalized_label = suffix
 
         badge_num = str(box_num_int) if box_num_int is not None else normalized_label
+        grid_style = (
+            f"grid-template-columns: repeat({grid_cols}, var(--cell-size, 7.2mm)); "
+            f"--cell-size-print-mm: {grid_cell_mm:.2f}mm; "
+            f"--cell-gap-print-mm: {grid_cell_gap_mm:.2f}mm; "
+            f"--cell-size-screen-px: {grid_cell_px}px; "
+            f"--cell-gap-screen-px: {grid_cell_gap_px}px; "
+            f"--cell-font-size: {grid_cell_font_px}px; "
+            f"--cell-empty-font-size: {grid_cell_empty_font_px}px; "
+            f"--cell-marker-font-size: {grid_marker_font_px}px;"
+        )
 
         box_html = f"""
         <div class="box">
@@ -240,7 +297,7 @@ def render_grid_html(grid_state):
                 <span class="box-header-main">BOX {normalized_label}</span>
                 <span class="box-header-num">#{badge_num}</span>
             </div>
-            <div class="box-grid">
+            <div class="box-grid" style="{grid_style}">
                 {"".join(cells_html)}
             </div>
         </div>
@@ -518,6 +575,7 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
             gap: 4mm;
             margin-bottom: 6mm;
             align-items: start;
+            justify-items: start;
         }}
 
         .box {{
@@ -527,6 +585,8 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
             background: #0f1a2a;
             break-inside: avoid;
             page-break-inside: avoid;
+            justify-self: start;
+            align-self: start;
         }}
 
         .box-header {{
@@ -562,8 +622,10 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
 
         .box-grid {{
             display: grid;
-            grid-template-columns: repeat(9, 1fr);
-            gap: 0.6mm;
+            column-gap: var(--cell-gap, 0.6mm);
+            row-gap: var(--cell-gap, 0.6mm);
+            justify-content: start;
+            align-content: start;
         }}
 
         .cell {{
@@ -571,11 +633,11 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
             display: flex;
             align-items: center;
             justify-content: center;
-            width: 7.2mm;
-            height: 7.2mm;
-            min-width: 7.2mm;
-            min-height: 7.2mm;
-            font-size: 8px;
+            width: var(--cell-size, 7.2mm);
+            height: var(--cell-size, 7.2mm);
+            min-width: var(--cell-size, 7.2mm);
+            min-height: var(--cell-size, 7.2mm);
+            font-size: var(--cell-font-size, 8px);
             line-height: 1;
             font-weight: 500;
             border: 0.3mm solid #36506d;
@@ -592,7 +654,7 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
         .cell-empty {{
             background-color: #1a2a40;
             color: #86a0bb;
-            font-size: 6px;
+            font-size: var(--cell-empty-font-size, 6px);
         }}
 
         .cell[data-operation="add"]::after {{
@@ -600,7 +662,7 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
             position: absolute;
             bottom: 0;
             right: 0;
-            font-size: 6px;
+            font-size: var(--cell-marker-font-size, 6px);
             font-weight: bold;
             color: #22c55e;
             background: rgba(0, 0, 0, 0.7);
@@ -618,7 +680,7 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
             position: absolute;
             bottom: 0;
             right: 0;
-            font-size: 6px;
+            font-size: var(--cell-marker-font-size, 6px);
             font-weight: bold;
             color: #ef4444;
             background: rgba(0, 0, 0, 0.7);
@@ -636,7 +698,7 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
             position: absolute;
             bottom: 0;
             right: 0;
-            font-size: 6px;
+            font-size: var(--cell-marker-font-size, 6px);
             font-weight: bold;
             color: #06b6d4;
             background: rgba(0, 0, 0, 0.7);
@@ -654,7 +716,7 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
             position: absolute;
             bottom: 0;
             right: 0;
-            font-size: 6px;
+            font-size: var(--cell-marker-font-size, 6px);
             font-weight: bold;
             color: #63b3ff;
             background: rgba(0, 0, 0, 0.7);
@@ -672,7 +734,7 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
             position: absolute;
             bottom: 0;
             right: 0;
-            font-size: 6px;
+            font-size: var(--cell-marker-font-size, 6px);
             font-weight: bold;
             color: #63b3ff;
             background: rgba(0, 0, 0, 0.7);
@@ -803,6 +865,11 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
                 padding: 12mm;
                 box-shadow: 0 14px 36px rgba(15, 23, 42, 0.16);
             }}
+
+            .box-grid {{
+                --cell-gap: var(--cell-gap-screen-px, 2px);
+                --cell-size: var(--cell-size-screen-px, 27px);
+            }}
         }}
 
         @media print {{
@@ -822,6 +889,11 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
                 padding: 0;
                 box-shadow: none;
                 transform: none !important;
+            }}
+
+            .box-grid {{
+                --cell-gap: var(--cell-gap-print-mm, 0.6mm);
+                --cell-size: var(--cell-size-print-mm, 7.2mm);
             }}
         }}
 

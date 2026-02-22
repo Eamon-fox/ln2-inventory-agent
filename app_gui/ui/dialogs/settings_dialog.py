@@ -227,10 +227,11 @@ class SettingsDialog(QDialog):
 
         provider_cfg = PROVIDER_DEFAULTS.get(current_provider, PROVIDER_DEFAULTS[DEFAULT_PROVIDER])
         default_model = ai_advanced.get("model") or provider_cfg["model"]
-        self.ai_model_edit = QLineEdit(default_model)
-        self.ai_model_edit.setPlaceholderText(provider_cfg["model"])
-        self.ai_model_edit.setEnabled(False)
+        self.ai_model_edit = _NoWheelComboBox()
+        self.ai_model_edit.setEditable(True)
+        self.ai_model_edit.setInsertPolicy(QComboBox.NoInsert)
         self.ai_model_edit.setObjectName("settingsModelPreview")
+        self._refresh_model_options(current_provider, selected_model=default_model)
         ai_layout.addRow(tr("settings.aiModel"), self.ai_model_edit)
 
         self.ai_max_steps = _NoWheelSpinBox()
@@ -691,8 +692,46 @@ class SettingsDialog(QDialog):
     def _on_provider_changed(self):
         provider = self.ai_provider_combo.currentData()
         cfg = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS[DEFAULT_PROVIDER])
-        self.ai_model_edit.setPlaceholderText(cfg["model"])
-        self.ai_model_edit.setText(cfg["model"])
+        self._refresh_model_options(provider, selected_model=cfg["model"])
+
+    @staticmethod
+    def _provider_models(provider):
+        cfg = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS[DEFAULT_PROVIDER])
+        models = []
+        seen = set()
+        for raw in cfg.get("models") or []:
+            text = str(raw or "").strip()
+            if not text:
+                continue
+            key = text.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            models.append(text)
+        default_model = str(cfg.get("model") or "").strip()
+        if default_model:
+            key = default_model.casefold()
+            if key not in seen:
+                models.append(default_model)
+        return models, default_model
+
+    def _refresh_model_options(self, provider, selected_model=None):
+        models, default_model = self._provider_models(provider)
+        target_model = str(selected_model or "").strip() or default_model
+
+        self.ai_model_edit.blockSignals(True)
+        self.ai_model_edit.clear()
+        for model in models:
+            self.ai_model_edit.addItem(model, model)
+        if target_model and self.ai_model_edit.findText(target_model) < 0:
+            self.ai_model_edit.addItem(target_model, target_model)
+        idx = self.ai_model_edit.findText(target_model)
+        if idx >= 0:
+            self.ai_model_edit.setCurrentIndex(idx)
+        elif target_model:
+            self.ai_model_edit.setEditText(target_model)
+        self.ai_model_edit.setPlaceholderText(default_model)
+        self.ai_model_edit.blockSignals(False)
 
     def _build_locked_api_key_row(self, initial_value):
         row_widget = QWidget()
@@ -746,7 +785,7 @@ class SettingsDialog(QDialog):
             "theme": self.theme_combo.currentData(),
             "ui_scale": self.scale_combo.currentData(),
             "ai_provider": provider,
-            "ai_model": self.ai_model_edit.text().strip() or provider_cfg["model"],
+            "ai_model": self.ai_model_edit.currentText().strip() or provider_cfg["model"],
             "ai_max_steps": self.ai_max_steps.value(),
             "ai_thinking_enabled": self.ai_thinking_enabled.isChecked(),
             "ai_thinking_expanded": self.ai_thinking_expanded.isChecked(),

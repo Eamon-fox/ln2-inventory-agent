@@ -8,12 +8,13 @@ from PySide6.QtCore import QTimer
 
 from app_gui.i18n import t, tr
 from app_gui.ui.utils import build_color_palette
-from lib.position_fmt import get_box_count
+from lib.position_fmt import display_to_box, display_to_pos, get_box_count
 
 
 def _reset_after_load_failure(self):
     self.overview_records_by_id = {}
     self.overview_selected_key = None
+    self._stats_include_inactive_loaded = False
     self._reset_detail()
 
 
@@ -27,14 +28,19 @@ def _build_records_by_id(records):
     return records_by_id
 
 
-def _build_position_map(records):
+def _build_position_map(records, layout=None):
     pos_map = {}
     for rec in records:
+        if not isinstance(rec, dict):
+            continue
         box = rec.get("box")
         pos = rec.get("position")
-        if box is None or pos is None:
+        if box in (None, "") or pos in (None, ""):
             continue
-        pos_map[(int(box), int(pos))] = rec
+        with suppress(ValueError, TypeError):
+            box_num = int(display_to_box(box, layout))
+            pos_num = int(display_to_pos(pos, layout))
+            pos_map[(box_num, pos_num)] = rec
     return pos_map
 
 
@@ -71,16 +77,30 @@ def refresh(self):
         _reset_after_load_failure(self)
         return
 
-    stats_response = self.bridge.generate_stats(yaml_path)
+    include_inactive = bool(
+        self._overview_view_mode == "table" and getattr(self, "_table_include_inactive", False)
+    )
+    stats_response = self.bridge.generate_stats(
+        yaml_path,
+        include_inactive=include_inactive,
+    )
     if not stats_response.get("ok"):
         self.ov_status.setText(t("overview.loadFailed", error=stats_response.get("message", "unknown error")))
         _reset_after_load_failure(self)
         return
+    self._stats_include_inactive_loaded = include_inactive
 
     payload = stats_response.get("result", {})
-    data = payload.get("data", {})
-    records = data.get("inventory", [])
-    self._current_meta = data.get("meta", {})
+    data = payload.get("data", {}) if isinstance(payload.get("data"), dict) else {}
+    meta_payload = payload.get("meta", {}) if isinstance(payload.get("meta"), dict) else {}
+    meta_data = data.get("meta", {}) if isinstance(data.get("meta"), dict) else {}
+    self._current_meta = meta_payload or meta_data
+
+    records_preview = payload.get("inventory_preview")
+    if isinstance(records_preview, list):
+        records = records_preview
+    else:
+        records = data.get("inventory", []) if isinstance(data.get("inventory"), list) else []
     self._current_records = records
 
     # Build color palette from meta
@@ -91,7 +111,9 @@ def refresh(self):
     self.overview_records_by_id = _build_records_by_id(records)
     self.data_loaded.emit(self.overview_records_by_id)
 
-    layout = payload.get("layout", {})
+    layout = payload.get("layout", {}) if isinstance(payload.get("layout"), dict) else {}
+    if not layout:
+        layout = (self._current_meta or {}).get("box_layout", {})
     stats = payload.get("stats", {})
     overall = stats.get("overall", {})
     box_stats = stats.get("boxes", {})
@@ -108,9 +130,9 @@ def refresh(self):
     if self.overview_shape != shape:
         self._rebuild_boxes(rows, cols, box_numbers)
 
-    self.overview_pos_map = _build_position_map(records)
+    self.overview_pos_map = _build_position_map(records, layout=layout)
 
-    total_records = len(records)
+    total_records = int(payload.get("record_count", len(records)) or 0)
     total_occupied = overall.get("total_occupied", 0)
     total_empty = overall.get("total_empty", 0)
     occupancy_rate = overall.get("occupancy_rate", 0)
@@ -129,7 +151,7 @@ def refresh(self):
         }
     )
 
-    _update_hover_hint(self, has_records=bool(records))
+    _update_hover_hint(self, has_records=(total_records > 0))
     _update_box_live_labels(self, box_numbers, box_stats, rows, cols)
 
     for key, button in self.overview_cells.items():
@@ -142,7 +164,7 @@ def refresh(self):
     self._apply_filters()
 
     self.ov_status.setText(
-        t("overview.loadedStatus", count=len(records), time=datetime.now().strftime("%H:%M:%S"))
+        t("overview.loadedStatus", count=total_records, time=datetime.now().strftime("%H:%M:%S"))
     )
 
     # Update box navigation buttons

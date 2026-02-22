@@ -94,11 +94,13 @@ def validate_plan_item(item: dict) -> Optional[str]:
         to = item.get("to_position")
         if not isinstance(to, int) or to < 1:
             return "to_position must be a positive integer for move"
-        if to == pos:
-            return "to_position must differ from position"
         to_box = item.get("to_box")
-        if to_box is not None and (not isinstance(to_box, int) or to_box < 1):
+        if to_box is not None and to_box != "" and (not isinstance(to_box, int) or to_box < 1):
             return "to_box must be a positive integer"
+        source_box = int(box)
+        target_box = source_box if to_box in (None, "") else int(to_box)
+        if target_box == source_box and to == pos:
+            return "to_position must differ from position"
 
     if action == "add":
         # Keep this as lightweight schema validation.
