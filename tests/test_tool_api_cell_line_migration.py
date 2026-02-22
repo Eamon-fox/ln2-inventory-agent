@@ -9,7 +9,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from lib.custom_fields import DEFAULT_UNKNOWN_CELL_LINE
 from lib.tool_api import validate_write_tool_call
 from lib.yaml_ops import create_yaml_backup, load_yaml, write_yaml
 
@@ -24,7 +23,7 @@ def _seed_yaml(path, data):
 
 
 class TestWriteGateCellLineMigration(unittest.TestCase):
-    def test_execute_mode_write_runs_cell_line_migration(self):
+    def test_execute_mode_write_does_not_run_cell_line_migration(self):
         with tempfile.TemporaryDirectory(prefix="ln2_gate_cl_exec_") as td:
             yaml_path = Path(td) / "inventory.yaml"
             _seed_yaml(
@@ -59,9 +58,9 @@ class TestWriteGateCellLineMigration(unittest.TestCase):
             self.assertTrue(result["ok"])
 
             data = load_yaml(str(yaml_path))
-            self.assertTrue(data["meta"]["cell_line_required"])
-            self.assertIn(DEFAULT_UNKNOWN_CELL_LINE, data["meta"]["cell_line_options"])
-            self.assertEqual(DEFAULT_UNKNOWN_CELL_LINE, data["inventory"][0]["cell_line"])
+            self.assertNotIn("cell_line_required", data["meta"])
+            self.assertEqual(["K562"], data["meta"].get("cell_line_options"))
+            self.assertNotIn("cell_line", data["inventory"][0])
 
     def test_execute_mode_rollback_skips_cell_line_migration(self):
         with tempfile.TemporaryDirectory(prefix="ln2_gate_cl_rollback_") as td:
@@ -73,18 +72,20 @@ class TestWriteGateCellLineMigration(unittest.TestCase):
                     "inventory": [{"id": 1, "box": 1, "position": 1, "frozen_at": "2026-02-10"}],
                 },
             )
+            rollback_target = str(create_yaml_backup(str(yaml_path)))
+            request_snapshot = str(create_yaml_backup(str(yaml_path)))
 
             result = validate_write_tool_call(
                 yaml_path=str(yaml_path),
                 action="rollback",
                 source="agent.react",
                 tool_name="tool_rollback",
-                tool_input={"dry_run": False},
-                payload={},
+                tool_input={"dry_run": False, "backup_path": rollback_target},
+                payload={"backup_path": rollback_target},
                 dry_run=False,
                 execution_mode="execute",
                 auto_backup=False,
-                request_backup_path=str(create_yaml_backup(str(yaml_path))),
+                request_backup_path=request_snapshot,
             )
             self.assertTrue(result["ok"])
 

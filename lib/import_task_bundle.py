@@ -1,4 +1,4 @@
-"""Build a portable import task bundle for external coding agents.
+"""Build an import task bundle directory for external coding agents.
 
 The bundle is designed for workflows where users hand raw files to an
 external assistant (e.g. Codex/Claude Code), then bring back a generated
@@ -9,8 +9,6 @@ import hashlib
 import json
 import os
 import shutil
-import tempfile
-import zipfile
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Tuple
 
@@ -152,21 +150,25 @@ The generated file **must** be `output/ln2_inventory.yaml`.
 - `id`: unique positive integer.
 - `box`: positive integer within configured box layout.
 - `frozen_at`: date in `YYYY-MM-DD`.
+- To pass strict import mode in this app, include non-empty `cell_line` for every record. If source value is unknown, use `"Unknown"`.
 
 ## Position rules
 
 - `position` may be integer or null.
 - If `position` is null, record must include valid takeout history in `thaw_events`.
 - Active records must not conflict on `(box, position)`. Any active-position conflict is a blocking failure.
+- If one source row contains multiple positions (for example `1,2,3`), split it into multiple tube-level records (one inventory item per position).
 
 ## Metadata rules
 
 - `meta.custom_fields` is optional.
-- If present, each item should be a structured object (for example with `name` and `type`), not a loose scalar value.
+- If present, each item should be a structured object with `key` (identifier-style) and `type` (for example `str`, `int`, `float`, `date`).
+- Optional keys such as `label`, `required`, and `default` are allowed.
 
 ## Date rules
 
 - `frozen_at` and thaw-event dates must be `YYYY-MM-DD`.
+- If a source date is an Excel serial number (for example `45072`), convert it to `YYYY-MM-DD` before writing output.
 - Future dates are invalid.
 
 ## Ambiguity rules
@@ -180,6 +182,11 @@ The generated file **must** be `output/ln2_inventory.yaml`.
 2. Follow `templates/runbook_en.md` in order.
 3. Run checks from `templates/acceptance_checklist_en.md`.
 4. Produce final YAML at `output/ln2_inventory.yaml` only after blocking checks pass.
+
+## Example outputs
+
+- Minimal reference: `examples/valid_inventory_min.yaml`
+- Full reference: `examples/valid_inventory_full.yaml`
 """
 
 
@@ -198,6 +205,7 @@ Hard requirements:
 - Do not invent records, fields, dates, or positions.
 - Use `null` only when allowed by `schema/validation_rules.md`.
 - Keep active tubes unique on `(box, position)`.
+- Ensure every inventory record has non-empty `cell_line`; use `"Unknown"` only when the source truly cannot provide it.
 - If required fields are ambiguous, ask clarifying questions before final output.
 - If clarification is unavailable, write blockers in `output/conversion_report.md` and avoid fake completion.
 
@@ -223,7 +231,12 @@ Follow every phase in order. Do not skip validation.
 
 1. Inspect each listed source file.
 2. Identify how required fields map to YAML fields (`id`, `box`, `position`, `frozen_at`).
-3. Record unresolved ambiguities before transformation.
+3. Run quick prechecks before transformation:
+   - required-field coverage (`box`, `position`, `frozen_at`, `cell_line`)
+   - duplicate active locations on `(box, position)`
+   - date parseability and future-date risks
+   - custom-field metadata shape (`meta.custom_fields` entries use `key` + `type`)
+4. Record unresolved ambiguities before transformation.
 
 ## Phase 3 - Design field mapping
 
@@ -261,11 +274,12 @@ Use this checklist before final delivery. Any failed blocking check means output
 - [ ] Top-level keys are exactly `meta` and `inventory`.
 - [ ] `meta.box_layout.rows` and `meta.box_layout.cols` are positive integers.
 - [ ] Every inventory record has required fields: `id`, `box`, `frozen_at`.
+- [ ] Every inventory record has non-empty `cell_line` (`"Unknown"` is acceptable only when source value is truly unavailable).
 - [ ] `id` values are unique positive integers.
 - [ ] Active tubes do not conflict on `(box, position)`.
 - [ ] `frozen_at` and thaw-event dates use `YYYY-MM-DD` and are not future dates.
 - [ ] `position` is integer or `null`; `null` is only used when rules allow it.
-- [ ] `meta.custom_fields`, if present, uses structured objects (for example `name` and `type`) instead of loose scalar entries.
+- [ ] `meta.custom_fields`, if present, uses structured objects with `key` + `type` (optional `label` / `required` / `default`).
 - [ ] No invented records or fabricated values were introduced.
 - [ ] No unresolved ambiguity remains for required fields.
 
@@ -288,10 +302,66 @@ inventory:
   - id: 1
     box: 1
     position: 1
-    frozen_at: "2025-01-01"
+    frozen_at: "2024-01-01"
     cell_line: K562
     note: null
     thaw_events: null
+"""
+
+
+def _build_example_full_yaml() -> str:
+    return """meta:
+  box_layout:
+    rows: 9
+    cols: 9
+    box_count: 2
+    indexing: numeric
+  custom_fields:
+    - key: batch
+      label: Batch
+      type: str
+      required: false
+    - key: operator
+      label: Operator
+      type: str
+      required: false
+
+inventory:
+  - id: 1
+    box: 1
+    position: 1
+    frozen_at: "2024-01-10"
+    cell_line: K562
+    note: "active tube"
+    batch: "BATCH-001"
+    operator: "alice"
+    thaw_events: null
+
+  - id: 2
+    box: 1
+    position: null
+    frozen_at: "2023-11-08"
+    cell_line: HeLa
+    note: "taken out"
+    batch: "BATCH-002"
+    operator: "bob"
+    thaw_events:
+      - action: takeout
+        date: "2024-06-17"
+        positions: [14]
+
+  - id: 3
+    box: 2
+    position: 20
+    frozen_at: "2024-03-02"
+    cell_line: U2OS
+    note: null
+    batch: "BATCH-003"
+    operator: "alice"
+    thaw_events:
+      - action: move
+        date: "2024-04-01"
+        positions: [11]
 """
 
 
@@ -304,22 +374,22 @@ def _bundle_error(error_code: str, message: str, warnings: List[str] = None) -> 
     }
 
 
-def build_import_task_bundle(
+def export_import_task_bundle(
     source_paths: Iterable[str],
-    output_zip_path: str,
+    output_dir: str,
     options: Dict[str, Any] = None,
 ) -> Dict[str, Any]:
-    """Create a portable ZIP task bundle for external conversion agents.
+    """Export an import task bundle directory for external conversion agents.
 
     Args:
         source_paths: Files/directories to include under ``inputs/``.
-        output_zip_path: Destination ZIP path (``.zip`` auto-appended if missing).
+        output_dir: Destination folder path.
         options: Optional metadata map recorded in ``manifest.json``.
 
     Returns:
         dict:
             - ok: bool
-            - bundle_path: absolute ZIP path (on success)
+            - bundle_dir: absolute bundle directory (on success)
             - manifest: manifest payload (on success)
             - warnings: list[str]
             - error_code/message (on failure)
@@ -332,23 +402,22 @@ def build_import_task_bundle(
             warnings=warnings,
         )
 
-    output_zip = str(output_zip_path or "").strip()
-    if not output_zip:
-        return _bundle_error("invalid_output_path", "Output ZIP path is required.", warnings=warnings)
-    if not output_zip.lower().endswith(".zip"):
-        output_zip += ".zip"
-    output_zip = os.path.abspath(output_zip)
+    bundle_dir = str(output_dir or "").strip()
+    if not bundle_dir:
+        return _bundle_error("invalid_output_path", "Output directory is required.", warnings=warnings)
+    bundle_dir = os.path.abspath(bundle_dir)
 
-    out_dir = os.path.dirname(output_zip)
-    if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
+    if os.path.exists(bundle_dir) and not os.path.isdir(bundle_dir):
+        return _bundle_error(
+            "invalid_output_path",
+            f"Output path is not a directory: {bundle_dir}",
+            warnings=warnings,
+        )
 
-    temp_root = tempfile.mkdtemp(prefix="ln2_import_bundle_")
-    bundle_root = os.path.join(temp_root, "bundle")
     try:
-        os.makedirs(bundle_root, exist_ok=True)
+        os.makedirs(bundle_dir, exist_ok=True)
         for rel in ("inputs", "schema", "templates", "examples", "output"):
-            os.makedirs(os.path.join(bundle_root, rel), exist_ok=True)
+            os.makedirs(os.path.join(bundle_dir, rel), exist_ok=True)
 
         used_names: set = set()
         manifest_sources: List[Dict[str, Any]] = []
@@ -356,7 +425,7 @@ def build_import_task_bundle(
             source_name = os.path.basename(src) or "source.bin"
             bundle_name = _dedupe_name(source_name, used_names)
             rel_path = f"inputs/{bundle_name}"
-            target = os.path.join(bundle_root, rel_path.replace("/", os.sep))
+            target = os.path.join(bundle_dir, rel_path.replace("/", os.sep))
             shutil.copy2(src, target)
             manifest_sources.append(
                 {
@@ -367,21 +436,22 @@ def build_import_task_bundle(
                 }
             )
 
-        schema_json_path = os.path.join(bundle_root, "schema", "ln2_import_schema.json")
+        schema_json_path = os.path.join(bundle_dir, "schema", "ln2_import_schema.json")
         with open(schema_json_path, "w", encoding="utf-8") as handle:
             json.dump(_build_schema_payload(), handle, ensure_ascii=False, indent=2)
             handle.write("\n")
 
-        _write_text(os.path.join(bundle_root, "schema", "validation_rules.md"), _build_rules_markdown())
-        _write_text(os.path.join(bundle_root, "templates", "prompt_en.md"), _build_prompt_en())
-        _write_text(os.path.join(bundle_root, "templates", "runbook_en.md"), _build_runbook_en())
+        _write_text(os.path.join(bundle_dir, "schema", "validation_rules.md"), _build_rules_markdown())
+        _write_text(os.path.join(bundle_dir, "templates", "prompt_en.md"), _build_prompt_en())
+        _write_text(os.path.join(bundle_dir, "templates", "runbook_en.md"), _build_runbook_en())
         _write_text(
-            os.path.join(bundle_root, "templates", "acceptance_checklist_en.md"),
+            os.path.join(bundle_dir, "templates", "acceptance_checklist_en.md"),
             _build_acceptance_checklist_en(),
         )
-        _write_text(os.path.join(bundle_root, "examples", "valid_inventory_min.yaml"), _build_example_yaml())
+        _write_text(os.path.join(bundle_dir, "examples", "valid_inventory_min.yaml"), _build_example_yaml())
+        _write_text(os.path.join(bundle_dir, "examples", "valid_inventory_full.yaml"), _build_example_full_yaml())
         _write_text(
-            os.path.join(bundle_root, "output", "README.md"),
+            os.path.join(bundle_dir, "output", "README.md"),
             "Put generated `ln2_inventory.yaml` in this directory.\n",
         )
 
@@ -394,21 +464,14 @@ def build_import_task_bundle(
             "options": dict(options or {}),
             "warnings": list(warnings),
         }
-        manifest_path = os.path.join(bundle_root, "manifest.json")
+        manifest_path = os.path.join(bundle_dir, "manifest.json")
         with open(manifest_path, "w", encoding="utf-8") as handle:
             json.dump(manifest, handle, ensure_ascii=False, indent=2)
             handle.write("\n")
 
-        with zipfile.ZipFile(output_zip, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            for root, _dirs, names in os.walk(bundle_root):
-                for name in sorted(names):
-                    abs_path = os.path.join(root, name)
-                    rel_path = os.path.relpath(abs_path, bundle_root).replace("\\", "/")
-                    archive.write(abs_path, arcname=rel_path)
-
         return {
             "ok": True,
-            "bundle_path": output_zip,
+            "bundle_dir": bundle_dir,
             "manifest": manifest,
             "warnings": list(warnings),
         }
@@ -418,5 +481,3 @@ def build_import_task_bundle(
             f"Failed to build import task bundle: {exc}",
             warnings=warnings,
         )
-    finally:
-        shutil.rmtree(temp_root, ignore_errors=True)

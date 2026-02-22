@@ -19,24 +19,31 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
         self.assertIs(tool_runner._WRITE_TOOLS, WRITE_TOOLS)
 
     def test_v2_move_takeout_contract_shapes(self):
-        self.assertIn("record_move", TOOL_CONTRACTS)
-        self.assertIn("batch_move", TOOL_CONTRACTS)
+        self.assertIn("move", TOOL_CONTRACTS)
+        self.assertIn("takeout", TOOL_CONTRACTS)
 
-        record_takeout_props = TOOL_CONTRACTS["record_takeout"]["parameters"]["properties"]
-        self.assertIn("from_box", record_takeout_props)
-        self.assertIn("from_position", record_takeout_props)
-        self.assertNotIn("action", record_takeout_props)
-        self.assertNotIn("to_position", record_takeout_props)
-
-        batch_takeout_props = TOOL_CONTRACTS["batch_takeout"]["parameters"]["properties"]
-        self.assertIn("entries", batch_takeout_props)
-        entries_schema = batch_takeout_props["entries"]
+        takeout_props = TOOL_CONTRACTS["takeout"]["parameters"]["properties"]
+        self.assertIn("entries", takeout_props)
+        entries_schema = takeout_props["entries"]
         self.assertEqual("array", entries_schema.get("type"))
         entry_props = entries_schema["items"]["properties"]
         self.assertIn("from_box", entry_props)
         self.assertIn("from_position", entry_props)
         self.assertNotIn("to_position", entry_props)
         self.assertNotIn("to_box", entry_props)
+
+        move_props = TOOL_CONTRACTS["move"]["parameters"]["properties"]
+        move_entry_props = move_props["entries"]["items"]["properties"]
+        self.assertIn("to_position", move_entry_props)
+        self.assertIn("to_box", move_entry_props)
+
+    def test_run_terminal_contract_is_single_string_input_and_not_write_tool(self):
+        self.assertIn("run_terminal", TOOL_CONTRACTS)
+        params = TOOL_CONTRACTS["run_terminal"]["parameters"]
+        self.assertEqual(["command"], params.get("required"))
+        self.assertEqual({"command"}, set((params.get("properties") or {}).keys()))
+        self.assertEqual(False, params.get("additionalProperties"))
+        self.assertNotIn("run_terminal", WRITE_TOOLS)
 
 
 if __name__ == "__main__":

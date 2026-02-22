@@ -1,7 +1,8 @@
-"""Batch takeout/move write-operation implementations for Tool API."""
+"""Takeout/move write-operation implementations for Tool API."""
 
 from ..position_fmt import get_position_range
 from ..takeout_parser import ACTION_LABEL, normalize_action
+from ..migrate_cell_line_policy import normalize_cell_line_policy_data
 from ..yaml_ops import load_yaml
 from . import write_takeout_batch_move as _move_ops
 from . import write_takeout_batch_nonmove as _nonmove_ops
@@ -31,7 +32,7 @@ def _validation_failed_result(
         source=source,
         tool_name=tool_name,
         error_code="validation_failed",
-        message="Batch operation parameter validation failed",
+        message="Takeout/move parameter validation failed",
         actor_context=actor_context,
         tool_input=tool_input,
         before_data=before_data,
@@ -41,7 +42,7 @@ def _validation_failed_result(
     )
 
 
-def _normalize_batch_takeout_entries(
+def _normalize_takeout_entries(
     *,
     entries,
     layout,
@@ -113,7 +114,7 @@ def _batch_validation_failed_result(
     )
 
 
-def _build_batch_operation_preview_item(op, *, include_move_fields):
+def _build_operation_preview_item(op, *, include_move_fields):
     item = {
         "record_id": op["record_id"],
         "cell_line": op["record"].get("cell_line"),
@@ -130,20 +131,20 @@ def _build_batch_operation_preview_item(op, *, include_move_fields):
     return item
 
 
-def _build_batch_preview(*, date_str, action_en, action, operations, include_move_fields):
+def _build_preview(*, date_str, action_en, action, operations, include_move_fields):
     return {
         "date": date_str,
         "action_en": action_en,
         "action_cn": ACTION_LABEL.get(action_en, action),
         "count": len(operations),
         "operations": [
-            _build_batch_operation_preview_item(op, include_move_fields=include_move_fields)
+            _build_operation_preview_item(op, include_move_fields=include_move_fields)
             for op in operations
         ],
     }
 
 
-def _build_batch_success_response(
+def _build_success_response(
     *,
     preview,
     operations,
@@ -165,7 +166,7 @@ def _build_batch_success_response(
     }
 
 
-def _process_batch_plan(
+def _process_plan(
     *,
     plan,
     include_move_fields,
@@ -198,7 +199,7 @@ def _process_batch_plan(
             errors=errors,
         )
 
-    preview = _build_batch_preview(
+    preview = _build_preview(
         date_str=date_str,
         action_en=action_en,
         action=action,
@@ -216,7 +217,7 @@ def _process_batch_plan(
     if failure:
         return failure
 
-    return _build_batch_success_response(
+    return _build_success_response(
         preview=preview,
         operations=operations,
         backup_path=backup_path,
@@ -224,7 +225,7 @@ def _process_batch_plan(
     )
 
 
-def _tool_batch_takeout_impl(
+def _tool_takeout_impl(
     yaml_path,
     entries,
     date_str,
@@ -235,10 +236,11 @@ def _tool_batch_takeout_impl(
     source="tool_api",
     auto_backup=True,
     request_backup_path=None,
+    tool_name="tool_takeout",
 ):
-    """Record batch takeout/move operations via shared tool flow."""
-    audit_action = "batch_takeout"
-    tool_name = "tool_batch_takeout"
+    """Record takeout/move operations via shared tool flow."""
+    requested_action = normalize_action(action)
+    audit_action = requested_action or "takeout"
     tool_input = {
         "entries": list(entries) if isinstance(entries, (list, tuple)) else entries,
         "date": date_str,
@@ -264,7 +266,9 @@ def _tool_batch_takeout_impl(
     if not validation.get("ok"):
         return validation
 
-    action_en = (validation.get("normalized") or {}).get("action_en") or normalize_action(action) or ""
+    action_en = (validation.get("normalized") or {}).get("action_en") or requested_action or ""
+    if action_en:
+        audit_action = action_en
 
     try:
         data = load_yaml(yaml_path)
@@ -280,12 +284,26 @@ def _tool_batch_takeout_impl(
             tool_input=tool_input,
             details={"load_error": str(exc)},
         )
+    normalized = normalize_cell_line_policy_data(data)
+    if not normalized.get("ok"):
+        return api._failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code=normalized.get("error_code", "normalize_failed"),
+            message=normalized.get("message", "Failed to normalize cell_line policy."),
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data if isinstance(data, dict) else None,
+        )
+    data = normalized.get("data")
 
     records = data.get("inventory", [])
     layout = api._get_layout(data)
     _pos_lo, _pos_hi = get_position_range(layout)
 
-    normalized_entries, failure = _normalize_batch_takeout_entries(
+    normalized_entries, failure = _normalize_takeout_entries(
         entries=entries,
         layout=layout,
         yaml_path=yaml_path,
@@ -299,7 +317,7 @@ def _tool_batch_takeout_impl(
         return failure
 
     if action_en == "move":
-        plan = _move_ops._build_batch_move_plan(
+        plan = _move_ops._build_move_plan(
             records=records,
             normalized_entries=normalized_entries,
             layout=layout,
@@ -307,7 +325,7 @@ def _tool_batch_takeout_impl(
             pos_lo=_pos_lo,
             pos_hi=_pos_hi,
         )
-        return _process_batch_plan(
+        return _process_plan(
             plan=plan,
             include_move_fields=True,
             date_str=date_str,
@@ -321,7 +339,7 @@ def _tool_batch_takeout_impl(
             tool_input=tool_input,
             before_data=data,
             dry_run=dry_run,
-            persist_fn=_persist_batch_move,
+            persist_fn=_persist_move,
             persist_kwargs={
                 "data": data,
                 "records": records,
@@ -347,7 +365,7 @@ def _tool_batch_takeout_impl(
         pos_lo=_pos_lo,
         pos_hi=_pos_hi,
     )
-    return _process_batch_plan(
+    return _process_plan(
         plan=nonmove,
         include_move_fields=False,
         date_str=date_str,
@@ -361,7 +379,7 @@ def _tool_batch_takeout_impl(
         tool_input=tool_input,
         before_data=data,
         dry_run=dry_run,
-        persist_fn=_persist_batch_nonmove,
+        persist_fn=_persist_nonmove,
         persist_kwargs={
             "data": data,
             "normalized_entries": normalized_entries,
@@ -381,10 +399,10 @@ def _tool_batch_takeout_impl(
     )
 
 
-def _persist_batch_move(**kwargs):
-    return _move_ops._persist_batch_move_plan(**kwargs)
+def _persist_move(**kwargs):
+    return _move_ops._persist_move_plan(**kwargs)
 
 
-def _persist_batch_nonmove(**kwargs):
+def _persist_nonmove(**kwargs):
     backup_path, failure = _nonmove_ops._persist_batch_nonmove_plan(**kwargs)
     return backup_path, None, failure

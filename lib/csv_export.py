@@ -146,7 +146,8 @@ def export_inventory_to_csv(data, output_path):
     rows = payload["rows"]
 
     abs_output_path = os.path.abspath(os.fspath(output_path))
-    with open(abs_output_path, "w", newline="", encoding="utf-8") as handle:
+    # Use UTF-8 BOM so Excel/WPS on Windows can open Chinese text without mojibake.
+    with open(abs_output_path, "w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.writer(handle)
         writer.writerow(columns)
         for row in rows:

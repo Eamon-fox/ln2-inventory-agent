@@ -1,5 +1,6 @@
 """Extracted read/query operation implementations for Tool API."""
 
+import os
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -12,7 +13,11 @@ from ..position_fmt import (
 )
 from ..takeout_parser import extract_events, normalize_action
 from ..validators import normalize_date_arg, parse_date, validate_box, validate_position
-from ..yaml_ops import compute_occupancy, load_yaml
+from ..yaml_ops import (
+    compute_occupancy,
+    load_yaml,
+    read_audit_events,
+)
 
 
 class _ApiProxy:
@@ -594,6 +599,150 @@ def tool_collect_timeline(yaml_path, days=30, all_history=False):
                 "takeout": total_takeout,
                 "move": total_move,
             },
+        },
+    }
+
+
+def _normalize_timeline_filter_date(name, value):
+    text = str(value or "").strip()
+    if not text:
+        return None, None
+    if parse_date(text) is None:
+        return None, {
+            "ok": False,
+            "error_code": "invalid_date",
+            "message": f"{name} must be YYYY-MM-DD",
+        }
+    return text, None
+
+
+def _coerce_audit_seq(value):
+    try:
+        seq = int(value)
+    except Exception:
+        return None
+    if seq <= 0:
+        return None
+    return seq
+
+
+def tool_list_audit_timeline(
+    yaml_path,
+    limit=50,
+    offset=0,
+    action_filter=None,
+    status_filter=None,
+    start_date=None,
+    end_date=None,
+):
+    """List audit timeline rows from persisted audit events only (audit_seq desc)."""
+    limit_val = None
+    if limit == "":
+        limit = 50
+    if limit is not None:
+        try:
+            limit_val = int(limit)
+        except Exception:
+            return {
+                "ok": False,
+                "error_code": "invalid_limit",
+                "message": "limit must be null or an integer >= 1",
+            }
+        if limit_val <= 0:
+            return {
+                "ok": False,
+                "error_code": "invalid_limit",
+                "message": "limit must be null or an integer >= 1",
+            }
+
+    try:
+        offset_val = 0 if offset in (None, "") else int(offset)
+    except Exception:
+        return {
+            "ok": False,
+            "error_code": "invalid_offset",
+            "message": "offset must be an integer >= 0",
+        }
+    if offset_val < 0:
+        return {
+            "ok": False,
+            "error_code": "invalid_offset",
+            "message": "offset must be an integer >= 0",
+        }
+
+    start_norm, start_error = _normalize_timeline_filter_date("start_date", start_date)
+    if start_error:
+        return start_error
+    end_norm, end_error = _normalize_timeline_filter_date("end_date", end_date)
+    if end_error:
+        return end_error
+    if start_norm and end_norm and start_norm > end_norm:
+        return {
+            "ok": False,
+            "error_code": "invalid_date_range",
+            "message": "start_date must be <= end_date",
+        }
+
+    action_norm = str(action_filter or "").strip()
+    if action_norm.lower() == "all":
+        action_norm = ""
+    status_norm = str(status_filter or "").strip()
+    if status_norm.lower() == "all":
+        status_norm = ""
+
+    yaml_abs = os.path.abspath(str(yaml_path or ""))
+    try:
+        audit_rows = list(read_audit_events(yaml_abs))
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error_code": "load_failed",
+            "message": f"Failed to load audit timeline: {exc}",
+        }
+
+    timeline_rows = []
+    for index, row in enumerate(audit_rows, start=1):
+        if not isinstance(row, dict):
+            continue
+        normalized = dict(row)
+        if not str(normalized.get("status") or "").strip():
+            normalized["status"] = "success"
+        seq = _coerce_audit_seq(normalized.get("audit_seq"))
+        if seq is not None:
+            normalized["audit_seq"] = seq
+        normalized["_audit_sort_seq"] = seq if seq is not None else index
+        timeline_rows.append(normalized)
+
+    # Sort newest first by audit sequence.
+    timeline_rows.sort(key=lambda ev: int(ev.get("_audit_sort_seq", 0)), reverse=True)
+
+    filtered = []
+    for row in timeline_rows:
+        ts_date = str(row.get("timestamp") or "")[:10]
+        if start_norm and (not ts_date or ts_date < start_norm):
+            continue
+        if end_norm and (not ts_date or ts_date > end_norm):
+            continue
+        if action_norm and str(row.get("action") or "") != action_norm:
+            continue
+        if status_norm and str(row.get("status") or "") != status_norm:
+            continue
+        normalized = dict(row)
+        normalized.pop("_audit_sort_seq", None)
+        filtered.append(normalized)
+
+    total = len(filtered)
+    if limit_val is None:
+        items = filtered[offset_val:]
+    else:
+        items = filtered[offset_val: offset_val + limit_val]
+    return {
+        "ok": True,
+        "result": {
+            "items": items,
+            "total": total,
+            "limit": limit_val,
+            "offset": offset_val,
         },
     }
 

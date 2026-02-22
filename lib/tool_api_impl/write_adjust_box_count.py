@@ -2,9 +2,62 @@
 
 from copy import deepcopy
 
+from ..migrate_cell_line_policy import normalize_cell_line_policy_data
 from ..position_fmt import get_box_numbers
 from ..yaml_ops import load_yaml, write_yaml
 from .write_common import api
+
+_BOX_TAG_MAX_LENGTH = 80
+
+
+def _normalize_box_tag_value(raw_tag):
+    text = "" if raw_tag is None else str(raw_tag)
+    if "\n" in text or "\r" in text:
+        return None
+    normalized = text.strip()
+    if not normalized:
+        return None
+    if len(normalized) > _BOX_TAG_MAX_LENGTH:
+        return None
+    return normalized
+
+
+def _normalize_box_tags(raw_tags, allowed_boxes):
+    if not isinstance(raw_tags, dict):
+        return {}
+
+    allowed = {int(box_num) for box_num in list(allowed_boxes or [])}
+    normalized = {}
+    for raw_box, raw_tag in raw_tags.items():
+        try:
+            box_num = int(raw_box)
+        except Exception:
+            continue
+        if box_num not in allowed:
+            continue
+        tag_value = _normalize_box_tag_value(raw_tag)
+        if tag_value:
+            normalized[str(box_num)] = tag_value
+    return normalized
+
+
+def _remap_box_tags_for_renumber(box_tags, box_mapping):
+    if not isinstance(box_tags, dict):
+        return {}
+
+    remapped = {}
+    for raw_box, raw_tag in box_tags.items():
+        try:
+            old_box = int(raw_box)
+        except Exception:
+            continue
+        new_box = box_mapping.get(old_box)
+        if new_box is None:
+            continue
+        tag_value = _normalize_box_tag_value(raw_tag)
+        if tag_value:
+            remapped[str(int(new_box))] = tag_value
+    return remapped
 
 
 def _prepare_adjust_box_count_context(
@@ -24,6 +77,7 @@ def _prepare_adjust_box_count_context(
     current_boxes = list(get_box_numbers(layout))
     if not current_boxes:
         current_boxes = [1]
+    current_box_tags = _normalize_box_tags((layout or {}).get("box_tags"), current_boxes)
 
     candidate_data = deepcopy(data)
     if not isinstance(candidate_data, dict):
@@ -60,6 +114,7 @@ def _prepare_adjust_box_count_context(
         "operation": None,
         "box_numbers_before": current_boxes,
         "box_count_before": len(current_boxes),
+        "box_tags_before": current_box_tags,
     }
 
     return {
@@ -67,6 +122,7 @@ def _prepare_adjust_box_count_context(
         "records": records,
         "layout": layout,
         "current_boxes": current_boxes,
+        "current_box_tags": current_box_tags,
         "candidate_data": candidate_data,
         "candidate_layout": candidate_layout,
         "preview": preview,
@@ -91,6 +147,7 @@ def _plan_adjust_box_count(
     records = context["records"]
     layout = context["layout"]
     current_boxes = context["current_boxes"]
+    current_box_tags = context["current_box_tags"]
     candidate_data = context["candidate_data"]
     preview = context["preview"]
 
@@ -123,9 +180,14 @@ def _plan_adjust_box_count(
                 "added_boxes": added_boxes,
                 "box_numbers_after": new_boxes,
                 "box_count_after": len(new_boxes),
+                "box_tags_after": _normalize_box_tags(current_box_tags, new_boxes),
             }
         )
-        return {"new_boxes": new_boxes, "preview": preview}, None
+        return {
+            "new_boxes": new_boxes,
+            "preview": preview,
+            "box_tags_after": _normalize_box_tags(current_box_tags, new_boxes),
+        }, None
 
     try:
         target_box = int(box)
@@ -266,8 +328,10 @@ def _plan_adjust_box_count(
             if rec_box in box_mapping:
                 rec["box"] = box_mapping[rec_box]
         new_boxes = list(range(1, len(sorted_remaining) + 1))
+        box_tags_after = _remap_box_tags_for_renumber(current_box_tags, box_mapping)
     else:
         new_boxes = sorted(remaining_boxes)
+        box_tags_after = _normalize_box_tags(current_box_tags, new_boxes)
 
     preview.update(
         {
@@ -277,10 +341,11 @@ def _plan_adjust_box_count(
             "box_mapping": box_mapping,
             "box_numbers_after": new_boxes,
             "box_count_after": len(new_boxes),
+            "box_tags_after": box_tags_after,
         }
     )
 
-    return {"new_boxes": new_boxes, "preview": preview}, None
+    return {"new_boxes": new_boxes, "preview": preview, "box_tags_after": box_tags_after}, None
 
 
 def _persist_adjust_box_count(
@@ -386,6 +451,20 @@ def _tool_adjust_box_count_impl(
             actor_context=actor_context,
             tool_input=tool_input,
         )
+    normalized = normalize_cell_line_policy_data(data)
+    if not normalized.get("ok"):
+        return api._failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code=normalized.get("error_code", "normalize_failed"),
+            message=normalized.get("message", "Failed to normalize cell_line policy."),
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data if isinstance(data, dict) else None,
+        )
+    data = normalized.get("data")
 
     context, failure = _prepare_adjust_box_count_context(
         data=data,
@@ -419,9 +498,14 @@ def _tool_adjust_box_count_impl(
     candidate_layout = context["candidate_layout"]
     preview = plan["preview"]
     new_boxes = plan["new_boxes"]
+    box_tags_after = plan.get("box_tags_after") or {}
 
     candidate_layout["box_numbers"] = list(new_boxes)
     candidate_layout["box_count"] = len(new_boxes)
+    if box_tags_after:
+        candidate_layout["box_tags"] = dict(box_tags_after)
+    else:
+        candidate_layout.pop("box_tags", None)
 
     validation_error = api._validate_data_or_error(candidate_data)
     if validation_error:

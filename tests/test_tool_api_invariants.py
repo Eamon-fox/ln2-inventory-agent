@@ -17,12 +17,106 @@ if str(ROOT) not in sys.path:
 from lib.tool_api import (
     parse_batch_entries,
     tool_add_entry,
-    tool_batch_move,
-    tool_batch_takeout,
-    tool_record_move,
-    tool_record_takeout,
+    tool_move,
+    tool_takeout,
 )
 from lib.yaml_ops import load_yaml, write_yaml, read_audit_events
+
+
+def tool_batch_takeout(*args, **kwargs):
+    return tool_takeout(*args, **kwargs)
+
+
+def tool_batch_move(*args, **kwargs):
+    return tool_move(*args, **kwargs)
+
+
+def _flatten_single_preview(response):
+    if not isinstance(response, dict):
+        return response
+    preview = response.get("preview")
+    if not isinstance(preview, dict):
+        return response
+    operations = preview.get("operations")
+    if not isinstance(operations, list) or len(operations) != 1:
+        return response
+    op = operations[0]
+    if not isinstance(op, dict):
+        return response
+    flat_preview = dict(preview)
+    for key in (
+        "record_id",
+        "cell_line",
+        "short_name",
+        "box",
+        "position",
+        "old_position",
+        "new_position",
+        "to_position",
+        "swap_with_record_id",
+    ):
+        if key in op:
+            flat_preview[key] = op.get(key)
+    if "old_position" in op and "position_before" not in flat_preview:
+        flat_preview["position_before"] = op.get("old_position")
+    if "new_position" in op and "position_after" not in flat_preview:
+        flat_preview["position_after"] = op.get("new_position")
+    normalized = dict(response)
+    normalized["preview"] = flat_preview
+    return normalized
+
+
+def tool_record_takeout(
+    yaml_path,
+    record_id,
+    from_slot,
+    date_str=None,
+    dry_run=False,
+    execution_mode=None,
+    actor_context=None,
+    source="tool_api",
+    auto_backup=True,
+    request_backup_path=None,
+):
+    response = tool_takeout(
+        yaml_path=yaml_path,
+        entries=[{"record_id": record_id, "from": from_slot}],
+        date_str=date_str,
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+        source=source,
+        auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
+    )
+    return _flatten_single_preview(response)
+
+
+def tool_record_move(
+    yaml_path,
+    record_id,
+    from_slot,
+    to_slot,
+    date_str=None,
+    dry_run=False,
+    execution_mode=None,
+    actor_context=None,
+    source="tool_api",
+    auto_backup=True,
+    request_backup_path=None,
+):
+    response = tool_move(
+        yaml_path=yaml_path,
+        entries=[{"record_id": record_id, "from": from_slot, "to": to_slot}],
+        date_str=date_str,
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+        source=source,
+        auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
+    )
+    return _flatten_single_preview(response)
 
 
 def make_record(rec_id=1, box=1, position=None, **extra):
@@ -356,7 +450,7 @@ class AuditTrailTests(unittest.TestCase):
                 date_str="2026-02-10",
             )
             rows = _read_audit(td)
-            thaw_rows = [r for r in rows if r.get("action") == "record_takeout"]
+            thaw_rows = [r for r in rows if r.get("action") == "takeout"]
             self.assertGreaterEqual(len(thaw_rows), 1)
 
     def test_successful_batch_writes_audit(self):
@@ -374,7 +468,7 @@ class AuditTrailTests(unittest.TestCase):
                 date_str="2026-02-10",
             )
             rows = _read_audit(td)
-            batch_rows = [r for r in rows if r.get("action") == "batch_takeout"]
+            batch_rows = [r for r in rows if r.get("action") == "takeout"]
             self.assertGreaterEqual(len(batch_rows), 1)
 
     def test_failed_add_writes_failed_audit(self):

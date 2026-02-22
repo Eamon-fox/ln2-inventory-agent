@@ -1,6 +1,11 @@
 """Write-operation facade for Tool API."""
 
-from . import write_add_edit, write_rollback_box, write_takeout_batch, write_takeout_single
+from . import (
+    write_add_edit,
+    write_rollback_box,
+    write_set_box_tag,
+    write_takeout_batch,
+)
 
 
 _EDITABLE_FIELDS = write_add_edit._EDITABLE_FIELDS
@@ -62,10 +67,6 @@ def tool_edit_entry(
     )
 
 
-def tool_list_backups(yaml_path):
-    return write_rollback_box.tool_list_backups(yaml_path=yaml_path)
-
-
 def tool_rollback(
     yaml_path,
     backup_path=None,
@@ -90,39 +91,7 @@ def tool_rollback(
     )
 
 
-def _tool_record_takeout_impl(
-    yaml_path,
-    record_id,
-    position=None,
-    date_str=None,
-    action="takeout",
-    to_position=None,
-    to_box=None,
-    dry_run=False,
-    execution_mode=None,
-    actor_context=None,
-    source="tool_api",
-    auto_backup=True,
-    request_backup_path=None,
-):
-    return write_takeout_single._tool_record_takeout_impl(
-        yaml_path=yaml_path,
-        record_id=record_id,
-        position=position,
-        date_str=date_str,
-        action=action,
-        to_position=to_position,
-        to_box=to_box,
-        dry_run=dry_run,
-        execution_mode=execution_mode,
-        actor_context=actor_context,
-        source=source,
-        auto_backup=auto_backup,
-        request_backup_path=request_backup_path,
-    )
-
-
-def _tool_batch_takeout_impl(
+def _tool_takeout_impl(
     yaml_path,
     entries,
     date_str,
@@ -133,8 +102,9 @@ def _tool_batch_takeout_impl(
     source="tool_api",
     auto_backup=True,
     request_backup_path=None,
+    tool_name="tool_takeout",
 ):
-    return write_takeout_batch._tool_batch_takeout_impl(
+    return write_takeout_batch._tool_takeout_impl(
         yaml_path=yaml_path,
         entries=entries,
         date_str=date_str,
@@ -145,6 +115,7 @@ def _tool_batch_takeout_impl(
         source=source,
         auto_backup=auto_backup,
         request_backup_path=request_backup_path,
+        tool_name=tool_name,
     )
 
 
@@ -167,6 +138,30 @@ def _tool_adjust_box_count_impl(
         count=count,
         box=box,
         renumber_mode=renumber_mode,
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+        source=source,
+        auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
+    )
+
+
+def tool_set_box_tag(
+    yaml_path,
+    box,
+    tag="",
+    dry_run=False,
+    execution_mode=None,
+    actor_context=None,
+    source="tool_api",
+    auto_backup=True,
+    request_backup_path=None,
+):
+    return write_set_box_tag.tool_set_box_tag(
+        yaml_path=yaml_path,
+        box=box,
+        tag=tag,
         dry_run=dry_run,
         execution_mode=execution_mode,
         actor_context=actor_context,

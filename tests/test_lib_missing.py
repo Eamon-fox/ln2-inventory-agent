@@ -1,7 +1,7 @@
 ﻿"""Missing unit tests for lib/ layer modules.
 
 Tests for:
-- yaml_ops.py: backup, warnings, diff functions
+- yaml_ops.py: backup, warnings
 - validators.py: date normalization, action validation, conflict checks
 - operations.py: find_record, check_conflicts, get_next_id
 - takeout_parser.py: normalization, extraction, position activity
@@ -17,7 +17,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from lib.yaml_ops import (
-    _diff_record_ids,
     create_yaml_backup,
     emit_capacity_warnings,
     get_yaml_size_warning,
@@ -168,46 +167,6 @@ class YamlOpsWarningTests(unittest.TestCase):
             yaml_path.write_text("small")
             warning = get_yaml_size_warning(path=str(yaml_path), warn_mb=10)
             self.assertIsNone(warning)
-
-
-class DiffRecordIdsTests(unittest.TestCase):
-    """Test _diff_record_ids functionality."""
-
-    def test_diff_records_added(self):
-        """Test detecting added records."""
-        before = [make_record(1)]
-        after = [make_record(1), make_record(2)]
-        diff = _diff_record_ids(before, after)
-        self.assertEqual([2], diff["added"])
-        self.assertEqual([], diff["removed"])
-        self.assertEqual([], diff["updated"])
-
-    def test_diff_records_removed(self):
-        """Test detecting removed records."""
-        before = [make_record(1), make_record(2)]
-        after = [make_record(1)]
-        diff = _diff_record_ids(before, after)
-        self.assertEqual([], diff["added"])
-        self.assertEqual([2], diff["removed"])
-        self.assertEqual([], diff["updated"])
-
-    def test_diff_records_updated(self):
-        """Test detecting updated records."""
-        before = [make_record(1)]
-        after = [make_record(1)]
-        after[0]["note"] = "updated"
-        diff = _diff_record_ids(before, after)
-        self.assertEqual([], diff["added"])
-        self.assertEqual([], diff["removed"])
-        self.assertEqual([1], diff["updated"])
-
-    def test_diff_records_no_changes(self):
-        """Test no changes detection."""
-        records = [make_record(1), make_record(2)]
-        diff = _diff_record_ids(records, records)
-        self.assertEqual([], diff["added"])
-        self.assertEqual([], diff["removed"])
-        self.assertEqual([], diff["updated"])
 
 
 # --- validators.py Tests ---

@@ -114,6 +114,29 @@ class YamlOpsWriteTests(unittest.TestCase):
 
 
 class YamlOpsSafetyTests(unittest.TestCase):
+    def test_audit_seq_increases_monotonically(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_audit_seq_monotonic_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+            write_yaml(
+                make_data([make_record(1, box=1, position=2)]),
+                path=str(yaml_path),
+                audit_meta={"action": "touch_1", "source": "tests"},
+            )
+            write_yaml(
+                make_data([make_record(1, box=1, position=3)]),
+                path=str(yaml_path),
+                audit_meta={"action": "touch_2", "source": "tests"},
+            )
+
+            rows = read_audit_events(str(yaml_path))
+            seqs = [int(row.get("audit_seq")) for row in rows]
+            self.assertEqual([1, 2, 3], seqs)
+
     def test_write_yaml_creates_backup_and_audit(self):
         with tempfile.TemporaryDirectory(prefix="ln2_safety_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
@@ -147,13 +170,21 @@ class YamlOpsSafetyTests(unittest.TestCase):
             last = lines[-1]
             self.assertEqual("add_entry", last["action"])
             self.assertEqual("tests", last["source"])
-            self.assertIn(2, last["changed_ids"]["added"])
-            self.assertTrue(last["backup_path"])
+            self.assertFalse(last.get("backup_path"))
+            self.assertGreater(int(last.get("audit_seq") or 0), 0)
             self.assertTrue(last.get("session_id"))
             self.assertTrue(last.get("trace_id"))
             self.assertNotIn("actor_type", last)
             self.assertNotIn("actor_id", last)
             self.assertNotIn("channel", last)
+            self.assertNotIn("user", last)
+            self.assertNotIn("host", last)
+            self.assertNotIn("size_bytes", last)
+            self.assertNotIn("size_mb", last)
+            self.assertNotIn("before", last)
+            self.assertNotIn("after", last)
+            self.assertNotIn("delta", last)
+            self.assertNotIn("changed_ids", last)
             self.assertEqual("success", last.get("status"))
 
     def test_audit_logs_are_isolated_per_yaml_file(self):
@@ -218,7 +249,7 @@ class YamlOpsSafetyTests(unittest.TestCase):
             canonical_path = Path(candidates[0])
             canonical_event = {
                 "timestamp": "2026-02-20T08:00:00",
-                "action": "record_takeout",
+                "action": "takeout",
                 "status": "success",
                 "source": "tests",
             }
@@ -229,7 +260,7 @@ class YamlOpsSafetyTests(unittest.TestCase):
 
             events = read_audit_events(str(yaml_path))
             actions = [str(ev.get("action") or "") for ev in events]
-            self.assertIn("record_takeout", actions)
+            self.assertIn("takeout", actions)
 
     def test_instance_guard_stable_on_same_path(self):
         with tempfile.TemporaryDirectory(prefix="ln2_instance_guard_stable_") as temp_dir:
@@ -303,8 +334,9 @@ class YamlOpsSafetyTests(unittest.TestCase):
             self.assertEqual(str(src_path.resolve()), details.get("instance_guard_origin_path_before"))
             self.assertEqual(str(dst_path.resolve()), details.get("instance_guard_origin_path_after"))
             self.assertEqual(dst_after_id, last.get("inventory_instance_id"))
-            backup_path = str(last.get("backup_path") or "")
-            self.assertIn(dst_after_id, backup_path)
+            self.assertFalse(last.get("backup_path"))
+            backups = list_yaml_backups(str(dst_path))
+            self.assertTrue(any(dst_after_id in str(path) for path in backups))
 
     def test_instance_guard_copy_then_delete_origin_is_treated_as_rename(self):
         with tempfile.TemporaryDirectory(prefix="ln2_instance_guard_copy_del_") as temp_dir:

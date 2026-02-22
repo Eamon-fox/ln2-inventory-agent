@@ -1,4 +1,4 @@
-"""Batch move helpers for Tool API write operations."""
+"""Move helpers for Tool API write operations."""
 
 from collections import defaultdict
 from copy import deepcopy
@@ -101,7 +101,7 @@ def _resolve_destination_or_error(
 
     if dest_idx in touched_indices:
         return None, (
-            f"Row {row_idx} ID {record_id}: target position {to_pos} has already been moved in this batch"
+            f"Row {row_idx} ID {record_id}: target position {to_pos} has already been moved in this request"
         )
 
     dest_record = records[dest_idx]
@@ -214,7 +214,7 @@ def _build_move_operation(
     return op
 
 
-def _build_batch_move_plan(
+def _build_move_plan(
     *,
     records,
     normalized_entries,
@@ -348,7 +348,7 @@ def _build_batch_move_plan(
     }
 
 
-def _persist_batch_move_plan(
+def _persist_move_plan(
     *,
     data,
     records,
@@ -459,7 +459,7 @@ def _persist_batch_move_plan(
             tool_input=tool_input,
             before_data=data,
             exc=exc,
-            message_prefix="Batch update failed",
+            message_prefix="Move update failed",
             details=details,
         )
 

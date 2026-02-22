@@ -96,7 +96,7 @@ TOOL_CONTRACTS = {
         },
     },
     "query_takeout_events": {
-        "description": "Query takeout/move event records.",
+        "description": "Query takeout/move events, or request aggregated summary by range.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -106,19 +106,26 @@ TOOL_CONTRACTS = {
                 "end_date": {"type": "string"},
                 "action": {"type": "string"},
                 "max_records": {"type": "integer", "minimum": 0},
+                "view": {"type": "string", "enum": ["events", "summary"]},
+                "range": {"type": "string", "enum": ["7d", "30d", "90d", "all"]},
             },
             "required": [],
             "additionalProperties": False,
         },
     },
-    "query_takeout_summary": {
-        "description": "Query timeline summary with a fixed range selector.",
+    "list_audit_timeline": {
+        "description": "List persisted audit-table timeline rows sorted by audit_seq desc. Use action=backup rows as the source of truth for rollback backup_path selection.",
         "parameters": {
             "type": "object",
             "properties": {
-                "range": {"type": "string", "enum": ["7d", "30d", "90d", "all"]},
+                "limit": {"type": "integer", "minimum": 1},
+                "offset": {"type": "integer", "minimum": 0},
+                "action_filter": {"type": "string"},
+                "status_filter": {"type": "string"},
+                "start_date": {"type": "string"},
+                "end_date": {"type": "string"},
             },
-            "required": ["range"],
+            "required": [],
             "additionalProperties": False,
         },
     },
@@ -165,9 +172,23 @@ TOOL_CONTRACTS = {
             "additionalProperties": False,
         },
     },
+    "run_terminal": {
+        "description": "Run one terminal command as-is and return raw terminal output.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "Terminal command text to execute exactly as provided.",
+                },
+            },
+            "required": ["command"],
+            "additionalProperties": False,
+        },
+    },
     "add_entry": {
-        "description": "Add new frozen tube records.",
-        "notes": "Provide sample metadata through fields object using declared keys (e.g. fields.cell_line, fields.note, fields.<custom_field>).",
+        "description": "Add new frozen tube records in one box; `positions` can be batched, while one shared `fields` object applies to every created tube in that call.",
+        "notes": "Provide sample metadata through `fields` using declared keys (e.g. fields.cell_line, fields.note, fields.<custom_field>). Per-position metadata is not supported; split into multiple add_entry calls (or staged items) when cell_line/note differs.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -202,47 +223,8 @@ TOOL_CONTRACTS = {
             "additionalProperties": False,
         },
     },
-    "record_takeout": {
-        "description": "Record takeout for one tube using explicit source box/position.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "record_id": {"type": "integer", "minimum": 1},
-                "from_box": {"type": "integer", "minimum": 1},
-                "from_position": _POSITION_VALUE_SCHEMA,
-                "date": {"type": "string"},
-                "dry_run": {"type": "boolean"},
-            },
-            "required": ["record_id", "from_box", "from_position", "date"],
-            "additionalProperties": False,
-        },
-    },
-    "record_move": {
-        "description": "Record move for one tube using explicit source/target box+position.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "record_id": {"type": "integer", "minimum": 1},
-                "from_box": {"type": "integer", "minimum": 1},
-                "from_position": _POSITION_VALUE_SCHEMA,
-                "to_box": {"type": "integer", "minimum": 1},
-                "to_position": _POSITION_VALUE_SCHEMA,
-                "date": {"type": "string"},
-                "dry_run": {"type": "boolean"},
-            },
-            "required": [
-                "record_id",
-                "from_box",
-                "from_position",
-                "to_box",
-                "to_position",
-                "date",
-            ],
-            "additionalProperties": False,
-        },
-    },
-    "batch_takeout": {
-        "description": "Record takeout for multiple tubes using explicit source box/position.",
+    "takeout": {
+        "description": "Record takeout for one or more tubes using explicit source box/position.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -258,8 +240,8 @@ TOOL_CONTRACTS = {
             "additionalProperties": False,
         },
     },
-    "batch_move": {
-        "description": "Record move for multiple tubes using explicit source/target box+position.",
+    "move": {
+        "description": "Record move for one or more tubes using explicit source/target box+position.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -276,8 +258,8 @@ TOOL_CONTRACTS = {
         },
     },
     "rollback": {
-        "description": "Rollback inventory YAML to a backup snapshot using explicit backup_path.",
-        "notes": "Always provide explicit backup_path.",
+        "description": "Rollback inventory YAML to a backup snapshot using explicit backup_path from list_audit_timeline.",
+        "notes": "Always provide explicit backup_path selected from action=backup rows in list_audit_timeline.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -287,23 +269,13 @@ TOOL_CONTRACTS = {
             "additionalProperties": False,
         },
     },
-    "manage_boxes_add": {
-        "description": "Safely add inventory boxes.",
+    "manage_boxes": {
+        "description": "Safely add/remove inventory boxes (human confirmation required).",
         "parameters": {
             "type": "object",
             "properties": {
+                "action": {"type": "string", "enum": ["add", "remove"]},
                 "count": {"type": "integer", "minimum": 1},
-                "dry_run": {"type": "boolean"},
-            },
-            "required": ["count"],
-            "additionalProperties": False,
-        },
-    },
-    "manage_boxes_remove": {
-        "description": "Safely remove one inventory box.",
-        "parameters": {
-            "type": "object",
-            "properties": {
                 "box": {"type": "integer", "minimum": 1},
                 "renumber_mode": {
                     "type": "string",
@@ -311,7 +283,7 @@ TOOL_CONTRACTS = {
                 },
                 "dry_run": {"type": "boolean"},
             },
-            "required": ["box"],
+            "required": ["action"],
             "additionalProperties": False,
         },
     },
@@ -333,32 +305,15 @@ TOOL_CONTRACTS = {
             "additionalProperties": False,
         },
     },
-    "staged_list": {
-        "description": "List staged plan items.",
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": False,
-        },
-    },
-    "staged_remove": {
-        "description": "Remove one staged plan item by index.",
+    "staged_plan": {
+        "description": "List/remove/clear staged plan items.",
         "parameters": {
             "type": "object",
             "properties": {
+                "action": {"type": "string", "enum": ["list", "remove", "clear"]},
                 "index": {"type": "integer", "minimum": 0},
             },
-            "required": ["index"],
-            "additionalProperties": False,
-        },
-    },
-    "staged_clear": {
-        "description": "Clear all staged plan items.",
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "required": [],
+            "required": ["action"],
             "additionalProperties": False,
         },
     },
@@ -368,10 +323,8 @@ TOOL_CONTRACTS = {
 WRITE_TOOLS = {
     "add_entry",
     "edit_entry",
-    "record_takeout",
-    "record_move",
-    "batch_takeout",
-    "batch_move",
+    "takeout",
+    "move",
     "rollback",
 }
 

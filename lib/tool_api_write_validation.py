@@ -1,16 +1,57 @@
 """Write-tool execution gate and request validation helpers."""
 
-from .migrate_cell_line_policy import migrate_cell_line_policy
+import os
+
 from .takeout_parser import normalize_action
 from .validators import validate_date
+from .yaml_ops import append_backup_event, create_yaml_backup
 
 
 _ALLOWED_EXECUTION_MODES = {"direct", "preflight", "execute"}
+_BOX_TAG_MAX_LENGTH = 80
 
 
 def _normalize_execution_mode(execution_mode):
     mode = str(execution_mode or "").strip().lower()
     return mode or "direct"
+
+
+def resolve_request_backup_path(
+    *,
+    yaml_path,
+    execution_mode=None,
+    dry_run=False,
+    request_backup_path=None,
+    backup_event_source=None,
+):
+    """Return execute-mode request snapshot path, creating it when needed.
+
+    - Dry-run or non-execute modes return ``None``.
+    - Execute mode accepts an explicit ``request_backup_path`` and normalizes it
+      to absolute path.
+    - Otherwise, create one snapshot from ``yaml_path`` and return its absolute
+      path, then append one ``action=backup`` audit event. Failure raises
+      ``RuntimeError`` for callers to surface consistently.
+    """
+    if bool(dry_run):
+        return None
+    if _normalize_execution_mode(execution_mode) != "execute":
+        return None
+
+    candidate = str(request_backup_path or "").strip()
+    if candidate:
+        return os.path.abspath(candidate)
+
+    created = create_yaml_backup(yaml_path)
+    if not created:
+        raise RuntimeError("Failed to create request-level backup before execute write.")
+    created_abs = os.path.abspath(str(created))
+    append_backup_event(
+        yaml_path=yaml_path,
+        backup_path=created_abs,
+        source=str(backup_event_source or "write_gate"),
+    )
+    return created_abs
 
 
 def _enforce_execute_mode_for_source(source):
@@ -80,39 +121,7 @@ def _validate_edit_entry_request(payload):
     return None, {}
 
 
-def _validate_record_takeout_request(payload):
-    date_str = payload.get("date_str")
-    action = payload.get("action")
-    to_position = payload.get("to_position")
-
-    if not validate_date(date_str):
-        return {
-            "error_code": "invalid_date",
-            "message": f"Invalid date format: {date_str}",
-            "details": {"date": date_str},
-        }, {}
-
-    action_en = normalize_action(action)
-    if not action_en:
-        return {
-            "error_code": "invalid_action",
-            "message": "Action must be takeout/move",
-            "details": {"action": action},
-        }, {}
-
-    normalized = {"action_en": action_en, "move_to_position": None}
-    if action_en == "move":
-        if to_position in (None, ""):
-            return {
-                "error_code": "invalid_move_target",
-                "message": "Move operation requires to_position (target position)",
-            }, normalized
-        normalized["move_to_position"] = to_position
-
-    return None, normalized
-
-
-def _validate_batch_takeout_request(payload):
+def _validate_takeout_request(payload):
     date_str = payload.get("date_str")
     action = payload.get("action")
     entries = payload.get("entries")
@@ -162,13 +171,57 @@ def _validate_adjust_box_count_request(payload):
     return None, {"op": op}
 
 
+def _validate_set_box_tag_request(payload):
+    try:
+        box = int(payload.get("box"))
+    except Exception:
+        return {
+            "error_code": "invalid_box",
+            "message": "box must be an integer",
+            "details": {"box": payload.get("box")},
+        }, {}
+    if box <= 0:
+        return {
+            "error_code": "invalid_box",
+            "message": "box must be >= 1",
+            "details": {"box": box},
+        }, {}
+
+    raw_tag = payload.get("tag", "")
+    tag_text = "" if raw_tag is None else str(raw_tag)
+    if "\n" in tag_text or "\r" in tag_text:
+        return {
+            "error_code": "invalid_tag",
+            "message": "Box tag must be a single line",
+            "details": {"max_length": _BOX_TAG_MAX_LENGTH},
+        }, {}
+    if len(tag_text.strip()) > _BOX_TAG_MAX_LENGTH:
+        return {
+            "error_code": "invalid_tag",
+            "message": f"Box tag must be <= {_BOX_TAG_MAX_LENGTH} characters",
+            "details": {"max_length": _BOX_TAG_MAX_LENGTH},
+        }, {}
+    return None, {"box": box}
+
+
+def _validate_rollback_request(payload):
+    backup_path = str(payload.get("backup_path") or "").strip()
+    if not backup_path:
+        return {
+            "error_code": "missing_backup_path",
+            "message": "backup_path must be a non-empty string",
+        }, {}
+    return None, {"backup_path": backup_path}
+
+
 _WRITE_REQUEST_VALIDATORS = {
     "tool_add_entry": _validate_add_entry_request,
     "tool_edit_entry": _validate_edit_entry_request,
-    "tool_record_takeout": _validate_record_takeout_request,
-    "tool_batch_takeout": _validate_batch_takeout_request,
-    "tool_rollback": lambda _payload: (None, {}),
+    "tool_takeout": _validate_takeout_request,
+    "tool_move": _validate_takeout_request,
+    "tool_rollback": _validate_rollback_request,
     "tool_adjust_box_count": _validate_adjust_box_count_request,
+    "tool_set_box_tag": _validate_set_box_tag_request,
 }
 
 
@@ -266,34 +319,6 @@ def validate_write_tool_call(
             )
     else:
         normalized = {}
-
-    if (not bool(dry_run)) and normalized_mode == "execute" and tool_name != "tool_rollback":
-        migration_result = migrate_cell_line_policy(
-            yaml_path=yaml_path,
-            dry_run=False,
-            auto_backup=False,
-            request_backup_path=request_backup_path,
-            audit_source="tool_api.validate_write_tool_call",
-        )
-        if not migration_result.get("ok"):
-            migration_code = migration_result.get("error_code", "migration_failed")
-            migration_message = migration_result.get("message", "Unknown migration error")
-            return failure_result_fn(
-                yaml_path=yaml_path,
-                action=action,
-                source=source,
-                tool_name=tool_name,
-                error_code="migration_failed",
-                message=(
-                    "Write blocked: failed to normalize cell_line policy before write "
-                    f"({migration_code}): {migration_message}"
-                ),
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=before_data,
-                details={"migration_error_code": migration_code},
-                extra={"migration": migration_result},
-            )
 
     return {
         "ok": True,

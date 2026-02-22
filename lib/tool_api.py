@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 from .position_fmt import (
     get_box_numbers,
 )
-from .migrate_takeout_actions import migrate_takeout_actions
 from .takeout_parser import extract_events
 from .validators import (
     format_validation_errors,
@@ -234,8 +233,7 @@ _enforce_execute_mode_for_source = _write_validation._enforce_execute_mode_for_s
 _validate_execution_gate = _write_validation._validate_execution_gate
 _validate_add_entry_request = _write_validation._validate_add_entry_request
 _validate_edit_entry_request = _write_validation._validate_edit_entry_request
-_validate_record_takeout_request = _write_validation._validate_record_takeout_request
-_validate_batch_takeout_request = _write_validation._validate_batch_takeout_request
+_validate_takeout_request = _write_validation._validate_takeout_request
 _validate_adjust_box_count_request = _write_validation._validate_adjust_box_count_request
 _WRITE_REQUEST_VALIDATORS = _write_validation._WRITE_REQUEST_VALIDATORS
 
@@ -368,19 +366,9 @@ def tool_edit_entry(
     return _format_tool_response_positions(response, yaml_path=yaml_path)
 
 
-tool_record_takeout = _write_v2.tool_record_takeout
-tool_record_move = _write_v2.tool_record_move
-_tool_record_takeout_impl = _write_v2._tool_record_takeout_impl
-tool_batch_takeout = _write_v2.tool_batch_takeout
-tool_batch_move = _write_v2.tool_batch_move
-_tool_batch_takeout_impl = _write_v2._tool_batch_takeout_impl
-
-def tool_list_backups(yaml_path):
-    from .tool_api_impl import write_ops as _write_ops
-
-    response = _write_ops.tool_list_backups(yaml_path=yaml_path)
-    return _format_tool_response_positions(response, yaml_path=yaml_path)
-
+tool_takeout = _write_v2.tool_takeout
+tool_move = _write_v2.tool_move
+_tool_takeout_impl = _write_v2._tool_takeout_impl
 
 def tool_rollback(
     yaml_path,
@@ -468,6 +456,34 @@ def _tool_adjust_box_count_impl(
     )
     return _format_tool_response_positions(response, yaml_path=yaml_path)
 
+
+def tool_set_box_tag(
+    yaml_path,
+    box,
+    tag="",
+    dry_run=False,
+    execution_mode=None,
+    actor_context=None,
+    source="tool_api",
+    auto_backup=True,
+    request_backup_path=None,
+):
+    from .tool_api_impl import write_ops as _write_ops
+
+    response = _write_ops.tool_set_box_tag(
+        yaml_path=yaml_path,
+        box=box,
+        tag=tag,
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+        source=source,
+        auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
+    )
+    return _format_tool_response_positions(response, yaml_path=yaml_path)
+
+
 def tool_export_inventory_csv(yaml_path, output_path):
     from .tool_api_impl import read_ops as _read_ops
 
@@ -554,26 +570,6 @@ def tool_query_takeout_events(
     return _format_tool_response_positions(response, yaml_path=yaml_path)
 
 
-def tool_migrate_takeout_actions(
-    yaml_path,
-    dry_run=False,
-    auto_backup=True,
-):
-    """One-click migration for legacy thaw/discard events.
-
-    Converts stored event actions to canonical values:
-    - thaw/discard -> takeout
-    - takeout/move stay unchanged
-    """
-    response = migrate_takeout_actions(
-        yaml_path=yaml_path,
-        dry_run=bool(dry_run),
-        auto_backup=bool(auto_backup),
-        audit_source="tool_api",
-    )
-    return _format_tool_response_positions(response, yaml_path=yaml_path)
-
-
 def _collect_timeline_events(records, days=None):
     timeline = defaultdict(lambda: {"frozen": [], "takeout": [], "move": []})
     cutoff_str = None
@@ -606,6 +602,29 @@ def tool_collect_timeline(yaml_path, days=30, all_history=False):
         yaml_path=yaml_path,
         days=days,
         all_history=all_history,
+    )
+    return _format_tool_response_positions(response, yaml_path=yaml_path)
+
+
+def tool_list_audit_timeline(
+    yaml_path,
+    limit=50,
+    offset=0,
+    action_filter=None,
+    status_filter=None,
+    start_date=None,
+    end_date=None,
+):
+    from .tool_api_impl import read_ops as _read_ops
+
+    response = _read_ops.tool_list_audit_timeline(
+        yaml_path=yaml_path,
+        limit=limit,
+        offset=offset,
+        action_filter=action_filter,
+        status_filter=status_filter,
+        start_date=start_date,
+        end_date=end_date,
     )
     return _format_tool_response_positions(response, yaml_path=yaml_path)
 

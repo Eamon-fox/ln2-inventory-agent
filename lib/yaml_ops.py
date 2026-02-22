@@ -1,12 +1,10 @@
 """
 YAML file operations for LN2 inventory
 """
-import getpass
 import hashlib
 import json
 import os
 import shutil
-import socket
 import sys
 import uuid
 from contextlib import suppress
@@ -469,8 +467,7 @@ def read_audit_events(yaml_path=YAML_PATH, limit=None):
         except Exception:
             pass
 
-    # Keep chronological order so callers can reliably use events[-1] as latest.
-    events.sort(key=lambda e: str(e.get("timestamp", "")))
+    # Keep file append order so callers can reliably use events[-1] as latest.
     if limit is not None:
         return events[: max(0, int(limit))]
     return events
@@ -597,58 +594,52 @@ def emit_yaml_size_warning(path=YAML_PATH, warn_mb=YAML_SIZE_WARNING_MB):
     return warning
 
 
-def _serialize_record(rec):
-    return json.dumps(rec, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
-
-
-def _sorted_ids(values):
-    return sorted(values, key=lambda v: str(v))
-
-
-def _diff_record_ids(before_records, after_records):
-    before = {}
-    for rec in before_records or []:
-        rec_id = rec.get("id")
-        if rec_id is not None:
-            before[rec_id] = _serialize_record(rec)
-
-    after = {}
-    for rec in after_records or []:
-        rec_id = rec.get("id")
-        if rec_id is not None:
-            after[rec_id] = _serialize_record(rec)
-
-    before_ids = set(before.keys())
-    after_ids = set(after.keys())
-
-    added = _sorted_ids(after_ids - before_ids)
-    removed = _sorted_ids(before_ids - after_ids)
-    updated = _sorted_ids(
-        rec_id for rec_id in (before_ids & after_ids) if before[rec_id] != after[rec_id]
-    )
-
-    return {
-        "added": added,
-        "removed": removed,
-        "updated": updated,
-    }
-
-
-def _delta_stats(before_stats, after_stats):
-    if not before_stats or not after_stats:
+def _coerce_audit_seq(value):
+    try:
+        seq = int(value)
+    except Exception:
         return None
-    return {
-        "record_count": after_stats["record_count"] - before_stats["record_count"],
-        "total_occupied": after_stats["total_occupied"] - before_stats["total_occupied"],
-        "total_empty": after_stats["total_empty"] - before_stats["total_empty"],
-    }
+    if seq <= 0:
+        return None
+    return seq
+
+
+def _next_audit_seq(log_path):
+    if not os.path.exists(log_path):
+        return 1
+
+    valid_count = 0
+    max_seq = 0
+    try:
+        with open(log_path, "r", encoding="utf-8") as f:
+            for line in f:
+                text = str(line or "").strip()
+                if not text:
+                    continue
+                try:
+                    row = json.loads(text)
+                except Exception:
+                    continue
+                valid_count += 1
+                seq = _coerce_audit_seq((row or {}).get("audit_seq"))
+                if seq and seq > max_seq:
+                    max_seq = seq
+    except Exception:
+        return 1
+
+    return max(max_seq, valid_count) + 1
 
 
 def _append_audit_event(yaml_path, event):
     log_path = _audit_log_path(yaml_path)
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    payload = dict(event or {})
+    seq = _coerce_audit_seq(payload.get("audit_seq"))
+    if seq is None:
+        seq = _next_audit_seq(log_path)
+    payload["audit_seq"] = seq
     with open(log_path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(event, ensure_ascii=False, sort_keys=True))
+        f.write(json.dumps(payload, ensure_ascii=False, sort_keys=True))
         f.write("\n")
     return log_path
 
@@ -661,15 +652,7 @@ def _build_audit_event(
     warnings,
     audit_meta,
 ):
-    before_stats = collect_inventory_stats(before_data) if isinstance(before_data, dict) else None
-    after_stats = collect_inventory_stats(after_data) if isinstance(after_data, dict) else None
-    before_records = before_data.get("inventory", []) if isinstance(before_data, dict) else []
-    after_records = after_data.get("inventory", []) if isinstance(after_data, dict) else []
-    changed_ids = _diff_record_ids(before_records, after_records)
-
     yaml_abs = _abs_path(yaml_path)
-    size_bytes = os.path.getsize(yaml_abs) if os.path.exists(yaml_abs) else None
-    size_mb = (size_bytes / (1024 * 1024)) if size_bytes is not None else None
 
     meta = dict(audit_meta or {})
     details = meta.get("details")
@@ -689,8 +672,6 @@ def _build_audit_event(
 
     event = {
         "timestamp": datetime.now().isoformat(timespec="seconds"),
-        "user": getpass.getuser(),
-        "host": socket.gethostname(),
         "action": meta.get("action", "write_yaml"),
         "source": meta.get("source", "lib.yaml_ops.write_yaml"),
         "session_id": session_id,
@@ -702,13 +683,7 @@ def _build_audit_event(
         "error": error,
         "yaml_path": yaml_abs,
         "backup_path": backup_path,
-        "size_bytes": size_bytes,
-        "size_mb": round(size_mb, 4) if size_mb is not None else None,
         "warnings": warnings or [],
-        "before": before_stats,
-        "after": after_stats,
-        "delta": _delta_stats(before_stats, after_stats),
-        "changed_ids": changed_ids,
         "details": details,
     }
     return event
@@ -734,6 +709,42 @@ def append_audit_event(
     return _append_audit_event(yaml_path, event)
 
 
+def append_backup_event(
+    yaml_path,
+    backup_path,
+    source="lib.tool_api_write_validation.resolve_request_backup_path",
+    details=None,
+):
+    backup_abs = str(backup_path or "").strip()
+    if not backup_abs:
+        raise ValueError("backup_path is required for append_backup_event")
+    backup_abs = _abs_path(backup_abs)
+
+    current_data = None
+    try:
+        current_data = load_yaml(yaml_path)
+    except Exception:
+        current_data = None
+
+    meta = {
+        "action": "backup",
+        "source": str(source or "backup"),
+    }
+    detail_payload = {"kind": "request_backup"}
+    if isinstance(details, dict):
+        detail_payload.update({str(k): v for k, v in details.items()})
+    meta["details"] = detail_payload
+
+    return append_audit_event(
+        yaml_path=yaml_path,
+        before_data=current_data,
+        after_data=current_data,
+        backup_path=backup_abs,
+        warnings=[],
+        audit_meta=meta,
+    )
+
+
 def write_yaml(
     data,
     path=YAML_PATH,
@@ -748,8 +759,8 @@ def write_yaml(
         path: YAML output path
         auto_backup: Whether to create backup before overwrite
         backup_path: Optional pre-created backup path reference. When provided,
-            no new backup is created by this function and this path is attached
-            to audit events/return payload.
+            no new backup is created by this function and this path is returned
+            to caller as the effective backup reference.
         audit_meta: Optional dict for audit fields.
             Common keys: action/source/details, plus session_id, trace_id,
             tool_name, tool_input, status, error.
@@ -825,7 +836,7 @@ def write_yaml(
             yaml_path=yaml_abs,
             before_data=before_data,
             after_data=data,
-            backup_path=effective_backup_path,
+            backup_path=None,
             warnings=warnings,
             audit_meta=effective_audit_meta,
         )

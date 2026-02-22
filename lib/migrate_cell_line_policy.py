@@ -34,29 +34,17 @@ def _normalize_cell_line_value(raw_value: Any) -> Optional[str]:
     return text or None
 
 
-def migrate_cell_line_policy(
-    yaml_path: str,
-    *,
-    dry_run: bool = False,
-    auto_backup: bool = True,
-    request_backup_path: Optional[str] = None,
-    audit_source: str = "migration",
-) -> Dict[str, Any]:
-    """Normalize ``cell_line`` policy defaults and legacy record values.
+def normalize_cell_line_policy_data(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Return normalized ``cell_line`` policy data without touching disk.
 
-    Migration behavior:
-    - missing ``meta.cell_line_required`` -> ``True``
-    - normalize ``meta.cell_line_options`` to a list and ensure ``"Unknown"``
-    - missing/blank record ``cell_line`` -> ``"Unknown"``
-    - legacy non-empty record values not in options -> append to options
+    This is the in-memory normalizer used by write tools so policy fixes are
+    persisted together with the business write action in one audit event.
     """
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
+    if not isinstance(data, dict):
         return {
             "ok": False,
-            "error_code": "load_failed",
-            "message": f"Failed to load YAML: {exc}",
+            "error_code": "invalid_data",
+            "message": "YAML root must be a mapping.",
         }
 
     inventory = data.get("inventory")
@@ -147,6 +135,49 @@ def migrate_cell_line_policy(
         "stripped_value_records": stripped_value_records,
         "options_count": len(normalized_options),
     }
+    return {
+        "ok": True,
+        "data": candidate,
+        "changed": changed,
+        "summary": summary,
+    }
+
+
+def migrate_cell_line_policy(
+    yaml_path: str,
+    *,
+    dry_run: bool = False,
+    auto_backup: bool = True,
+    request_backup_path: Optional[str] = None,
+    audit_source: str = "migration",
+) -> Dict[str, Any]:
+    """Normalize ``cell_line`` policy defaults and legacy record values.
+
+    Migration behavior:
+    - missing ``meta.cell_line_required`` -> ``True``
+    - normalize ``meta.cell_line_options`` to a list and ensure ``"Unknown"``
+    - missing/blank record ``cell_line`` -> ``"Unknown"``
+    - legacy non-empty record values not in options -> append to options
+    """
+    try:
+        data = load_yaml(yaml_path)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error_code": "load_failed",
+            "message": f"Failed to load YAML: {exc}",
+        }
+
+    normalized = normalize_cell_line_policy_data(data)
+    if not normalized.get("ok"):
+        return {
+            "ok": False,
+            "error_code": normalized.get("error_code", "normalize_failed"),
+            "message": normalized.get("message", "Failed to normalize cell_line policy."),
+        }
+    candidate = normalized.get("data")
+    changed = bool(normalized.get("changed"))
+    summary = dict(normalized.get("summary") or {})
 
     if dry_run or not changed:
         return {
@@ -164,7 +195,6 @@ def migrate_cell_line_policy(
             auto_backup=auto_backup,
             backup_path=request_backup_path,
             audit_meta={
-                "action": "migrate_cell_line_policy",
                 "source": audit_source,
                 "tool_name": "migrate_cell_line_policy",
                 "details": summary,

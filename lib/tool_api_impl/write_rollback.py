@@ -2,13 +2,8 @@
 
 import os
 
-from ..yaml_ops import list_yaml_backups, load_yaml, rollback_yaml
+from ..yaml_ops import load_yaml, rollback_yaml
 from .write_common import api
-
-
-def tool_list_backups(yaml_path):
-    """List YAML backup files, newest first."""
-    return list_yaml_backups(yaml_path)
 
 
 def tool_rollback(
@@ -57,7 +52,7 @@ def tool_rollback(
         source=source,
         tool_name=tool_name,
         tool_input=tool_input,
-        payload={},
+        payload={"backup_path": backup_path},
         dry_run=dry_run,
         execution_mode=execution_mode,
         actor_context=actor_context,
@@ -73,16 +68,15 @@ def tool_rollback(
     except Exception:
         current_data = None
 
-    backups = list_yaml_backups(yaml_path)
-    request_snapshot = str(request_backup_path or "").strip()
-    if request_snapshot:
-        request_snapshot = os.path.abspath(request_snapshot)
-        backups = [p for p in backups if os.path.abspath(str(p)) != request_snapshot]
-    if not backups and not backup_path:
+    normalized = validation.get("normalized") if isinstance(validation, dict) else {}
+    normalized_backup_path = (
+        str((normalized or {}).get("backup_path") or backup_path or "").strip()
+    )
+    if not normalized_backup_path:
         payload = {
             "ok": False,
-            "error_code": "no_backups",
-            "message": "No backups available; rollback is not possible",
+            "error_code": "missing_backup_path",
+            "message": "backup_path must be a non-empty string",
         }
         if not dry_run:
             return api._failure_result(
@@ -98,16 +92,15 @@ def tool_rollback(
                 details=_details_for_target(),
             )
         return payload
-
-    target = backup_path or backups[0]
-    if dry_run and not os.path.exists(target):
+    target_backup_path = os.path.abspath(normalized_backup_path)
+    if dry_run and not os.path.exists(target_backup_path):
         return {
             "ok": False,
             "error_code": "backup_not_found",
-            "message": f"Backup not found: {target}",
+            "message": f"Backup not found: {target_backup_path}",
         }
     try:
-        backup_data = load_yaml(target)
+        backup_data = load_yaml(target_backup_path)
     except Exception as exc:
         payload = {
             "ok": False,
@@ -125,7 +118,7 @@ def tool_rollback(
                 actor_context=actor_context,
                 tool_input=tool_input,
                 before_data=current_data,
-                details=_details_for_target(target),
+                details=_details_for_target(target_backup_path),
             )
         return payload
 
@@ -144,7 +137,7 @@ def tool_rollback(
             "error_code": "rollback_backup_invalid",
             "message": validation_error.get("message", "Validation failed"),
             "errors": validation_error.get("errors"),
-            "backup_path": target,
+            "backup_path": target_backup_path,
         }
         if not dry_run:
             return api._failure_result(
@@ -158,8 +151,8 @@ def tool_rollback(
                 tool_input=tool_input,
                 before_data=current_data,
                 errors=payload.get("errors"),
-                details=_details_for_target(target),
-                extra={"backup_path": target},
+                details=_details_for_target(target_backup_path),
+                extra={"backup_path": target_backup_path},
             )
         return payload
 
@@ -168,21 +161,21 @@ def tool_rollback(
             "ok": True,
             "dry_run": True,
             "result": {
-                "requested_backup": target,
+                "requested_backup": target_backup_path,
             },
         }
 
     try:
         result = rollback_yaml(
             path=yaml_path,
-            backup_path=target,
+            backup_path=target_backup_path,
             request_backup_path=request_backup_path,
             audit_meta=api._build_audit_meta(
                 action=audit_action,
                 source=source,
                 tool_name=tool_name,
                 actor_context=actor_context,
-                details=_details_for_target(target),
+                details=_details_for_target(target_backup_path),
                 tool_input=tool_input,
             ),
         )
@@ -197,7 +190,7 @@ def tool_rollback(
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=current_data,
-            details=_details_for_target(target),
+            details=_details_for_target(target_backup_path),
         )
 
     return {

@@ -4,10 +4,6 @@ from . import write_adjust_box_count as _box_ops
 from . import write_rollback as _rollback_ops
 
 
-def tool_list_backups(yaml_path):
-    return _rollback_ops.tool_list_backups(yaml_path=yaml_path)
-
-
 def tool_rollback(
     yaml_path,
     backup_path=None,

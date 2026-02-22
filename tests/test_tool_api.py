@@ -16,23 +16,24 @@ from lib.tool_api import (
     build_actor_context,
     tool_add_entry,
     tool_adjust_box_count,
-    tool_batch_move,
-    tool_batch_takeout,
     tool_collect_timeline,
     tool_edit_entry,
     tool_export_inventory_csv,
-    tool_record_move,
-    tool_record_takeout,
+    tool_move,
     tool_rollback,
+    tool_set_box_tag,
+    tool_takeout,
 )
 from lib.tool_api import (
     tool_get_raw_entries,
+    tool_list_audit_timeline,
     tool_query_takeout_events,
     tool_recommend_positions,
     tool_search_records,
     tool_generate_stats,
     tool_list_empty_positions,
 )
+from lib.tool_api_write_validation import resolve_request_backup_path
 from lib.yaml_ops import (
     create_yaml_backup,
     get_audit_log_path,
@@ -40,6 +41,102 @@ from lib.yaml_ops import (
     read_audit_events,
     write_yaml,
 )
+
+
+def tool_batch_takeout(*args, **kwargs):
+    return tool_takeout(*args, **kwargs)
+
+
+def tool_batch_move(*args, **kwargs):
+    return tool_move(*args, **kwargs)
+
+
+def _flatten_single_preview(response):
+    if not isinstance(response, dict):
+        return response
+    preview = response.get("preview")
+    if not isinstance(preview, dict):
+        return response
+    operations = preview.get("operations")
+    if not isinstance(operations, list) or len(operations) != 1:
+        return response
+    op = operations[0]
+    if not isinstance(op, dict):
+        return response
+    flat_preview = dict(preview)
+    for key in (
+        "record_id",
+        "cell_line",
+        "short_name",
+        "box",
+        "position",
+        "old_position",
+        "new_position",
+        "to_position",
+        "swap_with_record_id",
+    ):
+        if key in op:
+            flat_preview[key] = op.get(key)
+    if "old_position" in op and "position_before" not in flat_preview:
+        flat_preview["position_before"] = op.get("old_position")
+    if "new_position" in op and "position_after" not in flat_preview:
+        flat_preview["position_after"] = op.get("new_position")
+    normalized = dict(response)
+    normalized["preview"] = flat_preview
+    return normalized
+
+
+def tool_record_takeout(
+    yaml_path,
+    record_id,
+    from_slot,
+    date_str=None,
+    dry_run=False,
+    execution_mode=None,
+    actor_context=None,
+    source="tool_api",
+    auto_backup=True,
+    request_backup_path=None,
+):
+    response = tool_takeout(
+        yaml_path=yaml_path,
+        entries=[{"record_id": record_id, "from": from_slot}],
+        date_str=date_str,
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+        source=source,
+        auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
+    )
+    return _flatten_single_preview(response)
+
+
+def tool_record_move(
+    yaml_path,
+    record_id,
+    from_slot,
+    to_slot,
+    date_str=None,
+    dry_run=False,
+    execution_mode=None,
+    actor_context=None,
+    source="tool_api",
+    auto_backup=True,
+    request_backup_path=None,
+):
+    response = tool_move(
+        yaml_path=yaml_path,
+        entries=[{"record_id": record_id, "from": from_slot, "to": to_slot}],
+        date_str=date_str,
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+        source=source,
+        auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
+    )
+    return _flatten_single_preview(response)
 
 
 def make_record(rec_id=1, box=1, position=None):
@@ -94,6 +191,31 @@ def read_audit_rows(temp_dir):
 
 
 class ToolApiTests(unittest.TestCase):
+    def test_resolve_request_backup_path_appends_backup_audit_event(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_request_backup_event_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            request_backup = resolve_request_backup_path(
+                yaml_path=str(yaml_path),
+                execution_mode="execute",
+                dry_run=False,
+                request_backup_path=None,
+                backup_event_source="tests.request_backup",
+            )
+            self.assertTrue(Path(request_backup).exists())
+
+            rows = read_audit_rows(temp_dir)
+            self.assertGreaterEqual(len(rows), 2)
+            last = rows[-1]
+            self.assertEqual("backup", last.get("action"))
+            self.assertEqual(str(Path(request_backup).resolve()), str(Path(last.get("backup_path")).resolve()))
+            self.assertGreater(int(last.get("audit_seq") or 0), 0)
+
     def test_tool_add_entry_writes_trace_session_metadata(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_add_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
@@ -460,7 +582,7 @@ class ToolApiTests(unittest.TestCase):
             self.assertFalse(result["ok"])
             self.assertEqual("validation_failed", result["error_code"])
             self.assertTrue(
-                any("already been moved in this batch" in err for err in result.get("errors", []))
+                any("already been moved in this request" in err for err in result.get("errors", []))
             )
 
     def test_tool_add_entry_rejects_duplicate_ids_in_inventory(self):
@@ -577,7 +699,7 @@ class ToolApiTests(unittest.TestCase):
                 date_str="2026-02-10",
             )
             self.assertFalse(bad_pos["ok"])
-            self.assertEqual("invalid_position", bad_pos["error_code"])
+            self.assertEqual("validation_failed", bad_pos["error_code"])
 
     def test_tool_add_entry_rejects_existing_position_conflicts(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_conflict_") as temp_dir:
@@ -641,17 +763,20 @@ class ToolApiTests(unittest.TestCase):
             write_yaml(
                 make_data([make_record(1, box=1, position=9)]),
                 path=str(yaml_path),
-                audit_meta={"action": "record_takeout", "source": "tests"},
+                audit_meta={"action": "takeout", "source": "tests"},
             )
 
             source_event = {
                 "timestamp": "2026-02-12T09:00:00",
-                "action": "record_takeout",
+                "action": "takeout",
                 "trace_id": "trace-audit-1",
                 "session_id": "session-audit-1",
             }
+            backup_path = create_yaml_backup(str(yaml_path))
+            self.assertIsNotNone(backup_path)
             result = tool_rollback(
                 yaml_path=str(yaml_path),
+                backup_path=str(backup_path),
                 source_event=source_event,
             )
 
@@ -666,7 +791,7 @@ class ToolApiTests(unittest.TestCase):
             details = last.get("details") or {}
             requested_from_event = details.get("requested_from_event") or {}
             self.assertEqual("2026-02-12T09:00:00", requested_from_event.get("timestamp"))
-            self.assertEqual("record_takeout", requested_from_event.get("action"))
+            self.assertEqual("takeout", requested_from_event.get("action"))
             self.assertEqual("trace-audit-1", requested_from_event.get("trace_id"))
             self.assertEqual("session-audit-1", requested_from_event.get("session_id"))
 
@@ -697,7 +822,7 @@ class ToolApiTests(unittest.TestCase):
                         "box": 1,
                         "position": 2,
                         "frozen_at": "2026-02-09",
-                        "note": "no cell line",
+                        "note": "中文备注",
                     },
                 ],
             }
@@ -717,7 +842,7 @@ class ToolApiTests(unittest.TestCase):
             self.assertIn("cell_line", response["result"]["columns"])
             self.assertIn("passage_number", response["result"]["columns"])
 
-            with output_path.open("r", encoding="utf-8", newline="") as handle:
+            with output_path.open("r", encoding="utf-8-sig", newline="") as handle:
                 rows = list(csv.DictReader(handle))
 
             self.assertEqual(2, len(rows))
@@ -731,6 +856,7 @@ class ToolApiTests(unittest.TestCase):
             self.assertEqual("9", rows[1]["position"])
             self.assertEqual("HeLa", rows[1]["cell_line"])
             self.assertEqual("7", rows[1]["passage_number"])
+            self.assertEqual("中文备注", rows[0]["note"])
 
     def test_tool_export_inventory_csv_requires_output_path(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_export_csv_path_") as temp_dir:
@@ -1195,6 +1321,106 @@ class ToolApiTests(unittest.TestCase):
             self.assertEqual(1, summary["move"])
             self.assertGreaterEqual(summary["total_ops"], 1)
 
+    def test_tool_list_audit_timeline_defaults_to_latest_50_rows(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_audit_timeline_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            for idx in range(55):
+                write_yaml(
+                    make_data([make_record(1, box=1, position=1)]),
+                    path=str(yaml_path),
+                    audit_meta={"action": "touch", "source": "tests", "details": {"seq": idx}},
+                )
+
+            response = tool_list_audit_timeline(str(yaml_path))
+            self.assertTrue(response["ok"])
+            result = response["result"]
+            self.assertEqual(50, result["limit"])
+            self.assertEqual(0, result["offset"])
+            self.assertEqual(50, len(result["items"]))
+            self.assertGreaterEqual(result["total"], 55)
+            self.assertTrue(all(it.get("timestamp") for it in result["items"]))
+            seqs = [int(it.get("audit_seq")) for it in result["items"]]
+            self.assertEqual(seqs, sorted(seqs, reverse=True))
+
+            all_rows_response = tool_list_audit_timeline(
+                str(yaml_path),
+                limit=None,
+            )
+            self.assertTrue(all_rows_response["ok"])
+            all_result = all_rows_response["result"]
+            self.assertIsNone(all_result["limit"])
+            self.assertEqual(all_result["total"], len(all_result["items"]))
+            self.assertGreaterEqual(len(all_result["items"]), 55)
+            all_seqs = [int(it.get("audit_seq")) for it in all_result["items"]]
+            self.assertEqual(all_seqs, sorted(all_seqs, reverse=True))
+
+    def test_tool_list_audit_timeline_supports_action_filter(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_audit_timeline_filter_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "backup", "source": "tests"},
+            )
+
+            response = tool_list_audit_timeline(
+                str(yaml_path),
+                limit=10,
+                action_filter="backup",
+            )
+            self.assertTrue(response["ok"])
+            items = response["result"]["items"]
+            self.assertGreaterEqual(len(items), 1)
+            self.assertTrue(all(str(item.get("action")) == "backup" for item in items))
+
+    def test_tool_list_audit_timeline_sorts_by_audit_seq_not_timestamp(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_audit_seq_sort_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+            write_yaml(
+                make_data([make_record(1, box=1, position=2)]),
+                path=str(yaml_path),
+                audit_meta={"action": "touch_1", "source": "tests"},
+            )
+            write_yaml(
+                make_data([make_record(1, box=1, position=3)]),
+                path=str(yaml_path),
+                audit_meta={"action": "touch_2", "source": "tests"},
+            )
+
+            audit_path = Path(get_audit_log_path(str(yaml_path)))
+            rows = [json.loads(line) for line in audit_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertGreaterEqual(len(rows), 3)
+            # Intentionally scramble timestamps to ensure ordering follows audit_seq only.
+            rows[0]["timestamp"] = "2099-12-31T23:59:59"
+            rows[-1]["timestamp"] = "2000-01-01T00:00:00"
+            audit_path.write_text(
+                "".join(f"{json.dumps(row, ensure_ascii=False, sort_keys=True)}\n" for row in rows),
+                encoding="utf-8",
+            )
+
+            response = tool_list_audit_timeline(str(yaml_path), limit=None)
+            self.assertTrue(response["ok"])
+            items = response["result"]["items"]
+            seqs = [int(item.get("audit_seq")) for item in items]
+            self.assertEqual(seqs, sorted(seqs, reverse=True))
+            self.assertEqual(max(seqs), int(items[0].get("audit_seq")))
+
     def test_tool_recommend_positions_and_raw_entries(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_misc_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
@@ -1581,6 +1807,121 @@ class TestAdjustBoxCount(unittest.TestCase):
         empty = tool_list_empty_positions(p)
         self.assertTrue(empty["ok"])
         self.assertEqual(["1", "2", "4", "5"], [b["box"] for b in empty["result"]["boxes"]])
+
+    def test_add_boxes_preserves_existing_box_tags(self):
+        p, _ = self._seed(
+            [],
+            {
+                "rows": 9,
+                "cols": 9,
+                "box_count": 3,
+                "box_tags": {"1": "LN2-A", "2": "Virus"},
+            },
+        )
+        result = tool_adjust_box_count(
+            p,
+            operation="add",
+            count=2,
+            auto_backup=False,
+        )
+        self.assertTrue(result["ok"], result.get("message"))
+
+        data = load_yaml(p)
+        layout = data["meta"]["box_layout"]
+        self.assertEqual({"1": "LN2-A", "2": "Virus"}, layout.get("box_tags"))
+
+    def test_remove_middle_box_keep_gaps_updates_box_tags(self):
+        p, _ = self._seed(
+            [],
+            {
+                "rows": 9,
+                "cols": 9,
+                "box_count": 5,
+                "box_tags": {"2": "A", "3": "B", "4": "C"},
+            },
+        )
+        result = tool_adjust_box_count(
+            p,
+            operation="remove",
+            box=3,
+            renumber_mode="keep_gaps",
+            auto_backup=False,
+        )
+        self.assertTrue(result["ok"], result.get("message"))
+
+        data = load_yaml(p)
+        layout = data["meta"]["box_layout"]
+        self.assertEqual({"2": "A", "4": "C"}, layout.get("box_tags"))
+
+    def test_remove_middle_box_renumber_remaps_box_tags(self):
+        p, _ = self._seed(
+            [],
+            {
+                "rows": 9,
+                "cols": 9,
+                "box_count": 5,
+                "box_tags": {"2": "A", "4": "C", "5": "D"},
+            },
+        )
+        result = tool_adjust_box_count(
+            p,
+            operation="remove",
+            box=3,
+            renumber_mode="renumber_contiguous",
+            auto_backup=False,
+        )
+        self.assertTrue(result["ok"], result.get("message"))
+
+        data = load_yaml(p)
+        layout = data["meta"]["box_layout"]
+        self.assertEqual([1, 2, 3, 4], layout.get("box_numbers"))
+        self.assertEqual({"2": "A", "3": "C", "4": "D"}, layout.get("box_tags"))
+
+    def test_set_box_tag_updates_and_clears(self):
+        p, _ = self._seed([], {"rows": 9, "cols": 9, "box_count": 3})
+        result = tool_set_box_tag(
+            p,
+            box=2,
+            tag=" -80 second shelf ",
+            auto_backup=False,
+        )
+        self.assertTrue(result["ok"], result.get("message"))
+
+        data = load_yaml(p)
+        layout = data["meta"]["box_layout"]
+        self.assertEqual({"2": "-80 second shelf"}, layout.get("box_tags"))
+
+        clear_result = tool_set_box_tag(
+            p,
+            box=2,
+            tag="",
+            auto_backup=False,
+        )
+        self.assertTrue(clear_result["ok"], clear_result.get("message"))
+        data_after = load_yaml(p)
+        self.assertNotIn("box_tags", data_after["meta"]["box_layout"])
+
+    def test_set_box_tag_rejects_multiline(self):
+        p, _ = self._seed([], {"rows": 9, "cols": 9, "box_count": 2})
+        result = tool_set_box_tag(
+            p,
+            box=1,
+            tag="line1\nline2",
+            auto_backup=False,
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual("invalid_tag", result.get("error_code"))
+
+    def test_set_box_tag_rejects_too_long(self):
+        p, _ = self._seed([], {"rows": 9, "cols": 9, "box_count": 2})
+        result = tool_set_box_tag(
+            p,
+            box=1,
+            tag="x" * 81,
+            auto_backup=False,
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual("invalid_tag", result.get("error_code"))
 
     def test_remove_non_empty_box_blocked(self):
         records = [make_record(1, box=2, position=1)]
