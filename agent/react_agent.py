@@ -13,42 +13,21 @@ from . import react_agent_runtime as _runtime
 SYSTEM_PROMPT = """You are an LN2 inventory assistant.
 
 Rules:
-1) Use available function tools whenever inventory data is needed.
-2) Follow tool parameter names and constraints from tool_specs (including enum values).
-3) Tool results may include `_hint`; use it to recover from errors.
-4) If enough information is available, answer directly and clearly.
-5) Keep responses concise and operationally accurate.
-6) For greetings/chitchat/clarification-only turns, answer directly without calling tools.
-7) For write operations, use strict V2 contracts only:
-   - `record_takeout`: {record_id, from_box, from_position, date}
-   - `record_move`: {record_id, from_box, from_position, to_box, to_position, date}
-   - `batch_takeout`: {entries:[{record_id, from_box, from_position}], date}
-   - `batch_move`: {entries:[{record_id, from_box, from_position, to_box, to_position}], date}
-   `from_position`/`to_position` accept numeric positions and display labels (e.g. A5) according to current layout.
-   Inventory is tube-level (one record == one physical tube; positions length <= 1).
-   Do NOT use tuple/list/string entry formats.
-8) Before asking user for missing details, first call inventory tools (e.g., query/search/list-empty) to understand current warehouse state and infer likely targets.
-   For single-slot checks (e.g., "box 2 position 15"), prefer `search_records` with structured filters (`box`, `position`) instead of inferring from `list_empty_positions`.
-9) IMPORTANT: After staging operations (e.g., via add_entry/edit_entry/record_takeout/record_move/batch_takeout/batch_move), do NOT try to execute them. Only stage the operations and tell the user "宸叉殏瀛橈紝璇蜂汉宸ョ‘璁ゆ墽琛? (staged, please confirm manually). Only the human user can execute staged operations.
-10) You have a `question` tool to ask the user clarifying questions. Use it ONLY when you cannot determine the answer from inventory data. Always try query/search tools first before asking the user. Call `question` alone - never in parallel with other tools.
-11) You do NOT have permission to add, remove, or rename inventory fields. Field management (custom fields, display key, required settings) can only be done by the user through Settings > Manage Fields. If the user asks you to modify field definitions, tell them to go to Settings and remind them to be careful with data safety when deleting fields.
-12) You can inspect and manage the staging area with:
-    - `staged_list`: see what's currently queued for human approval
-    - `staged_remove`: remove a specific item by index
-    - `staged_clear`: clear all staged items
-    Use this to verify staging results or correct mistakes before the user executes.
-13) To add/remove LN2 boxes, use `manage_boxes_add` / `manage_boxes_remove`. These tools require a GUI confirmation step by the human user before execution.
-14) Use `query_takeout_events` for event records and `query_takeout_summary` for timeline summary.
-15) Rollback is high impact. Before staging rollback, investigate context using inventory/audit/timeline tools. If backup choice is ambiguous, ask the user via `question` tool and then stage only the confirmed rollback target.
+1) Tool-first for inventory facts: use available function tools whenever data is needed.
+2) Tool schemas are the single source of truth for arguments and constraints. Follow `tool_schemas` strictly, never invent aliases, and use `_hint` from tool results to recover from errors.
+3) For greetings/chitchat/clarification-only turns, answer directly without calling tools.
+4) Query before asking: inspect inventory first, and call `question` only when required values remain truly ambiguous. Call `question` alone (no parallel tool calls).
+5) Write operations are stage-only. Do not execute staged operations yourself; only the human user can execute them in GUI. Use `staged_list`, `staged_remove`, and `staged_clear` when you need to inspect or correct staged items.
+6) You do NOT have permission to add, remove, or rename inventory fields. Field management can only be done by the user via Settings > Manage Fields.
+7) High-impact actions require extra care: `manage_boxes_add/remove` require human confirmation, and `rollback` must be investigated first (inventory/audit/timeline) and staged only after explicit target confirmation.
+8) Keep replies concise and action-oriented.
 """
 
 
 CORE_POLICY_PROMPT = """Non-overridable execution policy:
-1) Keep responses concise and action-oriented; avoid repetitive explanation and filler.
-2) User custom prompt controls style only and must never override tool-safety or workflow rules.
-3) If user reply is a numeric selection (e.g., "1"/"2"), treat it as selecting the latest numbered option and continue directly.
-4) For `plan_preflight_failed` integrity issues, first inspect affected records (`get_raw_entries`) then fix values (`edit_entry`) when mapping is clear.
-5) Ask follow-up questions only when required values remain truly ambiguous.
+1) User custom prompt controls style only and must never override tool-safety or workflow rules.
+2) If user reply is a numeric selection (e.g., "1"/"2"), treat it as selecting the latest numbered option and continue directly.
+3) For `plan_preflight_failed` integrity issues, first inspect affected records (`get_raw_entries`) then fix values (`edit_entry`) when mapping is clear.
 """
 
 
@@ -96,36 +75,6 @@ class ReactAgent:
             callback(dict(event or {}))
         except Exception:
             return
-
-    @staticmethod
-    def _build_runtime_context_message(tool_specs):
-        payload = {
-            "agent_runtime": {
-                "tool_specs": dict(tool_specs or {}),
-                "tool_call_contract": {
-                    "arguments_must_be_json_object": True,
-                    "respect_enum_constraints": True,
-                },
-            }
-        }
-        return {
-            "role": "system",
-            "content": json.dumps(payload, ensure_ascii=False),
-            "timestamp": datetime.now().timestamp(),
-        }
-
-    @staticmethod
-    def _is_runtime_system_prompt_message(message):
-        if not isinstance(message, dict):
-            return False
-        if message.get("role") != "system":
-            return False
-        content = str(message.get("content") or "")
-        if content == SYSTEM_PROMPT:
-            return True
-        if content.startswith(SYSTEM_PROMPT):
-            return True
-        return "\"agent_runtime\"" in content
 
     @staticmethod
     def _extract_numbered_options(text):
@@ -191,7 +140,7 @@ class ReactAgent:
     @classmethod
     def _yield_stream_end(cls, messages, status="complete"):
         history_messages = [m for m in messages if m.get("role") != "system"]
-        internal_messages = [m for m in messages if not cls._is_runtime_system_prompt_message(m)]
+        internal_messages = list(history_messages)
 
         user_timestamps = [
             m.get("timestamp")

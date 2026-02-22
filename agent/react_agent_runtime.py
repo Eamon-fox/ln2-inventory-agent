@@ -7,12 +7,48 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 
-def _run_tool_call(self, call, tool_names, trace_id):
+def _is_stop_requested(stop_event):
+    try:
+        return bool(stop_event is not None and stop_event.is_set())
+    except Exception:
+        return False
+
+
+def _stopped_result(self, *, on_event, trace_id, step, memory, messages):
+    final_text = "Run stopped by user."
+    self._emit_event(
+        on_event,
+        {
+            "event": "final",
+            "type": "final",
+            "trace_id": trace_id,
+            "step": int(step or 0),
+            "data": final_text,
+        },
+    )
+    self._emit_event(on_event, {**self._yield_stream_end(messages, status="stopped"), "trace_id": trace_id})
+    return {
+        "ok": False,
+        "error_code": "run_stopped",
+        "trace_id": trace_id,
+        "steps": int(step or 0),
+        "final": final_text,
+        "conversation_history_used": len(memory),
+    }
+
+
+def _run_tool_call(self, call, tool_names, trace_id, stop_event=None):
     action = call["name"]
     action_input = call["arguments"]
     tool_call_id = call["id"]
 
-    if action not in tool_names:
+    if _is_stop_requested(stop_event):
+        observation = {
+            "ok": False,
+            "error_code": "run_stopped",
+            "message": "Run stopped by user.",
+        }
+    elif action not in tool_names:
         observation = {
             "ok": False,
             "error_code": "unknown_tool",
@@ -28,6 +64,12 @@ def _run_tool_call(self, call, tool_names, trace_id):
         and isinstance(observation, dict)
         and observation.get("waiting_for_user")
     ):
+        prompt = str(observation.get("question") or "").strip()
+        options = [
+            str(item).strip()
+            for item in (observation.get("options") or [])
+            if isinstance(item, str) and str(item).strip()
+        ]
         self._emit_event(
             getattr(self, "_on_event", None),
             {
@@ -35,7 +77,8 @@ def _run_tool_call(self, call, tool_names, trace_id):
                 "type": "question",
                 "trace_id": trace_id,
                 "question_id": observation.get("question_id"),
-                "questions": observation.get("questions"),
+                "question": prompt,
+                "options": options,
                 "tool_call_id": tool_call_id,
             },
         )
@@ -56,25 +99,39 @@ def _run_tool_call(self, call, tool_names, trace_id):
                 "message": "User cancelled the question.",
             }
         else:
-            answers = runner._pending_answer or []
-            questions = observation.get("questions") or []
-            formatted = []
-            for i, ans in enumerate(answers):
-                q = questions[i] if i < len(questions) else {}
-                header = q.get("header", f"Q{i+1}")
-                if isinstance(ans, list):
-                    formatted.append(f"{header}: {', '.join(ans)}")
-                else:
-                    formatted.append(f"{header}: {ans}")
+            raw_answer = runner._pending_answer
+            answer_text = ""
+            if isinstance(raw_answer, str):
+                answer_text = raw_answer.strip()
+            elif isinstance(raw_answer, list):
+                # Defensive fallback if caller still provides list-like answers.
+                for item in raw_answer:
+                    if isinstance(item, str) and item.strip():
+                        answer_text = item.strip()
+                        break
+            elif raw_answer is not None:
+                answer_text = str(raw_answer).strip()
 
-            observation = {
-                "ok": True,
-                "result": {
-                    "answers": formatted,
-                    "raw_answers": answers,
-                },
-                "message": "User answered: " + "; ".join(formatted),
-            }
+            if not answer_text:
+                observation = {
+                    "ok": False,
+                    "error_code": "invalid_question_answer",
+                    "message": "User answer is empty.",
+                }
+            elif answer_text not in options:
+                observation = {
+                    "ok": False,
+                    "error_code": "invalid_question_answer",
+                    "message": "User answer is not one of provided options.",
+                    "details": {"answer": answer_text},
+                }
+            else:
+                observation = {
+                    "ok": True,
+                    "answer": answer_text,
+                    "index": options.index(answer_text),
+                    "message": f"User answered: {answer_text}",
+                }
 
     if (
         action in {"manage_boxes_add", "manage_boxes_remove"}
@@ -130,7 +187,7 @@ def _run_tool_call(self, call, tool_names, trace_id):
     }
 
 
-def _ask_user_continue(self, on_event, trace_id):
+def _ask_user_continue(self, on_event, trace_id, stop_event=None):
     """Emit max_steps_ask event and block until user responds.
 
     Returns True if user wants to continue, False otherwise.
@@ -155,16 +212,39 @@ def _ask_user_continue(self, on_event, trace_id):
         },
     )
 
+    if _is_stop_requested(stop_event):
+        return False
+
     answered = runner._answer_event.wait(timeout=300)
     return answered and not runner._answer_cancelled
 
 
-def _collect_model_response(self, messages, tool_schemas, trace_id, step, on_event):
+def _collect_model_response(self, messages, tool_schemas, trace_id, step, on_event, stop_event=None):
     stream_fn = getattr(self._llm, "stream_chat", None)
     if callable(stream_fn):
-        iterator = stream_fn(messages, tools=tool_schemas, temperature=0.0)
+        try:
+            iterator = stream_fn(
+                messages,
+                tools=tool_schemas,
+                temperature=0.0,
+                stop_event=stop_event,
+            )
+        except TypeError:
+            iterator = stream_fn(messages, tools=tool_schemas, temperature=0.0)
     else:
-        fallback_response = self._llm.chat(messages, tools=tool_schemas, temperature=0.0)
+        try:
+            fallback_response = self._llm.chat(
+                messages,
+                tools=tool_schemas,
+                temperature=0.0,
+                stop_event=stop_event,
+            )
+        except TypeError:
+            fallback_response = self._llm.chat(
+                messages,
+                tools=tool_schemas,
+                temperature=0.0,
+            )
 
         def _fallback_iter():
             if not isinstance(fallback_response, dict):
@@ -189,6 +269,14 @@ def _collect_model_response(self, messages, tool_schemas, trace_id, step, on_eve
     thought_parts = []
     tool_calls = []
     for raw_event in getattr(iterator, "__iter__", lambda: iter(()))():
+        if _is_stop_requested(stop_event):
+            return {
+                "error": None,
+                "stopped": True,
+                "content": "".join(answer_parts).strip(),
+                "thought": "".join(thought_parts).strip(),
+                "tool_calls": tool_calls,
+            }
         if not isinstance(raw_event, dict):
             continue
 
@@ -237,23 +325,41 @@ def _collect_model_response(self, messages, tool_schemas, trace_id, step, on_eve
         if event_type == "error":
             return {
                 "error": str(raw_event.get("error") or "LLM stream failed"),
+                "stopped": False,
                 "content": "".join(answer_parts).strip(),
                 "thought": "".join(thought_parts).strip(),
                 "tool_calls": tool_calls,
             }
 
+    if _is_stop_requested(stop_event):
+        return {
+            "error": None,
+            "stopped": True,
+            "content": "".join(answer_parts).strip(),
+            "thought": "".join(thought_parts).strip(),
+            "tool_calls": tool_calls,
+        }
+
     return {
         "error": None,
+        "stopped": False,
         "content": "".join(answer_parts).strip(),
         "thought": "".join(thought_parts).strip(),
         "tool_calls": tool_calls,
     }
 
 
-def _request_direct_answer(self, messages):
+def _request_direct_answer(self, messages, stop_event=None):
     """Ask model for a plain final answer without tool schemas."""
+    if _is_stop_requested(stop_event):
+        return ""
     try:
-        response = self._llm.chat(messages, tools=None, temperature=0.0)
+        response = self._llm.chat(messages, tools=None, temperature=0.0, stop_event=stop_event)
+    except TypeError:
+        try:
+            response = self._llm.chat(messages, tools=None, temperature=0.0)
+        except Exception:
+            return ""
     except Exception:
         return ""
 
@@ -270,11 +376,10 @@ def _request_direct_answer(self, messages):
     return ""
 
 
-def run(self, user_query, conversation_history=None, on_event=None):
+def run(self, user_query, conversation_history=None, on_event=None, stop_event=None):
     self._on_event = on_event  # Store for _run_tool_call to use
     trace_id = f"trace-{uuid.uuid4().hex}"
     tool_names = self._tools.list_tools()
-    tool_specs = self._tools.tool_specs() if hasattr(self._tools, "tool_specs") else {}
     tool_schemas = self._tools.tool_schemas() if hasattr(self._tools, "tool_schemas") else []
     memory = self._normalize_history(conversation_history)
 
@@ -299,7 +404,6 @@ def run(self, user_query, conversation_history=None, on_event=None):
             "content": system_content,
             "timestamp": datetime.now().timestamp(),
         },
-        self._build_runtime_context_message(tool_specs),
     ]
     messages.extend(memory)
     messages.append(
@@ -321,6 +425,16 @@ def run(self, user_query, conversation_history=None, on_event=None):
         },
     )
 
+    if _is_stop_requested(stop_event):
+        return _stopped_result(
+            self,
+            on_event=on_event,
+            trace_id=trace_id,
+            step=0,
+            memory=memory,
+            messages=messages,
+        )
+
     last_answer_text = ""
     current_answer_buf = []
     forced_final_retry = False
@@ -328,6 +442,15 @@ def run(self, user_query, conversation_history=None, on_event=None):
     original_max_steps = self._max_steps
     step = 1
     while True:
+        if _is_stop_requested(stop_event):
+            return _stopped_result(
+                self,
+                on_event=on_event,
+                trace_id=trace_id,
+                step=step,
+                memory=memory,
+                messages=messages,
+            )
         current_answer_buf = []
         self._emit_event(
             on_event,
@@ -345,7 +468,18 @@ def run(self, user_query, conversation_history=None, on_event=None):
             trace_id=trace_id,
             step=step,
             on_event=on_event,
+            stop_event=stop_event,
         )
+
+        if model_response.get("stopped"):
+            return _stopped_result(
+                self,
+                on_event=on_event,
+                trace_id=trace_id,
+                step=step,
+                memory=memory,
+                messages=messages,
+            )
 
         if model_response.get("error"):
             observation = {
@@ -414,7 +548,7 @@ def run(self, user_query, conversation_history=None, on_event=None):
             )
             step += 1
             if step > self._max_steps:
-                if self._ask_user_continue(on_event, trace_id):
+                if self._ask_user_continue(on_event, trace_id, stop_event=stop_event):
                     self._max_steps += original_max_steps
                 else:
                     break
@@ -468,7 +602,12 @@ def run(self, user_query, conversation_history=None, on_event=None):
                             )
                         )
                     else:
-                        result = self._run_tool_call(call, tool_names, trace_id)
+                        result = self._run_tool_call(
+                            call,
+                            tool_names,
+                            trace_id,
+                            stop_event=stop_event,
+                        )
                         self._emit_event(
                             on_event,
                             {
@@ -492,7 +631,7 @@ def run(self, user_query, conversation_history=None, on_event=None):
                         messages.append(self._tool_message(result["tool_call_id"], result["observation"]))
                 step += 1
                 if step > self._max_steps:
-                    if self._ask_user_continue(on_event, trace_id):
+                    if self._ask_user_continue(on_event, trace_id, stop_event=stop_event):
                         self._max_steps += original_max_steps
                     else:
                         break
@@ -501,7 +640,13 @@ def run(self, user_query, conversation_history=None, on_event=None):
             max_workers = max(1, len(normalized_tool_calls))
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = [
-                    executor.submit(self._run_tool_call, call, tool_names, trace_id)
+                    executor.submit(
+                        self._run_tool_call,
+                        call,
+                        tool_names,
+                        trace_id,
+                        stop_event,
+                    )
                     for call in normalized_tool_calls
                 ]
                 results = [future.result() for future in futures]
@@ -534,9 +679,18 @@ def run(self, user_query, conversation_history=None, on_event=None):
                     },
                 )
                 messages.append(self._tool_message(tool_call_id, observation))
+            if _is_stop_requested(stop_event):
+                return _stopped_result(
+                    self,
+                    on_event=on_event,
+                    trace_id=trace_id,
+                    step=step,
+                    memory=memory,
+                    messages=messages,
+                )
             step += 1
             if step > self._max_steps:
-                if self._ask_user_continue(on_event, trace_id):
+                if self._ask_user_continue(on_event, trace_id, stop_event=stop_event):
                     self._max_steps += original_max_steps
                 else:
                     break
@@ -553,14 +707,23 @@ def run(self, user_query, conversation_history=None, on_event=None):
             )
             step += 1
             if step > self._max_steps:
-                if self._ask_user_continue(on_event, trace_id):
+                if self._ask_user_continue(on_event, trace_id, stop_event=stop_event):
                     self._max_steps += original_max_steps
                 else:
                     break
             continue
 
         if not assistant_content:
-            direct_text = self._request_direct_answer(messages)
+            if _is_stop_requested(stop_event):
+                return _stopped_result(
+                    self,
+                    on_event=on_event,
+                    trace_id=trace_id,
+                    step=step,
+                    memory=memory,
+                    messages=messages,
+                )
+            direct_text = self._request_direct_answer(messages, stop_event=stop_event)
             if direct_text:
                 assistant_content = direct_text
                 last_answer_text = assistant_content

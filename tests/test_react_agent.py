@@ -1,4 +1,3 @@
-import json
 import sys
 import tempfile
 import unittest
@@ -266,6 +265,60 @@ class ReactAgentTests(unittest.TestCase):
             self.assertEqual("done", result["final"])
             self.assertTrue(any(e.get("type") == "manage_boxes_confirm" for e in events))
 
+    def test_react_agent_question_returns_answer_and_index(self):
+        llm = _SequenceLLM(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_question",
+                            "name": "question",
+                            "arguments": {
+                                "question": "Proceed with takeout?",
+                                "options": ["yes", "no"],
+                            },
+                        }
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": "ok",
+                    "tool_calls": [],
+                },
+            ]
+        )
+
+        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
+        agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=3)
+        events = []
+
+        def _on_event(evt):
+            payload = dict(evt or {})
+            events.append(payload)
+            if payload.get("type") == "question":
+                runner._set_answer("no")
+
+        result = agent.run("confirm", on_event=_on_event)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("ok", result["final"])
+        tool_end = next(
+            (
+                e
+                for e in events
+                if e.get("event") == "tool_end" and e.get("action") == "question"
+            ),
+            None,
+        )
+        if not isinstance(tool_end, dict):
+            self.fail("question tool_end event should exist")
+        obs = tool_end.get("observation") or {}
+        self.assertTrue(obs.get("ok"))
+        self.assertEqual("no", obs.get("answer"))
+        self.assertEqual(1, obs.get("index"))
+
     def test_react_agent_includes_conversation_history_in_prompt(self):
         llm = _CapturePromptLLM()
         runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
@@ -283,19 +336,9 @@ class ReactAgentTests(unittest.TestCase):
         messages = llm.last_messages
         if not isinstance(messages, list):
             self.fail("LLM should receive a message list")
-        self.assertGreaterEqual(len(messages), 5)
+        self.assertGreaterEqual(len(messages), 4)
 
         self.assertEqual("system", messages[0].get("role"))
-        runtime_context = json.loads(messages[1]["content"])
-        runtime_payload = runtime_context.get("agent_runtime")
-        if not isinstance(runtime_payload, dict):
-            self.fail("agent_runtime should be a dict")
-
-        specs = runtime_payload.get("tool_specs")
-        if not isinstance(specs, dict):
-            self.fail("tool_specs should be a dict")
-        self.assertIn("add_entry", specs)
-        self.assertIn("required", specs["add_entry"])
 
         tools = llm.last_tools
         if not isinstance(tools, list):
@@ -470,6 +513,23 @@ class ReactAgentTests(unittest.TestCase):
         # Core rules must still be present
         self.assertIn("LN2 inventory assistant", system_msg["content"])
         self.assertIn("Non-overridable execution policy", system_msg["content"])
+        self.assertIn("single source of truth", system_msg["content"])
+        self.assertNotIn("single language only", system_msg["content"])
+
+    def test_system_prompt_avoids_hardcoded_v2_parameter_templates(self):
+        llm = _CapturePromptLLM()
+        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
+        agent = ReactAgent(llm_client=llm, tool_runner=runner)
+
+        agent.run("check prompt")
+
+        system_msg = llm.last_messages[0]
+        self.assertEqual("system", system_msg["role"])
+        self.assertIn("tool_schemas", system_msg["content"])
+        self.assertNotIn("`record_takeout`: {record_id", system_msg["content"])
+        self.assertNotIn("`record_move`: {record_id", system_msg["content"])
+        self.assertNotIn("`batch_takeout`: {entries", system_msg["content"])
+        self.assertNotIn("`batch_move`: {entries", system_msg["content"])
 
     def test_numeric_option_reply_is_expanded_from_recent_assistant_options(self):
         llm = _CapturePromptLLM()

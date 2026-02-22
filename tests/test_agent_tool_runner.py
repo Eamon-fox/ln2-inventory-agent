@@ -96,6 +96,12 @@ def make_data(records):
     }
 
 
+def make_data_alphanumeric(records):
+    data = make_data(records)
+    data["meta"]["box_layout"]["indexing"] = "alphanumeric"
+    return data
+
+
 class AgentToolRunnerTests(unittest.TestCase):
     def test_list_tools_contains_core_entries(self):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
@@ -117,7 +123,7 @@ class AgentToolRunnerTests(unittest.TestCase):
         self.assertNotIn("remove_staged", names)
         self.assertNotIn("clear_staged", names)
 
-    def test_manage_boxes_dry_run_dispatches_tool_api(self):
+    def test_manage_boxes_ignores_dry_run_input(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_box_dry_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -131,11 +137,11 @@ class AgentToolRunnerTests(unittest.TestCase):
                 {"count": 2, "dry_run": True},
             )
             self.assertTrue(response["ok"])
-            self.assertTrue(response.get("dry_run"))
-            self.assertEqual("add", response.get("preview", {}).get("operation"))
+            self.assertTrue(response.get("waiting_for_user_confirmation"))
+            self.assertEqual("add", response.get("request", {}).get("operation"))
 
 
-    def test_add_entry_requires_execute_mode(self):
+    def test_add_entry_rejects_undeclared_fields_via_schema_validation(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_add_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -152,7 +158,7 @@ class AgentToolRunnerTests(unittest.TestCase):
                 "add_entry",
                 {
                     "box": 1,
-                    "positions": "2,3",
+                    "positions": [2, 3],
                     "frozen_at": "2026-02-10",
                     "fields": {
                         "cell_line": "K562",
@@ -163,15 +169,40 @@ class AgentToolRunnerTests(unittest.TestCase):
                 trace_id="trace-agent-test",
             )
             self.assertFalse(response["ok"])
-            self.assertEqual("write_requires_execute_mode", response["error_code"])
+            self.assertEqual("invalid_tool_input", response["error_code"])
+            self.assertIn("short_name", str(response.get("message") or ""))
 
             current = load_yaml(str(yaml_path))
             self.assertEqual(1, len(current["inventory"]))
 
-            rows = read_audit_events(str(yaml_path))
-            last = rows[-1]
-            self.assertEqual("failed", last.get("status"))
-            self.assertEqual("write_requires_execute_mode", (last.get("error") or {}).get("error_code"))
+    def test_add_entry_staging_supports_alphanumeric_positions(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_add_alpha_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data_alphanumeric([]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            from lib.plan_store import PlanStore
+            runner = AgentToolRunner(
+                yaml_path=str(yaml_path),
+                plan_store=PlanStore(),
+            )
+            response = runner.run(
+                "add_entry",
+                {
+                    "box": 1,
+                    "positions": ["A5"],
+                    "frozen_at": "2026-02-10",
+                    "fields": {
+                        "cell_line": "K562",
+                    },
+                },
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertTrue(response.get("staged"))
 
     def test_record_takeout_requires_integer_fields(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_bad_") as temp_dir:
@@ -246,6 +277,14 @@ class AgentToolRunnerTests(unittest.TestCase):
             self.assertFalse(response["ok"])
             self.assertEqual("invalid_tool_input", response["error_code"])
 
+    def test_search_records_requires_non_empty_query(self):
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        response = runner.run("search_records", {})
+
+        self.assertFalse(response["ok"])
+        self.assertEqual("invalid_tool_input", response["error_code"])
+        self.assertEqual("未输入检索词", response.get("message"))
+
     def test_search_records_supports_structured_slot_filters(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_search_slot_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
@@ -265,7 +304,35 @@ class AgentToolRunnerTests(unittest.TestCase):
             )
 
             runner = AgentToolRunner(yaml_path=str(yaml_path))
-            response = runner.run("search_records", {"box": 2, "position": 15})
+            response = runner.run("search_records", {"query": "k562", "box": 2, "position": 15})
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(1, response["result"]["total_count"])
+            self.assertEqual(2, response["result"]["records"][0]["id"])
+            self.assertEqual("occupied", response["result"]["slot_lookup"]["status"])
+
+    def test_search_records_supports_alphanumeric_slot_filters(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_search_slot_alpha_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data_alphanumeric(
+                    [
+                        {
+                            "id": 2,
+                            "parent_cell_line": "K562",
+                            "short_name": "k562-a",
+                            "box": 2,
+                            "position": 15,
+                            "frozen_at": "2026-02-10",
+                        },
+                    ]
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run("search_records", {"query": "k562", "box": 2, "position": "B6"})
 
             self.assertTrue(response["ok"])
             self.assertEqual(1, response["result"]["total_count"])
@@ -297,6 +364,114 @@ class AgentToolRunnerTests(unittest.TestCase):
             self.assertEqual(1, response["result"]["total_count"])
             self.assertEqual(3, response["result"]["records"][0]["id"])
             self.assertEqual("2:15", response["result"]["applied_filters"]["query_shortcut"])
+
+    def test_search_records_default_excludes_taken_out_records(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_search_active_default_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        {
+                            "id": 1,
+                            "parent_cell_line": "K562",
+                            "short_name": "active",
+                            "box": 1,
+                            "position": 1,
+                            "frozen_at": "2026-02-10",
+                        },
+                        {
+                            "id": 2,
+                            "parent_cell_line": "K562",
+                            "short_name": "taken-out",
+                            "box": 1,
+                            "position": None,
+                            "frozen_at": "2026-02-10",
+                            "thaw_events": [{"date": "2026-02-11", "action": "takeout", "positions": [1]}],
+                        },
+                    ]
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run("search_records", {"query": "K562"})
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(1, response["result"]["total_count"])
+            self.assertEqual([1], [item.get("id") for item in response["result"]["records"]])
+            self.assertTrue(response["result"]["applied_filters"]["active_only"])
+
+    def test_generate_stats_supports_optional_box_records(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_stats_box_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        make_record(1, box=1, position=1),
+                        {
+                            "id": 2,
+                            "parent_cell_line": "K562",
+                            "short_name": "taken-out",
+                            "box": 1,
+                            "position": None,
+                            "frozen_at": "2026-02-10",
+                            "thaw_events": [
+                                {
+                                    "date": "2026-02-11",
+                                    "action": "takeout",
+                                    "positions": [1],
+                                }
+                            ],
+                        },
+                        make_record(3, box=2, position=1),
+                    ]
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run("generate_stats", {"box": 1})
+
+            self.assertTrue(response["ok"])
+            result = response.get("result") or {}
+            self.assertEqual(1, result.get("box"))
+            self.assertEqual(1, result.get("box_record_count"))
+            ids = [item.get("id") for item in result.get("box_records", [])]
+            self.assertEqual([1], ids)
+
+    def test_generate_stats_include_inactive_adds_taken_out_records(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_stats_box_inactive_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        make_record(1, box=1, position=1),
+                        {
+                            "id": 2,
+                            "parent_cell_line": "K562",
+                            "short_name": "taken-out",
+                            "box": 1,
+                            "position": None,
+                            "frozen_at": "2026-02-10",
+                            "thaw_events": [{"date": "2026-02-11", "action": "takeout", "positions": [1]}],
+                        },
+                    ]
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run("generate_stats", {"box": 1, "include_inactive": True})
+
+            self.assertTrue(response["ok"])
+            result = response.get("result") or {}
+            self.assertEqual(2, result.get("box_record_count"))
+            self.assertTrue(result.get("include_inactive"))
+            ids = [item.get("id") for item in result.get("box_records", [])]
+            self.assertEqual([1, 2], ids)
 
     def test_recent_frozen_replaces_recent_filters(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_recent_search_") as temp_dir:
@@ -486,47 +661,32 @@ class AgentToolRunnerTests(unittest.TestCase):
         self.assertIn("edit_entry", hint)
         self.assertIn("16", hint)
 
-    def test_tool_specs_expose_required_fields(self):
+    def test_tool_schemas_expose_required_fields(self):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
-        specs = runner.tool_specs()
-        self.assertIn("add_entry", specs)
-        self.assertIn("required", specs["add_entry"])
-        self.assertIn("positions", specs["add_entry"]["required"])
-
-        self.assertIn("search_records", specs)
-        self.assertEqual([], specs["search_records"].get("required"))
-        self.assertIn("box", specs["search_records"].get("optional", []))
-        self.assertIn("position", specs["search_records"].get("optional", []))
-        search_params = specs["search_records"].get("params", {})
-        self.assertIn("mode", search_params)
-        self.assertIn("record_id", search_params)
-        self.assertIn("active_only", search_params)
-        self.assertNotIn("recent_days", search_params)
-        self.assertNotIn("recent_count", search_params)
-        self.assertEqual(
-            ["fuzzy", "exact", "keywords"],
-            search_params["mode"].get("enum"),
-        )
-
-        self.assertIn("recent_frozen", specs)
-        self.assertIn("query_takeout_summary", specs)
-        self.assertNotIn("collect_timeline", specs)
-        self.assertNotIn("list_staged", specs)
-        self.assertNotIn("remove_staged", specs)
-        self.assertNotIn("clear_staged", specs)
-        self.assertIn("staged_list", specs)
-        self.assertIn("staged_remove", specs)
-        self.assertIn("staged_clear", specs)
-        self.assertIn("index", specs["staged_remove"].get("required", []))
-
-        self.assertIn("record_takeout", specs)
-        self.assertIn("from_box", specs["record_takeout"].get("required", []))
-        self.assertIn("from_position", specs["record_takeout"].get("required", []))
-        self.assertIn("date", specs["record_takeout"].get("required", []))
-        self.assertIn("dry_run", specs["record_takeout"].get("optional", []))
-        self.assertIn("record_move", specs)
-
         schemas = runner.tool_schemas()
+        names = [item.get("function", {}).get("name") for item in schemas]
+
+        self.assertIn("add_entry", names)
+        add_entry_schema = next(
+            (item for item in schemas if item.get("function", {}).get("name") == "add_entry"),
+            None,
+        )
+        if not isinstance(add_entry_schema, dict):
+            self.fail("add_entry schema should exist")
+        add_entry_params = add_entry_schema.get("function", {}).get("parameters", {})
+        self.assertIn("positions", add_entry_params.get("required", []))
+        self.assertIn("fields", add_entry_params.get("required", []))
+        add_entry_positions = (add_entry_params.get("properties") or {}).get("positions", {})
+        self.assertEqual("array", add_entry_positions.get("type"))
+        self.assertEqual("integer", (add_entry_positions.get("items") or {}).get("type"))
+        add_entry_fields = (add_entry_params.get("properties") or {}).get("fields", {})
+        self.assertEqual("object", add_entry_fields.get("type"))
+        self.assertEqual(False, add_entry_fields.get("additionalProperties"))
+        self.assertIn("cell_line", (add_entry_fields.get("properties") or {}))
+        self.assertIn("note", (add_entry_fields.get("properties") or {}))
+        self.assertIn("cell_line", add_entry_fields.get("required", []))
+        self.assertNotIn("dry_run", (add_entry_params.get("properties") or {}))
+
         search_schema = next(
             (
                 item
@@ -537,6 +697,10 @@ class AgentToolRunnerTests(unittest.TestCase):
         )
         if not isinstance(search_schema, dict):
             self.fail("search_records schema should exist")
+        search_params = search_schema.get("function", {}).get("parameters", {})
+        self.assertEqual(["query"], search_params.get("required", []))
+        self.assertIn("box", (search_params.get("properties") or {}))
+        self.assertIn("position", (search_params.get("properties") or {}))
         mode_schema = (
             search_schema.get("function", {})
             .get("parameters", {})
@@ -544,16 +708,286 @@ class AgentToolRunnerTests(unittest.TestCase):
             .get("mode", {})
         )
         self.assertEqual(["fuzzy", "exact", "keywords"], mode_schema.get("enum"))
+        record_takeout_schema = next(
+            (
+                item
+                for item in schemas
+                if item.get("function", {}).get("name") == "record_takeout"
+            ),
+            None,
+        )
+        if not isinstance(record_takeout_schema, dict):
+            self.fail("record_takeout schema should exist")
+        record_takeout_properties = (
+            record_takeout_schema.get("function", {})
+            .get("parameters", {})
+            .get("properties", {})
+        )
+        record_takeout_required = (
+            record_takeout_schema.get("function", {})
+            .get("parameters", {})
+            .get("required", [])
+        )
+        self.assertIn("from_box", record_takeout_required)
+        self.assertIn("from_position", record_takeout_required)
+        self.assertIn("date", record_takeout_required)
+        self.assertNotIn("dry_run", record_takeout_properties)
 
-    def test_rollback_tool_spec_mentions_question_workflow(self):
+        self.assertIn("recent_frozen", names)
+        self.assertIn("query_takeout_summary", names)
+        self.assertNotIn("collect_timeline", names)
+        self.assertNotIn("list_staged", names)
+        self.assertNotIn("remove_staged", names)
+        self.assertNotIn("clear_staged", names)
+        self.assertIn("staged_list", names)
+        self.assertIn("staged_remove", names)
+        self.assertIn("staged_clear", names)
+
+        staged_remove_schema = next(
+            (item for item in schemas if item.get("function", {}).get("name") == "staged_remove"),
+            None,
+        )
+        if not isinstance(staged_remove_schema, dict):
+            self.fail("staged_remove schema should exist")
+        self.assertIn(
+            "index",
+            staged_remove_schema.get("function", {}).get("parameters", {}).get("required", []),
+        )
+
+        generate_stats_schema = next(
+            (item for item in schemas if item.get("function", {}).get("name") == "generate_stats"),
+            None,
+        )
+        if not isinstance(generate_stats_schema, dict):
+            self.fail("generate_stats schema should exist")
+        self.assertIn(
+            "box",
+            generate_stats_schema.get("function", {}).get("parameters", {}).get("properties", {}),
+        )
+        self.assertIn(
+            "include_inactive",
+            generate_stats_schema.get("function", {}).get("parameters", {}).get("properties", {}),
+        )
+
+        for tool_name in [
+            "record_move",
+            "batch_takeout",
+            "batch_move",
+            "manage_boxes_add",
+            "manage_boxes_remove",
+        ]:
+            schema_item = next(
+                (item for item in schemas if item.get("function", {}).get("name") == tool_name),
+                None,
+            )
+            if not isinstance(schema_item, dict):
+                self.fail(f"{tool_name} schema should exist")
+            self.assertNotIn(
+                "dry_run",
+                schema_item.get("function", {}).get("parameters", {}).get("properties", {}),
+            )
+
+    def test_tool_schemas_positions_follow_alphanumeric_layout(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_schema_alpha_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data_alphanumeric([make_record(1, box=1, position=5)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            schemas = runner.tool_schemas()
+
+            def _schema(name):
+                return next(
+                    (item for item in schemas if item.get("function", {}).get("name") == name),
+                    None,
+                )
+
+            add_entry_schema = _schema("add_entry")
+            if not isinstance(add_entry_schema, dict):
+                self.fail("add_entry schema should exist")
+            add_positions = (
+                add_entry_schema.get("function", {})
+                .get("parameters", {})
+                .get("properties", {})
+                .get("positions", {})
+            )
+            self.assertEqual("array", add_positions.get("type"))
+            self.assertEqual("string", (add_positions.get("items") or {}).get("type"))
+
+            search_schema = _schema("search_records")
+            if not isinstance(search_schema, dict):
+                self.fail("search_records schema should exist")
+            search_position = (
+                search_schema.get("function", {})
+                .get("parameters", {})
+                .get("properties", {})
+                .get("position", {})
+            )
+            self.assertEqual("string", search_position.get("type"))
+
+            takeout_schema = _schema("record_takeout")
+            if not isinstance(takeout_schema, dict):
+                self.fail("record_takeout schema should exist")
+            from_position = (
+                takeout_schema.get("function", {})
+                .get("parameters", {})
+                .get("properties", {})
+                .get("from_position", {})
+            )
+            self.assertEqual("string", from_position.get("type"))
+
+    def test_tool_schemas_include_dynamic_custom_fields_for_add_and_edit(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_schema_custom_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            seeded_record = make_record(1, box=1, position=1)
+            seeded_record["passage_number"] = 1
+            custom_data = make_data([seeded_record])
+            custom_data.setdefault("meta", {}).update(
+                {
+                    "cell_line_required": False,
+                    "custom_fields": [
+                        {"key": "passage_number", "label": "Passage", "type": "int", "required": True},
+                        {"key": "source_batch", "label": "Source Batch", "type": "str", "required": False},
+                    ],
+                }
+            )
+            write_yaml(
+                custom_data,
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            schemas = runner.tool_schemas()
+
+            add_schema = next(
+                (item for item in schemas if item.get("function", {}).get("name") == "add_entry"),
+                None,
+            )
+            if not isinstance(add_schema, dict):
+                self.fail("add_entry schema should exist")
+            add_fields = (
+                add_schema.get("function", {})
+                .get("parameters", {})
+                .get("properties", {})
+                .get("fields", {})
+            )
+            add_field_props = add_fields.get("properties", {})
+            self.assertIn("passage_number", add_field_props)
+            self.assertEqual("integer", add_field_props["passage_number"].get("type"))
+            self.assertIn("source_batch", add_field_props)
+            self.assertEqual("string", add_field_props["source_batch"].get("type"))
+            self.assertIn("passage_number", add_fields.get("required", []))
+            self.assertNotIn("cell_line", add_fields.get("required", []))
+            self.assertIn(
+                "fields",
+                add_schema.get("function", {}).get("parameters", {}).get("required", []),
+            )
+
+            edit_schema = next(
+                (item for item in schemas if item.get("function", {}).get("name") == "edit_entry"),
+                None,
+            )
+            if not isinstance(edit_schema, dict):
+                self.fail("edit_entry schema should exist")
+            edit_fields = (
+                edit_schema.get("function", {})
+                .get("parameters", {})
+                .get("properties", {})
+                .get("fields", {})
+            )
+            edit_field_props = edit_fields.get("properties", {})
+            self.assertIn("frozen_at", edit_field_props)
+            self.assertIn("passage_number", edit_field_props)
+            self.assertEqual("integer", edit_field_props["passage_number"].get("type"))
+            self.assertEqual("object", edit_fields.get("type"))
+            self.assertEqual(1, edit_fields.get("minProperties"))
+            self.assertEqual(False, edit_fields.get("additionalProperties"))
+
+    def test_add_entry_rejects_positions_string_payload(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_add_schema_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run(
+                "add_entry",
+                {
+                    "box": 1,
+                    "positions": "2,3",
+                    "frozen_at": "2026-02-10",
+                    "fields": {"cell_line": "K562"},
+                },
+            )
+            self.assertFalse(response["ok"])
+            self.assertEqual("invalid_tool_input", response["error_code"])
+            self.assertIn("positions", str(response.get("message") or ""))
+
+    def test_record_takeout_rejects_string_position_in_numeric_layout(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_takeout_numeric_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run(
+                "record_takeout",
+                {
+                    "record_id": 1,
+                    "from_box": 1,
+                    "from_position": "1",
+                    "date": "2026-02-10",
+                },
+            )
+            self.assertFalse(response["ok"])
+            self.assertEqual("invalid_tool_input", response["error_code"])
+            self.assertIn("from_position", str(response.get("message") or ""))
+
+    def test_record_takeout_rejects_integer_position_in_alphanumeric_layout(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_takeout_alpha_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data_alphanumeric([make_record(1, box=1, position=5)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run(
+                "record_takeout",
+                {
+                    "record_id": 1,
+                    "from_box": 1,
+                    "from_position": 5,
+                    "date": "2026-02-10",
+                },
+            )
+            self.assertFalse(response["ok"])
+            self.assertEqual("invalid_tool_input", response["error_code"])
+            self.assertIn("from_position", str(response.get("message") or ""))
+
+    def test_rollback_tool_schema_mentions_explicit_backup_path(self):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
-        rollback_spec = runner.tool_specs().get("rollback", {})
-
-        description = str(rollback_spec.get("description") or "").lower()
-        notes = str(rollback_spec.get("notes") or "").lower()
+        rollback_schema = next(
+            (
+                item
+                for item in runner.tool_schemas()
+                if item.get("function", {}).get("name") == "rollback"
+            ),
+            None,
+        )
+        if not isinstance(rollback_schema, dict):
+            self.fail("rollback schema should exist")
+        description = str(rollback_schema.get("function", {}).get("description") or "").lower()
 
         self.assertIn("backup_path", description)
-        self.assertIn("explicit", notes)
+        self.assertIn("explicit", description)
 
     def test_staged_tools_list_remove_clear(self):
         from lib.plan_store import PlanStore
@@ -704,10 +1138,11 @@ class EditEntryToolRunnerTests(unittest.TestCase):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
         self.assertIn("edit_entry", set(runner.list_tools()))
 
-    def test_edit_entry_in_tool_specs(self):
+    def test_edit_entry_in_tool_schemas(self):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
-        specs = runner.tool_specs()
-        self.assertIn("edit_entry", specs)
+        schemas = runner.tool_schemas()
+        names = [item.get("function", {}).get("name") for item in schemas]
+        self.assertIn("edit_entry", names)
 
     # --- cell_line alias tests ---
 

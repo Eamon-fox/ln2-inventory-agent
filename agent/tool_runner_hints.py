@@ -3,16 +3,15 @@
 
 def _hint_for_error(self, tool_name, payload):
     error_code = str(payload.get("error_code") or "").strip()
-    spec = self.tool_specs().get(tool_name, {})
+    input_schema = self._tool_input_schema(tool_name)
+    required_fields, optional_fields = self._tool_input_field_sets(tool_name)
 
     if error_code == "invalid_tool_input":
-        required = spec.get("required") or []
-        optional = spec.get("optional") or []
-        required_text = ", ".join(required) if required else "(none)"
-        optional_text = ", ".join(optional) if optional else "(none)"
+        required_text = ", ".join(required_fields) if required_fields else "(none)"
+        optional_text = ", ".join(optional_fields) if optional_fields else "(none)"
         return self._msg(
             "hint.invalidToolInput",
-            "Check `{tool_name}` input fields. Required: {required_text}. Optional: {optional_text}.",
+            "Input does not match `{tool_name}` schema. Fix field names/types first, then retry. Required: {required_text}. Optional: {optional_text}.",
             tool_name=tool_name,
             required_text=required_text,
             optional_text=optional_text,
@@ -42,7 +41,7 @@ def _hint_for_error(self, tool_name, payload):
     if error_code == "write_requires_execute_mode":
         return self._msg(
             "hint.writeRequiresExecuteMode",
-            "Write tools are execute-gated. Stage operations first, then let a human run Execute in GUI Plan tab. Use dry_run for preview-only checks.",
+            "Write tools are execute-gated. Stage operations first, then let a human run Execute in GUI Plan tab.",
         )
 
     if error_code == "record_not_found":
@@ -148,10 +147,10 @@ def _hint_for_error(self, tool_name, payload):
             "One or more write operations are invalid against current inventory state. Review blocked details, then retry only corrected operations.",
         )
 
-    if spec:
+    if input_schema:
         return self._msg(
-            "hint.adjustInputByToolSpecs",
-            "Adjust `{tool_name}` inputs according to `tool_specs`, then retry.",
+            "hint.adjustInputByToolSchema",
+            "Adjust `{tool_name}` inputs according to the tool schema, then retry.",
             tool_name=tool_name,
         )
     return self._msg(

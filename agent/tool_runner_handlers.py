@@ -18,6 +18,52 @@ from lib.tool_api import (
     tool_rollback,
     tool_search_records,
 )
+from lib.position_fmt import pos_to_display
+from lib.yaml_ops import create_yaml_backup
+
+
+def _create_request_backup_or_raise(yaml_path):
+    backup_path = create_yaml_backup(yaml_path)
+    if not backup_path:
+        raise RuntimeError("Failed to create request-level backup before execute write.")
+    return str(backup_path)
+
+
+def _resolve_write_execution_kwargs(self, payload):
+    dry_run = self._as_bool(payload.get("dry_run", False), default=False)
+    kwargs = {
+        "dry_run": dry_run,
+        "execution_mode": "preflight" if dry_run else "execute",
+    }
+    if dry_run:
+        return kwargs
+    kwargs["request_backup_path"] = _create_request_backup_or_raise(self._yaml_path)
+    kwargs["auto_backup"] = False
+    return kwargs
+
+
+def _to_tool_position(value, layout, *, field_name="position"):
+    """Convert normalized internal position to tool-facing display value."""
+    if value in (None, "") or isinstance(value, bool):
+        raise ValueError(f"{field_name} is required")
+    try:
+        return pos_to_display(int(value), layout)
+    except Exception as exc:
+        raise ValueError(f"{field_name} is invalid: {value}") from exc
+
+
+def _to_tool_positions(values, layout, *, field_name="positions"):
+    """Convert normalized one-or-many positions for tool calls."""
+    if values in (None, ""):
+        raise ValueError(f"{field_name} is required")
+    if isinstance(values, bool):
+        raise ValueError(f"{field_name} is invalid: {values}")
+    if isinstance(values, (list, tuple, set)):
+        converted = []
+        for idx, value in enumerate(values):
+            converted.append(_to_tool_position(value, layout, field_name=f"{field_name}[{idx}]"))
+        return converted
+    return [_to_tool_position(values, layout, field_name=field_name)]
 
 
 def _run_manage_boxes_add(self, payload, trace_id=None):
@@ -54,7 +100,7 @@ def _run_manage_boxes_add(self, payload, trace_id=None):
             ),
         }
 
-    return self._safe_call(tool_name, _call_manage_boxes_add, include_expected=True)
+    return self._safe_call(tool_name, _call_manage_boxes_add, include_expected_schema=True)
 
 
 def _run_manage_boxes_remove(self, payload, trace_id=None):
@@ -95,7 +141,7 @@ def _run_manage_boxes_remove(self, payload, trace_id=None):
             ),
         }
 
-    return self._safe_call(tool_name, _call_manage_boxes_remove, include_expected=True)
+    return self._safe_call(tool_name, _call_manage_boxes_remove, include_expected_schema=True)
 
 
 def _run_list_empty_positions(self, payload, _trace_id=None):
@@ -116,9 +162,13 @@ def _run_search_records(self, payload, _trace_id=None):
 
     position = None
     if payload.get("position") not in (None, ""):
-        position = self._parse_position(
-            payload.get("position"),
-            layout=layout,
+        position = _to_tool_position(
+            self._parse_position(
+                payload.get("position"),
+                layout=layout,
+                field_name="position",
+            ),
+            layout,
             field_name="position",
         )
 
@@ -157,7 +207,7 @@ def _run_recent_frozen(self, payload, _trace_id=None):
             )
         )
 
-    return self._safe_call(tool_name, _call_recent_frozen, include_expected=True)
+    return self._safe_call(tool_name, _call_recent_frozen, include_expected_schema=True)
 
 
 def _run_query_takeout_events(self, payload, _trace_id=None):
@@ -212,7 +262,7 @@ def _run_query_takeout_summary(self, payload, _trace_id=None):
             all_history=False,
         )
 
-    return self._safe_call(tool_name, _call_query_takeout_summary, include_expected=True)
+    return self._safe_call(tool_name, _call_query_takeout_summary, include_expected_schema=True)
 
 
 def _run_recommend_positions(self, payload, _trace_id=None):
@@ -228,10 +278,14 @@ def _run_recommend_positions(self, payload, _trace_id=None):
     )
 
 
-def _run_generate_stats(self, _payload, _trace_id=None):
+def _run_generate_stats(self, payload, _trace_id=None):
     return self._safe_call(
         "generate_stats",
-        lambda: tool_generate_stats(yaml_path=self._yaml_path),
+        lambda: tool_generate_stats(
+            yaml_path=self._yaml_path,
+            box=self._optional_int(payload, "box"),
+            include_inactive=self._as_bool(payload.get("include_inactive", False), default=False),
+        ),
     )
 
 
@@ -245,7 +299,7 @@ def _run_get_raw_entries(self, payload, _trace_id=None):
             ids=ids,
         )
 
-    return self._safe_call(tool_name, _call_get_raw_entries, include_expected=True)
+    return self._safe_call(tool_name, _call_get_raw_entries, include_expected_schema=True)
 
 
 def _run_edit_entry(self, payload, trace_id=None):
@@ -261,15 +315,17 @@ def _run_edit_entry(self, payload, trace_id=None):
                     "fields must be a non-empty object",
                 )
             )
+        write_kwargs = _resolve_write_execution_kwargs(self, payload)
         return tool_edit_entry(
             yaml_path=self._yaml_path,
             record_id=rid,
             fields=fields,
             actor_context=self._actor_context(trace_id=trace_id),
             source="agent.react",
+            **write_kwargs,
         )
 
-    return self._safe_call(tool_name, _call_edit_entry, include_expected=True)
+    return self._safe_call(tool_name, _call_edit_entry, include_expected_schema=True)
 
 
 def _run_add_entry(self, payload, trace_id=None):
@@ -280,20 +336,22 @@ def _run_add_entry(self, payload, trace_id=None):
         box_val = self._required_int(payload, "box")
         frozen_at = payload.get("frozen_at")
         positions = self._normalize_positions(payload.get("positions"), layout=layout)
+        tool_positions = _to_tool_positions(positions, layout, field_name="positions")
         fields = dict(payload.get("fields") or {})
 
+        write_kwargs = _resolve_write_execution_kwargs(self, payload)
         return tool_add_entry(
             yaml_path=self._yaml_path,
             box=box_val,
-            positions=positions,
+            positions=tool_positions,
             frozen_at=frozen_at,
             fields=fields,
-            dry_run=self._as_bool(payload.get("dry_run", False), default=False),
             actor_context=self._actor_context(trace_id=trace_id),
             source="agent.react",
+            **write_kwargs,
         )
 
-    return self._safe_call(tool_name, _call_add_entry, include_expected=True)
+    return self._safe_call(tool_name, _call_add_entry, include_expected_schema=True)
 
 
 def _parse_batch_flat_entries(self, raw_entries, *, layout, include_target):
@@ -312,9 +370,13 @@ def _parse_batch_flat_entries(self, raw_entries, *, layout, include_target):
             "record_id": self._required_int(entry, "record_id"),
             "from": {
                 "box": self._required_int(entry, "from_box"),
-                "position": self._parse_position(
-                    entry.get("from_position"),
-                    layout=layout,
+                "position": _to_tool_position(
+                    self._parse_position(
+                        entry.get("from_position"),
+                        layout=layout,
+                        field_name=f"entries[{idx}].from_position",
+                    ),
+                    layout,
                     field_name=f"entries[{idx}].from_position",
                 ),
             },
@@ -322,9 +384,13 @@ def _parse_batch_flat_entries(self, raw_entries, *, layout, include_target):
         if include_target:
             parsed["to"] = {
                 "box": self._required_int(entry, "to_box"),
-                "position": self._parse_position(
-                    entry.get("to_position"),
-                    layout=layout,
+                "position": _to_tool_position(
+                    self._parse_position(
+                        entry.get("to_position"),
+                        layout=layout,
+                        field_name=f"entries[{idx}].to_position",
+                    ),
+                    layout,
                     field_name=f"entries[{idx}].to_position",
                 ),
             }
@@ -334,28 +400,37 @@ def _parse_batch_flat_entries(self, raw_entries, *, layout, include_target):
 
 def _call_record_flat_tool(self, payload, trace_id, *, tool_fn, include_target):
     layout = self._load_layout()
+    write_kwargs = _resolve_write_execution_kwargs(self, payload)
     call_kwargs = {
         "yaml_path": self._yaml_path,
         "record_id": self._required_int(payload, "record_id"),
         "from_slot": {
             "box": self._required_int(payload, "from_box"),
-            "position": self._parse_position(
-                payload.get("from_position"),
-                layout=layout,
+            "position": _to_tool_position(
+                self._parse_position(
+                    payload.get("from_position"),
+                    layout=layout,
+                    field_name="from_position",
+                ),
+                layout,
                 field_name="from_position",
             ),
         },
         "date_str": payload.get("date"),
-        "dry_run": self._as_bool(payload.get("dry_run", False), default=False),
         "actor_context": self._actor_context(trace_id=trace_id),
         "source": "agent.react",
+        **write_kwargs,
     }
     if include_target:
         call_kwargs["to_slot"] = {
             "box": self._required_int(payload, "to_box"),
-            "position": self._parse_position(
-                payload.get("to_position"),
-                layout=layout,
+            "position": _to_tool_position(
+                self._parse_position(
+                    payload.get("to_position"),
+                    layout=layout,
+                    field_name="to_position",
+                ),
+                layout,
                 field_name="to_position",
             ),
         }
@@ -364,6 +439,7 @@ def _call_record_flat_tool(self, payload, trace_id, *, tool_fn, include_target):
 
 def _call_batch_flat_tool(self, payload, trace_id, *, tool_fn, include_target):
     layout = self._load_layout()
+    write_kwargs = _resolve_write_execution_kwargs(self, payload)
     entries = _parse_batch_flat_entries(
         self,
         payload.get("entries") or [],
@@ -374,9 +450,9 @@ def _call_batch_flat_tool(self, payload, trace_id, *, tool_fn, include_target):
         yaml_path=self._yaml_path,
         entries=entries,
         date_str=payload.get("date"),
-        dry_run=self._as_bool(payload.get("dry_run", False), default=False),
         actor_context=self._actor_context(trace_id=trace_id),
         source="agent.react",
+        **write_kwargs,
     )
 
 
@@ -392,7 +468,7 @@ def _run_record_takeout(self, payload, trace_id=None):
             include_target=False,
         )
 
-    return self._safe_call(tool_name, _call_record_takeout, include_expected=True)
+    return self._safe_call(tool_name, _call_record_takeout, include_expected_schema=True)
 
 
 def _run_record_move(self, payload, trace_id=None):
@@ -407,7 +483,7 @@ def _run_record_move(self, payload, trace_id=None):
             include_target=True,
         )
 
-    return self._safe_call(tool_name, _call_record_move, include_expected=True)
+    return self._safe_call(tool_name, _call_record_move, include_expected_schema=True)
 
 
 def _run_batch_takeout(self, payload, trace_id=None):
@@ -422,7 +498,7 @@ def _run_batch_takeout(self, payload, trace_id=None):
             include_target=False,
         )
 
-    return self._safe_call(tool_name, _call_batch_takeout, include_expected=True)
+    return self._safe_call(tool_name, _call_batch_takeout, include_expected_schema=True)
 
 
 def _run_batch_move(self, payload, trace_id=None):
@@ -437,11 +513,12 @@ def _run_batch_move(self, payload, trace_id=None):
             include_target=True,
         )
 
-    return self._safe_call(tool_name, _call_batch_move, include_expected=True)
+    return self._safe_call(tool_name, _call_batch_move, include_expected_schema=True)
 
 
 def _run_rollback(self, payload, trace_id=None):
     tool_name = "rollback"
+    write_kwargs = _resolve_write_execution_kwargs(self, payload)
     return self._safe_call(
         tool_name,
         lambda: tool_rollback(
@@ -449,6 +526,7 @@ def _run_rollback(self, payload, trace_id=None):
             backup_path=payload.get("backup_path"),
             actor_context=self._actor_context(trace_id=trace_id),
             source="agent.react",
+            **write_kwargs,
         ),
     )
 

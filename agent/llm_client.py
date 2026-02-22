@@ -2,6 +2,7 @@
 
 import json
 import os
+import threading
 import uuid
 from abc import ABC, abstractmethod
 from urllib import error as urlerror
@@ -11,6 +12,7 @@ from urllib import request as urlrequest
 PROVIDER_DEFAULTS = {
     "deepseek": {
         "model": "deepseek-chat",
+        "models": ["deepseek-chat"],
         "env_key": "DEEPSEEK_API_KEY",
         "display_name": "DeepSeek",
         "base_url": "https://api.deepseek.com",
@@ -18,6 +20,7 @@ PROVIDER_DEFAULTS = {
     },
     "zhipu": {
         "model": "glm-5",
+        "models": ["glm-5", "glm-4.7"],
         "env_key": "ZHIPUAI_API_KEY",
         "display_name": "智谱 GLM",
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
@@ -28,17 +31,26 @@ PROVIDER_DEFAULTS = {
 DEFAULT_PROVIDER = "deepseek"
 
 
+def _is_stop_requested(stop_event):
+    try:
+        return bool(stop_event is not None and stop_event.is_set())
+    except Exception:
+        return False
+
+
 class LLMClient(ABC):
     """Simple chat completion client interface."""
 
     @abstractmethod
-    def chat(self, messages, tools=None, temperature=0.0):
+    def chat(self, messages, tools=None, temperature=0.0, stop_event=None):
         """Return assistant response payload with optional tool calls."""
         raise NotImplementedError
 
-    def stream_chat(self, messages, tools=None, temperature=0.0):
+    def stream_chat(self, messages, tools=None, temperature=0.0, stop_event=None):
         """Yield normalized stream events (answer/tool_call/error)."""
-        response = self.chat(messages, tools=tools, temperature=temperature)
+        if _is_stop_requested(stop_event):
+            return
+        response = self.chat(messages, tools=tools, temperature=temperature, stop_event=stop_event)
         if not isinstance(response, dict):
             yield {"type": "error", "error": "Invalid model response payload"}
             return
@@ -69,9 +81,26 @@ class DeepSeekLLMClient(LLMClient):
         self._timeout = int(timeout)
         self._thinking_enabled = bool(thinking_enabled)
         self._api_key = api_key or os.environ.get("DEEPSEEK_API_KEY")
+        self._stop_lock = threading.Lock()
+        self._active_response = None
+        self._local_stop = threading.Event()
 
         if not self._api_key:
             raise RuntimeError("DEEPSEEK_API_KEY is required")
+
+    def _is_stopping(self, stop_event=None):
+        return self._local_stop.is_set() or _is_stop_requested(stop_event)
+
+    def request_stop(self):
+        self._local_stop.set()
+        resp = None
+        with self._stop_lock:
+            resp = self._active_response
+        if resp is not None and hasattr(resp, "close"):
+            try:
+                resp.close()
+            except Exception:
+                pass
 
     @classmethod
     def _normalize_content(cls, raw_content):
@@ -329,7 +358,8 @@ class DeepSeekLLMClient(LLMClient):
             for tool_call in raw_tool_calls:
                 self._accumulate_tool_call(pending_tool_calls, tool_call)
 
-    def stream_chat(self, messages, tools=None, temperature=0.0):
+    def stream_chat(self, messages, tools=None, temperature=0.0, stop_event=None):
+        self._local_stop.clear()
         req = self._build_request(messages, tools=tools, temperature=temperature)
 
         pending_tool_calls = {}
@@ -338,48 +368,64 @@ class DeepSeekLLMClient(LLMClient):
 
         try:
             with urlrequest.urlopen(req, timeout=self._timeout) as resp:
-                for raw_line in resp:
-                    line = raw_line.decode("utf-8", errors="replace").strip()
-                    if not line:
-                        continue
+                with self._stop_lock:
+                    self._active_response = resp
+                try:
+                    for raw_line in resp:
+                        if self._is_stopping(stop_event):
+                            return
+                        line = raw_line.decode("utf-8", errors="replace").strip()
+                        if not line:
+                            continue
 
-                    if not line.startswith("data:"):
-                        plain_lines.append(line)
-                        continue
+                        if not line.startswith("data:"):
+                            plain_lines.append(line)
+                            continue
 
-                    saw_sse = True
-                    data = line[len("data:") :].strip()
-                    if data == "[DONE]":
-                        break
+                        saw_sse = True
+                        data = line[len("data:") :].strip()
+                        if data == "[DONE]":
+                            break
 
-                    try:
-                        chunk = json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
+                        try:
+                            chunk = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
 
-                    if isinstance(chunk, dict) and chunk.get("error"):
-                        err = chunk.get("error")
-                        if isinstance(err, dict):
-                            message = err.get("message") or json.dumps(err, ensure_ascii=False)
-                        else:
-                            message = str(err)
-                        yield {"type": "error", "error": f"DeepSeek API error: {message}"}
-                        return
+                        if isinstance(chunk, dict) and chunk.get("error"):
+                            err = chunk.get("error")
+                            if isinstance(err, dict):
+                                message = err.get("message") or json.dumps(err, ensure_ascii=False)
+                            else:
+                                message = str(err)
+                            yield {"type": "error", "error": f"DeepSeek API error: {message}"}
+                            return
 
-                    for event in self._yield_events_from_chunk(chunk, pending_tool_calls):
-                        yield event
+                        for event in self._yield_events_from_chunk(chunk, pending_tool_calls):
+                            if self._is_stopping(stop_event):
+                                return
+                            yield event
+                finally:
+                    with self._stop_lock:
+                        self._active_response = None
 
             if not saw_sse and plain_lines:
+                if self._is_stopping(stop_event):
+                    return
                 joined = "\n".join(plain_lines)
                 try:
                     payload_obj = json.loads(joined)
                     for event in self._yield_events_from_plain_payload(payload_obj, pending_tool_calls):
+                        if self._is_stopping(stop_event):
+                            return
                         yield event
                 except Exception:
                     pass
 
             if pending_tool_calls:
                 for tool_call in self._finalize_tool_calls(pending_tool_calls):
+                    if self._is_stopping(stop_event):
+                        return
                     yield {"type": "tool_call", "tool_call": tool_call}
 
         except urlerror.HTTPError as exc:
@@ -395,11 +441,13 @@ class DeepSeekLLMClient(LLMClient):
         except urlerror.URLError as exc:
             yield {"type": "error", "error": f"DeepSeek request failed: {exc.reason}"}
 
-    def chat(self, messages, tools=None, temperature=0.0):
+    def chat(self, messages, tools=None, temperature=0.0, stop_event=None):
         content_parts = []
         tool_calls = []
 
-        for event in self.stream_chat(messages, tools=tools, temperature=temperature):
+        for event in self.stream_chat(messages, tools=tools, temperature=temperature, stop_event=stop_event):
+            if self._is_stopping(stop_event):
+                break
             if not isinstance(event, dict):
                 continue
 
@@ -431,9 +479,26 @@ class ZhipuLLMClient(LLMClient):
         self._timeout = int(timeout)
         self._thinking_enabled = bool(thinking_enabled)
         self._api_key = api_key or os.environ.get("ZHIPUAI_API_KEY") or os.environ.get("ZHIPU_API_KEY") or os.environ.get("GLM_API_KEY")
+        self._stop_lock = threading.Lock()
+        self._active_response = None
+        self._local_stop = threading.Event()
 
         if not self._api_key:
             raise RuntimeError("ZHIPUAI_API_KEY is required. Set ZHIPU_API_KEY or ZHIPUAI_API_KEY env var.")
+
+    def _is_stopping(self, stop_event=None):
+        return self._local_stop.is_set() or _is_stop_requested(stop_event)
+
+    def request_stop(self):
+        self._local_stop.set()
+        resp = None
+        with self._stop_lock:
+            resp = self._active_response
+        if resp is not None and hasattr(resp, "close"):
+            try:
+                resp.close()
+            except Exception:
+                pass
 
     def _build_request(self, messages, tools=None, temperature=0.0):
         payload = {
@@ -492,7 +557,8 @@ class ZhipuLLMClient(LLMClient):
                 yield {"type": "tool_call", "tool_call": tool_call}
             pending_tool_calls.clear()
 
-    def stream_chat(self, messages, tools=None, temperature=0.0):
+    def stream_chat(self, messages, tools=None, temperature=0.0, stop_event=None):
+        self._local_stop.clear()
         req = self._build_request(messages, tools=tools, temperature=temperature)
 
         pending_tool_calls = {}
@@ -501,48 +567,64 @@ class ZhipuLLMClient(LLMClient):
 
         try:
             with urlrequest.urlopen(req, timeout=self._timeout) as resp:
-                for raw_line in resp:
-                    line = raw_line.decode("utf-8", errors="replace").strip()
-                    if not line:
-                        continue
+                with self._stop_lock:
+                    self._active_response = resp
+                try:
+                    for raw_line in resp:
+                        if self._is_stopping(stop_event):
+                            return
+                        line = raw_line.decode("utf-8", errors="replace").strip()
+                        if not line:
+                            continue
 
-                    if not line.startswith("data:"):
-                        plain_lines.append(line)
-                        continue
+                        if not line.startswith("data:"):
+                            plain_lines.append(line)
+                            continue
 
-                    saw_sse = True
-                    data = line[5:].strip()
-                    if data == "[DONE]":
-                        break
+                        saw_sse = True
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            break
 
-                    try:
-                        chunk = json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
+                        try:
+                            chunk = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
 
-                    if isinstance(chunk, dict) and chunk.get("error"):
-                        err = chunk.get("error")
-                        if isinstance(err, dict):
-                            message = err.get("message") or json.dumps(err, ensure_ascii=False)
-                        else:
-                            message = str(err)
-                        yield {"type": "error", "error": f"Zhipu API error: {message}"}
-                        return
+                        if isinstance(chunk, dict) and chunk.get("error"):
+                            err = chunk.get("error")
+                            if isinstance(err, dict):
+                                message = err.get("message") or json.dumps(err, ensure_ascii=False)
+                            else:
+                                message = str(err)
+                            yield {"type": "error", "error": f"Zhipu API error: {message}"}
+                            return
 
-                    for event in self._yield_events_from_chunk(chunk, pending_tool_calls):
-                        yield event
+                        for event in self._yield_events_from_chunk(chunk, pending_tool_calls):
+                            if self._is_stopping(stop_event):
+                                return
+                            yield event
+                finally:
+                    with self._stop_lock:
+                        self._active_response = None
 
             if not saw_sse and plain_lines:
+                if self._is_stopping(stop_event):
+                    return
                 joined = "\n".join(plain_lines)
                 try:
                     payload_obj = json.loads(joined)
                     for event in self._yield_events_from_chunk(payload_obj, pending_tool_calls):
+                        if self._is_stopping(stop_event):
+                            return
                         yield event
                 except Exception:
                     pass
 
             if pending_tool_calls:
                 for tool_call in DeepSeekLLMClient._finalize_tool_calls(pending_tool_calls):
+                    if self._is_stopping(stop_event):
+                        return
                     yield {"type": "tool_call", "tool_call": tool_call}
 
         except urlerror.HTTPError as exc:
@@ -558,11 +640,13 @@ class ZhipuLLMClient(LLMClient):
         except urlerror.URLError as exc:
             yield {"type": "error", "error": f"Zhipu request failed: {exc.reason}"}
 
-    def chat(self, messages, tools=None, temperature=0.0):
+    def chat(self, messages, tools=None, temperature=0.0, stop_event=None):
         content_parts = []
         tool_calls = []
 
-        for event in self.stream_chat(messages, tools=tools, temperature=temperature):
+        for event in self.stream_chat(messages, tools=tools, temperature=temperature, stop_event=stop_event):
+            if self._is_stopping(stop_event):
+                break
             if not isinstance(event, dict):
                 continue
 

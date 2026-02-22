@@ -96,16 +96,16 @@ class ToolRunnerNormalizationTests(unittest.TestCase):
         self.assertEqual([1, 2, 3], result)
 
     def test_normalize_positions_single_int(self):
-        """Test _normalize_positions with single int."""
+        """Test _normalize_positions rejects scalar int (array-only)."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
-        result = runner._normalize_positions(5)
-        self.assertEqual([5], result)
+        with self.assertRaises(ValueError):
+            runner._normalize_positions(5)
 
     def test_normalize_positions_string(self):
-        """Test _normalize_positions with string."""
+        """Test _normalize_positions rejects comma string (array-only)."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
-        result = runner._normalize_positions("1,2,3")
-        self.assertEqual([1, 2, 3], result)
+        with self.assertRaises(ValueError):
+            runner._normalize_positions("1,2,3")
 
     def test_normalize_positions_none(self):
         """Test _normalize_positions with None."""
@@ -155,7 +155,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         result = runner._stage_to_plan(
             "add_entry",
             {
-                "fields": {"cell_line": "K562", "short_name": "clone-new"},
+                "fields": {"cell_line": "K562", "note": "clone-new"},
                 "box": 1,
                 "positions": [2, 3],
                 "frozen_at": "2026-02-10",
@@ -387,7 +387,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         first = runner._stage_to_plan(
             "add_entry",
             {
-                "fields": {"short_name": "clone-a"},
+                "fields": {"cell_line": "K562"},
                 "box": 1,
                 "positions": [2],
                 "frozen_at": "2026-02-10",
@@ -399,7 +399,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         second = runner._stage_to_plan(
             "add_entry",
             {
-                "fields": {"short_name": "clone-b"},
+                "fields": {"cell_line": "K562"},
                 "box": 1,
                 "positions": [2],
                 "frozen_at": "2026-02-10",
@@ -456,7 +456,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         result = runner._stage_to_plan(
             "add_entry",
             {
-                "fields": {"short_name": "clone-a", "cell_line": "K562"},
+                "fields": {"cell_line": "K562"},
                 "box": 1,
                 "positions": [6],
                 "frozen_at": "2026-02-10",
@@ -626,26 +626,6 @@ class ReactAgentHistoryTests(unittest.TestCase):
 class ReactAgentParsingTests(unittest.TestCase):
     """Test ReactAgent parsing functions."""
 
-    def test_build_runtime_context_message(self):
-        """Test _build_runtime_context_message structure."""
-        from agent.react_agent import ReactAgent
-        tool_specs = {"test_tool": {"required": [], "optional": []}}
-        result = ReactAgent._build_runtime_context_message(tool_specs)
-        self.assertEqual("system", result["role"])
-        self.assertIn("tool_specs", result["content"])
-
-    def test_is_runtime_system_prompt_message_true(self):
-        """Test _is_runtime_system_prompt_message recognizes runtime prompts."""
-        from agent.react_agent import ReactAgent
-        msg = {"role": "system", "content": '{"agent_runtime": {"tool_specs": {}}}'}
-        self.assertTrue(ReactAgent._is_runtime_system_prompt_message(msg))
-
-    def test_is_runtime_system_prompt_message_false(self):
-        """Test _is_runtime_system_prompt_message rejects other system prompts."""
-        from agent.react_agent import ReactAgent
-        msg = {"role": "system", "content": "You are a helpful assistant"}
-        self.assertFalse(ReactAgent._is_runtime_system_prompt_message(msg))
-
     def test_parse_tool_arguments_dict(self):
         """Test _parse_tool_arguments with dict input."""
         from agent.react_agent import ReactAgent
@@ -747,7 +727,6 @@ class ReactAgentRunBehaviorTests(unittest.TestCase):
 
         mock_tools = Mock()
         mock_tools.list_tools.return_value = []
-        mock_tools.tool_specs.return_value = {}
         mock_tools.tool_schemas.return_value = []
 
         agent = ReactAgent(llm_client=self.mock_llm, tool_runner=mock_tools, max_steps=1)

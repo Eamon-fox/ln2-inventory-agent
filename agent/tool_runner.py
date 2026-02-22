@@ -67,8 +67,6 @@ class AgentToolRunner:
 
     def _actor_context(self, trace_id=None):
         return build_actor_context(
-            actor_type="agent",
-            channel="agent",
             session_id=self._session_id,
             trace_id=trace_id,
         )
@@ -160,6 +158,14 @@ class AgentToolRunner:
             return {}
         return (data or {}).get("meta", {}).get("box_layout", {})
 
+    def _load_meta(self):
+        try:
+            data = load_yaml(self._yaml_path)
+        except Exception:
+            return {}
+        meta = (data or {}).get("meta", {})
+        return meta if isinstance(meta, dict) else {}
+
     @staticmethod
     def _parse_position(value, layout=None, field_name="position"):
         if value in (None, ""):
@@ -179,6 +185,8 @@ class AgentToolRunner:
     def _normalize_positions(self, value, layout=None):
         if value in (None, ""):
             return None
+        if not isinstance(value, (list, tuple, set)):
+            raise ValueError("positions must be an array")
         return _tool_parsers._normalize_positions_input(value, layout=layout)
 
     def _parse_slot_payload(self, slot_payload, *, layout, field_name):
@@ -197,8 +205,10 @@ class AgentToolRunner:
     def list_tools(self):
         return list(TOOL_CONTRACTS.keys())
 
-    tool_specs = _runner_validation.tool_specs
     tool_schemas = _runner_validation.tool_schemas
+    _tool_input_schema = _runner_validation._tool_input_schema
+    _tool_input_field_sets = _runner_validation._tool_input_field_sets
+    _sanitize_tool_input_payload = staticmethod(_runner_validation._sanitize_tool_input_payload)
     _is_integer = staticmethod(_runner_validation._is_integer)
     _validate_schema_value = _runner_validation._validate_schema_value
     _validate_tool_input = _runner_validation._validate_tool_input
@@ -213,38 +223,61 @@ class AgentToolRunner:
         ReactAgent._run_tool_call, which emits the question event first
         and then waits for the GUI to call _set_answer / _cancel_answer.
         """
-        questions = payload.get("questions", [])
-        if not questions:
+        question_text = str(payload.get("question") or "").strip()
+        if not question_text:
             return {
                 "ok": False,
-                "error_code": "no_questions",
+                "error_code": "invalid_tool_input",
                 "message": self._msg(
-                    "question.atLeastOneRequired",
-                    "At least one question is required.",
+                    "question.nonEmptyQuestionRequired",
+                    "question must be a non-empty string.",
                 ),
             }
 
-        for i, q in enumerate(questions):
-            if not isinstance(q, dict):
+        options_raw = payload.get("options")
+        if not isinstance(options_raw, list):
+            return {
+                "ok": False,
+                "error_code": "invalid_tool_input",
+                "message": self._msg(
+                    "question.optionsMustBeArray",
+                    "options must be an array of non-empty strings.",
+                ),
+            }
+        if len(options_raw) < 2 or len(options_raw) > 5:
+            return {
+                "ok": False,
+                "error_code": "invalid_tool_input",
+                "message": self._msg(
+                    "question.optionsCountRange",
+                    "options must contain 2 to 5 items.",
+                ),
+            }
+
+        options = []
+        for idx, raw_option in enumerate(options_raw):
+            if not isinstance(raw_option, str):
                 return {
                     "ok": False,
-                    "error_code": "invalid_question_format",
+                    "error_code": "invalid_tool_input",
                     "message": self._msg(
-                        "question.mustBeDict",
-                        "Question {index} must be a dict.",
-                        index=i,
+                        "question.optionMustBeString",
+                        "options[{index}] must be a string.",
+                        index=idx,
                     ),
                 }
-            if "header" not in q or "question" not in q:
+            option = raw_option.strip()
+            if not option:
                 return {
                     "ok": False,
-                    "error_code": "missing_required_field",
+                    "error_code": "invalid_tool_input",
                     "message": self._msg(
-                        "question.missingHeaderOrQuestion",
-                        "Question {index} missing 'header' or 'question'.",
-                        index=i,
+                        "question.optionMustBeNonEmpty",
+                        "options[{index}] must be a non-empty string.",
+                        index=idx,
                     ),
                 }
+            options.append(option)
 
         question_id = str(uuid.uuid4())
 
@@ -257,10 +290,11 @@ class AgentToolRunner:
             "ok": True,
             "waiting_for_user": True,
             "question_id": question_id,
-            "questions": questions,
+            "question": question_text,
+            "options": options,
         }
 
-    def _safe_call(self, tool_name, fn, include_expected=False):
+    def _safe_call(self, tool_name, fn, include_expected_schema=False):
         try:
             response = fn()
         except Exception as exc:
@@ -269,8 +303,8 @@ class AgentToolRunner:
                 "error_code": "invalid_tool_input",
                 "message": str(exc),
             }
-            if include_expected:
-                payload["expected"] = self.tool_specs().get(tool_name)
+            if include_expected_schema:
+                payload["expected_schema"] = self._tool_input_schema(tool_name)
             return self._with_hint(tool_name, payload)
         return self._with_hint(tool_name, response)
 
@@ -364,7 +398,7 @@ class AgentToolRunner:
     _build_stage_blocked_response = _runner_staging._build_stage_blocked_response
 
     def run(self, tool_name, tool_input, trace_id=None):
-        payload = dict(tool_input) if isinstance(tool_input, dict) else {}
+        payload = self._sanitize_tool_input_payload(tool_input)
         return self._run_dispatch(tool_name, payload, trace_id)
 
     def _unknown_tool_response(self, tool_name):

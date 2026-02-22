@@ -4,8 +4,186 @@ from copy import deepcopy
 from lib.tool_contracts import TOOL_CONTRACTS
 
 
+_HIDDEN_LLM_FIELDS = {"dry_run"}
+_POSITION_FIELD_KEYS = {"position", "from_position", "to_position"}
+
+
 def _tool_contracts():
     return TOOL_CONTRACTS
+
+
+def _filter_schema_for_llm(schema):
+    """Drop internal-only fields before exposing schemas to the LLM."""
+    filtered = deepcopy(schema) if isinstance(schema, dict) else {}
+    properties = filtered.get("properties")
+    if isinstance(properties, dict):
+        for field in _HIDDEN_LLM_FIELDS:
+            properties.pop(field, None)
+    required = filtered.get("required")
+    if isinstance(required, list):
+        filtered["required"] = [name for name in required if name not in _HIDDEN_LLM_FIELDS]
+    return filtered
+
+
+def _layout_indexing(layout):
+    text = str((layout or {}).get("indexing", "numeric")).strip().lower()
+    return "alphanumeric" if text == "alphanumeric" else "numeric"
+
+
+def _strict_position_value_schema(layout):
+    if _layout_indexing(layout) == "alphanumeric":
+        return {"type": "string"}
+    return {"type": "integer", "minimum": 1}
+
+
+def _merge_schema_metadata(base_schema, strict_schema):
+    merged = dict(strict_schema)
+    if not isinstance(base_schema, dict):
+        return merged
+    for key in ("description", "title", "examples", "default"):
+        if key in base_schema and key not in merged:
+            merged[key] = deepcopy(base_schema[key])
+    return merged
+
+
+def _custom_field_value_schema(field_type):
+    type_name = str(field_type or "str").strip().lower()
+    if type_name == "int":
+        return {"type": "integer"}
+    if type_name == "float":
+        return {"type": "number"}
+    if type_name == "date":
+        return {"type": "string", "description": "Date in YYYY-MM-DD format."}
+    return {"type": "string"}
+
+
+def _dynamic_fields_schema(meta, *, include_frozen_at):
+    from lib.custom_fields import (
+        get_cell_line_options,
+        get_effective_fields,
+        get_required_field_keys,
+        is_cell_line_required,
+    )
+
+    field_properties = {}
+    if include_frozen_at:
+        field_properties["frozen_at"] = {"type": "string", "description": "Date in YYYY-MM-DD format."}
+
+    cell_line_schema = {"type": "string"}
+    cell_line_options = [str(option).strip() for option in get_cell_line_options(meta) if str(option).strip()]
+    if cell_line_options:
+        cell_line_schema["enum"] = cell_line_options
+    field_properties["cell_line"] = cell_line_schema
+    field_properties["note"] = {"type": "string"}
+
+    for field in get_effective_fields(meta):
+        if not isinstance(field, dict):
+            continue
+        key = str(field.get("key") or "").strip()
+        if not key:
+            continue
+        field_properties[key] = _custom_field_value_schema(field.get("type"))
+
+    required_for_add = set(get_required_field_keys(meta))
+    if is_cell_line_required(meta):
+        required_for_add.add("cell_line")
+
+    return field_properties, sorted(required_for_add)
+
+
+def _apply_dynamic_fields_rules(schema, meta, *, tool_name=None):
+    if not isinstance(schema, dict):
+        return schema
+
+    narrowed = deepcopy(schema)
+    properties = narrowed.get("properties")
+    if not isinstance(properties, dict):
+        return narrowed
+
+    fields_schema = properties.get("fields")
+    if not isinstance(fields_schema, dict):
+        return narrowed
+
+    if tool_name == "add_entry":
+        field_properties, required_for_add = _dynamic_fields_schema(meta, include_frozen_at=False)
+        dynamic_schema = {
+            "type": "object",
+            "properties": field_properties,
+            "additionalProperties": False,
+        }
+        if required_for_add:
+            dynamic_schema["required"] = required_for_add
+            required_top = list(narrowed.get("required") or [])
+            if "fields" not in required_top:
+                required_top.append("fields")
+            narrowed["required"] = required_top
+        properties["fields"] = _merge_schema_metadata(fields_schema, dynamic_schema)
+        return narrowed
+
+    if tool_name == "edit_entry":
+        field_properties, _required_for_add = _dynamic_fields_schema(meta, include_frozen_at=True)
+        dynamic_schema = {
+            "type": "object",
+            "properties": field_properties,
+            "additionalProperties": False,
+            "minProperties": 1,
+        }
+        properties["fields"] = _merge_schema_metadata(fields_schema, dynamic_schema)
+
+    return narrowed
+
+
+def _apply_layout_position_rules(schema, layout, *, tool_name=None):
+    if not isinstance(schema, dict):
+        return schema
+
+    narrowed = deepcopy(schema)
+
+    properties = narrowed.get("properties")
+    if isinstance(properties, dict):
+        for key, value in list(properties.items()):
+            if key in _POSITION_FIELD_KEYS:
+                strict_value_schema = _strict_position_value_schema(layout)
+                properties[key] = _merge_schema_metadata(value, strict_value_schema)
+                continue
+
+            if tool_name == "add_entry" and key == "positions":
+                strict_positions_schema = {
+                    "type": "array",
+                    "items": _strict_position_value_schema(layout),
+                    "minItems": 1,
+                }
+                properties[key] = _merge_schema_metadata(value, strict_positions_schema)
+                continue
+
+            properties[key] = _apply_layout_position_rules(
+                value,
+                layout,
+                tool_name=tool_name,
+            )
+
+    items = narrowed.get("items")
+    if isinstance(items, dict):
+        narrowed["items"] = _apply_layout_position_rules(items, layout, tool_name=tool_name)
+
+    one_of = narrowed.get("oneOf")
+    if isinstance(one_of, list):
+        narrowed["oneOf"] = [
+            _apply_layout_position_rules(option, layout, tool_name=tool_name)
+            if isinstance(option, dict)
+            else option
+            for option in one_of
+        ]
+
+    return narrowed
+
+
+def _sanitize_tool_input_payload(payload):
+    """Ignore LLM-internal fields if the model still sends them."""
+    normalized = dict(payload) if isinstance(payload, dict) else {}
+    for field in _HIDDEN_LLM_FIELDS:
+        normalized.pop(field, None)
+    return normalized
 
 
 def _normalize_search_mode(value):
@@ -23,39 +201,26 @@ def _normalize_search_mode(value):
             "errors.modeMustBeOneOf",
             "mode must be one of: fuzzy, exact, keywords",
         )
-    )
-
-
-def tool_specs(self):
-    """Compact tool schemas for runtime grounding (single source of truth)."""
-    specs = {}
-    for name, contract in _tool_contracts().items():
-        schema = deepcopy(contract.get("parameters") or {})
-        properties = dict(schema.get("properties") or {})
-        required = list(schema.get("required") or [])
-        optional = [key for key in properties if key not in required]
-        desc_default = contract.get("description") or self._msg(
-            "toolContracts.defaultDescription",
-            "LN2 inventory tool: {name}",
-            name=name,
         )
-        item = {
-            "required": required,
-            "optional": optional,
-            "params": properties,
-            "description": self._msg(
-                f"toolContracts.{name}.description",
-                desc_default,
-            ),
-        }
-        notes = contract.get("notes")
-        if notes:
-            item["notes"] = self._msg(
-                f"toolContracts.{name}.notes",
-                notes,
-            )
-        specs[name] = item
-    return specs
+
+
+def _tool_input_schema(self, tool_name):
+    contract = _tool_contracts().get(tool_name)
+    if not isinstance(contract, dict):
+        return {}
+    base_schema = _filter_schema_for_llm(contract.get("parameters") or {})
+    meta = self._load_meta() if hasattr(self, "_load_meta") else {}
+    layout = self._load_layout() if hasattr(self, "_load_layout") else {}
+    position_schema = _apply_layout_position_rules(base_schema, layout, tool_name=tool_name)
+    return _apply_dynamic_fields_rules(position_schema, meta, tool_name=tool_name)
+
+
+def _tool_input_field_sets(self, tool_name):
+    schema = _tool_input_schema(self, tool_name)
+    properties = dict(schema.get("properties") or {})
+    required = list(schema.get("required") or [])
+    optional = [key for key in properties if key not in required]
+    return required, optional
 
 
 def tool_schemas(self):
@@ -77,7 +242,7 @@ def tool_schemas(self):
                         f"toolContracts.{name}.description",
                         desc_default,
                     ),
-                    "parameters": deepcopy(contract.get("parameters") or {}),
+                    "parameters": _tool_input_schema(self, name),
                 },
             }
         )
@@ -87,6 +252,10 @@ def tool_schemas(self):
 
 def _is_integer(value):
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _validate_schema_value(self, value, schema, path):
@@ -230,6 +399,15 @@ def _validate_schema_value(self, value, schema, path):
                 label=label,
             )
 
+    elif expected_type == "number":
+        if not _is_number(value):
+            label = path or "value"
+            return self._msg(
+                "validation.mustBeNumber",
+                "{label} must be a number",
+                label=label,
+            )
+
     enum_values = schema.get("enum")
     if isinstance(enum_values, list) and enum_values and value not in enum_values:
         label = path or "value"
@@ -247,7 +425,16 @@ def _validate_tool_input(self, tool_name, payload):
     contract = _tool_contracts().get(tool_name)
     if not contract:
         return None
-    schema = contract.get("parameters") or {}
+
+    if tool_name == "search_records":
+        query_text = payload.get("query")
+        if query_text is None or str(query_text).strip() == "":
+            return self._msg(
+                "input.searchQueryRequired",
+                "未输入检索词",
+            )
+
+    schema = _tool_input_schema(self, tool_name)
     schema_error = self._validate_schema_value(payload, schema, "")
     if schema_error:
         return schema_error

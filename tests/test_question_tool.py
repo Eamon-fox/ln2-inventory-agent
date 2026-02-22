@@ -18,49 +18,64 @@ def runner(tmp_path):
 # --- Validation ---
 
 class TestQuestionValidation:
-    def test_no_questions(self, runner):
-        result = runner.run("question", {"questions": []})
+    def test_missing_question(self, runner):
+        result = runner.run("question", {"options": ["yes", "no"]})
         assert result["ok"] is False
-        assert result["error_code"] == "no_questions"
+        assert result["error_code"] == "invalid_tool_input"
+        assert "question" in result["message"]
 
-    def test_missing_questions_key(self, runner):
-        result = runner.run("question", {})
+    def test_missing_options(self, runner):
+        result = runner.run("question", {"question": "Continue?"})
         assert result["ok"] is False
-        assert result["error_code"] == "no_questions"
+        assert result["error_code"] == "invalid_tool_input"
+        assert "options" in result["message"]
 
-    def test_non_dict_question(self, runner):
-        result = runner.run("question", {"questions": ["not a dict"]})
+    def test_options_must_be_array(self, runner):
+        result = runner.run("question", {"question": "Continue?", "options": "yes"})
         assert result["ok"] is False
-        assert result["error_code"] == "invalid_question_format"
+        assert result["error_code"] == "invalid_tool_input"
+        assert "options" in result["message"]
 
-    def test_missing_header(self, runner):
-        result = runner.run("question", {"questions": [{"question": "Hello?"}]})
+    def test_options_count_range(self, runner):
+        result = runner.run("question", {"question": "Continue?", "options": ["yes"]})
         assert result["ok"] is False
-        assert result["error_code"] == "missing_required_field"
+        assert result["error_code"] == "invalid_tool_input"
+        assert "2 to 5" in result["message"]
 
-    def test_missing_question_text(self, runner):
-        result = runner.run("question", {"questions": [{"header": "Test"}]})
+    def test_option_must_be_string(self, runner):
+        result = runner.run("question", {"question": "Continue?", "options": ["yes", 2]})
         assert result["ok"] is False
-        assert result["error_code"] == "missing_required_field"
+        assert result["error_code"] == "invalid_tool_input"
+        assert "options[1]" in result["message"]
+
+    def test_option_must_be_non_empty(self, runner):
+        result = runner.run("question", {"question": "Continue?", "options": ["yes", "  "]})
+        assert result["ok"] is False
+        assert result["error_code"] == "invalid_tool_input"
+        assert "options[1]" in result["message"]
 
     def test_valid_returns_waiting(self, runner):
-        result = runner.run("question", {
-            "questions": [{"header": "Test", "question": "Hello?"}]
-        })
+        result = runner.run(
+            "question",
+            {"question": "Continue?", "options": ["yes", "no"]},
+        )
         assert result["ok"] is True
         assert result["waiting_for_user"] is True
         assert "question_id" in result
-        assert len(result["questions"]) == 1
+        assert result["question"] == "Continue?"
+        assert result["options"] == ["yes", "no"]
 
-    def test_multiple_questions(self, runner):
-        result = runner.run("question", {
-            "questions": [
-                {"header": "Cell", "question": "Which cell?", "options": ["K562", "HeLa"]},
-                {"header": "Box", "question": "Which box?"},
-            ]
-        })
-        assert result["ok"] is True
-        assert len(result["questions"]) == 2
+    def test_rejects_legacy_questions_payload(self, runner):
+        result = runner.run(
+            "question",
+            {
+                "questions": [
+                    {"header": "Cell", "question": "Which cell?", "options": ["K562", "HeLa"]},
+                ]
+            },
+        )
+        assert result["ok"] is False
+        assert result["error_code"] == "invalid_tool_input"
 
 
 # --- Threading synchronization ---
@@ -100,9 +115,10 @@ class TestAnswerSync:
         runner._set_answer(["old answer"])
         assert runner._answer_event.is_set()
 
-        result = runner.run("question", {
-            "questions": [{"header": "Test", "question": "New?"}]
-        })
+        result = runner.run(
+            "question",
+            {"question": "New?", "options": ["yes", "no"]},
+        )
         assert result["ok"] is True
         # Event should be cleared after new question
         assert not runner._answer_event.is_set()
@@ -116,12 +132,14 @@ class TestToolListing:
         tools = runner.list_tools()
         assert "question" in tools
 
-    def test_question_in_tool_specs(self, runner):
-        specs = runner.tool_specs()
-        assert "question" in specs
-        assert specs["question"]["required"] == ["questions"]
-
     def test_question_in_tool_schemas(self, runner):
         schemas = runner.tool_schemas()
         names = [s["function"]["name"] for s in schemas]
         assert "question" in names
+        question_schema = next(
+            (item for item in schemas if item.get("function", {}).get("name") == "question"),
+            None,
+        )
+        assert question_schema is not None
+        required = question_schema.get("function", {}).get("parameters", {}).get("required", [])
+        assert required == ["question", "options"]
