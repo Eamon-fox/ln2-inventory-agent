@@ -11,7 +11,10 @@ _VALID_TYPES = {"str", "int", "float", "date"}
 # Keep empty by default: users explicitly decide their own custom fields.
 DEFAULT_PRESET_FIELDS = []
 
+DEFAULT_UNKNOWN_CELL_LINE = "Unknown"
+
 DEFAULT_CELL_LINE_OPTIONS = [
+    DEFAULT_UNKNOWN_CELL_LINE,
     "K562",
     "HeLa",
     "NCCIT",
@@ -163,10 +166,11 @@ def get_required_field_keys(meta):
 def is_cell_line_required(meta):
     """Check if cell_line is marked as required.
 
-    Backward-compatible default is False when the flag is absent.
-    GUI defaults the checkbox to checked for newly saved configs.
+    Default is True when the flag is absent.
+    Existing datasets are upgraded by write-time migration, which fills
+    empty/missing values with ``"Unknown"``.
     """
-    return bool((meta or {}).get("cell_line_required", False))
+    return bool((meta or {}).get("cell_line_required", True))
 
 
 def coerce_value(value, field_type):

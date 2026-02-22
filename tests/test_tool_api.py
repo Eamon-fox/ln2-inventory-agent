@@ -49,7 +49,10 @@ def make_record(rec_id=1, box=1, position=None):
 
 def make_data(records):
     return {
-        "meta": {"box_layout": {"rows": 9, "cols": 9}},
+        "meta": {
+            "box_layout": {"rows": 9, "cols": 9},
+            "cell_line_required": False,
+        },
         "inventory": records,
     }
 
@@ -305,9 +308,9 @@ class ToolApiTests(unittest.TestCase):
 
             self.assertTrue(result["ok"])
             self.assertEqual("move", result["preview"]["action_en"])
-            self.assertEqual(3, result["preview"]["to_position"])
-            self.assertEqual(1, result["preview"]["position_before"])
-            self.assertEqual(3, result["preview"]["position_after"])
+            self.assertEqual("3", result["preview"]["to_position"])
+            self.assertEqual("1", result["preview"]["position_before"])
+            self.assertEqual("3", result["preview"]["position_after"])
 
             current = load_yaml(str(yaml_path))
             self.assertEqual(3, current["inventory"][0]["position"])
@@ -805,7 +808,7 @@ class ToolApiTests(unittest.TestCase):
             self.assertEqual(1, response["result"]["records"][0]["id"])
             self.assertEqual("2:15", response["result"]["applied_filters"]["query_shortcut"])
             self.assertEqual(2, response["result"]["applied_filters"]["box"])
-            self.assertEqual(15, response["result"]["applied_filters"]["position"])
+            self.assertEqual("15", response["result"]["applied_filters"]["position"])
 
     def test_tool_search_records_record_id_with_query_filter(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_search_rid_") as temp_dir:
@@ -1046,7 +1049,7 @@ def make_data_custom(records, rows=9, cols=9, box_count=None, indexing=None):
         layout["box_count"] = box_count
     if indexing is not None:
         layout["indexing"] = indexing
-    return {"meta": {"box_layout": layout}, "inventory": records}
+    return {"meta": {"box_layout": layout, "cell_line_required": False}, "inventory": records}
 
 
 class TestCustomLayout10x10(unittest.TestCase):
@@ -1125,7 +1128,7 @@ class TestCustomLayout10x10(unittest.TestCase):
         self.assertTrue(result["ok"])
         for rec in result["result"]["recommendations"]:
             for pos in rec["positions"]:
-                self.assertLessEqual(pos, 100)
+                self.assertLessEqual(int(pos), 100)
 
     def test_thaw_then_move_high_position(self):
         """Record at position 95 can be moved to position 100."""
@@ -1225,6 +1228,12 @@ class TestValidatorsWithLayout(unittest.TestCase):
         result = parse_positions("A1,B3", layout)
         self.assertEqual([1, 12], result)
 
+    def test_parse_positions_alphanumeric_rejects_numeric_input(self):
+        from lib.validators import parse_positions
+        layout = {"rows": 9, "cols": 9, "indexing": "alphanumeric"}
+        with self.assertRaises(ValueError):
+            parse_positions("1,2", layout)
+
 
 class TestAdjustBoxCount(unittest.TestCase):
     def _seed(self, records, layout):
@@ -1293,6 +1302,34 @@ class TestAdjustBoxCount(unittest.TestCase):
         )
         self.assertFalse(result["ok"])
         self.assertEqual("box_not_empty", result.get("error_code"))
+
+    def test_remove_box_with_only_historical_records_reports_reason(self):
+        records = [
+            {
+                "id": 1,
+                "parent_cell_line": "NCCIT",
+                "short_name": "hist-only",
+                "box": 2,
+                "position": None,
+                "frozen_at": "2025-01-01",
+                "thaw_events": [
+                    {"date": "2025-01-10", "action": "takeout", "positions": [1]},
+                ],
+            }
+        ]
+        p, _ = self._seed(records, {"rows": 9, "cols": 9, "box_count": 5})
+        result = tool_adjust_box_count(
+            p,
+            operation="remove",
+            box=2,
+            renumber_mode="keep_gaps",
+            auto_backup=False,
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual("box_not_empty", result.get("error_code"))
+        self.assertIn("historical", str(result.get("message", "")).lower())
+        self.assertEqual([], result.get("active_blocking_record_ids"))
+        self.assertEqual([1], result.get("historical_blocking_record_ids"))
 
     def test_record_takeout_cross_box_respects_box_numbers(self):
         records = [make_record(1, box=1, position=1)]

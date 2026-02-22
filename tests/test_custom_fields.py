@@ -11,7 +11,16 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from lib.custom_fields import STRUCTURAL_FIELD_KEYS, coerce_value, parse_custom_fields, get_color_key, get_cell_line_options, DEFAULT_CELL_LINE_OPTIONS, is_cell_line_required
+from lib.custom_fields import (
+    STRUCTURAL_FIELD_KEYS,
+    coerce_value,
+    parse_custom_fields,
+    get_color_key,
+    get_cell_line_options,
+    DEFAULT_CELL_LINE_OPTIONS,
+    DEFAULT_UNKNOWN_CELL_LINE,
+    is_cell_line_required,
+)
 from lib.tool_api import (
     tool_add_entry,
     tool_edit_entry,
@@ -221,7 +230,7 @@ class TestToolAddEntryCustomData(unittest.TestCase):
                 box=1,
                 positions=[2],
                 frozen_at="2026-02-10",
-                fields={"parent_cell_line": "K562", "short_name": "K562_test",
+                fields={"cell_line": "K562", "parent_cell_line": "K562", "short_name": "K562_test",
                         "passage_number": 5, "medium": "10% DMSO"},
                 source="test_custom_fields",
             )
@@ -251,7 +260,7 @@ class TestToolAddEntryCustomData(unittest.TestCase):
                 box=1,
                 positions=[2],
                 frozen_at="2026-02-10",
-                fields={"parent_cell_line": "K562", "short_name": "K562_plain"},
+                fields={"cell_line": "K562", "parent_cell_line": "K562", "short_name": "K562_plain"},
                 source="test_custom_fields",
             )
 
@@ -275,7 +284,7 @@ class TestToolAddEntryCustomData(unittest.TestCase):
                 box=1,
                 positions=[2],
                 frozen_at="2026-02-10",
-                fields={"parent_cell_line": "K562", "short_name": "K562_core",
+                fields={"cell_line": "K562", "parent_cell_line": "K562", "short_name": "K562_core",
                         "box": 999, "note": "hacked", "virus_titer": "high"},
                 source="test_custom_fields",
             )
@@ -517,6 +526,7 @@ class TestGetCellLineOptions(unittest.TestCase):
     def test_default_returns_preset_options(self):
         result = get_cell_line_options(None)
         self.assertEqual(DEFAULT_CELL_LINE_OPTIONS, result)
+        self.assertIn(DEFAULT_UNKNOWN_CELL_LINE, result)
 
     def test_meta_overrides_defaults(self):
         meta = {"cell_line_options": ["A549", "MCF7"]}
@@ -543,9 +553,9 @@ class TestGetCellLineOptions(unittest.TestCase):
 class TestCellLineRequiredFlag(unittest.TestCase):
     """Unit tests for is_cell_line_required()."""
 
-    def test_default_is_not_required(self):
-        self.assertFalse(is_cell_line_required(None))
-        self.assertFalse(is_cell_line_required({}))
+    def test_default_is_required(self):
+        self.assertTrue(is_cell_line_required(None))
+        self.assertTrue(is_cell_line_required({}))
 
     def test_meta_flag_controls_required(self):
         self.assertTrue(is_cell_line_required({"cell_line_required": True}))
@@ -653,7 +663,14 @@ class TestCellLineAddEntry(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ln2_cl_add_empty_") as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, position=1)]),
+                {
+                    "meta": {
+                        "box_layout": {"rows": 9, "cols": 9},
+                        "cell_line_required": False,
+                        "cell_line_options": ["K562", "HeLa"],
+                    },
+                    "inventory": [make_record(1, box=1, position=1)],
+                },
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )

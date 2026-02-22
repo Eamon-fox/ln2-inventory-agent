@@ -22,7 +22,6 @@ def tool_rollback(
     source_event=None,
 ):
     """Rollback inventory YAML using shared tool flow."""
-    del auto_backup  # Keep signature parity with tool_api; rollback handles its own snapshots.
 
     audit_action = "rollback"
     tool_name = "tool_rollback"
@@ -60,6 +59,7 @@ def tool_rollback(
         dry_run=dry_run,
         execution_mode=execution_mode,
         actor_context=actor_context,
+        auto_backup=auto_backup,
     )
     if not validation.get("ok"):
         return validation

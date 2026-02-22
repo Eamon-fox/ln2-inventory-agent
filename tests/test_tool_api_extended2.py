@@ -47,7 +47,7 @@ def make_data(records):
     }
 
 
-# 鈹€鈹€ tool_recent_frozen Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- tool_recent_frozen Tests ---
 
 
 class RecentFrozenTests(unittest.TestCase):
@@ -119,7 +119,7 @@ class RecentFrozenTests(unittest.TestCase):
             self.assertEqual(0, result["result"]["count"])
 
 
-# 鈹€鈹€ tool_recommend_positions Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- tool_recommend_positions Tests ---
 
 
 class RecommendPositionsTests(unittest.TestCase):
@@ -208,7 +208,7 @@ class RecommendPositionsTests(unittest.TestCase):
             # Should still find positions in other boxes
 
 
-# 鈹€鈹€ tool_query_takeout_events Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- tool_query_takeout_events Tests ---
 
 
 class QueryThawEventsExtendedTests(unittest.TestCase):
@@ -298,7 +298,7 @@ class QueryThawEventsExtendedTests(unittest.TestCase):
             self.assertEqual(4, result["result"]["event_count"])
 
 
-# 鈹€鈹€ tool_collect_timeline Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- tool_collect_timeline Tests ---
 
 
 class CollectTimelineExtendedTests(unittest.TestCase):
@@ -357,7 +357,7 @@ class CollectTimelineExtendedTests(unittest.TestCase):
             self.assertEqual(0, result["result"]["summary"]["takeout"])
 
 
-# 鈹€鈹€ tool_generate_stats Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- tool_generate_stats Tests ---
 
 
 class GenerateStatsTests(unittest.TestCase):

@@ -16,23 +16,14 @@ _POSITION_VALUE_SCHEMA = {
     ]
 }
 
-_SLOT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "box": {"type": "integer", "minimum": 1},
-        "position": _POSITION_VALUE_SCHEMA,
-    },
-    "required": ["box", "position"],
-    "additionalProperties": False,
-}
-
 _TAKEOUT_ENTRY_SCHEMA = {
     "type": "object",
     "properties": {
         "record_id": {"type": "integer", "minimum": 1},
-        "from": _SLOT_SCHEMA,
+        "from_box": {"type": "integer", "minimum": 1},
+        "from_position": _POSITION_VALUE_SCHEMA,
     },
-    "required": ["record_id", "from"],
+    "required": ["record_id", "from_box", "from_position"],
     "additionalProperties": False,
 }
 
@@ -40,10 +31,18 @@ _MOVE_ENTRY_SCHEMA = {
     "type": "object",
     "properties": {
         "record_id": {"type": "integer", "minimum": 1},
-        "from": _SLOT_SCHEMA,
-        "to": _SLOT_SCHEMA,
+        "from_box": {"type": "integer", "minimum": 1},
+        "from_position": _POSITION_VALUE_SCHEMA,
+        "to_box": {"type": "integer", "minimum": 1},
+        "to_position": _POSITION_VALUE_SCHEMA,
     },
-    "required": ["record_id", "from", "to"],
+    "required": [
+        "record_id",
+        "from_box",
+        "from_position",
+        "to_box",
+        "to_position",
+    ],
     "additionalProperties": False,
 }
 
@@ -60,7 +59,7 @@ TOOL_CONTRACTS = {
         },
     },
     "search_records": {
-        "description": "Search inventory records, or list recently frozen records via recent_* filters.",
+        "description": "Search inventory records via text and structured filters.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -76,34 +75,50 @@ TOOL_CONTRACTS = {
                 "max_results": {"type": "integer", "minimum": 1},
                 "case_sensitive": {"type": "boolean"},
                 "box": {"type": "integer", "minimum": 1},
-                "position": {"type": "integer", "minimum": 1},
+                "position": _POSITION_VALUE_SCHEMA,
                 "record_id": {"type": "integer", "minimum": 1},
                 "active_only": {"type": "boolean"},
-                "recent_days": {"type": "integer", "minimum": 1},
-                "recent_count": {"type": "integer", "minimum": 1},
             },
             "required": [],
             "additionalProperties": False,
         },
     },
-    "query_takeout_events": {
-        "description": "Query takeout/move events, or timeline summary via view=summary.",
+    "recent_frozen": {
+        "description": "List recently frozen records by a basis/value selector.",
         "parameters": {
             "type": "object",
             "properties": {
-                "view": {
-                    "type": "string",
-                    "enum": ["events", "summary"],
-                },
+                "basis": {"type": "string", "enum": ["days", "count"]},
+                "value": {"type": "integer", "minimum": 1},
+            },
+            "required": ["basis", "value"],
+            "additionalProperties": False,
+        },
+    },
+    "query_takeout_events": {
+        "description": "Query takeout/move event records.",
+        "parameters": {
+            "type": "object",
+            "properties": {
                 "date": {"type": "string"},
                 "days": {"type": "integer", "minimum": 1},
                 "start_date": {"type": "string"},
                 "end_date": {"type": "string"},
                 "action": {"type": "string"},
                 "max_records": {"type": "integer", "minimum": 0},
-                "all_history": {"type": "boolean"},
             },
             "required": [],
+            "additionalProperties": False,
+        },
+    },
+    "query_takeout_summary": {
+        "description": "Query timeline summary with a fixed range selector.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "range": {"type": "string", "enum": ["7d", "30d", "90d", "all"]},
+            },
+            "required": ["range"],
             "additionalProperties": False,
         },
     },
@@ -158,7 +173,7 @@ TOOL_CONTRACTS = {
                     "oneOf": [
                         {
                             "type": "array",
-                            "items": {"type": "integer", "minimum": 1},
+                            "items": _POSITION_VALUE_SCHEMA,
                             "minItems": 1,
                         },
                         {"type": "string"},
@@ -185,36 +200,46 @@ TOOL_CONTRACTS = {
         },
     },
     "record_takeout": {
-        "description": "Record takeout for one tube using explicit source slot.",
+        "description": "Record takeout for one tube using explicit source box/position.",
         "parameters": {
             "type": "object",
             "properties": {
                 "record_id": {"type": "integer", "minimum": 1},
-                "from": _SLOT_SCHEMA,
+                "from_box": {"type": "integer", "minimum": 1},
+                "from_position": _POSITION_VALUE_SCHEMA,
                 "date": {"type": "string"},
                 "dry_run": {"type": "boolean"},
             },
-            "required": ["record_id", "from", "date"],
+            "required": ["record_id", "from_box", "from_position", "date"],
             "additionalProperties": False,
         },
     },
     "record_move": {
-        "description": "Record move for one tube using explicit source and target slots.",
+        "description": "Record move for one tube using explicit source/target box+position.",
         "parameters": {
             "type": "object",
             "properties": {
                 "record_id": {"type": "integer", "minimum": 1},
-                "from": _SLOT_SCHEMA,
-                "to": _SLOT_SCHEMA,
+                "from_box": {"type": "integer", "minimum": 1},
+                "from_position": _POSITION_VALUE_SCHEMA,
+                "to_box": {"type": "integer", "minimum": 1},
+                "to_position": _POSITION_VALUE_SCHEMA,
                 "date": {"type": "string"},
                 "dry_run": {"type": "boolean"},
             },
-            "required": ["record_id", "from", "to", "date"],
+            "required": [
+                "record_id",
+                "from_box",
+                "from_position",
+                "to_box",
+                "to_position",
+                "date",
+            ],
             "additionalProperties": False,
         },
     },
     "batch_takeout": {
-        "description": "Record takeout for multiple tubes using explicit source slots.",
+        "description": "Record takeout for multiple tubes using explicit source box/position.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -231,7 +256,7 @@ TOOL_CONTRACTS = {
         },
     },
     "batch_move": {
-        "description": "Record move for multiple tubes using explicit source and target slots.",
+        "description": "Record move for multiple tubes using explicit source/target box+position.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -259,13 +284,23 @@ TOOL_CONTRACTS = {
             "additionalProperties": False,
         },
     },
-    "manage_boxes": {
-        "description": "Safely add or remove inventory boxes.",
+    "manage_boxes_add": {
+        "description": "Safely add inventory boxes.",
         "parameters": {
             "type": "object",
             "properties": {
-                "operation": {"type": "string", "enum": ["add", "remove"]},
                 "count": {"type": "integer", "minimum": 1},
+                "dry_run": {"type": "boolean"},
+            },
+            "required": ["count"],
+            "additionalProperties": False,
+        },
+    },
+    "manage_boxes_remove": {
+        "description": "Safely remove one inventory box.",
+        "parameters": {
+            "type": "object",
+            "properties": {
                 "box": {"type": "integer", "minimum": 1},
                 "renumber_mode": {
                     "type": "string",
@@ -273,7 +308,7 @@ TOOL_CONTRACTS = {
                 },
                 "dry_run": {"type": "boolean"},
             },
-            "required": ["operation"],
+            "required": ["box"],
             "additionalProperties": False,
         },
     },
@@ -293,7 +328,15 @@ TOOL_CONTRACTS = {
                             "question": {"type": "string"},
                             "options": {
                                 "type": "array",
-                                "items": {"type": "string"},
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "label": {"type": "string"},
+                                        "description": {"type": "string"},
+                                    },
+                                    "required": ["label"],
+                                    "additionalProperties": False,
+                                },
                             },
                             "multiple": {"type": "boolean"},
                         },
@@ -306,21 +349,32 @@ TOOL_CONTRACTS = {
             "additionalProperties": False,
         },
     },
-    "manage_staged": {
-        "description": "List, remove, or clear staged plan items.",
+    "staged_list": {
+        "description": "List staged plan items.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+    "staged_remove": {
+        "description": "Remove one staged plan item by index.",
         "parameters": {
             "type": "object",
             "properties": {
-                "operation": {
-                    "type": "string",
-                    "enum": ["list", "remove", "clear"],
-                },
                 "index": {"type": "integer", "minimum": 0},
-                "action": {"type": "string"},
-                "record_id": {"type": "integer", "minimum": 1},
-                "position": {"type": "integer", "minimum": 1},
             },
-            "required": ["operation"],
+            "required": ["index"],
+            "additionalProperties": False,
+        },
+    },
+    "staged_clear": {
+        "description": "Clear all staged plan items.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
             "additionalProperties": False,
         },
     },

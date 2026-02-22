@@ -23,7 +23,8 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
         self.assertIn("batch_move", TOOL_CONTRACTS)
 
         record_takeout_props = TOOL_CONTRACTS["record_takeout"]["parameters"]["properties"]
-        self.assertIn("from", record_takeout_props)
+        self.assertIn("from_box", record_takeout_props)
+        self.assertIn("from_position", record_takeout_props)
         self.assertNotIn("action", record_takeout_props)
         self.assertNotIn("to_position", record_takeout_props)
 
@@ -32,7 +33,8 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
         entries_schema = batch_takeout_props["entries"]
         self.assertEqual("array", entries_schema.get("type"))
         entry_props = entries_schema["items"]["properties"]
-        self.assertIn("from", entry_props)
+        self.assertIn("from_box", entry_props)
+        self.assertIn("from_position", entry_props)
         self.assertNotIn("to_position", entry_props)
         self.assertNotIn("to_box", entry_props)
 

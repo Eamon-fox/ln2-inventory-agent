@@ -13,8 +13,10 @@ if str(ROOT) not in sys.path:
 
 from lib.yaml_ops import (
     get_audit_log_path,
+    get_audit_log_paths,
     list_yaml_backups,
     load_yaml,
+    read_audit_events,
     rollback_yaml,
     write_yaml,
 )
@@ -165,6 +167,65 @@ class YamlOpsSafetyTests(unittest.TestCase):
             self.assertNotEqual(str(audit_a), str(audit_b))
             self.assertTrue(audit_a.exists())
             self.assertTrue(audit_b.exists())
+
+    def test_legacy_named_yaml_paths_get_unique_audit_targets(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_audit_legacy_iso_") as root_dir:
+            dir_a = Path(root_dir) / "project_a"
+            dir_b = Path(root_dir) / "project_b"
+            dir_a.mkdir(parents=True, exist_ok=True)
+            dir_b.mkdir(parents=True, exist_ok=True)
+
+            yaml_a = dir_a / "inventory.yaml"
+            yaml_b = dir_b / "inventory.yaml"
+
+            # Write raw YAML without inventory_instance_id to exercise legacy fallback naming.
+            with yaml_a.open("w", encoding="utf-8") as handle:
+                yaml.safe_dump(
+                    make_data([make_record(1)]),
+                    handle,
+                    allow_unicode=True,
+                    sort_keys=False,
+                    width=120,
+                )
+            with yaml_b.open("w", encoding="utf-8") as handle:
+                yaml.safe_dump(
+                    make_data([make_record(2)]),
+                    handle,
+                    allow_unicode=True,
+                    sort_keys=False,
+                    width=120,
+                )
+
+            audit_a = Path(get_audit_log_path(str(yaml_a)))
+            audit_b = Path(get_audit_log_path(str(yaml_b)))
+
+            self.assertNotEqual(str(audit_a), str(audit_b))
+
+    def test_read_audit_events_merges_all_candidate_paths(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_audit_merge_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            candidates = get_audit_log_paths(str(yaml_path))
+            self.assertGreaterEqual(len(candidates), 2)
+            legacy_shared_path = Path(candidates[-1])
+            legacy_shared_path.parent.mkdir(parents=True, exist_ok=True)
+            legacy_event = {
+                "timestamp": "2026-02-20T08:00:00",
+                "action": "record_takeout",
+                "status": "success",
+                "source": "legacy-tests",
+            }
+            legacy_shared_path.write_text(json.dumps(legacy_event, ensure_ascii=False) + "\n", encoding="utf-8")
+
+            events = read_audit_events(str(yaml_path))
+            actions = [str(ev.get("action") or "") for ev in events]
+            self.assertIn("seed", actions)
+            self.assertIn("record_takeout", actions)
 
     def test_rollback_yaml_restores_latest_backup(self):
         with tempfile.TemporaryDirectory(prefix="ln2_rollback_") as temp_dir:

@@ -40,7 +40,10 @@ def make_record(rec_id=1, box=1, position=None, **extra):
 
 def make_data(records):
     return {
-        "meta": {"box_layout": {"rows": 9, "cols": 9}},
+        "meta": {
+            "box_layout": {"rows": 9, "cols": 9},
+            "cell_line_required": False,
+        },
         "inventory": records,
     }
 
@@ -78,7 +81,7 @@ def _read_audit(temp_dir):
     return read_audit_events(str(yaml_path))
 
 
-# 鈹€鈹€ parse_batch_entries 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- parse_batch_entries ---
 
 
 class ParseBatchEntriesTests(unittest.TestCase):
@@ -99,7 +102,7 @@ class ParseBatchEntriesTests(unittest.TestCase):
             parse_batch_entries("not-valid")
 
 
-# 鈹€鈹€ Position consistency invariants 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- Position consistency invariants ---
 
 
 class PositionConsistencyTests(unittest.TestCase):
@@ -227,7 +230,7 @@ class PositionConsistencyTests(unittest.TestCase):
             self.assertFalse(result["ok"])
 
 
-# 鈹€鈹€ Batch same-record edge cases 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- Batch same-record edge cases ---
 
 
 class BatchSameRecordTests(unittest.TestCase):
@@ -322,7 +325,7 @@ class BatchSameRecordTests(unittest.TestCase):
             self.assertFalse(result["ok"])
 
 
-# 鈹€鈹€ Audit trail invariants 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- Audit trail invariants ---
 
 
 class AuditTrailTests(unittest.TestCase):
@@ -388,7 +391,7 @@ class AuditTrailTests(unittest.TestCase):
             self.assertGreaterEqual(len(failed), 1)
 
 
-# 鈹€鈹€ Boundary values on tool_api 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- Boundary values on tool_api ---
 
 
 class BoundaryValueTests(unittest.TestCase):
@@ -481,7 +484,7 @@ class BoundaryValueTests(unittest.TestCase):
             self.assertFalse(result["ok"])
 
 
-# 鈹€鈹€ Error path tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- Error path tests ---
 
 
 class ErrorPathTests(unittest.TestCase):
@@ -570,7 +573,7 @@ class ErrorPathTests(unittest.TestCase):
             self.assertTrue(result["ok"])
 
 
-# 鈹€鈹€ Cross-box move tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- Cross-box move tests ---
 
 
 class CrossBoxMoveTests(unittest.TestCase):

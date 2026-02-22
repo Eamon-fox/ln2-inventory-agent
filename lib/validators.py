@@ -30,6 +30,11 @@ def validate_date(date_str):
         return False
 
 
+def _is_plain_int(value):
+    """Return True only for integers, excluding booleans."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def parse_date(date_str):
     """Parse YYYY-MM-DD string to datetime object.
 
@@ -76,6 +81,9 @@ def validate_box(box, layout=None):
     Returns:
         bool: True if valid, False otherwise
     """
+    if isinstance(box, bool):
+        return False
+
     try:
         box_num = int(box)
     except Exception:
@@ -116,6 +124,9 @@ def validate_position(pos, layout=None):
     Returns:
         bool: True if valid, False otherwise
     """
+    if not _is_plain_int(pos):
+        return False
+
     if layout is not None:
         lo, hi = get_position_range(layout)
         return lo <= pos <= hi
@@ -150,7 +161,7 @@ def parse_positions(positions_str, layout=None):
         ValueError: If format is invalid or positions out of range
     """
     positions = []
-    is_alpha = _indexing(layout) == "alphanumeric" if layout else False
+    is_alpha_mode = _indexing(layout) == "alphanumeric" if layout else False
     lo, hi = get_position_range(layout) if layout else (POSITION_RANGE[0], POSITION_RANGE[1])
 
     try:
@@ -158,15 +169,23 @@ def parse_positions(positions_str, layout=None):
             part = part.strip()
             if not part:
                 continue
-            if is_alpha and part[0].isalpha():
+            if is_alpha_mode:
+                if "-" in part:
+                    raise ValueError("Ranges are not supported in alphanumeric mode")
                 positions.append(display_to_pos(part, layout))
-            elif "-" in part:
-                start, end = part.split("-")
-                positions.extend(range(int(start), int(end) + 1))
+                continue
+
+            if "-" in part:
+                start_text, end_text = part.split("-", 1)
+                start = int(start_text)
+                end = int(end_text)
+                if end < start:
+                    raise ValueError(f"Range end must be >= start: {part}")
+                positions.extend(range(start, end + 1))
             else:
-                positions.append(int(part))
+                positions.append(display_to_pos(part, layout))
     except Exception as e:
-        raise ValueError(f"Invalid position format: {e}. Example: '1,2,3' or '1-3'")
+        raise ValueError(f"Invalid position format: {e}. Example: '1,2,3' or '1-3' or 'A1,A2'")
 
     for pos in positions:
         if not (lo <= pos <= hi):
@@ -238,11 +257,11 @@ def validate_record(rec, idx=None, layout=None, meta=None):
             errors.append(f"{rec_id}: missing required field '{field}'")
 
     rec_id_value = rec.get("id")
-    if not isinstance(rec_id_value, int) or rec_id_value <= 0:
+    if not _is_plain_int(rec_id_value) or rec_id_value <= 0:
         errors.append(f"{rec_id}: 'id' must be a positive integer")
 
     box = rec.get("box")
-    if not isinstance(box, int):
+    if not _is_plain_int(box):
         errors.append(f"{rec_id}: 'box' must be an integer")
     elif not validate_box(box, layout):
         errors.append(f"{rec_id}: 'box' out of range ({box_rule})")
@@ -287,7 +306,7 @@ def validate_record(rec, idx=None, layout=None, meta=None):
     # Validate position (single integer, optional for consumed records)
     position = rec.get("position")
     if position is not None:
-        if not isinstance(position, int):
+        if not _is_plain_int(position):
             errors.append(f"{rec_id}: 'position' must be an integer")
         elif not validate_position(position, layout):
             errors.append(f"{rec_id}: 'position' {position} out of range ({pos_lo}-{pos_hi})")
@@ -376,8 +395,8 @@ def check_position_conflicts(records):
         position = rec.get("position")
         if box is None or position is None:
             continue
-        if isinstance(position, int):
-            usage[(int(box), int(position))].append((idx, rec))
+        if _is_plain_int(box) and _is_plain_int(position):
+            usage[(box, position)].append((idx, rec))
 
     conflicts = []
     for (box, pos), entries in usage.items():

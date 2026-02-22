@@ -32,6 +32,9 @@ from lib.validators import (
     normalize_date_arg,
     parse_date,
     validate_action,
+    validate_box,
+    validate_inventory,
+    validate_position,
     validate_record,
 )
 from lib.takeout_parser import (
@@ -65,7 +68,7 @@ def make_data(records):
     }
 
 
-# 鈹€鈹€ yaml_ops.py Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- yaml_ops.py Tests ---
 
 
 class YamlOpsBackupTests(unittest.TestCase):
@@ -207,7 +210,7 @@ class DiffRecordIdsTests(unittest.TestCase):
         self.assertEqual([], diff["updated"])
 
 
-# 鈹€鈹€ validators.py Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- validators.py Tests ---
 
 
 class ValidatorsDateTests(unittest.TestCase):
@@ -328,6 +331,17 @@ class ValidatorsPositionConflictsTests(unittest.TestCase):
         errors = check_position_conflicts(records)
         self.assertEqual([], errors)  # Same position but different boxes is OK
 
+    def test_check_position_conflicts_ignores_invalid_numeric_types(self):
+        """Invalid box/position types should not crash conflict checking."""
+        records = [
+            make_record(1, box="abc", position=5),
+            make_record(2, box=1, position=5),
+            make_record(3, box=1, position=5),
+        ]
+        errors = check_position_conflicts(records)
+        self.assertEqual(1, len(errors))
+        self.assertIn("Box 1 Position 5", errors[0])
+
 
 class ValidatorsRecordTests(unittest.TestCase):
     """Test record validation optional fields."""
@@ -351,8 +365,30 @@ class ValidatorsRecordTests(unittest.TestCase):
         errors, warnings = validate_record(record)
         self.assertEqual([], errors)
 
+    def test_validate_record_rejects_bool_for_core_integer_fields(self):
+        """id/box/position should reject booleans even though bool is int subclass."""
+        record = make_record(1)
+        record["id"] = True
+        record["box"] = True
+        record["position"] = True
+        errors, _warnings = validate_record(record)
+        self.assertTrue(any("'id' must be a positive integer" in e for e in errors))
+        self.assertTrue(any("'box' must be an integer" in e for e in errors))
+        self.assertTrue(any("'position' must be an integer" in e for e in errors))
 
-# 鈹€鈹€ operations.py Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    def test_validate_inventory_non_numeric_box_returns_errors_not_exception(self):
+        """validate_inventory should return structured errors for bad box type."""
+        data = make_data([make_record(1, box="abc", position=1)])
+        errors, _warnings = validate_inventory(data)
+        self.assertTrue(any("'box' must be an integer" in e for e in errors))
+
+    def test_validate_box_and_position_reject_bool(self):
+        """Field-level validators should treat bool as invalid integer input."""
+        self.assertFalse(validate_box(True))
+        self.assertFalse(validate_position(True))
+
+
+# --- operations.py Tests ---
 
 
 class OperationsTests(unittest.TestCase):
@@ -418,7 +454,7 @@ class OperationsTests(unittest.TestCase):
         self.assertEqual(6, next_id)  # Should be max + 1
 
 
-# 鈹€鈹€ takeout_parser.py Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- takeout_parser.py Tests ---
 
 
 class ThawParserNormalizationTests(unittest.TestCase):
@@ -520,7 +556,7 @@ class ThawParserActivityTests(unittest.TestCase):
         self.assertTrue(is_position_active(record, 99))
 
 
-# 鈹€鈹€ Cross-module normalization tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- Cross-module normalization tests ---
 
 
 class NormalizeActionConsistencyTests(unittest.TestCase):

@@ -45,18 +45,38 @@ def display_to_pos(display, layout=None):
 
     Raises ``ValueError`` on invalid input.
     """
-    display = str(display).strip()
-    if _indexing(layout) == "alphanumeric" and display and display[0].isalpha():
-        letter = display[0].upper()
+    if isinstance(display, int) and not isinstance(display, bool):
+        return int(display)
+
+    text = str(display).strip()
+    if not text:
+        raise ValueError("Position cannot be empty")
+
+    indexing = _indexing(layout)
+    if indexing == "alphanumeric":
+        if not text[0].isalpha():
+            raise ValueError(f"Position must use alphanumeric format like A1: {text}")
+
+        letter = text[0].upper()
+        if letter not in _LETTERS:
+            raise ValueError(f"Invalid row letter: {text}")
+
+        suffix = text[1:]
+        if not suffix.isdigit():
+            raise ValueError(f"Invalid alphanumeric position: {text}")
+
         row = _LETTERS.index(letter)
-        col = int(display[1:]) - 1
+        col = int(suffix) - 1
         cols = _cols(layout)
         if col < 0 or col >= cols:
-            raise ValueError(f"Column out of range: {display}")
+            raise ValueError(f"Column out of range: {text}")
         if row < 0 or row >= _rows(layout):
-            raise ValueError(f"Row out of range: {display}")
+            raise ValueError(f"Row out of range: {text}")
         return row * cols + col + 1
-    return int(display)
+
+    if text[0].isalpha():
+        raise ValueError(f"Position must be numeric like 1: {text}")
+    return int(text)
 
 
 # ---------------------------------------------------------------------------

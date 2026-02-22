@@ -361,6 +361,7 @@ def _tool_add_entry_impl(
         dry_run=dry_run,
         execution_mode=execution_mode,
         actor_context=actor_context,
+        auto_backup=auto_backup,
     )
     if not validation.get("ok"):
         return validation

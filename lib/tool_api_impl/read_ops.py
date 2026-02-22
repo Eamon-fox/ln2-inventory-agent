@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 from ..csv_export import export_inventory_to_csv
 from ..position_fmt import (
     display_to_box,
-    display_to_pos,
     get_box_numbers,
     get_position_range,
     get_total_slots,
@@ -172,7 +171,7 @@ def tool_search_records(
     normalized_position = None
     if position not in (None, ""):
         try:
-            normalized_position = int(display_to_pos(position, layout))
+            normalized_position = int(api._coerce_position_value(position, layout=layout, field_name="position"))
         except Exception:
             return {
                 "ok": False,

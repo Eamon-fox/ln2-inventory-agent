@@ -52,6 +52,7 @@ def tool_edit_entry(
         dry_run=dry_run,
         execution_mode=execution_mode,
         actor_context=actor_context,
+        auto_backup=auto_backup,
     )
     if not validation.get("ok"):
         return validation
@@ -216,5 +217,4 @@ def tool_edit_entry(
         },
         "backup_path": _backup_path,
     }
-
 

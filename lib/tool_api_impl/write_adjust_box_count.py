@@ -172,13 +172,22 @@ def _plan_adjust_box_count(
             for rec in blocking_records
             if rec.get("id") is not None and rec.get("position") is not None
         ]
+        historical_ids = [
+            rec.get("id")
+            for rec in blocking_records
+            if rec.get("id") is not None and rec.get("position") is None
+        ]
+        if active_ids:
+            block_message = "Cannot remove box with active records"
+        else:
+            block_message = "Cannot remove box with historical records"
         return None, api._failure_result(
             yaml_path=yaml_path,
             action=audit_action,
             source=source,
             tool_name=tool_name,
             error_code="box_not_empty",
-            message="Validation failed",
+            message=block_message,
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=data,
@@ -186,10 +195,12 @@ def _plan_adjust_box_count(
                 "box": target_box,
                 "blocking_record_ids": blocking_ids,
                 "active_blocking_record_ids": active_ids,
+                "historical_blocking_record_ids": historical_ids,
             },
             extra={
                 "blocking_record_ids": blocking_ids,
                 "active_blocking_record_ids": active_ids,
+                "historical_blocking_record_ids": historical_ids,
             },
         )
 
@@ -350,6 +361,7 @@ def _tool_adjust_box_count_impl(
         dry_run=dry_run,
         execution_mode=execution_mode,
         actor_context=actor_context,
+        auto_backup=auto_backup,
     )
     if not validation.get("ok"):
         return validation

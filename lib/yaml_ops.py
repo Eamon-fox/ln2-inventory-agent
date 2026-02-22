@@ -2,6 +2,7 @@
 YAML file operations for LN2 inventory
 """
 import getpass
+import hashlib
 import json
 import os
 import shutil
@@ -35,7 +36,7 @@ _COMMON_CJK_CHARS = set(
 )
 
 _MOJIBAKE_SOURCE_ENCODINGS = ("gb18030", "gbk", "cp936")
-_MOJIBAKE_MARKER_CHARS = set("浣鍙璁瀹鍐绉缁澶鎿娓寮鎴鍚闄鏄鐨锛銆鈥")
+_MOJIBAKE_MARKER_CHARS = set("\u95c4\u7039\u951b\u9350\u93b4\u935a\u7ec9\u93bf\u7481\u9286\u93c4\u9225\u7f01\u9428\u5a13\u9359\u5bee\u6fb6\u6d63")
 
 
 def _ensure_inventory_integrity(data, prefix="完整性校验失败"):
@@ -125,9 +126,14 @@ def get_instance_audit_path(yaml_path):
     instance_id = resolve_instance_id(yaml_abs, mode="read")
     if instance_id:
         return os.path.join(AUDIT_DIR, f"{instance_id}.audit.jsonl")
-    
+
+    # Legacy files without instance_id can collide by stem (e.g. many
+    # inventory.yaml files in different directories). Use a stable path hash to
+    # keep per-dataset isolation while still supporting reads from old stem-only
+    # paths.
     stem = os.path.splitext(os.path.basename(yaml_abs))[0] or "inventory"
-    return os.path.join(AUDIT_DIR, f"legacy-{stem}.audit.jsonl")
+    digest = hashlib.sha1(yaml_abs.encode("utf-8")).hexdigest()[:10]
+    return os.path.join(AUDIT_DIR, f"legacy-{stem}-{digest}.audit.jsonl")
 
 
 def _abs_path(path):
@@ -344,6 +350,36 @@ def get_audit_log_path(yaml_path=YAML_PATH):
     return get_instance_audit_path(yaml_path)
 
 
+def get_audit_log_paths(yaml_path=YAML_PATH):
+    """Return all candidate audit log paths for reads (new + legacy)."""
+    yaml_abs = _abs_path(yaml_path)
+    stem = os.path.splitext(os.path.basename(yaml_abs))[0] or "inventory"
+    instance_id = None
+    with suppress(Exception):
+        instance_id = resolve_instance_id(yaml_abs, mode="read")
+
+    candidates = [
+        get_instance_audit_path(yaml_abs),
+    ]
+    # Only legacy files without inventory_instance_id should probe the old
+    # stem-only centralized path. Including it for instance-based datasets would
+    # cause cross-dataset contamination for common names like inventory.yaml.
+    if not instance_id:
+        candidates.append(os.path.join(AUDIT_DIR, f"legacy-{stem}.audit.jsonl"))
+
+    # Old colocated per-directory audit log.
+    candidates.append(get_legacy_audit_log_path(yaml_abs))
+
+    unique_paths = []
+    seen = set()
+    for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        unique_paths.append(path)
+    return unique_paths
+
+
 def read_audit_events(yaml_path=YAML_PATH, limit=None):
     """Read audit events for a YAML file from both new and legacy locations.
     
@@ -355,18 +391,42 @@ def read_audit_events(yaml_path=YAML_PATH, limit=None):
     """
     yaml_abs = _abs_path(yaml_path)
     
-    new_path = get_instance_audit_path(yaml_abs)
-    legacy_path = get_legacy_audit_log_path(yaml_abs)
-    
+    candidate_paths = get_audit_log_paths(yaml_abs)
+
     events = []
-    for path in [new_path, legacy_path]:
+    seen_events = set()
+    for path in candidate_paths:
         if os.path.exists(path):
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     for line in f:
                         line = line.strip()
-                        if line:
-                            events.append(json.loads(line))
+                        if not line:
+                            continue
+                        try:
+                            event = json.loads(line)
+                        except Exception:
+                            continue
+                        event_yaml = event.get("yaml_path")
+                        if isinstance(event_yaml, str) and event_yaml.strip():
+                            try:
+                                if _abs_path(event_yaml) != yaml_abs:
+                                    continue
+                            except Exception:
+                                continue
+                        try:
+                            signature = json.dumps(
+                                event,
+                                ensure_ascii=False,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            )
+                        except Exception:
+                            signature = str(event)
+                        if signature in seen_events:
+                            continue
+                        seen_events.add(signature)
+                        events.append(event)
             except Exception:
                 pass
     
