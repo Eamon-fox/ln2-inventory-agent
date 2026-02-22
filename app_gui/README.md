@@ -31,7 +31,7 @@ Current status:
 - Query table can export current view to CSV
 - Query/backup tables support sorting; table widths and last operation mode are persisted across sessions
 - Add Entry panel wired to `tool_add_entry`
-- Single and batch takeout panels wired to `tool_record_takeout` / `tool_batch_takeout`
+- Takeout/move execution uses unified `tool_takeout` / `tool_move` APIs (`entries` supports single or multiple tubes)
 - Takeout panel shows rich prefill context (cell/short/box/all positions/target check/frozen/plasmid/history/note)
 - Batch takeout operation is placed in an independent collapsible section in the Takeout panel
 - Inputs are typed widgets (spin boxes/date pickers/action dropdowns) to reduce format errors

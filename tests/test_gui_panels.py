@@ -115,6 +115,12 @@ class _FakeOperationsBridge:
     def batch_move(self, yaml_path, **payload):
         return self.batch_takeout(yaml_path, **payload)
 
+    def takeout(self, yaml_path, **payload):
+        return self.batch_takeout(yaml_path, **payload)
+
+    def move(self, yaml_path, **payload):
+        return self.batch_move(yaml_path, **payload)
+
     def generate_stats(self, yaml_path, box=None, include_inactive=False):
         return {"ok": True, "result": {"total_records": 0, "total_slots": 405, "occupied_slots": 0, "boxes": {}}}
 
@@ -132,13 +138,13 @@ class GuiPanelRegressionTests(unittest.TestCase):
         cls._app = QApplication.instance() or QApplication([])
 
     def _new_operations_panel(self):
-        return OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        return OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
 
     def _new_ai_panel(self):
-        return AIPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        return AIPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
 
     def _new_overview_panel(self):
-        return OverviewPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        return OverviewPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
 
     @staticmethod
     def _make_table_item(text):
@@ -417,6 +423,71 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertIn("glm-5", options)
         self.assertIn("glm-4.7", options)
 
+    def test_operations_panel_inline_edit_lock_toggle_controls_confirm_visibility(self):
+        panel = self._new_operations_panel()
+        panel.update_records_cache({
+            1: {
+                "id": 1,
+                "parent_cell_line": "K562",
+                "short_name": "K562_note",
+                "box": 1,
+                "position": 1,
+                "note": "old-note",
+            },
+        })
+        panel.t_id.setValue(1)
+        panel._refresh_takeout_record_context()
+
+        container = panel.t_ctx_note.parentWidget()
+        lock_btn = container.findChild(QPushButton, "inlineLockBtn")
+        confirm_btn = container.findChild(QPushButton, "inlineConfirmBtn")
+
+        self.assertTrue(confirm_btn.isHidden())
+        lock_btn.click()
+        self.assertFalse(confirm_btn.isHidden())
+        lock_btn.click()
+        self.assertTrue(confirm_btn.isHidden())
+
+    def test_operations_panel_inline_edit_confirm_executes_immediately(self):
+        panel = self._new_operations_panel()
+        panel.update_records_cache({
+            1: {
+                "id": 1,
+                "parent_cell_line": "K562",
+                "short_name": "K562_note",
+                "box": 1,
+                "position": 1,
+                "note": "old-note",
+            },
+        })
+        panel.t_id.setValue(1)
+        panel._refresh_takeout_record_context()
+
+        bridge = SimpleNamespace(
+            edit_entry=MagicMock(return_value={"ok": True})
+        )
+        panel.bridge = bridge
+        emitted = []
+        panel.operation_completed.connect(lambda ok: emitted.append(bool(ok)))
+
+        container = panel.t_ctx_note.parentWidget()
+        lock_btn = container.findChild(QPushButton, "inlineLockBtn")
+        confirm_btn = container.findChild(QPushButton, "inlineConfirmBtn")
+
+        lock_btn.click()
+        panel.t_ctx_note.setText("new-note")
+        confirm_btn.click()
+
+        bridge.edit_entry.assert_called_once()
+        kwargs = bridge.edit_entry.call_args.kwargs
+        self.assertEqual("/tmp/__ln2_gui_panels_virtual_inventory__.yaml", kwargs["yaml_path"])
+        self.assertEqual(1, kwargs["record_id"])
+        self.assertEqual({"note": "new-note"}, kwargs["fields"])
+        self.assertEqual("execute", kwargs["execution_mode"])
+        self.assertEqual([True], emitted)
+        self.assertTrue(panel.t_ctx_note.isReadOnly())
+        self.assertTrue(confirm_btn.isHidden())
+
     def test_operations_panel_action_dropdown_supports_move(self):
         panel = self._new_operations_panel()
 
@@ -466,7 +537,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
         store = PlanStore()
         panel = OperationsPanel(
             bridge=object(),
-            yaml_path_getter=lambda: "/tmp/inventory.yaml",
+            yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml",
             plan_store=store,
         )
         self.assertFalse(panel.plan_print_btn.isEnabled())
@@ -763,7 +834,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
 
         self.assertEqual(
             {
-                "yaml_path": "/tmp/inventory.yaml",
+                "yaml_path": "/tmp/__ln2_gui_panels_virtual_inventory__.yaml",
                 "output_path": "/tmp/full_export.csv",
             },
             bridge.last_export_payload,
@@ -1375,7 +1446,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
         panel = self._new_operations_panel()
         bridge = _FakeOperationsBridge()
         panel.bridge = bridge
-        panel.yaml_path_getter = lambda: "/tmp/inventory.yaml"
+        panel.yaml_path_getter = lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml"
 
         items = [
             {
@@ -1463,6 +1534,12 @@ class GuiPanelRegressionTests(unittest.TestCase):
 
         self.assertEqual("deepseek-chat", panel.ai_model_id_label.text())
         self.assertEqual("deepseek:deepseek-chat", panel.ai_model_id_label.toolTip())
+
+    def test_ai_panel_model_switch_button_uses_dropdown_icon(self):
+        panel = self._new_ai_panel()
+
+        self.assertEqual("", panel.ai_model_switch_btn.text())
+        self.assertFalse(panel.ai_model_switch_btn.icon().isNull())
 
     def test_ai_panel_model_switch_options_include_zhipu_glm_4_7(self):
         panel = self._new_ai_panel()
@@ -1780,6 +1857,60 @@ class GuiPanelRegressionTests(unittest.TestCase):
         after_text = panel.ai_chat.toPlainText()
         self.assertEqual(stopped_text, after_text)
 
+    def test_ai_panel_can_start_new_run_after_stop_even_if_old_thread_still_running(self):
+        panel = self._new_ai_panel()
+        panel.ai_stop_requested = True
+        panel.ai_run_inflight = False
+        panel.ai_prompt.setPlainText("new run prompt")
+
+        class _RunningThread:
+            def isRunning(self):
+                return True
+
+        class _StopWorker:
+            def __init__(self):
+                self.called = False
+
+            def request_stop(self):
+                self.called = True
+
+        stale_thread = _RunningThread()
+        stale_worker = _StopWorker()
+        panel.ai_run_thread = stale_thread
+        panel.ai_run_worker = stale_worker
+
+        with patch.object(panel, "start_worker") as start_mock:
+            panel.on_run_ai_agent()
+
+        self.assertTrue(stale_worker.called)
+        self.assertFalse(panel.ai_stop_requested)
+        self.assertIsNone(panel.ai_run_thread)
+        self.assertIsNone(panel.ai_run_worker)
+        start_mock.assert_called_once_with("new run prompt")
+
+    def test_ai_panel_ignores_stale_worker_progress_sender(self):
+        panel = self._new_ai_panel()
+        panel.ai_run_worker = object()
+        stale_sender = object()
+        before_text = panel.ai_chat.toPlainText()
+
+        with patch.object(AIPanel, "sender", return_value=stale_sender):
+            panel.on_progress({"event": "chunk", "trace_id": "trace-stale", "data": "ignored"})
+
+        after_text = panel.ai_chat.toPlainText()
+        self.assertEqual(before_text, after_text)
+
+    def test_ai_panel_ignores_stale_worker_finished_sender(self):
+        panel = self._new_ai_panel()
+        panel.ai_run_worker = object()
+        stale_sender = object()
+        history_len_before = len(panel.ai_history)
+
+        with patch.object(AIPanel, "sender", return_value=stale_sender):
+            panel.on_finished({"ok": True, "result": {"final": "ignored stale final"}})
+
+        self.assertEqual(history_len_before, len(panel.ai_history))
+
     def test_ai_panel_finished_persists_stop_history_after_stop_request(self):
         panel = self._new_ai_panel()
         panel.ai_stop_requested = True
@@ -1807,7 +1938,7 @@ class ToolRunnerPlanSinkTests(unittest.TestCase):
         from lib.plan_store import PlanStore
         self.store = PlanStore()
 
-    def _make_runner(self, yaml_path="/tmp/inventory.yaml"):
+    def _make_runner(self, yaml_path="/tmp/__ln2_gui_panels_virtual_inventory__.yaml"):
         from agent.tool_runner import AgentToolRunner
         return AgentToolRunner(
             yaml_path=yaml_path,
@@ -1837,12 +1968,16 @@ class ToolRunnerPlanSinkTests(unittest.TestCase):
         self.assertEqual("ai", item["source"])
         self.assertEqual(1, item["box"])
 
-    def test_record_takeout_staged(self):
+    def test_takeout_staged(self):
         runner = self._make_runner()
-        result = runner.run("record_takeout", {
-            "record_id": 5,
-            "from_box": 1,
-            "from_position": 10,
+        result = runner.run("takeout", {
+            "entries": [
+                {
+                    "record_id": 5,
+                    "from_box": 1,
+                    "from_position": 10,
+                }
+            ],
             "date": "2026-02-10",
         })
         self.assertTrue(result.get("staged"))
@@ -1855,7 +1990,7 @@ class ToolRunnerPlanSinkTests(unittest.TestCase):
     def test_without_plan_sink_executes_normally(self):
         from agent.tool_runner import AgentToolRunner
         runner = AgentToolRunner(
-            yaml_path="/tmp/inventory.yaml",
+            yaml_path="/tmp/__ln2_gui_panels_virtual_inventory__.yaml",
         )
         # Without plan_store, add_entry should attempt execution (may error but not stage)
         result = runner.run("add_entry", {
@@ -2012,7 +2147,7 @@ class PlanDedupRegressionTests(unittest.TestCase):
         cls._app = QApplication.instance() or QApplication([])
 
     def _new_panel(self):
-        return OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        return OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
 
     def test_duplicate_item_replaces_existing(self):
         """Staging same (action, record_id, position) should replace, not append."""
@@ -2081,7 +2216,7 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
         cls._app = QApplication.instance() or QApplication([])
 
     def _new_panel(self, bridge):
-        panel = OperationsPanel(bridge=bridge, yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        panel = OperationsPanel(bridge=bridge, yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
         return panel
 
     def test_move_batch_fails_falls_back_to_individual(self):
@@ -2297,7 +2432,7 @@ class UndoRestoresPlanRegressionTests(unittest.TestCase):
         cls._app = QApplication.instance() or QApplication([])
 
     def _new_panel(self, bridge):
-        return OperationsPanel(bridge=bridge, yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        return OperationsPanel(bridge=bridge, yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
 
     def test_undo_restores_executed_plan_items(self):
         """After executing plan and undoing, items should return to plan."""
@@ -2464,7 +2599,7 @@ class RollbackConfirmationDialogTests(unittest.TestCase):
                             "backup_path": backup_path,
                             "source_event": {
                                 "timestamp": "2026-02-12T09:00:00",
-                                "action": "record_takeout",
+                                "action": "takeout",
                                 "trace_id": "trace-audit-1",
                             },
                         },
@@ -2496,7 +2631,7 @@ class RollbackConfirmationDialogTests(unittest.TestCase):
             self.assertIn(os.path.abspath(yaml_path), info)
             self.assertIn(os.path.abspath(backup_path), info)
             self.assertIn("trace-audit-1", info)
-            self.assertIn("record_takeout", info)
+            self.assertIn("takeout", info)
         finally:
             self._cleanup_yaml(tmpdir)
 
@@ -2548,7 +2683,7 @@ class RollbackConfirmationDialogTests(unittest.TestCase):
                     "backup_path": backup_path,
                     "source_event": {
                         "timestamp": "2026-02-12T09:00:00",
-                        "action": "record_takeout",
+                        "action": "takeout",
                         "trace_id": "trace-audit-1",
                     },
                 },
@@ -2573,7 +2708,7 @@ class RollbackConfirmationDialogTests(unittest.TestCase):
                     continue
                 text = cell_item.text() or ""
                 tip = cell_item.toolTip() or ""
-                if ("trace-audit-1" in text) or ("trace-audit-1" in tip) or ("record_takeout" in tip):
+                if ("trace-audit-1" in text) or ("trace-audit-1" in tip) or ("takeout" in tip):
                     note_item = cell_item
                     break
 
@@ -2585,7 +2720,7 @@ class RollbackConfirmationDialogTests(unittest.TestCase):
             tooltip = note_item.toolTip()
             self.assertIn("operations.planRollbackSourceEvent", tooltip)
             self.assertIn(os.path.basename(backup_path), tooltip)
-            self.assertIn("record_takeout", tooltip)
+            self.assertIn("takeout", tooltip)
         finally:
             self._cleanup_yaml(tmpdir)
 
@@ -2599,7 +2734,7 @@ class PrintPlanRegressionTests(unittest.TestCase):
         cls._app = QApplication.instance() or QApplication([])
 
     def _new_panel(self, bridge):
-        return OperationsPanel(bridge=bridge, yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        return OperationsPanel(bridge=bridge, yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
 
     def test_print_last_executed_uses_recent_execution(self):
         bridge = _UndoBridge()
@@ -2925,7 +3060,7 @@ class OperationEventFeedTests(unittest.TestCase):
 
     def _new_ai_panel(self):
         from app_gui.ui.ai_panel import AIPanel
-        return AIPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        return AIPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
 
     @staticmethod
     def _make_mouse_release_event(x=6.0, y=6.0):
@@ -3266,7 +3401,7 @@ class ExecuteFailurePreservesPlanTests(unittest.TestCase):
         cls._app = QApplication.instance() or QApplication([])
 
     def _new_panel(self, bridge):
-        return OperationsPanel(bridge=bridge, yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        return OperationsPanel(bridge=bridge, yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
 
     def test_execute_failure_preserves_entire_original_plan(self):
         """When execution fails, the entire original plan should be preserved."""
@@ -3376,21 +3511,21 @@ class CellLineDropdownTests(unittest.TestCase):
 
     def test_cell_line_combo_exists(self):
         """Operations panel should have a cell_line combo box."""
-        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
         self.assertTrue(hasattr(panel, "a_cell_line"))
         from PySide6.QtWidgets import QComboBox
         self.assertIsInstance(panel.a_cell_line, QComboBox)
 
     def test_cell_line_combo_starts_with_empty(self):
         """Cell line combo should start with an empty option."""
-        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
         self.assertEqual("", panel.a_cell_line.itemText(0))
 
     def test_refresh_cell_line_options_populates_combo(self):
         """_refresh_cell_line_options should populate from meta."""
         from lib.custom_fields import is_cell_line_required
 
-        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
         meta = {"cell_line_options": ["K562", "HeLa", "NCCIT"]}
         panel._refresh_cell_line_options(meta)
         hints = self._hint_lines()
@@ -3413,7 +3548,7 @@ class CellLineDropdownTests(unittest.TestCase):
         """Refreshing options should preserve the current selection."""
         from lib.custom_fields import is_cell_line_required
 
-        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
         meta = {"cell_line_options": ["K562", "HeLa"]}
         panel._refresh_cell_line_options(meta)
         hella_index = 1 if is_cell_line_required(meta) else 2
@@ -3428,7 +3563,7 @@ class CellLineDropdownTests(unittest.TestCase):
         """Without meta options, should use DEFAULT_CELL_LINE_OPTIONS."""
         from lib.custom_fields import DEFAULT_CELL_LINE_OPTIONS, is_cell_line_required
 
-        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
         panel._refresh_cell_line_options({})
         hints = self._hint_lines()
         required = is_cell_line_required({})
@@ -3437,7 +3572,7 @@ class CellLineDropdownTests(unittest.TestCase):
 
     def test_apply_meta_update_switches_required_mode_immediately(self):
         """Changing cell_line_required should update add-form combo immediately."""
-        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
 
         panel.apply_meta_update({
             "cell_line_required": True,
@@ -3460,7 +3595,7 @@ class CellLineDropdownTests(unittest.TestCase):
         """Thaw/move cell_line context should support lock-based inline editing."""
         from PySide6.QtWidgets import QLineEdit
 
-        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
         self.assertIsInstance(panel.t_ctx_cell_line, QLineEdit)
         self.assertIsInstance(panel.m_ctx_cell_line, QLineEdit)
         self.assertTrue(panel.t_ctx_cell_line.isReadOnly())
@@ -3468,7 +3603,7 @@ class CellLineDropdownTests(unittest.TestCase):
 
     def test_context_cell_line_prefix_validator_and_completer(self):
         """Cell line edit should allow only option prefixes and exact option values."""
-        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
         panel.apply_meta_update({
             "cell_line_required": True,
             "cell_line_options": ["K562", "HeLa", "NCCIT"],
@@ -3515,7 +3650,7 @@ class CellLineDropdownTests(unittest.TestCase):
             self.assertFalse(bool(flags & Qt.ItemIsSelectable))
 
     def test_add_cell_line_combo_expands_without_scrollbar(self):
-        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/inventory.yaml")
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
         opts = [f"Cell-{i:02d}" for i in range(30)]
         panel._refresh_cell_line_options({
             "cell_line_required": True,

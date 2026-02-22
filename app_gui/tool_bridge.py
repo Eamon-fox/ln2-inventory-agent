@@ -7,23 +7,22 @@ from agent.react_agent import ReactAgent
 from agent.tool_runner import AgentToolRunner
 from app_gui.gui_config import DEFAULT_MAX_STEPS
 from app_gui.i18n import tr
-from lib.yaml_ops import create_yaml_backup
 from lib.tool_api import (
     build_actor_context,
     tool_add_entry,
     tool_adjust_box_count,
-    tool_batch_move,
-    tool_batch_takeout,
     tool_collect_timeline,
     tool_edit_entry,
     tool_export_inventory_csv,
     tool_generate_stats,
+    tool_list_audit_timeline,
     tool_list_empty_positions,
-    tool_list_backups,
-    tool_record_move,
-    tool_record_takeout,
+    tool_move,
     tool_rollback,
+    tool_set_box_tag,
+    tool_takeout,
 )
+from lib.tool_api_write_validation import resolve_request_backup_path
 
 
 def _api_key_setup_hint(provider=None):
@@ -56,10 +55,6 @@ class GuiToolBridge:
             session_id=self._session_id,
         )
 
-    @staticmethod
-    def _execution_mode_text(execution_mode):
-        return str(execution_mode or "").strip().lower() or "direct"
-
     def _resolve_request_backup_path(
         self,
         *,
@@ -67,18 +62,15 @@ class GuiToolBridge:
         execution_mode=None,
         dry_run=False,
         request_backup_path=None,
+        backup_event_source="app_gui",
     ):
-        if bool(dry_run):
-            return None
-        if self._execution_mode_text(execution_mode) != "execute":
-            return None
-        candidate = str(request_backup_path or "").strip()
-        if candidate:
-            return os.path.abspath(candidate)
-        created = create_yaml_backup(yaml_path)
-        if not created:
-            raise RuntimeError("Failed to create request-level backup before write.")
-        return os.path.abspath(str(created))
+        return resolve_request_backup_path(
+            yaml_path=yaml_path,
+            execution_mode=execution_mode,
+            dry_run=dry_run,
+            request_backup_path=request_backup_path,
+            backup_event_source=backup_event_source,
+        )
 
     @staticmethod
     def _backup_create_failed(exc):
@@ -107,15 +99,25 @@ class GuiToolBridge:
     def collect_timeline(self, yaml_path, days=7, all_history=False):
         return tool_collect_timeline(yaml_path=yaml_path, days=days, all_history=all_history)
 
-    def list_backups(self, yaml_path):
-        backups = tool_list_backups(yaml_path)
-        return {
-            "ok": True,
-            "result": {
-                "count": len(backups),
-                "backups": backups,
-            },
-        }
+    def list_audit_timeline(
+        self,
+        yaml_path,
+        limit=50,
+        offset=0,
+        action_filter=None,
+        status_filter=None,
+        start_date=None,
+        end_date=None,
+    ):
+        return tool_list_audit_timeline(
+            yaml_path=yaml_path,
+            limit=limit,
+            offset=offset,
+            action_filter=action_filter,
+            status_filter=status_filter,
+            start_date=start_date,
+            end_date=end_date,
+        )
 
     def add_entry(self, yaml_path, **payload):
         execution_mode = payload.get("execution_mode")
@@ -172,7 +174,7 @@ class GuiToolBridge:
             request_backup_path=request_backup_path,
         )
 
-    def record_takeout(self, yaml_path, **payload):
+    def takeout(self, yaml_path, **payload):
         execution_mode = payload.get("execution_mode")
         dry_run = bool(payload.get("dry_run", False))
         request_backup_path = payload.pop("request_backup_path", None)
@@ -188,14 +190,14 @@ class GuiToolBridge:
         if resolved_backup:
             payload["request_backup_path"] = resolved_backup
             payload["auto_backup"] = False
-        return tool_record_takeout(
+        return tool_takeout(
             yaml_path=yaml_path,
             actor_context=self._ctx(),
             source="app_gui",
             **payload,
         )
 
-    def record_move(self, yaml_path, **payload):
+    def move(self, yaml_path, **payload):
         execution_mode = payload.get("execution_mode")
         dry_run = bool(payload.get("dry_run", False))
         request_backup_path = payload.pop("request_backup_path", None)
@@ -211,53 +213,7 @@ class GuiToolBridge:
         if resolved_backup:
             payload["request_backup_path"] = resolved_backup
             payload["auto_backup"] = False
-        return tool_record_move(
-            yaml_path=yaml_path,
-            actor_context=self._ctx(),
-            source="app_gui",
-            **payload,
-        )
-
-    def batch_takeout(self, yaml_path, **payload):
-        execution_mode = payload.get("execution_mode")
-        dry_run = bool(payload.get("dry_run", False))
-        request_backup_path = payload.pop("request_backup_path", None)
-        try:
-            resolved_backup = self._resolve_request_backup_path(
-                yaml_path=yaml_path,
-                execution_mode=execution_mode,
-                dry_run=dry_run,
-                request_backup_path=request_backup_path,
-            )
-        except Exception as exc:
-            return self._backup_create_failed(exc)
-        if resolved_backup:
-            payload["request_backup_path"] = resolved_backup
-            payload["auto_backup"] = False
-        return tool_batch_takeout(
-            yaml_path=yaml_path,
-            actor_context=self._ctx(),
-            source="app_gui",
-            **payload,
-        )
-
-    def batch_move(self, yaml_path, **payload):
-        execution_mode = payload.get("execution_mode")
-        dry_run = bool(payload.get("dry_run", False))
-        request_backup_path = payload.pop("request_backup_path", None)
-        try:
-            resolved_backup = self._resolve_request_backup_path(
-                yaml_path=yaml_path,
-                execution_mode=execution_mode,
-                dry_run=dry_run,
-                request_backup_path=request_backup_path,
-            )
-        except Exception as exc:
-            return self._backup_create_failed(exc)
-        if resolved_backup:
-            payload["request_backup_path"] = resolved_backup
-            payload["auto_backup"] = False
-        return tool_batch_move(
+        return tool_move(
             yaml_path=yaml_path,
             actor_context=self._ctx(),
             source="app_gui",
@@ -313,6 +269,40 @@ class GuiToolBridge:
             actor_context=self._ctx(),
             source="app_gui",
             **payload,
+        )
+
+    def set_box_tag(
+        self,
+        yaml_path,
+        box,
+        tag="",
+        execution_mode=None,
+        dry_run=False,
+        auto_backup=True,
+        request_backup_path=None,
+    ):
+        try:
+            resolved_backup = self._resolve_request_backup_path(
+                yaml_path=yaml_path,
+                execution_mode=execution_mode,
+                dry_run=bool(dry_run),
+                request_backup_path=request_backup_path,
+            )
+        except Exception as exc:
+            return self._backup_create_failed(exc)
+        if resolved_backup:
+            request_backup_path = resolved_backup
+            auto_backup = False
+        return tool_set_box_tag(
+            yaml_path=yaml_path,
+            box=box,
+            tag=tag,
+            dry_run=bool(dry_run),
+            execution_mode=execution_mode,
+            actor_context=self._ctx(),
+            source="app_gui",
+            auto_backup=auto_backup,
+            request_backup_path=request_backup_path,
         )
 
     def run_agent_query(

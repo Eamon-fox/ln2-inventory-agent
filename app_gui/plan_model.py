@@ -21,6 +21,20 @@ from app_gui.plan_model_sheet import (
 # Compatibility export consumed by app_gui.plan_gate and tests.
 _PLAN_MODEL_EXPORTS = (validate_plan_item,)
 
+
+def _box_tag_for_box(layout, box_num):
+    box_tags = (layout or {}).get("box_tags")
+    if not isinstance(box_tags, dict):
+        return ""
+    raw_tag = box_tags.get(str(box_num))
+    if raw_tag is None:
+        return ""
+    text = str(raw_tag).replace("\r", " ").replace("\n", " ").strip()
+    if len(text) > 80:
+        return text[:80]
+    return text
+
+
 def extract_grid_state_for_print(overview_panel):
     """Extract current grid state from overview panel for print view.
 
@@ -73,6 +87,7 @@ def extract_grid_state_for_print(overview_panel):
         boxes_data.append({
             "box_number": box_num,
             "box_label": box_to_display(box_num, layout),
+            "box_tag": _box_tag_for_box(layout, box_num),
             "cells": cells_data,
         })
 
@@ -171,6 +186,8 @@ def render_grid_html(grid_state):
     Returns:
         HTML string for grid visualization
     """
+    from html import escape
+
     if not grid_state or not grid_state.get("boxes"):
         return ""
 
@@ -280,6 +297,7 @@ def render_grid_html(grid_state):
                 normalized_label = suffix
 
         badge_num = str(box_num_int) if box_num_int is not None else normalized_label
+        box_tag = str(box_data.get("box_tag") or "").replace("\r", " ").replace("\n", " ").strip()
         grid_style = (
             f"grid-template-columns: repeat({grid_cols}, var(--cell-size, 7.2mm)); "
             f"--cell-size-print-mm: {grid_cell_mm:.2f}mm; "
@@ -290,12 +308,19 @@ def render_grid_html(grid_state):
             f"--cell-empty-font-size: {grid_cell_empty_font_px}px; "
             f"--cell-marker-font-size: {grid_marker_font_px}px;"
         )
+        tag_html = ""
+        if box_tag:
+            tag_html = (
+                f'<span class="box-header-tag" title="{escape(box_tag)}">'
+                f"{escape(box_tag)}</span>"
+            )
 
         box_html = f"""
         <div class="box">
             <div class="box-header">
-                <span class="box-header-main">BOX {normalized_label}</span>
-                <span class="box-header-num">#{badge_num}</span>
+                <span class="box-header-main">BOX {escape(normalized_label)}</span>
+                {tag_html}
+                <span class="box-header-num">#{escape(badge_num)}</span>
             </div>
             <div class="box-grid" style="{grid_style}">
                 {"".join(cells_html)}
@@ -603,6 +628,16 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
             letter-spacing: 0.04em;
             text-transform: uppercase;
             color: #9fc2e8;
+        }}
+
+        .box-header-tag {{
+            flex: 1;
+            min-width: 0;
+            font-size: 6px;
+            color: #dbeafe;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }}
 
         .box-header-num {{

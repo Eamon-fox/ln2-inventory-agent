@@ -179,7 +179,9 @@ class AIPanel(QWidget):
         self.ai_model_id_label.setProperty("role", "mutedInline")
         action_bar.addWidget(self.ai_model_id_label)
 
-        self.ai_model_switch_btn = QPushButton("^")
+        self.ai_model_switch_btn = QPushButton()
+        self.ai_model_switch_btn.setIcon(get_icon(Icons.CHEVRON_DOWN))
+        self.ai_model_switch_btn.setIconSize(QSize(14, 14))
         self.ai_model_switch_btn.setObjectName("aiModelSwitchBtn")
         self.ai_model_switch_btn.setFixedSize(18, 18)
         self.ai_model_switch_btn.setProperty("variant", "ghost")
@@ -280,7 +282,18 @@ class AIPanel(QWidget):
             action.setChecked(provider_id == current_provider and model_id == current_model)
             action_to_option[action] = option
 
-        chosen = menu.exec(self.ai_model_switch_btn.mapToGlobal(self.ai_model_switch_btn.rect().bottomLeft()))
+        # Prefer showing the model list above the trigger button.
+        popup_pos = self.ai_model_switch_btn.mapToGlobal(self.ai_model_switch_btn.rect().topLeft())
+        try:
+            menu_height = int(menu.sizeHint().height())
+        except Exception:
+            menu_height = 0
+        if menu_height > 0:
+            popup_pos.setY(popup_pos.y() - menu_height)
+        screen = self.ai_model_switch_btn.screen()
+        if screen is not None and popup_pos.y() < screen.availableGeometry().top():
+            popup_pos = self.ai_model_switch_btn.mapToGlobal(self.ai_model_switch_btn.rect().bottomLeft())
+        chosen = menu.exec(popup_pos)
         selected = action_to_option.get(chosen)
         if not selected:
             return

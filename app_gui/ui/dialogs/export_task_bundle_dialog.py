@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from app_gui.i18n import t, tr
-from lib.import_task_bundle import build_import_task_bundle
+from lib.import_task_bundle import export_import_task_bundle
 
 
 class _SourceDropTextEdit(QTextEdit):
@@ -68,7 +68,7 @@ class _SourceDropTextEdit(QTextEdit):
 
 
 class ExportTaskBundleDialog(QDialog):
-    """Guide users to export a standardized conversion bundle ZIP."""
+    """Guide users to export a standardized conversion bundle directory."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -114,7 +114,7 @@ class ExportTaskBundleDialog(QDialog):
         output_row = QHBoxLayout()
         default_output = os.path.join(
             os.path.expanduser("~"),
-            "ln2_import_task_bundle.zip",
+            "ln2_import_task_bundle",
         )
         self.output_edit = QLineEdit(default_output)
         output_row.addWidget(self.output_edit, 1)
@@ -198,20 +198,19 @@ class ExportTaskBundleDialog(QDialog):
         self._render_source_preview()
 
     def _browse_output(self):
-        output, _ = QFileDialog.getSaveFileName(
+        output = QFileDialog.getExistingDirectory(
             self,
             tr("main.exportBundleOutput"),
             self.output_edit.text().strip(),
-            tr("main.zipFilesFilter"),
         )
         if output:
             self.output_edit.setText(output)
 
     def _export_bundle(self):
         output_path = self.output_edit.text().strip()
-        result = build_import_task_bundle(self._source_paths, output_path)
+        result = export_import_task_bundle(self._source_paths, output_path)
         if result.get("ok"):
-            bundle_path = result.get("bundle_path") or output_path
+            bundle_path = result.get("bundle_dir") or output_path
             warning_text = ""
             warnings = result.get("warnings") or []
             if warnings:

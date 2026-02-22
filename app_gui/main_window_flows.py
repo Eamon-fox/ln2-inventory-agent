@@ -545,7 +545,7 @@ class ManageBoxesFlow:
             window,
             tr("main.manageBoxes"),
             tr("main.boxActionPrompt"),
-            [tr("main.boxOpAdd"), tr("main.boxOpRemove")],
+            [tr("main.boxOpAdd"), tr("main.boxOpRemove"), tr("main.boxOpSetTag")],
             0,
             False,
         )
@@ -565,6 +565,41 @@ class ManageBoxesFlow:
             if not ok:
                 return None
             return {"operation": "add", "count": int(count)}
+
+        if operation == tr("main.boxOpSetTag"):
+            try:
+                data = load_yaml(yaml_path)
+                layout = (data or {}).get("meta", {}).get("box_layout", {})
+                box_numbers = get_box_numbers(layout)
+            except Exception as exc:
+                self._show_warning("%s: %s" % (tr("main.boxAdjustFailed"), exc))
+                return None
+
+            if not box_numbers:
+                self._show_warning(tr("main.boxNoAvailable"))
+                return None
+
+            box_text, ok = QInputDialog.getItem(
+                window,
+                tr("main.manageBoxes"),
+                tr("main.boxTagTargetPrompt"),
+                [str(box_num) for box_num in box_numbers],
+                0,
+                False,
+            )
+            if not ok:
+                return None
+
+            current_tag = self._get_box_tag(layout, int(box_text))
+            tag_text, ok = QInputDialog.getText(
+                window,
+                tr("main.manageBoxes"),
+                t("main.boxTagInputPrompt", box=box_text),
+                text=current_tag,
+            )
+            if not ok:
+                return None
+            return {"operation": "set_tag", "box": int(box_text), "tag": str(tag_text or "")}
 
         try:
             data = load_yaml(yaml_path)
@@ -633,8 +668,8 @@ class ManageBoxesFlow:
             return self._error_response("load_failed", t("main.fileNotFound", path=yaml_path))
 
         op = str(request.get("operation") or "").strip().lower()
-        if op not in {"add", "remove"}:
-            return self._error_response("invalid_operation", "operation must be add/remove")
+        if op not in {"add", "remove", "set_tag"}:
+            return self._error_response("invalid_operation", "operation must be add/remove/set_tag")
 
         payload = {"operation": op}
         mode = self._normalize_mode_alias(request.get("renumber_mode"))
@@ -655,6 +690,29 @@ class ManageBoxesFlow:
                 t("main.boxConfirmAdd", count=payload["count"]),
             ):
                 return self._user_cancelled_response()
+        elif op == "set_tag":
+            try:
+                target_box = int(request.get("box"))
+            except Exception:
+                return self._error_response("invalid_box", "box must be an integer")
+
+            raw_tag = request.get("tag", "")
+            if raw_tag is None:
+                raw_tag = ""
+            payload["box"] = target_box
+            payload["tag"] = str(raw_tag)
+
+            try:
+                data = load_yaml(yaml_path)
+                layout = (data or {}).get("meta", {}).get("box_layout", {})
+                box_numbers = get_box_numbers(layout)
+            except Exception as exc:
+                return self._error_response("load_failed", str(exc))
+            if target_box not in box_numbers:
+                return self._error_response(
+                    "invalid_box",
+                    "box does not exist in current layout",
+                )
         else:
             try:
                 target_box = int(request.get("box"))
@@ -691,11 +749,19 @@ class ManageBoxesFlow:
             ):
                 return self._user_cancelled_response()
 
-        response = window.bridge.adjust_box_count(
-            yaml_path=yaml_path,
-            execution_mode="execute",
-            **payload,
-        )
+        if op == "set_tag":
+            response = window.bridge.set_box_tag(
+                yaml_path=yaml_path,
+                box=payload["box"],
+                tag=payload.get("tag", ""),
+                execution_mode="execute",
+            )
+        else:
+            response = window.bridge.adjust_box_count(
+                yaml_path=yaml_path,
+                execution_mode="execute",
+                **payload,
+            )
 
         if response.get("ok"):
             window.overview_panel.refresh()
@@ -761,3 +827,13 @@ class ManageBoxesFlow:
             QMessageBox.Cancel,
         )
         return reply == QMessageBox.Yes
+
+    @staticmethod
+    def _get_box_tag(layout, box_num):
+        box_tags = (layout or {}).get("box_tags")
+        if not isinstance(box_tags, dict):
+            return ""
+        text = box_tags.get(str(box_num))
+        if text is None:
+            return ""
+        return str(text).replace("\r", " ").replace("\n", " ").strip()

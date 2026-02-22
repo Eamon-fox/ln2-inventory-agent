@@ -121,13 +121,15 @@ def _make_editable_field(self, field_name, record_id_getter, refresh_callback=No
             # Unlock
             _apply_choices()
             field.setReadOnly(False)
-            lock_btn.setText("\U0001F513")  # 婵☆偓绲介崯顖炲疾?                confirm_btn.setVisible(True)
+            lock_btn.setText("\U0001F513")
+            confirm_btn.setVisible(True)
             field.setFocus()
             field.selectAll()
         else:
             # Re-lock without saving
             field.setReadOnly(True)
-            lock_btn.setText("\U0001F512")  # 婵☆偓绲介崯顖炲疾?                confirm_btn.setVisible(False)
+            lock_btn.setText("\U0001F512")
+            confirm_btn.setVisible(False)
             # Restore original value
             if refresh_callback:
                 refresh_callback()

@@ -96,6 +96,7 @@ class OverviewPanel(QWidget):
     _emit_add_prefill = _ov_table._emit_add_prefill
 
     _repaint_all_cells = _ov_grid._repaint_all_cells
+    _update_box_titles = _ov_grid._update_box_titles
     _warm_hover_animation = _ov_grid._warm_hover_animation
     _rebuild_boxes = _ov_grid._rebuild_boxes
     _paint_cell = _ov_grid._paint_cell
@@ -145,6 +146,7 @@ class OverviewPanel(QWidget):
     _emit_hover_stats = _ov_interactions._emit_hover_stats
     _show_detail = _ov_interactions._show_detail
     on_cell_context_menu = _ov_interactions.on_cell_context_menu
+    on_box_context_menu = _ov_interactions.on_box_context_menu
     _create_takeout_plan_item = _ov_interactions._create_takeout_plan_item
     _create_move_plan_item = _ov_interactions._create_move_plan_item
     _on_cell_drop = _ov_interactions._on_cell_drop

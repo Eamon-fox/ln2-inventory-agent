@@ -153,6 +153,7 @@ def refresh(self):
 
     _update_hover_hint(self, has_records=(total_records > 0))
     _update_box_live_labels(self, box_numbers, box_stats, rows, cols)
+    self._update_box_titles(box_numbers)
 
     for key, button in self.overview_cells.items():
         box_num, position = key

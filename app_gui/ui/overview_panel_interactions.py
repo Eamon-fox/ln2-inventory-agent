@@ -140,6 +140,79 @@ def on_cell_context_menu(self, box_num, position, global_pos):
         self._create_takeout_plan_item(rec_id, box_num, position, record)
 
 
+def _current_box_tag(self, box_num):
+    box_tags = (getattr(self, "_current_layout", {}) or {}).get("box_tags")
+    if not isinstance(box_tags, dict):
+        return ""
+    raw_value = box_tags.get(str(box_num))
+    if raw_value is None:
+        return ""
+    return str(raw_value).replace("\r", " ").replace("\n", " ").strip()
+
+
+def on_box_context_menu(self, box_num, global_pos):
+    from PySide6.QtWidgets import QInputDialog
+
+    from app_gui.error_localizer import localize_error_payload
+    from app_gui.ui import overview_panel as _ov_panel
+
+    menu = _ov_panel.QMenu(self)
+    act_set_tag = menu.addAction(tr("overview.setBoxTag"))
+    act_clear_tag = menu.addAction(tr("overview.clearBoxTag"))
+    current_tag = _current_box_tag(self, box_num)
+    act_clear_tag.setEnabled(bool(current_tag))
+
+    selected = menu.exec(global_pos)
+    if selected is None:
+        return
+
+    yaml_path = self.yaml_path_getter()
+    if not yaml_path:
+        self.status_message.emit(tr("overview.boxTagUpdateFailed"), 2500)
+        return
+
+    if selected == act_set_tag:
+        tag_text, ok = QInputDialog.getText(
+            self,
+            tr("overview.boxTagDialogTitle"),
+            t("overview.boxTagDialogPrompt", box=box_num),
+            text=current_tag,
+        )
+        if not ok:
+            return
+        response = self.bridge.set_box_tag(
+            yaml_path=yaml_path,
+            box=box_num,
+            tag=str(tag_text or ""),
+            execution_mode="execute",
+        )
+        if response.get("ok"):
+            self.refresh()
+            self.status_message.emit(t("overview.boxTagUpdated", box=box_num), 2500)
+        else:
+            self.status_message.emit(
+                localize_error_payload(response, fallback=tr("overview.boxTagUpdateFailed")),
+                3500,
+            )
+        return
+
+    if selected == act_clear_tag:
+        response = self.bridge.set_box_tag(
+            yaml_path=yaml_path,
+            box=box_num,
+            tag="",
+            execution_mode="execute",
+        )
+        if response.get("ok"):
+            self.refresh()
+            self.status_message.emit(t("overview.boxTagCleared", box=box_num), 2500)
+        else:
+            self.status_message.emit(
+                localize_error_payload(response, fallback=tr("overview.boxTagUpdateFailed")),
+                3500,
+            )
+
+
 def _create_takeout_plan_item(self, record_id, box_num, position, record):
     """Create a takeout plan item directly from overview context menu."""
     from datetime import date

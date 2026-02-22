@@ -98,8 +98,11 @@
     "boxActionPrompt": "请选择盒子操作：",
     "boxOpAdd": "增加盒子",
     "boxOpRemove": "删除盒子",
+    "boxOpSetTag": "设置盒子Tag",
     "boxAddCountPrompt": "要增加多少个盒子？",
     "boxRemovePrompt": "请选择要删除的盒子：",
+    "boxTagTargetPrompt": "请选择要编辑Tag的盒子：",
+    "boxTagInputPrompt": "盒子 {box} 的Tag（单行，最多80字符；留空表示清空）：",
     "boxNoAvailable": "没有可用盒子。",
     "boxDeleteKeepGaps": "保留编号空洞",
     "boxDeleteRenumber": "重排为连续编号",
@@ -121,20 +124,19 @@
     "updateComplete": "更新完成！",
     "updateFailed": "更新失败",
     "importStartupTitle": "欢迎！导入设置",
-    "importStartupMessage": "当前数据集为空。你可以先“从其他格式导入”（把你原有液氮罐/冻存盒管理的土法、杂乱索引记录打包给外部编码代理处理），或导入外部生成并通过严格校验的 YAML。",
+    "importStartupMessage": "当前数据集为空。如果你的数据量不大（小于 50 条），建议先在本应用新建库存，再通过 AI Panel 或手动添加完成录入。只有在数据量较大时，才建议使用“从其他格式导入”并借助外部编码代理处理；处理后请先严格校验再导入 YAML。",
     "exportTaskBundleTitle": "从其他格式导入",
-    "exportTaskBundleDesc": "这个模块用于把用户原有的液氮罐/冻存盒管理索引（包括土法、杂乱格式）通过标准流程转换为可导入 YAML。你先打包原始索引记录，再交给外部编码代理规范化。",
-    "exportTaskBundleGuide": "使用说明：\n1) 在“原始索引文件”中添加你现有的液氮罐/冻存盒管理索引（手工 Excel、CSV、截图、照片、PDF、文本笔记等，土法或杂乱格式都可以）。\n2) 导出 ZIP 并发送给外部代理（Codex/Claude Code）。\n3) 让代理在任务上下文内生成 output/ln2_inventory.yaml。\n4) 回到本应用，使用“导入已验证 YAML”。\n\n说明：\n- 支持将文件直接拖拽到来源框中。\n- 这个对话框只打包原始索引资料，不是最终 YAML 导入文件。",
-    "exportTaskBundleAction": "导出任务包",
-    "exportTaskBundleSuccess": "任务包已导出：\n{path}\n\n下一步：\n1) 把这个 ZIP 发给 Codex/Claude Code。\n2) 让它产出 output/ln2_inventory.yaml。\n3) 回到本应用使用“导入已验证 YAML”。",
+    "exportTaskBundleDesc": "如果数据量不大（小于 50 条），建议先新建库存，再在 AI Panel 或手动添加中完成录入。这个模块主要用于数据量较大时：把你现有的液氮罐/冻存盒管理索引资料打包后，交给外部编码代理规范化为可导入 YAML。",
+    "exportTaskBundleGuide": "How to use:\n1) Add your existing LN2 tank/cryobox tracking records in \"Raw Index Files\" (hand-made Excel, CSV, screenshots, photos, PDF, text notes, etc.).\n2) Export the task bundle directory and send that folder to an external agent (Codex/Claude Code).\n3) Ask the agent to generate output/ln2_inventory.yaml inside the task context.\n4) Return to this app and use \"Import Validated YAML\".\n\nNotes:\n- You can drag files directly into the source box.\n- This dialog packages raw tracking indexes, not the final YAML import file.\n- If the raw source data is very messy/noisy, conversion quality may be limited. Please review the output carefully and decide whether it is reliable for your use.",
+    "exportTaskBundleAction": "Export Bundle Directory",
+    "exportTaskBundleSuccess": "Task bundle exported:\n{path}\n\nNext:\n1) Send this folder to Codex/Claude Code.\n2) Ask it to produce output/ln2_inventory.yaml.\n3) Use \"Import Validated YAML\" in this app.",
     "exportTaskBundleFailed": "导出任务包失败。",
     "exportTaskBundleWarnings": "警告：\n{warnings}",
     "exportBundleSources": "原始索引文件（液氮罐/冻存盒管理记录，供外部 AI 处理）：",
-    "exportBundleOutput": "任务包 ZIP：",
+    "exportBundleOutput": "Bundle Output Folder:",
     "exportBundleNoSources": "尚未添加原始索引记录。\n请点击“添加原始索引文件”。\n也可以将文件拖拽到此框中。",
     "selectSourceFiles": "添加原始索引文件",
     "allFilesFilter": "所有文件 (*)",
-    "zipFilesFilter": "ZIP 文件 (*.zip)",
     "importValidatedTitle": "导入已验证 YAML",
     "importValidatedDesc": "对外部生成的 YAML 先执行本地严格校验，再导入。校验不通过不会写入。",
     "importValidatedGuide": "请准备外部代理生成的 output/ln2_inventory.yaml。\n\n步骤：\n1) 选择“候选 YAML”（外部代理输出）。\n2) 选择“目标数据集 YAML”（本应用保存位置）。\n3) 先点击“执行严格校验”。\n4) 校验通过后再点击“导入数据集（通过后）”。\n\n结果区域会显示 errors/warnings。严格模式下，只要 errors > 0 或 warnings > 0 都会阻止导入。",
@@ -185,6 +187,13 @@
     "previewAdd": "存入",
     "previewOut": "取出",
     "takeout": "取出",
+    "setBoxTag": "设置盒子Tag...",
+    "clearBoxTag": "清空盒子Tag",
+    "boxTagDialogTitle": "设置盒子Tag",
+    "boxTagDialogPrompt": "盒子 {box} 的Tag（单行，最多80字符；留空表示清空）：",
+    "boxTagUpdated": "已更新盒子 {box} 的Tag。",
+    "boxTagCleared": "已清空盒子 {box} 的Tag。",
+    "boxTagUpdateFailed": "更新盒子Tag失败。",
     "boxLabel": "盒子 {box}",
     "occupiedCount": "已占用 {occupied}/{total} | 空闲 {empty}",
     "filteredCount": "筛选后：已占用 {occupied} | 空闲 {empty}",
@@ -319,13 +328,6 @@
     "colPlasmidId": "质粒ID",
     "colEmptyTotal": "空位/总位",
     "historySummary": "共 {count} 条历史；最近: {date} {action} [{positions}]",
-    "backupPath": "备份路径",
-    "backupPh": "留空则回滚最新备份",
-    "refreshBackups": "刷新备份",
-    "useSelected": "使用选中备份",
-    "rollbackLatest": "回滚最新",
-    "rollbackSelected": "回滚选中/路径",
-    "backupsInfo": "备份将在此列出。",
     "confirmModify": "此操作将修改库存 YAML 文件。",
     "moveMustDiffer": "移动：起始和目标位置必须不同。",
     "contextSuccess": "{context}：成功",
@@ -415,26 +417,17 @@
     "exportedTo": "已导出到 {path}",
     "exportedToWithCount": "已导出 {count} 条记录到 {path}",
     "exportFailed": "导出失败：{error}",
-    "backupColIndex": "#",
-    "backupColDate": "日期",
-    "backupColSize": "大小",
-    "backupColPath": "路径",
-    "foundBackups": "已找到 {count} 条备份。",
-    "noBackupsFound": "未找到备份。请先点击“刷新备份”。",
-    "selectBackupPathFirst": "请先选择备份路径。",
     "auditAction": "操作",
     "auditStatus": "状态",
     "auditStatusSuccess": "成功",
     "auditStatusFailed": "失败",
     "loadAuditLog": "加载审计日志",
     "auditActionAddEntry": "存入",
-    "auditActionRecordTakeout": "单条取出",
-    "auditActionBatchTakeout": "批量取出",
+    "auditActionTakeout": "取出",
+    "auditActionMove": "移动",
     "auditActionRollback": "回滚",
+    "auditActionBackup": "备份",
     "auditRollbackFromSelected": "从所选回滚",
-    "auditRollbackAdvanced": "高级回滚（按备份）",
-    "showAdvancedRollback": "显示备份回滚",
-    "hideAdvancedRollback": "隐藏备份回滚",
     "clickLoadAudit": "点击“加载审计日志”查看事件。",
     "auditFileNotFound": "未找到审计文件：{path}",
     "failedToLoadAudit": "加载审计失败：{error}",
@@ -557,6 +550,7 @@
       "invalid_position": "位置无效。",
       "invalid_record_id": "记录 ID 无效。",
       "invalid_renumber_mode": "重排模式无效。",
+      "invalid_tag": "盒子Tag无效。",
       "invalid_tool_input": "输入参数无效。",
       "invalid_agent_result": "Agent 返回格式无效。",
       "agent_runtime_failed": "Agent 运行失败。",
@@ -665,8 +659,10 @@
       "unknownTool": "未知工具：{tool_name}"
     },
     "hint": {
+      "addEntrySharedFields": "`add_entry` uses one shared `fields` object for all `positions` in that call. It does not support per-position cell_line/note. Split into multiple add_entry calls (or staged items) when metadata differs. Required: {required_text}. Optional: {optional_text}.",
       "adjustInputByToolSchema": "Adjust `{tool_name}` inputs according to the tool schema, then retry.",
       "boxNotEmpty": "Remove all active tubes from that box first, then retry remove operation.",
+      "backupPathRequired": "Provide explicit `backup_path` from `list_audit_timeline` before calling rollback.",
       "emptyPositionsOrEntries": "Provide at least one target position or entry before retrying.",
       "invalidAction": "Use a supported action value: takeout / move.",
       "invalidBoxOrPositionOrRecordId": "Provide valid box IDs and valid positions in the current layout (e.g. 12 or A1).",
@@ -675,7 +671,9 @@
       "invalidMoveTarget": "For move operations, provide a valid `to_position` different from source position.",
       "invalidToolInput": "Input does not match `{tool_name}` schema. Fix field names/types first, then retry. Required: {required_text}. Optional: {optional_text}.",
       "minBoxCount": "At least one box must remain; do not remove the last box.",
-      "noBackups": "No backups exist yet; investigate write history first and confirm rollback intent with `question` tool before choosing a backup_path.",
+      "noBackups": "No backups exist yet in audit timeline. Use `list_audit_timeline` as source of truth before choosing a rollback backup_path.",
+      "backupNotInTimeline": "Selected backup_path is not in timeline backup events. Re-select from `list_audit_timeline` action=backup rows.",
+      "missingAuditSeq": "Selected backup event has no valid audit_seq. Do not infer by timestamp; pick a backup row with audit_seq.",
       "pathOrPermission": "Verify yaml_path exists and file permissions are correct, then retry.",
       "planPreflightFailedNoIds": "One or more write operations are invalid against current inventory state. Review blocked details, then retry only corrected operations.",
       "planPreflightFailedWithIds": "Preflight failed due to baseline integrity issues. Fetch affected records with `get_raw_entries` ids=[{ids_text}], then repair invalid fields via `edit_entry` (for example, normalize `cell_line` to configured options), and retry staging.",
@@ -686,7 +684,7 @@
       "retryWithCorrectedInput": "Retry with corrected tool input.",
       "unknownTool": "Use one of available tools: {available_text}.",
       "userCancelled": "User cancelled the confirmation dialog.",
-      "validationOrRollbackInvalid": "Rollback target is invalid for current file state. Re-check backup_path against audit/timeline and ask user confirmation with `question` if needed before retrying.",
+      "validationOrRollbackInvalid": "Rollback target is invalid for current file state. Re-select backup_path from `list_audit_timeline` and retry.",
       "writeRequiresExecuteMode": "Write tools are execute-gated. Stage operations first, then let a human run Execute in GUI Plan tab."
     },
     "input": {
@@ -740,15 +738,15 @@
       "allRejectedByValidation": "所有操作均被验证拒绝：{detail}",
       "moreBlockedItems": "; ...以及 {count} 更多",
       "planStoreNotAvailable": "计划商店不可用。",
-      "stagedForHumanApproval": "\u5df2\u6682\u5b58 {count} \u6761\u64cd\u4f5c\uff0c\u8bf7\u5728\u201c\u8ba1\u5212\u201d\u9875\u7b7e\u624b\u52a8\u786e\u8ba4\u6267\u884c\uff1a{summary}"
+      "stagedForHumanApproval": "已暂存 {count} 条操作，请在“计划”页签手动确认执行：{summary}"
     },
     "toolContracts": {
       "add_entry": {
-        "description": "Add new frozen tube records.",
-        "notes": "Provide sample metadata through fields object using declared keys (e.g. fields.cell_line, fields.note, fields.<custom_field>)."
+        "description": "Add new frozen tube records in one box; `positions` can be batched, while one shared `fields` object applies to every created tube in that call.",
+        "notes": "Provide sample metadata through `fields` using declared keys (e.g. fields.cell_line, fields.note, fields.<custom_field>). Per-position metadata is not supported; split into multiple add_entry calls (or staged items) when cell_line/note differs."
       },
-      "batch_takeout": {
-        "description": "Record takeout for multiple tubes in one call (single tube: record_takeout)."
+      "takeout": {
+        "description": "Record takeout for one or more tubes in one call."
       },
       "defaultDescription": "LN2 inventory tool: {name}",
       "edit_entry": {
@@ -764,22 +762,13 @@
         "description": "List empty positions, optionally within one box."
       },
       "manage_boxes": {
-        "description": "Safely add or remove inventory boxes."
-      },
-      "manage_boxes_add": {
-        "description": "Safely add inventory boxes."
-      },
-      "manage_boxes_remove": {
-        "description": "Safely remove one inventory box."
-      },
-      "manage_staged": {
-        "description": "List, remove, or clear staged plan items."
+        "description": "Safely add/remove inventory boxes (human confirmation required)."
       },
       "query_takeout_events": {
-        "description": "Query takeout/move event records (detailed events only)."
+        "description": "Query takeout/move events, or request aggregated summary by range."
       },
-      "query_takeout_summary": {
-        "description": "Query aggregated timeline summary (use query_takeout_events for detailed event rows)."
+      "list_audit_timeline": {
+        "description": "List persisted audit-table timeline rows sorted by audit_seq desc. Use action=backup rows as the source of truth for rollback backup_path selection."
       },
       "question": {
         "description": "Ask one clarifying question with explicit options.",
@@ -791,30 +780,18 @@
       "recommend_positions": {
         "description": "Recommend empty positions for new tubes."
       },
-      "record_takeout": {
-        "description": "Record takeout for one tube only (use batch_takeout for multiple tubes)."
-      },
       "rollback": {
-        "description": "Rollback inventory YAML to a backup snapshot using explicit backup_path.",
-        "notes": "Always provide explicit backup_path."
+        "description": "Rollback inventory YAML to a backup snapshot using explicit backup_path from list_audit_timeline.",
+        "notes": "Always provide explicit backup_path selected from action=backup rows in list_audit_timeline."
       },
       "search_records": {
         "description": "Search inventory records using a non-empty query and optional structured filters."
       },
-      "batch_move": {
-        "description": "Record move for multiple tubes in one call (single tube: record_move)."
+      "move": {
+        "description": "Record move for one or more tubes in one call."
       },
-      "record_move": {
-        "description": "Record move for one tube only (use batch_move for multiple tubes)."
-      },
-      "staged_clear": {
-        "description": "Clear all staged plan items."
-      },
-      "staged_list": {
-        "description": "List staged plan items."
-      },
-      "staged_remove": {
-        "description": "Remove one staged plan item by index."
+      "staged_plan": {
+        "description": "List/remove/clear staged plan items."
       }
     },
     "validation": {
@@ -834,4 +811,3 @@
     }
   }
 }
-

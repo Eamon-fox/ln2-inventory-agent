@@ -365,6 +365,13 @@ class RenderOperationSheetWithGridTests(unittest.TestCase):
         self.assertIn('class="box-header-main">BOX 1</span>', html)
         self.assertIn('class="box-header-num">#1</span>', html)
 
+    def test_grid_header_shows_box_tag_when_present(self):
+        grid_state = _grid_state_with_markers()
+        grid_state["boxes"][0]["box_tag"] = "virus stock"
+        html = render_grid_html(grid_state)
+        self.assertIn('class="box-header-tag"', html)
+        self.assertIn("virus stock", html)
+
     def test_business_table_columns_replace_manual_checklist_columns(self):
         html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
         self.assertIn('class="op-action"', html)

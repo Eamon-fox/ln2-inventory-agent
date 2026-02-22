@@ -50,6 +50,7 @@ _ERROR_DEFAULTS_EN = {
     "invalid_record_id": "Invalid record ID.",
     "invalid_renumber_mode": "Invalid renumber mode.",
     "invalid_tool_input": "Invalid input.",
+    "invalid_tag": "Invalid box tag.",
     "invalid_agent_result": "Invalid agent response payload.",
     "agent_runtime_failed": "Agent runtime failed.",
     "api_key_required": "API key is required.",

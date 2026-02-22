@@ -46,6 +46,28 @@ def _marker_css_overlay(marker_type):
     )
 
 
+def _get_box_tag(layout, box_num):
+    box_tags = (layout or {}).get("box_tags")
+    if not isinstance(box_tags, dict):
+        return ""
+    raw_value = box_tags.get(str(box_num))
+    if raw_value is None:
+        return ""
+    text = str(raw_value)
+    if "\n" in text or "\r" in text:
+        text = text.replace("\r", " ").replace("\n", " ")
+    return text.strip()
+
+
+def _format_box_group_title(box_num, layout):
+    box_label = box_to_display(box_num, layout)
+    title = t("overview.boxLabel", box=box_label)
+    box_tag = _get_box_tag(layout, box_num)
+    if not box_tag:
+        return title
+    return f"{title} | {box_tag}"
+
+
 def _build_operation_marker_map(plan_items):
     marker_map = {}
     move_counter = 1
@@ -138,6 +160,15 @@ def _repaint_all_cells(self):
         self._paint_cell(button, box_num, position, record)
 
 
+def _update_box_titles(self, box_numbers):
+    layout = getattr(self, "_current_layout", {}) or {}
+    for box_num in list(box_numbers or []):
+        group = self.overview_box_groups.get(box_num)
+        if group is None:
+            continue
+        group.setTitle(_format_box_group_title(box_num, layout))
+
+
 def _warm_hover_animation(self):
     """Pre-create hover proxy and animation to eliminate first-hover delay."""
     if self._hover_warmed or not self.overview_cells:
@@ -175,9 +206,15 @@ def _rebuild_boxes(self, rows, cols, box_numbers):
     cell_size = max(12, int(self._base_cell_size * self._zoom_level))
     columns = 3
     for idx, box_num in enumerate(box_numbers):
-        box_label = box_to_display(box_num, layout)
-        group = QGroupBox(t("overview.boxLabel", box=box_label))
+        group = QGroupBox(_format_box_group_title(box_num, layout))
         group.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        group.setContextMenuPolicy(Qt.CustomContextMenu)
+        group.customContextMenuRequested.connect(
+            lambda point, b=box_num, grp=group: self.on_box_context_menu(
+                b,
+                grp.mapToGlobal(point),
+            )
+        )
         group_layout = QVBoxLayout(group)
         group_layout.setContentsMargins(6, 6, 6, 6)
         group_layout.setSpacing(4)

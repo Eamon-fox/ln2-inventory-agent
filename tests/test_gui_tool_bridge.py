@@ -30,6 +30,7 @@ inventory:
     frozen_at: 2026-02-10
     plasmid_name: EGFP
     plasmid_id: P-001
+    note: 中文说明
 """,
             encoding="utf-8",
         )
@@ -47,13 +48,14 @@ inventory:
         self.assertTrue(response.get("ok"))
         self.assertTrue(output_path.exists())
 
-        with output_path.open("r", encoding="utf-8", newline="") as handle:
+        with output_path.open("r", encoding="utf-8-sig", newline="") as handle:
             rows = list(csv.reader(handle))
 
         self.assertGreaterEqual(len(rows), 2)
         self.assertEqual("id", rows[0][0])
         self.assertIn("cell_line", rows[0])
         self.assertEqual("5", rows[1][0])
+        self.assertIn("中文说明", rows[1])
 
 
 if __name__ == "__main__":

@@ -413,7 +413,7 @@ class RunPlanExecuteTests(unittest.TestCase):
             )
 
             bridge = MagicMock()
-            bridge.batch_move.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
+            bridge.move.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
 
             items = [
                 make_move_item(record_id=1, position=1, to_position=10),
@@ -423,7 +423,7 @@ class RunPlanExecuteTests(unittest.TestCase):
 
             self.assertTrue(result["ok"])
             self.assertEqual(2, result["stats"]["ok"])
-            bridge.batch_move.assert_called_once()
+            bridge.move.assert_called_once()
 
     def test_run_plan_move_batch_converts_positions_for_alphanumeric_layout(self):
         with tempfile.TemporaryDirectory() as td:
@@ -440,7 +440,7 @@ class RunPlanExecuteTests(unittest.TestCase):
             )
 
             bridge = MagicMock()
-            bridge.batch_move.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
+            bridge.move.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
 
             items = [
                 make_move_item(record_id=1, position=1, to_position=3),
@@ -449,8 +449,8 @@ class RunPlanExecuteTests(unittest.TestCase):
             result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
 
             self.assertTrue(result["ok"])
-            bridge.batch_move.assert_called_once()
-            kwargs = bridge.batch_move.call_args.kwargs
+            bridge.move.assert_called_once()
+            kwargs = bridge.move.call_args.kwargs
             self.assertEqual("A1", kwargs["entries"][0]["from"]["position"])
             self.assertEqual("A3", kwargs["entries"][0]["to"]["position"])
             self.assertEqual("A2", kwargs["entries"][1]["from"]["position"])
@@ -469,7 +469,7 @@ class RunPlanExecuteTests(unittest.TestCase):
             )
 
             bridge = MagicMock()
-            bridge.batch_move.return_value = {"ok": False, "error_code": "validation_failed", "message": "Batch failed"}
+            bridge.move.return_value = {"ok": False, "error_code": "validation_failed", "message": "Batch failed"}
 
             items = [
                 make_move_item(record_id=1, position=1, to_position=10),
@@ -480,8 +480,8 @@ class RunPlanExecuteTests(unittest.TestCase):
             self.assertFalse(result["ok"])
             self.assertTrue(result["blocked"])
             self.assertEqual(2, result["stats"]["blocked"])
-            bridge.batch_move.assert_called_once()
-            self.assertFalse(bridge.record_takeout.called)
+            bridge.move.assert_called_once()
+            self.assertFalse(bridge.takeout.called)
             self.assertTrue(all(it.get("error_code") == "validation_failed" for it in result["items"]))
 
     def test_run_plan_move_batch_fails_maps_errors_per_record_id(self):
@@ -497,7 +497,7 @@ class RunPlanExecuteTests(unittest.TestCase):
             )
 
             bridge = MagicMock()
-            bridge.batch_move.return_value = {
+            bridge.move.return_value = {
                 "ok": False,
                 "error_code": "validation_failed",
                 "message": "Batch operation parameter validation failed",
@@ -532,7 +532,7 @@ class RunPlanExecuteTests(unittest.TestCase):
             )
 
             bridge = MagicMock()
-            bridge.batch_takeout.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
+            bridge.takeout.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
 
             items = [
                 make_takeout_item(record_id=1, position=1),
@@ -558,7 +558,7 @@ class RunPlanExecuteTests(unittest.TestCase):
             )
 
             bridge = MagicMock()
-            bridge.batch_takeout.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
+            bridge.takeout.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
 
             items = [
                 make_takeout_item(record_id=1, position=5),
@@ -567,8 +567,8 @@ class RunPlanExecuteTests(unittest.TestCase):
             result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
 
             self.assertTrue(result["ok"])
-            bridge.batch_takeout.assert_called_once()
-            kwargs = bridge.batch_takeout.call_args.kwargs
+            bridge.takeout.assert_called_once()
+            kwargs = bridge.takeout.call_args.kwargs
             self.assertEqual("A5", kwargs["entries"][0]["from"]["position"])
             self.assertEqual("A6", kwargs["entries"][1]["from"]["position"])
 
@@ -585,8 +585,8 @@ class RunPlanExecuteTests(unittest.TestCase):
 
             bridge = MagicMock()
             bridge.add_entry.return_value = {"ok": True}
-            bridge.batch_move.return_value = {"ok": True}
-            bridge.batch_takeout.return_value = {"ok": True}
+            bridge.move.return_value = {"ok": True}
+            bridge.takeout.return_value = {"ok": True}
 
             items = [
                 make_add_item(box=2, position=10),
@@ -649,7 +649,7 @@ class RunPlanExecuteTests(unittest.TestCase):
 
             source_event = {
                 "timestamp": "2026-02-12T09:00:00",
-                "action": "record_takeout",
+                "action": "takeout",
                 "trace_id": "trace-audit-1",
             }
             item = make_rollback_item(str(manual_backup))
@@ -695,8 +695,8 @@ class PreflightVsExecuteConsistencyTests(unittest.TestCase):
             )
 
             bridge = MagicMock()
-            bridge.batch_move.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
-            bridge.record_takeout.return_value = {"ok": True}
+            bridge.move.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
+            bridge.takeout.return_value = {"ok": True}
 
             items = [make_move_item(record_id=1, position=1, to_position=5)]
 
@@ -838,7 +838,7 @@ class EditPlanTests(unittest.TestCase):
 
             bridge = MagicMock()
             bridge.edit_entry.return_value = {"ok": True}
-            bridge.batch_takeout.return_value = {"ok": True}
+            bridge.takeout.return_value = {"ok": True}
 
             items = [
                 make_edit_item(record_id=1, box=1, position=5, fields={"note": "edited"}),
@@ -849,7 +849,7 @@ class EditPlanTests(unittest.TestCase):
             self.assertTrue(result["ok"])
             self.assertEqual(2, result["stats"]["ok"])
             bridge.edit_entry.assert_called_once()
-            bridge.batch_takeout.assert_called_once()
+            bridge.takeout.assert_called_once()
 
     def test_multiple_edits_execute_independently(self):
         with tempfile.TemporaryDirectory() as td:

@@ -44,11 +44,9 @@ def test_agent_hints_are_aligned_across_en_and_zh():
     assert en_hints == zh_hints, "agentToolRunner.hint should match across locales"
 
 
-def test_takeout_query_tool_contracts_have_clear_event_vs_summary_boundary():
+def test_takeout_query_tool_contract_supports_event_and_summary_modes():
     contracts = _agent_tool_runner_section("en.json", "toolContracts")
     events_desc = str((contracts.get("query_takeout_events") or {}).get("description") or "").lower()
-    summary_desc = str((contracts.get("query_takeout_summary") or {}).get("description") or "").lower()
 
-    assert "summary" not in events_desc, "query_takeout_events should describe detailed events only"
-    assert "aggregated" in summary_desc, "query_takeout_summary should emphasize aggregated output"
-    assert "query_takeout_events" in summary_desc, "query_takeout_summary should point to detailed-event tool"
+    assert "summary" in events_desc, "query_takeout_events should mention summary capability"
+    assert "range" in events_desc, "query_takeout_events should mention range selector for summary"

@@ -38,8 +38,17 @@ def on_run_ai_agent(self):
     if self.ai_stop_requested:
         thread = getattr(self, "ai_run_thread", None)
         if thread is not None and thread.isRunning():
-            self.status_message.emit(tr("ai.aiRunStopped"), 1500)
-            return
+            # Previous run can still be draining after stop is requested.
+            # Re-issue cooperative stop, then detach stale worker/thread refs so
+            # a new run can start immediately while late callbacks are ignored.
+            worker = getattr(self, "ai_run_worker", None)
+            if worker is not None and hasattr(worker, "request_stop"):
+                try:
+                    worker.request_stop()
+                except Exception:
+                    pass
+            self.ai_run_thread = None
+            self.ai_run_worker = None
         self.ai_stop_requested = False
 
     prompt = self.ai_prompt.toPlainText().strip()
@@ -106,6 +115,10 @@ def start_worker(self, prompt):
 
 def _handle_question_event(self, event_data):
     """Handle question event from agent: show dialog and unblock worker."""
+    sender = self.sender() if hasattr(self, "sender") else None
+    if sender is not None and sender is not self.ai_run_worker:
+        return
+
     if self.ai_stop_requested:
         if self.ai_run_worker:
             self.ai_run_worker.cancel_answer()
@@ -272,6 +285,10 @@ def set_busy(self, busy):
 
 
 def on_progress(self, event):
+    sender = self.sender() if hasattr(self, "sender") else None
+    if sender is not None and sender is not self.ai_run_worker:
+        return
+
     if self.ai_stop_requested:
         return
 
@@ -394,6 +411,10 @@ def _handle_progress_max_steps(_event):
 
 
 def on_finished(self, response):
+    sender = self.sender() if hasattr(self, "sender") else None
+    if sender is not None and sender is not self.ai_run_worker:
+        return
+
     if self.ai_stop_requested:
         response = response if isinstance(response, dict) else {}
         raw_result = response.get("result")
@@ -480,6 +501,10 @@ def on_finished(self, response):
 
 
 def on_thread_finished(self):
+    sender = self.sender() if hasattr(self, "sender") else None
+    if sender is not None and sender is not self.ai_run_thread:
+        return
+
     self.ai_stop_requested = False
     self.ai_run_thread = None
     self.ai_run_worker = None

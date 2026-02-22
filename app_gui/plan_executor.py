@@ -10,7 +10,8 @@ from datetime import date
 from typing import Callable, Dict, List, Optional, Tuple
 
 from lib.position_fmt import pos_to_display
-from lib.yaml_ops import create_yaml_backup, load_yaml, write_yaml
+from lib.tool_api_write_validation import resolve_request_backup_path
+from lib.yaml_ops import load_yaml, write_yaml
 
 
 def _make_error_item(item: Dict[str, object], error_code: str, message: str) -> Dict[str, object]:
@@ -565,20 +566,23 @@ def run_plan(
     request_backup_path: Optional[str] = None
 
     if mode == "execute":
-        if os.path.isfile(yaml_path):
-            try:
-                created_backup = create_yaml_backup(yaml_path)
-            except Exception as exc:
+        try:
+            request_backup_path = resolve_request_backup_path(
+                yaml_path=yaml_path,
+                execution_mode="execute",
+                dry_run=False,
+                request_backup_path=None,
+                backup_event_source="plan_executor.execute",
+            )
+        except Exception as exc:
+            if os.path.isfile(yaml_path):
                 return _build_execute_backup_blocked_result(
                     items,
                     message=f"Blocked before execute: failed to create backup ({exc})",
                 )
-            if not created_backup:
-                return _build_execute_backup_blocked_result(
-                    items,
-                    message="Blocked before execute: failed to create backup.",
-                )
-            request_backup_path = os.path.abspath(str(created_backup))
+            # In-memory/test execution may run with a virtual path. Let tool-level
+            # validation report the concrete failure instead of hard-blocking here.
+            request_backup_path = None
 
     remaining = list(items)
 
@@ -586,12 +590,12 @@ def run_plan(
     rollbacks = _items_with_action(remaining, "rollback")
     for item in rollbacks:
         payload = dict(item.get("payload") or {})
-        backup_path = payload.get("backup_path")
+        target_backup_path = payload.get("backup_path")
         source_event = payload.get("source_event")
 
         rollback_kwargs = {
             "yaml_path": yaml_path,
-            "backup_path": backup_path,
+            "backup_path": target_backup_path,
             "execution_mode": "execute",
             "request_backup_path": request_backup_path,
         }
@@ -603,7 +607,7 @@ def run_plan(
                 bridge=bridge,
                 yaml_path=yaml_path,
                 tool_name="tool_rollback",
-                backup_path=backup_path,
+                backup_path=target_backup_path,
                 source_event=source_event,
             ),
             run_execute=lambda: _run_execute_rollback(bridge, rollback_kwargs),
@@ -718,7 +722,7 @@ def run_plan(
         reports,
         remaining,
         phase_items=moves,
-        run_batch=lambda: _execute_moves_batch(
+        run_batch=lambda: _execute_move(
             yaml_path=yaml_path,
             items=moves,
             bridge=bridge,
@@ -735,7 +739,7 @@ def run_plan(
         reports,
         remaining,
         phase_items=out_items,
-        run_batch=lambda: _execute_takeout_batch(
+        run_batch=lambda: _execute_takeout(
             yaml_path=yaml_path,
             items=out_items,
             action_name="Takeout",
@@ -866,36 +870,36 @@ def _preflight_add_entry(bridge: object, yaml_path: str, payload: Dict[str, obje
     )
 
 
-def _preflight_batch_takeout(bridge: object, yaml_path: str, payload: Dict[str, object]) -> Dict[str, object]:
-    """Validate batch_takeout with the same path as execute mode."""
+def _preflight_takeout(bridge: object, yaml_path: str, payload: Dict[str, object]) -> Dict[str, object]:
+    """Validate takeout with the same path as execute mode."""
     return _run_preflight_tool(
         bridge=bridge,
         yaml_path=yaml_path,
-        tool_name="tool_batch_takeout",
+        tool_name="tool_takeout",
         entries=payload.get("entries", []),
         date_str=payload.get("date_str"),
     )
 
 
-def _preflight_batch_move(bridge: object, yaml_path: str, payload: Dict[str, object]) -> Dict[str, object]:
-    """Validate batch_move with the same path as execute mode."""
+def _preflight_move(bridge: object, yaml_path: str, payload: Dict[str, object]) -> Dict[str, object]:
+    """Validate move with the same path as execute mode."""
     return _run_preflight_tool(
         bridge=bridge,
         yaml_path=yaml_path,
-        tool_name="tool_batch_move",
+        tool_name="tool_move",
         entries=payload.get("entries", []),
         date_str=payload.get("date_str"),
     )
 
 
-def _build_batch_takeout_payload(
+def _build_takeout_payload(
     items: List[Dict[str, object]],
     *,
     date_str: str,
     layout: Dict[str, object],
     include_target: bool = False,
 ) -> Dict[str, object]:
-    """Build shared V2 batch payload for takeout/move operations."""
+    """Build shared V2 payload for takeout/move operations."""
     entries = []
     for idx, item in enumerate(items):
         payload = item.get("payload") or {}
@@ -937,7 +941,7 @@ def _build_batch_takeout_payload(
     }
 
 
-def _run_batch_takeout(
+def _run_takeout(
     bridge: object,
     yaml_path: str,
     batch_payload: Dict[str, object],
@@ -945,8 +949,8 @@ def _run_batch_takeout(
     request_backup_path: Optional[str] = None,
 ) -> Dict[str, object]:
     if mode == "preflight":
-        return _preflight_batch_takeout(bridge, yaml_path, batch_payload)
-    response = bridge.batch_takeout(
+        return _preflight_takeout(bridge, yaml_path, batch_payload)
+    response = bridge.takeout(
         yaml_path=yaml_path,
         execution_mode="execute",
         auto_backup=False,
@@ -956,7 +960,7 @@ def _run_batch_takeout(
     return _attach_request_backup(response, request_backup_path)
 
 
-def _run_batch_move(
+def _run_move(
     bridge: object,
     yaml_path: str,
     batch_payload: Dict[str, object],
@@ -964,8 +968,8 @@ def _run_batch_move(
     request_backup_path: Optional[str] = None,
 ) -> Dict[str, object]:
     if mode == "preflight":
-        return _preflight_batch_move(bridge, yaml_path, batch_payload)
-    response = bridge.batch_move(
+        return _preflight_move(bridge, yaml_path, batch_payload)
+    response = bridge.move(
         yaml_path=yaml_path,
         execution_mode="execute",
         auto_backup=False,
@@ -975,7 +979,7 @@ def _run_batch_move(
     return _attach_request_backup(response, request_backup_path)
 
 
-def _execute_moves_batch(
+def _execute_move(
     yaml_path: str,
     items: List[Dict[str, object]],
     bridge: object,
@@ -983,10 +987,10 @@ def _execute_moves_batch(
     mode: str,
     request_backup_path: Optional[str] = None,
 ) -> Tuple[bool, List[Dict[str, object]]]:
-    """Execute move operations using a single batch strategy."""
+    """Execute move operations using a single tool call."""
     layout = _load_box_layout(yaml_path)
     try:
-        batch_payload = _build_batch_takeout_payload(
+        batch_payload = _build_takeout_payload(
             items,
             date_str=date_str,
             layout=layout,
@@ -996,7 +1000,7 @@ def _execute_moves_batch(
         message = str(exc)
         return False, [_make_error_item(item, "validation_failed", message) for item in items]
 
-    response = _run_batch_move(
+    response = _run_move(
         bridge,
         yaml_path,
         batch_payload,
@@ -1012,7 +1016,7 @@ def _execute_moves_batch(
     )
 
 
-def _execute_takeout_batch(
+def _execute_takeout(
     yaml_path: str,
     items: List[Dict[str, object]],
     action_name: str,
@@ -1044,18 +1048,21 @@ def _execute_takeout_batch(
                 all_ok = False
                 continue
             single_payload = {
-                "record_id": p.get("record_id"),
-                "from_slot": {
-                    "box": item.get("box"),
-                    "position": position,
-                },
+                "entries": [
+                    {
+                        "record_id": p.get("record_id"),
+                        "from": {
+                            "box": item.get("box"),
+                            "position": position,
+                        },
+                    }
+                ],
                 "date_str": p.get("date_str", date_str),
             }
-            response = _run_preflight_tool(
+            response = _preflight_takeout(
                 bridge=bridge,
                 yaml_path=yaml_path,
-                tool_name="tool_record_takeout",
-                **single_payload,
+                payload=single_payload,
             )
             if not _append_item_report(
                 reports,
@@ -1068,7 +1075,7 @@ def _execute_takeout_batch(
         return all_ok, reports
 
     try:
-        batch_payload = _build_batch_takeout_payload(
+        batch_payload = _build_takeout_payload(
             items,
             date_str=date_str,
             layout=layout,
@@ -1078,7 +1085,7 @@ def _execute_takeout_batch(
         message = str(exc)
         return False, [_make_error_item(item, "validation_failed", message) for item in items]
 
-    response = _run_batch_takeout(
+    response = _run_takeout(
         bridge,
         yaml_path,
         batch_payload,

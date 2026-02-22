@@ -300,6 +300,53 @@ def test_manage_boxes_flow_remove_invalid_box_fails_before_confirm():
         window.show_status.assert_not_called()
 
 
+def test_manage_boxes_flow_set_tag_executes_and_emits_notice():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yaml_path = os.path.join(tmpdir, "inventory.yaml")
+        Path(yaml_path).write_text(
+            (
+                "meta:\n"
+                "  box_layout:\n"
+                "    rows: 9\n"
+                "    cols: 9\n"
+                "    box_count: 2\n"
+                "inventory: []\n"
+            ),
+            encoding="utf-8",
+        )
+
+        set_tag_mock = MagicMock(return_value={"ok": True, "result": {"box": 1, "tag_after": "virus"}})
+        adjust_mock = MagicMock(return_value={"ok": True})
+        window = SimpleNamespace(
+            current_yaml_path=yaml_path,
+            bridge=SimpleNamespace(adjust_box_count=adjust_mock, set_box_tag=set_tag_mock),
+            overview_panel=SimpleNamespace(refresh=MagicMock()),
+            on_operation_completed=MagicMock(),
+            operations_panel=SimpleNamespace(emit_external_operation_event=MagicMock()),
+            show_status=MagicMock(),
+        )
+        flow = ManageBoxesFlow(window)
+
+        result = flow.handle_request(
+            {"operation": "set_tag", "box": 1, "tag": "virus"},
+            from_ai=False,
+            yaml_path_override=yaml_path,
+        )
+
+        assert result["ok"] is True
+        set_tag_mock.assert_called_once_with(
+            yaml_path=yaml_path,
+            box=1,
+            tag="virus",
+            execution_mode="execute",
+        )
+        adjust_mock.assert_not_called()
+        window.overview_panel.refresh.assert_called_once()
+        window.on_operation_completed.assert_called_once_with(True)
+        window.show_status.assert_called_once()
+        window.operations_panel.emit_external_operation_event.assert_called_once()
+
+
 def test_window_state_flow_restore_and_label_and_stats():
     stats_bar = SimpleNamespace(setText=MagicMock())
     dataset_label = SimpleNamespace(setText=MagicMock())
