@@ -389,10 +389,8 @@ class AgentToolRunner:
     _stage_to_plan_impl = _runner_staging._stage_to_plan_impl
     _build_staged_plan_items = _runner_staging._build_staged_plan_items
     _stage_items_add_entry = _runner_staging._stage_items_add_entry
-    _stage_items_record_takeout = _runner_staging._stage_items_record_takeout
-    _stage_items_record_move = _runner_staging._stage_items_record_move
-    _stage_items_batch_takeout = _runner_staging._stage_items_batch_takeout
-    _stage_items_batch_move = _runner_staging._stage_items_batch_move
+    _stage_items_takeout = _runner_staging._stage_items_takeout
+    _stage_items_move = _runner_staging._stage_items_move
     _stage_items_edit_entry = _runner_staging._stage_items_edit_entry
     _stage_items_rollback = _runner_staging._stage_items_rollback
     _build_stage_blocked_response = _runner_staging._build_stage_blocked_response
@@ -416,26 +414,22 @@ class AgentToolRunner:
             },
         )
 
-    _run_manage_boxes_add = _runner_handlers._run_manage_boxes_add
-    _run_manage_boxes_remove = _runner_handlers._run_manage_boxes_remove
+    _run_manage_boxes = _runner_handlers._run_manage_boxes
     _run_list_empty_positions = _runner_handlers._run_list_empty_positions
     _run_search_records = _runner_handlers._run_search_records
     _run_recent_frozen = _runner_handlers._run_recent_frozen
     _run_query_takeout_events = _runner_handlers._run_query_takeout_events
-    _run_query_takeout_summary = _runner_handlers._run_query_takeout_summary
+    _run_list_audit_timeline = _runner_handlers._run_list_audit_timeline
     _run_recommend_positions = _runner_handlers._run_recommend_positions
     _run_generate_stats = _runner_handlers._run_generate_stats
     _run_get_raw_entries = _runner_handlers._run_get_raw_entries
+    _run_run_terminal = _runner_handlers._run_run_terminal
     _run_edit_entry = _runner_handlers._run_edit_entry
     _run_add_entry = _runner_handlers._run_add_entry
-    _run_record_takeout = _runner_handlers._run_record_takeout
-    _run_record_move = _runner_handlers._run_record_move
-    _run_batch_takeout = _runner_handlers._run_batch_takeout
-    _run_batch_move = _runner_handlers._run_batch_move
+    _run_takeout = _runner_handlers._run_takeout
+    _run_move = _runner_handlers._run_move
     _run_rollback = _runner_handlers._run_rollback
-    _run_staged_list = _runner_handlers._run_staged_list
-    _run_staged_remove = _runner_handlers._run_staged_remove
-    _run_staged_clear = _runner_handlers._run_staged_clear
+    _run_staged_plan = _runner_handlers._run_staged_plan
 
     def _run_dispatch(self, tool_name, payload, trace_id=None):
         if tool_name not in TOOL_CONTRACTS:
@@ -461,26 +455,22 @@ class AgentToolRunner:
             return self._stage_to_plan(tool_name, payload, trace_id)
 
         handlers = {
-            "manage_boxes_add": self._run_manage_boxes_add,
-            "manage_boxes_remove": self._run_manage_boxes_remove,
+            "manage_boxes": self._run_manage_boxes,
             "list_empty_positions": self._run_list_empty_positions,
             "search_records": self._run_search_records,
             "recent_frozen": self._run_recent_frozen,
             "query_takeout_events": self._run_query_takeout_events,
-            "query_takeout_summary": self._run_query_takeout_summary,
+            "list_audit_timeline": self._run_list_audit_timeline,
             "recommend_positions": self._run_recommend_positions,
             "generate_stats": self._run_generate_stats,
             "get_raw_entries": self._run_get_raw_entries,
+            "run_terminal": self._run_run_terminal,
             "edit_entry": self._run_edit_entry,
             "add_entry": self._run_add_entry,
-            "record_takeout": self._run_record_takeout,
-            "record_move": self._run_record_move,
-            "batch_takeout": self._run_batch_takeout,
-            "batch_move": self._run_batch_move,
+            "takeout": self._run_takeout,
+            "move": self._run_move,
             "rollback": self._run_rollback,
-            "staged_list": self._run_staged_list,
-            "staged_remove": self._run_staged_remove,
-            "staged_clear": self._run_staged_clear,
+            "staged_plan": self._run_staged_plan,
         }
         handler = handlers.get(tool_name)
         if callable(handler):

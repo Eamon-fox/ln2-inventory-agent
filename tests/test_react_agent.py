@@ -222,8 +222,8 @@ class ReactAgentTests(unittest.TestCase):
                     "tool_calls": [
                         {
                             "id": "call_manage_boxes",
-                            "name": "manage_boxes_add",
-                            "arguments": {"count": 1},
+                            "name": "manage_boxes",
+                            "arguments": {"action": "add", "count": 1},
                         }
                     ],
                 },
@@ -530,6 +530,21 @@ class ReactAgentTests(unittest.TestCase):
         self.assertNotIn("`record_move`: {record_id", system_msg["content"])
         self.assertNotIn("`batch_takeout`: {entries", system_msg["content"])
         self.assertNotIn("`batch_move`: {entries", system_msg["content"])
+
+    def test_system_prompt_includes_current_inventory_yaml_path(self):
+        llm = _CapturePromptLLM()
+        yaml_path = "/tmp/current_inventory.yaml"
+        runner = AgentToolRunner(yaml_path=yaml_path)
+        agent = ReactAgent(llm_client=llm, tool_runner=runner)
+
+        agent.run("check prompt context")
+
+        system_msg = llm.last_messages[0]
+        self.assertEqual("system", system_msg["role"])
+        content = str(system_msg.get("content") or "")
+        self.assertIn("Current time:", content)
+        self.assertIn(f"Current inventory (yaml_path): {yaml_path}", content)
+        self.assertLess(content.index("Current time:"), content.index("Current inventory (yaml_path):"))
 
     def test_numeric_option_reply_is_expanded_from_recent_assistant_options(self):
         llm = _CapturePromptLLM()

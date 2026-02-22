@@ -134,7 +134,7 @@ def _run_tool_call(self, call, tool_names, trace_id, stop_event=None):
                 }
 
     if (
-        action in {"manage_boxes_add", "manage_boxes_remove"}
+        action == "manage_boxes"
         and isinstance(observation, dict)
         and observation.get("waiting_for_user_confirmation")
     ):
@@ -383,9 +383,11 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
     tool_schemas = self._tools.tool_schemas() if hasattr(self._tools, "tool_schemas") else []
     memory = self._normalize_history(conversation_history)
 
+    yaml_path = str(getattr(self._tools, "_yaml_path", "") or "").strip()
     system_sections = [
         self.SYSTEM_PROMPT,
         f"Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Current inventory (yaml_path): {yaml_path or '(unknown)'}",
     ]
     if self._custom_prompt:
         system_sections.append(

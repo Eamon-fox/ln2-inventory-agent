@@ -20,6 +20,7 @@ if str(ROOT) not in sys.path:
 
 from agent.tool_runner import AgentToolRunner
 from agent.llm_client import DeepSeekLLMClient
+from lib.tool_api_write_validation import resolve_request_backup_path
 from lib.yaml_ops import create_yaml_backup, write_yaml
 
 
@@ -167,15 +168,19 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertEqual("add", self.plan_store.list_items()[0]["action"])
         self.assertEqual(1, self.plan_store.list_items()[0]["box"])
 
-    def test_stage_to_plan_record_takeout(self):
-        """Test staging record_takeout operation."""
+    def test_stage_to_plan_takeout(self):
+        """Test staging takeout operation."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
-            "record_takeout",
+            "takeout",
             {
-                "record_id": 1,
-                "from_box": 1,
-                "from_position": 5,
+                "entries": [
+                    {
+                        "record_id": 1,
+                        "from_box": 1,
+                        "from_position": 5,
+                    }
+                ],
                 "date": "2026-02-10",
             },
         )
@@ -185,16 +190,20 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertEqual("takeout", self.plan_store.list_items()[0]["action"])
         self.assertEqual(5, self.plan_store.list_items()[0]["position"])
 
-    def test_stage_to_plan_record_takeout_accepts_alphanumeric_position(self):
+    def test_stage_to_plan_takeout_accepts_alphanumeric_position(self):
         """Position parsing should accept display values like A5 in alphanumeric layout."""
         yaml_path = self._seed_yaml_alphanumeric([make_record(rec_id=1, box=1, position=5)])
         runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
-            "record_takeout",
+            "takeout",
             {
-                "record_id": 1,
-                "from_box": 1,
-                "from_position": "A5",
+                "entries": [
+                    {
+                        "record_id": 1,
+                        "from_box": 1,
+                        "from_position": "A5",
+                    }
+                ],
                 "date": "2026-02-10",
             },
         )
@@ -203,16 +212,20 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertEqual(1, len(self.plan_store.list_items()))
         self.assertEqual(5, self.plan_store.list_items()[0]["position"])
 
-    def test_stage_to_plan_record_takeout_rejects_numeric_text_in_alphanumeric_layout(self):
+    def test_stage_to_plan_takeout_rejects_numeric_text_in_alphanumeric_layout(self):
         """In alphanumeric mode, numeric text should be rejected (use A1-style input)."""
         yaml_path = self._seed_yaml_alphanumeric([make_record(rec_id=1, box=1, position=5)])
         runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
-            "record_takeout",
+            "takeout",
             {
-                "record_id": 1,
-                "from_box": 1,
-                "from_position": "5",
+                "entries": [
+                    {
+                        "record_id": 1,
+                        "from_box": 1,
+                        "from_position": "5",
+                    }
+                ],
                 "date": "2026-02-10",
             },
         )
@@ -220,15 +233,19 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertEqual("invalid_tool_input", result.get("error_code"))
         self.assertEqual(0, len(self.plan_store.list_items()))
 
-    def test_stage_to_plan_record_takeout_rejects_legacy_action_alias(self):
+    def test_stage_to_plan_takeout_rejects_legacy_action_alias(self):
         """Legacy alias 瑙ｅ喕 should be rejected by strict schema."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
-            "record_takeout",
+            "takeout",
             {
-                "record_id": 1,
-                "from_box": 1,
-                "from_position": 5,
+                "entries": [
+                    {
+                        "record_id": 1,
+                        "from_box": 1,
+                        "from_position": 5,
+                    }
+                ],
                 "date": "2026-02-10",
                 "action": "瑙ｅ喕",
             },
@@ -237,17 +254,21 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertEqual("invalid_tool_input", result["error_code"])
         self.assertEqual(0, len(self.plan_store.list_items()))
 
-    def test_stage_to_plan_record_move(self):
-        """Test staging record_move operation."""
+    def test_stage_to_plan_move(self):
+        """Test staging move operation."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
-            "record_move",
+            "move",
             {
-                "record_id": 1,
-                "from_box": 1,
-                "from_position": 5,
-                "to_box": 1,
-                "to_position": 10,
+                "entries": [
+                    {
+                        "record_id": 1,
+                        "from_box": 1,
+                        "from_position": 5,
+                        "to_box": 1,
+                        "to_position": 10,
+                    }
+                ],
                 "date": "2026-02-10",
             },
         )
@@ -256,11 +277,11 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertEqual("move", self.plan_store.list_items()[0]["action"])
         self.assertEqual(10, self.plan_store.list_items()[0]["to_position"])
 
-    def test_stage_to_plan_batch_takeout(self):
-        """Test staging batch_takeout operation."""
+    def test_stage_to_plan_takeout_multiple_entries(self):
+        """Test staging takeout operation with multiple entries."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
-            "batch_takeout",
+            "takeout",
             {
                 "entries": [
                     {"record_id": 1, "from_box": 1, "from_position": 5},
@@ -273,11 +294,11 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertTrue(result.get("staged"))
         self.assertEqual(2, len(self.plan_store.list_items()))
 
-    def test_stage_to_plan_batch_move(self):
-        """Test staging batch_move operation."""
+    def test_stage_to_plan_move_multiple_entries(self):
+        """Test staging move operation with multiple entries."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
         result = runner._stage_to_plan(
-            "batch_move",
+            "move",
             {
                 "entries": [
                     {
@@ -317,11 +338,15 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=5)])
         runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
-            "record_takeout",
+            "takeout",
             {
-                "record_id": 999,
-                "from_box": 1,
-                "from_position": 5,
+                "entries": [
+                    {
+                        "record_id": 999,
+                        "from_box": 1,
+                        "from_position": 5,
+                    }
+                ],
                 "date": "2026-02-10",
             },
         )
@@ -342,7 +367,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         yaml_path = self._seed_yaml(records)
         runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
-            "batch_takeout",
+            "takeout",
             {
                 "entries": [
                     {"record_id": 1, "from_box": 1, "from_position": 5},
@@ -365,7 +390,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=5)])
         runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
-            "batch_takeout",
+            "takeout",
             {
                 "entries": [
                     {"record_id": 1, "from_box": 1, "from_position": 5},
@@ -412,7 +437,13 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
 
     def test_stage_to_plan_rollback_requires_explicit_backup_path(self):
         yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=5)])
-        backup_path = create_yaml_backup(yaml_path)
+        backup_path = resolve_request_backup_path(
+            yaml_path=yaml_path,
+            execution_mode="execute",
+            dry_run=False,
+            request_backup_path=None,
+            backup_event_source="tests.stage.rollback",
+        )
         self.assertTrue(os.path.exists(str(backup_path)))
 
         runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
@@ -506,7 +537,7 @@ class ToolRunnerHintTests(unittest.TestCase):
         """Test hint for record_not_found."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
         payload = {"error_code": "record_not_found"}
-        hint = runner._hint_for_error("record_takeout", payload)
+        hint = runner._hint_for_error("takeout", payload)
         self.assertIn("search_records", hint)
 
     def test_hint_for_error_position_conflict(self):
@@ -520,7 +551,7 @@ class ToolRunnerHintTests(unittest.TestCase):
         """Test hint for invalid_move_target."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
         payload = {"error_code": "invalid_move_target"}
-        hint = runner._hint_for_error("record_takeout", payload)
+        hint = runner._hint_for_error("takeout", payload)
         self.assertIn("to_position", hint)
 
     def test_hint_for_error_no_backups(self):
@@ -529,6 +560,27 @@ class ToolRunnerHintTests(unittest.TestCase):
         payload = {"error_code": "no_backups"}
         hint = runner._hint_for_error("rollback", payload)
         self.assertIn("backup_path", hint)
+
+    def test_hint_for_error_missing_backup_path(self):
+        """Test hint for missing_backup_path."""
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        payload = {"error_code": "missing_backup_path"}
+        hint = runner._hint_for_error("rollback", payload)
+        self.assertIn("list_audit_timeline", hint)
+
+    def test_hint_for_error_backup_not_in_timeline(self):
+        """Test hint for backup_not_in_timeline."""
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        payload = {"error_code": "backup_not_in_timeline"}
+        hint = runner._hint_for_error("rollback", payload)
+        self.assertIn("action=backup", hint)
+
+    def test_hint_for_error_missing_audit_seq(self):
+        """Test hint for missing_audit_seq."""
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        payload = {"error_code": "missing_audit_seq"}
+        hint = runner._hint_for_error("rollback", payload)
+        self.assertIn("audit_seq", hint)
 
     def test_hint_for_error_invalid_box(self):
         """Test hint for invalid_box."""
@@ -542,7 +594,7 @@ class ToolRunnerHintTests(unittest.TestCase):
         """Test hint for plan_preflight_failed."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
         payload = {"error_code": "plan_preflight_failed"}
-        hint = runner._hint_for_error("record_takeout", payload)
+        hint = runner._hint_for_error("takeout", payload)
         self.assertIn("invalid", hint.lower())
         self.assertIn("retry", hint.lower())
 

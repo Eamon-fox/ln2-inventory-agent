@@ -6,6 +6,21 @@ def _hint_for_error(self, tool_name, payload):
     input_schema = self._tool_input_schema(tool_name)
     required_fields, optional_fields = self._tool_input_field_sets(tool_name)
 
+    if tool_name == "add_entry" and error_code in {
+        "invalid_tool_input",
+        "forbidden_fields",
+        "missing_required_fields",
+        "validation_failed",
+    }:
+        required_text = ", ".join(required_fields) if required_fields else "(none)"
+        optional_text = ", ".join(optional_fields) if optional_fields else "(none)"
+        return self._msg(
+            "hint.addEntrySharedFields",
+            "`add_entry` uses one shared `fields` object for all `positions` in that call. It does not support per-position cell_line/note. Split into multiple add_entry calls (or staged items) when metadata differs. Required: {required_text}. Optional: {optional_text}.",
+            required_text=required_text,
+            optional_text=optional_text,
+        )
+
     if error_code == "invalid_tool_input":
         required_text = ", ".join(required_fields) if required_fields else "(none)"
         optional_text = ", ".join(optional_fields) if optional_fields else "(none)"
@@ -86,6 +101,18 @@ def _hint_for_error(self, tool_name, payload):
             "User cancelled the confirmation dialog.",
         )
 
+    if error_code == "terminal_timeout":
+        return self._msg(
+            "hint.terminalTimeout",
+            "Terminal command timed out. Simplify the command or run a shorter non-interactive step first.",
+        )
+
+    if error_code in {"terminal_exec_failed", "terminal_nonzero_exit"}:
+        return self._msg(
+            "hint.terminalExecFailed",
+            "Check `raw_output` for terminal details, fix the command, then retry.",
+        )
+
     if error_code == "invalid_move_target":
         return self._msg(
             "hint.invalidMoveTarget",
@@ -116,16 +143,34 @@ def _hint_for_error(self, tool_name, payload):
             "Provide at least one target position or entry before retrying.",
         )
 
+    if error_code == "missing_backup_path":
+        return self._msg(
+            "hint.backupPathRequired",
+            "Provide explicit `backup_path` from `list_audit_timeline` before calling rollback.",
+        )
+
+    if error_code == "backup_not_in_timeline":
+        return self._msg(
+            "hint.backupNotInTimeline",
+            "Selected backup_path is not in timeline backup events. Re-select from `list_audit_timeline` action=backup rows.",
+        )
+
+    if error_code == "missing_audit_seq":
+        return self._msg(
+            "hint.missingAuditSeq",
+            "Selected backup event has no valid audit_seq. Do not infer by timestamp; pick a backup row with audit_seq.",
+        )
+
     if error_code == "no_backups":
         return self._msg(
             "hint.noBackups",
-            "No backups exist yet; investigate write history first and confirm rollback intent with `question` tool before choosing a backup_path.",
+            "No backups exist yet in audit timeline. Use `list_audit_timeline` as source of truth before choosing a rollback backup_path.",
         )
 
     if error_code in {"validation_failed", "integrity_validation_failed", "rollback_backup_invalid"}:
         return self._msg(
             "hint.validationOrRollbackInvalid",
-            "Rollback target is invalid for current file state. Re-check backup_path against audit/timeline and ask user confirmation with `question` if needed before retrying.",
+            "Rollback target is invalid for current file state. Re-select backup_path from `list_audit_timeline` and retry.",
         )
 
     if error_code == "plan_preflight_failed":

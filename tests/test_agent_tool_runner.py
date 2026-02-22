@@ -11,7 +11,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agent.tool_runner import AgentToolRunner
-from lib.yaml_ops import load_yaml, read_audit_events, write_yaml
+from lib.tool_api_write_validation import resolve_request_backup_path
+from lib.yaml_ops import create_yaml_backup, get_audit_log_path, load_yaml, read_audit_events, write_yaml
 
 
 def _collect_agent_tool_runner_i18n_keys():
@@ -108,15 +109,19 @@ class AgentToolRunnerTests(unittest.TestCase):
         names = set(runner.list_tools())
         self.assertIn("search_records", names)
         self.assertIn("recent_frozen", names)
-        self.assertIn("query_takeout_summary", names)
+        self.assertIn("query_takeout_events", names)
+        self.assertIn("list_audit_timeline", names)
         self.assertIn("add_entry", names)
-        self.assertIn("record_takeout", names)
-        self.assertIn("manage_boxes_add", names)
-        self.assertIn("manage_boxes_remove", names)
-        self.assertIn("staged_list", names)
-        self.assertIn("staged_remove", names)
-        self.assertIn("staged_clear", names)
-        self.assertNotIn("manage_boxes", names)
+        self.assertIn("takeout", names)
+        self.assertIn("move", names)
+        self.assertIn("run_terminal", names)
+        self.assertIn("manage_boxes", names)
+        self.assertIn("staged_plan", names)
+        self.assertNotIn("manage_boxes_add", names)
+        self.assertNotIn("manage_boxes_remove", names)
+        self.assertNotIn("staged_list", names)
+        self.assertNotIn("staged_remove", names)
+        self.assertNotIn("staged_clear", names)
         self.assertNotIn("manage_staged", names)
         self.assertNotIn("collect_timeline", names)
         self.assertNotIn("list_staged", names)
@@ -133,8 +138,8 @@ class AgentToolRunnerTests(unittest.TestCase):
             )
             runner = AgentToolRunner(yaml_path=str(yaml_path))
             response = runner.run(
-                "manage_boxes_add",
-                {"count": 2, "dry_run": True},
+                "manage_boxes",
+                {"action": "add", "count": 2, "dry_run": True},
             )
             self.assertTrue(response["ok"])
             self.assertTrue(response.get("waiting_for_user_confirmation"))
@@ -204,7 +209,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             self.assertTrue(response["ok"])
             self.assertTrue(response.get("staged"))
 
-    def test_record_takeout_requires_integer_fields(self):
+    def test_takeout_requires_entries_payload(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_bad_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -214,11 +219,22 @@ class AgentToolRunnerTests(unittest.TestCase):
             )
 
             runner = AgentToolRunner(yaml_path=str(yaml_path))
-            response = runner.run("record_takeout", {"position": 1, "date": "2026-02-10"})
+            response = runner.run("takeout", {"position": 1, "date": "2026-02-10"})
             self.assertFalse(response["ok"])
             self.assertEqual("invalid_tool_input", response["error_code"])
             self.assertTrue(response.get("_hint"))
             self.assertIn("Required", response.get("_hint", ""))
+
+    def test_add_entry_invalid_tool_input_hint_explains_shared_fields(self):
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        payload = {"error_code": "invalid_tool_input"}
+
+        hint = runner._hint_for_error("add_entry", payload)
+
+        self.assertIn("shared `fields` object", hint)
+        self.assertIn("Split into multiple add_entry calls", hint)
+        self.assertIn("Required", hint)
+        self.assertIn("Optional", hint)
 
     def test_unknown_tool_returns_hint(self):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
@@ -228,6 +244,42 @@ class AgentToolRunnerTests(unittest.TestCase):
         self.assertEqual("unknown_tool", response["error_code"])
         self.assertTrue(response.get("_hint"))
         self.assertIn("available tools", response.get("_hint", "").lower())
+
+    def test_run_terminal_requires_non_empty_command(self):
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        response = runner.run("run_terminal", {"command": "   "})
+
+        self.assertFalse(response["ok"])
+        self.assertEqual("invalid_tool_input", response["error_code"])
+        self.assertIn("command", str(response.get("message") or ""))
+
+    def test_run_terminal_executes_command_and_returns_raw_output(self):
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        marker = "snowfox_terminal_ok"
+        response = runner.run("run_terminal", {"command": f"echo {marker}"})
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(0, response.get("exit_code"))
+        self.assertIn(marker, str(response.get("raw_output") or ""))
+
+    def test_run_terminal_schema_exposes_single_command_field(self):
+        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        schemas = runner.tool_schemas()
+        terminal_schema = next(
+            (
+                item
+                for item in schemas
+                if item.get("function", {}).get("name") == "run_terminal"
+            ),
+            None,
+        )
+        if not isinstance(terminal_schema, dict):
+            self.fail("run_terminal schema should exist")
+
+        params = terminal_schema.get("function", {}).get("parameters", {})
+        self.assertEqual(["command"], params.get("required", []))
+        self.assertEqual({"command"}, set((params.get("properties") or {}).keys()))
+        self.assertEqual(False, params.get("additionalProperties"))
 
     def test_search_records_rejects_keyword_mode_alias(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_search_alias_") as temp_dir:
@@ -532,17 +584,103 @@ class AgentToolRunnerTests(unittest.TestCase):
             )
 
             runner = AgentToolRunner(yaml_path=str(yaml_path))
-            response = runner.run("query_takeout_summary", {"range": "all"})
+            response = runner.run("query_takeout_events", {"range": "all"})
 
             self.assertTrue(response["ok"])
             self.assertIn("summary", response["result"])
 
     def test_query_takeout_events_summary_rejects_event_filters(self):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
-        response = runner.run("query_takeout_summary", {"range": "all", "action": "takeout"})
+        response = runner.run("query_takeout_events", {"range": "all", "action": "takeout"})
 
         self.assertFalse(response["ok"])
         self.assertEqual("invalid_tool_input", response["error_code"])
+
+    def test_list_audit_timeline_returns_only_persisted_audit_rows(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_audit_timeline_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+            # Creating filesystem backups alone should not inject synthetic rows.
+            create_yaml_backup(str(yaml_path), keep=0)
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run("list_audit_timeline", {})
+
+            self.assertTrue(response["ok"])
+            result = response["result"]
+            self.assertEqual(50, result.get("limit"))
+            self.assertEqual(0, result.get("offset"))
+            items = list(result.get("items") or [])
+            self.assertGreaterEqual(len(items), 1)
+            self.assertFalse(any(str(item.get("action")) == "backup" for item in items))
+
+    def test_rollback_rejects_backup_path_not_in_backup_events(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_rollback_backup_rows_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+            backup_path = create_yaml_backup(str(yaml_path))
+            self.assertTrue(Path(str(backup_path)).exists())
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run(
+                "rollback",
+                {"backup_path": str(backup_path)},
+            )
+
+            self.assertFalse(response["ok"])
+            self.assertEqual("backup_not_in_timeline", response.get("error_code"))
+
+    def test_rollback_rejects_backup_event_without_audit_seq(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_rollback_seq_guard_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+            backup_path = resolve_request_backup_path(
+                yaml_path=str(yaml_path),
+                execution_mode="execute",
+                dry_run=False,
+                request_backup_path=None,
+                backup_event_source="tests.rollback_seq_guard",
+            )
+            backup_abs = str(Path(str(backup_path)).resolve())
+
+            audit_path = Path(get_audit_log_path(str(yaml_path)))
+            rows = [json.loads(line) for line in audit_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            touched = False
+            for row in rows:
+                if str(row.get("action") or "").strip().lower() != "backup":
+                    continue
+                candidate = str(Path(str(row.get("backup_path") or "")).resolve()) if row.get("backup_path") else ""
+                if candidate != backup_abs:
+                    continue
+                row.pop("audit_seq", None)
+                touched = True
+                break
+            self.assertTrue(touched)
+            audit_path.write_text(
+                "".join(f"{json.dumps(row, ensure_ascii=False, sort_keys=True)}\n" for row in rows),
+                encoding="utf-8",
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run(
+                "rollback",
+                {"backup_path": backup_abs},
+            )
+
+            self.assertFalse(response["ok"])
+            self.assertEqual("missing_audit_seq", response.get("error_code"))
 
     def test_add_entry_rejects_alias_fields(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_add_alias_") as temp_dir:
@@ -572,7 +710,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             records = current.get("inventory", [])
             self.assertEqual(1, len(records))
 
-    def test_record_takeout_rejects_id_and_pos_alias(self):
+    def test_takeout_rejects_id_and_pos_alias(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_thaw_alias_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -583,7 +721,7 @@ class AgentToolRunnerTests(unittest.TestCase):
 
             runner = AgentToolRunner(yaml_path=str(yaml_path))
             response = runner.run(
-                "record_takeout",
+                "takeout",
                 {
                     "id": 1,
                     "pos": 1,
@@ -594,7 +732,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             self.assertFalse(response["ok"])
             self.assertEqual("invalid_tool_input", response["error_code"])
 
-    def test_record_takeout_move_rejects_target_position_alias(self):
+    def test_move_rejects_target_position_alias(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_move_alias_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -605,7 +743,7 @@ class AgentToolRunnerTests(unittest.TestCase):
 
             runner = AgentToolRunner(yaml_path=str(yaml_path))
             response = runner.run(
-                "record_takeout",
+                "move",
                 {
                     "id": 1,
                     "pos": 1,
@@ -620,7 +758,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             current = load_yaml(str(yaml_path))
             self.assertEqual(1, current["inventory"][0]["position"])
 
-    def test_record_takeout_missing_source_returns_hint(self):
+    def test_takeout_missing_source_returns_hint(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_move_hint_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -631,9 +769,9 @@ class AgentToolRunnerTests(unittest.TestCase):
 
             runner = AgentToolRunner(yaml_path=str(yaml_path))
             response = runner.run(
-                "record_takeout",
+                "takeout",
                 {
-                    "record_id": 1,
+                    "entries": [{"record_id": 1}],
                     "date": "2026-02-10",
                 },
             )
@@ -656,7 +794,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             ],
         }
 
-        hint = runner._hint_for_error("record_takeout", payload)
+        hint = runner._hint_for_error("takeout", payload)
         self.assertIn("get_raw_entries", hint)
         self.assertIn("edit_entry", hint)
         self.assertIn("16", hint)
@@ -674,6 +812,9 @@ class AgentToolRunnerTests(unittest.TestCase):
         if not isinstance(add_entry_schema, dict):
             self.fail("add_entry schema should exist")
         add_entry_params = add_entry_schema.get("function", {}).get("parameters", {})
+        add_entry_desc = str(add_entry_schema.get("function", {}).get("description") or "").lower()
+        self.assertIn("shared", add_entry_desc)
+        self.assertIn("fields", add_entry_desc)
         self.assertIn("positions", add_entry_params.get("required", []))
         self.assertIn("fields", add_entry_params.get("required", []))
         add_entry_positions = (add_entry_params.get("properties") or {}).get("positions", {})
@@ -708,50 +849,54 @@ class AgentToolRunnerTests(unittest.TestCase):
             .get("mode", {})
         )
         self.assertEqual(["fuzzy", "exact", "keywords"], mode_schema.get("enum"))
-        record_takeout_schema = next(
+        takeout_schema = next(
             (
                 item
                 for item in schemas
-                if item.get("function", {}).get("name") == "record_takeout"
+                if item.get("function", {}).get("name") == "takeout"
             ),
             None,
         )
-        if not isinstance(record_takeout_schema, dict):
-            self.fail("record_takeout schema should exist")
-        record_takeout_properties = (
-            record_takeout_schema.get("function", {})
+        if not isinstance(takeout_schema, dict):
+            self.fail("takeout schema should exist")
+        takeout_properties = (
+            takeout_schema.get("function", {})
             .get("parameters", {})
             .get("properties", {})
         )
-        record_takeout_required = (
-            record_takeout_schema.get("function", {})
+        takeout_required = (
+            takeout_schema.get("function", {})
             .get("parameters", {})
             .get("required", [])
         )
-        self.assertIn("from_box", record_takeout_required)
-        self.assertIn("from_position", record_takeout_required)
-        self.assertIn("date", record_takeout_required)
-        self.assertNotIn("dry_run", record_takeout_properties)
+        self.assertIn("entries", takeout_required)
+        self.assertIn("date", takeout_required)
+        takeout_entry_props = ((takeout_properties.get("entries") or {}).get("items") or {}).get(
+            "properties",
+            {},
+        )
+        self.assertIn("from_box", takeout_entry_props)
+        self.assertIn("from_position", takeout_entry_props)
+        self.assertEqual("integer", (takeout_entry_props.get("from_position") or {}).get("type"))
+        self.assertNotIn("dry_run", takeout_properties)
 
         self.assertIn("recent_frozen", names)
-        self.assertIn("query_takeout_summary", names)
+        self.assertIn("query_takeout_events", names)
         self.assertNotIn("collect_timeline", names)
         self.assertNotIn("list_staged", names)
         self.assertNotIn("remove_staged", names)
         self.assertNotIn("clear_staged", names)
-        self.assertIn("staged_list", names)
-        self.assertIn("staged_remove", names)
-        self.assertIn("staged_clear", names)
+        self.assertIn("staged_plan", names)
 
-        staged_remove_schema = next(
-            (item for item in schemas if item.get("function", {}).get("name") == "staged_remove"),
+        staged_plan_schema = next(
+            (item for item in schemas if item.get("function", {}).get("name") == "staged_plan"),
             None,
         )
-        if not isinstance(staged_remove_schema, dict):
-            self.fail("staged_remove schema should exist")
+        if not isinstance(staged_plan_schema, dict):
+            self.fail("staged_plan schema should exist")
         self.assertIn(
-            "index",
-            staged_remove_schema.get("function", {}).get("parameters", {}).get("required", []),
+            "action",
+            staged_plan_schema.get("function", {}).get("parameters", {}).get("required", []),
         )
 
         generate_stats_schema = next(
@@ -770,11 +915,10 @@ class AgentToolRunnerTests(unittest.TestCase):
         )
 
         for tool_name in [
-            "record_move",
-            "batch_takeout",
-            "batch_move",
-            "manage_boxes_add",
-            "manage_boxes_remove",
+            "move",
+            "takeout",
+            "manage_boxes",
+            "staged_plan",
         ]:
             schema_item = next(
                 (item for item in schemas if item.get("function", {}).get("name") == tool_name),
@@ -828,12 +972,15 @@ class AgentToolRunnerTests(unittest.TestCase):
             )
             self.assertEqual("string", search_position.get("type"))
 
-            takeout_schema = _schema("record_takeout")
+            takeout_schema = _schema("takeout")
             if not isinstance(takeout_schema, dict):
-                self.fail("record_takeout schema should exist")
+                self.fail("takeout schema should exist")
             from_position = (
                 takeout_schema.get("function", {})
                 .get("parameters", {})
+                .get("properties", {})
+                .get("entries", {})
+                .get("items", {})
                 .get("properties", {})
                 .get("from_position", {})
             )
@@ -928,7 +1075,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             self.assertEqual("invalid_tool_input", response["error_code"])
             self.assertIn("positions", str(response.get("message") or ""))
 
-    def test_record_takeout_rejects_string_position_in_numeric_layout(self):
+    def test_takeout_rejects_string_position_in_numeric_layout(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_takeout_numeric_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -938,11 +1085,15 @@ class AgentToolRunnerTests(unittest.TestCase):
             )
             runner = AgentToolRunner(yaml_path=str(yaml_path))
             response = runner.run(
-                "record_takeout",
+                "takeout",
                 {
-                    "record_id": 1,
-                    "from_box": 1,
-                    "from_position": "1",
+                    "entries": [
+                        {
+                            "record_id": 1,
+                            "from_box": 1,
+                            "from_position": "1",
+                        }
+                    ],
                     "date": "2026-02-10",
                 },
             )
@@ -950,7 +1101,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             self.assertEqual("invalid_tool_input", response["error_code"])
             self.assertIn("from_position", str(response.get("message") or ""))
 
-    def test_record_takeout_rejects_integer_position_in_alphanumeric_layout(self):
+    def test_takeout_rejects_integer_position_in_alphanumeric_layout(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_takeout_alpha_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -960,11 +1111,15 @@ class AgentToolRunnerTests(unittest.TestCase):
             )
             runner = AgentToolRunner(yaml_path=str(yaml_path))
             response = runner.run(
-                "record_takeout",
+                "takeout",
                 {
-                    "record_id": 1,
-                    "from_box": 1,
-                    "from_position": 5,
+                    "entries": [
+                        {
+                            "record_id": 1,
+                            "from_box": 1,
+                            "from_position": 5,
+                        }
+                    ],
                     "date": "2026-02-10",
                 },
             )
@@ -989,7 +1144,7 @@ class AgentToolRunnerTests(unittest.TestCase):
         self.assertIn("backup_path", description)
         self.assertIn("explicit", description)
 
-    def test_staged_tools_list_remove_clear(self):
+    def test_staged_plan_list_remove_clear(self):
         from lib.plan_store import PlanStore
 
         store = PlanStore()
@@ -1012,21 +1167,21 @@ class AgentToolRunnerTests(unittest.TestCase):
         ])
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=store)
 
-        list_resp = runner.run("staged_list", {})
+        list_resp = runner.run("staged_plan", {"action": "list"})
         self.assertTrue(list_resp["ok"])
         self.assertEqual(2, list_resp["result"]["count"])
 
-        remove_resp = runner.run("staged_remove", {"index": 0})
+        remove_resp = runner.run("staged_plan", {"action": "remove", "index": 0})
         self.assertTrue(remove_resp["ok"])
         self.assertEqual(1, remove_resp["result"]["removed"])
 
-        clear_resp = runner.run("staged_clear", {})
+        clear_resp = runner.run("staged_plan", {"action": "clear"})
         self.assertTrue(clear_resp["ok"])
         self.assertEqual(1, clear_resp["result"]["cleared_count"])
 
-    def test_staged_remove_requires_index(self):
+    def test_staged_plan_remove_requires_index(self):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
-        response = runner.run("staged_remove", {})
+        response = runner.run("staged_plan", {"action": "remove"})
 
         self.assertFalse(response["ok"])
         self.assertEqual("invalid_tool_input", response["error_code"])
@@ -1048,7 +1203,19 @@ class AgentToolRunnerTests(unittest.TestCase):
 
     def test_removed_tools_are_unknown(self):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
-        for name in ("collect_timeline", "manage_boxes", "manage_staged", "list_staged", "remove_staged", "clear_staged"):
+        for name in (
+            "collect_timeline",
+            "manage_boxes_add",
+            "manage_boxes_remove",
+            "manage_staged",
+            "staged_list",
+            "staged_remove",
+            "staged_clear",
+            "query_takeout_summary",
+            "list_staged",
+            "remove_staged",
+            "clear_staged",
+        ):
             response = runner.run(name, {})
             self.assertFalse(response["ok"])
             self.assertEqual("unknown_tool", response["error_code"])

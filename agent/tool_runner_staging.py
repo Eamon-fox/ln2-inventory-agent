@@ -2,12 +2,17 @@
 
 from app_gui.plan_gate import validate_stage_request
 from lib.plan_item_factory import build_add_plan_item, build_edit_plan_item, build_record_plan_item, build_rollback_plan_item
+from .tool_runner_handlers import _validate_rollback_backup_candidate
+
 
 def _stage_to_plan(self, tool_name, payload, trace_id=None):
     return self._stage_to_plan_impl(tool_name, payload, trace_id)
 
 def _stage_to_plan_impl(self, tool_name, payload, trace_id=None):
     """Intercept write ops and stage as PlanItems for human approval."""
+    if tool_name not in self.list_tools():
+        return self._unknown_tool_response(tool_name)
+
     input_error = self._validate_tool_input(tool_name, payload)
     if input_error:
         return self._with_hint(
@@ -18,6 +23,11 @@ def _stage_to_plan_impl(self, tool_name, payload, trace_id=None):
                 "message": input_error,
             },
         )
+
+    if tool_name == "rollback":
+        issue = _validate_rollback_backup_candidate(self._yaml_path, payload.get("backup_path"))
+        if issue:
+            return self._with_hint(tool_name, issue)
 
     layout = self._load_layout()
     try:
@@ -75,10 +85,8 @@ def _stage_to_plan_impl(self, tool_name, payload, trace_id=None):
 def _build_staged_plan_items(self, tool_name, payload, layout):
     handlers = {
         "add_entry": self._stage_items_add_entry,
-        "record_takeout": self._stage_items_record_takeout,
-        "record_move": self._stage_items_record_move,
-        "batch_takeout": self._stage_items_batch_takeout,
-        "batch_move": self._stage_items_batch_move,
+        "takeout": self._stage_items_takeout,
+        "move": self._stage_items_move,
         "edit_entry": self._stage_items_edit_entry,
         "rollback": self._stage_items_rollback,
     }
@@ -167,63 +175,7 @@ def _parse_batch_entry_record_id(self, entry):
     return int(rid_raw)
 
 
-def _stage_items_record_takeout(self, payload, layout):
-    rid = _parse_required_record_id(self, payload)
-    from_box, pos = _extract_flat_slot(
-        self,
-        payload,
-        layout=layout,
-        box_key="from_box",
-        pos_key="from_position",
-        field_name="from_position",
-    )
-    return [
-        build_record_plan_item(
-            action="takeout",
-            record_id=rid,
-            position=pos,
-            box=from_box,
-            date_str=payload.get("date"),
-            source="ai",
-            payload_action="Takeout",
-        )
-    ]
-
-def _stage_items_record_move(self, payload, layout):
-    rid = _parse_required_record_id(self, payload)
-
-    from_box, from_pos = _extract_flat_slot(
-        self,
-        payload,
-        layout=layout,
-        box_key="from_box",
-        pos_key="from_position",
-        field_name="from_position",
-    )
-    to_box, to_pos = _extract_flat_slot(
-        self,
-        payload,
-        layout=layout,
-        box_key="to_box",
-        pos_key="to_position",
-        field_name="to_position",
-    )
-
-    return [
-        build_record_plan_item(
-            action="move",
-            record_id=rid,
-            position=from_pos,
-            box=from_box,
-            date_str=payload.get("date"),
-            to_position=to_pos,
-            to_box=to_box,
-            source="ai",
-            payload_action="Move",
-        )
-    ]
-
-def _stage_items_batch_takeout(self, payload, layout):
+def _stage_items_takeout(self, payload, layout):
     entries = _require_non_empty_entries(self, payload.get("entries"))
     items = []
     for idx, entry in enumerate(entries):
@@ -252,7 +204,7 @@ def _stage_items_batch_takeout(self, payload, layout):
 
     return items
 
-def _stage_items_batch_move(self, payload, layout):
+def _stage_items_move(self, payload, layout):
     entries = _require_non_empty_entries(self, payload.get("entries"))
 
     items = []
