@@ -16,6 +16,7 @@ meta:
   display_key: cell_line
   color_key: cell_line
   cell_line_options:
+  - Unknown
   - K562
   - HeLa
   - NCCIT
@@ -243,8 +244,14 @@ inventory:
   box: 1
   frozen_at: '2026-02-04'
   note: long-term backup stock
-  thaw_events: null
-  position: 18
+  thaw_events:
+  - date: '2026-02-22'
+    action: move
+    positions:
+    - 18
+    from_position: 18
+    to_position: 17
+  position: 17
 - id: 19
   cell_line: U2OS
   short_name: U2OS_backup_stock
@@ -353,6 +360,22 @@ inventory:
   position: 65
 - id: 28
   cell_line: K562
-  box: 2
-  position: 14
+  box: 1
+  position: 27
   frozen_at: '2026-01-20'
+  thaw_events:
+  - date: '2026-02-22'
+    action: move
+    positions:
+    - 14
+    from_position: 14
+    to_position: 27
+    from_box: 2
+    to_box: 1
+- id: 29
+  cell_line: HeLa
+  note: null
+  box: 3
+  position: 19
+  frozen_at: '2026-02-22'
+  short_name: RTCB-dTAG
