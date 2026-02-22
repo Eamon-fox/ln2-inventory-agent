@@ -1,4 +1,4 @@
-﻿# CLAUDE.md
+# CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -43,33 +43,33 @@ pytest tests/test_tool_api.py::TestToolAddEntry::test_basic_add -v
 pytest tests/test_gui_panels.py -v
 ```
 
-No mocking framework required 鈥?tests use real YAML in temp directories.
+No mocking framework required — tests use real YAML in temp directories.
 
 ## Architecture
 
 Four-layer design with a single unified API (`lib/tool_api.py`) shared by all three frontends:
 
 ```
-GUI (app_gui/)  鈹€鈹尖攢鈹€鈻? lib/tool_api.py  鈹€鈹€鈻? lib/{yaml_ops,validators,operations,takeout_parser}
-Agent (agent/)  鈹€鈹?          鈹?                             鈹?
-                             鈻?                             鈻?
+GUI (app_gui/)  ─┼──▶  lib/tool_api.py  ──▶  lib/{yaml_ops,validators,operations,thaw_parser}
+Agent (agent/)  ─┘           │                              │
+                             ▼                              ▼
                       Standard result:               lib/config.py
                       {ok, result, error_code, message}
 ```
 
 ### Key modules
 
-- **`lib/tool_api.py`** 鈥?13 tool functions (add, takeout, batch_takeout, query, search, stats, recommend, rollback, etc.). Every write goes through validate 鈫?backup 鈫?write 鈫?audit.
-- **`lib/config.py`** 鈥?Runtime configuration with priority: built-in defaults 鈫?`LN2_CONFIG_FILE` env JSON 鈫?PyInstaller frozen detection. Exports `YAML_PATH`, `BOX_RANGE`, `POSITION_RANGE`, etc.
-- **`lib/yaml_ops.py`** 鈥?YAML I/O with atomic backup-before-write and JSONL audit logging.
-- **`lib/validators.py`** 鈥?Date/box/position validation, position-conflict and duplicate-ID checks.
-- **`lib/takeout_parser.py`** 鈥?Chinese/English action normalization (鍙栧嚭/takeout, 绉诲姩/move).
-- **`agent/react_agent.py`** 鈥?ReAct loop: LLM call 鈫?tool dispatch (parallel via ThreadPoolExecutor) 鈫?observation 鈫?repeat until max_steps or direct answer.
-- **`agent/tool_runner.py`** 鈥?Dispatches named tool calls to `tool_api`, with plan-stashing for write operations (human approval required in GUI).
-- **`app_gui/tool_bridge.py`** 鈥?Adapter stamping GUI metadata (actor_id) onto tool_api calls.
-- **`app_gui/ui/ai_panel.py`** 鈥?Chat widget with streaming markdown re-rendering and tool progress display.
-- **`app_gui/ui/overview_panel.py`** 鈥?9x9 grid visualization per box, multi-select for batch operations.
-- **`app_gui/ui/operations_panel.py`** 鈥?Forms for add/takeout/move, plan staging/execution/undo, export (CSV/HTML).
+- **`lib/tool_api.py`** — 13 tool functions (add, thaw, batch_thaw, query, search, stats, recommend, rollback, etc.). Every write goes through validate → backup → write → audit.
+- **`lib/config.py`** — Runtime configuration with priority: built-in defaults → `LN2_CONFIG_FILE` env JSON → PyInstaller frozen detection. Exports `YAML_PATH`, `BOX_RANGE`, `POSITION_RANGE`, etc.
+- **`lib/yaml_ops.py`** — YAML I/O with atomic backup-before-write and JSONL audit logging.
+- **`lib/validators.py`** — Date/box/position validation, position-conflict and duplicate-ID checks.
+- **`lib/thaw_parser.py`** — Chinese/English action normalization (取出/takeout, 复苏/thaw, 扔掉/discard, 移动/move).
+- **`agent/react_agent.py`** — ReAct loop: LLM call → tool dispatch (parallel via ThreadPoolExecutor) → observation → repeat until max_steps or direct answer.
+- **`agent/tool_runner.py`** — Dispatches named tool calls to `tool_api`, with plan-stashing for write operations (human approval required in GUI).
+- **`app_gui/tool_bridge.py`** — Adapter stamping GUI metadata (actor_id) onto tool_api calls.
+- **`app_gui/ui/ai_panel.py`** — Chat widget with streaming markdown re-rendering and tool progress display.
+- **`app_gui/ui/overview_panel.py`** — 9x9 grid visualization per box, multi-select for batch operations.
+- **`app_gui/ui/operations_panel.py`** — Forms for add/thaw/move, plan staging/execution/undo, export (CSV/HTML).
 
 ### Data model
 
@@ -77,9 +77,9 @@ Single YAML file (`ln2_inventory.yaml`): `inventory[]` records with `id`, `cell_
 
 ### GUI panel communication (Qt signals)
 
-- OverviewPanel 鈫?OperationsPanel: `plan_items_requested`, `request_prefill`, `data_loaded`
-- OperationsPanel 鈫?OverviewPanel: `operation_completed`
-- AIPanel 鈫?OperationsPanel: `plan_items_staged`, `operation_completed`
+- OverviewPanel → OperationsPanel: `plan_items_requested`, `request_prefill`, `data_loaded`
+- OperationsPanel → OverviewPanel: `operation_completed`
+- AIPanel → OperationsPanel: `plan_items_staged`, `operation_completed`
 
 ### i18n
 
@@ -87,8 +87,7 @@ Translation files at `app_gui/i18n/translations/{en,zh-CN}.json`. Use `tr("key.s
 
 ## Configuration
 
-- **Runtime config**: `LN2_CONFIG_FILE` env var 鈫?JSON (see `references/ln2_config.sample.json`)
+- **Runtime config**: `LN2_CONFIG_FILE` env var → JSON (see `references/ln2_config.sample.json`)
 - **GUI config**: `~/.ln2agent/config.yaml` (yaml_path, actor_id, api_key, language, theme, ai settings)
 - **Audit log**: `ln2_inventory_audit.jsonl` (JSONL with action/timestamp/actor_id/session_id/trace_id)
 - **Backups**: `ln2_inventory_backups/` (timestamped, auto-rotated)
-
