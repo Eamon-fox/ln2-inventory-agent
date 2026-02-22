@@ -11,8 +11,7 @@ from lib.tool_api import (
     tool_get_raw_entries,
 )
 from lib.tool_contracts import TOOL_CONTRACTS, WRITE_TOOLS
-from lib.position_fmt import display_to_pos
-from lib.validators import parse_positions
+from lib import tool_api_parsers as _tool_parsers
 from lib.yaml_ops import load_yaml
 from app_gui.i18n import tr
 from . import tool_runner_handlers as _runner_handlers
@@ -166,7 +165,7 @@ class AgentToolRunner:
         if value in (None, ""):
             return None
         try:
-            return int(display_to_pos(value, layout))
+            return int(_tool_parsers._coerce_position_value(value, layout=layout, field_name=field_name))
         except Exception as exc:
             raise ValueError(
                 AgentToolRunner._msg(
@@ -180,15 +179,18 @@ class AgentToolRunner:
     def _normalize_positions(self, value, layout=None):
         if value in (None, ""):
             return None
-        if isinstance(value, list):
-            return [self._parse_position(item, layout=layout) for item in value]
-        if isinstance(value, tuple):
-            return [self._parse_position(item, layout=layout) for item in value]
-        if isinstance(value, (int, float)):
-            return [int(value)]
-        if isinstance(value, str):
-            return parse_positions(value, layout=layout)
-        return value
+        return _tool_parsers._normalize_positions_input(value, layout=layout)
+
+    def _parse_slot_payload(self, slot_payload, *, layout, field_name):
+        try:
+            box, position = _tool_parsers._parse_slot_payload(
+                slot_payload,
+                layout=layout,
+                field_name=field_name,
+            )
+            return {"box": box, "position": position}
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
 
     _normalize_search_mode = staticmethod(_runner_validation._normalize_search_mode)
 
@@ -284,6 +286,17 @@ class AgentToolRunner:
                     rec = entries[0]
                     box = int(rec.get("box", 0))
                     position = rec.get("position")
+                    if position is not None:
+                        try:
+                            position = int(
+                                _tool_parsers._coerce_position_value(
+                                    position,
+                                    layout=self._load_layout(),
+                                    field_name="position",
+                                )
+                            )
+                        except Exception:
+                            position = None
                     return box, position
         except Exception:
             pass
@@ -369,10 +382,13 @@ class AgentToolRunner:
             },
         )
 
-    _run_manage_boxes = _runner_handlers._run_manage_boxes
+    _run_manage_boxes_add = _runner_handlers._run_manage_boxes_add
+    _run_manage_boxes_remove = _runner_handlers._run_manage_boxes_remove
     _run_list_empty_positions = _runner_handlers._run_list_empty_positions
     _run_search_records = _runner_handlers._run_search_records
+    _run_recent_frozen = _runner_handlers._run_recent_frozen
     _run_query_takeout_events = _runner_handlers._run_query_takeout_events
+    _run_query_takeout_summary = _runner_handlers._run_query_takeout_summary
     _run_recommend_positions = _runner_handlers._run_recommend_positions
     _run_generate_stats = _runner_handlers._run_generate_stats
     _run_get_raw_entries = _runner_handlers._run_get_raw_entries
@@ -383,7 +399,9 @@ class AgentToolRunner:
     _run_batch_takeout = _runner_handlers._run_batch_takeout
     _run_batch_move = _runner_handlers._run_batch_move
     _run_rollback = _runner_handlers._run_rollback
-    _run_manage_staged = _runner_handlers._run_manage_staged
+    _run_staged_list = _runner_handlers._run_staged_list
+    _run_staged_remove = _runner_handlers._run_staged_remove
+    _run_staged_clear = _runner_handlers._run_staged_clear
 
     def _run_dispatch(self, tool_name, payload, trace_id=None):
         if tool_name not in TOOL_CONTRACTS:
@@ -409,10 +427,13 @@ class AgentToolRunner:
             return self._stage_to_plan(tool_name, payload, trace_id)
 
         handlers = {
-            "manage_boxes": self._run_manage_boxes,
+            "manage_boxes_add": self._run_manage_boxes_add,
+            "manage_boxes_remove": self._run_manage_boxes_remove,
             "list_empty_positions": self._run_list_empty_positions,
             "search_records": self._run_search_records,
+            "recent_frozen": self._run_recent_frozen,
             "query_takeout_events": self._run_query_takeout_events,
+            "query_takeout_summary": self._run_query_takeout_summary,
             "recommend_positions": self._run_recommend_positions,
             "generate_stats": self._run_generate_stats,
             "get_raw_entries": self._run_get_raw_entries,
@@ -423,7 +444,9 @@ class AgentToolRunner:
             "batch_takeout": self._run_batch_takeout,
             "batch_move": self._run_batch_move,
             "rollback": self._run_rollback,
-            "manage_staged": self._run_manage_staged,
+            "staged_list": self._run_staged_list,
+            "staged_remove": self._run_staged_remove,
+            "staged_clear": self._run_staged_clear,
         }
         handler = handlers.get(tool_name)
         if callable(handler):

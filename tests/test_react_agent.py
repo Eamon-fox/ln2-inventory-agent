@@ -223,8 +223,8 @@ class ReactAgentTests(unittest.TestCase):
                     "tool_calls": [
                         {
                             "id": "call_manage_boxes",
-                            "name": "manage_boxes",
-                            "arguments": {"operation": "add", "count": 1},
+                            "name": "manage_boxes_add",
+                            "arguments": {"count": 1},
                         }
                     ],
                 },

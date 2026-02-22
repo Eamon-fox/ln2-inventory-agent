@@ -252,106 +252,15 @@ def _validate_tool_input(self, tool_name, payload):
     if schema_error:
         return schema_error
 
-    if tool_name == "manage_boxes":
-        operation = payload.get("operation")
-        if operation == "add":
-            if "count" not in payload:
-                return self._msg(
-                    "input.countRequiredWhenAdd",
-                    "count is required when operation=add",
-                )
-            if "box" in payload:
-                return self._msg(
-                    "input.boxNotAllowedWhenAdd",
-                    "box is not allowed when operation=add",
-                )
-            if "renumber_mode" in payload:
-                return self._msg(
-                    "input.renumberOnlyForRemove",
-                    "renumber_mode is only valid when operation=remove",
-                )
-        elif operation == "remove":
-            if "box" not in payload:
-                return self._msg(
-                    "input.boxRequiredWhenRemove",
-                    "box is required when operation=remove",
-                )
-            if "count" in payload:
-                return self._msg(
-                    "input.countNotAllowedWhenRemove",
-                    "count is not allowed when operation=remove",
-                )
-
-    if tool_name == "search_records":
-        has_recent = any(k in payload for k in ("recent_days", "recent_count"))
-        if has_recent:
-            if "recent_days" in payload and "recent_count" in payload:
-                return self._msg(
-                    "input.useEitherRecentDaysOrCount",
-                    "Use either recent_days or recent_count, not both",
-                )
-            mixed_fields = [
-                k
-                for k in (
-                    "query",
-                    "mode",
-                    "max_results",
-                    "case_sensitive",
-                    "box",
-                    "position",
-                    "record_id",
-                    "active_only",
-                )
-                if k in payload
-            ]
-            if mixed_fields:
-                return self._msg(
-                    "input.recentCannotMixSearchFields",
-                    "recent_* filters cannot be mixed with text/structured search fields",
-                )
-
-    if tool_name == "query_takeout_events":
-        view = payload.get("view", "events")
-        if view == "summary":
-            forbidden = [k for k in ("date", "start_date", "end_date", "action", "max_records") if k in payload]
-            if forbidden:
-                return self._msg(
-                    "input.summaryViewAllowedFields",
-                    "view=summary only supports: view, days, all_history",
-                )
-        elif "all_history" in payload:
+    if tool_name == "recent_frozen":
+        basis = str(payload.get("basis") or "").strip().lower()
+        if basis not in {"days", "count"}:
             return self._msg(
-                "input.allHistoryOnlyForSummary",
-                "all_history is only valid when view=summary",
+                "validation.mustBeOneOf",
+                "{label} must be one of: {values}",
+                label="basis",
+                values="days, count",
             )
-
-    if tool_name == "manage_staged":
-        operation = payload.get("operation")
-        has_index = "index" in payload
-        has_key_fields = any(k in payload for k in ("action", "record_id", "position"))
-
-        if operation in {"list", "clear"}:
-            if has_index or has_key_fields:
-                return self._msg(
-                    "input.manageStagedSelectorOnlyForRemove",
-                    "index/action/record_id/position are only valid when operation=remove",
-                )
-        elif operation == "remove":
-            if has_index and has_key_fields:
-                return self._msg(
-                    "input.manageStagedIndexOrKeyNotBoth",
-                    "Provide either index OR action+record_id+position, not both",
-                )
-            if not has_index and not has_key_fields:
-                return self._msg(
-                    "input.manageStagedNeedIndexOrKey",
-                    "Provide either index OR action+record_id+position",
-                )
-            if has_key_fields and not all(k in payload for k in ("action", "record_id", "position")):
-                return self._msg(
-                    "input.manageStagedNeedActionRecordPosition",
-                    "action, record_id, and position are required when removing by key",
-                )
 
     if tool_name == "rollback":
         backup_path = str(payload.get("backup_path") or "").strip()

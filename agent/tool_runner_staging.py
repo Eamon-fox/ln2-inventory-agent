@@ -103,20 +103,12 @@ def _stage_items_add_entry(self, payload, layout):
         )
     ]
 
-def _extract_slot(self, slot_payload, *, layout, field_name):
-    if not isinstance(slot_payload, dict):
-        raise ValueError(
-            self._msg(
-                "validation.mustBeObject",
-                "{label} must be an object",
-                label=field_name,
-            )
-        )
-    box = self._required_int(slot_payload, "box")
+def _extract_flat_slot(self, payload, *, layout, box_key, pos_key, field_name):
+    box = self._required_int(payload, box_key)
     position = self._parse_position(
-        slot_payload.get("position"),
+        payload.get(pos_key),
         layout=layout,
-        field_name=f"{field_name}.position",
+        field_name=field_name,
     )
     return box, position
 
@@ -177,12 +169,13 @@ def _parse_batch_entry_record_id(self, entry):
 
 def _stage_items_record_takeout(self, payload, layout):
     rid = _parse_required_record_id(self, payload)
-    from_slot = payload.get("from")
-    from_box, pos = _extract_slot(
+    from_box, pos = _extract_flat_slot(
         self,
-        from_slot,
+        payload,
         layout=layout,
-        field_name="from",
+        box_key="from_box",
+        pos_key="from_position",
+        field_name="from_position",
     )
     return [
         build_record_plan_item(
@@ -199,17 +192,21 @@ def _stage_items_record_takeout(self, payload, layout):
 def _stage_items_record_move(self, payload, layout):
     rid = _parse_required_record_id(self, payload)
 
-    from_box, from_pos = _extract_slot(
+    from_box, from_pos = _extract_flat_slot(
         self,
-        payload.get("from"),
+        payload,
         layout=layout,
-        field_name="from",
+        box_key="from_box",
+        pos_key="from_position",
+        field_name="from_position",
     )
-    to_box, to_pos = _extract_slot(
+    to_box, to_pos = _extract_flat_slot(
         self,
-        payload.get("to"),
+        payload,
         layout=layout,
-        field_name="to",
+        box_key="to_box",
+        pos_key="to_position",
+        field_name="to_position",
     )
 
     return [
@@ -232,11 +229,13 @@ def _stage_items_batch_takeout(self, payload, layout):
     for idx, entry in enumerate(entries):
         entry = _require_batch_entry_object(self, entry, idx)
         rid = _parse_batch_entry_record_id(self, entry)
-        from_box, pos = _extract_slot(
+        from_box, pos = _extract_flat_slot(
             self,
-            entry.get("from"),
+            entry,
             layout=layout,
-            field_name=f"entries[{idx}].from",
+            box_key="from_box",
+            pos_key="from_position",
+            field_name=f"entries[{idx}].from_position",
         )
 
         items.append(
@@ -260,17 +259,21 @@ def _stage_items_batch_move(self, payload, layout):
     for idx, entry in enumerate(entries):
         entry = _require_batch_entry_object(self, entry, idx)
         rid = _parse_batch_entry_record_id(self, entry)
-        from_box, from_pos = _extract_slot(
+        from_box, from_pos = _extract_flat_slot(
             self,
-            entry.get("from"),
+            entry,
             layout=layout,
-            field_name=f"entries[{idx}].from",
+            box_key="from_box",
+            pos_key="from_position",
+            field_name=f"entries[{idx}].from_position",
         )
-        to_box, to_pos = _extract_slot(
+        to_box, to_pos = _extract_flat_slot(
             self,
-            entry.get("to"),
+            entry,
             layout=layout,
-            field_name=f"entries[{idx}].to",
+            box_key="to_box",
+            pos_key="to_position",
+            field_name=f"entries[{idx}].to_position",
         )
 
         items.append(

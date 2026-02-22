@@ -101,11 +101,17 @@ class AgentToolRunnerTests(unittest.TestCase):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
         names = set(runner.list_tools())
         self.assertIn("search_records", names)
+        self.assertIn("recent_frozen", names)
+        self.assertIn("query_takeout_summary", names)
         self.assertIn("add_entry", names)
         self.assertIn("record_takeout", names)
-        self.assertIn("manage_boxes", names)
-        self.assertIn("manage_staged", names)
-        self.assertNotIn("recent_frozen", names)
+        self.assertIn("manage_boxes_add", names)
+        self.assertIn("manage_boxes_remove", names)
+        self.assertIn("staged_list", names)
+        self.assertIn("staged_remove", names)
+        self.assertIn("staged_clear", names)
+        self.assertNotIn("manage_boxes", names)
+        self.assertNotIn("manage_staged", names)
         self.assertNotIn("collect_timeline", names)
         self.assertNotIn("list_staged", names)
         self.assertNotIn("remove_staged", names)
@@ -121,8 +127,8 @@ class AgentToolRunnerTests(unittest.TestCase):
             )
             runner = AgentToolRunner(yaml_path=str(yaml_path))
             response = runner.run(
-                "manage_boxes",
-                {"operation": "add", "count": 2, "dry_run": True},
+                "manage_boxes_add",
+                {"count": 2, "dry_run": True},
             )
             self.assertTrue(response["ok"])
             self.assertTrue(response.get("dry_run"))
@@ -292,7 +298,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             self.assertEqual(3, response["result"]["records"][0]["id"])
             self.assertEqual("2:15", response["result"]["applied_filters"]["query_shortcut"])
 
-    def test_search_records_recent_filters_replace_recent_tool(self):
+    def test_recent_frozen_replaces_recent_filters(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_recent_search_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -319,7 +325,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             )
 
             runner = AgentToolRunner(yaml_path=str(yaml_path))
-            response = runner.run("search_records", {"recent_count": 1})
+            response = runner.run("recent_frozen", {"basis": "count", "value": 1})
 
             self.assertTrue(response["ok"])
             self.assertEqual(1, response["result"]["count"])
@@ -351,14 +357,14 @@ class AgentToolRunnerTests(unittest.TestCase):
             )
 
             runner = AgentToolRunner(yaml_path=str(yaml_path))
-            response = runner.run("query_takeout_events", {"view": "summary", "all_history": True})
+            response = runner.run("query_takeout_summary", {"range": "all"})
 
             self.assertTrue(response["ok"])
             self.assertIn("summary", response["result"])
 
     def test_query_takeout_events_summary_rejects_event_filters(self):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
-        response = runner.run("query_takeout_events", {"view": "summary", "action": "takeout"})
+        response = runner.run("query_takeout_summary", {"range": "all", "action": "takeout"})
 
         self.assertFalse(response["ok"])
         self.assertEqual("invalid_tool_input", response["error_code"])
@@ -459,7 +465,7 @@ class AgentToolRunnerTests(unittest.TestCase):
 
             self.assertFalse(response["ok"])
             self.assertEqual("invalid_tool_input", response["error_code"])
-            self.assertIn("from", response.get("message", ""))
+            self.assertIn("from_box", response.get("message", ""))
 
     def test_plan_preflight_hint_guides_record_repair_flow(self):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
@@ -495,23 +501,27 @@ class AgentToolRunnerTests(unittest.TestCase):
         self.assertIn("mode", search_params)
         self.assertIn("record_id", search_params)
         self.assertIn("active_only", search_params)
-        self.assertIn("recent_days", search_params)
-        self.assertIn("recent_count", search_params)
+        self.assertNotIn("recent_days", search_params)
+        self.assertNotIn("recent_count", search_params)
         self.assertEqual(
             ["fuzzy", "exact", "keywords"],
             search_params["mode"].get("enum"),
         )
 
-        self.assertNotIn("recent_frozen", specs)
+        self.assertIn("recent_frozen", specs)
+        self.assertIn("query_takeout_summary", specs)
         self.assertNotIn("collect_timeline", specs)
         self.assertNotIn("list_staged", specs)
         self.assertNotIn("remove_staged", specs)
         self.assertNotIn("clear_staged", specs)
-        self.assertIn("manage_staged", specs)
-        self.assertIn("operation", specs["manage_staged"].get("required", []))
+        self.assertIn("staged_list", specs)
+        self.assertIn("staged_remove", specs)
+        self.assertIn("staged_clear", specs)
+        self.assertIn("index", specs["staged_remove"].get("required", []))
 
         self.assertIn("record_takeout", specs)
-        self.assertIn("from", specs["record_takeout"].get("required", []))
+        self.assertIn("from_box", specs["record_takeout"].get("required", []))
+        self.assertIn("from_position", specs["record_takeout"].get("required", []))
         self.assertIn("date", specs["record_takeout"].get("required", []))
         self.assertIn("dry_run", specs["record_takeout"].get("optional", []))
         self.assertIn("record_move", specs)
@@ -545,7 +555,7 @@ class AgentToolRunnerTests(unittest.TestCase):
         self.assertIn("backup_path", description)
         self.assertIn("explicit", notes)
 
-    def test_manage_staged_list_remove_clear(self):
+    def test_staged_tools_list_remove_clear(self):
         from lib.plan_store import PlanStore
 
         store = PlanStore()
@@ -568,21 +578,21 @@ class AgentToolRunnerTests(unittest.TestCase):
         ])
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=store)
 
-        list_resp = runner.run("manage_staged", {"operation": "list"})
+        list_resp = runner.run("staged_list", {})
         self.assertTrue(list_resp["ok"])
         self.assertEqual(2, list_resp["result"]["count"])
 
-        remove_resp = runner.run("manage_staged", {"operation": "remove", "index": 0})
+        remove_resp = runner.run("staged_remove", {"index": 0})
         self.assertTrue(remove_resp["ok"])
         self.assertEqual(1, remove_resp["result"]["removed"])
 
-        clear_resp = runner.run("manage_staged", {"operation": "clear"})
+        clear_resp = runner.run("staged_clear", {})
         self.assertTrue(clear_resp["ok"])
         self.assertEqual(1, clear_resp["result"]["cleared_count"])
 
-    def test_manage_staged_remove_requires_selector(self):
+    def test_staged_remove_requires_index(self):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
-        response = runner.run("manage_staged", {"operation": "remove"})
+        response = runner.run("staged_remove", {})
 
         self.assertFalse(response["ok"])
         self.assertEqual("invalid_tool_input", response["error_code"])
@@ -604,7 +614,7 @@ class AgentToolRunnerTests(unittest.TestCase):
 
     def test_removed_tools_are_unknown(self):
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
-        for name in ("recent_frozen", "collect_timeline", "list_staged", "remove_staged", "clear_staged"):
+        for name in ("collect_timeline", "manage_boxes", "manage_staged", "list_staged", "remove_staged", "clear_staged"):
             response = runner.run(name, {})
             self.assertFalse(response["ok"])
             self.assertEqual("unknown_tool", response["error_code"])

@@ -1,4 +1,4 @@
-"""Dispatch handlers for AgentToolRunner."""
+﻿"""Dispatch handlers for AgentToolRunner."""
 
 from lib.tool_api import (
     tool_add_entry,
@@ -19,77 +19,70 @@ from lib.tool_api import (
     tool_search_records,
 )
 
-def _run_manage_boxes(self, payload, trace_id=None):
-    tool_name = "manage_boxes"
 
-    def _call_manage_boxes():
-        op = str(payload.get("operation") or "").strip().lower()
-        if op not in {"add", "remove"}:
-            raise ValueError(
-                self._msg(
-                    "errors.operationMustBeAddOrRemove",
-                    "operation must be add or remove",
-                )
+def _run_manage_boxes_add(self, payload, trace_id=None):
+    tool_name = "manage_boxes_add"
+
+    def _call_manage_boxes_add():
+        count = self._required_int(payload, "count")
+        request = {
+            "operation": "add",
+            "count": count,
+            "box": None,
+            "renumber_mode": None,
+        }
+
+        dry_run = self._as_bool(payload.get("dry_run", False), default=False)
+        if dry_run:
+            return tool_adjust_box_count(
+                yaml_path=self._yaml_path,
+                operation="add",
+                count=count,
+                dry_run=True,
+                execution_mode="preflight",
+                actor_context=self._actor_context(trace_id=trace_id),
+                source="agent.react",
             )
 
-        normalized_mode = payload.get("renumber_mode")
-        add_count = None
-        target_box = None
+        return {
+            "ok": True,
+            "waiting_for_user_confirmation": True,
+            "request": request,
+            "message": self._msg(
+                "manageBoxes.awaitingUserConfirmation",
+                "Awaiting user confirmation in GUI.",
+            ),
+        }
 
-        if op == "add":
-            if "count" not in payload:
-                raise ValueError(
-                    self._msg("input.countRequiredWhenAdd", "count is required when operation=add")
-                )
-            if "box" in payload:
-                raise ValueError(
-                    self._msg("input.boxNotAllowedWhenAdd", "box is not allowed when operation=add")
-                )
-            if normalized_mode not in (None, ""):
-                raise ValueError(
-                    self._msg(
-                        "input.renumberOnlyForRemove",
-                        "renumber_mode is only valid when operation=remove",
-                    )
-                )
-            add_count = self._required_int(payload, "count")
-        else:
-            if "box" not in payload:
-                raise ValueError(
-                    self._msg("input.boxRequiredWhenRemove", "box is required when operation=remove")
-                )
-            if "count" in payload:
-                raise ValueError(
-                    self._msg(
-                        "input.countNotAllowedWhenRemove",
-                        "count is not allowed when operation=remove",
-                    )
-                )
-            target_box = self._required_int(payload, "box")
+    return self._safe_call(tool_name, _call_manage_boxes_add, include_expected=True)
 
+
+def _run_manage_boxes_remove(self, payload, trace_id=None):
+    tool_name = "manage_boxes_remove"
+
+    def _call_manage_boxes_remove():
+        box = self._required_int(payload, "box")
+        renumber_mode = payload.get("renumber_mode")
         request = {
-            "operation": op,
-            "renumber_mode": normalized_mode,
-            "count": add_count if op == "add" else None,
-            "box": target_box if op == "remove" else None,
+            "operation": "remove",
+            "count": None,
+            "box": box,
+            "renumber_mode": renumber_mode,
         }
 
         dry_run = self._as_bool(payload.get("dry_run", False), default=False)
         if dry_run:
             call_kwargs = {
                 "yaml_path": self._yaml_path,
-                "operation": op,
+                "operation": "remove",
+                "box": box,
                 "dry_run": True,
                 "execution_mode": "preflight",
                 "actor_context": self._actor_context(trace_id=trace_id),
                 "source": "agent.react",
             }
-            if normalized_mode is not None:
-                call_kwargs["renumber_mode"] = normalized_mode
-            if op == "add":
-                call_kwargs["count"] = add_count
-            else:
-                call_kwargs["box"] = target_box
+            if renumber_mode not in (None, ""):
+                call_kwargs["renumber_mode"] = renumber_mode
             return tool_adjust_box_count(**call_kwargs)
 
         return {
@@ -102,7 +95,8 @@ def _run_manage_boxes(self, payload, trace_id=None):
             ),
         }
 
-    return self._safe_call(tool_name, _call_manage_boxes, include_expected=True)
+    return self._safe_call(tool_name, _call_manage_boxes_remove, include_expected=True)
+
 
 def _run_list_empty_positions(self, payload, _trace_id=None):
     tool_name = "list_empty_positions"
@@ -114,21 +108,20 @@ def _run_list_empty_positions(self, payload, _trace_id=None):
         ),
     )
 
+
 def _run_search_records(self, payload, _trace_id=None):
     tool_name = "search_records"
-    recent_days = self._optional_int(payload, "recent_days")
-    recent_count = self._optional_int(payload, "recent_count")
-    if recent_days is not None or recent_count is not None:
-        return self._safe_call(
-            tool_name,
-            lambda: tool_recent_frozen(
-                yaml_path=self._yaml_path,
-                days=recent_days,
-                count=recent_count,
-            ),
+    mode = self._normalize_search_mode(payload.get("mode"))
+    layout = self._load_layout()
+
+    position = None
+    if payload.get("position") not in (None, ""):
+        position = self._parse_position(
+            payload.get("position"),
+            layout=layout,
+            field_name="position",
         )
 
-    mode = self._normalize_search_mode(payload.get("mode"))
     return self._safe_call(
         tool_name,
         lambda: tool_search_records(
@@ -137,28 +130,38 @@ def _run_search_records(self, payload, _trace_id=None):
             mode=mode,
             max_results=self._optional_int(payload, "max_results"),
             case_sensitive=self._as_bool(payload.get("case_sensitive", False), default=False),
-            box=payload.get("box"),
-            position=payload.get("position"),
-            record_id=payload.get("record_id"),
+            box=self._optional_int(payload, "box"),
+            position=position,
+            record_id=self._optional_int(payload, "record_id"),
             active_only=(payload.get("active_only") if "active_only" in payload else None),
         ),
     )
 
-def _run_query_takeout_events(self, payload, _trace_id=None):
-    tool_name = "query_takeout_events"
-    view = payload.get("view", "events")
-    if view == "summary":
-        timeline_days = self._optional_int(payload, "days", default=30)
-        timeline_days = 30 if timeline_days is None else int(timeline_days)
-        return self._safe_call(
-            tool_name,
-            lambda: tool_collect_timeline(
-                yaml_path=self._yaml_path,
-                days=timeline_days,
-                all_history=self._as_bool(payload.get("all_history", False), default=False),
-            ),
+
+def _run_recent_frozen(self, payload, _trace_id=None):
+    tool_name = "recent_frozen"
+
+    def _call_recent_frozen():
+        basis = str(payload.get("basis") or "").strip().lower()
+        value = self._required_int(payload, "value")
+        if basis == "days":
+            return tool_recent_frozen(yaml_path=self._yaml_path, days=value, count=None)
+        if basis == "count":
+            return tool_recent_frozen(yaml_path=self._yaml_path, days=None, count=value)
+        raise ValueError(
+            self._msg(
+                "validation.mustBeOneOf",
+                "{label} must be one of: {values}",
+                label="basis",
+                values="days, count",
+            )
         )
 
+    return self._safe_call(tool_name, _call_recent_frozen, include_expected=True)
+
+
+def _run_query_takeout_events(self, payload, _trace_id=None):
+    tool_name = "query_takeout_events"
     days_value = self._optional_int(payload, "days")
     if days_value is not None:
         days_value = int(days_value)
@@ -178,6 +181,40 @@ def _run_query_takeout_events(self, payload, _trace_id=None):
         ),
     )
 
+
+def _run_query_takeout_summary(self, payload, _trace_id=None):
+    tool_name = "query_takeout_summary"
+
+    def _call_query_takeout_summary():
+        selector = str(payload.get("range") or "").strip().lower()
+        if selector == "all":
+            return tool_collect_timeline(
+                yaml_path=self._yaml_path,
+                days=30,
+                all_history=True,
+            )
+
+        days_map = {"7d": 7, "30d": 30, "90d": 90}
+        days = days_map.get(selector)
+        if days is None:
+            raise ValueError(
+                self._msg(
+                    "validation.mustBeOneOf",
+                    "{label} must be one of: {values}",
+                    label="range",
+                    values="7d, 30d, 90d, all",
+                )
+            )
+
+        return tool_collect_timeline(
+            yaml_path=self._yaml_path,
+            days=days,
+            all_history=False,
+        )
+
+    return self._safe_call(tool_name, _call_query_takeout_summary, include_expected=True)
+
+
 def _run_recommend_positions(self, payload, _trace_id=None):
     tool_name = "recommend_positions"
     return self._safe_call(
@@ -190,11 +227,13 @@ def _run_recommend_positions(self, payload, _trace_id=None):
         ),
     )
 
+
 def _run_generate_stats(self, _payload, _trace_id=None):
     return self._safe_call(
         "generate_stats",
         lambda: tool_generate_stats(yaml_path=self._yaml_path),
     )
+
 
 def _run_get_raw_entries(self, payload, _trace_id=None):
     tool_name = "get_raw_entries"
@@ -207,6 +246,7 @@ def _run_get_raw_entries(self, payload, _trace_id=None):
         )
 
     return self._safe_call(tool_name, _call_get_raw_entries, include_expected=True)
+
 
 def _run_edit_entry(self, payload, trace_id=None):
     tool_name = "edit_entry"
@@ -230,6 +270,7 @@ def _run_edit_entry(self, payload, trace_id=None):
         )
 
     return self._safe_call(tool_name, _call_edit_entry, include_expected=True)
+
 
 def _run_add_entry(self, payload, trace_id=None):
     tool_name = "add_entry"
@@ -255,25 +296,7 @@ def _run_add_entry(self, payload, trace_id=None):
     return self._safe_call(tool_name, _call_add_entry, include_expected=True)
 
 
-def _parse_slot_payload(self, slot_payload, *, layout, field_name):
-    if not isinstance(slot_payload, dict):
-        raise ValueError(
-            self._msg(
-                "validation.mustBeObject",
-                "{label} must be an object",
-                label=field_name,
-            )
-        )
-    box = self._required_int(slot_payload, "box")
-    position = self._parse_position(
-        slot_payload.get("position"),
-        layout=layout,
-        field_name=f"{field_name}.position",
-    )
-    return {"box": box, "position": position}
-
-
-def _parse_batch_slot_entries(self, raw_entries, *, layout, include_target):
+def _parse_batch_flat_entries(self, raw_entries, *, layout, include_target):
     entries = []
     for idx, entry in enumerate(raw_entries):
         if not isinstance(entry, dict):
@@ -284,55 +307,64 @@ def _parse_batch_slot_entries(self, raw_entries, *, layout, include_target):
                     label=f"entries[{idx}]",
                 )
             )
-        parsed_entry = {
+
+        parsed = {
             "record_id": self._required_int(entry, "record_id"),
-            "from": _parse_slot_payload(
-                self,
-                entry.get("from"),
-                layout=layout,
-                field_name=f"entries[{idx}].from",
-            ),
+            "from": {
+                "box": self._required_int(entry, "from_box"),
+                "position": self._parse_position(
+                    entry.get("from_position"),
+                    layout=layout,
+                    field_name=f"entries[{idx}].from_position",
+                ),
+            },
         }
         if include_target:
-            parsed_entry["to"] = _parse_slot_payload(
-                self,
-                entry.get("to"),
-                layout=layout,
-                field_name=f"entries[{idx}].to",
-            )
-        entries.append(parsed_entry)
+            parsed["to"] = {
+                "box": self._required_int(entry, "to_box"),
+                "position": self._parse_position(
+                    entry.get("to_position"),
+                    layout=layout,
+                    field_name=f"entries[{idx}].to_position",
+                ),
+            }
+        entries.append(parsed)
     return entries
 
 
-def _call_record_slot_tool(self, payload, trace_id, *, tool_fn, include_target):
+def _call_record_flat_tool(self, payload, trace_id, *, tool_fn, include_target):
     layout = self._load_layout()
     call_kwargs = {
         "yaml_path": self._yaml_path,
         "record_id": self._required_int(payload, "record_id"),
-        "from_slot": _parse_slot_payload(
-            self,
-            payload.get("from"),
-            layout=layout,
-            field_name="from",
-        ),
+        "from_slot": {
+            "box": self._required_int(payload, "from_box"),
+            "position": self._parse_position(
+                payload.get("from_position"),
+                layout=layout,
+                field_name="from_position",
+            ),
+        },
         "date_str": payload.get("date"),
         "dry_run": self._as_bool(payload.get("dry_run", False), default=False),
         "actor_context": self._actor_context(trace_id=trace_id),
         "source": "agent.react",
     }
     if include_target:
-        call_kwargs["to_slot"] = _parse_slot_payload(
-            self,
-            payload.get("to"),
-            layout=layout,
-            field_name="to",
-        )
+        call_kwargs["to_slot"] = {
+            "box": self._required_int(payload, "to_box"),
+            "position": self._parse_position(
+                payload.get("to_position"),
+                layout=layout,
+                field_name="to_position",
+            ),
+        }
     return tool_fn(**call_kwargs)
 
 
-def _call_batch_slot_tool(self, payload, trace_id, *, tool_fn, include_target):
+def _call_batch_flat_tool(self, payload, trace_id, *, tool_fn, include_target):
     layout = self._load_layout()
-    entries = _parse_batch_slot_entries(
+    entries = _parse_batch_flat_entries(
         self,
         payload.get("entries") or [],
         layout=layout,
@@ -352,7 +384,7 @@ def _run_record_takeout(self, payload, trace_id=None):
     tool_name = "record_takeout"
 
     def _call_record_takeout():
-        return _call_record_slot_tool(
+        return _call_record_flat_tool(
             self,
             payload,
             trace_id,
@@ -367,7 +399,7 @@ def _run_record_move(self, payload, trace_id=None):
     tool_name = "record_move"
 
     def _call_record_move():
-        return _call_record_slot_tool(
+        return _call_record_flat_tool(
             self,
             payload,
             trace_id,
@@ -382,7 +414,7 @@ def _run_batch_takeout(self, payload, trace_id=None):
     tool_name = "batch_takeout"
 
     def _call_batch_takeout():
-        return _call_batch_slot_tool(
+        return _call_batch_flat_tool(
             self,
             payload,
             trace_id,
@@ -397,7 +429,7 @@ def _run_batch_move(self, payload, trace_id=None):
     tool_name = "batch_move"
 
     def _call_batch_move():
-        return _call_batch_slot_tool(
+        return _call_batch_flat_tool(
             self,
             payload,
             trace_id,
@@ -406,6 +438,7 @@ def _run_batch_move(self, payload, trace_id=None):
         )
 
     return self._safe_call(tool_name, _call_batch_move, include_expected=True)
+
 
 def _run_rollback(self, payload, trace_id=None):
     tool_name = "rollback"
@@ -419,38 +452,40 @@ def _run_rollback(self, payload, trace_id=None):
         ),
     )
 
-def _run_manage_staged(self, payload, _trace_id=None):
-    tool_name = "manage_staged"
-    operation = payload.get("operation")
 
-    if operation == "list":
-        if not self._plan_store:
-            return {
-                "ok": True,
-                "result": {"items": [], "count": 0},
-                "message": self._msg(
-                    "manageStaged.noPlanStoreAvailableList",
-                    "No plan store available.",
-                ),
-            }
-        items = self._plan_store.list_items()
-        summary = []
-        for index, item in enumerate(items):
-            entry = {
-                "index": index,
-                "action": item.get("action"),
-                "record_id": item.get("record_id"),
-                "box": item.get("box"),
-                "position": item.get("position"),
-                "label": item.get("label"),
-                "source": item.get("source"),
-            }
-            if item.get("to_position") is not None:
-                entry["to_position"] = item["to_position"]
-            if item.get("to_box") is not None:
-                entry["to_box"] = item["to_box"]
-            summary.append(entry)
-        return {"ok": True, "result": {"items": summary, "count": len(summary)}}
+def _run_staged_list(self, _payload, _trace_id=None):
+    if not self._plan_store:
+        return {
+            "ok": True,
+            "result": {"items": [], "count": 0},
+            "message": self._msg(
+                "manageStaged.noPlanStoreAvailableList",
+                "No plan store available.",
+            ),
+        }
+
+    items = self._plan_store.list_items()
+    summary = []
+    for index, item in enumerate(items):
+        entry = {
+            "index": index,
+            "action": item.get("action"),
+            "record_id": item.get("record_id"),
+            "box": item.get("box"),
+            "position": item.get("position"),
+            "label": item.get("label"),
+            "source": item.get("source"),
+        }
+        if item.get("to_position") is not None:
+            entry["to_position"] = item["to_position"]
+        if item.get("to_box") is not None:
+            entry["to_box"] = item["to_box"]
+        summary.append(entry)
+    return {"ok": True, "result": {"items": summary, "count": len(summary)}}
+
+
+def _run_staged_remove(self, payload, _trace_id=None):
+    tool_name = "staged_remove"
 
     if not self._plan_store:
         return {
@@ -462,72 +497,54 @@ def _run_manage_staged(self, payload, _trace_id=None):
             ),
         }
 
-    if operation == "remove":
-        idx = self._optional_int(payload, "index")
-        if idx is not None:
-            removed = self._plan_store.remove_by_index(idx)
-            if removed is None:
-                max_idx = self._plan_store.count() - 1
-                return self._with_hint(
-                    tool_name,
-                    {
-                        "ok": False,
-                        "error_code": "invalid_index",
-                        "message": self._msg(
-                            "manageStaged.indexOutOfRange",
-                            "Index {idx} out of range (0..{max_idx}).",
-                            idx=idx,
-                            max_idx=max_idx,
-                        ),
-                    },
-                )
-            return {
-                "ok": True,
+    idx = self._required_int(payload, "index")
+    removed = self._plan_store.remove_by_index(idx)
+    if removed is None:
+        max_idx = self._plan_store.count() - 1
+        return self._with_hint(
+            tool_name,
+            {
+                "ok": False,
+                "error_code": "invalid_index",
                 "message": self._msg(
-                    "manageStaged.removedByIndex",
-                    "Removed item at index {idx}: {desc}",
+                    "manageStaged.indexOutOfRange",
+                    "Index {idx} out of range (0..{max_idx}).",
                     idx=idx,
-                    desc=self._item_desc(removed),
+                    max_idx=max_idx,
                 ),
-                "result": {"removed": 1},
-            }
+            },
+        )
 
-        action = payload.get("action")
-        rid = self._optional_int(payload, "record_id")
-        pos = self._optional_int(payload, "position")
-        count = self._plan_store.remove_by_key(action, rid, pos)
-        if count == 0:
-            return self._with_hint(
-                tool_name,
-                {
-                    "ok": False,
-                    "error_code": "not_found",
-                    "message": self._msg(
-                        "manageStaged.noMatchingItem",
-                        "No matching staged item found.",
-                    ),
-                },
-            )
+    return {
+        "ok": True,
+        "message": self._msg(
+            "manageStaged.removedByIndex",
+            "Removed item at index {idx}: {desc}",
+            idx=idx,
+            desc=self._item_desc(removed),
+        ),
+        "result": {"removed": 1},
+    }
+
+
+def _run_staged_clear(self, _payload, _trace_id=None):
+    if not self._plan_store:
         return {
-            "ok": True,
+            "ok": False,
+            "error_code": "no_plan_store",
             "message": self._msg(
-                "manageStaged.removedMatchingCount",
-                "Removed {count} matching item(s).",
-                count=count,
+                "manageStaged.planStoreNotAvailable",
+                "Plan store not available.",
             ),
-            "result": {"removed": count},
         }
 
-    if operation == "clear":
-        cleared = self._plan_store.clear()
-        return {
-            "ok": True,
-            "message": self._msg(
-                "manageStaged.clearedCount",
-                "Cleared {count} staged item(s).",
-                count=len(cleared),
-            ),
-            "result": {"cleared_count": len(cleared)},
-        }
-
-    return self._unknown_tool_response(tool_name)
+    cleared = self._plan_store.clear()
+    return {
+        "ok": True,
+        "message": self._msg(
+            "manageStaged.clearedCount",
+            "Cleared {count} staged item(s).",
+            count=len(cleared),
+        ),
+        "result": {"cleared_count": len(cleared)},
+    }

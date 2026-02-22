@@ -36,12 +36,15 @@ def make_record(rec_id=1, box=1, position=None):
 
 def make_data(records):
     return {
-        "meta": {"box_layout": {"rows": 9, "cols": 9}},
+        "meta": {
+            "box_layout": {"rows": 9, "cols": 9},
+            "cell_line_required": False,
+        },
         "inventory": records,
     }
 
 
-# 鈹€鈹€ tool_runner.py Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- tool_runner.py Tests ---
 
 
 class ToolRunnerNormalizationTests(unittest.TestCase):
@@ -131,6 +134,21 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         )
         return str(yaml_path)
 
+    def _seed_yaml_alphanumeric(self, records):
+        """Create a temporary YAML file with alphanumeric slot indexing."""
+        tmpdir = tempfile.TemporaryDirectory(prefix="tool_runner_stage_alpha_")
+        self.addCleanup(tmpdir.cleanup)
+        yaml_path = Path(tmpdir.name) / "inventory.yaml"
+        data = make_data(records)
+        data["meta"]["box_layout"]["indexing"] = "alphanumeric"
+        write_yaml(
+            data,
+            path=str(yaml_path),
+            auto_backup=False,
+            audit_meta={"action": "seed", "source": "tests"},
+        )
+        return str(yaml_path)
+
     def test_stage_to_plan_add_entry(self):
         """Test staging add_entry operation."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
@@ -156,7 +174,8 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
             "record_takeout",
             {
                 "record_id": 1,
-                "from": {"box": 1, "position": 5},
+                "from_box": 1,
+                "from_position": 5,
                 "date": "2026-02-10",
             },
         )
@@ -166,6 +185,41 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertEqual("takeout", self.plan_store.list_items()[0]["action"])
         self.assertEqual(5, self.plan_store.list_items()[0]["position"])
 
+    def test_stage_to_plan_record_takeout_accepts_alphanumeric_position(self):
+        """Position parsing should accept display values like A5 in alphanumeric layout."""
+        yaml_path = self._seed_yaml_alphanumeric([make_record(rec_id=1, box=1, position=5)])
+        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
+        result = runner._stage_to_plan(
+            "record_takeout",
+            {
+                "record_id": 1,
+                "from_box": 1,
+                "from_position": "A5",
+                "date": "2026-02-10",
+            },
+        )
+        self.assertTrue(result["ok"])
+        self.assertTrue(result.get("staged"))
+        self.assertEqual(1, len(self.plan_store.list_items()))
+        self.assertEqual(5, self.plan_store.list_items()[0]["position"])
+
+    def test_stage_to_plan_record_takeout_rejects_numeric_text_in_alphanumeric_layout(self):
+        """In alphanumeric mode, numeric text should be rejected (use A1-style input)."""
+        yaml_path = self._seed_yaml_alphanumeric([make_record(rec_id=1, box=1, position=5)])
+        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
+        result = runner._stage_to_plan(
+            "record_takeout",
+            {
+                "record_id": 1,
+                "from_box": 1,
+                "from_position": "5",
+                "date": "2026-02-10",
+            },
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual("invalid_tool_input", result.get("error_code"))
+        self.assertEqual(0, len(self.plan_store.list_items()))
+
     def test_stage_to_plan_record_takeout_rejects_legacy_action_alias(self):
         """Legacy alias 瑙ｅ喕 should be rejected by strict schema."""
         runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
@@ -173,7 +227,8 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
             "record_takeout",
             {
                 "record_id": 1,
-                "from": {"box": 1, "position": 5},
+                "from_box": 1,
+                "from_position": 5,
                 "date": "2026-02-10",
                 "action": "瑙ｅ喕",
             },
@@ -189,8 +244,10 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
             "record_move",
             {
                 "record_id": 1,
-                "from": {"box": 1, "position": 5},
-                "to": {"box": 1, "position": 10},
+                "from_box": 1,
+                "from_position": 5,
+                "to_box": 1,
+                "to_position": 10,
                 "date": "2026-02-10",
             },
         )
@@ -206,8 +263,8 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
             "batch_takeout",
             {
                 "entries": [
-                    {"record_id": 1, "from": {"box": 1, "position": 5}},
-                    {"record_id": 2, "from": {"box": 1, "position": 10}},
+                    {"record_id": 1, "from_box": 1, "from_position": 5},
+                    {"record_id": 2, "from_box": 1, "from_position": 10},
                 ],
                 "date": "2026-02-10",
             },
@@ -225,8 +282,10 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
                 "entries": [
                     {
                         "record_id": 1,
-                        "from": {"box": 1, "position": 5},
-                        "to": {"box": 1, "position": 10},
+                        "from_box": 1,
+                        "from_position": 5,
+                        "to_box": 1,
+                        "to_position": 10,
                     }
                 ],
                 "date": "2026-02-10",
@@ -261,7 +320,8 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
             "record_takeout",
             {
                 "record_id": 999,
-                "from": {"box": 1, "position": 5},
+                "from_box": 1,
+                "from_position": 5,
                 "date": "2026-02-10",
             },
         )
@@ -285,8 +345,8 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
             "batch_takeout",
             {
                 "entries": [
-                    {"record_id": 1, "from": {"box": 1, "position": 5}},
-                    {"record_id": 999, "from": {"box": 1, "position": 5}},
+                    {"record_id": 1, "from_box": 1, "from_position": 5},
+                    {"record_id": 999, "from_box": 1, "from_position": 5},
                 ],
                 "date": "2026-02-10",
             },
@@ -308,8 +368,8 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
             "batch_takeout",
             {
                 "entries": [
-                    {"record_id": 1, "from": {"box": 1, "position": 5}},
-                    {"record_id": 2},  # Missing from -> schema invalid
+                    {"record_id": 1, "from_box": 1, "from_position": 5},
+                    {"record_id": 2},  # Missing from_box/from_position -> schema invalid
                 ],
                 "date": "2026-02-10",
             },
@@ -504,7 +564,7 @@ class DeepSeekLLMClientMockTests(unittest.TestCase):
             DeepSeekLLMClient()
 
 
-# 鈹€鈹€ react_agent.py Tests (Unit Tests) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- react_agent.py Tests (Unit Tests) ---
 
 
 class ReactAgentHistoryTests(unittest.TestCase):
@@ -666,7 +726,7 @@ class ReactAgentParsingTests(unittest.TestCase):
         self.assertEqual("max_steps", result3["data"]["status"])
 
 
-# 鈹€鈹€ ReactAgent run() Behavior Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- ReactAgent run() Behavior Tests ---
 
 
 class ReactAgentRunBehaviorTests(unittest.TestCase):
