@@ -386,7 +386,6 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
     yaml_path = str(getattr(self._tools, "_yaml_path", "") or "").strip()
     system_sections = [
         self.SYSTEM_PROMPT,
-        f"Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"Current inventory (yaml_path): {yaml_path or '(unknown)'}",
     ]
     if self._custom_prompt:

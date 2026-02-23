@@ -542,9 +542,8 @@ class ReactAgentTests(unittest.TestCase):
         system_msg = llm.last_messages[0]
         self.assertEqual("system", system_msg["role"])
         content = str(system_msg.get("content") or "")
-        self.assertIn("Current time:", content)
         self.assertIn(f"Current inventory (yaml_path): {yaml_path}", content)
-        self.assertLess(content.index("Current time:"), content.index("Current inventory (yaml_path):"))
+        self.assertNotIn("Current time:", content)
 
     def test_numeric_option_reply_is_expanded_from_recent_assistant_options(self):
         llm = _CapturePromptLLM()
