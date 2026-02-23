@@ -6,7 +6,7 @@
 
 #define MyAppVersion GetEnv("LN2_AGENT_VERSION")
 #if MyAppVersion == ""
-  #define MyAppVersion "1.1.1"
+  #define MyAppVersion "1.2.1"
 #endif
 
 #define MyAppExeName "SnowFox-" + MyAppVersion + ".exe"
@@ -119,13 +119,13 @@ var
 begin
   if CurStep = ssPostInstall then
   begin
-    { Keep installer bootstrap path aligned with app_gui/gui_config.py default:
-      {app}\config\config.yaml }
+    // Keep installer bootstrap path aligned with app_gui/gui_config.py default.
+    // Target file: {app}\config\config.yaml
     ConfigDir := ExpandConstant('{app}\config');
-    { Release structure:
-      {app}\SnowFox-<version>.exe
-      {app}\inventories\<dataset>\inventory.yaml
-      {app}\config\config.yaml }
+    // Release structure:
+    // - {app}\SnowFox-<version>.exe
+    // - {app}\inventories\<dataset>\inventory.yaml
+    // - {app}\config\config.yaml
     ForceDirectories(ExpandConstant('{app}\inventories'));
     ForceDirectories(ConfigDir);
     ConfigFile := ConfigDir + '\config.yaml';
