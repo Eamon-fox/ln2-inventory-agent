@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 from lib.custom_fields import DEFAULT_UNKNOWN_CELL_LINE
 from lib.migrate_cell_line_policy import migrate_cell_line_policy
 from lib.yaml_ops import load_yaml, write_yaml
+from tests.managed_paths import ManagedPathTestCase
 
 
 def _seed_yaml(path, data):
@@ -23,7 +24,7 @@ def _seed_yaml(path, data):
     )
 
 
-class TestMigrateCellLinePolicy(unittest.TestCase):
+class TestMigrateCellLinePolicy(ManagedPathTestCase):
     def test_migrate_normalizes_required_options_and_records(self):
         with tempfile.TemporaryDirectory(prefix="ln2_migrate_cl_") as td:
             yaml_path = Path(td) / "inventory.yaml"

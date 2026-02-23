@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from lib.inventory_paths import create_managed_dataset_yaml_path
 
 try:
     from PySide6.QtWidgets import QDialog, QMessageBox
@@ -73,6 +74,64 @@ class _FakeCheckField:
         return self._value
 
 
+class _FakeSignal:
+    def __init__(self):
+        self._callbacks = []
+
+    def connect(self, callback):
+        self._callbacks.append(callback)
+
+    def emit(self, *args, **kwargs):
+        for callback in list(self._callbacks):
+            callback(*args, **kwargs)
+
+
+class _FakeCheckBoxWidget:
+    def __init__(self, text="", parent=None):
+        _ = parent
+        self._text = str(text)
+        self._checked = False
+
+    def setChecked(self, value):
+        self._checked = bool(value)
+
+    def isChecked(self):
+        return bool(self._checked)
+
+
+class _FakeMessageBox:
+    Information = 1
+    AcceptRole = 0
+
+    def __init__(self, parent=None):
+        _ = parent
+        self.finished = _FakeSignal()
+        self._checkbox = None
+
+    def setWindowTitle(self, value):
+        self.window_title = str(value)
+
+    def setText(self, value):
+        self.text = str(value)
+
+    def setIcon(self, value):
+        self.icon = value
+
+    def setCheckBox(self, checkbox):
+        self._checkbox = checkbox
+
+    def checkBox(self):
+        return self._checkbox
+
+    def addButton(self, text, role):
+        btn = SimpleNamespace(text=str(text), role=role)
+        self.default_button = btn
+        return btn
+
+    def setDefaultButton(self, button):
+        self.default_button = button
+
+
 def _build_settings_window(path_text):
     status = MagicMock()
     window = SimpleNamespace()
@@ -90,7 +149,6 @@ def _build_settings_window(path_text):
         ai_model=_FakeTextField(),
         ai_steps=_FakeSpinField(),
         ai_thinking_enabled=_FakeCheckField(),
-        ai_thinking_collapsed=False,
         ai_custom_prompt="",
     )
     window._update_dataset_label = MagicMock()
@@ -112,7 +170,6 @@ def test_settings_flow_apply_and_finalize_updates_runtime_state():
         "ai_model": "deepseek-chat",
         "ai_max_steps": 9,
         "ai_thinking_enabled": False,
-        "ai_thinking_expanded": False,
         "ai_custom_prompt": "use concise style",
     }
 
@@ -126,7 +183,6 @@ def test_settings_flow_apply_and_finalize_updates_runtime_state():
     assert window.ai_panel.ai_model.value == "deepseek-chat"
     assert window.ai_panel.ai_steps.current == 9
     assert window.ai_panel.ai_thinking_enabled.value is False
-    assert window.ai_panel.ai_thinking_collapsed is True
     assert window.ai_panel.ai_custom_prompt == "use concise style"
     window.bridge.set_api_keys.assert_called_once_with({"deepseek": "sk-test"})
     window._update_dataset_label.assert_called_once()
@@ -170,8 +226,11 @@ def test_dataset_flow_writes_new_dataset_yaml():
             return ["K562", "HeLa"]
 
     flow = DatasetFlow(SimpleNamespace())
-    with tempfile.TemporaryDirectory() as tmpdir:
-        target = os.path.join(tmpdir, "new_inventory.yaml")
+    with tempfile.TemporaryDirectory() as tmpdir, patch(
+        "lib.inventory_paths.get_install_dir",
+        return_value=tmpdir,
+    ):
+        target = create_managed_dataset_yaml_path("new_inventory")
         created_path = flow.create_dataset_file(
             target_path=target,
             box_layout={"box_1": {"rows": 9, "cols": 9}},
@@ -359,7 +418,6 @@ def test_window_state_flow_restore_and_label_and_stats():
                 "model": "deepseek-chat",
                 "max_steps": 7,
                 "thinking_enabled": False,
-                "thinking_expanded": False,
                 "custom_prompt": "abc",
             }
         },
@@ -368,7 +426,6 @@ def test_window_state_flow_restore_and_label_and_stats():
             ai_model=_FakeTextField(),
             ai_steps=_FakeSpinField(),
             ai_thinking_enabled=_FakeCheckField(),
-            ai_thinking_collapsed=False,
             ai_custom_prompt="",
         ),
         dataset_label=dataset_label,
@@ -388,7 +445,6 @@ def test_window_state_flow_restore_and_label_and_stats():
     assert window.ai_panel.ai_model.value == "deepseek-chat"
     assert window.ai_panel.ai_steps.current == 7
     assert window.ai_panel.ai_thinking_enabled.value is False
-    assert window.ai_panel.ai_thinking_collapsed is True
     assert window.ai_panel.ai_custom_prompt == "abc"
     dataset_label.setText.assert_called_once_with("D:/tmp/inventory.yaml")
     assert stats_bar.setText.call_count >= 3
@@ -437,7 +493,6 @@ def test_window_state_flow_close_event_busy_and_persist():
             ai_model=_FakeTextField(),
             ai_steps=_FakeSpinField(),
             ai_thinking_enabled=_FakeCheckField(),
-            ai_thinking_collapsed=False,
             ai_custom_prompt="prompt text",
         ),
         settings=SimpleNamespace(setValue=MagicMock()),
@@ -461,6 +516,271 @@ def test_window_state_flow_close_event_busy_and_persist():
     assert window.gui_config["ai"]["model"] == "deepseek-chat"
     assert window.gui_config["ai"]["max_steps"] == 11
     assert window.gui_config["ai"]["thinking_enabled"] is True
-    assert window.gui_config["ai"]["thinking_expanded"] is True
     assert window.gui_config["ai"]["custom_prompt"] == "prompt text"
     save_mock.assert_called_once_with(window.gui_config)
+
+
+def test_main_window_on_rename_dataset_switches_and_appends_audit():
+    from app_gui.main import MainWindow
+
+    old_yaml = "D:/inventories/old/inventory.yaml"
+    new_yaml = "D:/inventories/new/inventory.yaml"
+    status_message = MagicMock()
+    window = MainWindow.__new__(MainWindow)
+    window.current_yaml_path = old_yaml
+    window._dataset_session = SimpleNamespace(switch_to=MagicMock(return_value=new_yaml))
+    window.statusBar = MagicMock(return_value=SimpleNamespace(showMessage=status_message))
+
+    with patch("app_gui.main.rename_managed_dataset_yaml_path", return_value=new_yaml) as rename_mock, patch(
+        "app_gui.main.build_dataset_rename_payload",
+        return_value={"kind": "dataset_rename"},
+    ) as payload_mock, patch(
+        "app_gui.main.load_yaml",
+        return_value={"meta": {}, "inventory": []},
+    ) as load_mock, patch("app_gui.main.append_audit_event") as audit_mock:
+        result = MainWindow.on_rename_dataset(window, old_yaml, "new")
+
+    assert result == new_yaml
+    rename_mock.assert_called_once_with(os.path.abspath(old_yaml), "new")
+    payload_mock.assert_called_once_with(os.path.abspath(old_yaml), new_yaml)
+    load_mock.assert_called_once_with(new_yaml)
+    audit_mock.assert_called_once()
+    window._dataset_session.switch_to.assert_called_once_with(new_yaml, reason="dataset_rename")
+    status_message.assert_called_once()
+
+
+def test_main_window_on_rename_dataset_keeps_success_when_audit_append_fails():
+    from app_gui.main import MainWindow
+
+    old_yaml = "D:/inventories/old/inventory.yaml"
+    new_yaml = "D:/inventories/new/inventory.yaml"
+    status_message = MagicMock()
+    window = MainWindow.__new__(MainWindow)
+    window.current_yaml_path = old_yaml
+    window._dataset_session = SimpleNamespace(switch_to=MagicMock(return_value=new_yaml))
+    window.statusBar = MagicMock(return_value=SimpleNamespace(showMessage=status_message))
+
+    with patch("app_gui.main.rename_managed_dataset_yaml_path", return_value=new_yaml), patch(
+        "app_gui.main.build_dataset_rename_payload",
+        return_value={"kind": "dataset_rename"},
+    ), patch(
+        "app_gui.main.load_yaml",
+        return_value={"meta": {}, "inventory": []},
+    ), patch("app_gui.main.append_audit_event", side_effect=RuntimeError("audit failed")):
+        result = MainWindow.on_rename_dataset(window, old_yaml, "new")
+
+    assert result == new_yaml
+    window._dataset_session.switch_to.assert_called_once_with(new_yaml, reason="dataset_rename")
+    status_message.assert_called_once()
+
+
+def test_main_window_on_delete_dataset_switches_and_appends_audit():
+    from app_gui.main import MainWindow
+
+    old_yaml = "D:/inventories/old/inventory.yaml"
+    switched_yaml = "D:/inventories/new/inventory.yaml"
+    status_message = MagicMock()
+    window = MainWindow.__new__(MainWindow)
+    window.current_yaml_path = old_yaml
+    window._dataset_session = SimpleNamespace(switch_to=MagicMock(return_value=switched_yaml))
+    window.statusBar = MagicMock(return_value=SimpleNamespace(showMessage=status_message))
+
+    with patch(
+        "app_gui.main.delete_managed_dataset_yaml_path",
+        return_value={"yaml_path": os.path.abspath(old_yaml), "dataset_name": "old"},
+    ) as delete_mock, patch(
+        "app_gui.main.list_managed_datasets",
+        return_value=[{"name": "new", "yaml_path": switched_yaml}],
+    ), patch(
+        "app_gui.main.assert_allowed_inventory_yaml_path",
+        return_value=switched_yaml,
+    ) as allow_mock, patch(
+        "app_gui.main.build_dataset_delete_payload",
+        return_value={"kind": "dataset_delete"},
+    ) as payload_mock, patch(
+        "app_gui.main.load_yaml",
+        return_value={"meta": {}, "inventory": []},
+    ) as load_mock, patch("app_gui.main.append_audit_event") as audit_mock:
+        result = MainWindow.on_delete_dataset(window, old_yaml)
+
+    assert result == switched_yaml
+    delete_mock.assert_called_once_with(os.path.abspath(old_yaml))
+    allow_mock.assert_called_once_with(os.path.abspath(switched_yaml), must_exist=True)
+    payload_mock.assert_called_once_with(os.path.abspath(old_yaml), switched_yaml)
+    load_mock.assert_called_once_with(switched_yaml)
+    audit_mock.assert_called_once()
+    window._dataset_session.switch_to.assert_called_once_with(switched_yaml, reason="dataset_delete")
+    status_message.assert_called_once()
+
+
+def test_main_window_on_delete_dataset_keeps_success_when_audit_append_fails():
+    from app_gui.main import MainWindow
+
+    old_yaml = "D:/inventories/old/inventory.yaml"
+    switched_yaml = "D:/inventories/new/inventory.yaml"
+    status_message = MagicMock()
+    window = MainWindow.__new__(MainWindow)
+    window.current_yaml_path = old_yaml
+    window._dataset_session = SimpleNamespace(switch_to=MagicMock(return_value=switched_yaml))
+    window.statusBar = MagicMock(return_value=SimpleNamespace(showMessage=status_message))
+
+    with patch(
+        "app_gui.main.delete_managed_dataset_yaml_path",
+        return_value={"yaml_path": os.path.abspath(old_yaml), "dataset_name": "old"},
+    ), patch(
+        "app_gui.main.list_managed_datasets",
+        return_value=[{"name": "new", "yaml_path": switched_yaml}],
+    ), patch(
+        "app_gui.main.assert_allowed_inventory_yaml_path",
+        return_value=switched_yaml,
+    ), patch(
+        "app_gui.main.build_dataset_delete_payload",
+        return_value={"kind": "dataset_delete"},
+    ), patch(
+        "app_gui.main.load_yaml",
+        return_value={"meta": {}, "inventory": []},
+    ), patch("app_gui.main.append_audit_event", side_effect=RuntimeError("audit failed")):
+        result = MainWindow.on_delete_dataset(window, old_yaml)
+
+    assert result == switched_yaml
+    window._dataset_session.switch_to.assert_called_once_with(switched_yaml, reason="dataset_delete")
+    status_message.assert_called_once()
+
+
+def test_main_window_on_delete_dataset_creates_fallback_when_empty():
+    from app_gui.main import MainWindow
+
+    old_yaml = "D:/inventories/old/inventory.yaml"
+    fallback_yaml = "D:/inventories/inventory/inventory.yaml"
+    status_message = MagicMock()
+    window = MainWindow.__new__(MainWindow)
+    window.current_yaml_path = old_yaml
+    window._dataset_session = SimpleNamespace(switch_to=MagicMock(return_value=fallback_yaml))
+    window.statusBar = MagicMock(return_value=SimpleNamespace(showMessage=status_message))
+
+    with patch(
+        "app_gui.main.delete_managed_dataset_yaml_path",
+        return_value={"yaml_path": os.path.abspath(old_yaml), "dataset_name": "old"},
+    ), patch(
+        "app_gui.main.list_managed_datasets",
+        return_value=[],
+    ), patch(
+        "app_gui.main.create_managed_dataset_yaml_path",
+        return_value=fallback_yaml,
+    ) as create_mock, patch(
+        "app_gui.main._write_inventory_yaml",
+        return_value=fallback_yaml,
+    ) as write_mock, patch(
+        "app_gui.main.assert_allowed_inventory_yaml_path",
+        return_value=fallback_yaml,
+    ), patch(
+        "app_gui.main.build_dataset_delete_payload",
+        return_value={"kind": "dataset_delete"},
+    ), patch(
+        "app_gui.main.load_yaml",
+        return_value={"meta": {}, "inventory": []},
+    ), patch("app_gui.main.append_audit_event"):
+        result = MainWindow.on_delete_dataset(window, old_yaml)
+
+    assert result == fallback_yaml
+    create_mock.assert_called_once_with("inventory")
+    write_mock.assert_called_once_with(fallback_yaml)
+    window._dataset_session.switch_to.assert_called_once_with(fallback_yaml, reason="dataset_delete")
+    status_message.assert_called_once()
+
+
+def test_main_window_migration_mode_change_forwards_to_operations_panel():
+    from app_gui.main import MainWindow
+
+    window = MainWindow.__new__(MainWindow)
+    operations_panel = SimpleNamespace(set_migration_mode=MagicMock())
+    migration_mode_badge = SimpleNamespace(setVisible=MagicMock())
+    migration_status_indicator = SimpleNamespace(setVisible=MagicMock())
+    show_notice = MagicMock()
+    window.operations_panel = operations_panel
+    window.migration_mode_badge = migration_mode_badge
+    window._migration_status_indicator = migration_status_indicator
+    window._show_migration_mode_entry_notice = show_notice
+
+    MainWindow._on_migration_mode_changed(window, True)
+    MainWindow._on_migration_mode_changed(window, False)
+
+    assert operations_panel.set_migration_mode.call_args_list[0].args == (True,)
+    assert operations_panel.set_migration_mode.call_args_list[1].args == (False,)
+    assert migration_mode_badge.setVisible.call_args_list[0].args == (True,)
+    assert migration_mode_badge.setVisible.call_args_list[1].args == (False,)
+    assert migration_status_indicator.setVisible.call_args_list[0].args == (True,)
+    assert migration_status_indicator.setVisible.call_args_list[1].args == (False,)
+    show_notice.assert_called_once_with()
+
+
+def test_main_window_migration_mode_change_ignores_missing_operations_panel():
+    from app_gui.main import MainWindow
+
+    window = MainWindow.__new__(MainWindow)
+    window.operations_panel = SimpleNamespace()
+    window._show_migration_mode_entry_notice = MagicMock()
+
+    MainWindow._on_migration_mode_changed(window, True)
+
+
+def test_main_window_migration_notice_skips_when_suppressed():
+    from app_gui.main import MainWindow
+
+    window = MainWindow.__new__(MainWindow)
+    window.gui_config = {"migration_mode_notice_suppressed": True}
+    window._show_nonblocking_dialog = MagicMock()
+
+    with patch("app_gui.main.QMessageBox", _FakeMessageBox), patch(
+        "app_gui.main.QCheckBox",
+        _FakeCheckBoxWidget,
+    ), patch("app_gui.main.save_gui_config") as save_mock:
+        MainWindow._show_migration_mode_entry_notice(window)
+
+    window._show_nonblocking_dialog.assert_not_called()
+    save_mock.assert_not_called()
+
+
+def test_main_window_migration_notice_persists_opt_out_when_checked():
+    from app_gui.main import MainWindow
+
+    window = MainWindow.__new__(MainWindow)
+    window.gui_config = {}
+
+    def _show_dialog_and_confirm(msg_box):
+        checkbox = msg_box.checkBox()
+        assert checkbox is not None
+        checkbox.setChecked(True)
+        msg_box.finished.emit(0)
+
+    window._show_nonblocking_dialog = MagicMock(side_effect=_show_dialog_and_confirm)
+
+    with patch("app_gui.main.QMessageBox", _FakeMessageBox), patch(
+        "app_gui.main.QCheckBox",
+        _FakeCheckBoxWidget,
+    ), patch("app_gui.main.save_gui_config") as save_mock:
+        MainWindow._show_migration_mode_entry_notice(window)
+
+    assert window.gui_config.get("migration_mode_notice_suppressed") is True
+    save_mock.assert_called_once_with(window.gui_config)
+
+
+def test_main_window_migration_notice_does_not_persist_when_unchecked():
+    from app_gui.main import MainWindow
+
+    window = MainWindow.__new__(MainWindow)
+    window.gui_config = {}
+
+    def _show_dialog_without_opt_out(msg_box):
+        msg_box.finished.emit(0)
+
+    window._show_nonblocking_dialog = MagicMock(side_effect=_show_dialog_without_opt_out)
+
+    with patch("app_gui.main.QMessageBox", _FakeMessageBox), patch(
+        "app_gui.main.QCheckBox",
+        _FakeCheckBoxWidget,
+    ), patch("app_gui.main.save_gui_config") as save_mock:
+        MainWindow._show_migration_mode_entry_notice(window)
+
+    assert "migration_mode_notice_suppressed" not in window.gui_config
+    save_mock.assert_not_called()

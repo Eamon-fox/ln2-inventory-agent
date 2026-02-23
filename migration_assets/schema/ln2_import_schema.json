@@ -33,6 +33,23 @@
               "type": "integer",
               "minimum": 1
             },
+            "box_numbers": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "box_tags": {
+              "type": "object",
+              "propertyNames": {
+                "pattern": "^[0-9]+$"
+              },
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
             "indexing": {
               "type": "string",
               "enum": [

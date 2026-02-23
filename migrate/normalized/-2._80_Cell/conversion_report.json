@@ -1,0 +1,18 @@
+{
+  "source_path": "D:\\github_repo\\ln2-inventory-agent\\migrate\\inputs\\-2. 80℃ Cell位置.xlsx",
+  "source_name": "-2. 80℃ Cell位置.xlsx",
+  "status": "ok",
+  "message": "Workbook converted to normalized CSV assets.",
+  "sheet_count": 4,
+  "schema_summary_path": "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\schema_summary.json",
+  "generated_files": [
+    "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\sheets\\01_thermo.csv",
+    "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\sheets\\02_Sheet2.csv",
+    "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\sheets\\03_Sheet3.csv",
+    "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\sheets\\04_sheet_4.csv",
+    "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\schema_summary.json"
+  ],
+  "warnings": [],
+  "errors": [],
+  "generated_at": "2026-02-23T23:20:11Z"
+}

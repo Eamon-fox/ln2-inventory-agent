@@ -1,0 +1,835 @@
+{
+  "source_path": "D:\\github_repo\\ln2-inventory-agent\\migrate\\inputs\\-2. 80℃ Cell位置.xlsx",
+  "source_name": "-2. 80℃ Cell位置.xlsx",
+  "status": "ok",
+  "sheet_count": 4,
+  "sheets": [
+    {
+      "sheet_name": "thermo",
+      "sheet_index": 1,
+      "row_count": 207,
+      "non_empty_rows": 192,
+      "max_columns": 38,
+      "header_candidate": {
+        "row_index": 2,
+        "values": [
+          "",
+          "1列#1层",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "3列#1层"
+        ]
+      },
+      "columns": [
+        {
+          "index": 1,
+          "non_empty": 81,
+          "detected_type": "string",
+          "type_counts": {
+            "empty": 111,
+            "string": 81
+          },
+          "sample_values": [
+            "A",
+            "B",
+            "C",
+            "D",
+            "E",
+            "F",
+            "G",
+            "H",
+            "I"
+          ]
+        },
+        {
+          "index": 2,
+          "non_empty": 106,
+          "detected_type": "integer",
+          "type_counts": {
+            "string": 24,
+            "integer": 82,
+            "empty": 86
+          },
+          "sample_values": [
+            "1列#1层",
+            "1",
+            "nc-2",
+            "10",
+            "N-nc9",
+            "19",
+            "nc8",
+            "28",
+            "N-nc1",
+            "37",
+            "46",
+            "55"
+          ]
+        },
+        {
+          "index": 3,
+          "non_empty": 96,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 96,
+            "integer": 81,
+            "string": 15
+          },
+          "sample_values": [
+            "2",
+            "nc-6",
+            "11",
+            "DHX29-5",
+            "20",
+            "nc10",
+            "29",
+            "N-nc2",
+            "38",
+            "47",
+            "56",
+            "dTAG-HSPD1-C"
+          ]
+        },
+        {
+          "index": 4,
+          "non_empty": 97,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 95,
+            "integer": 81,
+            "string": 16
+          },
+          "sample_values": [
+            "3",
+            "DHX29-5",
+            "12",
+            "DHX29-15",
+            "21",
+            "CAPZA1-7",
+            "30",
+            "N-nc6",
+            "39",
+            "48",
+            "57",
+            "dTAG-NELFA-C"
+          ]
+        },
+        {
+          "index": 5,
+          "non_empty": 96,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 96,
+            "integer": 81,
+            "string": 15
+          },
+          "sample_values": [
+            "4",
+            "DHX29-15",
+            "13",
+            "nc8",
+            "22",
+            "CAPZA1-52",
+            "31",
+            "N-nc6",
+            "40",
+            "49",
+            "58",
+            "dTAG-NELFA-C"
+          ]
+        },
+        {
+          "index": 6,
+          "non_empty": 95,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 97,
+            "integer": 81,
+            "string": 14
+          },
+          "sample_values": [
+            "5",
+            "FOXI3-7",
+            "14",
+            "nc10",
+            "23",
+            "HIS-2",
+            "32",
+            "N-nc9",
+            "41",
+            "50",
+            "59",
+            "lenti_new"
+          ]
+        },
+        {
+          "index": 7,
+          "non_empty": 95,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 97,
+            "integer": 82,
+            "string": 13
+          },
+          "sample_values": [
+            "6",
+            "FOXI3-36",
+            "15",
+            "CAPZA1-7",
+            "24",
+            "HIS-31",
+            "33",
+            "DHX29-5",
+            "42",
+            "51",
+            "60",
+            "lenti_can"
+          ]
+        },
+        {
+          "index": 8,
+          "non_empty": 95,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 97,
+            "integer": 82,
+            "string": 13
+          },
+          "sample_values": [
+            "7",
+            "N-nc1",
+            "16",
+            "CAPZA1-52",
+            "25",
+            "FOXI3-7",
+            "34",
+            "DHX29-15",
+            "43",
+            "52",
+            "61",
+            "lenti_empty"
+          ]
+        },
+        {
+          "index": 9,
+          "non_empty": 95,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 97,
+            "integer": 83,
+            "string": 12
+          },
+          "sample_values": [
+            "8",
+            "N-nc2",
+            "17",
+            "HIS-2",
+            "26",
+            "FOXI3-36",
+            "35",
+            "FOXI3-7",
+            "44",
+            "53",
+            "62",
+            "lenti_new"
+          ]
+        },
+        {
+          "index": 10,
+          "non_empty": 93,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 99,
+            "integer": 83,
+            "string": 10
+          },
+          "sample_values": [
+            "9",
+            "N-nc6",
+            "18",
+            "HIS-31",
+            "27",
+            "N-nc1",
+            "36",
+            "FOXI3-36",
+            "45",
+            "54",
+            "63",
+            "lenti_can"
+          ]
+        },
+        {
+          "index": 11,
+          "non_empty": 17,
+          "detected_type": "string",
+          "type_counts": {
+            "empty": 175,
+            "string": 17
+          },
+          "sample_values": [
+            "1-36",
+            "37-54",
+            "55-59",
+            "59-64",
+            "72",
+            "65-68",
+            "70-72",
+            "19-21",
+            "28-30",
+            "31-35",
+            "1-18",
+            "19-26"
+          ]
+        },
+        {
+          "index": 12,
+          "non_empty": 16,
+          "detected_type": "string",
+          "type_counts": {
+            "empty": 176,
+            "string": 16
+          },
+          "sample_values": [
+            "Alu deletion in NCCIT(1-12; 25-36) and K562(13-24),cases are from ASO and HS",
+            "px320 ko for AP2S1, AP2B1, AP2A1, AP2M1 in k562, from zyy(RNA-seq，对Alu调控与之前不一致)",
+            "dTAG population, enrich top20% GFP+cells，无冻存盒冻存，20260116",
+            "202601. AP2S1 OE in THP-1 by Lentivirus,population，blast sorted.",
+            "260128,mESC WT in 3 wells of 6-well plate",
+            "NELFA-dTAG clones in NCCIT, 10cm dish, 20260218",
+            "lenti-AP2S1 OE（cannoical-HA，new isoform-flag, mix）in THP-1,20260218, BLAST-selected",
+            "2024/11/21",
+            "Alu^MRPL39 KO",
+            "CRISPRa for Alu^METTL17, sg1, sg3 and three NC(42.92.93)",
+            "AP2S1 KO in THP-1 Cas9 poplation, FACS sorted the BFP-mChery positve cells",
+            "20250118, FAM231A ko using 5x sgRNA in K562-cas9 and 293T-cas9 population"
+          ]
+        },
+        {
+          "index": 13,
+          "non_empty": 2,
+          "detected_type": "string",
+          "type_counts": {
+            "empty": 190,
+            "string": 2
+          },
+          "sample_values": [
+            "lentivirus for MCP-APEX2_blast, 48h +72h, population",
+            "CRISPR a/ i sgRNA lentivirus, target Alu 48h+72h mix, 17(Alu^ METTL17), 39(Alu^ MRPL39)"
+          ]
+        },
+        {
+          "index": 14,
+          "non_empty": 0,
+          "detected_type": "empty",
+          "type_counts": {
+            "empty": 192
+          },
+          "sample_values": []
+        },
+        {
+          "index": 15,
+          "non_empty": 0,
+          "detected_type": "empty",
+          "type_counts": {
+            "empty": 192
+          },
+          "sample_values": []
+        },
+        {
+          "index": 16,
+          "non_empty": 0,
+          "detected_type": "empty",
+          "type_counts": {
+            "empty": 192
+          },
+          "sample_values": []
+        },
+        {
+          "index": 17,
+          "non_empty": 0,
+          "detected_type": "empty",
+          "type_counts": {
+            "empty": 192
+          },
+          "sample_values": []
+        },
+        {
+          "index": 18,
+          "non_empty": 0,
+          "detected_type": "empty",
+          "type_counts": {
+            "empty": 192
+          },
+          "sample_values": []
+        },
+        {
+          "index": 19,
+          "non_empty": 0,
+          "detected_type": "empty",
+          "type_counts": {
+            "empty": 192
+          },
+          "sample_values": []
+        },
+        {
+          "index": 20,
+          "non_empty": 90,
+          "detected_type": "string",
+          "type_counts": {
+            "empty": 102,
+            "string": 90
+          },
+          "sample_values": [
+            "A",
+            "B",
+            "C",
+            "D",
+            "E",
+            "F",
+            "G",
+            "H",
+            "I"
+          ]
+        },
+        {
+          "index": 21,
+          "non_empty": 139,
+          "detected_type": "integer",
+          "type_counts": {
+            "string": 49,
+            "integer": 90,
+            "empty": 18
+          },
+          "sample_values": [
+            "3列#1层",
+            "1",
+            "THP-1_hxy",
+            "10",
+            "231A_GFP-rescue",
+            "19",
+            "APEX2_C-231A",
+            "28",
+            "293T_ac2-1",
+            "37",
+            "293T_3-1",
+            "46"
+          ]
+        },
+        {
+          "index": 22,
+          "non_empty": 128,
+          "detected_type": "integer",
+          "type_counts": {
+            "integer": 90,
+            "string": 38,
+            "empty": 19
+          },
+          "sample_values": [
+            "2",
+            "THP-1_hxy",
+            "11",
+            "APEX2_C-231A",
+            "20",
+            "APEX2_N-231A",
+            "29",
+            "293T_3-1",
+            "38",
+            "293T_3-2",
+            "47",
+            "AluRT_23"
+          ]
+        },
+        {
+          "index": 23,
+          "non_empty": 126,
+          "detected_type": "integer",
+          "type_counts": {
+            "integer": 90,
+            "string": 36,
+            "empty": 19
+          },
+          "sample_values": [
+            "3",
+            "THP-1_hxy",
+            "12",
+            "APEX2_N-231A",
+            "21",
+            "APEX2_N-AP",
+            "30",
+            "293T_3-2",
+            "39",
+            "293T_3-3",
+            "48",
+            "AluRT_2-2"
+          ]
+        },
+        {
+          "index": 24,
+          "non_empty": 127,
+          "detected_type": "integer",
+          "type_counts": {
+            "integer": 90,
+            "string": 37,
+            "empty": 18
+          },
+          "sample_values": [
+            "4",
+            "DC",
+            "13",
+            "APEX2_N-AP",
+            "22",
+            "APEX2_C-AP",
+            "31",
+            "293T_3-3",
+            "40",
+            "293T_43",
+            "49",
+            "AluRT_2-11"
+          ]
+        },
+        {
+          "index": 25,
+          "non_empty": 126,
+          "detected_type": "integer",
+          "type_counts": {
+            "integer": 90,
+            "string": 36,
+            "empty": 19
+          },
+          "sample_values": [
+            "5",
+            "THP-1_whf",
+            "14",
+            "APEX2_C-AP",
+            "23",
+            "APEX2_V5",
+            "32",
+            "293T_43",
+            "41",
+            "293T_92",
+            "50",
+            "AluRT_2-21"
+          ]
+        },
+        {
+          "index": 26,
+          "non_empty": 128,
+          "detected_type": "integer",
+          "type_counts": {
+            "integer": 90,
+            "string": 38,
+            "empty": 17
+          },
+          "sample_values": [
+            "6",
+            "THP-1_whf",
+            "15",
+            "APEX2_V5",
+            "24",
+            "33",
+            "293T_92",
+            "42",
+            "293T_93",
+            "51",
+            "AluRT_2",
+            "60"
+          ]
+        },
+        {
+          "index": 27,
+          "non_empty": 129,
+          "detected_type": "integer",
+          "type_counts": {
+            "integer": 90,
+            "string": 39,
+            "empty": 15
+          },
+          "sample_values": [
+            "7",
+            "THP-1_whf",
+            "16",
+            "231A_GFP-rescue",
+            "25",
+            "34",
+            "293T_93",
+            "43",
+            "AluRT_8",
+            "52",
+            "231A_N-OE",
+            "61"
+          ]
+        },
+        {
+          "index": 28,
+          "non_empty": 130,
+          "detected_type": "integer",
+          "type_counts": {
+            "integer": 90,
+            "string": 40,
+            "empty": 14
+          },
+          "sample_values": [
+            "8",
+            "231A_GFP-rescue",
+            "17",
+            "231A_N-rescue",
+            "26",
+            "THP-1_hxy",
+            "35",
+            "293T_ac2-1",
+            "44",
+            "AluRT_9",
+            "53",
+            "231A_C-OE"
+          ]
+        },
+        {
+          "index": 29,
+          "non_empty": 128,
+          "detected_type": "integer",
+          "type_counts": {
+            "integer": 90,
+            "string": 38,
+            "empty": 15
+          },
+          "sample_values": [
+            "9",
+            "231A_N-rescue",
+            "18",
+            "231A_GFP-rescue",
+            "27",
+            "THP-1_hxy",
+            "36",
+            "293T_ac2-2",
+            "45",
+            "AluRT_10",
+            "54",
+            "63"
+          ]
+        },
+        {
+          "index": 30,
+          "non_empty": 47,
+          "detected_type": "string",
+          "type_counts": {
+            "string": 47,
+            "empty": 3
+          },
+          "sample_values": [
+            "1-3",
+            "5-7",
+            "8-10",
+            "11-23",
+            "28-42",
+            "43-51",
+            "52-53",
+            "80-81",
+            "1-32",
+            "33-34",
+            "35-36",
+            "37-46"
+          ]
+        },
+        {
+          "index": 31,
+          "non_empty": 48,
+          "detected_type": "string",
+          "type_counts": {
+            "string": 48,
+            "empty": 1
+          },
+          "sample_values": [
+            "THP-1 WT cells from 胡小玉 lab, 复苏后直接冻存",
+            "THP-1 WT cells from 王海峰 lab, 复苏后直接冻存",
+            "FAM231A rescue in K562 KO population(14#)",
+            "APEX2 for FAM231A, AP2S1 and control(V5) in K562-WT cells",
+            "PX321-mediated KO in 293T-cas9, FAM231A and AP2S1， puromycin selection",
+            "Alu retrotransposition reporter candidate clones in AAVS1 site in  K562-Cas9 cells.",
+            "FAM231A OE in NCCIT cells. ",
+            "CRISPR a、I population in NCCIT WT cells，puromycin",
+            "CRISPR-a、i for solo Alu（AluSx consensus）,20241213， 编号对应sgRNA",
+            "CRISPR-a for AP2S1 varient3 isoform, sg2",
+            "lenti-Cas9-BFP(9-3), population",
+            "V5-MCP-APEX2 clones in THP-1, 备选克隆，暂不用。"
+          ]
+        },
+        {
+          "index": 32,
+          "non_empty": 7,
+          "detected_type": "string",
+          "type_counts": {
+            "empty": 6,
+            "string": 7
+          },
+          "sample_values": [
+            "NDRG2-Alu deletion, 2nd",
+            "THP-1 WT cells， 10cm dishes",
+            "PARP8-Alu deletion， 2nd, there are three half-KO clones",
+            "CRISPRa/i for FAM231A in K562 cells",
+            "2024/4/15",
+            "FAM231A ko by 3x sgRNA in 293T-wt cells",
+            "NC of FAM231A ko by 3x sgRNA in 293T-wt cells"
+          ]
+        },
+        {
+          "index": 33,
+          "non_empty": 2,
+          "detected_type": "string",
+          "type_counts": {
+            "empty": 6,
+            "string": 2
+          },
+          "sample_values": [
+            "nc cells were thawed at 0506",
+            "13-15.20250618 thaw"
+          ]
+        },
+        {
+          "index": 34,
+          "non_empty": 1,
+          "detected_type": "string",
+          "type_counts": {
+            "empty": 5,
+            "string": 1
+          },
+          "sample_values": [
+            "81"
+          ]
+        },
+        {
+          "index": 35,
+          "non_empty": 3,
+          "detected_type": "string",
+          "type_counts": {
+            "empty": 3,
+            "string": 3
+          },
+          "sample_values": [
+            "202512，THP-1 wt cells， 可用",
+            "thaw the a-1,a-3,a-11,a-12, 已冻回",
+            "81"
+          ]
+        },
+        {
+          "index": 36,
+          "non_empty": 2,
+          "detected_type": "string",
+          "type_counts": {
+            "empty": 2,
+            "string": 2
+          },
+          "sample_values": [
+            "231a_gfp KI_N_sorted twice,20250426",
+            "15-16"
+          ]
+        },
+        {
+          "index": 37,
+          "non_empty": 3,
+          "detected_type": "string",
+          "type_counts": {
+            "string": 3
+          },
+          "sample_values": [
+            "26-27",
+            "24-25",
+            "202410 thawed，for half-life time assay; 20241116, frozen"
+          ]
+        },
+        {
+          "index": 38,
+          "non_empty": 2,
+          "detected_type": "string",
+          "type_counts": {
+            "string": 2
+          },
+          "sample_values": [
+            "2nd batch "
+          ]
+        }
+      ],
+      "csv_path": "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\sheets\\01_thermo.csv"
+    },
+    {
+      "sheet_name": "Sheet2",
+      "sheet_index": 2,
+      "row_count": 0,
+      "non_empty_rows": 0,
+      "max_columns": 0,
+      "header_candidate": null,
+      "columns": [],
+      "csv_path": "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\sheets\\02_Sheet2.csv"
+    },
+    {
+      "sheet_name": "Sheet3",
+      "sheet_index": 3,
+      "row_count": 0,
+      "non_empty_rows": 0,
+      "max_columns": 0,
+      "header_candidate": null,
+      "columns": [],
+      "csv_path": "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\sheets\\03_Sheet3.csv"
+    },
+    {
+      "sheet_name": "液氮罐位置",
+      "sheet_index": 4,
+      "row_count": 50,
+      "non_empty_rows": 10,
+      "max_columns": 2,
+      "header_candidate": {
+        "row_index": 1,
+        "values": [
+          "",
+          "1#"
+        ]
+      },
+      "columns": [
+        {
+          "index": 1,
+          "non_empty": 0,
+          "detected_type": "empty",
+          "type_counts": {
+            "empty": 10
+          },
+          "sample_values": []
+        },
+        {
+          "index": 2,
+          "non_empty": 10,
+          "detected_type": "string",
+          "type_counts": {
+            "string": 10
+          },
+          "sample_values": [
+            "1#",
+            "AAC09-B1：HNRNPC_shRNA1",
+            "AAC09-B2：HNRNPC_shRNA2",
+            "AAC09-B4：HNRNPC_shRNA3",
+            "LAB85-B4：SRFS11_shRNA1",
+            "LAB85-B6：SRFS11_shRNA2",
+            "LAB85-B7：SRFS11_shRNA3",
+            "001：SHC001_Misson pLKO.1- puro Control Vector",
+            "016：SHC016_pLKO.1-PURO NON-TARGET Control DNA&"
+          ]
+        }
+      ],
+      "csv_path": "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\sheets\\04_sheet_4.csv"
+    }
+  ],
+  "generated_at": "2026-02-23T23:20:11Z"
+}

@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -47,6 +48,7 @@ from lib.operations import (
     find_record_by_id,
     get_next_id,
 )
+from tests.managed_paths import ManagedPathTestCase
 
 
 def make_record(rec_id=1, box=1, position=None):
@@ -70,47 +72,38 @@ def make_data(records):
 # --- yaml_ops.py Tests ---
 
 
-class YamlOpsBackupTests(unittest.TestCase):
+class YamlOpsBackupTests(ManagedPathTestCase):
     """Test backup and utility functions in yaml_ops.py."""
 
     def test_create_yaml_backup_none_when_source_missing(self):
         """create_yaml_backup should return None when source file doesn't exist."""
         with tempfile.TemporaryDirectory() as td:
-            fake_path = Path(td) / "nonexistent.yaml"
+            fake_path = Path(td) / "inventory.yaml"
             result = create_yaml_backup(str(fake_path))
             self.assertIsNone(result)
 
     def test_create_yaml_backup_with_naming_conflict(self):
         """Test backup creation when timestamp collision occurs."""
         with tempfile.TemporaryDirectory() as td:
-            yaml_path = Path(td) / "test.yaml"
+            yaml_path = Path(td) / "inventory.yaml"
             yaml_path.write_text("data")
 
-            # Create first backup
-            result1 = create_yaml_backup(str(yaml_path), keep=0)
+            from datetime import datetime
+
+            fixed_now = datetime(2026, 1, 1, 12, 0, 0)
+            with patch("lib.yaml_ops.datetime") as mock_datetime:
+                mock_datetime.now.return_value = fixed_now
+                result1 = create_yaml_backup(str(yaml_path), keep=0)
+                result2 = create_yaml_backup(str(yaml_path), keep=0)
+
             self.assertIsNotNone(result1)
-
-            # Get timestamp from backup filename
-            import re
-            match = re.search(r'\d{8}-\d{6}', result1)
-            self.assertIsNotNone(match)
-            timestamp = match.group()
-
-            # Simulate collision by creating a file with same timestamp
-            import shutil
-            backup_dir = Path(result1).parent
-            conflict_file = backup_dir / f"test.{timestamp}.bak"
-            shutil.copy2(result1, conflict_file)
-
-            # Create second backup - should use .1 suffix
-            result2 = create_yaml_backup(str(yaml_path), keep=0)
             self.assertIsNotNone(result2)
             self.assertIn(".1.", Path(result2).name)
 
     def test_keep_zero_does_not_delete_old_backups(self):
         """Test keep=0 doesn't delete old backups."""
         with tempfile.TemporaryDirectory() as td:
-            yaml_path = Path(td) / "test.yaml"
+            yaml_path = Path(td) / "inventory.yaml"
             yaml_path.write_text("data")
 
             result1 = create_yaml_backup(str(yaml_path), keep=0)
@@ -126,7 +119,7 @@ class YamlOpsBackupTests(unittest.TestCase):
     def test_write_yaml_without_auto_backup(self):
         """write_yaml with auto_backup=False should not create backup."""
         with tempfile.TemporaryDirectory() as td:
-            yaml_path = Path(td) / "test.yaml"
+            yaml_path = Path(td) / "inventory.yaml"
             data = make_data([make_record(1)])
             result = write_yaml(data, path=str(yaml_path), auto_backup=False)
             self.assertIsNone(result)

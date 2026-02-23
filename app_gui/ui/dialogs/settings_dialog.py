@@ -11,12 +11,12 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QInputDialog,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -27,10 +27,17 @@ from PySide6.QtWidgets import (
 )
 
 from agent.llm_client import DEFAULT_PROVIDER, PROVIDER_DEFAULTS
-from app_gui.gui_config import DEFAULT_MAX_STEPS
+from app_gui.gui_config import DEFAULT_MAX_STEPS, MAX_AGENT_STEPS
 from app_gui.i18n import t, tr
 from app_gui.ui.icons import Icons, get_icon
+from lib.inventory_paths import (
+    assert_allowed_inventory_yaml_path,
+    list_managed_datasets,
+    managed_dataset_name_from_yaml_path,
+)
 from lib.import_acceptance import validate_candidate_yaml
+from lib.import_validation_core import validate_inventory_document
+from lib.validators import format_validation_errors
 from lib.yaml_ops import load_yaml
 
 APP_VERSION = "1.1.1"
@@ -60,10 +67,18 @@ def _normalize_inventory_yaml_path(path_text) -> str:
     raw = str(path_text or "").strip()
     if not raw:
         return ""
-    abs_path = os.path.abspath(raw)
-    if ".demo." in os.path.basename(abs_path).lower():
-        return abs_path
-    return abs_path
+    return os.path.abspath(raw)
+
+
+def _is_valid_inventory_file_path(path_text):
+    """Legacy helper retained for compatibility with existing tests."""
+    path = _normalize_inventory_yaml_path(path_text)
+    if not path or os.path.isdir(path):
+        return False
+    suffix = os.path.splitext(path)[1].lower()
+    if suffix not in {".yaml", ".yml"}:
+        return False
+    return os.path.isfile(path)
 
 
 class _NoWheelComboBox(QComboBox):
@@ -90,6 +105,37 @@ class _NoWheelTextEdit(QTextEdit):
         event.ignore()
 
 
+class _NoPasteLineEdit(QLineEdit):
+    """QLineEdit that blocks paste paths for destructive confirmations."""
+
+    def keyPressEvent(self, event):
+        if event.matches(QKeySequence.Paste):
+            return
+        if event.key() == Qt.Key_Insert and event.modifiers() & Qt.ShiftModifier:
+            return
+        super().keyPressEvent(event)
+
+    def contextMenuEvent(self, event):
+        event.accept()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MiddleButton:
+            return
+        super().mousePressEvent(event)
+
+    def insertFromMimeData(self, source):
+        return
+
+    def dragEnterEvent(self, event):
+        event.ignore()
+
+    def dragMoveEvent(self, event):
+        event.ignore()
+
+    def dropEvent(self, event):
+        event.ignore()
+
+
 class SettingsDialog(QDialog):
     """Enhanced Settings dialog with sections and help text."""
 
@@ -98,6 +144,8 @@ class SettingsDialog(QDialog):
         parent=None,
         config=None,
         on_create_new_dataset=None,
+        on_rename_dataset=None,
+        on_delete_dataset=None,
         on_manage_boxes=None,
         on_data_changed=None,
         *,
@@ -105,8 +153,8 @@ class SettingsDialog(QDialog):
         app_release_url=APP_RELEASE_URL,
         github_api_latest=_GITHUB_API_LATEST,
         root_dir=None,
-        export_task_bundle_dialog_cls=None,
-        import_validated_yaml_dialog_cls=None,
+        on_import_existing_data=None,
+        on_export_inventory_csv=None,
         custom_fields_dialog_cls=None,
         normalize_yaml_path=None,
     ):
@@ -116,16 +164,19 @@ class SettingsDialog(QDialog):
         self.setMinimumHeight(750)
         self._config = config or {}
         self._on_create_new_dataset = on_create_new_dataset
+        self._on_rename_dataset = on_rename_dataset
+        self._on_delete_dataset = on_delete_dataset
         self._on_manage_boxes = on_manage_boxes
         self._on_data_changed = on_data_changed
         self._app_version = str(app_version or APP_VERSION)
         self._app_release_url = str(app_release_url or APP_RELEASE_URL)
         self._github_api_latest = str(github_api_latest or _GITHUB_API_LATEST)
         self._root_dir = root_dir or ROOT
-        self._export_task_bundle_dialog_cls = export_task_bundle_dialog_cls
-        self._import_validated_yaml_dialog_cls = import_validated_yaml_dialog_cls
+        self._on_import_existing_data = on_import_existing_data
+        self._on_export_inventory_csv = on_export_inventory_csv
         self._custom_fields_dialog_cls = custom_fields_dialog_cls
         self._normalize_yaml_path = normalize_yaml_path or _normalize_inventory_yaml_path
+        self._inventory_path_locked = True
 
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
@@ -145,25 +196,38 @@ class SettingsDialog(QDialog):
 
         yaml_row = QHBoxLayout()
         self.yaml_edit = QLineEdit(self._config.get("yaml_path", ""))
+        self.yaml_edit.setReadOnly(self._inventory_path_locked)
         self.yaml_new_btn = QPushButton(tr("main.new"))
         self.yaml_new_btn.setIcon(get_icon(Icons.FILE_PLUS))
         self.yaml_new_btn.setIconSize(QSize(14, 14))
         self.yaml_new_btn.setMinimumWidth(60)
         self.yaml_new_btn.clicked.connect(self._emit_create_new_dataset_request)
-        yaml_browse = QPushButton(tr("settings.browse"))
-        yaml_browse.setIcon(get_icon(Icons.FOLDER_OPEN))
-        yaml_browse.setIconSize(QSize(14, 14))
-        yaml_browse.setMinimumWidth(60)
-        yaml_browse.clicked.connect(self._browse_yaml)
         yaml_row.addWidget(self.yaml_edit, 1)
         yaml_row.addWidget(self.yaml_new_btn)
-        yaml_row.addWidget(yaml_browse)
         data_layout.addRow(tr("settings.inventoryFile"), yaml_row)
 
-        yaml_hint = QLabel(tr("settings.inventoryFileHint"))
-        yaml_hint.setProperty("role", "settingsHint")
-        yaml_hint.setWordWrap(True)
-        data_layout.addRow("", yaml_hint)
+        self.dataset_switch_combo = None
+        self.dataset_rename_btn = None
+        self.dataset_delete_btn = None
+        switch_row = QHBoxLayout()
+        self.dataset_switch_combo = _NoWheelComboBox()
+        self.dataset_switch_combo.currentIndexChanged.connect(self._on_dataset_switch_changed)
+        switch_row.addWidget(self.dataset_switch_combo, 1)
+        self.dataset_rename_btn = QPushButton(tr("settings.renameDataset"))
+        self.dataset_rename_btn.clicked.connect(self._emit_rename_dataset_request)
+        self.dataset_rename_btn.setEnabled(callable(self._on_rename_dataset))
+        switch_row.addWidget(self.dataset_rename_btn)
+        self.dataset_delete_btn = QPushButton(tr("settings.deleteDataset"))
+        self.dataset_delete_btn.clicked.connect(self._emit_delete_dataset_request)
+        self.dataset_delete_btn.setEnabled(callable(self._on_delete_dataset))
+        switch_row.addWidget(self.dataset_delete_btn)
+        data_layout.addRow(tr("settings.datasetSwitch"), switch_row)
+        self._refresh_dataset_choices(selected_yaml=self.yaml_edit.text().strip())
+
+        lock_hint = QLabel(tr("settings.inventoryFileLockedHint"))
+        lock_hint.setProperty("role", "settingsHint")
+        lock_hint.setWordWrap(True)
+        data_layout.addRow("", lock_hint)
 
         tool_row = QHBoxLayout()
         cf_btn = QPushButton(tr("main.manageCustomFields"))
@@ -174,13 +238,18 @@ class SettingsDialog(QDialog):
         box_btn.clicked.connect(self._open_manage_boxes)
         tool_row.addWidget(box_btn)
 
-        export_bundle_btn = QPushButton(tr("main.exportTaskBundleTitle"))
-        export_bundle_btn.clicked.connect(self._open_export_task_bundle)
-        tool_row.addWidget(export_bundle_btn)
+        import_btn = QPushButton(tr("main.importExistingDataTitle"))
+        import_btn.setToolTip(tr("main.importExistingDataHint"))
+        import_btn.clicked.connect(self._open_import_journey)
+        tool_row.addWidget(import_btn)
 
-        import_validated_btn = QPushButton(tr("main.importValidatedTitle"))
-        import_validated_btn.clicked.connect(self._open_import_validated_yaml)
-        tool_row.addWidget(import_validated_btn)
+        self.export_csv_btn = QPushButton(tr("operations.exportFullCsv"))
+        self.export_csv_btn.setIcon(get_icon(Icons.DOWNLOAD))
+        self.export_csv_btn.setIconSize(QSize(14, 14))
+        self.export_csv_btn.setToolTip(tr("operations.exportFullCsvHint"))
+        self.export_csv_btn.clicked.connect(self._open_export_inventory_csv)
+        self.export_csv_btn.setEnabled(callable(self._on_export_inventory_csv))
+        tool_row.addWidget(self.export_csv_btn)
 
         tool_row.addStretch()
         data_layout.addRow("", tool_row)
@@ -199,13 +268,15 @@ class SettingsDialog(QDialog):
             )
             self._api_key_edits[provider_id] = key_edit
             self._api_key_lock_buttons[provider_id] = lock_btn
-            label = f'{cfg["display_name"]} ({cfg["env_key"]}):'
-            ai_layout.addRow(label, key_row)
-            if cfg.get("help_url"):
-                help_label = QLabel(f'<a href="{cfg["help_url"]}">{cfg["help_url"]}</a>')
-                help_label.setProperty("role", "settingsHint")
-                help_label.setOpenExternalLinks(True)
-                ai_layout.addRow("", help_label)
+            help_url = str(cfg.get("help_url") or "").strip()
+            if help_url:
+                label_widget = QLabel(
+                    f'<a href="{help_url}">{cfg["display_name"]}</a> ({cfg["env_key"]}):'
+                )
+                label_widget.setOpenExternalLinks(True)
+            else:
+                label_widget = QLabel(f'{cfg["display_name"]} ({cfg["env_key"]}):')
+            ai_layout.addRow(label_widget, key_row)
 
         api_hint_text = str(tr("settings.apiKeyHint") or "").strip()
         if api_hint_text:
@@ -235,17 +306,13 @@ class SettingsDialog(QDialog):
         ai_layout.addRow(tr("settings.aiModel"), self.ai_model_edit)
 
         self.ai_max_steps = _NoWheelSpinBox()
-        self.ai_max_steps.setRange(1, 20)
+        self.ai_max_steps.setRange(1, MAX_AGENT_STEPS)
         self.ai_max_steps.setValue(ai_advanced.get("max_steps", DEFAULT_MAX_STEPS))
         ai_layout.addRow(tr("settings.aiMaxSteps"), self.ai_max_steps)
 
         self.ai_thinking_enabled = QCheckBox()
         self.ai_thinking_enabled.setChecked(ai_advanced.get("thinking_enabled", True))
         ai_layout.addRow(tr("settings.aiThinking"), self.ai_thinking_enabled)
-
-        self.ai_thinking_expanded = QCheckBox()
-        self.ai_thinking_expanded.setChecked(ai_advanced.get("thinking_expanded", True))
-        ai_layout.addRow(tr("settings.aiThinkingExpanded"), self.ai_thinking_expanded)
 
         self.ai_custom_prompt = _NoWheelTextEdit()
         self.ai_custom_prompt.setPlaceholderText(tr("settings.customPromptPlaceholder"))
@@ -373,20 +440,60 @@ class SettingsDialog(QDialog):
         self._refresh_yaml_path_validity()
         layout.addWidget(buttons)
 
-    @staticmethod
-    def _is_valid_inventory_file_path(path_text):
-        path = _normalize_inventory_yaml_path(path_text)
+    def _is_valid_inventory_file_path(self, path_text):
+        path = self._normalize_yaml_path(path_text)
         if not path or os.path.isdir(path):
             return False
         suffix = os.path.splitext(path)[1].lower()
         if suffix not in {".yaml", ".yml"}:
             return False
-        return os.path.isfile(path)
+        try:
+            assert_allowed_inventory_yaml_path(path, must_exist=True)
+        except Exception:
+            return False
+        return True
 
     def _refresh_yaml_path_validity(self):
         if not hasattr(self, "_ok_button") or self._ok_button is None:
             return
         self._ok_button.setEnabled(self._is_valid_inventory_file_path(self.yaml_edit.text().strip()))
+
+    def _refresh_dataset_choices(self, selected_yaml=""):
+        if self.dataset_switch_combo is None:
+            return
+
+        rows = list_managed_datasets()
+        combo = self.dataset_switch_combo
+        combo.blockSignals(True)
+        combo.clear()
+        for row in rows:
+            name = str(row.get("name") or "")
+            yaml_path = str(row.get("yaml_path") or "")
+            combo.addItem(name, yaml_path)
+
+        combo.setEnabled(bool(rows))
+        if self.dataset_rename_btn is not None:
+            self.dataset_rename_btn.setEnabled(bool(rows) and callable(self._on_rename_dataset))
+        if self.dataset_delete_btn is not None:
+            self.dataset_delete_btn.setEnabled(bool(rows) and callable(self._on_delete_dataset))
+        current_yaml = self._normalize_yaml_path(selected_yaml or self.yaml_edit.text().strip())
+        if rows:
+            idx = combo.findData(current_yaml)
+            if idx < 0:
+                idx = 0
+            combo.setCurrentIndex(idx)
+            selected_path = combo.currentData()
+            if selected_path:
+                self.yaml_edit.setText(self._normalize_yaml_path(selected_path))
+        combo.blockSignals(False)
+
+    def _on_dataset_switch_changed(self):
+        if self.dataset_switch_combo is None:
+            return
+        selected_path = self.dataset_switch_combo.currentData()
+        if not selected_path:
+            return
+        self.yaml_edit.setText(self._normalize_yaml_path(selected_path))
 
     @staticmethod
     def _render_validation_report(report, *, max_items=8):
@@ -399,6 +506,34 @@ class SettingsDialog(QDialog):
         if len(errors) > max_items:
             lines.append(f"- ... and {len(errors) - max_items} more")
         return "\n".join(lines)
+
+    @staticmethod
+    def _validate_inventory_payload_strict(data):
+        """Validate an in-memory inventory payload with strict warning blocking."""
+        errors, warnings = validate_inventory_document(data)
+        if warnings:
+            errors.extend([f"Warning treated as error: {item}" for item in warnings])
+        if errors:
+            return {
+                "ok": False,
+                "message": format_validation_errors(errors, prefix="Import validation failed"),
+                "report": {
+                    "error_count": len(errors),
+                    "warning_count": len(warnings),
+                    "errors": list(errors),
+                    "warnings": list(warnings),
+                },
+            }
+        return {
+            "ok": True,
+            "message": "Validation passed.",
+            "report": {
+                "error_count": 0,
+                "warning_count": len(warnings),
+                "errors": [],
+                "warnings": list(warnings),
+            },
+        }
 
     def accept(self):
         """Block saving settings when selected dataset YAML fails strict validation."""
@@ -427,16 +562,6 @@ class SettingsDialog(QDialog):
         except TypeError:
             self._on_data_changed()
 
-    def _browse_yaml(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            tr("settings.selectInventoryFile"),
-            "",
-            "YAML Files (*.yaml *.yml)",
-        )
-        if path:
-            self.yaml_edit.setText(self._normalize_yaml_path(path))
-
     def _emit_create_new_dataset_request(self):
         if not callable(self._on_create_new_dataset):
             return
@@ -445,6 +570,142 @@ class SettingsDialog(QDialog):
         new_path = self._on_create_new_dataset(update_window=True)
         if new_path:
             self.yaml_edit.setText(self._normalize_yaml_path(new_path))
+            self._refresh_dataset_choices(selected_yaml=new_path)
+
+    def _emit_rename_dataset_request(self):
+        if not callable(self._on_rename_dataset):
+            return
+
+        current_yaml = self._normalize_yaml_path(self.yaml_edit.text().strip())
+        if not current_yaml:
+            return
+
+        try:
+            default_name = managed_dataset_name_from_yaml_path(current_yaml)
+        except Exception:
+            default_name = ""
+        new_name, ok = QInputDialog.getText(
+            self,
+            tr("settings.renameDataset"),
+            tr("settings.renameDatasetPrompt"),
+            text=default_name,
+        )
+        if not ok:
+            return
+
+        try:
+            new_path = self._on_rename_dataset(current_yaml, str(new_name or ""))
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                tr("settings.renameDataset"),
+                t("settings.renameDatasetFailed", error=str(exc)),
+            )
+            return
+
+        if new_path:
+            self.yaml_edit.setText(self._normalize_yaml_path(new_path))
+            self._refresh_dataset_choices(selected_yaml=new_path)
+
+    def _confirm_phrase_dialog(self, *, title, prompt_text, phrase, strip_input=False):
+        confirm_dlg = QDialog(self)
+        confirm_dlg.setWindowTitle(title)
+        confirm_layout = QVBoxLayout(confirm_dlg)
+
+        confirm_label = QLabel(prompt_text)
+        confirm_label.setWordWrap(True)
+        confirm_layout.addWidget(confirm_label)
+
+        confirm_input = _NoPasteLineEdit()
+        confirm_input.setPlaceholderText(phrase)
+        confirm_layout.addWidget(confirm_input)
+
+        confirm_buttons = QDialogButtonBox()
+        ok_btn = QPushButton(tr("common.ok"))
+        ok_btn.setEnabled(False)
+        ok_btn.clicked.connect(confirm_dlg.accept)
+        confirm_buttons.addButton(ok_btn, QDialogButtonBox.AcceptRole)
+        cancel_btn = QPushButton(tr("common.cancel"))
+        cancel_btn.clicked.connect(confirm_dlg.reject)
+        confirm_buttons.addButton(cancel_btn, QDialogButtonBox.RejectRole)
+        confirm_layout.addWidget(confirm_buttons)
+
+        def _matches(text):
+            candidate = str(text or "")
+            if strip_input:
+                candidate = candidate.strip()
+            return candidate == phrase
+
+        confirm_input.textChanged.connect(lambda txt: ok_btn.setEnabled(_matches(txt)))
+        if confirm_dlg.exec() != QDialog.Accepted:
+            return False
+        return _matches(confirm_input.text())
+
+    def _emit_delete_dataset_request(self):
+        if not callable(self._on_delete_dataset):
+            return
+
+        current_yaml = self._normalize_yaml_path(self.yaml_edit.text().strip())
+        if not current_yaml:
+            return
+
+        try:
+            dataset_name = managed_dataset_name_from_yaml_path(current_yaml)
+        except Exception:
+            dataset_name = os.path.basename(os.path.dirname(current_yaml)) or current_yaml
+
+        if not self._confirm_delete_dataset_initial(dataset_name):
+            return
+
+        confirm_phrase = t("settings.deleteDatasetPhrase", name=dataset_name)
+        phrase_prompt = t("settings.deleteDatasetPhrasePrompt", phrase=confirm_phrase)
+        if not self._confirm_phrase_dialog(
+            title=tr("settings.deleteDataset"),
+            prompt_text=phrase_prompt,
+            phrase=confirm_phrase,
+            strip_input=False,
+        ):
+            return
+
+        if not self._confirm_delete_dataset_final(dataset_name):
+            return
+
+        try:
+            new_path = self._on_delete_dataset(current_yaml)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                tr("settings.deleteDataset"),
+                t("settings.deleteDatasetFailed", error=str(exc)),
+            )
+            return
+
+        if new_path:
+            self.yaml_edit.setText(self._normalize_yaml_path(new_path))
+            self._refresh_dataset_choices(selected_yaml=new_path)
+
+    def _confirm_delete_dataset_initial(self, dataset_name):
+        first_confirm = QMessageBox(self)
+        first_confirm.setIcon(QMessageBox.Warning)
+        first_confirm.setWindowTitle(tr("settings.deleteDataset"))
+        first_confirm.setText(t("settings.deleteDatasetPrompt", name=dataset_name))
+        first_confirm.setInformativeText(tr("settings.deleteDatasetPromptDetail"))
+        delete_btn = first_confirm.addButton(tr("settings.deleteDatasetAction"), QMessageBox.DestructiveRole)
+        first_confirm.addButton(tr("common.cancel"), QMessageBox.RejectRole)
+        first_confirm.setDefaultButton(first_confirm.button(QMessageBox.Cancel))
+        first_confirm.exec()
+        return first_confirm.clickedButton() == delete_btn
+
+    def _confirm_delete_dataset_final(self, dataset_name):
+        final_confirm = QMessageBox(self)
+        final_confirm.setIcon(QMessageBox.Critical)
+        final_confirm.setWindowTitle(tr("settings.deleteDataset"))
+        final_confirm.setText(t("settings.deleteDatasetFinalPrompt", name=dataset_name))
+        final_delete_btn = final_confirm.addButton(tr("settings.deleteDatasetAction"), QMessageBox.DestructiveRole)
+        final_confirm.addButton(tr("common.cancel"), QMessageBox.RejectRole)
+        final_confirm.setDefaultButton(final_confirm.button(QMessageBox.Cancel))
+        final_confirm.exec()
+        return final_confirm.clickedButton() == final_delete_btn
 
     def _on_check_update(self):
         """Manually check for updates from GitHub."""
@@ -590,45 +851,12 @@ class SettingsDialog(QDialog):
 
                 # Second confirmation: require typing a phrase
                 confirm_phrase = "DELETE"
-                confirm_dlg = QDialog(self)
-                confirm_dlg.setWindowTitle(tr("main.customFieldsTitle"))
-                confirm_layout = QVBoxLayout(confirm_dlg)
-                confirm_label = QLabel(t("main.cfRemoveDataConfirm", phrase=confirm_phrase))
-                confirm_label.setWordWrap(True)
-                confirm_layout.addWidget(confirm_label)
-
-                class _NoPasteLineEdit(QLineEdit):
-                    """QLineEdit that blocks paste via keyboard, context menu, and middle-click."""
-                    def keyPressEvent(self, event):
-                        if event.matches(QKeySequence.Paste):
-                            return
-                        super().keyPressEvent(event)
-                    def contextMenuEvent(self, event):
-                        pass  # disable right-click menu entirely
-                    def mousePressEvent(self, event):
-                        if event.button() == Qt.MiddleButton:
-                            return
-                        super().mousePressEvent(event)
-                    def insertFromMimeData(self, source):
-                        pass  # block any remaining paste path
-
-                confirm_input = _NoPasteLineEdit()
-                confirm_input.setPlaceholderText(confirm_phrase)
-                confirm_layout.addWidget(confirm_input)
-                confirm_buttons = QDialogButtonBox()
-                ok_btn = QPushButton(tr("common.ok"))
-                ok_btn.setEnabled(False)
-                ok_btn.clicked.connect(confirm_dlg.accept)
-                confirm_buttons.addButton(ok_btn, QDialogButtonBox.AcceptRole)
-                cancel_btn = QPushButton(tr("common.cancel"))
-                cancel_btn.clicked.connect(confirm_dlg.reject)
-                confirm_buttons.addButton(cancel_btn, QDialogButtonBox.RejectRole)
-                confirm_input.textChanged.connect(
-                    lambda txt: ok_btn.setEnabled(txt.strip() == confirm_phrase)
-                )
-                confirm_layout.addWidget(confirm_buttons)
-
-                if confirm_dlg.exec() != QDialog.Accepted:
+                if not self._confirm_phrase_dialog(
+                    title=tr("main.customFieldsTitle"),
+                    prompt_text=t("main.cfRemoveDataConfirm", phrase=confirm_phrase),
+                    phrase=confirm_phrase,
+                    strip_input=True,
+                ):
                     return  # cancelled
 
                 for rec in inventory:
@@ -636,58 +864,61 @@ class SettingsDialog(QDialog):
                         for k in removed_keys:
                             rec.pop(k, None)
 
-        # --- Step 3: save ---
-        meta["custom_fields"] = new_fields
+        # Build pending meta exactly as it would be saved.
+        pending_meta = dict(meta)
+        pending_meta["custom_fields"] = new_fields
         if new_dk:
-            meta["display_key"] = new_dk
+            pending_meta["display_key"] = new_dk
         if new_ck:
-            meta["color_key"] = new_ck
+            pending_meta["color_key"] = new_ck
         if new_clo:
-            meta["cell_line_options"] = new_clo
-        elif "cell_line_options" in meta:
-            del meta["cell_line_options"]
-        meta["cell_line_required"] = bool(new_cl_required)
-        data["meta"] = meta
+            pending_meta["cell_line_options"] = new_clo
+        elif "cell_line_options" in pending_meta:
+            del pending_meta["cell_line_options"]
+        pending_meta["cell_line_required"] = bool(new_cl_required)
+
+        # Run the same strict validation used by Settings OK to fail fast here.
+        pending_data = dict(data)
+        pending_data["meta"] = pending_meta
+        pending_data["inventory"] = inventory
+        validation = self._validate_inventory_payload_strict(pending_data)
+        if not validation.get("ok"):
+            report_text = self._render_validation_report(validation.get("report") or {})
+            message = t(
+                "main.datasetYamlValidationBlocked",
+                message=validation.get("message") or tr("main.importValidationFailed"),
+            )
+            if report_text:
+                message += "\n\n" + report_text
+            message += "\n\n" + tr("main.datasetYamlValidationHint")
+            QMessageBox.warning(self, tr("main.importValidatedTitle"), message)
+            return
+
+        # --- Step 3: save ---
+        data["meta"] = pending_meta
         with open(yaml_path, "w", encoding="utf-8") as f:
             yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
-        self._notify_data_changed(yaml_path=yaml_path, meta=meta)
+        self._notify_data_changed(yaml_path=yaml_path, meta=pending_meta)
 
     def _open_manage_boxes(self):
         if callable(self._on_manage_boxes):
             self._on_manage_boxes(self.yaml_edit.text().strip())
 
-    def _open_export_task_bundle(self):
-        dialog_cls = self._export_task_bundle_dialog_cls
-        if dialog_cls is None:
-            from app_gui.ui.dialogs.export_task_bundle_dialog import ExportTaskBundleDialog as dialog_cls
-        dlg = dialog_cls(self)
-        dlg.exec()
+    def _open_import_journey(self):
+        if not callable(self._on_import_existing_data):
+            raise RuntimeError("SettingsDialog requires `on_import_existing_data` callback.")
+        stage = str(self._on_import_existing_data(parent=self) or "").strip().lower()
+        if stage == "awaiting_ai":
+            # Import migration now continues in the main window AI panel.
+            self.reject()
 
-    def _suggest_import_target_path(self):
-        current = self.yaml_edit.text().strip()
-        if current and os.path.splitext(current)[1].lower() in {".yaml", ".yml"}:
-            return current
-
-        if current:
-            candidate_dir = os.path.dirname(self._normalize_yaml_path(current))
-        else:
-            candidate_dir = os.getcwd()
-        if not candidate_dir:
-            candidate_dir = os.getcwd()
-        return os.path.join(candidate_dir, "ln2_inventory.imported.yaml")
-
-    def _open_import_validated_yaml(self):
-        dialog_cls = self._import_validated_yaml_dialog_cls
-        if dialog_cls is None:
-            from app_gui.ui.dialogs.import_validated_yaml_dialog import (
-                ImportValidatedYamlDialog as dialog_cls,
-            )
-        dlg = dialog_cls(self, default_target_path=self._suggest_import_target_path())
-        if dlg.exec() != QDialog.Accepted:
+    def _open_export_inventory_csv(self):
+        if not callable(self._on_export_inventory_csv):
             return
-        imported_yaml = getattr(dlg, "imported_yaml_path", "")
-        if imported_yaml:
-            self.yaml_edit.setText(self._normalize_yaml_path(imported_yaml))
+        self._on_export_inventory_csv(
+            parent=self,
+            yaml_path_override=self.yaml_edit.text().strip(),
+        )
 
     def _on_provider_changed(self):
         provider = self.ai_provider_combo.currentData()
@@ -778,8 +1009,13 @@ class SettingsDialog(QDialog):
             key_text = edit.text().strip()
             if key_text:
                 api_keys[prov_id] = key_text
+        yaml_path = self._normalize_yaml_path(self.yaml_edit.text().strip())
+        try:
+            yaml_path = assert_allowed_inventory_yaml_path(yaml_path, must_exist=True)
+        except Exception:
+            yaml_path = ""
         return {
-            "yaml_path": self._normalize_yaml_path(self.yaml_edit.text().strip()),
+            "yaml_path": yaml_path,
             "api_keys": api_keys,
             "language": self.lang_combo.currentData(),
             "theme": self.theme_combo.currentData(),
@@ -788,7 +1024,6 @@ class SettingsDialog(QDialog):
             "ai_model": self.ai_model_edit.currentText().strip() or provider_cfg["model"],
             "ai_max_steps": self.ai_max_steps.value(),
             "ai_thinking_enabled": self.ai_thinking_enabled.isChecked(),
-            "ai_thinking_expanded": self.ai_thinking_expanded.isChecked(),
             "ai_custom_prompt": self.ai_custom_prompt.toPlainText().strip(),
         }
 

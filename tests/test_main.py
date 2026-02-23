@@ -12,8 +12,6 @@ DIALOG_FILES = [
     ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog.py",
     ROOT / "app_gui" / "ui" / "dialogs" / "new_dataset_dialog.py",
     ROOT / "app_gui" / "ui" / "dialogs" / "custom_fields_dialog.py",
-    ROOT / "app_gui" / "ui" / "dialogs" / "export_task_bundle_dialog.py",
-    ROOT / "app_gui" / "ui" / "dialogs" / "import_validated_yaml_dialog.py",
 ]
 
 
@@ -46,20 +44,30 @@ def test_main_keeps_settings_entry_and_missing_file_hint():
     assert "main.fileNotFound" in text
 
 
-def test_main_preserves_user_selected_inventory_filename_on_create():
+def test_main_creates_dataset_under_managed_root():
     text = _source_text()
 
-    assert 'INVENTORY_FILE_NAME = "ln2_inventory.yaml"' not in text
-    assert "target_path = _normalize_inventory_yaml_path(target_path)" in text
-    assert "default_path = os.getcwd()" in text
-    assert "_normalize_inventory_yaml_path(target_path, force_canonical_file=True)" not in text
-    assert "return os.path.join(abs_path, INVENTORY_FILE_NAME)" not in text
+    assert "create_managed_dataset_yaml_path(dataset_name)" in text
+    assert "QInputDialog.getText(" in text
+    assert "QFileDialog.getSaveFileName" not in text
 
 
 def test_settings_new_dataset_switches_immediately():
     text = _combined_source_text()
 
     assert "self._on_create_new_dataset(update_window=True)" in text
+
+
+def test_settings_dialog_wires_dataset_rename_callback():
+    text = _source_text()
+
+    assert "on_rename_dataset=self.on_rename_dataset" in text
+
+
+def test_settings_dialog_wires_dataset_delete_callback():
+    text = _source_text()
+
+    assert "on_delete_dataset=self.on_delete_dataset" in text
 
 
 def test_settings_dialog_enforces_existing_yaml_file_before_ok():
@@ -73,10 +81,12 @@ def test_settings_dialog_enforces_existing_yaml_file_before_ok():
     assert "self._ok_button.setEnabled(self._is_valid_inventory_file_path(self.yaml_edit.text().strip()))" in text
 
 
-def test_dataset_switch_resets_plan_and_undo_state():
+def test_dataset_switch_is_centralized_in_session_controller():
     text = _source_text()
 
-    assert text.count("self.operations_panel.reset_for_dataset_switch()") >= 2
+    assert "DatasetSessionController" in text
+    assert "self._dataset_session.switch_to(" in text
+    assert "self.operations_panel.reset_for_dataset_switch()" not in text
 
 
 def test_qsettings_migration_is_guarded_by_marker():
@@ -93,16 +103,9 @@ def test_settings_accept_does_not_force_rename_existing_yaml_filename():
     assert 'selected_yaml = _normalize_inventory_yaml_path(values["yaml_path"])' in text
 
 
-def test_demo_yaml_path_is_preserved():
-    text = _source_text()
-
-    assert '".demo." in os.path.basename(abs_path).lower()' in text
-
-
 def test_path_utils_module_is_not_imported_by_main():
     spec = importlib.util.spec_from_file_location("_main", str(MAIN_FILE))
     assert spec is not None
-    assert "resolve_demo_dataset_path" not in (MAIN_FILE.read_text(encoding="utf-8") )
 
 
 def test_tr_not_called_with_keyword_args():
@@ -147,8 +150,7 @@ def test_startup_dialogs_use_non_blocking_open_and_fixed_tag_parsing():
     assert "def _show_nonblocking_dialog(" in text
     assert "dialog.setWindowModality(Qt.NonModal)" in text
     assert "dialog.show()" in text
-    assert 'msg_box.addButton(tr("main.exportTaskBundleTitle"), QMessageBox.ActionRole)' in text
-    assert 'msg_box.addButton(tr("main.importValidatedTitle"), QMessageBox.ActionRole)' in text
+    assert 'msg_box.addButton(tr("main.importExistingDataTitle"), QMessageBox.ActionRole)' in text
     assert 'msg_box.addButton(tr("main.new"), QMessageBox.ActionRole)' in text
     assert "QMessageBox.Close" in text
     assert '.lstrip("1.0.1")' not in text

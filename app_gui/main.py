@@ -3,12 +3,13 @@
 import os
 import sys
 from contextlib import suppress
+import yaml
 from PySide6.QtCore import Qt, QSettings, Slot, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QPushButton, QLabel, QSplitter,
-    QDialog, QLineEdit, QFileDialog, QTextEdit, QPlainTextEdit,
+    QDialog, QLineEdit, QInputDialog, QMessageBox, QTextEdit, QPlainTextEdit, QCheckBox,
 )
 
 if getattr(sys, "frozen", False):
@@ -27,8 +28,20 @@ from app_gui.gui_config import (
 )
 from agent.llm_client import PROVIDER_DEFAULTS
 from app_gui.i18n import t, tr, set_language
-from lib.config import YAML_PATH
+from lib.inventory_paths import (
+    assert_allowed_inventory_yaml_path,
+    build_dataset_delete_payload,
+    build_dataset_rename_payload,
+    create_managed_dataset_yaml_path,
+    delete_managed_dataset_yaml_path,
+    ensure_inventories_root,
+    list_managed_datasets,
+    latest_managed_inventory_yaml_path,
+    rename_managed_dataset_yaml_path,
+    sanitize_dataset_name,
+)
 from lib.plan_store import PlanStore
+from lib.yaml_ops import append_audit_event, load_yaml
 from app_gui.ui.theme import (
     apply_dark_theme, apply_light_theme,
     resolve_theme_token,
@@ -42,8 +55,6 @@ from app_gui.ui.operations_panel import OperationsPanel
 from app_gui.ui.ai_panel import AIPanel
 from app_gui.ui.dialogs import (
     SettingsDialog,
-    ExportTaskBundleDialog,
-    ImportValidatedYamlDialog,
     NewDatasetDialog,
     CustomFieldsDialog,
 )
@@ -55,6 +66,9 @@ from app_gui.main_window_flows import (
     DatasetFlow,
     ManageBoxesFlow,
 )
+from app_gui.dataset_session import DatasetSessionController
+from app_gui.import_journey import ImportJourneyService
+from app_gui.migration_workspace import MigrationWorkspaceService
 
 APP_VERSION = "1.1.1"
 APP_RELEASE_URL = "https://github.com/Eamon-fox/snowfox/releases"
@@ -75,32 +89,143 @@ def _is_version_newer(new_version: str, old_version: str) -> bool:
     return _parse_version(new_version) > _parse_version(old_version)
 
 
-def _normalize_inventory_yaml_path(path_text) -> str:
-    """Normalize inventory YAML path.
+def _coerce_ui_scale(value, default=1.0) -> float:
+    """Parse UI scale as positive float with a safe fallback."""
+    try:
+        parsed = float(value)
+    except Exception:
+        return float(default)
+    if parsed <= 0:
+        return float(default)
+    return parsed
 
-    - Empty input -> ""
-    - Directory input -> keep as-is
-    - File input -> keep as-is
-    - Special case: demo path with .demo. suffix -> keep as-is (don't rename)
-    """
+
+def _detect_primary_screen_pixels_windows():
+    """Return primary-screen physical pixels on Windows, otherwise None."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        gdi32 = ctypes.windll.gdi32
+    except Exception:
+        return None
+
+    # Best effort: request DPI awareness before probing metrics.
+    with suppress(Exception):
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    with suppress(Exception):
+        user32.SetProcessDPIAware()
+
+    # Prefer physical desktop resolution from GDI device caps.
+    dc = 0
+    try:
+        dc = user32.GetDC(0)
+        if dc:
+            width = int(gdi32.GetDeviceCaps(dc, 118))   # DESKTOPHORZRES
+            height = int(gdi32.GetDeviceCaps(dc, 117))  # DESKTOPVERTRES
+            if width > 0 and height > 0:
+                return (width, height)
+    except Exception:
+        pass
+    finally:
+        if dc:
+            with suppress(Exception):
+                user32.ReleaseDC(0, dc)
+
+    # Fallback metrics (may be logical when DPI virtualization applies).
+    with suppress(Exception):
+        width = int(user32.GetSystemMetrics(0))
+        height = int(user32.GetSystemMetrics(1))
+        if width > 0 and height > 0:
+            return (width, height)
+    return None
+
+
+def _is_primary_screen_4k_windows() -> bool:
+    """Check whether Windows primary screen is at least 3840x2160."""
+    pixels = _detect_primary_screen_pixels_windows()
+    if not pixels:
+        return False
+    width, height = pixels
+    return int(width) >= 3840 and int(height) >= 2160
+
+
+def _resolve_startup_ui_scale(*, config_exists: bool, configured_scale) -> float:
+    """Resolve startup UI scale without overriding existing user settings."""
+    scale = _coerce_ui_scale(configured_scale, default=1.0)
+    if bool(config_exists):
+        return scale
+    if _is_primary_screen_4k_windows():
+        return 1.25
+    return scale
+
+
+def _normalize_inventory_yaml_path(path_text) -> str:
+    """Normalize inventory YAML path."""
     raw = str(path_text or "").strip()
     if not raw:
         return ""
+    return os.path.abspath(raw)
 
-    abs_path = os.path.abspath(raw)
 
-    # Preserve demo/default inventory paths that have .demo. suffix
-    if ".demo." in os.path.basename(abs_path).lower():
-        return abs_path
+def _default_inventory_payload():
+    return {
+        "meta": {
+            "version": "1.0",
+            "box_layout": {
+                "rows": 9,
+                "cols": 9,
+                "box_count": 5,
+                "box_numbers": [1, 2, 3, 4, 5],
+            },
+            "custom_fields": [],
+            "cell_line_required": True,
+        },
+        "inventory": [],
+    }
 
-    return abs_path
+
+def _write_inventory_yaml(path, payload=None):
+    target_path = os.path.abspath(str(path or "").strip())
+    if not target_path:
+        raise ValueError("target inventory path is required")
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+    with open(target_path, "w", encoding="utf-8") as handle:
+        yaml.safe_dump(payload or _default_inventory_payload(), handle, allow_unicode=True, sort_keys=False)
+    return target_path
+
+
+def _resolve_managed_startup_yaml_path(configured_yaml_path):
+    """Resolve active YAML path under managed-inventories lock mode."""
+    ensure_inventories_root()
+
+    configured = _normalize_inventory_yaml_path(configured_yaml_path)
+    if configured:
+        with suppress(Exception):
+            return assert_allowed_inventory_yaml_path(configured, must_exist=True)
+
+    latest = latest_managed_inventory_yaml_path()
+    if latest:
+        return assert_allowed_inventory_yaml_path(latest, must_exist=True)
+
+    default_yaml = create_managed_dataset_yaml_path("inventory")
+    _write_inventory_yaml(default_yaml)
+    return assert_allowed_inventory_yaml_path(default_yaml, must_exist=True)
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.settings = QSettings("EamonFox", "LN2InventoryAgent")
+        config_file_exists = os.path.isfile(DEFAULT_CONFIG_FILE)
         self.gui_config = load_gui_config()
+        if not config_file_exists:
+            self.gui_config["ui_scale"] = _resolve_startup_ui_scale(
+                config_exists=False,
+                configured_scale=self.gui_config.get("ui_scale", 1.0),
+            )
         set_language(self.gui_config.get("language") or "zh-CN")
 
         self.setWindowTitle(tr("app.title"))
@@ -111,9 +236,9 @@ class MainWindow(QMainWindow):
 
         # One-time migration from legacy QSettings if unified config file does not exist yet.
         # Guarded by a dedicated marker to avoid re-importing stale paths after users
-        # intentionally remove ~/.ln2agent/config.yaml.
+        # intentionally remove managed config.yaml.
         migrated_once = self.settings.value("migration/unified_config_done", False, type=bool)
-        if (not os.path.isfile(DEFAULT_CONFIG_FILE)) and (not migrated_once):
+        if (not config_file_exists) and (not migrated_once):
             migrated_model = self.settings.value("ai/model", "", type=str)
             migrated_steps = self.settings.value("ai/max_steps", DEFAULT_MAX_STEPS, type=int)
             self.gui_config["ai"] = {
@@ -125,9 +250,21 @@ class MainWindow(QMainWindow):
             self.settings.setValue("migration/unified_config_done", True)
 
         configured_yaml = _normalize_inventory_yaml_path(self.gui_config.get("yaml_path") or "")
-        self.current_yaml_path = configured_yaml or YAML_PATH
+        self.current_yaml_path = _resolve_managed_startup_yaml_path(
+            configured_yaml_path=configured_yaml,
+        )
+        self._migration_mode_enabled = False
+        self.gui_config["yaml_path"] = self.current_yaml_path
+        save_gui_config(self.gui_config)
 
         self.setup_ui()
+        self._dataset_session = DatasetSessionController(
+            self,
+            normalize_yaml_path=_normalize_inventory_yaml_path,
+        )
+        self._import_journey = ImportJourneyService(
+            workspace_service=MigrationWorkspaceService(),
+        )
         self._state_flow = WindowStateFlow(self)
         self._startup_flow = StartupFlow(
             self,
@@ -136,8 +273,7 @@ class MainWindow(QMainWindow):
             github_api_latest=_GITHUB_API_LATEST,
             is_version_newer=_is_version_newer,
             show_nonblocking_dialog=self._show_nonblocking_dialog,
-            export_task_bundle_dialog_cls=ExportTaskBundleDialog,
-            import_validated_yaml_dialog_cls=ImportValidatedYamlDialog,
+            start_import_journey=self.on_import_existing_data,
         )
         self._settings_flow = SettingsFlow(self, normalize_yaml_path=_normalize_inventory_yaml_path)
         self._dataset_flow = DatasetFlow(self)
@@ -147,6 +283,10 @@ class MainWindow(QMainWindow):
         self.restore_ui_settings()
         self._startup_checks_scheduled = False
         self._floating_dialog_refs = []
+        self._migration_status_indicator = QLabel(tr("main.migrationModeStatus"))
+        self._migration_status_indicator.setObjectName("mainMigrationStatusIndicator")
+        self._migration_status_indicator.setVisible(False)
+        self.statusBar().addPermanentWidget(self._migration_status_indicator)
 
         self.statusBar().showMessage(tr("app.ready"), 2000)
         self.overview_panel.refresh()
@@ -181,10 +321,21 @@ class MainWindow(QMainWindow):
         self._update_dataset_label()
         top.addWidget(self.dataset_label, 1)
 
+        self.migration_mode_badge = QLabel(tr("main.migrationModeBadge"))
+        self.migration_mode_badge.setObjectName("mainMigrationModeBadge")
+        self.migration_mode_badge.setVisible(False)
+        top.addWidget(self.migration_mode_badge)
+
         new_dataset_btn = QPushButton(tr("main.new"))
         new_dataset_btn.setIcon(get_icon(Icons.FILE_PLUS))
         new_dataset_btn.clicked.connect(self.on_create_new_dataset)
         top.addWidget(new_dataset_btn)
+
+        import_dataset_btn = QPushButton(tr("main.importExistingDataTitle"))
+        import_dataset_btn.setIcon(get_icon(Icons.FOLDER_OPEN))
+        import_dataset_btn.setToolTip(tr("main.importExistingDataHint"))
+        import_dataset_btn.clicked.connect(self.on_import_existing_data)
+        top.addWidget(import_dataset_btn)
 
         audit_log_btn = QPushButton(tr("main.auditLog"))
         audit_log_btn.setIcon(get_icon(Icons.FILE_TEXT))
@@ -217,6 +368,7 @@ class MainWindow(QMainWindow):
             lambda: self.current_yaml_path,
             plan_store=self.plan_store,
             manage_boxes_request_handler=self.handle_manage_boxes_request,
+            import_dataset_handler=self._handle_ai_imported_dataset,
         )
 
         # Apply layout constraints from theme.py
@@ -262,6 +414,7 @@ class MainWindow(QMainWindow):
         self.overview_panel.request_prefill_background.connect(self.operations_panel.set_prefill_background)
         self.overview_panel.request_add_prefill.connect(self.operations_panel.set_add_prefill)
         self.overview_panel.request_add_prefill_background.connect(self.operations_panel.set_add_prefill_background)
+        self.overview_panel.request_export_inventory_csv.connect(self.operations_panel.on_export_inventory_csv)
         self.overview_panel.data_loaded.connect(self.operations_panel.update_records_cache)
 
         # Operations -> Overview (refresh after execution)
@@ -273,6 +426,7 @@ class MainWindow(QMainWindow):
         # AI -> Operations: agent writes to plan_store directly;
         # on_change callback triggers GUI refresh (see _wire_plan_store below).
         self.ai_panel.operation_completed.connect(self.on_operation_completed)
+        self.ai_panel.migration_mode_changed.connect(self._on_migration_mode_changed)
 
         # Plan store -> Operations panel (thread-safe refresh)
         self._wire_plan_store()
@@ -351,6 +505,50 @@ class MainWindow(QMainWindow):
     def on_operation_completed(self, success):
         self._state_flow.on_operation_completed(success)
 
+    def _on_migration_mode_changed(self, enabled):
+        locked = bool(enabled)
+        self._migration_mode_enabled = locked
+        badge = getattr(self, "migration_mode_badge", None)
+        if badge is not None:
+            badge.setVisible(locked)
+        status_indicator = getattr(self, "_migration_status_indicator", None)
+        if status_indicator is not None:
+            status_indicator.setVisible(locked)
+        if locked:
+            show_notice_fn = getattr(self, "_show_migration_mode_entry_notice", None)
+            if callable(show_notice_fn):
+                with suppress(Exception):
+                    show_notice_fn()
+        operations_panel = getattr(self, "operations_panel", None)
+        if operations_panel is not None and hasattr(operations_panel, "set_migration_mode"):
+            operations_panel.set_migration_mode(locked)
+
+    def _show_migration_mode_entry_notice(self):
+        cfg = self.gui_config if isinstance(getattr(self, "gui_config", None), dict) else {}
+        if bool(cfg.get("migration_mode_notice_suppressed", False)):
+            return
+
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle(tr("main.migrationModeDialogTitle"))
+        msg_box.setText(tr("main.migrationModeDialogText"))
+        msg_box.setIcon(QMessageBox.Information)
+
+        dont_show_cb = QCheckBox(tr("main.doNotShowAgain"), msg_box)
+        msg_box.setCheckBox(dont_show_cb)
+        ok_btn = msg_box.addButton(tr("common.ok"), QMessageBox.AcceptRole)
+        msg_box.setDefaultButton(ok_btn)
+
+        def _persist_notice_choice(_result=0):
+            cb = msg_box.checkBox()
+            if cb is None or not cb.isChecked():
+                return
+            cfg["migration_mode_notice_suppressed"] = True
+            self.gui_config = cfg
+            save_gui_config(cfg)
+
+        msg_box.finished.connect(_persist_notice_choice)
+        self._show_nonblocking_dialog(msg_box)
+
     def _update_dataset_label(self):
         if hasattr(self, "_state_flow"):
             self._state_flow.update_dataset_label()
@@ -358,7 +556,6 @@ class MainWindow(QMainWindow):
         self.dataset_label.setText(self.current_yaml_path)
 
     def on_open_settings(self):
-        previous_yaml_abs = os.path.abspath(str(self.current_yaml_path or ""))
         dialog = SettingsDialog(
             self,
             config={
@@ -370,14 +567,16 @@ class MainWindow(QMainWindow):
                 "ui_scale": self.gui_config.get("ui_scale", 1.0),
             },
             on_create_new_dataset=self.on_create_new_dataset,
+            on_rename_dataset=self.on_rename_dataset,
+            on_delete_dataset=self.on_delete_dataset,
             on_manage_boxes=self.on_manage_boxes,
             on_data_changed=self._on_settings_data_changed,
             app_version=APP_VERSION,
             app_release_url=APP_RELEASE_URL,
             github_api_latest=_GITHUB_API_LATEST,
             root_dir=ROOT,
-            export_task_bundle_dialog_cls=ExportTaskBundleDialog,
-            import_validated_yaml_dialog_cls=ImportValidatedYamlDialog,
+            on_import_existing_data=self.on_import_existing_data,
+            on_export_inventory_csv=self.operations_panel.on_export_inventory_csv,
             custom_fields_dialog_cls=CustomFieldsDialog,
             normalize_yaml_path=_normalize_inventory_yaml_path,
         )
@@ -386,13 +585,12 @@ class MainWindow(QMainWindow):
 
         values = dialog.get_values()
         selected_yaml = _normalize_inventory_yaml_path(values["yaml_path"])
-        self.current_yaml_path = selected_yaml or self.current_yaml_path or YAML_PATH
+        try:
+            self._dataset_session.switch_to(selected_yaml, reason="manual_switch")
+        except Exception as exc:
+            self.statusBar().showMessage(str(exc), 5000)
+            return
         self._settings_flow.apply_dialog_values(values)
-
-        new_yaml_abs = os.path.abspath(str(self.current_yaml_path or ""))
-        if previous_yaml_abs != new_yaml_abs:
-            self.operations_panel.reset_for_dataset_switch()
-
         self._settings_flow.finalize_after_settings()
 
     def _on_settings_data_changed(self, *, yaml_path=None, meta=None):
@@ -419,44 +617,181 @@ class MainWindow(QMainWindow):
             yaml_path_override=yaml_path_override,
         )
 
+    def on_import_existing_data(self, checked=False, *, parent=None):
+        _ = checked
+        result = self._import_journey.run(
+            parent=parent or self,
+        )
+        if result.ok:
+            self._handoff_import_journey_to_ai(result)
+            self.statusBar().showMessage(
+                tr("main.importJourneyStaged"),
+                4000,
+            )
+            return result.stage
+        if result.error_code == "user_cancelled":
+            return ""
+        QMessageBox.warning(
+            self,
+            tr("main.importExistingDataTitle"),
+            result.message or tr("main.importValidatedFailed"),
+        )
+        self.statusBar().showMessage(result.message or tr("main.importValidatedFailed"), 6000)
+        return ""
+
+    def _handoff_import_journey_to_ai(self, result):
+        prompt_text = str(getattr(result, "ai_prompt", "") or "").strip()
+        if not prompt_text:
+            prompt_text = tr("main.importAiPromptFallback")
+        self.ai_panel.prepare_import_migration(prompt_text, focus=True)
+
+    def _handle_ai_imported_dataset(self, imported_yaml_path):
+        switched_path = self._dataset_session.switch_to(
+            imported_yaml_path,
+            reason="import_success",
+        )
+        self.statusBar().showMessage(
+            t("main.importOpened", path=switched_path),
+            4000,
+        )
+        return switched_path
+
+    def on_rename_dataset(self, current_yaml_path, new_dataset_name):
+        source_yaml = _normalize_inventory_yaml_path(current_yaml_path or self.current_yaml_path)
+        new_yaml_path = rename_managed_dataset_yaml_path(source_yaml, new_dataset_name)
+
+        details = build_dataset_rename_payload(source_yaml, new_yaml_path)
+        try:
+            current_data = load_yaml(new_yaml_path)
+        except Exception:
+            current_data = None
+
+        audit_failed = None
+        try:
+            append_audit_event(
+                yaml_path=new_yaml_path,
+                before_data=current_data,
+                after_data=current_data,
+                backup_path=None,
+                warnings=[],
+                audit_meta={
+                    "action": "dataset_rename",
+                    "source": "app_gui.settings",
+                    "details": details,
+                },
+            )
+        except Exception as exc:
+            audit_failed = str(exc)
+
+        switched = self._dataset_session.switch_to(
+            new_yaml_path,
+            reason="dataset_rename",
+        )
+        if audit_failed:
+            self.statusBar().showMessage(
+                t("settings.renameDatasetSuccessWithAuditWarning", path=switched, error=audit_failed),
+                6000,
+            )
+        else:
+            self.statusBar().showMessage(
+                t("settings.renameDatasetSuccess", path=switched),
+                4000,
+            )
+        return switched
+
+    def on_delete_dataset(self, current_yaml_path):
+        source_yaml = _normalize_inventory_yaml_path(current_yaml_path or self.current_yaml_path)
+        deleted = delete_managed_dataset_yaml_path(source_yaml)
+        deleted_yaml = _normalize_inventory_yaml_path(deleted.get("yaml_path") or source_yaml)
+
+        rows = list_managed_datasets()
+        fallback_yaml = ""
+        if rows:
+            fallback_yaml = _normalize_inventory_yaml_path(rows[0].get("yaml_path"))
+        if not fallback_yaml:
+            fallback_yaml = create_managed_dataset_yaml_path("inventory")
+            _write_inventory_yaml(fallback_yaml)
+        fallback_yaml = assert_allowed_inventory_yaml_path(fallback_yaml, must_exist=True)
+
+        details = build_dataset_delete_payload(deleted_yaml, fallback_yaml)
+        try:
+            current_data = load_yaml(fallback_yaml)
+        except Exception:
+            current_data = None
+
+        audit_failed = None
+        try:
+            append_audit_event(
+                yaml_path=fallback_yaml,
+                before_data=current_data,
+                after_data=current_data,
+                backup_path=None,
+                warnings=[],
+                audit_meta={
+                    "action": "dataset_delete",
+                    "source": "app_gui.settings",
+                    "details": details,
+                },
+            )
+        except Exception as exc:
+            audit_failed = str(exc)
+
+        switched = self._dataset_session.switch_to(
+            fallback_yaml,
+            reason="dataset_delete",
+        )
+        if audit_failed:
+            self.statusBar().showMessage(
+                t("settings.deleteDatasetSuccessWithAuditWarning", path=switched, error=audit_failed),
+                6000,
+            )
+        else:
+            self.statusBar().showMessage(
+                t("settings.deleteDatasetSuccess", path=switched),
+                4000,
+            )
+        return switched
+
     def on_create_new_dataset(self, update_window=True):
-        previous_yaml_abs = os.path.abspath(str(self.current_yaml_path or ""))
         layout_dlg = NewDatasetDialog(self)
         if layout_dlg.exec() != QDialog.Accepted:
             return
         box_layout = layout_dlg.get_layout()
 
-        default_path = str(self.current_yaml_path or "").strip()
-        if not default_path:
-            default_path = os.getcwd()
-        target_path, _ = QFileDialog.getSaveFileName(
+        suggested = sanitize_dataset_name("", fallback="inventory")
+        dataset_name, ok = QInputDialog.getText(
             self,
             tr("main.new"),
-            default_path,
-            "YAML Files (*.yaml *.yml)",
+            tr("main.newDatasetNamePrompt"),
+            text=suggested,
         )
-        if not target_path:
+        if not ok:
+            return
+        dataset_name = sanitize_dataset_name(dataset_name, fallback="inventory")
+        try:
+            target_path = create_managed_dataset_yaml_path(dataset_name)
+        except Exception as exc:
+            self.statusBar().showMessage(str(exc), 5000)
             return
 
-        target_path = _normalize_inventory_yaml_path(target_path)
         created_path = self._dataset_flow.create_dataset_file(
             target_path=target_path,
             box_layout=box_layout,
             custom_fields_dialog_cls=CustomFieldsDialog,
         )
         if not created_path:
+            with suppress(OSError):
+                os.rmdir(os.path.dirname(target_path))
             return
 
         if not update_window:
             return created_path
 
-        self.current_yaml_path = created_path
-        if previous_yaml_abs != os.path.abspath(str(self.current_yaml_path or "")):
-            self.operations_panel.reset_for_dataset_switch()
-        self._update_dataset_label()
-        self.gui_config["yaml_path"] = self.current_yaml_path
-        save_gui_config(self.gui_config)
-        self.overview_panel.refresh()
+        try:
+            self._dataset_session.switch_to(created_path, reason="new_dataset")
+        except Exception as exc:
+            self.statusBar().showMessage(str(exc), 5000)
+            return
         self.statusBar().showMessage(
             t("main.fileCreated", path=self.current_yaml_path),
             4000,
@@ -473,8 +808,13 @@ class MainWindow(QMainWindow):
 
 def main():
     # Load GUI config BEFORE creating QApplication to set scale factor
+    config_file_exists = os.path.isfile(DEFAULT_CONFIG_FILE)
     gui_config = load_gui_config()
-    ui_scale = gui_config.get("ui_scale", 1.0)
+    ui_scale = _resolve_startup_ui_scale(
+        config_exists=config_file_exists,
+        configured_scale=gui_config.get("ui_scale", 1.0),
+    )
+    gui_config["ui_scale"] = ui_scale
 
     # Set scale factor BEFORE creating QApplication (Qt 6 method)
     if ui_scale != 1.0:

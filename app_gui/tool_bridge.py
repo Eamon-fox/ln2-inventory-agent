@@ -1,12 +1,18 @@
-﻿"""GUI-facing bridge to the unified Tool API."""
+"""GUI-facing bridge to the unified Tool API."""
 
 import os
 
-from agent.llm_client import DEFAULT_PROVIDER, DeepSeekLLMClient, ZhipuLLMClient, PROVIDER_DEFAULTS
+from agent.llm_client import DEFAULT_PROVIDER, DeepSeekLLMClient, ZhipuLLMClient, MiniMaxLLMClient, PROVIDER_DEFAULTS
 from agent.react_agent import ReactAgent
 from agent.tool_runner import AgentToolRunner
-from app_gui.gui_config import DEFAULT_MAX_STEPS
+from agent.tool_access_profiles import (
+    normalize_agent_mode,
+    resolve_allowed_tools,
+    should_expose_inventory_context,
+)
+from app_gui.gui_config import DEFAULT_MAX_STEPS, MAX_AGENT_STEPS
 from app_gui.i18n import tr
+from lib.inventory_paths import assert_allowed_inventory_yaml_path
 from lib.tool_api import (
     build_actor_context,
     tool_add_entry,
@@ -55,6 +61,18 @@ class GuiToolBridge:
             session_id=self._session_id,
         )
 
+    @staticmethod
+    def _path_validation_failed(exc):
+        return {
+            "ok": False,
+            "error_code": "inventory_path_not_allowed",
+            "message": str(exc),
+        }
+
+    @staticmethod
+    def _guard_yaml_path(yaml_path, *, must_exist=True):
+        return assert_allowed_inventory_yaml_path(yaml_path, must_exist=must_exist)
+
     def _resolve_request_backup_path(
         self,
         *,
@@ -74,29 +92,52 @@ class GuiToolBridge:
 
     @staticmethod
     def _backup_create_failed(exc):
-        return {
+        error_code = str(getattr(exc, "code", "") or "backup_create_failed")
+        message = str(getattr(exc, "message", "") or f"Failed to create request backup: {exc}")
+        payload = {
             "ok": False,
-            "error_code": "backup_create_failed",
-            "message": f"Failed to create request backup: {exc}",
+            "error_code": error_code,
+            "message": message,
         }
+        resolved_path = str(getattr(exc, "resolved_path", "") or "").strip()
+        if resolved_path:
+            payload["resolved_path"] = resolved_path
+        return payload
 
     def list_empty_positions(self, yaml_path, box=None):
+        try:
+            yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
+        except Exception as exc:
+            return self._path_validation_failed(exc)
         return tool_list_empty_positions(yaml_path=yaml_path, box=box)
 
     def export_inventory_csv(self, yaml_path, output_path):
+        try:
+            yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
+        except Exception as exc:
+            return self._path_validation_failed(exc)
         return tool_export_inventory_csv(
             yaml_path=yaml_path,
             output_path=output_path,
         )
 
     def generate_stats(self, yaml_path, box=None, include_inactive=False):
+        try:
+            yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
+        except Exception as exc:
+            return self._path_validation_failed(exc)
         return tool_generate_stats(
             yaml_path=yaml_path,
             box=box,
             include_inactive=include_inactive,
+            full_records_for_gui=True,
         )
 
     def collect_timeline(self, yaml_path, days=7, all_history=False):
+        try:
+            yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
+        except Exception as exc:
+            return self._path_validation_failed(exc)
         return tool_collect_timeline(yaml_path=yaml_path, days=days, all_history=all_history)
 
     def list_audit_timeline(
@@ -109,6 +150,10 @@ class GuiToolBridge:
         start_date=None,
         end_date=None,
     ):
+        try:
+            yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
+        except Exception as exc:
+            return self._path_validation_failed(exc)
         return tool_list_audit_timeline(
             yaml_path=yaml_path,
             limit=limit,
@@ -120,6 +165,10 @@ class GuiToolBridge:
         )
 
     def add_entry(self, yaml_path, **payload):
+        try:
+            yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
+        except Exception as exc:
+            return self._path_validation_failed(exc)
         execution_mode = payload.get("execution_mode")
         dry_run = bool(payload.get("dry_run", False))
         request_backup_path = payload.pop("request_backup_path", None)
@@ -152,6 +201,10 @@ class GuiToolBridge:
         request_backup_path=None,
     ):
         try:
+            yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
+        except Exception as exc:
+            return self._path_validation_failed(exc)
+        try:
             resolved_backup = self._resolve_request_backup_path(
                 yaml_path=yaml_path,
                 execution_mode=execution_mode,
@@ -175,6 +228,10 @@ class GuiToolBridge:
         )
 
     def takeout(self, yaml_path, **payload):
+        try:
+            yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
+        except Exception as exc:
+            return self._path_validation_failed(exc)
         execution_mode = payload.get("execution_mode")
         dry_run = bool(payload.get("dry_run", False))
         request_backup_path = payload.pop("request_backup_path", None)
@@ -198,6 +255,10 @@ class GuiToolBridge:
         )
 
     def move(self, yaml_path, **payload):
+        try:
+            yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
+        except Exception as exc:
+            return self._path_validation_failed(exc)
         execution_mode = payload.get("execution_mode")
         dry_run = bool(payload.get("dry_run", False))
         request_backup_path = payload.pop("request_backup_path", None)
@@ -229,6 +290,10 @@ class GuiToolBridge:
         request_backup_path=None,
     ):
         try:
+            yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
+        except Exception as exc:
+            return self._path_validation_failed(exc)
+        try:
             resolved_backup = self._resolve_request_backup_path(
                 yaml_path=yaml_path,
                 execution_mode=execution_mode,
@@ -249,6 +314,10 @@ class GuiToolBridge:
         )
 
     def adjust_box_count(self, yaml_path, **payload):
+        try:
+            yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
+        except Exception as exc:
+            return self._path_validation_failed(exc)
         execution_mode = payload.get("execution_mode")
         dry_run = bool(payload.get("dry_run", False))
         request_backup_path = payload.pop("request_backup_path", None)
@@ -281,6 +350,10 @@ class GuiToolBridge:
         auto_backup=True,
         request_backup_path=None,
     ):
+        try:
+            yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
+        except Exception as exc:
+            return self._path_validation_failed(exc)
         try:
             resolved_backup = self._resolve_request_backup_path(
                 yaml_path=yaml_path,
@@ -320,7 +393,12 @@ class GuiToolBridge:
         _expose_llm=None,
         provider=None,
         stop_event=None,
+        agent_mode="default",
     ):
+        try:
+            yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
+        except Exception as exc:
+            return self._path_validation_failed(exc)
         prompt = str(query or "").strip()
         if not prompt:
             return {
@@ -339,17 +417,20 @@ class GuiToolBridge:
                 "message": f"max_steps must be an integer: {max_steps}",
                 "result": None,
             }
-        if steps < 1 or steps > 20:
+        if steps < 1 or steps > MAX_AGENT_STEPS:
             return {
                 "ok": False,
                 "error_code": "invalid_max_steps",
-                "message": "max_steps must be between 1 and 20",
+                "message": f"max_steps must be between 1 and {MAX_AGENT_STEPS}",
                 "result": None,
             }
 
         provider = (provider or "").strip().lower() or DEFAULT_PROVIDER
         if provider not in PROVIDER_DEFAULTS:
             provider = DEFAULT_PROVIDER
+        normalized_agent_mode = normalize_agent_mode(agent_mode)
+        allowed_tools = resolve_allowed_tools(normalized_agent_mode)
+        expose_inventory_context = should_expose_inventory_context(normalized_agent_mode)
         provider_cfg = PROVIDER_DEFAULTS[provider]
         use_thinking = bool(thinking_enabled)
         chosen_model = (model or "").strip() or os.environ.get(f"{provider.upper()}_MODEL") or provider_cfg["model"]
@@ -358,6 +439,8 @@ class GuiToolBridge:
         try:
             if provider == "zhipu":
                 llm = ZhipuLLMClient(model=chosen_model, api_key=api_key, thinking_enabled=use_thinking)
+            elif provider == "minimax":
+                llm = MiniMaxLLMClient(model=chosen_model, api_key=api_key, thinking_enabled=use_thinking)
             else:
                 llm = DeepSeekLLMClient(model=chosen_model, api_key=api_key, thinking_enabled=use_thinking)
             if callable(_expose_llm):
@@ -366,6 +449,8 @@ class GuiToolBridge:
                 yaml_path=yaml_path,
                 session_id=self._session_id,
                 plan_store=plan_store,
+                allowed_tools=allowed_tools,
+                expose_inventory_context=expose_inventory_context,
             )
             if callable(_expose_runner):
                 _expose_runner(runner)
@@ -420,5 +505,6 @@ class GuiToolBridge:
             "result": result,
             "mode": provider,
             "model": chosen_model,
+            "agent_mode": normalized_agent_mode,
         }
 

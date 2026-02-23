@@ -81,10 +81,12 @@ class NewDatasetDialog(QDialog):
             self.cols_spin.setValue(c)
 
     def get_layout(self):
+        box_count = self.box_count_spin.value()
         result = {
             "rows": self.rows_spin.value(),
             "cols": self.cols_spin.value(),
-            "box_count": self.box_count_spin.value(),
+            "box_count": box_count,
+            "box_numbers": list(range(1, box_count + 1)),
         }
         indexing = self.indexing_combo.currentData()
         if indexing and indexing != "numeric":
