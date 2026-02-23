@@ -6,7 +6,6 @@
 - `app_gui/`: PySide6 desktop GUI. `app_gui/tool_bridge.py` adapts GUI actions to Tool API calls. i18n: `app_gui/i18n/translations/{en,zh-CN}.json`.
 - `agent/`: ReAct agent runtime (DeepSeek client + tool runner) calling the same Tool API.
 - `tests/`: `pytest` suite for lib/GUI/agent.
-- `references/` and `demo/`: Sample config/data for local testing.
 - `ln2_inventory.spec` and `installer/windows/`: Windows packaging (PyInstaller + Inno Setup).
 
 ## Build, Test, and Development Commands

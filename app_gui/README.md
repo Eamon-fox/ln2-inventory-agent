@@ -46,7 +46,7 @@ Current status:
 Run:
 
 ```bash
-pip install PySide6
+pip install "PySide6>=6.6"
 python app_gui/main.py
 ```
 

@@ -26,6 +26,8 @@ ln2_inventory_audit.jsonl
 ln2_inventory.html
 .ln2_inventory_http_server.json
 .ln2agent-data/
+config/config.yaml
+inventories/
 
 # IDE & Editors
 .vscode/
@@ -43,6 +45,16 @@ Thumbs.db
 *.bak
 *.cache
 /nul
+.tmp_opencode/
+.ruff_cache/
+debug_output/
+
+# Fixed migrate workspace (runtime user data)
+migrate/manifest.json
+migrate/inputs/*
+!migrate/inputs/.gitkeep
+migrate/output/*
+!migrate/output/.gitkeep
 
 # Testing
 .pytest_cache/

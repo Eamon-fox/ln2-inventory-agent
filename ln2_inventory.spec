@@ -28,8 +28,12 @@ a = Analysis(
     datas=[
         ("app_gui/i18n/translations", "app_gui/i18n/translations"),
         ("app_gui/assets", "app_gui/assets"),
+        ("migration_assets", "migration_assets"),
+        ("migrate/README.md", "migrate"),
+        ("migrate/inputs/.gitkeep", "migrate/inputs"),
+        ("migrate/output/.gitkeep", "migrate/output"),
     ],
-    hiddenimports=["yaml", "mistune"],
+    hiddenimports=["yaml", "mistune", "openpyxl", "et_xmlfile"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -73,8 +77,3 @@ coll = COLLECT(
     name="SnowFox",
 )
 
-# Copy demo folder to output directory
-demo_src = os.path.join(os.path.dirname(SPEC), "demo", "ln2_inventory.demo.yaml")
-demo_dst_dir = os.path.join(coll.name, "demo")
-os.makedirs(demo_dst_dir, exist_ok=True)
-shutil.copy2(demo_src, demo_dst_dir)

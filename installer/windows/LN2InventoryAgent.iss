@@ -26,7 +26,7 @@ AppId={{7C2D9B8B-A08F-4C69-A8E7-2A04A3010049}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={autopf}\{#MyAppName}
+DefaultDirName={localappdata}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=..\..\dist\installer
@@ -36,7 +36,7 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-PrivilegesRequired=admin
+PrivilegesRequired=lowest
 UninstallDisplayIcon={app}\{#MyAppExeName}
 SetupIconFile=..\..\installer\windows\icon.ico
 LicenseFile=..\..\LICENSE
@@ -73,11 +73,7 @@ var
   ThemeLabel: TLabel;
 
 procedure InitializeWizard;
-var
-  ConfigDir: string;
 begin
-  ConfigDir := ExpandConstant('{userappdata}\ln2agent');
-
   LanguagePage := CreateCustomPage(wpSelectDir, 'Language', 'Select your preferred language');
   
   LanguageLabel := TLabel.Create(LanguagePage);
@@ -123,7 +119,14 @@ var
 begin
   if CurStep = ssPostInstall then
   begin
-    ConfigDir := ExpandConstant('{userappdata}\ln2agent');
+    { Keep installer bootstrap path aligned with app_gui/gui_config.py default:
+      {app}\config\config.yaml }
+    ConfigDir := ExpandConstant('{app}\config');
+    { Release structure:
+      {app}\SnowFox-<version>.exe
+      {app}\inventories\<dataset>\inventory.yaml
+      {app}\config\config.yaml }
+    ForceDirectories(ExpandConstant('{app}\inventories'));
     ForceDirectories(ConfigDir);
     ConfigFile := ConfigDir + '\config.yaml';
 
@@ -139,17 +142,17 @@ begin
 
     StringList := TStringList.Create;
     try
-      StringList.Add('yaml_path:');
+      StringList.Add('yaml_path: ""');
       StringList.Add('api_keys: {}');
       StringList.Add('language: "' + LangCode + '"');
       StringList.Add('theme: "' + ThemeCode + '"');
       StringList.Add('last_notified_release: "0.0.0"');
       StringList.Add('release_notes_preview: ""');
-      StringList.Add('import_prompt_seen: false');
+      StringList.Add('import_onboarding_seen: false');
       StringList.Add('ai:');
       StringList.Add('  provider: deepseek');
       StringList.Add('  model: null');
-      StringList.Add('  max_steps: 12');
+      StringList.Add('  max_steps: 120');
       StringList.Add('  thinking_enabled: true');
       StringList.Add('  custom_prompt: ""');
       StringList.SaveToFile(ConfigFile);
