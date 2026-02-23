@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.managed_paths import ManagedPathTestCase
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -74,7 +76,7 @@ def takeout_item(record_id, pos):
     }
 
 
-class PlanPreviewSimTests(unittest.TestCase):
+class PlanPreviewSimTests(ManagedPathTestCase):
     def test_add_predicts_new_ids_and_occupies_positions(self):
         base = {1: make_record(1, box=1, pos=1)}
         plan = [add_item(1, [2, 3], parent="NCCIT", short="stitchr")]
@@ -131,7 +133,7 @@ class PlanPreviewSimTests(unittest.TestCase):
 
     def test_rollback_preview_loads_backup_inventory(self):
         with tempfile.TemporaryDirectory(prefix="ln2_preview_rb_") as td:
-            backup_path = Path(td) / "backup.yaml"
+            backup_path = Path(td) / "inventory.yaml"
             write_yaml(
                 {"meta": {"box_layout": {"rows": 9, "cols": 9}}, "inventory": [make_record(7, box=2, pos=3)]},
                 path=str(backup_path),

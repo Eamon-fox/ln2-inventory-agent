@@ -160,16 +160,29 @@ def _reset_plan_feedback_and_validation(self):
     self._apply_preflight_report(None)
 
 
+def _is_rollback_replace_request(items):
+    incoming = list(items or [])
+    if len(incoming) != 1:
+        return False
+    action = str((incoming[0] or {}).get("action") or "").strip().lower()
+    return action == "rollback"
+
+
 def add_plan_items(self, items):
     """Validate and add items to the plan staging area atomically."""
+    if bool(getattr(self, "_guard_migration_write_action", lambda: False)()):
+        return
     incoming = list(items or [])
     if not incoming:
         return
 
     self._set_plan_feedback("")
+    existing_items = self._plan_store.list_items()
+    replace_with_rollback = _is_rollback_replace_request(incoming)
+    gate_existing_items = [] if replace_with_rollback else existing_items
 
     gate = validate_stage_request(
-        existing_items=self._plan_store.list_items(),
+        existing_items=gate_existing_items,
         incoming_items=incoming,
         yaml_path=self.yaml_path_getter(),
         bridge=self.bridge,
@@ -186,7 +199,14 @@ def add_plan_items(self, items):
 
     if blocked_messages:
         first = blocked_messages[0]
-        user_text = _tr("operations.planRejected", error=first)
+        if replace_with_rollback and existing_items:
+            user_text = _tr(
+                "operations.planRejectedRollbackKept",
+                error=first,
+                count=len(existing_items),
+            )
+        else:
+            user_text = _tr("operations.planRejected", error=first)
         preview = blocked_messages[:3]
         feedback = "\n".join(f"- {msg}" for msg in preview)
         if len(blocked_messages) > 3:
@@ -209,6 +229,28 @@ def add_plan_items(self, items):
 
     accepted = list(gate.get("accepted_items") or [])
     if not accepted:
+        return
+
+    if replace_with_rollback:
+        replaced_count = len(existing_items)
+        self._plan_store.replace_all(accepted)
+        self._refresh_after_plan_items_changed()
+        self._set_plan_feedback("")
+
+        self._publish_plan_items_notice(
+            code="plan.stage.replaced_by_rollback",
+            text=_tr("operations.planRollbackReplaced", count=replaced_count),
+            level="info",
+            timeout=2000,
+            items=accepted,
+            count_key="replaced_count",
+            count_value=replaced_count,
+            include_total_count=True,
+            extra_data={
+                "items": accepted,
+                "replaced_items": existing_items,
+            },
+        )
         return
 
     added = self._plan_store.add(accepted)
@@ -260,6 +302,11 @@ def _run_plan_preflight(self, trigger="manual"):
 
 def _update_execute_button_state(self):
     """Enable/disable Execute button based on preflight results."""
+    if bool(getattr(self, "_is_migration_write_locked", lambda: False)()):
+        self.plan_exec_btn.setEnabled(False)
+        self.plan_exec_btn.setText(_tr("operations.executeAll"))
+        return
+
     if not self._plan_store.count():
         self.plan_exec_btn.setEnabled(False)
         return

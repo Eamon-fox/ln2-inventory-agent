@@ -61,12 +61,22 @@ def _lookup_record(self, rid):
     except (ValueError, TypeError):
         return None
 
+
+def _set_text_widget_value(widget, value):
+    text = str(value or "")
+    if hasattr(widget, "setPlainText"):
+        widget.setPlainText(text)
+        return
+    if hasattr(widget, "setText"):
+        widget.setText(text)
+
+
 def _clear_context_label_groups(base_labels, extra_widgets):
     for lbl in base_labels or []:
-        lbl.setText("-")
+        _set_text_widget_value(lbl, "-")
     for _key, widget_pair in (extra_widgets or {}).items():
         if isinstance(widget_pair, (tuple, list)) and len(widget_pair) >= 2:
-            widget_pair[1].setText("-")
+            _set_text_widget_value(widget_pair[1], "-")
 
 def _populate_record_context_labels(
     self,
@@ -89,14 +99,17 @@ def _populate_record_context_labels(
         field_name="position",
         allow_empty=True,
     )
-    box_label.setText(str(box) if box is not None else "-")
-    position_label.setText(self._position_to_display(position) if position is not None else "-")
-    frozen_label.setText(str(record.get("frozen_at") or "-"))
-    note_label.setText(str(record.get("note") or "-"))
-    cell_line_label.setText(str(record.get("cell_line") or "-"))
+    _set_text_widget_value(box_label, str(box) if box is not None else "-")
+    _set_text_widget_value(
+        position_label,
+        self._position_to_display(position) if position is not None else "-",
+    )
+    _set_text_widget_value(frozen_label, str(record.get("frozen_at") or "-"))
+    _set_text_widget_value(note_label, str(record.get("note") or "-"))
+    _set_text_widget_value(cell_line_label, str(record.get("cell_line") or "-"))
     for key, widget_pair in (extra_widgets or {}).items():
         if isinstance(widget_pair, (tuple, list)) and len(widget_pair) >= 2:
-            widget_pair[1].setText(str(record.get(key) or "-"))
+            _set_text_widget_value(widget_pair[1], str(record.get(key) or "-"))
     return box, position
 
 def _set_last_event_summary_label(self, label_widget, events):

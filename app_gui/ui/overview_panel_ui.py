@@ -52,7 +52,7 @@ def setup_ui(self):
 
     self.ov_filter_keyword = QLineEdit()
     self.ov_filter_keyword.setPlaceholderText(tr("overview.searchPlaceholder"))
-    self.ov_filter_keyword.textChanged.connect(self._apply_filters)
+    self.ov_filter_keyword.textChanged.connect(self._on_filter_keyword_changed)
     filter_row.addWidget(self.ov_filter_keyword, 2)
 
     # More filters button with icon
@@ -235,6 +235,7 @@ def setup_ui(self):
     self.ov_scroll = QScrollArea()
     self.ov_scroll.setWidgetResizable(True)
     self.ov_scroll.installEventFilter(self)
+    self.ov_scroll.viewport().installEventFilter(self)
     self.ov_boxes_widget = QWidget()
     self.ov_boxes_layout = QGridLayout(self.ov_boxes_widget)
     self.ov_boxes_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
@@ -242,6 +243,19 @@ def setup_ui(self):
     self.ov_boxes_layout.setHorizontalSpacing(4)
     self.ov_boxes_layout.setVerticalSpacing(6)
     self.ov_scroll.setWidget(self.ov_boxes_widget)
+
+    # Floating export action anchored to the viewport (fixed position,
+    # so it does not move with box content scroll/zoom).
+    self.ov_export_csv_btn = QPushButton(self.ov_scroll.viewport())
+    self.ov_export_csv_btn.setObjectName("overviewFloatingActionBtn")
+    self.ov_export_csv_btn.setIcon(get_icon(Icons.DOWNLOAD, size=16))
+    self.ov_export_csv_btn.setIconSize(QSize(16, 16))
+    self.ov_export_csv_btn.setFlat(True)
+    self.ov_export_csv_btn.setFixedSize(24, 24)
+    self.ov_export_csv_btn.setToolTip(tr("operations.exportFullCsvHint"))
+    self.ov_export_csv_btn.clicked.connect(self._emit_export_inventory_csv_request)
+    self.ov_export_csv_btn.show()
+    self.ov_export_csv_btn.raise_()
 
     # Table Area
     self.ov_table = QTableWidget()
@@ -261,6 +275,7 @@ def setup_ui(self):
     self.ov_view_stack.addWidget(self.ov_scroll)  # grid
     self.ov_view_stack.addWidget(self.ov_table)   # table
     layout.addWidget(self.ov_view_stack, 1)
+    self._position_floating_actions()
 
 
 def _build_card(self, layout, title):
@@ -274,6 +289,22 @@ def _build_card(self, layout, title):
     card_layout.addWidget(value_label)
     layout.addWidget(card)
     return value_label
+
+
+def _position_floating_actions(self):
+    floating = getattr(self, "ov_export_csv_btn", None)
+    scroll = getattr(self, "ov_scroll", None)
+    if floating is None or scroll is None:
+        return
+    viewport = scroll.viewport()
+    if viewport is None:
+        return
+
+    margin = 2
+    x = max(0, viewport.width() - floating.width() - margin)
+    y = max(0, viewport.height() - floating.height() - margin)
+    floating.move(x, y)
+    floating.raise_()
 
 
 def _is_dark_theme(self):

@@ -353,6 +353,17 @@ class RenderOperationSheetWithGridTests(unittest.TestCase):
         self.assertIn('class="grid-section print-grid-section"', html)
         self.assertIn('class="grid-container print-grid-container"', html)
 
+    def test_print_preview_merges_text_brand_into_original_header(self):
+        html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
+        self.assertNotIn('class="print-page-header"', html)
+        self.assertIn('class="header-title-row"', html)
+        self.assertIn('class="header-brand">SNOWFOX</span>', html)
+        self.assertNotIn("data:image/svg+xml;base64", html)
+
+    def test_print_css_keeps_original_header_visible(self):
+        html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
+        self.assertNotIn(".header {\n                display: none;", html)
+
     def test_print_css_has_break_inside_compat_rules(self):
         html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
         self.assertIn("break-inside: avoid;", html)

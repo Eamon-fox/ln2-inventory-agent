@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import Qt, Signal, Slot, QTimer
 from PySide6.QtWidgets import QWidget, QMenu
 from app_gui.ui.theme import FONT_SIZE_CELL
 from app_gui.ui import overview_panel_filters as _ov_filters
@@ -33,6 +33,7 @@ class OverviewPanel(QWidget):
     request_prefill = Signal(dict)
     request_prefill_background = Signal(dict)
     request_quick_add = Signal()
+    request_export_inventory_csv = Signal()
     request_add_prefill = Signal(dict)
     request_add_prefill_background = Signal(dict)
     # Use object to preserve non-string dict keys (Qt map coercion can drop int keys).
@@ -66,11 +67,20 @@ class OverviewPanel(QWidget):
         self._table_rows = []
         self._table_columns = []
         self._table_row_records = []
+        self._table_version = 0
+        self._column_unique_cache = {}
         self._hover_warmed = False
         self._show_summary_cards = True  # Can be set to False to hide cards
         self._column_filters = {}  # {column_name: filter_config}
         self._plan_store_ref = None
         self._operation_markers = {}
+        self._stats_response_cache = {}
+        self._last_stats_cache_key = None
+        self._cell_render_signatures = {}
+        self._filter_debounce_ms = 120
+        self._filter_apply_timer = QTimer(self)
+        self._filter_apply_timer.setSingleShot(True)
+        self._filter_apply_timer.timeout.connect(self._on_filter_debounce_timeout)
 
         # Animation objects for smooth zoom and scroll transitions
         self._zoom_animation = None
@@ -83,8 +93,13 @@ class OverviewPanel(QWidget):
     _build_card = _ov_ui._build_card
     _is_dark_theme = _ov_ui._is_dark_theme
     _update_view_toggle_icons = _ov_ui._update_view_toggle_icons
+    _position_floating_actions = _ov_ui._position_floating_actions
 
     _on_view_mode_changed = _ov_runtime._on_view_mode_changed
+    _emit_export_inventory_csv_request = _ov_runtime._emit_export_inventory_csv_request
+    _on_filter_keyword_changed = _ov_runtime._on_filter_keyword_changed
+    _schedule_apply_filters = _ov_runtime._schedule_apply_filters
+    _on_filter_debounce_timeout = _ov_runtime._on_filter_debounce_timeout
 
 
     _set_table_columns = _ov_table._set_table_columns
@@ -99,6 +114,7 @@ class OverviewPanel(QWidget):
     _update_box_titles = _ov_grid._update_box_titles
     _warm_hover_animation = _ov_grid._warm_hover_animation
     _rebuild_boxes = _ov_grid._rebuild_boxes
+    _build_cell_render_signature = _ov_grid._build_cell_render_signature
     _paint_cell = _ov_grid._paint_cell
     _set_selected_cell = _ov_grid._set_selected_cell
     _clear_selected_cell = _ov_grid._clear_selected_cell

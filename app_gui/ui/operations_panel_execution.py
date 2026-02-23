@@ -52,6 +52,8 @@ def _is_undo_eligible_item(item):
 
 def execute_plan(self):
     """Execute all staged plan items after user confirmation."""
+    if bool(getattr(self, "_guard_migration_write_action", lambda: False)()):
+        return
     if not self._plan_store.count():
         msg = tr("operations.planNoItemsToExecute")
         self._set_plan_feedback(msg, level="warning")

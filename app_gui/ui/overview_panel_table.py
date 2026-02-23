@@ -79,48 +79,59 @@ def _rebuild_table_rows(self, records):
     self._table_rows = rows
     self._set_table_columns(self._table_columns)
     self._table_row_records = []
+    self._table_version = int(getattr(self, "_table_version", 0) or 0) + 1
+    unique_cache = getattr(self, "_column_unique_cache", None)
+    if isinstance(unique_cache, dict):
+        unique_cache.clear()
+    else:
+        self._column_unique_cache = {}
 
 
 def _render_table_rows(self, rows):
+    rows_list = list(rows or [])
     self.ov_table.setSortingEnabled(False)
-    self.ov_table.setRowCount(0)
-    self._table_row_records = []
+    updates_enabled = bool(self.ov_table.updatesEnabled())
+    self.ov_table.setUpdatesEnabled(False)
 
     RECORD_ROLE = Qt.UserRole + 100
 
     from app_gui.ui import overview_panel as _ov_panel
 
-    for row_index, row_data in enumerate(rows):
-        self.ov_table.insertRow(row_index)
-        values = row_data.get("values") or {}
-        color_value = str(row_data.get("color_value") or "")
-        row_tint = cell_color(color_value or None)
-        record = row_data.get("record")
+    try:
+        self.ov_table.setRowCount(len(rows_list))
+        self._table_row_records = [None] * len(rows_list)
 
-        for col_index, column in enumerate(self._table_columns):
-            value = values.get(column, "")
-            item = QTableWidgetItem(str(value))
-            item.setData(_ov_panel.TABLE_ROW_TINT_ROLE, row_tint)
+        for row_index, row_data in enumerate(rows_list):
+            values = row_data.get("values") or {}
+            color_value = str(row_data.get("color_value") or "")
+            row_tint = cell_color(color_value or None)
+            record = row_data.get("record")
+            self._table_row_records[row_index] = record
 
-            if col_index == 0:
-                item.setData(RECORD_ROLE, record)
+            for col_index, column in enumerate(self._table_columns):
+                value = values.get(column, "")
+                item = QTableWidgetItem(str(value))
+                item.setData(_ov_panel.TABLE_ROW_TINT_ROLE, row_tint)
 
-            if column == "id":
-                with suppress(ValueError, TypeError):
-                    item.setData(Qt.UserRole, int(value))
-            elif column == "location":
-                try:
-                    parts = str(value).split(":")
-                    if len(parts) == 2:
-                        box, pos = int(parts[0]), int(parts[1])
-                        item.setData(Qt.UserRole, box * 1000 + pos)
-                except (ValueError, TypeError):
-                    pass
+                if col_index == 0:
+                    item.setData(RECORD_ROLE, record)
 
-            self.ov_table.setItem(row_index, col_index, item)
-        self._table_row_records.append(record)
+                if column == "id":
+                    with suppress(ValueError, TypeError):
+                        item.setData(Qt.UserRole, int(value))
+                elif column == "location":
+                    try:
+                        parts = str(value).split(":")
+                        if len(parts) == 2:
+                            box, pos = int(parts[0]), int(parts[1])
+                            item.setData(Qt.UserRole, box * 1000 + pos)
+                    except (ValueError, TypeError):
+                        pass
 
-    self.ov_table.setSortingEnabled(True)
+                self.ov_table.setItem(row_index, col_index, item)
+    finally:
+        self.ov_table.setUpdatesEnabled(updates_enabled)
+        self.ov_table.setSortingEnabled(True)
 
 
 def on_table_row_double_clicked(self, row, _col):

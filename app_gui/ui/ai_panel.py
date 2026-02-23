@@ -1,15 +1,17 @@
 from datetime import datetime
+from contextlib import suppress
 import time
 import re
 import random
-from PySide6.QtCore import Qt, Signal, QEvent, QSize
-from PySide6.QtGui import QTextCursor, QPalette, QMouseEvent, QActionGroup
+from PySide6.QtCore import Qt, Signal, QEvent, QSize, QTimer
+from PySide6.QtGui import QTextCursor, QTextBlockFormat, QPalette, QMouseEvent, QActionGroup
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLineEdit, QLabel, QMenu,
     QTextEdit, QSpinBox, QCheckBox
 )
 from agent.llm_client import DEFAULT_PROVIDER, PROVIDER_DEFAULTS
+from app_gui.gui_config import AI_HISTORY_LIMIT, AI_OPERATION_EVENT_POOL_LIMIT, MAX_AGENT_STEPS
 from app_gui.ui.theme import FONT_SIZE_XS, FONT_SIZE_SM, MONO_FONT_CSS_FAMILY, resolve_theme_token
 from app_gui.ui.icons import get_icon, Icons
 from app_gui.system_notice import build_system_notice, coerce_system_notice
@@ -85,13 +87,23 @@ def _md_to_html(text, is_dark=True):
 class AIPanel(QWidget):
     operation_completed = Signal(bool)
     status_message = Signal(str, int) # msg, timeout
+    migration_mode_changed = Signal(bool)
 
-    def __init__(self, bridge, yaml_path_getter, plan_store=None, manage_boxes_request_handler=None):
+    def __init__(
+        self,
+        bridge,
+        yaml_path_getter,
+        plan_store=None,
+        manage_boxes_request_handler=None,
+        import_dataset_handler=None,
+    ):
         super().__init__()
         self.bridge = bridge
         self.yaml_path_getter = yaml_path_getter
         self._plan_store = plan_store
         self._manage_boxes_request_handler = manage_boxes_request_handler
+        self._import_dataset_handler = import_dataset_handler
+        self._agent_mode = "default"
         
         self.ai_history = []
         self.ai_operation_events = []
@@ -100,6 +112,7 @@ class AIPanel(QWidget):
         self.ai_run_thread = None
         self.ai_run_worker = None
         self.ai_active_trace_id = None
+        self._history_snapshot_from_stream_end = False
         self.ai_streaming_active = False
         self.ai_stream_buffer = ""
         self.ai_stream_thought_buffer = ""
@@ -111,11 +124,13 @@ class AIPanel(QWidget):
         self.ai_stream_render_interval_sec = 0.05
         self.ai_last_role = None
         self.ai_stream_has_thought = False
-        self.ai_thinking_collapsed = False
-        self.ai_stream_thought_collapsed = False
-        self.ai_stream_thought_id = None
-        self.ai_message_blocks = []
         self.ai_collapsible_blocks = []
+        self.ai_auto_follow_enabled = True
+        self.ai_unseen_message_count = 0
+        self.ai_scroll_bottom_threshold_px = 24
+        self.ai_programmatic_scroll_lock = False
+        self.ai_chat_write_in_progress = False
+        self._run_btn_attention_timer = None
 
         self.setup_ui()
         self.refresh_placeholder()
@@ -125,11 +140,17 @@ class AIPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 4)
         layout.setSpacing(0)
 
+        self._migration_mode_banner = QLabel(tr("ai.migrationModeBanner"))
+        self._migration_mode_banner.setObjectName("aiMigrationModeBanner")
+        self._migration_mode_banner.setWordWrap(True)
+        self._migration_mode_banner.setVisible(False)
+        layout.addWidget(self._migration_mode_banner)
+
         # Controls (hidden, values managed via Settings)
         self.ai_provider = QLineEdit()
         self.ai_model = QLineEdit()
         self.ai_steps = QSpinBox()
-        self.ai_steps.setRange(1, 20)
+        self.ai_steps.setRange(1, MAX_AGENT_STEPS)
         self.ai_thinking_enabled = QCheckBox()
         self.ai_custom_prompt = ""
         provider_cfg = PROVIDER_DEFAULTS.get(DEFAULT_PROVIDER, {})
@@ -148,6 +169,12 @@ class AIPanel(QWidget):
         self.ai_chat.viewport().installEventFilter(self)
         self.ai_chat.viewport().setCursor(Qt.ArrowCursor)
         layout.addWidget(self.ai_chat, 1)
+        self.ai_new_msg_btn = QPushButton(self.ai_chat.viewport())
+        self.ai_new_msg_btn.setObjectName("aiNewMessagesButton")
+        self.ai_new_msg_btn.setProperty("variant", "ghost")
+        self.ai_new_msg_btn.setIcon(get_icon(Icons.CHEVRON_DOWN))
+        self.ai_new_msg_btn.setVisible(False)
+        self.ai_new_msg_btn.clicked.connect(self._jump_to_chat_bottom)
 
         # Bottom dock: prompt input + controls
         dock = QWidget()
@@ -200,9 +227,11 @@ class AIPanel(QWidget):
         action_bar.addWidget(ai_clear_btn)
 
         self.ai_run_btn = QPushButton(tr("ai.runAgent"))
+        self.ai_run_btn.setObjectName("aiRunActionBtn")
         self.ai_run_btn.setIcon(get_icon(Icons.PLAY, color="#ffffff"))  # White icon for primary variant
         self.ai_run_btn.setIconSize(QSize(16, 16))
         self.ai_run_btn.setProperty("variant", "primary")
+        self.ai_run_btn.setProperty("migrationAttention", False)
         self.ai_run_btn.setMinimumWidth(60)
         self.ai_run_btn.clicked.connect(self._on_run_stop_toggle)
         action_bar.addWidget(self.ai_run_btn)
@@ -214,6 +243,12 @@ class AIPanel(QWidget):
         self.ai_provider.textChanged.connect(self._refresh_model_badge)
         self.ai_model.textChanged.connect(self._refresh_model_badge)
         self._refresh_model_badge()
+        self._refresh_new_message_button()
+        self._reposition_new_message_button()
+        scroll_bar = self._chat_scrollbar()
+        if scroll_bar is not None:
+            scroll_bar.valueChanged.connect(self._on_chat_scroll_value_changed)
+            scroll_bar.rangeChanged.connect(self._on_chat_scroll_range_changed)
 
     def _iter_model_switch_options(self):
         options = []
@@ -320,7 +355,13 @@ class AIPanel(QWidget):
         ):
             if self._handle_chat_anchor_click(event):
                 return True
+        if event.type() == QEvent.Resize and obj is self.ai_chat.viewport():
+            self._reposition_new_message_button()
         return super().eventFilter(obj, event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reposition_new_message_button()
 
     def _handle_chat_anchor_click(self, event):
         if not isinstance(event, QMouseEvent):
@@ -328,88 +369,11 @@ class AIPanel(QWidget):
         anchor = self.ai_chat.anchorAt(event.position().toPoint())
         if not anchor:
             return False
-        if anchor == "toggle_thought":
-            self._toggle_current_thought_collapsed()
-        elif anchor.startswith("toggle_details_"):
+        if anchor.startswith("toggle_details_"):
             self._toggle_collapsible_block(anchor)
         else:
             return False
         return True
-
-    def _toggle_current_thought_collapsed(self):
-        if self.ai_streaming_active:
-            if not self.ai_stream_has_thought or not self.ai_stream_thought_buffer:
-                return
-            self.ai_stream_thought_collapsed = not self.ai_stream_thought_collapsed
-            self._rerender_stream_with_thought_markdown_in_place(force=True)
-        else:
-            if not hasattr(self.ai_chat, "textCursor"):
-                return
-            cursor = self.ai_chat.textCursor()
-            click_pos = cursor.position()
-            for block in reversed(self.ai_message_blocks):
-                start = block.get("start")
-                end = block.get("end")
-                if start is not None and end is not None and start <= click_pos <= end:
-                    block["collapsed"] = not block.get("collapsed", False)
-                    self._rerender_saved_message_block(block)
-                    break
-
-    def _rerender_saved_message_block(self, block):
-        if not isinstance(block, dict):
-            return False
-        start = block.get("start")
-        end = block.get("end")
-        if start is None or end is None:
-            return False
-        if not hasattr(self.ai_chat, "textCursor"):
-            return False
-
-        is_dark = _is_dark_mode(self)
-        thought_buffer = block.get("thought_buffer", "")
-        answer_buffer = block.get("answer_buffer", "")
-        collapsed = block.get("collapsed", False)
-
-        answer_html = _md_to_html(str(answer_buffer or ""), is_dark)
-
-        combined_html = ""
-        muted_color = _get_role_color("muted", is_dark)
-        link_color = _get_role_color("link", is_dark)
-        if thought_buffer:
-            if collapsed:
-                expand_text = tr("ai.expandThinking")
-                combined_html += f'<div style="color: {muted_color}; font-style: italic;"><a href="toggle_thought" style="color: {muted_color};">Thinking... ({expand_text})</a></div>'
-            else:
-                thought_html = _md_to_html(str(thought_buffer or ""), is_dark)
-                collapse_text = tr("ai.collapseThinking")
-                combined_html += f'<div style="color: {muted_color};">{thought_html}<br/><a href="toggle_thought" style="color: {link_color};">[{collapse_text}]</a></div>'
-        if answer_html:
-            if combined_html:
-                combined_html += "<br/>"
-            combined_html += answer_html
-
-        if not combined_html:
-            return False
-
-        try:
-            cursor = self.ai_chat.textCursor()
-            cursor.setPosition(int(start))
-            cursor.setPosition(int(end), QTextCursor.KeepAnchor)
-            cursor.removeSelectedText()
-            self._insert_markdown_with_cursor(cursor, combined_html)
-            new_end = cursor.position()
-            block["end"] = new_end
-            delta = new_end - end
-            self._shift_block_ranges(
-                self.ai_message_blocks,
-                after_end=end,
-                delta=delta,
-                exclude=block,
-            )
-            self._move_chat_cursor_to_end()
-            return True
-        except Exception:
-            return False
 
     def refresh_placeholder(self):
         """Refresh placeholder with a random example (called once on init)."""
@@ -420,25 +384,93 @@ class AIPanel(QWidget):
         pool = PLACEHOLDER_EXAMPLES_ZH if lang.startswith("zh") else PLACEHOLDER_EXAMPLES_EN
         self.ai_prompt.setPlaceholderText(random.choice(pool))
 
+    def prepare_import_migration(self, prompt_text, *, focus=True):
+        self.enter_migration_mode()
+        text = str(prompt_text or "").strip()
+        if not text:
+            return
+        self.ai_prompt.setPlainText(text)
+        if focus:
+            self.ai_prompt.setFocus(Qt.OtherFocusReason)
+            cursor = self.ai_prompt.textCursor()
+            cursor.movePosition(QTextCursor.End)
+            self.ai_prompt.setTextCursor(cursor)
+
+    def _set_migration_mode_banner(self, visible):
+        banner = getattr(self, "_migration_mode_banner", None)
+        if banner is None:
+            return
+        banner.setVisible(bool(visible))
+
+    def _set_run_button_attention(self, enabled):
+        run_btn = getattr(self, "ai_run_btn", None)
+        if run_btn is None:
+            return
+        target = bool(enabled)
+        if bool(run_btn.property("migrationAttention")) == target:
+            return
+        run_btn.setProperty("migrationAttention", target)
+        run_btn.style().unpolish(run_btn)
+        run_btn.style().polish(run_btn)
+
+    def _clear_run_button_attention(self):
+        self._set_run_button_attention(False)
+
+    def _flash_run_button_attention(self, duration_ms=2500):
+        run_btn = getattr(self, "ai_run_btn", None)
+        if run_btn is None:
+            return
+
+        self._set_run_button_attention(True)
+        timer = getattr(self, "_run_btn_attention_timer", None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._clear_run_button_attention)
+            self._run_btn_attention_timer = timer
+        timer.start(max(1, int(duration_ms or 0)))
+
+    def enter_migration_mode(self):
+        if self._agent_mode == "migration":
+            return
+        self._agent_mode = "migration"
+        self._set_migration_mode_banner(True)
+        self._flash_run_button_attention(duration_ms=2500)
+        clear_fn = getattr(self._plan_store, "clear", None)
+        if callable(clear_fn):
+            with suppress(Exception):
+                clear_fn()
+        self.migration_mode_changed.emit(True)
+        self.status_message.emit(tr("ai.migrationModeEnteredStatus"), 4000)
+
+    def exit_migration_mode(self):
+        if self._agent_mode != "migration":
+            return
+        self._agent_mode = "default"
+        self._set_migration_mode_banner(False)
+        self.migration_mode_changed.emit(False)
+        self.status_message.emit(tr("ai.migrationModeExitedStatus"), 4000)
+
     def _reset_stream_thought_state(self):
         self.ai_stream_has_thought = False
         self.ai_stream_thought_buffer = ""
-        self.ai_stream_thought_collapsed = False
-        self.ai_stream_thought_id = None
 
     def on_clear(self):
         self.ai_chat.clear()
         self.ai_history = []
-        self.ai_message_blocks = []
         self.ai_collapsible_blocks = []
         self.ai_active_trace_id = None
+        self._history_snapshot_from_stream_end = False
         self.ai_streaming_active = False
         self.ai_stream_buffer = ""
         self.ai_stream_start_pos = None
         self.ai_last_stream_block = None
         self.ai_stream_last_render_ts = 0.0
         self.ai_stream_last_render_len = 0
+        self.ai_auto_follow_enabled = True
+        self.ai_unseen_message_count = 0
         self._reset_stream_thought_state()
+        self._refresh_new_message_button()
         self.status_message.emit(tr("ai.memoryCleared"), 2000)
 
     def _build_header_html(self, role, compact=False, is_dark=True):
@@ -453,10 +485,165 @@ class AIPanel(QWidget):
 
     def _append_chat_header(self, role, compact=False):
         """Append a standalone header (used by stream + collapsible paths)."""
+        self._ensure_chat_block_context()
         is_dark = _is_dark_mode(self)
         self._move_chat_cursor_to_end()
         html = self._build_header_html(role, compact=compact, is_dark=is_dark)
         self.ai_chat.append(html)
+
+    def _chat_scrollbar(self):
+        if self.ai_chat is None:
+            return None
+        getter = getattr(self.ai_chat, "verticalScrollBar", None)
+        if not callable(getter):
+            return None
+        try:
+            return getter()
+        except Exception:
+            return None
+
+    def _is_near_bottom(self, threshold_px=None):
+        scroll_bar = self._chat_scrollbar()
+        if scroll_bar is None:
+            return True
+        threshold = self.ai_scroll_bottom_threshold_px if threshold_px is None else threshold_px
+        try:
+            delta = int(scroll_bar.maximum()) - int(scroll_bar.value())
+        except Exception:
+            return True
+        return delta <= int(max(0, threshold))
+
+    def _capture_view_anchor(self):
+        scroll_bar = self._chat_scrollbar()
+        if scroll_bar is None:
+            return None
+        try:
+            return {
+                "value": int(scroll_bar.value()),
+                "maximum": int(scroll_bar.maximum()),
+                "near_bottom": self._is_near_bottom(),
+            }
+        except Exception:
+            return None
+
+    def _set_scroll_value(self, value):
+        scroll_bar = self._chat_scrollbar()
+        if scroll_bar is None:
+            return
+        self.ai_programmatic_scroll_lock = True
+        try:
+            scroll_bar.setValue(int(value))
+        except Exception:
+            pass
+        finally:
+            self.ai_programmatic_scroll_lock = False
+
+    def _scroll_chat_to_bottom(self):
+        scroll_bar = self._chat_scrollbar()
+        if scroll_bar is None:
+            return
+        try:
+            self._set_scroll_value(scroll_bar.maximum())
+        except Exception:
+            return
+
+    def _update_follow_state_from_scroll(self):
+        self.ai_auto_follow_enabled = self._is_near_bottom()
+        if self.ai_auto_follow_enabled:
+            self.ai_unseen_message_count = 0
+
+    def _refresh_new_message_button(self):
+        btn = getattr(self, "ai_new_msg_btn", None)
+        if btn is None:
+            return
+        count = max(0, int(self.ai_unseen_message_count or 0))
+        visible = bool(count > 0 and not self.ai_auto_follow_enabled)
+        if count > 0:
+            label = tr("ai.newMessages").format(count=count)
+            jump = tr("ai.jumpToLatest")
+            btn.setText(f"{label} · {jump}")
+            btn.adjustSize()
+            self._reposition_new_message_button()
+        btn.setVisible(visible)
+
+    def _reposition_new_message_button(self):
+        btn = getattr(self, "ai_new_msg_btn", None)
+        if btn is None:
+            return
+        chat = getattr(self, "ai_chat", None)
+        if chat is None:
+            return
+        viewport_getter = getattr(chat, "viewport", None)
+        if not callable(viewport_getter):
+            return
+        viewport = viewport_getter()
+        if viewport is None:
+            return
+        try:
+            btn.adjustSize()
+            width = max(int(btn.width()), int(btn.sizeHint().width()))
+            height = max(int(btn.height()), int(btn.sizeHint().height()))
+            margin = 10
+            x = max(margin, int(viewport.width()) - width - margin)
+            y = max(margin, int(viewport.height()) - height - margin)
+            btn.move(x, y)
+            btn.raise_()
+        except Exception:
+            return
+
+    def _mark_unseen_message(self):
+        self.ai_unseen_message_count = int(self.ai_unseen_message_count or 0) + 1
+        self._refresh_new_message_button()
+
+    def _jump_to_chat_bottom(self):
+        self.ai_auto_follow_enabled = True
+        self.ai_unseen_message_count = 0
+        self._scroll_chat_to_bottom()
+        self._refresh_new_message_button()
+
+    def _on_chat_scroll_value_changed(self, _value):
+        if self.ai_programmatic_scroll_lock or self.ai_chat_write_in_progress:
+            return
+        self._update_follow_state_from_scroll()
+        self._refresh_new_message_button()
+
+    def _on_chat_scroll_range_changed(self, _minimum, _maximum):
+        if self.ai_chat_write_in_progress:
+            return
+        self._refresh_new_message_button()
+
+    def _restore_view_anchor(self, anchor, *, marks_new=False, force_follow=False):
+        scroll_bar = self._chat_scrollbar()
+        if scroll_bar is None:
+            return
+        should_follow = bool(force_follow)
+        if not should_follow:
+            if isinstance(anchor, dict):
+                should_follow = bool(anchor.get("near_bottom"))
+            else:
+                should_follow = self.ai_auto_follow_enabled and self._is_near_bottom()
+
+        if should_follow:
+            self.ai_auto_follow_enabled = True
+            self.ai_unseen_message_count = 0
+            self._scroll_chat_to_bottom()
+        else:
+            if isinstance(anchor, dict):
+                self._set_scroll_value(anchor.get("value", 0))
+            self._update_follow_state_from_scroll()
+            if marks_new and not self.ai_auto_follow_enabled:
+                self._mark_unseen_message()
+        self._refresh_new_message_button()
+
+    def _run_chat_write(self, writer, *, marks_new=False, force_follow=False):
+        anchor = self._capture_view_anchor()
+        previous_lock = bool(self.ai_chat_write_in_progress)
+        self.ai_chat_write_in_progress = True
+        try:
+            return writer()
+        finally:
+            self.ai_chat_write_in_progress = previous_lock
+            self._restore_view_anchor(anchor, marks_new=marks_new, force_follow=force_follow)
 
     def _move_chat_cursor_to_end(self):
         if not hasattr(self.ai_chat, "textCursor") or not hasattr(self.ai_chat, "setTextCursor"):
@@ -464,6 +651,43 @@ class AIPanel(QWidget):
         cursor = self.ai_chat.textCursor()
         cursor.movePosition(QTextCursor.End)
         self.ai_chat.setTextCursor(cursor)
+
+    def _document_end_position(self):
+        if hasattr(self.ai_chat, "document"):
+            try:
+                return max(0, int(self.ai_chat.document().characterCount()) - 1)
+            except Exception:
+                pass
+        if hasattr(self.ai_chat, "textCursor"):
+            try:
+                return int(self.ai_chat.textCursor().position())
+            except Exception:
+                return 0
+        return 0
+
+    def _ensure_chat_block_context(self):
+        """Break out of list blocks so the next message starts as a plain paragraph."""
+        if not hasattr(self.ai_chat, "textCursor") or not hasattr(self.ai_chat, "setTextCursor"):
+            return
+        try:
+            cursor = self.ai_chat.textCursor()
+            cursor.movePosition(QTextCursor.End)
+
+            in_list = False
+            if hasattr(cursor, "currentList"):
+                in_list = cursor.currentList() is not None
+            if not in_list:
+                in_list = cursor.blockFormat().objectIndex() != -1
+            if not in_list:
+                self.ai_chat.setTextCursor(cursor)
+                return
+
+            block_format = QTextBlockFormat()
+            block_format.setObjectIndex(-1)
+            cursor.insertBlock(block_format)
+            self.ai_chat.setTextCursor(cursor)
+        except Exception:
+            return
 
     @staticmethod
     def _escape_html_text(value):
@@ -488,13 +712,16 @@ class AIPanel(QWidget):
                 other["end"] = other_end + delta
 
     def _append_chat_markdown_block(self, role, text, *, is_dark=None):
-        if is_dark is None:
-            is_dark = _is_dark_mode(self)
-        header_html = self._build_header_html(role, is_dark=is_dark)
-        body_html = _md_to_html(str(text or ""), is_dark)
-        self._move_chat_cursor_to_end()
-        self.ai_chat.append(header_html)
-        self.ai_chat.append(body_html)
+        def _writer():
+            self._ensure_chat_block_context()
+            _is_dark = is_dark if is_dark is not None else _is_dark_mode(self)
+            header_html = self._build_header_html(role, is_dark=_is_dark)
+            body_html = _md_to_html(str(text or ""), _is_dark)
+            self._move_chat_cursor_to_end()
+            self.ai_chat.append(header_html)
+            self.ai_chat.append(body_html)
+
+        self._run_chat_write(_writer, marks_new=True)
 
     def _should_use_compact(self):
         """Check if tool messages should be compact (attached to previous message)."""
@@ -509,15 +736,20 @@ class AIPanel(QWidget):
         """Append header then content."""
         is_dark = _is_dark_mode(self)
         if compact:
-            header_html = self._build_header_html(role, compact=True, is_dark=is_dark)
-            self._move_chat_cursor_to_end()
-            # Compact: single line, inline formatting only (no block elements)
-            body = str(text or "")
-            body = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', body)
-            body = re.sub(r'`([^`]+)`', r'\1', body)
-            self.ai_chat.append(header_html + body)
-        else:
-            self._append_chat_markdown_block(role, text, is_dark=is_dark)
+            def _writer():
+                self._ensure_chat_block_context()
+                header_html = self._build_header_html(role, compact=True, is_dark=is_dark)
+                self._move_chat_cursor_to_end()
+                # Compact: single line, inline formatting only (no block elements)
+                body = str(text or "")
+                body = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', body)
+                body = re.sub(r'`([^`]+)`', r'\1', body)
+                self.ai_chat.append(header_html + body)
+
+            self._run_chat_write(_writer, marks_new=True)
+            return
+
+        self._append_chat_markdown_block(role, text, is_dark=is_dark)
 
     def _begin_stream_chat(self, role="Agent"):
         if self.ai_streaming_active:
@@ -526,17 +758,19 @@ class AIPanel(QWidget):
         self.ai_stream_buffer = ""
         self.ai_stream_thought_buffer = ""
         self.ai_stream_has_thought = False
-        self.ai_stream_thought_collapsed = self.ai_thinking_collapsed
-        self.ai_stream_thought_id = f"thought_{id(self)}_{time.monotonic_ns()}"
         self.ai_stream_start_pos = None
         self.ai_last_stream_block = None
         self.ai_stream_last_render_ts = 0.0
         self.ai_stream_last_render_len = 0
-        self._append_chat_header(role)
-        self.ai_chat.append("")
-        self._move_chat_cursor_to_end()
-        if hasattr(self.ai_chat, "textCursor"):
-            self.ai_stream_start_pos = self.ai_chat.textCursor().position()
+
+        def _writer():
+            self._append_chat_header(role)
+            self.ai_chat.append("")
+            self._move_chat_cursor_to_end()
+            if hasattr(self.ai_chat, "textCursor"):
+                self.ai_stream_start_pos = self.ai_chat.textCursor().position()
+
+        self._run_chat_write(_writer, marks_new=True)
 
     def _append_stream_chunk(self, text, channel="answer"):
         chunk = str(text or "")
@@ -575,29 +809,23 @@ class AIPanel(QWidget):
         if not self.ai_streaming_active:
             return
 
-        self._rerender_stream_with_thought_markdown_in_place(force=True)
+        def _writer():
+            self._rerender_stream_with_thought_markdown_in_place(force=True)
 
-        self._move_chat_cursor_to_end()
-        start_pos = self.ai_stream_start_pos
-        end_pos = None
-        if hasattr(self.ai_chat, "textCursor"):
-            end_pos = self.ai_chat.textCursor().position()
-        self.ai_last_stream_block = {
-            "start": start_pos,
-            "end": end_pos,
-            "text": self.ai_stream_buffer,
-        }
-
-        if self.ai_stream_has_thought and self.ai_stream_thought_buffer:
-            self.ai_message_blocks.append({
+            self._move_chat_cursor_to_end()
+            start_pos = self.ai_stream_start_pos
+            end_pos = None
+            if hasattr(self.ai_chat, "textCursor"):
+                end_pos = self.ai_chat.textCursor().position()
+            self.ai_last_stream_block = {
                 "start": start_pos,
                 "end": end_pos,
-                "thought_buffer": self.ai_stream_thought_buffer,
-                "answer_buffer": self.ai_stream_buffer,
-                "collapsed": self.ai_stream_thought_collapsed,
-            })
+                "text": self.ai_stream_buffer,
+            }
 
-        self.ai_chat.append("")
+            self.ai_chat.append("")
+
+        self._run_chat_write(_writer, marks_new=False)
         self.ai_streaming_active = False
         self.ai_stream_start_pos = None
         self.ai_stream_last_render_ts = 0.0
@@ -614,16 +842,22 @@ class AIPanel(QWidget):
         if not hasattr(self.ai_chat, "textCursor"):
             return False
 
-        try:
-            cursor = self.ai_chat.textCursor()
-            cursor.setPosition(int(start))
-            cursor.setPosition(int(end), QTextCursor.KeepAnchor)
-            cursor.removeSelectedText()
-            self._insert_markdown_with_cursor(cursor, str(html_text or ""))
-            self._move_chat_cursor_to_end()
-            return True
-        except Exception:
-            return False
+        success = {"ok": False}
+
+        def _writer():
+            try:
+                cursor = self.ai_chat.textCursor()
+                cursor.setPosition(int(start))
+                cursor.setPosition(int(end), QTextCursor.KeepAnchor)
+                cursor.removeSelectedText()
+                self._insert_markdown_with_cursor(cursor, str(html_text or ""))
+                block["end"] = cursor.position()
+                success["ok"] = True
+            except Exception:
+                success["ok"] = False
+
+        self._run_chat_write(_writer, marks_new=False)
+        return bool(success["ok"])
 
     def _rerender_stream_with_thought_markdown_in_place(self, force=False):
         if not self.ai_streaming_active:
@@ -638,8 +872,7 @@ class AIPanel(QWidget):
         if not force and interval > 0.0 and (now - float(self.ai_stream_last_render_ts or 0.0)) < interval:
             return False
 
-        self._move_chat_cursor_to_end()
-        end_pos = self.ai_chat.textCursor().position()
+        end_pos = self._document_end_position()
         block = {
             "start": self.ai_stream_start_pos,
             "end": end_pos,
@@ -651,15 +884,9 @@ class AIPanel(QWidget):
 
         combined_html = ""
         muted_color = _get_role_color("muted", is_dark)
-        link_color = _get_role_color("link", is_dark)
         if self.ai_stream_has_thought and self.ai_stream_thought_buffer:
-            if self.ai_stream_thought_collapsed:
-                expand_text = tr("ai.expandThinking")
-                combined_html += f'<div style="color: {muted_color}; font-style: italic;"><a href="toggle_thought" style="color: {muted_color};">Thinking... ({expand_text})</a></div>'
-            else:
-                thought_html = _md_to_html(str(self.ai_stream_thought_buffer or ""), is_dark)
-                collapse_text = tr("ai.collapseThinking")
-                combined_html += f'<div style="color: {muted_color};">{thought_html}<br/><a href="toggle_thought" style="color: {link_color};">[{collapse_text}]</a></div>'
+            thought_html = _md_to_html(str(self.ai_stream_thought_buffer or ""), is_dark)
+            combined_html += f'<div style="color: {muted_color};">{thought_html}</div>'
         if answer_html:
             if combined_html:
                 combined_html += "<br/>"
@@ -675,8 +902,7 @@ class AIPanel(QWidget):
         self.ai_stream_last_render_ts = now
         self.ai_stream_last_render_len = len(self.ai_stream_buffer) + len(self.ai_stream_thought_buffer)
 
-        self._move_chat_cursor_to_end()
-        new_end = self.ai_chat.textCursor().position()
+        new_end = block.get("end", end_pos)
         self.ai_last_stream_block = {
             "start": self.ai_stream_start_pos,
             "end": new_end,
@@ -709,18 +935,24 @@ class AIPanel(QWidget):
         if not hasattr(self.ai_chat, "textCursor"):
             return False
 
-        try:
-            cursor = self.ai_chat.textCursor()
-            cursor.setPosition(int(start))
-            cursor.setPosition(int(end), QTextCursor.KeepAnchor)
-            cursor.removeSelectedText()
-            is_dark = _is_dark_mode(self)
-            highlighted = _md_to_html(str(markdown_text or ""), is_dark)
-            self._insert_markdown_with_cursor(cursor, highlighted)
-            self._move_chat_cursor_to_end()
-            return True
-        except Exception:
-            return False
+        success = {"ok": False}
+
+        def _writer():
+            try:
+                cursor = self.ai_chat.textCursor()
+                cursor.setPosition(int(start))
+                cursor.setPosition(int(end), QTextCursor.KeepAnchor)
+                cursor.removeSelectedText()
+                is_dark = _is_dark_mode(self)
+                highlighted = _md_to_html(str(markdown_text or ""), is_dark)
+                self._insert_markdown_with_cursor(cursor, highlighted)
+                block["end"] = cursor.position()
+                success["ok"] = True
+            except Exception:
+                success["ok"] = False
+
+        self._run_chat_write(_writer, marks_new=False)
+        return bool(success["ok"])
 
     _on_run_stop_toggle = _ai_runtime._on_run_stop_toggle
     on_run_ai_agent = _ai_runtime.on_run_ai_agent
@@ -738,7 +970,7 @@ class AIPanel(QWidget):
     _handle_progress_chunk = _ai_runtime._handle_progress_chunk
     _handle_progress_step_end = _ai_runtime._handle_progress_step_end
     _handle_progress_error = staticmethod(_ai_runtime._handle_progress_error)
-    _handle_progress_stream_end = staticmethod(_ai_runtime._handle_progress_stream_end)
+    _handle_progress_stream_end = _ai_runtime._handle_progress_stream_end
     _handle_progress_max_steps = staticmethod(_ai_runtime._handle_progress_max_steps)
     on_finished = _ai_runtime.on_finished
     on_thread_finished = _ai_runtime.on_thread_finished
@@ -756,8 +988,8 @@ class AIPanel(QWidget):
 
     def _append_history(self, role, text):
         self.ai_history.append({"role": role, "content": text})
-        if len(self.ai_history) > 20:
-            self.ai_history = self.ai_history[-20:]
+        if len(self.ai_history) > AI_HISTORY_LIMIT:
+            self.ai_history = self.ai_history[-AI_HISTORY_LIMIT:]
 
     def _render_system_notice(self, notice):
         """Render one normalized notice to chat with expandable raw payload."""
@@ -786,8 +1018,8 @@ class AIPanel(QWidget):
                 notice["timestamp"] = raw_event.get("timestamp")
 
         self.ai_operation_events.append(notice)
-        if len(self.ai_operation_events) > 20:
-            self.ai_operation_events = self.ai_operation_events[-20:]
+        if len(self.ai_operation_events) > AI_OPERATION_EVENT_POOL_LIMIT:
+            self.ai_operation_events = self.ai_operation_events[-AI_OPERATION_EVENT_POOL_LIMIT:]
 
         self._render_system_notice(notice)
 
@@ -815,25 +1047,28 @@ class AIPanel(QWidget):
             preview_lines=collapsed_preview_lines,
         )
 
-        self._move_chat_cursor_to_end()
-        if not hasattr(self.ai_chat, "textCursor"):
-            self.ai_chat.append(collapsed_html)
-            self.ai_chat.append("")
-            return
-        cursor = self.ai_chat.textCursor()
-        start = cursor.position()
-        cursor.insertHtml(collapsed_html)
-        end = cursor.position()
+        def _writer():
+            self._move_chat_cursor_to_end()
+            if not hasattr(self.ai_chat, "textCursor"):
+                self.ai_chat.append(collapsed_html)
+                self.ai_chat.append("")
+                return
+            cursor = self.ai_chat.textCursor()
+            start = cursor.position()
+            cursor.insertHtml(collapsed_html)
+            end = cursor.position()
 
-        self.ai_collapsible_blocks.append({
-            "block_id": block_id,
-            "start": start,
-            "end": end,
-            "content": details_text,
-            "collapsed": True,
-            "preview_lines": max(0, int(collapsed_preview_lines or 0)),
-        })
-        self.ai_chat.append("")
+            self.ai_collapsible_blocks.append({
+                "block_id": block_id,
+                "start": start,
+                "end": end,
+                "content": details_text,
+                "collapsed": True,
+                "preview_lines": max(0, int(collapsed_preview_lines or 0)),
+            })
+            self.ai_chat.append("")
+
+        self._run_chat_write(_writer, marks_new=False)
 
     def _render_collapsible_details(self, block_id, content, collapsed=True, is_dark=True, preview_lines=3):
         """Render details as a collapsible code block with configurable collapsed preview."""
@@ -931,28 +1166,27 @@ class AIPanel(QWidget):
 
         start = block["start"]
         end = block["end"]
-        try:
-            cursor = self.ai_chat.textCursor()
-            cursor.setPosition(int(start))
-            cursor.setPosition(int(end), QTextCursor.KeepAnchor)
-            cursor.removeSelectedText()
-            cursor.insertHtml(new_html)
-            new_end = cursor.position()
-            delta = new_end - end
-            block["end"] = new_end
-            self._shift_block_ranges(
-                self.ai_collapsible_blocks,
-                after_end=end,
-                delta=delta,
-                exclude=block,
-            )
-            self._shift_block_ranges(
-                self.ai_message_blocks,
-                after_end=end,
-                delta=delta,
-            )
-        except Exception:
-            pass
+
+        def _writer():
+            try:
+                cursor = self.ai_chat.textCursor()
+                cursor.setPosition(int(start))
+                cursor.setPosition(int(end), QTextCursor.KeepAnchor)
+                cursor.removeSelectedText()
+                cursor.insertHtml(new_html)
+                new_end = cursor.position()
+                delta = new_end - end
+                block["end"] = new_end
+                self._shift_block_ranges(
+                    self.ai_collapsible_blocks,
+                    after_end=end,
+                    delta=delta,
+                    exclude=block,
+                )
+            except Exception:
+                pass
+
+        self._run_chat_write(_writer, marks_new=False)
 
     def _load_audit(self, trace_id, run_result):
         pass

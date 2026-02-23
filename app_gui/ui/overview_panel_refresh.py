@@ -15,7 +15,26 @@ def _reset_after_load_failure(self):
     self.overview_records_by_id = {}
     self.overview_selected_key = None
     self._stats_include_inactive_loaded = False
+    self._stats_response_cache = {}
+    self._last_stats_cache_key = None
+    self._cell_render_signatures = {}
     self._reset_detail()
+
+
+def _stats_cache_key(yaml_path, include_inactive):
+    target_path = os.path.abspath(str(yaml_path or "").strip())
+    if not target_path:
+        return None
+    try:
+        stat = os.stat(target_path)
+    except OSError:
+        return None
+    return (
+        target_path,
+        int(getattr(stat, "st_mtime_ns", 0) or 0),
+        int(getattr(stat, "st_size", 0) or 0),
+        bool(include_inactive),
+    )
 
 
 def _build_records_by_id(records):
@@ -73,17 +92,38 @@ def refresh(self):
     yaml_path = self.yaml_path_getter()
     self.ov_status.setText(tr("overview.statusLoading"))
     if not yaml_path or not os.path.isfile(yaml_path):
-        self.ov_status.setText(t("main.fileNotFound", path=yaml_path or ""))
         _reset_after_load_failure(self)
+        missing_file_message = t("main.fileNotFound", path=yaml_path or "")
+        self.ov_status.setText(missing_file_message)
+        self.ov_hover_hint.setText(missing_file_message)
+        self.ov_hover_hint.setProperty("state", "warning")
+        self.ov_hover_hint.style().unpolish(self.ov_hover_hint)
+        self.ov_hover_hint.style().polish(self.ov_hover_hint)
         return
 
     include_inactive = bool(
         self._overview_view_mode == "table" and getattr(self, "_table_include_inactive", False)
     )
-    stats_response = self.bridge.generate_stats(
-        yaml_path,
-        include_inactive=include_inactive,
-    )
+    cache_key = _stats_cache_key(yaml_path, include_inactive)
+    cached_map = getattr(self, "_stats_response_cache", None)
+    if not isinstance(cached_map, dict):
+        cached_map = {}
+        self._stats_response_cache = cached_map
+
+    stats_response = cached_map.get(cache_key) if cache_key is not None else None
+    if stats_response is None:
+        stats_response = self.bridge.generate_stats(
+            yaml_path,
+            include_inactive=include_inactive,
+        )
+        if cache_key is not None and isinstance(stats_response, dict) and stats_response.get("ok"):
+            self._stats_response_cache = {cache_key: stats_response}
+            self._last_stats_cache_key = cache_key
+        else:
+            self._last_stats_cache_key = None
+    else:
+        self._last_stats_cache_key = cache_key
+
     if not stats_response.get("ok"):
         self.ov_status.setText(t("overview.loadFailed", error=stats_response.get("message", "unknown error")))
         _reset_after_load_failure(self)
@@ -155,9 +195,17 @@ def refresh(self):
     _update_box_live_labels(self, box_numbers, box_stats, rows, cols)
     self._update_box_titles(box_numbers)
 
+    signatures = getattr(self, "_cell_render_signatures", None)
+    if not isinstance(signatures, dict):
+        signatures = {}
+        self._cell_render_signatures = signatures
+
     for key, button in self.overview_cells.items():
         box_num, position = key
         rec = self.overview_pos_map.get(key)
+        signature = self._build_cell_render_signature(box_num, position, rec)
+        if signatures.get(key) == signature:
+            continue
         self._paint_cell(button, box_num, position, rec)
 
     self._rebuild_table_rows(records)

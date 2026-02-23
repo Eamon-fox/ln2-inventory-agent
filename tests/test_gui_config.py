@@ -8,10 +8,24 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app_gui.gui_config import load_gui_config, save_gui_config, DEFAULT_GUI_CONFIG, _load_default_prompt
+from app_gui.gui_config import (
+    DEFAULT_CONFIG_DIR,
+    DEFAULT_CONFIG_FILE,
+    DEFAULT_GUI_CONFIG,
+    DEFAULT_MAX_STEPS,
+    _load_default_prompt,
+    load_gui_config,
+    save_gui_config,
+)
+from lib.inventory_paths import get_install_dir
 
 
 class GuiConfigTests(unittest.TestCase):
+    def test_default_config_location_under_install_root(self):
+        expected_dir = Path(get_install_dir()) / "config"
+        self.assertEqual(expected_dir.resolve(), Path(DEFAULT_CONFIG_DIR).resolve())
+        self.assertEqual((expected_dir / "config.yaml").resolve(), Path(DEFAULT_CONFIG_FILE).resolve())
+
     def test_load_gui_config_defaults(self):
         with tempfile.TemporaryDirectory(prefix="ln2_gui_cfg_") as temp_dir:
             config_path = Path(temp_dir) / "config.yaml"
@@ -19,7 +33,7 @@ class GuiConfigTests(unittest.TestCase):
 
         self.assertEqual("deepseek", cfg["ai"]["provider"])
         self.assertEqual("deepseek-chat", cfg["ai"]["model"])
-        self.assertEqual(12, cfg["ai"]["max_steps"])
+        self.assertEqual(DEFAULT_MAX_STEPS, cfg["ai"]["max_steps"])
         self.assertTrue(cfg["ai"]["thinking_enabled"])
 
     def test_load_gui_config_backfills_blank_model(self):
@@ -35,7 +49,7 @@ ai:
             cfg = load_gui_config(path=str(config_path))
 
         self.assertEqual("deepseek-chat", cfg["ai"]["model"])
-        self.assertEqual(12, cfg["ai"]["max_steps"])
+        self.assertEqual(DEFAULT_MAX_STEPS, cfg["ai"]["max_steps"])
         self.assertTrue(cfg["ai"]["thinking_enabled"])
 
     def test_save_and_load_gui_config_keeps_explicit_model(self):

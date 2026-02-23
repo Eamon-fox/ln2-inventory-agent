@@ -564,9 +564,26 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
             margin-bottom: 20px;
         }}
 
+        .header-title-row {{
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 5px;
+        }}
+
         .header h1 {{
-            margin: 0 0 5px 0;
+            margin: 0;
             font-size: {FONT_SIZE_XXL}px;
+        }}
+
+        .header-brand {{
+            font-size: {FONT_SIZE_SM}px;
+            font-weight: 700;
+            color: #64748b;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            white-space: nowrap;
         }}
 
         .header-meta {{
@@ -926,6 +943,14 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
                 transform: none !important;
             }}
 
+            .header {{
+                margin-bottom: 6mm;
+            }}
+
+            .header-brand {{
+                font-size: {FONT_SIZE_XS}px;
+            }}
+
             .box-grid {{
                 --cell-gap: var(--cell-gap-print-mm, 0.6mm);
                 --cell-size: var(--cell-size-print-mm, 7.2mm);
@@ -943,7 +968,10 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
     <div class="sheet-preview-shell">
     <div class="sheet-page">
     <div class="header">
-        <h1>LN2 Operation Preview & Guide</h1>
+        <div class="header-title-row">
+            <h1>LN2 Operation Preview & Guide</h1>
+            <span class="header-brand">SNOWFOX</span>
+        </div>
         <div class="header-meta">
             <span>Date: <strong>{today}</strong></span>
             <span>Total: <strong>{total_count} operations</strong></span>

@@ -102,6 +102,8 @@ def _print_operation_sheet_with_grid(self, items, grid_state, *, table_rows=None
 
 
 def clear_plan(self):
+    if bool(getattr(self, "_guard_migration_write_action", lambda: False)()):
+        return
     cleared_items = self._plan_store.clear()
     self._reset_plan_feedback_and_validation()
     self._refresh_after_plan_items_changed()
@@ -125,11 +127,12 @@ def reset_for_dataset_switch(self):
     self._refresh_after_plan_items_changed()
 
 
-def on_export_inventory_csv(self):
+def on_export_inventory_csv(self, checked=False, *, parent=None, yaml_path_override=None):
     # Keep tests and monkeypatch points stable on operations_panel module symbols.
     from app_gui.ui import operations_panel as _ops_panel
 
-    yaml_path = self.yaml_path_getter()
+    _ = checked
+    yaml_path = str(yaml_path_override or "").strip() or self.yaml_path_getter()
     default_name = f"inventory_full_{date.today().isoformat()}.csv"
     suggested_path = default_name
     if yaml_path:
@@ -141,7 +144,7 @@ def on_export_inventory_csv(self):
         )
 
     path, _ = _ops_panel.QFileDialog.getSaveFileName(
-        self,
+        parent or self,
         tr("operations.exportDialogTitle"),
         suggested_path,
         tr("operations.exportCsvFilter"),
@@ -248,6 +251,8 @@ def _disable_undo(self, *, clear_last_executed=False):
 
 
 def on_undo_last(self):
+    if bool(getattr(self, "_guard_migration_write_action", lambda: False)()):
+        return
     if not self._last_operation_backup:
         self._publish_system_notice(
             code="undo.unavailable",

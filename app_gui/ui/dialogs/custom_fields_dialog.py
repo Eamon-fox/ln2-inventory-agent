@@ -159,6 +159,10 @@ class CustomFieldsDialog(QDialog):
         # Cell line options editor
         clo_row = QVBoxLayout()
         clo_row.addWidget(QLabel(tr("main.cfCellLineOptions")))
+        cell_line_hint = QLabel(tr("main.cfCellLineOptionsHint"))
+        cell_line_hint.setWordWrap(True)
+        cell_line_hint.setProperty("role", "dialogHint")
+        clo_row.addWidget(cell_line_hint)
         self._cell_line_options_edit = QTextEdit()
         self._cell_line_options_edit.setMaximumHeight(80)
         self._cell_line_options_edit.setPlaceholderText(tr("main.cfCellLineOptionsPh"))

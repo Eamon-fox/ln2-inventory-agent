@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 
 from app_gui.plan_executor import preflight_plan, run_plan
 from lib.yaml_ops import write_yaml
+from tests.managed_paths import ManagedPathTestCase
 
 
 def make_data(records):
@@ -24,6 +25,13 @@ def make_data(records):
         },
         "inventory": records,
     }
+
+
+def _write_raw_yaml(path, data):
+    Path(path).write_text(
+        yaml.safe_dump(data, allow_unicode=True, sort_keys=False, width=120),
+        encoding="utf-8",
+    )
 
 
 def make_data_alphanumeric(records):
@@ -142,7 +150,7 @@ def make_edit_item(record_id=1, box=1, position=1, fields=None, **extra):
     return base
 
 
-class PreflightPlanTests(unittest.TestCase):
+class PreflightPlanTests(ManagedPathTestCase):
     """Tests for preflight_plan function."""
 
     def test_preflight_empty_plan_returns_ok(self):
@@ -271,11 +279,9 @@ class PreflightPlanTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
             backup_path = Path(td) / "manual_backup.yaml"
-            write_yaml(
+            _write_raw_yaml(
+                str(backup_path),
                 make_data([make_record(1, box=1, position=1)]),
-                path=str(backup_path),
-                auto_backup=False,
-                audit_meta={"action": "seed_backup", "source": "tests"},
             )
 
             bridge = MagicMock()
@@ -304,7 +310,7 @@ class PreflightPlanTests(unittest.TestCase):
             self.assertEqual(1, result["stats"]["blocked"])
 
 
-class RunPlanExecuteTests(unittest.TestCase):
+class RunPlanExecuteTests(ManagedPathTestCase):
     """Tests for run_plan in execute mode."""
 
     def test_run_plan_empty_returns_ok(self):
@@ -607,11 +613,9 @@ class RunPlanExecuteTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
             manual_backup = Path(td) / "manual_backup.bak"
-            write_yaml(
+            _write_raw_yaml(
+                str(manual_backup),
                 make_data([make_record(2, box=1, position=2)]),
-                path=str(manual_backup),
-                auto_backup=False,
-                audit_meta={"action": "seed_backup", "source": "tests"},
             )
 
             bridge = MagicMock()
@@ -637,11 +641,9 @@ class RunPlanExecuteTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
             manual_backup = Path(td) / "manual_backup.bak"
-            write_yaml(
+            _write_raw_yaml(
+                str(manual_backup),
                 make_data([make_record(2, box=1, position=2)]),
-                path=str(manual_backup),
-                auto_backup=False,
-                audit_meta={"action": "seed_backup", "source": "tests"},
             )
 
             bridge = MagicMock()
@@ -682,7 +684,7 @@ class RunPlanExecuteTests(unittest.TestCase):
         self.assertFalse(bridge.add_entry.called)
 
 
-class PreflightVsExecuteConsistencyTests(unittest.TestCase):
+class PreflightVsExecuteConsistencyTests(ManagedPathTestCase):
     """Tests to verify preflight and execute produce consistent results."""
 
     def test_preflight_and_execute_agree_on_valid_move(self):
@@ -727,7 +729,7 @@ class PreflightVsExecuteConsistencyTests(unittest.TestCase):
             self.assertEqual(preflight_result["blocked"], execute_result["blocked"])
 
 
-class EditPlanTests(unittest.TestCase):
+class EditPlanTests(ManagedPathTestCase):
     """Tests for edit action in preflight and execute."""
 
     def test_preflight_edit_passes(self):
@@ -882,7 +884,7 @@ class EditPlanTests(unittest.TestCase):
             self.assertEqual(2, bridge.edit_entry.call_count)
 
 
-class EditPreflightExecuteConsistencyTests(unittest.TestCase):
+class EditPreflightExecuteConsistencyTests(ManagedPathTestCase):
     """Verify preflight and execute agree for edit operations."""
 
     def test_preflight_and_execute_agree_on_valid_edit(self):
@@ -906,7 +908,7 @@ class EditPreflightExecuteConsistencyTests(unittest.TestCase):
             self.assertEqual(preflight_result["blocked"], execute_result["blocked"])
 
 
-class MultiAddPreflightTests(unittest.TestCase):
+class MultiAddPreflightTests(ManagedPathTestCase):
     """Regression: preflight must detect cross-item position conflicts for adds."""
 
     def test_preflight_catches_same_position_conflict_between_two_adds(self):

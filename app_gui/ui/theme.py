@@ -521,9 +521,9 @@ def _get_common_qss():
             --indicator-md: 18px;
             --input-icon-size: 16px;
             --input-arrow-size: 8px;
-            --scrollbar-width: 6px;
-            --scrollbar-handle-min: 24px;
-            --scrollbar-handle-radius: 3px;
+            --scrollbar-width: 4px;
+            --scrollbar-handle-min: 20px;
+            --scrollbar-handle-radius: 2px;
             --splitter-width: 6px;
             --splitter-radius: 2px;
         }
@@ -568,16 +568,63 @@ def _get_common_qss():
         QLabel#operationsPlanFeedback[level="info"] {{ color: var(--text-muted); background: var(--background-inset); }}
         QLabel#operationsPlanFeedback[level="warning"] {{ color: var(--status-warning); background: var(--status-warning-bg); }}
         QLabel#operationsPlanFeedback[level="error"] {{ color: var(--status-error); background: var(--status-error-bg); }}
+        QLabel#aiMigrationModeBanner, QLabel#operationsMigrationModeBanner {{
+            color: var(--status-warning);
+            background: var(--status-warning-bg);
+            border: 1px solid var(--status-warning);
+            border-radius: var(--radius-sm);
+            padding: 6px 10px;
+            font-weight: {FONT_WEIGHT_SEMIBOLD};
+        }}
+        QLabel#mainMigrationModeBadge {{
+            color: var(--status-warning);
+            background: var(--status-warning-bg);
+            border: 1px solid var(--status-warning);
+            border-radius: var(--radius-xs);
+            padding: 2px 8px;
+            font-size: {FONT_SIZE_XS}px;
+            font-weight: {FONT_WEIGHT_BOLD};
+        }}
+        QLabel#mainMigrationStatusIndicator {{
+            color: var(--status-warning);
+            background: var(--status-warning-bg);
+            border: 1px solid var(--status-warning);
+            border-radius: var(--radius-xs);
+            padding: 0 8px;
+            font-size: {FONT_SIZE_XS}px;
+            font-weight: {FONT_WEIGHT_SEMIBOLD};
+        }}
+        QWidget#operationsMigrationLockOverlay {{
+            background-color: var(--sheet-grid-overlay-bg);
+            border: 1px solid var(--status-warning);
+            border-radius: var(--radius-sm);
+        }}
+        QLabel#operationsMigrationLockOverlayLabel {{
+            color: var(--status-warning);
+            background: var(--status-warning-bg);
+            border: 1px solid var(--status-warning);
+            border-radius: var(--radius-sm);
+            padding: 8px 12px;
+            font-weight: {FONT_WEIGHT_SEMIBOLD};
+        }}
         QLabel[role="statusWarning"] {{ color: var(--status-warning); }}
         QLabel[role="readonlyField"] {{ background: var(--display-bg); border: none; color: var(--display-text); padding: 2px 4px; }}
         QLineEdit[role="contextEditable"][readOnly="true"] {{ background: var(--display-bg); border: none; color: var(--display-text); padding: 2px 4px; }}
         QLineEdit[role="contextEditable"][readOnly="false"] {{ background: var(--input-bg); border: var(--border-thin) solid var(--input-border-focus); color: var(--input-text); padding: 2px 4px; }}
+        QPlainTextEdit[role="contextEditable"][readOnly="true"] {{ background: var(--display-bg); border: none; color: var(--display-text); padding: 2px 4px; }}
+        QPlainTextEdit[role="contextEditable"][readOnly="false"] {{ background: var(--input-bg); border: var(--border-thin) solid var(--input-border-focus); color: var(--input-text); padding: 2px 4px; }}
         QPushButton#inlineLockBtn {{ border: none; padding: 0; font-size: {FONT_SIZE_SM}px; background: transparent; }}
         QPushButton#inlineConfirmBtn {{ border: none; padding: 0; font-size: {FONT_SIZE_LG}px; font-weight: {FONT_WEIGHT_BOLD}; color: var(--status-success); background: transparent; }}
         QLabel[role="mutedInline"] {{ color: var(--text-muted); }}
         QWidget#overviewStatCard {{ background-color: var(--background-inset); border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-md); margin-top: 8px; padding-top: 8px; }}
         QWidget#overviewStatCard QLabel#overviewStatValue {{ color: var(--text-strong); font-weight: {FONT_WEIGHT_MEDIUM}; font-size: {FONT_SIZE_XL}px; }}
         QPushButton#overviewIconButton {{ border: none; background: transparent; }}
+        QPushButton#overviewFloatingActionBtn {{
+            border: none;
+            background: transparent;
+            padding: 0;
+        }}
+        QPushButton#overviewFloatingActionBtn:hover {{ background: transparent; }}
         QLabel#overviewZoomLabel {{ font-size: {FONT_SIZE_XS}px; }}
         QLabel#overviewZoomSeparator {{ color: var(--border-weak); margin: 0 4px; }}
         QLabel#overviewHoverHint {{ color: var(--text-weak); font-weight: {FONT_WEIGHT_MEDIUM}; }}
@@ -608,6 +655,15 @@ def _get_common_qss():
         QPushButton[variant="warning"] {{ background-color: var(--btn-warning); color: #ffffff; font-weight: bold; border: 1px solid var(--btn-warning-border); }}
         QPushButton[variant="warning"]:hover {{ background-color: var(--btn-warning-hover); }}
         QPushButton[variant="warning"]:pressed {{ background-color: var(--btn-warning-border); }}
+        QPushButton#aiRunActionBtn[migrationAttention="true"] {{
+            border: 2px solid var(--status-warning);
+            background-color: var(--btn-warning);
+            color: #ffffff;
+            font-weight: {FONT_WEIGHT_BOLD};
+        }}
+        QPushButton#aiRunActionBtn[migrationAttention="true"]:hover {{
+            background-color: var(--btn-warning-hover);
+        }}
         QTextEdit#aiChatArea {{ border: none; background-color: transparent; padding: var(--space-1) var(--space-1); color: var(--text-strong); }}
         QWidget#aiPromptDock {{ background-color: transparent; }}
         QWidget#aiInputContainer {{ background-color: var(--background-raised); border: 1px solid var(--border-weak); }}
@@ -641,6 +697,13 @@ def _get_common_qss():
         }}
         QPushButton[class="quick-prompt-btn"] {{ padding: 3px 10px; font-size: {FONT_SIZE_XS}px; border-radius: 10px; background-color: var(--quick-prompt-bg); border: none; color: var(--quick-prompt-color); }}
         QPushButton[class="quick-prompt-btn"]:hover {{ background-color: var(--quick-prompt-hover-bg); color: var(--quick-prompt-hover-color); }}
+        QScrollBar:vertical {{ width: var(--scrollbar-width); margin: 0; background: transparent; border: none; }}
+        QScrollBar:horizontal {{ height: var(--scrollbar-width); margin: 0; background: transparent; border: none; }}
+        QScrollBar::handle:vertical {{ min-height: var(--scrollbar-handle-min); background: var(--scrollbar-handle); border-radius: var(--scrollbar-handle-radius); }}
+        QScrollBar::handle:horizontal {{ min-width: var(--scrollbar-handle-min); background: var(--scrollbar-handle); border-radius: var(--scrollbar-handle-radius); }}
+        QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {{ background: var(--scrollbar-handle-hover); }}
+        QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; border: none; width: 0; height: 0; }}
+        QTableCornerButton::section {{ background: transparent; border: none; }}
         QWidget#OverviewPanel {{ background-color: var(--overview-bg); }}
         QSplitter#mainSplitter::handle {{ background-color: var(--splitter-color); }}
         QSplitter#mainSplitter::handle:hover {{ background-color: var(--splitter-hover); }}

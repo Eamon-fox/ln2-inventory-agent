@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from pathlib import Path
-
+from tests.managed_paths import ManagedPathTestCase
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -15,14 +15,22 @@ if str(ROOT) not in sys.path:
 try:
     from PySide6.QtCore import QDate, Qt, QEvent, QPointF
     from PySide6.QtGui import QValidator, QMouseEvent
-    from PySide6.QtWidgets import QApplication, QMessageBox, QCompleter, QPushButton, QLineEdit
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import (
+        QApplication,
+        QMessageBox,
+        QCompleter,
+        QPushButton,
+        QLineEdit,
+        QPlainTextEdit,
+    )
 
     from app_gui.ui.ai_panel import AIPanel
     from app_gui.ui.overview_panel import OverviewPanel, TABLE_ROW_TINT_ROLE
     from app_gui.ui.operations_panel import OperationsPanel
     from app_gui.ui.utils import cell_color
     from app_gui.error_localizer import localize_error_payload
-    from app_gui.i18n import tr
+    from app_gui.i18n import get_language, set_language, t, tr
 
     PYSIDE_AVAILABLE = True
 except Exception:
@@ -32,19 +40,52 @@ except Exception:
     QPointF = None
     QValidator = None
     QMouseEvent = None
+    QTest = None
     QApplication = None
     QMessageBox = None
     QCompleter = None
     QPushButton = None
     QLineEdit = None
+    QPlainTextEdit = None
     AIPanel = None
     OverviewPanel = None
     TABLE_ROW_TINT_ROLE = None
     OperationsPanel = None
     cell_color = None
     localize_error_payload = None
+    get_language = None
+    set_language = None
+    t = None
     tr = None
     PYSIDE_AVAILABLE = False
+
+
+def _validate_stage_request_without_preflight(*args, **kwargs):
+    from app_gui.plan_gate import validate_stage_request as _validate_stage_request
+
+    params = dict(kwargs)
+    params["run_preflight"] = False
+    return _validate_stage_request(*args, **params)
+
+
+class _NoStagePreflightMixin:
+    """Disable staging preflight so UI behavior tests stay data-shape focused."""
+
+    def setUp(self):
+        super().setUp()
+        self._patch_stage_gate_ui = patch(
+            "app_gui.ui.operations_panel_plan_store.validate_stage_request",
+            side_effect=_validate_stage_request_without_preflight,
+        )
+        self._patch_stage_gate_ui.start()
+        self.addCleanup(self._patch_stage_gate_ui.stop)
+
+        self._patch_stage_gate_agent = patch(
+            "agent.tool_runner_staging.validate_stage_request",
+            side_effect=_validate_stage_request_without_preflight,
+        )
+        self._patch_stage_gate_agent.start()
+        self.addCleanup(self._patch_stage_gate_agent.stop)
 
 
 class _FakeChatNoMarkdown:
@@ -132,25 +173,75 @@ class _FakeOperationsBridge:
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
-class GuiPanelRegressionTests(unittest.TestCase):
+class GuiPanelRegressionTests(_NoStagePreflightMixin, ManagedPathTestCase):
     @classmethod
     def setUpClass(cls):
         cls._app = QApplication.instance() or QApplication([])
 
     def _new_operations_panel(self):
-        return OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
+        return OperationsPanel(bridge=object(), yaml_path_getter=lambda: self.fake_yaml_path)
 
     def _new_ai_panel(self):
-        return AIPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
+        return AIPanel(bridge=object(), yaml_path_getter=lambda: self.fake_yaml_path)
 
     def _new_overview_panel(self):
-        return OverviewPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
+        return OverviewPanel(bridge=object(), yaml_path_getter=lambda: self.fake_yaml_path)
 
     @staticmethod
     def _make_table_item(text):
         from PySide6.QtWidgets import QTableWidgetItem
 
         return QTableWidgetItem(text)
+
+    def test_operations_panel_migration_lock_disables_write_controls(self):
+        panel = self._new_operations_panel()
+
+        self.assertTrue(panel.op_mode_combo.isEnabled())
+        self.assertTrue(panel.op_stack.isEnabled())
+        panel.plan_exec_btn.setEnabled(True)
+        panel.plan_clear_btn.setEnabled(True)
+        panel.undo_btn.setEnabled(True)
+
+        panel.set_migration_mode(True)
+
+        self.assertFalse(panel.op_mode_combo.isEnabled())
+        self.assertFalse(panel.op_stack.isEnabled())
+        self.assertFalse(panel.plan_exec_btn.isEnabled())
+        self.assertFalse(panel.plan_clear_btn.isEnabled())
+        self.assertFalse(panel.undo_btn.isEnabled())
+
+    def test_operations_panel_migration_banner_visibility_tracks_mode(self):
+        panel = self._new_operations_panel()
+
+        self.assertTrue(panel._migration_mode_banner.isHidden())
+        self.assertTrue(panel._migration_lock_overlay.isHidden())
+        panel.set_migration_mode(True)
+        self.assertFalse(panel._migration_mode_banner.isHidden())
+        self.assertFalse(panel._migration_lock_overlay.isHidden())
+        panel.set_migration_mode(False)
+        self.assertTrue(panel._migration_mode_banner.isHidden())
+        self.assertTrue(panel._migration_lock_overlay.isHidden())
+
+    def test_operations_panel_migration_lock_blocks_staging_writes(self):
+        panel = self._new_operations_panel()
+        notices = []
+        panel.status_message.connect(lambda msg, timeout, level: notices.append((msg, timeout, level)))
+        panel.set_migration_mode(True)
+
+        panel.add_plan_items(
+            [
+                {
+                    "action": "add",
+                    "box": 1,
+                    "positions": [1],
+                    "fields": {"cell_line": "K562"},
+                }
+            ]
+        )
+
+        self.assertEqual(0, panel._plan_store.count())
+        self.assertTrue(notices)
+        self.assertEqual(tr("operations.migrationWriteLocked"), notices[-1][0])
 
     def test_operations_panel_refreshes_stale_default_dates(self):
         panel = self._new_operations_panel()
@@ -317,6 +408,57 @@ class GuiPanelRegressionTests(unittest.TestCase):
             self.assertGreaterEqual(btn.minimumWidth(), 96)
             self.assertGreaterEqual(btn.minimumHeight(), 28)
 
+    def test_operations_panel_watermark_is_click_through(self):
+        panel = self._new_operations_panel()
+
+        self.assertTrue(hasattr(panel, "_op_watermark"))
+        self.assertTrue(panel._op_watermark.testAttribute(Qt.WA_TransparentForMouseEvents))
+        self.assertIs(panel.plan_panel, panel._op_watermark_host)
+
+    def test_operations_panel_watermark_geometry_clamps_to_ratio_limits(self):
+        panel = self._new_operations_panel()
+        host = panel._op_watermark_host
+        watermark = panel._op_watermark
+
+        host.setGeometry(0, 0, 500, 420)
+        panel._update_operation_watermark_geometry()
+        self.assertEqual(240, watermark.width())
+        self.assertEqual((500 - watermark.width()) // 2, watermark.x())
+        self.assertEqual((420 - watermark.height()) // 2, watermark.y())
+
+        host.setGeometry(0, 0, 300, 420)
+        panel._update_operation_watermark_geometry()
+        self.assertEqual(180, watermark.width())
+        self.assertEqual((300 - watermark.width()) // 2, watermark.x())
+
+        host.setGeometry(0, 0, 1200, 700)
+        panel._update_operation_watermark_geometry()
+        self.assertEqual(360, watermark.width())
+
+    def test_operations_panel_logo_path_prefers_assets_then_root_fallback(self):
+        panel = self._new_operations_panel()
+
+        with patch("app_gui.ui.operations_panel.os.path.isfile") as is_file:
+            def _both_exist(path):
+                norm = str(path).replace("\\", "/")
+                return norm.endswith("/app_gui/assets/logo.svg") or norm.endswith("/logo.svg")
+
+            is_file.side_effect = _both_exist
+            preferred = panel._resolve_operation_logo_path()
+
+            def _only_root(path):
+                norm = str(path).replace("\\", "/")
+                return norm.endswith("/logo.svg") and not norm.endswith("/app_gui/assets/logo.svg")
+
+            is_file.side_effect = _only_root
+            fallback = panel._resolve_operation_logo_path()
+
+        preferred_norm = preferred.replace("\\", "/")
+        fallback_norm = fallback.replace("\\", "/")
+        self.assertTrue(preferred_norm.endswith("/app_gui/assets/logo.svg"))
+        self.assertTrue(fallback_norm.endswith("/logo.svg"))
+        self.assertFalse(fallback_norm.endswith("/app_gui/assets/logo.svg"))
+
     def test_main_window_ctrl_f_focuses_overview_search_when_focus_not_editable(self):
         from app_gui.main import MainWindow
 
@@ -423,6 +565,322 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertIn("glm-5", options)
         self.assertIn("glm-4.7", options)
 
+    def test_settings_dialog_import_handoff_closes_dialog_for_ai_panel(self):
+        from app_gui.main import SettingsDialog
+
+        dialog = SettingsDialog(
+            config={"yaml_path": self.fake_yaml_path},
+            on_import_existing_data=lambda **_kwargs: "awaiting_ai",
+        )
+
+        with patch.object(dialog, "reject") as reject_mock:
+            dialog._open_import_journey()
+
+        reject_mock.assert_called_once()
+
+    def test_settings_dialog_custom_fields_blocks_non_option_cell_line_early(self):
+        from app_gui.main import SettingsDialog
+        from lib.yaml_ops import load_yaml
+
+        payload = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9,
+                    "cols": 9,
+                    "box_count": 5,
+                    "box_numbers": [1, 2, 3, 4, 5],
+                },
+                "custom_fields": [],
+                "cell_line_required": True,
+                "cell_line_options": ["K562", "HeLa"],
+            },
+            "inventory": [
+                {
+                    "id": 1,
+                    "box": 1,
+                    "position": 1,
+                    "frozen_at": "2025-01-01",
+                    "cell_line": "K562",
+                    "note": None,
+                    "thaw_events": None,
+                }
+            ],
+        }
+        yaml_path = self.ensure_dataset_yaml("cf-cell-line-strict", payload=payload)
+        on_data_changed = MagicMock()
+
+        class _FakeCustomFieldsDialog:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            @staticmethod
+            def exec():
+                return 1
+
+            @staticmethod
+            def get_custom_fields():
+                return []
+
+            @staticmethod
+            def get_display_key():
+                return ""
+
+            @staticmethod
+            def get_color_key():
+                return "cell_line"
+
+            @staticmethod
+            def get_cell_line_options():
+                return ["HeLa"]
+
+            @staticmethod
+            def get_cell_line_required():
+                return True
+
+        dialog = SettingsDialog(
+            config={"yaml_path": yaml_path},
+            on_data_changed=on_data_changed,
+            custom_fields_dialog_cls=_FakeCustomFieldsDialog,
+        )
+
+        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock:
+            dialog._open_custom_fields_editor()
+
+        warn_mock.assert_called_once()
+        on_data_changed.assert_not_called()
+
+        saved = load_yaml(yaml_path) or {}
+        saved_meta = saved.get("meta") or {}
+        self.assertEqual(["K562", "HeLa"], saved_meta.get("cell_line_options"))
+
+    def test_settings_dialog_accept_blocks_invalid_color_key_in_yaml(self):
+        from app_gui.main import SettingsDialog
+
+        payload = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9,
+                    "cols": 9,
+                    "box_count": 5,
+                    "box_numbers": [1, 2, 3, 4, 5],
+                },
+                "custom_fields": [],
+                "color_key": "cell_line ",
+            },
+            "inventory": [
+                {
+                    "id": 1,
+                    "box": 1,
+                    "position": 1,
+                    "frozen_at": "2025-01-01",
+                    "cell_line": "K562",
+                    "note": None,
+                    "thaw_events": None,
+                }
+            ],
+        }
+        yaml_path = self.ensure_dataset_yaml("settings-invalid-color-key", payload=payload)
+        dialog = SettingsDialog(config={"yaml_path": yaml_path})
+
+        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock, patch(
+            "app_gui.ui.dialogs.settings_dialog.QDialog.accept"
+        ) as accept_mock:
+            dialog.accept()
+
+        warn_mock.assert_called_once()
+        accept_mock.assert_not_called()
+        warning_text = str(warn_mock.call_args[0][2])
+        self.assertIn("meta.color_key", warning_text)
+
+    def test_settings_dialog_accept_allows_custom_field_color_key(self):
+        from app_gui.main import SettingsDialog
+
+        payload = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9,
+                    "cols": 9,
+                    "box_count": 5,
+                    "box_numbers": [1, 2, 3, 4, 5],
+                },
+                "custom_fields": [
+                    {"key": "short_name", "label": "Short Name", "type": "str", "required": False}
+                ],
+                "color_key": "short_name",
+            },
+            "inventory": [
+                {
+                    "id": 1,
+                    "box": 1,
+                    "position": 1,
+                    "frozen_at": "2025-01-01",
+                    "cell_line": "K562",
+                    "short_name": "K562_A1",
+                    "note": None,
+                    "thaw_events": None,
+                }
+            ],
+        }
+        yaml_path = self.ensure_dataset_yaml("settings-valid-color-key", payload=payload)
+        dialog = SettingsDialog(config={"yaml_path": yaml_path})
+
+        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock, patch(
+            "app_gui.ui.dialogs.settings_dialog.QDialog.accept"
+        ) as accept_mock:
+            dialog.accept()
+
+        warn_mock.assert_not_called()
+        accept_mock.assert_called_once()
+
+    def test_settings_dialog_export_csv_uses_selected_yaml(self):
+        from app_gui.main import SettingsDialog
+
+        export_mock = MagicMock()
+        dialog = SettingsDialog(
+            config={"yaml_path": self.fake_yaml_path},
+            on_export_inventory_csv=export_mock,
+        )
+
+        dialog.export_csv_btn.click()
+
+        export_mock.assert_called_once_with(
+            parent=dialog,
+            yaml_path_override=dialog.yaml_edit.text().strip(),
+        )
+
+    def test_settings_dialog_rename_dataset_updates_selected_yaml(self):
+        from app_gui.main import SettingsDialog
+
+        old_path = self.fake_yaml_path
+        new_path = self.ensure_dataset_yaml("renamed-by-settings")
+        rename_mock = MagicMock(return_value=new_path)
+        dialog = SettingsDialog(
+            config={"yaml_path": old_path},
+            on_rename_dataset=rename_mock,
+        )
+
+        with patch(
+            "app_gui.ui.dialogs.settings_dialog.QInputDialog.getText",
+            return_value=("renamed-by-settings", True),
+        ), patch(
+            "app_gui.ui.dialogs.settings_dialog.list_managed_datasets",
+            return_value=[{"name": "renamed-by-settings", "yaml_path": new_path}],
+        ):
+            dialog._emit_rename_dataset_request()
+
+        rename_mock.assert_called_once_with(old_path, "renamed-by-settings")
+        self.assertEqual(os.path.abspath(new_path), dialog.yaml_edit.text())
+
+    def test_settings_dialog_rename_dataset_shows_warning_on_failure(self):
+        from app_gui.main import SettingsDialog
+
+        old_path = self.fake_yaml_path
+        dialog = SettingsDialog(
+            config={"yaml_path": old_path},
+            on_rename_dataset=MagicMock(side_effect=RuntimeError("rename failed")),
+        )
+
+        with patch(
+            "app_gui.ui.dialogs.settings_dialog.QInputDialog.getText",
+            return_value=("renamed-by-settings", True),
+        ), patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock:
+            dialog._emit_rename_dataset_request()
+
+        warn_mock.assert_called_once()
+        self.assertEqual(os.path.abspath(old_path), dialog.yaml_edit.text())
+
+    def test_settings_dialog_delete_dataset_updates_selected_yaml(self):
+        from app_gui.main import SettingsDialog
+
+        old_path = self.fake_yaml_path
+        new_path = self.ensure_dataset_yaml("after-delete")
+        delete_mock = MagicMock(return_value=new_path)
+        dialog = SettingsDialog(
+            config={"yaml_path": old_path},
+            on_delete_dataset=delete_mock,
+        )
+
+        with patch.object(dialog, "_confirm_delete_dataset_initial", return_value=True), patch.object(
+            dialog, "_confirm_phrase_dialog", return_value=True
+        ), patch.object(dialog, "_confirm_delete_dataset_final", return_value=True), patch(
+            "app_gui.ui.dialogs.settings_dialog.list_managed_datasets",
+            return_value=[{"name": "after-delete", "yaml_path": new_path}],
+        ):
+            dialog._emit_delete_dataset_request()
+
+        delete_mock.assert_called_once_with(old_path)
+        self.assertEqual(os.path.abspath(new_path), dialog.yaml_edit.text())
+
+    def test_settings_dialog_delete_dataset_shows_warning_on_failure(self):
+        from app_gui.main import SettingsDialog
+
+        old_path = self.fake_yaml_path
+        dialog = SettingsDialog(
+            config={"yaml_path": old_path},
+            on_delete_dataset=MagicMock(side_effect=RuntimeError("delete failed")),
+        )
+
+        with patch.object(dialog, "_confirm_delete_dataset_initial", return_value=True), patch.object(
+            dialog, "_confirm_phrase_dialog", return_value=True
+        ), patch.object(dialog, "_confirm_delete_dataset_final", return_value=True), patch(
+            "app_gui.ui.dialogs.settings_dialog.QMessageBox.warning"
+        ) as warn_mock:
+            dialog._emit_delete_dataset_request()
+
+        warn_mock.assert_called_once()
+        self.assertEqual(os.path.abspath(old_path), dialog.yaml_edit.text())
+
+    def test_settings_dialog_delete_dataset_requires_phrase_confirmation(self):
+        from app_gui.main import SettingsDialog
+
+        old_path = self.fake_yaml_path
+        delete_mock = MagicMock(return_value=self.ensure_dataset_yaml("phrase-should-not-pass"))
+        dialog = SettingsDialog(
+            config={"yaml_path": old_path},
+            on_delete_dataset=delete_mock,
+        )
+
+        with patch.object(dialog, "_confirm_delete_dataset_initial", return_value=True), patch.object(
+            dialog, "_confirm_phrase_dialog", return_value=False
+        ), patch.object(dialog, "_confirm_delete_dataset_final", return_value=True) as final_mock:
+            dialog._emit_delete_dataset_request()
+
+        delete_mock.assert_not_called()
+        final_mock.assert_not_called()
+        self.assertEqual(os.path.abspath(old_path), dialog.yaml_edit.text())
+
+    def test_settings_dialog_delete_dataset_phrase_stays_english_in_zh_locale(self):
+        from app_gui.main import SettingsDialog
+
+        old_path = self.fake_yaml_path
+        delete_mock = MagicMock()
+        dialog = SettingsDialog(
+            config={"yaml_path": old_path},
+            on_delete_dataset=delete_mock,
+        )
+
+        original_language = get_language()
+        set_language("zh-CN")
+        try:
+            with patch.object(dialog, "_confirm_delete_dataset_initial", return_value=True), patch.object(
+                dialog, "_confirm_phrase_dialog", return_value=False
+            ) as phrase_mock, patch.object(
+                dialog, "_confirm_delete_dataset_final", return_value=True
+            ) as final_mock:
+                dialog._emit_delete_dataset_request()
+
+            dataset_name = os.path.basename(os.path.dirname(os.path.abspath(old_path)))
+            expected_phrase = f"DELETE DATASET {dataset_name}"
+
+            phrase_mock.assert_called_once()
+            kwargs = phrase_mock.call_args.kwargs
+            self.assertEqual(expected_phrase, kwargs.get("phrase"))
+            self.assertIn(expected_phrase, kwargs.get("prompt_text", ""))
+            final_mock.assert_not_called()
+            delete_mock.assert_not_called()
+        finally:
+            set_language(original_language)
+
     def test_operations_panel_inline_edit_lock_toggle_controls_confirm_visibility(self):
         panel = self._new_operations_panel()
         panel.update_records_cache({
@@ -447,6 +905,32 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertFalse(confirm_btn.isHidden())
         lock_btn.click()
         self.assertTrue(confirm_btn.isHidden())
+
+    def test_operations_panel_note_fields_use_multiline_editors(self):
+        panel = self._new_operations_panel()
+
+        self.assertIsInstance(panel.a_note, QPlainTextEdit)
+        self.assertIsInstance(panel.t_ctx_note, QPlainTextEdit)
+        self.assertIsInstance(panel.m_ctx_note, QPlainTextEdit)
+
+        self.assertGreater(panel.a_note.minimumHeight(), panel.a_positions.minimumHeight())
+        self.assertGreater(panel.t_ctx_note.minimumHeight(), panel.t_from_position.minimumHeight())
+        self.assertGreater(panel.m_ctx_note.minimumHeight(), panel.m_from_position.minimumHeight())
+
+    def test_operations_panel_add_staging_preserves_multiline_note(self):
+        panel = self._new_operations_panel()
+
+        panel.a_box.setValue(1)
+        panel.a_positions.setText("1")
+        panel.a_note.setPlainText("first line\nsecond line")
+
+        panel.on_add_entry()
+
+        self.assertEqual(1, panel._plan_store.count())
+        item = panel._plan_store.list_items()[0]
+        payload = item.get("payload") or {}
+        fields = payload.get("fields") or {}
+        self.assertEqual("first line\nsecond line", fields.get("note"))
 
     def test_operations_panel_inline_edit_confirm_executes_immediately(self):
         panel = self._new_operations_panel()
@@ -475,12 +959,12 @@ class GuiPanelRegressionTests(unittest.TestCase):
         confirm_btn = container.findChild(QPushButton, "inlineConfirmBtn")
 
         lock_btn.click()
-        panel.t_ctx_note.setText("new-note")
+        panel.t_ctx_note.setPlainText("new-note")
         confirm_btn.click()
 
         bridge.edit_entry.assert_called_once()
         kwargs = bridge.edit_entry.call_args.kwargs
-        self.assertEqual("/tmp/__ln2_gui_panels_virtual_inventory__.yaml", kwargs["yaml_path"])
+        self.assertEqual(self.fake_yaml_path, kwargs["yaml_path"])
         self.assertEqual(1, kwargs["record_id"])
         self.assertEqual({"note": "new-note"}, kwargs["fields"])
         self.assertEqual("execute", kwargs["execution_mode"])
@@ -514,7 +998,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertFalse(hasattr(panel, "rb_backup_path"))
         self.assertFalse(hasattr(panel, "backup_table"))
 
-    def test_rollback_staging_is_rejected_when_plan_has_other_items(self):
+    def test_rollback_staging_replaces_existing_plan_items(self):
         panel = self._new_operations_panel()
         messages = []
         panel.status_message.connect(lambda msg, _timeout, _level: messages.append(msg))
@@ -525,9 +1009,39 @@ class GuiPanelRegressionTests(unittest.TestCase):
         panel.add_plan_items([build_rollback_plan_item(backup_path="/tmp/backup_a.bak", source="tests")])
 
         self.assertEqual(1, len(panel.plan_items))
+        self.assertEqual("rollback", panel.plan_items[0].get("action"))
+        self.assertIn(
+            tr("operations.planRollbackReplaced", count=1),
+            [str(msg) for msg in messages],
+        )
+
+    def test_invalid_rollback_staging_keeps_existing_plan_items(self):
+        panel = self._new_operations_panel()
+        messages = []
+        panel.status_message.connect(lambda msg, _timeout, _level: messages.append(msg))
+
+        from lib.plan_item_factory import build_rollback_plan_item
+
+        panel.add_plan_items([_make_takeout_item(record_id=1, position=1)])
+        panel.add_plan_items([build_rollback_plan_item(backup_path="", source="tests")])
+
+        self.assertEqual(1, len(panel.plan_items))
         self.assertEqual("takeout", panel.plan_items[0].get("action"))
-        prefix = tr("operations.planRejected", error="").strip()
-        self.assertTrue(any(str(msg).startswith(prefix) for msg in messages))
+        reject_prefix = tr("operations.planRejected", error="").strip()
+        self.assertTrue(
+            any(
+                str(msg).startswith(reject_prefix)
+                for msg in messages
+            )
+        )
+        self.assertTrue(
+            any(
+                "RollbackKept" in str(msg)
+                or "kept" in str(msg).lower()
+                or "\u4fdd\u7559" in str(msg)
+                for msg in messages
+            )
+        )
 
     def test_plan_store_queued_refresh_keeps_ui_consistent_after_external_clear(self):
         from PySide6.QtCore import QMetaObject, Qt
@@ -537,7 +1051,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
         store = PlanStore()
         panel = OperationsPanel(
             bridge=object(),
-            yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml",
+            yaml_path_getter=lambda: self.fake_yaml_path,
             plan_store=store,
         )
         self.assertFalse(panel.plan_print_btn.isEnabled())
@@ -834,11 +1348,20 @@ class GuiPanelRegressionTests(unittest.TestCase):
 
         self.assertEqual(
             {
-                "yaml_path": "/tmp/__ln2_gui_panels_virtual_inventory__.yaml",
+                "yaml_path": self.fake_yaml_path,
                 "output_path": "/tmp/full_export.csv",
             },
             bridge.last_export_payload,
         )
+
+    def test_overview_export_button_emits_request_signal(self):
+        panel = self._new_overview_panel()
+        emitted = []
+        panel.request_export_inventory_csv.connect(lambda: emitted.append(True))
+
+        panel.ov_export_csv_btn.click()
+
+        self.assertEqual([True], emitted)
 
     def test_overview_click_prefills_background_only(self):
         panel = self._new_overview_panel()
@@ -1180,6 +1703,27 @@ class GuiPanelRegressionTests(unittest.TestCase):
         button.stop_hover_visual()
         self.assertFalse(proxy.isVisible())
 
+    def test_overview_missing_yaml_uses_warning_hint_style(self):
+        original_language = get_language()
+        set_language("en")
+        try:
+            missing_yaml_path = os.path.join(
+                os.path.dirname(__file__),
+                "__missing_overview_panel_inventory__.yaml",
+            )
+            if os.path.exists(missing_yaml_path):
+                os.remove(missing_yaml_path)
+
+            panel = OverviewPanel(bridge=object(), yaml_path_getter=lambda: missing_yaml_path)
+            panel.refresh()
+
+            expected_message = t("main.fileNotFound", path=missing_yaml_path)
+            self.assertEqual(expected_message, panel.ov_status.text())
+            self.assertEqual(expected_message, panel.ov_hover_hint.text())
+            self.assertEqual("warning", panel.ov_hover_hint.property("state"))
+        finally:
+            set_language(original_language)
+
     def test_overview_context_menu_record_stages_takeout_item(self):
         panel = self._new_overview_panel()
         panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
@@ -1446,7 +1990,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
         panel = self._new_operations_panel()
         bridge = _FakeOperationsBridge()
         panel.bridge = bridge
-        panel.yaml_path_getter = lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml"
+        panel.yaml_path_getter = lambda: self.fake_yaml_path
 
         items = [
             {
@@ -1606,6 +2150,7 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertIn("final answer", rendered)
         self.assertIn("\n", rendered)
         self.assertTrue(panel.ai_stream_has_thought)
+        self.assertNotIn("toggle_thought", panel.ai_chat.toHtml())
 
     def test_ai_panel_append_chat_prefers_insert_markdown_when_available(self):
         panel = self._new_ai_panel()
@@ -1712,7 +2257,59 @@ class GuiPanelRegressionTests(unittest.TestCase):
         append_calls = [value for name, value in panel.ai_chat.calls if name == "append"]
         merged = "\n".join(append_calls)
         self.assertIn("query_takeout_events", merged)
-        self.assertIn("OK", merged)
+        self.assertNotIn("finished", merged)
+
+    def test_ai_panel_tool_end_keeps_ui_brief(self):
+        panel = self._new_ai_panel()
+        panel.ai_chat = _FakeChatNoMarkdown()
+
+        panel.on_progress({"event": "run_start", "trace_id": "trace-tool-brief"})
+        panel.on_progress(
+            {
+                "event": "tool_end",
+                "trace_id": "trace-tool-brief",
+                "data": {"name": "bash"},
+                "observation": {
+                    "ok": False,
+                    "error_code": "terminal_nonzero_exit",
+                    "message": "exit code 1",
+                    "_hint": "Use powershell on Windows",
+                    "resolved_path": "D:/repo/file.txt",
+                    "effective_root": "D:/repo",
+                    "raw_output": "verbose details",
+                },
+            }
+        )
+
+        append_calls = [value for name, value in panel.ai_chat.calls if name == "append"]
+        merged = "\n".join(append_calls)
+        self.assertIn("FAIL: exit code 1", merged)
+        self.assertNotIn("finished", merged)
+        self.assertNotIn("Hint:", merged)
+        self.assertNotIn("Code:", merged)
+        self.assertNotIn("Path:", merged)
+        self.assertNotIn("Root:", merged)
+        self.assertNotIn("Raw output:", merged)
+        self.assertNotIn("Reason:", merged)
+
+    def test_ai_panel_tool_start_prefers_status_text(self):
+        panel = self._new_ai_panel()
+        panel.ai_chat = _FakeChatNoMarkdown()
+
+        panel.on_progress({"event": "run_start", "trace_id": "trace-status"})
+        panel.on_progress(
+            {
+                "event": "tool_start",
+                "trace_id": "trace-status",
+                "status_text": "List files in migrate/inputs",
+                "data": {"name": "fs_list"},
+            }
+        )
+
+        append_calls = [value for name, value in panel.ai_chat.calls if name == "append"]
+        merged = "\n".join(append_calls)
+        self.assertIn("List files in migrate/inputs", merged)
+        self.assertNotIn("Running fs_list", merged)
 
     def test_ai_panel_renders_blocked_items_from_tool_result(self):
         panel = self._new_ai_panel()
@@ -1763,6 +2360,129 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertIn("bold", rendered_text)
         self.assertNotIn("**bold**", rendered_text)
 
+    def test_ai_panel_message_after_markdown_list_does_not_join_list(self):
+        panel = self._new_ai_panel()
+
+        panel._append_chat("Agent", "1. first\n2. second\n3. third")
+        html_before = panel.ai_chat.toHtml()
+        li_before = html_before.count("<li")
+        self.assertGreater(li_before, 0)
+
+        panel._append_chat("You", "8...")
+
+        html = panel.ai_chat.toHtml()
+        self.assertEqual(li_before, html.count("<li"))
+        self.assertIn("You</span>", html)
+        self.assertNotIn("You</span></li>", html)
+
+    def test_ai_panel_compact_tool_message_after_markdown_list_does_not_join_list(self):
+        panel = self._new_ai_panel()
+
+        panel._append_chat("Agent", "1. first\n2. second")
+        html_before = panel.ai_chat.toHtml()
+        li_before = html_before.count("<li")
+        self.assertGreater(li_before, 0)
+
+        panel._append_tool_message("Running generate_stats")
+
+        html = panel.ai_chat.toHtml()
+        self.assertEqual(li_before, html.count("<li"))
+        self.assertIn("[Tool]", panel.ai_chat.toPlainText())
+
+    def test_ai_panel_keeps_view_when_user_scrolled_up_and_new_message_arrives(self):
+        panel = self._new_ai_panel()
+        panel.resize(560, 320)
+        panel.show()
+        self._app.processEvents()
+
+        for i in range(100):
+            panel._append_chat("Agent", f"history line {i}")
+        self._app.processEvents()
+
+        scroll_bar = panel.ai_chat.verticalScrollBar()
+        self.assertGreater(scroll_bar.maximum(), 0)
+        scroll_bar.setValue(max(scroll_bar.minimum(), scroll_bar.maximum() - 200))
+        self._app.processEvents()
+        before_value = scroll_bar.value()
+
+        panel._append_chat("Agent", "latest line")
+        self._app.processEvents()
+
+        self.assertLess(scroll_bar.value(), scroll_bar.maximum())
+        self.assertAlmostEqual(before_value, scroll_bar.value(), delta=32)
+        self.assertTrue(panel.ai_new_msg_btn.isVisible())
+
+    def test_ai_panel_auto_follows_when_user_stays_near_bottom(self):
+        panel = self._new_ai_panel()
+        panel.resize(560, 320)
+        panel.show()
+        self._app.processEvents()
+
+        for i in range(100):
+            panel._append_chat("Agent", f"history line {i}")
+        self._app.processEvents()
+
+        scroll_bar = panel.ai_chat.verticalScrollBar()
+        self.assertGreater(scroll_bar.maximum(), 0)
+        self.assertEqual(scroll_bar.value(), scroll_bar.maximum())
+
+        panel._append_chat("Agent", "latest line")
+        self._app.processEvents()
+
+        self.assertEqual(scroll_bar.value(), scroll_bar.maximum())
+        self.assertFalse(panel.ai_new_msg_btn.isVisible())
+
+    def test_ai_panel_jump_to_latest_button_recovers_follow_mode(self):
+        panel = self._new_ai_panel()
+        panel.resize(560, 320)
+        panel.show()
+        self._app.processEvents()
+
+        for i in range(100):
+            panel._append_chat("Agent", f"history line {i}")
+        self._app.processEvents()
+
+        scroll_bar = panel.ai_chat.verticalScrollBar()
+        scroll_bar.setValue(max(scroll_bar.minimum(), scroll_bar.maximum() - 240))
+        self._app.processEvents()
+
+        panel._append_chat("Agent", "latest line")
+        self._app.processEvents()
+        self.assertTrue(panel.ai_new_msg_btn.isVisible())
+        self.assertFalse(panel.ai_auto_follow_enabled)
+        self.assertGreater(panel.ai_unseen_message_count, 0)
+
+        panel.ai_new_msg_btn.click()
+        self._app.processEvents()
+
+        self.assertEqual(scroll_bar.value(), scroll_bar.maximum())
+        self.assertTrue(panel.ai_auto_follow_enabled)
+        self.assertEqual(0, panel.ai_unseen_message_count)
+        self.assertFalse(panel.ai_new_msg_btn.isVisible())
+
+    def test_ai_panel_stream_chunk_does_not_force_scroll_when_scrolled_up(self):
+        panel = self._new_ai_panel()
+        panel.resize(560, 320)
+        panel.show()
+        self._app.processEvents()
+
+        for i in range(100):
+            panel._append_chat("Agent", f"history line {i}")
+        self._app.processEvents()
+
+        scroll_bar = panel.ai_chat.verticalScrollBar()
+        scroll_bar.setValue(max(scroll_bar.minimum(), scroll_bar.maximum() - 220))
+        self._app.processEvents()
+        before_value = scroll_bar.value()
+
+        panel.on_progress({"event": "run_start", "trace_id": "trace-scroll"})
+        panel.on_progress({"event": "chunk", "trace_id": "trace-scroll", "data": "chunk data"})
+        self._app.processEvents()
+
+        self.assertLess(scroll_bar.value(), scroll_bar.maximum())
+        self.assertAlmostEqual(before_value, scroll_bar.value(), delta=40)
+        self.assertTrue(panel.ai_new_msg_btn.isVisible())
+
     def test_ai_panel_separates_multiple_runs_without_merging_messages(self):
         panel = self._new_ai_panel()
 
@@ -1808,6 +2528,55 @@ class GuiPanelRegressionTests(unittest.TestCase):
         self.assertGreaterEqual(len(panel.ai_history), 1)
         self.assertEqual("assistant", panel.ai_history[-1]["role"])
         self.assertEqual("hello", panel.ai_history[-1]["content"])
+
+    def test_ai_panel_stream_end_persists_tool_history_and_dedupes_final(self):
+        panel = self._new_ai_panel()
+        panel.on_progress(
+            {
+                "event": "stream_end",
+                "trace_id": "trace-stream-end",
+                "data": {
+                    "status": "complete",
+                    "messages": [
+                        {"role": "user", "content": "hi", "timestamp": 1.0},
+                        {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "search_records",
+                                        "arguments": "{}",
+                                    },
+                                }
+                            ],
+                            "timestamp": 2.0,
+                        },
+                        {
+                            "role": "tool",
+                            "tool_call_id": "call_1",
+                            "content": '{"ok":true}',
+                            "timestamp": 3.0,
+                        },
+                        {"role": "assistant", "content": "done", "timestamp": 4.0},
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(4, len(panel.ai_history))
+        self.assertEqual("tool", panel.ai_history[2].get("role"))
+        self.assertEqual("call_1", panel.ai_history[2].get("tool_call_id"))
+
+        panel.on_finished({"ok": True, "result": {"final": "done", "trace_id": "trace-stream-end"}})
+        final_assistant_count = sum(
+            1
+            for item in panel.ai_history
+            if item.get("role") == "assistant" and item.get("content") == "done"
+        )
+        self.assertEqual(1, final_assistant_count)
 
     def test_ai_panel_finished_flags_protocol_error_without_result(self):
         panel = self._new_ai_panel()
@@ -1931,17 +2700,19 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class ToolRunnerPlanSinkTests(unittest.TestCase):
+class ToolRunnerPlanSinkTests(_NoStagePreflightMixin, ManagedPathTestCase):
     """Test that AgentToolRunner stages write operations when plan_store is set."""
 
     def setUp(self):
+        super().setUp()
         from lib.plan_store import PlanStore
         self.store = PlanStore()
 
-    def _make_runner(self, yaml_path="/tmp/__ln2_gui_panels_virtual_inventory__.yaml"):
+    def _make_runner(self, yaml_path=None):
         from agent.tool_runner import AgentToolRunner
+        target_yaml = yaml_path or self.fake_yaml_path
         return AgentToolRunner(
-            yaml_path=yaml_path,
+            yaml_path=target_yaml,
             plan_store=self.store,
         )
 
@@ -1990,7 +2761,7 @@ class ToolRunnerPlanSinkTests(unittest.TestCase):
     def test_without_plan_sink_executes_normally(self):
         from agent.tool_runner import AgentToolRunner
         runner = AgentToolRunner(
-            yaml_path="/tmp/__ln2_gui_panels_virtual_inventory__.yaml",
+            yaml_path=self.fake_yaml_path,
         )
         # Without plan_store, add_entry should attempt execution (may error but not stage)
         result = runner.run("add_entry", {
@@ -2139,7 +2910,7 @@ class _RollbackAwareBridge(_ConfigurableBridge):
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
-class PlanDedupRegressionTests(unittest.TestCase):
+class PlanDedupRegressionTests(_NoStagePreflightMixin, ManagedPathTestCase):
     """Regression: add_plan_items should deduplicate by stable item identity."""
 
     @classmethod
@@ -2147,7 +2918,7 @@ class PlanDedupRegressionTests(unittest.TestCase):
         cls._app = QApplication.instance() or QApplication([])
 
     def _new_panel(self):
-        return OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
+        return OperationsPanel(bridge=object(), yaml_path_getter=lambda: self.fake_yaml_path)
 
     def test_duplicate_item_replaces_existing(self):
         """Staging same (action, record_id, position) should replace, not append."""
@@ -2208,7 +2979,7 @@ class PlanDedupRegressionTests(unittest.TestCase):
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
-class ExecutePlanFallbackRegressionTests(unittest.TestCase):
+class ExecutePlanFallbackRegressionTests(_NoStagePreflightMixin, ManagedPathTestCase):
     """Regression: batch failure should fallback to individual execution."""
 
     @classmethod
@@ -2216,7 +2987,7 @@ class ExecutePlanFallbackRegressionTests(unittest.TestCase):
         cls._app = QApplication.instance() or QApplication([])
 
     def _new_panel(self, bridge):
-        panel = OperationsPanel(bridge=bridge, yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
+        panel = OperationsPanel(bridge=bridge, yaml_path_getter=lambda: self.fake_yaml_path)
         return panel
 
     def test_move_batch_fails_falls_back_to_individual(self):
@@ -2424,7 +3195,7 @@ class _UndoBridge(_FakeOperationsBridge):
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
-class UndoRestoresPlanRegressionTests(unittest.TestCase):
+class UndoRestoresPlanRegressionTests(_NoStagePreflightMixin, ManagedPathTestCase):
     """Regression: undo should restore executed items back to plan."""
 
     @classmethod
@@ -2432,7 +3203,7 @@ class UndoRestoresPlanRegressionTests(unittest.TestCase):
         cls._app = QApplication.instance() or QApplication([])
 
     def _new_panel(self, bridge):
-        return OperationsPanel(bridge=bridge, yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
+        return OperationsPanel(bridge=bridge, yaml_path_getter=lambda: self.fake_yaml_path)
 
     def test_undo_restores_executed_plan_items(self):
         """After executing plan and undoing, items should return to plan."""
@@ -2460,6 +3231,29 @@ class UndoRestoresPlanRegressionTests(unittest.TestCase):
         self.assertTrue(bridge.rollback_called)
         self.assertEqual(2, len(panel.plan_items))
         self.assertEqual("takeout", panel.plan_items[0]["action"])
+
+    def test_undo_then_stage_rollback_replaces_restored_plan(self):
+        """Undo-restored plan items should be replaced when a rollback is staged."""
+        from lib.plan_item_factory import build_rollback_plan_item
+
+        bridge = _UndoBridge()
+        panel = self._new_panel(bridge)
+
+        panel.add_plan_items([_make_takeout_item(record_id=1, position=5)])
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.on_undo_last()
+
+        self.assertEqual(1, len(panel.plan_items))
+        self.assertEqual("takeout", panel.plan_items[0]["action"])
+
+        panel.add_plan_items(
+            [build_rollback_plan_item(backup_path="/tmp/undo_second_backup.bak", source="tests")]
+        )
+        self.assertEqual(1, len(panel.plan_items))
+        self.assertEqual("rollback", panel.plan_items[0]["action"])
 
     def test_undo_clears_last_executed_plan(self):
         """After undo, _last_executed_plan should be cleared."""
@@ -2492,7 +3286,10 @@ class UndoRestoresPlanRegressionTests(unittest.TestCase):
         with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
             panel.execute_plan()
 
-        self.assertEqual("/tmp/backup_test.yaml", panel._last_operation_backup)
+        backup_path = str(panel._last_operation_backup or "")
+        self.assertTrue(backup_path)
+        self.assertIn(os.path.join("_fake", "backups"), backup_path)
+        self.assertTrue(backup_path.endswith(".bak"))
         self.assertEqual(1, len(panel._last_executed_plan))
         self.assertEqual(1, panel._last_executed_plan[0]["record_id"])
 
@@ -2545,7 +3342,7 @@ class UndoRestoresPlanRegressionTests(unittest.TestCase):
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
-class RollbackConfirmationDialogTests(unittest.TestCase):
+class RollbackConfirmationDialogTests(ManagedPathTestCase):
     """Regression: rollback confirmations should show complete backup context."""
 
     @classmethod
@@ -2726,7 +3523,7 @@ class RollbackConfirmationDialogTests(unittest.TestCase):
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
-class PrintPlanRegressionTests(unittest.TestCase):
+class PrintPlanRegressionTests(_NoStagePreflightMixin, ManagedPathTestCase):
     """Regression: printing should support recently executed plans."""
 
     @classmethod
@@ -2734,7 +3531,7 @@ class PrintPlanRegressionTests(unittest.TestCase):
         cls._app = QApplication.instance() or QApplication([])
 
     def _new_panel(self, bridge):
-        return OperationsPanel(bridge=bridge, yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
+        return OperationsPanel(bridge=bridge, yaml_path_getter=lambda: self.fake_yaml_path)
 
     def test_print_last_executed_uses_recent_execution(self):
         bridge = _UndoBridge()
@@ -2864,7 +3661,7 @@ class PrintPlanRegressionTests(unittest.TestCase):
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
-class PlanPreflightGuardTests(unittest.TestCase):
+class PlanPreflightGuardTests(ManagedPathTestCase):
     """Regression: preflight should block execution of invalid plans."""
 
     @classmethod
@@ -2957,7 +3754,7 @@ class PlanPreflightGuardTests(unittest.TestCase):
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
-class ExecuteInterceptTests(unittest.TestCase):
+class ExecuteInterceptTests(ManagedPathTestCase):
     """Regression: execute should be intercepted when plan is blocked."""
 
     @classmethod
@@ -3051,7 +3848,7 @@ class ExecuteInterceptTests(unittest.TestCase):
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
-class OperationEventFeedTests(unittest.TestCase):
+class OperationEventFeedTests(ManagedPathTestCase):
     """Regression: operation events should flow to AI panel."""
 
     @classmethod
@@ -3060,7 +3857,7 @@ class OperationEventFeedTests(unittest.TestCase):
 
     def _new_ai_panel(self):
         from app_gui.ui.ai_panel import AIPanel
-        return AIPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
+        return AIPanel(bridge=object(), yaml_path_getter=lambda: self.fake_yaml_path)
 
     @staticmethod
     def _make_mouse_release_event(x=6.0, y=6.0):
@@ -3093,8 +3890,128 @@ class OperationEventFeedTests(unittest.TestCase):
         self.assertIn("succeeded", chat_text)
         self.assertNotIn("plan.execute.result", chat_text)
 
+    def test_ai_panel_import_tool_success_calls_dataset_switch_handler(self):
+        switched = []
+        panel = AIPanel(
+            bridge=object(),
+            yaml_path_getter=lambda: self.fake_yaml_path,
+            import_dataset_handler=lambda path: switched.append(path) or path,
+        )
+        panel.prepare_import_migration("run staged migration", focus=False)
+        self.assertEqual("migration", panel._agent_mode)
+
+        panel.on_progress(
+            {
+                "event": "tool_end",
+                "type": "tool_end",
+                "data": {"name": "import_migration_output"},
+                "observation": {
+                    "ok": True,
+                    "target_path": "D:/inventories/ln2_inventory/inventory.yaml",
+                },
+            }
+        )
+
+        self.assertEqual(["D:/inventories/ln2_inventory/inventory.yaml"], switched)
+        self.assertEqual("default", panel._agent_mode)
+        self.assertTrue(panel._migration_mode_banner.isHidden())
+        chat_text = panel.ai_chat.toPlainText().lower()
+        self.assertIn("imported dataset opened", chat_text)
+
+    def test_ai_panel_migration_mode_updates_banner_and_status(self):
+        panel = self._new_ai_panel()
+        mode_changes = []
+        status_messages = []
+        panel.migration_mode_changed.connect(lambda enabled: mode_changes.append(bool(enabled)))
+        panel.status_message.connect(lambda msg, timeout: status_messages.append((msg, timeout)))
+
+        panel.prepare_import_migration("run staged migration", focus=False)
+
+        self.assertEqual("migration", panel._agent_mode)
+        self.assertFalse(panel._migration_mode_banner.isHidden())
+        self.assertEqual([True], mode_changes)
+        self.assertIn((tr("ai.migrationModeEnteredStatus"), 4000), status_messages)
+        self.assertTrue(bool(panel.ai_run_btn.property("migrationAttention")))
+
+        panel.exit_migration_mode()
+
+        self.assertEqual("default", panel._agent_mode)
+        self.assertTrue(panel._migration_mode_banner.isHidden())
+        self.assertEqual([True, False], mode_changes)
+        self.assertEqual((tr("ai.migrationModeExitedStatus"), 4000), status_messages[-1])
+
+    def test_ai_panel_run_button_attention_clears_after_timer(self):
+        panel = self._new_ai_panel()
+
+        panel._flash_run_button_attention(duration_ms=30)
+        self.assertTrue(bool(panel.ai_run_btn.property("migrationAttention")))
+
+        QTest.qWait(80)
+        self.assertFalse(bool(panel.ai_run_btn.property("migrationAttention")))
+
+    def test_ai_panel_import_tool_success_reports_switch_failure(self):
+        panel = AIPanel(
+            bridge=object(),
+            yaml_path_getter=lambda: self.fake_yaml_path,
+            import_dataset_handler=lambda _path: (_ for _ in ()).throw(RuntimeError("switch failed")),
+        )
+        panel.prepare_import_migration("run staged migration", focus=False)
+        self.assertEqual("migration", panel._agent_mode)
+
+        panel.on_progress(
+            {
+                "event": "tool_end",
+                "type": "tool_end",
+                "data": {"name": "import_migration_output"},
+                "observation": {
+                    "ok": True,
+                    "target_path": "D:/inventories/ln2_inventory/inventory.yaml",
+                },
+            }
+        )
+
+        chat_text = panel.ai_chat.toPlainText().lower()
+        self.assertIn("opening dataset failed", chat_text)
+        self.assertEqual("migration", panel._agent_mode)
+
+    def test_ai_panel_prepare_import_migration_prefills_prompt(self):
+        panel = self._new_ai_panel()
+
+        panel.prepare_import_migration("run staged migration", focus=False)
+
+        self.assertEqual("run staged migration", panel.ai_prompt.toPlainText())
+        self.assertEqual("migration", panel._agent_mode)
+
+    def test_ai_panel_prepare_import_migration_clears_plan_store(self):
+        from lib.plan_store import PlanStore
+
+        plan_store = PlanStore()
+        plan_store.add(
+            [
+                {
+                    "action": "add",
+                    "box": 1,
+                    "positions": [1],
+                    "fields": {"cell_line": "K562"},
+                }
+            ]
+        )
+        panel = AIPanel(
+            bridge=object(),
+            yaml_path_getter=lambda: self.fake_yaml_path,
+            plan_store=plan_store,
+        )
+        self.assertEqual(1, plan_store.count())
+
+        panel.prepare_import_migration("run staged migration", focus=False)
+
+        self.assertEqual("migration", panel._agent_mode)
+        self.assertEqual(0, plan_store.count())
+
     def test_ai_panel_limits_operation_events(self):
         """AI panel should limit stored operation events to prevent memory growth."""
+        from app_gui.gui_config import AI_OPERATION_EVENT_POOL_LIMIT
+
         panel = self._new_ai_panel()
 
         for i in range(30):
@@ -3106,7 +4023,18 @@ class OperationEventFeedTests(unittest.TestCase):
                 "summary": f"Event {i}",
             })
 
-        self.assertLessEqual(len(panel.ai_operation_events), 20)
+        self.assertLessEqual(len(panel.ai_operation_events), AI_OPERATION_EVENT_POOL_LIMIT)
+
+    def test_ai_panel_limits_chat_history_by_config(self):
+        """AI panel history should honor AI_HISTORY_LIMIT constant."""
+        from app_gui.gui_config import AI_HISTORY_LIMIT
+
+        panel = self._new_ai_panel()
+        for i in range(AI_HISTORY_LIMIT + 15):
+            panel._append_history("user", f"msg-{i}")
+
+        self.assertEqual(AI_HISTORY_LIMIT, len(panel.ai_history))
+        self.assertEqual(f"msg-{AI_HISTORY_LIMIT + 14}", panel.ai_history[-1]["content"])
 
     def test_ai_panel_shows_blocked_events(self):
         """AI panel should show blocked execution events."""
@@ -3361,16 +4289,16 @@ class OperationEventFeedTests(unittest.TestCase):
         self.assertIn("<div", expanded_html)
         self.assertLess(expanded_html.find("Collapse"), expanded_html.find("<div"))
 
-    def test_ai_panel_anchor_click_routes_toggle_thought(self):
+    def test_ai_panel_anchor_click_ignores_legacy_toggle_thought_anchor(self):
         panel = self._new_ai_panel()
         event = self._make_mouse_release_event()
         with patch.object(panel.ai_chat, "anchorAt", return_value="toggle_thought") as anchor_mock:
-            with patch.object(panel, "_toggle_current_thought_collapsed") as toggle_mock:
+            with patch.object(panel, "_toggle_collapsible_block") as toggle_mock:
                 handled = panel._handle_chat_anchor_click(event)
 
-        self.assertTrue(handled)
+        self.assertFalse(handled)
         anchor_mock.assert_called_once()
-        toggle_mock.assert_called_once_with()
+        toggle_mock.assert_not_called()
 
     def test_ai_panel_event_filter_consumes_toggle_details_anchor_click(self):
         panel = self._new_ai_panel()
@@ -3393,7 +4321,7 @@ class OperationEventFeedTests(unittest.TestCase):
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
-class ExecuteFailurePreservesPlanTests(unittest.TestCase):
+class ExecuteFailurePreservesPlanTests(_NoStagePreflightMixin, ManagedPathTestCase):
     """Regression: execute failure should preserve original plan for retry."""
 
     @classmethod
@@ -3401,7 +4329,7 @@ class ExecuteFailurePreservesPlanTests(unittest.TestCase):
         cls._app = QApplication.instance() or QApplication([])
 
     def _new_panel(self, bridge):
-        return OperationsPanel(bridge=bridge, yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
+        return OperationsPanel(bridge=bridge, yaml_path_getter=lambda: self.fake_yaml_path)
 
     def test_execute_failure_preserves_entire_original_plan(self):
         """When execution fails, the entire original plan should be preserved."""
@@ -3495,7 +4423,7 @@ class ExecuteFailurePreservesPlanTests(unittest.TestCase):
 # ===========================================================================
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 not available")
-class CellLineDropdownTests(unittest.TestCase):
+class CellLineDropdownTests(ManagedPathTestCase):
     """Tests for cell_line QComboBox in operations panel."""
 
     @classmethod
@@ -3511,21 +4439,21 @@ class CellLineDropdownTests(unittest.TestCase):
 
     def test_cell_line_combo_exists(self):
         """Operations panel should have a cell_line combo box."""
-        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: self.fake_yaml_path)
         self.assertTrue(hasattr(panel, "a_cell_line"))
         from PySide6.QtWidgets import QComboBox
         self.assertIsInstance(panel.a_cell_line, QComboBox)
 
     def test_cell_line_combo_starts_with_empty(self):
         """Cell line combo should start with an empty option."""
-        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: self.fake_yaml_path)
         self.assertEqual("", panel.a_cell_line.itemText(0))
 
     def test_refresh_cell_line_options_populates_combo(self):
         """_refresh_cell_line_options should populate from meta."""
         from lib.custom_fields import is_cell_line_required
 
-        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: self.fake_yaml_path)
         meta = {"cell_line_options": ["K562", "HeLa", "NCCIT"]}
         panel._refresh_cell_line_options(meta)
         hints = self._hint_lines()
@@ -3548,7 +4476,7 @@ class CellLineDropdownTests(unittest.TestCase):
         """Refreshing options should preserve the current selection."""
         from lib.custom_fields import is_cell_line_required
 
-        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: self.fake_yaml_path)
         meta = {"cell_line_options": ["K562", "HeLa"]}
         panel._refresh_cell_line_options(meta)
         hella_index = 1 if is_cell_line_required(meta) else 2
@@ -3563,7 +4491,7 @@ class CellLineDropdownTests(unittest.TestCase):
         """Without meta options, should use DEFAULT_CELL_LINE_OPTIONS."""
         from lib.custom_fields import DEFAULT_CELL_LINE_OPTIONS, is_cell_line_required
 
-        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: self.fake_yaml_path)
         panel._refresh_cell_line_options({})
         hints = self._hint_lines()
         required = is_cell_line_required({})
@@ -3572,7 +4500,7 @@ class CellLineDropdownTests(unittest.TestCase):
 
     def test_apply_meta_update_switches_required_mode_immediately(self):
         """Changing cell_line_required should update add-form combo immediately."""
-        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: self.fake_yaml_path)
 
         panel.apply_meta_update({
             "cell_line_required": True,
@@ -3595,7 +4523,7 @@ class CellLineDropdownTests(unittest.TestCase):
         """Thaw/move cell_line context should support lock-based inline editing."""
         from PySide6.QtWidgets import QLineEdit
 
-        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: self.fake_yaml_path)
         self.assertIsInstance(panel.t_ctx_cell_line, QLineEdit)
         self.assertIsInstance(panel.m_ctx_cell_line, QLineEdit)
         self.assertTrue(panel.t_ctx_cell_line.isReadOnly())
@@ -3603,7 +4531,7 @@ class CellLineDropdownTests(unittest.TestCase):
 
     def test_context_cell_line_prefix_validator_and_completer(self):
         """Cell line edit should allow only option prefixes and exact option values."""
-        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: self.fake_yaml_path)
         panel.apply_meta_update({
             "cell_line_required": True,
             "cell_line_options": ["K562", "HeLa", "NCCIT"],
@@ -3650,7 +4578,7 @@ class CellLineDropdownTests(unittest.TestCase):
             self.assertFalse(bool(flags & Qt.ItemIsSelectable))
 
     def test_add_cell_line_combo_expands_without_scrollbar(self):
-        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: "/tmp/__ln2_gui_panels_virtual_inventory__.yaml")
+        panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: self.fake_yaml_path)
         opts = [f"Cell-{i:02d}" for i in range(30)]
         panel._refresh_cell_line_options({
             "cell_line_required": True,
@@ -3675,7 +4603,7 @@ class CellLineDropdownTests(unittest.TestCase):
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 not available")
-class OverviewColorKeyFilterTests(unittest.TestCase):
+class OverviewColorKeyFilterTests(ManagedPathTestCase):
     """Tests for overview panel filtering by color_key."""
 
     @classmethod
@@ -3918,7 +4846,7 @@ class OverviewColorKeyFilterTests(unittest.TestCase):
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 not available")
-class OverviewTableViewTests(unittest.TestCase):
+class OverviewTableViewTests(ManagedPathTestCase):
     """Tests for Overview table view and shared live filters."""
 
     @classmethod
@@ -4039,6 +4967,228 @@ class OverviewTableViewTests(unittest.TestCase):
             panel.ov_filter_cell.setCurrentIndex(cell_idx)
             self.assertEqual(1, panel.ov_table.rowCount())
             self.assertEqual("1", panel.ov_table.item(0, 0).text())
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_detect_column_type_uses_current_meta_without_yaml_load(self):
+        records = []
+        for idx in range(1, 31):
+            records.append(
+                {
+                    "id": idx,
+                    "cell_line": f"Line-{idx}",
+                    "short_name": f"S-{idx}",
+                    "box": 1,
+                    "position": idx,
+                    "frozen_at": "2025-01-01",
+                    "passage_number": idx,
+                }
+            )
+        meta_extra = {
+            "custom_fields": [{"key": "passage_number", "label": "Passage #", "type": "int"}],
+            "color_key": "cell_line",
+        }
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra=meta_extra)
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+
+            with patch(
+                "lib.yaml_ops.load_yaml",
+                side_effect=AssertionError("column type detection should not reload YAML"),
+            ):
+                detected = panel._detect_column_type("passage_number")
+
+            self.assertEqual("number", detected)
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_get_unique_column_values_uses_table_version_cache(self):
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+            {"id": 2, "cell_line": "HeLa", "short_name": "B", "box": 1, "position": 2, "frozen_at": "2025-01-01"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            class _CountingRows(list):
+                def __init__(self, rows):
+                    super().__init__(rows)
+                    self.iter_calls = 0
+
+                def __iter__(self):
+                    self.iter_calls += 1
+                    return super().__iter__()
+
+            panel._table_rows = _CountingRows(list(panel._table_rows))
+            panel._table_version = 7
+            panel._column_unique_cache = {}
+
+            first = panel._get_unique_column_values("cell_line")
+            second = panel._get_unique_column_values("cell_line")
+            self.assertEqual(first, second)
+            self.assertEqual(1, panel._table_rows.iter_calls)
+
+            panel._table_version = 8
+            panel._get_unique_column_values("cell_line")
+            self.assertEqual(2, panel._table_rows.iter_calls)
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_rebuild_table_rows_bumps_version_and_clears_unique_cache(self):
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+
+            panel._table_version = 3
+            panel._column_unique_cache = {("cell_line", 3): [("K562", 1)]}
+            panel._rebuild_table_rows(panel._current_records)
+
+            self.assertEqual(4, panel._table_version)
+            self.assertEqual({}, panel._column_unique_cache)
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_render_table_rows_uses_set_row_count_batch_path(self):
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+            {"id": 2, "cell_line": "HeLa", "short_name": "B", "box": 1, "position": 2, "frozen_at": "2025-01-01"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            rows = list(panel._table_rows)
+            table_cls = type(panel.ov_table)
+            set_row_count_calls = []
+            original_set_row_count = table_cls.setRowCount
+
+            def _tracked_set_row_count(count):
+                set_row_count_calls.append(count)
+                return original_set_row_count(panel.ov_table, count)
+
+            with patch.object(
+                table_cls,
+                "insertRow",
+                autospec=True,
+                side_effect=AssertionError("_render_table_rows should not use insertRow per row"),
+            ), patch.object(
+                table_cls,
+                "setRowCount",
+                autospec=True,
+                side_effect=_tracked_set_row_count,
+            ):
+                panel._render_table_rows(rows)
+
+            self.assertEqual([len(rows)], set_row_count_calls)
+            self.assertEqual(len(rows), panel.ov_table.rowCount())
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_match_column_filter_list_compiles_value_set(self):
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            row_data = {"values": {"cell_line": "HeLa"}}
+            filter_config = {"type": "list", "values": ["K562", "HeLa"]}
+
+            self.assertTrue(panel._match_column_filter(row_data, "cell_line", filter_config))
+            self.assertEqual({"K562", "HeLa"}, filter_config.get("_values_set"))
+
+            filter_config["values"] = ["A549"]
+            self.assertFalse(panel._match_column_filter(row_data, "cell_line", filter_config))
+            self.assertEqual({"A549"}, filter_config.get("_values_set"))
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_table_keyword_filter_debounces_when_panel_visible(self):
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "clone-A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+            {"id": 2, "cell_line": "HeLa", "short_name": "clone-B", "box": 2, "position": 2, "frozen_at": "2025-01-01"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
+        panel = None
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+            panel.show()
+            self._app.processEvents()
+            self.assertTrue(panel.isVisible())
+            self.assertEqual(2, panel.ov_table.rowCount())
+
+            panel.ov_filter_keyword.setText("hela")
+            # Visible mode uses debounced filter application.
+            self.assertEqual(2, panel.ov_table.rowCount())
+            QTest.qWait(int(panel._filter_debounce_ms) + 40)
+            self.assertEqual(1, panel.ov_table.rowCount())
+        finally:
+            if panel is not None:
+                panel.hide()
+            self._cleanup(tmpdir)
+
+    def test_refresh_reuses_cached_stats_when_yaml_unchanged(self):
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            bridge = GuiToolBridge()
+            call_count = {"n": 0}
+            original_generate_stats = bridge.generate_stats
+
+            def _counted_generate_stats(*args, **kwargs):
+                call_count["n"] += 1
+                return original_generate_stats(*args, **kwargs)
+
+            bridge.generate_stats = _counted_generate_stats
+
+            panel = OverviewPanel(bridge=bridge, yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            panel.refresh()
+            self.assertEqual(1, call_count["n"])
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_refresh_skips_repainting_when_cell_signatures_unchanged(self):
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            with patch.object(panel, "_paint_cell", wraps=panel._paint_cell) as paint_mock:
+                panel.refresh()
+            self.assertEqual(0, paint_mock.call_count)
         finally:
             self._cleanup(tmpdir)
 

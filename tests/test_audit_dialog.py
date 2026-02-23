@@ -18,6 +18,7 @@ try:
     from app_gui.ui import audit_dialog as audit_dialog_module
     from app_gui.ui.audit_dialog import AuditLogDialog
     from lib.yaml_ops import get_audit_log_paths, write_yaml
+    from tests.managed_paths import ManagedPathTestCase
 
     PYSIDE_AVAILABLE = True
 except Exception:
@@ -30,6 +31,7 @@ except Exception:
     get_audit_log_paths = None
     write_yaml = None
     audit_dialog_module = None
+    ManagedPathTestCase = unittest.TestCase
     PYSIDE_AVAILABLE = False
 
 
@@ -64,7 +66,7 @@ class _TimelineBridge:
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 not available")
-class AuditDialogTests(unittest.TestCase):
+class AuditDialogTests(ManagedPathTestCase):
     @classmethod
     def setUpClass(cls):
         cls._app = QApplication.instance() or QApplication([])
@@ -112,7 +114,7 @@ class AuditDialogTests(unittest.TestCase):
 
     def test_on_load_audit_shows_newest_events_first(self):
         with tempfile.TemporaryDirectory(prefix="ln2_audit_dialog_sort_") as temp_dir:
-            yaml_path = Path(temp_dir) / "sort_case.yaml"
+            yaml_path = Path(temp_dir) / "inventory.yaml"
             yaml_path.write_text(
                 "\n".join(
                     [

@@ -1,6 +1,5 @@
 """Filter helpers for OverviewPanel."""
 
-import os
 from datetime import datetime
 
 from PySide6.QtWidgets import QDialog
@@ -249,24 +248,22 @@ def _detect_column_type(self, column_name):
     if column_name in known_types:
         return known_types[column_name]
 
-    try:
-        yaml_path = self.yaml_path_getter()
-        if yaml_path and os.path.exists(yaml_path):
-            from lib.yaml_ops import load_yaml
+    meta = getattr(self, "_current_meta", {})
+    custom_fields = []
+    if isinstance(meta, dict):
+        custom_fields = list(meta.get("custom_fields") or [])
 
-            data = load_yaml(yaml_path)
-            meta = data.get("meta", {})
-            custom_fields = meta.get("custom_fields", [])
-
-            for field in custom_fields:
-                if field.get("name") == column_name:
-                    field_type = field.get("type", "str")
-                    if field_type in ("int", "float"):
-                        return "number"
-                    if field_type == "date":
-                        return "date"
-    except Exception:
-        pass
+    for field in custom_fields:
+        if not isinstance(field, dict):
+            continue
+        field_key = str(field.get("key") or field.get("name") or "").strip()
+        if field_key != str(column_name or "").strip():
+            continue
+        field_type = str(field.get("type") or "str").strip().lower()
+        if field_type in {"int", "float", "number"}:
+            return "number"
+        if field_type in {"date", "datetime"}:
+            return "date"
 
     unique_values = self._get_unique_column_values(column_name)
     if unique_values and len(unique_values) <= 20:
@@ -277,6 +274,16 @@ def _detect_column_type(self, column_name):
 
 def _get_unique_column_values(self, column_name):
     """Get unique values and their counts for a column."""
+    table_version = int(getattr(self, "_table_version", 0) or 0)
+    cache_key = (str(column_name or ""), table_version)
+    cache = getattr(self, "_column_unique_cache", None)
+    if not isinstance(cache, dict):
+        cache = {}
+        self._column_unique_cache = cache
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return list(cached)
+
     value_counts = {}
 
     for row_data in self._table_rows:
@@ -290,6 +297,7 @@ def _get_unique_column_values(self, column_name):
         key=lambda x: (-x[1], x[0]),
     )
 
+    cache[cache_key] = list(sorted_values)
     return sorted_values
 
 
@@ -298,7 +306,14 @@ def _match_column_filter(self, row_data, column_name, filter_config):
     value = row_data.get("values", {}).get(column_name)
 
     if filter_config["type"] == "list":
-        return str(value) in [str(v) for v in filter_config["values"]]
+        values = list(filter_config.get("values") or [])
+        values_sig = tuple(str(v) for v in values)
+        values_set = filter_config.get("_values_set")
+        if (not isinstance(values_set, set)) or filter_config.get("_values_sig") != values_sig:
+            values_set = set(values_sig)
+            filter_config["_values_set"] = values_set
+            filter_config["_values_sig"] = values_sig
+        return str(value) in values_set
 
     if filter_config["type"] == "text":
         search_text = filter_config["text"].lower()

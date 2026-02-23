@@ -22,17 +22,23 @@ def _refresh_plan_toolbar_state(self):
         return
 
     has_items = bool(self._plan_store.count())
+    locked = bool(getattr(self, "_is_migration_write_locked", lambda: False)())
     self.plan_print_btn.setEnabled(has_items)
-    self.plan_clear_btn.setEnabled(has_items)
+    self.plan_clear_btn.setEnabled(has_items and (not locked))
 
 
 def _refresh_after_plan_items_changed(self):
     self._refresh_plan_table()
     self._update_execute_button_state()
     self._refresh_plan_toolbar_state()
+    apply_mode_fn = getattr(self, "_apply_migration_mode_ui_state", None)
+    if callable(apply_mode_fn):
+        apply_mode_fn()
 
 
 def remove_selected_plan_items(self):
+    if bool(getattr(self, "_guard_migration_write_action", lambda: False)()):
+        return
     rows = self._get_selected_plan_rows()
     if not rows:
         self.status_message.emit(tr("operations.planNoSelection"), 2000, "warning")

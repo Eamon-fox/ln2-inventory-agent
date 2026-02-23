@@ -1,4 +1,7 @@
-from PySide6.QtCore import Qt, Signal, Slot, QDate, QSize, QSortFilterProxyModel
+import os
+import sys
+
+from PySide6.QtCore import Qt, Signal, Slot, QDate, QSortFilterProxyModel, QEvent
 from PySide6.QtGui import QDesktopServices, QValidator, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -8,8 +11,10 @@ from PySide6.QtWidgets import (
 )
 from app_gui.ui.theme import (
     get_theme_color,
+    resolve_theme_token,
 )
 from app_gui.ui.icons import get_icon, Icons
+from app_gui.ui.watermark_overlay import SvgWatermarkLabel
 from app_gui.gui_config import load_gui_config
 from app_gui.i18n import tr
 from lib.position_fmt import pos_to_display
@@ -104,7 +109,8 @@ class _ChoiceHintProxyModel(QSortFilterProxyModel):
         if prefix == self._prefix:
             return
         self._prefix = prefix
-        self.invalidateFilter()
+        self.beginFilterChange()
+        self.endFilterChange(QSortFilterProxyModel.Direction.Rows)
 
     def filterAcceptsRow(self, source_row, source_parent):
         model = self.sourceModel()
@@ -130,6 +136,7 @@ class OperationsPanel(QWidget):
         self.yaml_path_getter = yaml_path_getter
         self._plan_store = plan_store if plan_store is not None else PlanStore()
         self._overview_panel_ref = overview_panel  # Store reference for grid state extraction
+        self._migration_mode = False
 
         self.records_cache = {}
         self.current_operation_mode = "takeout"
@@ -146,6 +153,7 @@ class OperationsPanel(QWidget):
         self._current_layout = {}
 
         self.setup_ui()
+        self._apply_migration_mode_ui_state()
 
     @property
     def plan_items(self):
@@ -158,12 +166,22 @@ class OperationsPanel(QWidget):
         layout.setSpacing(6)
 
         layout.addLayout(self._build_mode_row())
+        self._migration_mode_banner = QLabel(tr("operations.migrationModeBanner"))
+        self._migration_mode_banner.setObjectName("operationsMigrationModeBanner")
+        self._migration_mode_banner.setWordWrap(True)
+        self._migration_mode_banner.setVisible(False)
+        layout.addWidget(self._migration_mode_banner)
         layout.addWidget(self._build_operation_stack(), 2)
         layout.addLayout(self._build_feedback_row())
         # Plan Queue is always visible to reduce context switching.
         self.plan_panel = self._build_plan_tab()
         layout.addWidget(self.plan_panel, 3)
+        self._op_watermark_host = self.plan_panel
+        self._op_watermark = self._create_operation_watermark(self.plan_panel)
+        self.plan_panel.installEventFilter(self)
+        self._update_operation_watermark()
         layout.addLayout(self._build_result_row())
+        self._build_migration_lock_overlay()
 
         self._sync_result_actions()
         self.set_mode("takeout")
@@ -183,31 +201,135 @@ class OperationsPanel(QWidget):
             self.op_mode_combo.addItem(mode_label, mode_key)
         self.op_mode_combo.currentIndexChanged.connect(self.on_mode_changed)
 
-        self.quick_add_btn = QPushButton(tr("overview.quickAdd"))
-        self.quick_add_btn.setIcon(get_icon(Icons.PLUS))
-        self.quick_add_btn.setIconSize(QSize(16, 16))
-        self.quick_add_btn.clicked.connect(lambda: self.set_mode("add"))
-        mode_row.addWidget(self.quick_add_btn)
-
-        self.export_full_csv_btn = QPushButton(tr("operations.exportFullCsv"))
-        self.export_full_csv_btn.setIcon(get_icon(Icons.DOWNLOAD))
-        self.export_full_csv_btn.setIconSize(QSize(16, 16))
-        self.export_full_csv_btn.setToolTip(tr("operations.exportFullCsvHint"))
-        self.export_full_csv_btn.clicked.connect(self.on_export_inventory_csv)
-        mode_row.addWidget(self.export_full_csv_btn)
-
-        mode_row.addStretch()
         mode_row.addWidget(self.op_mode_combo)
+        mode_row.addStretch()
         return mode_row
 
     def _build_operation_stack(self):
-        self.op_stack = QStackedWidget()
+        host = QWidget()
+        host_layout = QVBoxLayout(host)
+        host_layout.setContentsMargins(0, 0, 0, 0)
+        host_layout.setSpacing(0)
+
+        self.op_stack = QStackedWidget(host)
         self.op_mode_indexes = {
             "add": self.op_stack.addWidget(self._build_add_tab()),
             "takeout": self.op_stack.addWidget(self._build_takeout_tab()),
             "move": self.op_stack.addWidget(self._build_move_tab()),
         }
-        return self.op_stack
+        host_layout.addWidget(self.op_stack)
+        return host
+
+    def _create_operation_watermark(self, parent):
+        watermark = SvgWatermarkLabel(
+            parent=parent,
+            opacity=0.09,
+            target_ratio=0.48,
+            min_width=180,
+            max_width=360,
+            margin_top=12,
+            margin_right=12,
+        )
+        watermark.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        return watermark
+
+    def _resolve_operation_logo_path(self):
+        candidates = []
+
+        if getattr(sys, "frozen", False):
+            meipass_root = str(getattr(sys, "_MEIPASS", "") or "")
+            if meipass_root:
+                candidates.append(os.path.join(meipass_root, "app_gui", "assets", "logo.svg"))
+            exe_dir = os.path.dirname(str(getattr(sys, "executable", "") or ""))
+            if exe_dir:
+                candidates.append(os.path.join(exe_dir, "logo.svg"))
+        else:
+            app_gui_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            repo_root = os.path.dirname(app_gui_root)
+            candidates.append(os.path.join(app_gui_root, "assets", "logo.svg"))
+            candidates.append(os.path.join(repo_root, "logo.svg"))
+
+        seen = set()
+        for raw_path in candidates:
+            norm_path = os.path.normpath(str(raw_path))
+            key = os.path.normcase(norm_path)
+            if key in seen:
+                continue
+            seen.add(key)
+            if os.path.isfile(norm_path):
+                return norm_path
+        return ""
+
+    def _watermark_tint_color(self):
+        theme_mode = "dark" if self._is_dark_theme() else "light"
+        return resolve_theme_token("text-muted", mode=theme_mode, fallback="#94a3b8")
+
+    def _update_operation_watermark_geometry(self):
+        host = getattr(self, "_op_watermark_host", None)
+        watermark = getattr(self, "_op_watermark", None)
+        if host is None or watermark is None:
+            return
+        if host.width() <= 0 or host.height() <= 0:
+            return
+        watermark.update_geometry_for(host.rect())
+        centered_x = max(0, int((host.width() - watermark.width()) / 2))
+        centered_y = max(0, int((host.height() - watermark.height()) / 2))
+        watermark.move(centered_x, centered_y)
+        watermark.raise_()
+
+    def _update_operation_watermark(self):
+        watermark = getattr(self, "_op_watermark", None)
+        if watermark is None:
+            return
+
+        logo_path = self._resolve_operation_logo_path()
+        if not logo_path:
+            watermark.hide()
+            return
+
+        watermark.set_tint_color(self._watermark_tint_color())
+        if not watermark.set_svg_path(logo_path):
+            watermark.hide()
+            return
+
+        self._update_operation_watermark_geometry()
+        watermark.show()
+
+    def _build_migration_lock_overlay(self):
+        overlay = QWidget(self)
+        overlay.setObjectName("operationsMigrationLockOverlay")
+        overlay_layout = QVBoxLayout(overlay)
+        overlay_layout.setContentsMargins(18, 12, 18, 12)
+        overlay_layout.setSpacing(8)
+        overlay_layout.addStretch()
+        overlay_label = QLabel(tr("operations.migrationOverlayHint"), overlay)
+        overlay_label.setObjectName("operationsMigrationLockOverlayLabel")
+        overlay_label.setWordWrap(True)
+        overlay_layout.addWidget(overlay_label, 0, Qt.AlignCenter)
+        overlay_layout.addStretch()
+        overlay.hide()
+        self._migration_lock_overlay = overlay
+        self._update_migration_lock_overlay_geometry()
+
+    def _update_migration_lock_overlay_geometry(self):
+        overlay = getattr(self, "_migration_lock_overlay", None)
+        if overlay is None:
+            return
+        if self.width() <= 0 or self.height() <= 0:
+            return
+        overlay.setGeometry(self.rect())
+        if overlay.isVisible():
+            overlay.raise_()
+
+    def eventFilter(self, watched, event):
+        if watched is getattr(self, "_op_watermark_host", None):
+            if event.type() in (QEvent.Resize, QEvent.Show):
+                self._update_operation_watermark_geometry()
+        return super().eventFilter(watched, event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_migration_lock_overlay_geometry()
 
     def _build_feedback_row(self):
         # Inline feedback near operation forms (more visible than status bar).
@@ -326,7 +448,60 @@ class OperationsPanel(QWidget):
         else:
             self.undo_btn.setText(tr("operations.undoLast"))
 
+        if self._is_migration_write_locked():
+            self.undo_btn.setEnabled(False)
+
         self.result_actions.setVisible(has_last_executed or has_undo)
+
+    def _is_migration_write_locked(self):
+        return bool(getattr(self, "_migration_mode", False))
+
+    def _warn_migration_write_locked(self):
+        self.status_message.emit(tr("operations.migrationWriteLocked"), 3000, "warning")
+
+    def _guard_migration_write_action(self):
+        if not self._is_migration_write_locked():
+            return False
+        self._warn_migration_write_locked()
+        return True
+
+    def _apply_migration_mode_ui_state(self):
+        locked = self._is_migration_write_locked()
+        banner = getattr(self, "_migration_mode_banner", None)
+        if banner is not None:
+            banner.setVisible(locked)
+        overlay = getattr(self, "_migration_lock_overlay", None)
+        if overlay is not None:
+            overlay.setVisible(locked)
+            if locked:
+                self._update_migration_lock_overlay_geometry()
+                overlay.raise_()
+        for attr in ("op_mode_combo", "op_stack"):
+            widget = getattr(self, attr, None)
+            if widget is not None:
+                widget.setEnabled(not locked)
+        if locked:
+            for attr in ("plan_exec_btn", "plan_clear_btn", "undo_btn"):
+                widget = getattr(self, attr, None)
+                if widget is not None:
+                    widget.setEnabled(False)
+            return
+
+        update_exec_fn = getattr(self, "_update_execute_button_state", None)
+        if callable(update_exec_fn):
+            update_exec_fn()
+        refresh_toolbar_fn = getattr(self, "_refresh_plan_toolbar_state", None)
+        if callable(refresh_toolbar_fn):
+            refresh_toolbar_fn()
+        self._sync_result_actions()
+
+    def set_migration_mode(self, enabled):
+        locked = bool(enabled)
+        if self._migration_mode == locked:
+            self._apply_migration_mode_ui_state()
+            return
+        self._migration_mode = locked
+        self._apply_migration_mode_ui_state()
 
     def set_mode(self, mode):
         self._ensure_today_defaults()
@@ -861,6 +1036,8 @@ class OperationsPanel(QWidget):
     _style_stage_button = _ops_forms._style_stage_button
     _build_stage_action_button = _ops_forms._build_stage_action_button
     _set_plan_feedback = _ops_forms._set_plan_feedback
+    _read_text_widget_value = staticmethod(_ops_forms._read_text_widget_value)
+    _write_text_widget_value = staticmethod(_ops_forms._write_text_widget_value)
 
     def _ensure_today_defaults(self):
         today = QDate.currentDate()

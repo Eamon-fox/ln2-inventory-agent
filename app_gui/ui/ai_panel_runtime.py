@@ -6,22 +6,11 @@ from PySide6.QtCore import QThread
 
 from app_gui.error_localizer import localize_error_payload
 from app_gui.event_compactor import compact_operation_event_for_context
+from app_gui.gui_config import AI_HISTORY_LIMIT, AI_OPERATION_CONTEXT_LIMIT
 from app_gui.i18n import tr
 from app_gui.ui.icons import Icons, get_icon
 from app_gui.ui.utils import compact_json
 from app_gui.ui.workers import AgentRunWorker
-
-
-def _append_assistant_history_once(panel, text):
-    content = str(text or "").strip()
-    if not content:
-        return
-    if panel.ai_history:
-        last = panel.ai_history[-1]
-        if isinstance(last, dict):
-            if str(last.get("role") or "") == "assistant" and str(last.get("content") or "").strip() == content:
-                return
-    panel._append_history("assistant", content)
 
 
 def _on_run_stop_toggle(self):
@@ -57,7 +46,8 @@ def on_run_ai_agent(self):
         return
 
     self._append_chat("You", prompt)
-    self._append_history("user", prompt)
+    self._current_user_prompt = prompt
+    self._history_snapshot_from_stream_end = False
     self.ai_prompt.clear()
     self.ai_active_trace_id = None
     if self.ai_streaming_active:
@@ -77,10 +67,14 @@ def on_run_ai_agent(self):
 def start_worker(self, prompt):
     self.ai_stop_requested = False
     model = self.ai_model.text().strip() or None
+    agent_mode = str(getattr(self, "_agent_mode", "default") or "default").strip().lower()
+    if agent_mode != "migration":
+        agent_mode = "default"
+    plan_store = None if agent_mode == "migration" else self._plan_store
     history = [dict(item) for item in self.ai_history if isinstance(item, dict)]
 
     if self.ai_operation_events:
-        recent_events = self.ai_operation_events[-5:]
+        recent_events = self.ai_operation_events[-AI_OPERATION_CONTEXT_LIMIT:]
         context_events = [compact_operation_event_for_context(event) for event in recent_events]
         context_msg = json.dumps(context_events, ensure_ascii=False, separators=(",", ":"))
         history.append({"role": "user", "content": f"[Operation Results]\n{context_msg}"})
@@ -94,8 +88,9 @@ def start_worker(self, prompt):
         history=history,
         thinking_enabled=self.ai_thinking_enabled.isChecked(),
         custom_prompt=self.ai_custom_prompt,
-        plan_store=self._plan_store,
+        plan_store=plan_store,
         provider=self.ai_provider.text().strip() or None,
+        agent_mode=agent_mode,
     )
     self.ai_run_thread = QThread(self)
     self.ai_run_worker.moveToThread(self.ai_run_thread)
@@ -212,12 +207,13 @@ def _handle_max_steps_ask(self, event_data):
 
 
 def _show_question_dialog(self, question_text, options):
-    """Modal dialog for one clarifying question with single-choice options."""
+    """Modal dialog for one clarifying question with single-choice + free text."""
     from PySide6.QtWidgets import (
         QComboBox,
         QDialog,
         QDialogButtonBox,
         QLabel,
+        QLineEdit,
         QVBoxLayout,
     )
 
@@ -234,13 +230,56 @@ def _show_question_dialog(self, question_text, options):
     combo.addItems(list(options or []))
     layout.addWidget(combo)
 
+    input_edit = QLineEdit()
+    input_edit.setPlaceholderText("\u8bf7\u8f93\u5165")
+    input_edit.setVisible(False)
+    layout.addWidget(input_edit)
+
+    error_label = QLabel("")
+    error_label.setStyleSheet("color: #d9534f;")
+    error_label.setVisible(False)
+    layout.addWidget(error_label)
+
     buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-    buttons.accepted.connect(dialog.accept)
     buttons.rejected.connect(dialog.reject)
     layout.addWidget(buttons)
 
+    other_option = options[-1] if options else ""
+
+    def _toggle_other_input():
+        selected = str(combo.currentText() or "").strip()
+        is_other = bool(other_option and selected == other_option)
+        input_edit.setVisible(is_other)
+        if is_other:
+            input_edit.setFocus()
+        if not is_other:
+            error_label.setVisible(False)
+            error_label.setText("")
+            input_edit.clear()
+
+    def _accept():
+        selected = str(combo.currentText() or "").strip()
+        if other_option and selected == other_option:
+            typed = str(input_edit.text() or "").strip()
+            if not typed:
+                error_label.setText("\u8bf7\u8f93\u5165\u5185\u5bb9\u540e\u518d\u786e\u8ba4\u3002")
+                error_label.setVisible(True)
+                input_edit.setFocus()
+                return
+        dialog.accept()
+
+    combo.currentIndexChanged.connect(_toggle_other_input)
+    buttons.accepted.connect(_accept)
+    _toggle_other_input()
+
     if dialog.exec() == QDialog.Accepted:
-        return combo.currentText()
+        selected = str(combo.currentText() or "").strip()
+        if other_option and selected == other_option:
+            return {
+                "selected": selected,
+                "text": str(input_edit.text() or "").strip(),
+            }
+        return selected
     return None
 
 
@@ -297,6 +336,10 @@ def on_progress(self, event):
 
     if event_type == "run_start":
         self.ai_active_trace_id = event.get("trace_id")
+        self._history_snapshot_from_stream_end = False
+        current_prompt = getattr(self, "_current_user_prompt", None)
+        if current_prompt:
+            self._append_history("user", current_prompt)
         return
 
     if self.ai_active_trace_id and trace_id and trace_id != self.ai_active_trace_id:
@@ -336,12 +379,15 @@ def _handle_progress_tool_end(self, event):
     data = event.get("data") or {}
     name = str(data.get("name") or event.get("action") or "tool")
     raw_obs = self._extract_progress_observation(event)
-    status = "OK" if raw_obs.get("ok") else "FAIL"
-    hint = raw_obs.get("_hint")
 
-    self._append_tool_message(f"`{name}` finished: **{status}**")
-    if hint:
-        self._append_tool_message(f"Hint: {hint}")
+    if not raw_obs.get("ok"):
+        reason = str(raw_obs.get("message") or "").strip()
+        if reason:
+            self._append_tool_message(f"FAIL: {reason}")
+        else:
+            self._append_tool_message(
+                f"FAIL: {localize_error_payload(raw_obs, fallback='unknown error')}"
+            )
 
     blocked_items = raw_obs.get("blocked_items")
     if isinstance(blocked_items, list) and blocked_items:
@@ -358,10 +404,18 @@ def _handle_progress_tool_end(self, event):
         )
         self._append_chat_with_collapsible("System", summary_text, details_json)
 
+    if name == "import_migration_output" and bool(raw_obs.get("ok")):
+        _handle_import_migration_completed(self, raw_obs)
+
 
 def _handle_progress_tool_start(self, event):
     if self.ai_streaming_active:
         self._end_stream_chat()
+
+    status_text = str(event.get("status_text") or "").strip()
+    if status_text:
+        self._append_tool_message(status_text)
+        return
 
     data = event.get("data") or {}
     name = str(data.get("name") or event.get("action") or "tool")
@@ -401,19 +455,92 @@ def _handle_progress_error(event):
     _ = err
 
 
-def _handle_progress_stream_end(event):
-    status = (event.get("data") or {}).get("status")
-    _ = status
+def _handle_progress_stream_end(self, event):
+    data = event.get("data") or {}
+    raw_messages = data.get("messages")
+    if not isinstance(raw_messages, list):
+        return
+
+    normalized = []
+    for item in raw_messages:
+        if not isinstance(item, dict):
+            continue
+
+        role = str(item.get("role") or "").strip().lower()
+        if role not in {"user", "assistant", "tool"}:
+            continue
+
+        content = str(item.get("content") or "").strip()
+        if role == "user" and content.startswith("[Operation Results]\n"):
+            continue
+        tool_calls = item.get("tool_calls") if role == "assistant" else None
+        if role == "assistant":
+            has_tool_calls = isinstance(tool_calls, list) and len(tool_calls) > 0
+            if not content and not has_tool_calls:
+                continue
+        elif not content:
+            continue
+
+        entry = {"role": role, "content": content}
+
+        ts = item.get("timestamp")
+        if isinstance(ts, (int, float)):
+            entry = {**entry, "timestamp": float(ts)}
+
+        if role == "assistant":
+            if isinstance(tool_calls, list):
+                entry = {**entry, "tool_calls": list(tool_calls)}
+            reasoning = str(item.get("reasoning_content") or "")
+            if reasoning:
+                entry = {**entry, "reasoning_content": reasoning}
+        elif role == "tool":
+            tool_call_id = str(item.get("tool_call_id") or "").strip()
+            if not tool_call_id:
+                continue
+            entry = {**entry, "tool_call_id": tool_call_id}
+
+        normalized.append(entry)
+
+    if normalized:
+        self.ai_history = normalized[-AI_HISTORY_LIMIT:]
+        self._history_snapshot_from_stream_end = True
 
 
 def _handle_progress_max_steps(_event):
     return
 
 
+def _handle_import_migration_completed(panel, raw_obs):
+    target_path = str(raw_obs.get("target_path") or "").strip()
+    if not target_path:
+        panel._append_tool_message("Import succeeded but target_path is missing in tool output.")
+        return
+
+    switch_handler = getattr(panel, "_import_dataset_handler", None)
+    if not callable(switch_handler):
+        panel._append_tool_message(f"Imported dataset ready: `{target_path}`")
+        return
+
+    try:
+        opened_path = switch_handler(target_path)
+    except Exception as exc:
+        panel._append_tool_message(f"Import succeeded but opening dataset failed: {exc}")
+        return
+
+    exit_mode = getattr(panel, "exit_migration_mode", None)
+    if callable(exit_mode):
+        exit_mode()
+
+    opened_text = str(opened_path or target_path).strip() or target_path
+    panel._append_tool_message(f"Imported dataset opened: `{opened_text}`")
+
+
 def on_finished(self, response):
     sender = self.sender() if hasattr(self, "sender") else None
     if sender is not None and sender is not self.ai_run_worker:
         return
+
+    stream_end_snapshot_applied = bool(getattr(self, "_history_snapshot_from_stream_end", False))
 
     if self.ai_stop_requested:
         response = response if isinstance(response, dict) else {}
@@ -429,10 +556,11 @@ def on_finished(self, response):
             self._end_stream_chat()
             streamed_text = str((self.ai_last_stream_block or {}).get("text") or "").strip()
 
-        if streamed_text:
-            _append_assistant_history_once(self, streamed_text)
-        if stop_note:
-            _append_assistant_history_once(self, stop_note)
+        if not stream_end_snapshot_applied:
+            if streamed_text:
+                self._append_history("assistant", streamed_text)
+            if stop_note:
+                self._append_history("assistant", stop_note)
 
         self.set_busy(False)
         self.ai_streaming_active = False
@@ -443,6 +571,7 @@ def on_finished(self, response):
         self.ai_stream_last_render_len = 0
         self._reset_stream_thought_state()
         self.operation_completed.emit(False)
+        self._history_snapshot_from_stream_end = False
         return
 
     self.set_busy(False)
@@ -489,7 +618,8 @@ def on_finished(self, response):
     self.ai_stream_last_render_ts = 0.0
     self.ai_stream_last_render_len = 0
     self._reset_stream_thought_state()
-    self._append_history("assistant", final_text)
+    if not stream_end_snapshot_applied:
+        self._append_history("assistant", final_text)
 
     if response.get("error_code") == "api_key_required":
         self.status_message.emit("API key missing. See chat for setup steps.", 6000)
@@ -498,6 +628,7 @@ def on_finished(self, response):
 
     trace_id = raw_result.get("trace_id")
     self._load_audit(trace_id, raw_result)
+    self._history_snapshot_from_stream_end = False
 
 
 def on_thread_finished(self):

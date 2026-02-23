@@ -18,6 +18,54 @@ def _normalize_positive_int(raw):
     return value if value > 0 else None
 
 
+def _freeze_signature_value(value):
+    if isinstance(value, dict):
+        return tuple(
+            (str(key), _freeze_signature_value(val))
+            for key, val in sorted(value.items(), key=lambda item: str(item[0]))
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_signature_value(item) for item in value)
+    if isinstance(value, set):
+        return tuple(sorted(_freeze_signature_value(item) for item in value))
+    return value
+
+
+def _build_cell_render_signature(self, box_num, position, record):
+    from lib.custom_fields import get_color_key, get_display_key
+
+    layout = getattr(self, "_current_layout", {}) or {}
+    meta = getattr(self, "_current_meta", {}) or {}
+    marker_map = getattr(self, "_operation_markers", {}) or {}
+    marker = marker_map.get((box_num, position)) if isinstance(marker_map, dict) else None
+    marker_type = str((marker or {}).get("type") or "").strip().lower()
+    move_id = (marker or {}).get("move_id")
+    selected = bool(getattr(self, "overview_selected_key", None) == (box_num, position))
+    zoom = round(float(getattr(self, "_zoom_level", 1.0) or 1.0), 3)
+    fonts = tuple(getattr(self, "_current_font_sizes", (9, 8)) or (9, 8))
+    display_key = str(get_display_key(meta) or "")
+    color_key = str(get_color_key(meta) or "")
+    layout_signature = (
+        int(layout.get("rows", 9) or 9),
+        int(layout.get("cols", 9) or 9),
+        str(layout.get("indexing", "") or ""),
+    )
+    record_signature = _freeze_signature_value(record) if isinstance(record, dict) else None
+    return (
+        box_num,
+        position,
+        layout_signature,
+        display_key,
+        color_key,
+        selected,
+        marker_type,
+        move_id,
+        zoom,
+        fonts,
+        record_signature,
+    )
+
+
 def _marker_border_color(marker_type):
     marker = str(marker_type or "").strip().lower()
     if marker == "add":
@@ -198,6 +246,7 @@ def _rebuild_boxes(self, rows, cols, box_numbers):
     self.overview_box_live_labels = {}
     self.overview_box_groups = {}
     self.overview_selected_key = None
+    self._cell_render_signatures = {}
     self._reset_detail()
 
     layout = getattr(self, "_current_layout", {})
@@ -339,6 +388,10 @@ def _paint_cell(self, button, box_num, position, record):
 
     if hasattr(button, "set_operation_marker"):
         button.set_operation_marker(marker_type if marker_type else None, move_id if marker_type else None)
+
+    signatures = getattr(self, "_cell_render_signatures", None)
+    if isinstance(signatures, dict):
+        signatures[(box_num, position)] = _build_cell_render_signature(self, box_num, position, record)
 
 
 def _set_selected_cell(self, box_num, position):

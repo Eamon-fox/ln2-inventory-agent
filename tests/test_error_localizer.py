@@ -44,6 +44,15 @@ class TestErrorLocalizer(unittest.TestCase):
         text = localize_error_payload(payload)
         self.assertEqual("Raw backend message", text)
 
+    def test_dataset_delete_failed_code_has_default_message(self):
+        set_language("en")
+        payload = {
+            "error_code": "dataset_delete_failed",
+            "message": "backend raw error should be replaced by default",
+        }
+        text = localize_error_payload(payload)
+        self.assertEqual("Failed to delete dataset.", text)
+
     def test_empty_payload_honors_fallback(self):
         set_language("en")
         text = localize_error_payload({}, fallback="")

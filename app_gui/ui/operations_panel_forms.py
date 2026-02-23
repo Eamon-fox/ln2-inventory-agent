@@ -13,7 +13,9 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QTableWidget,
     QVBoxLayout,
@@ -24,6 +26,45 @@ from app_gui.error_localizer import localize_error_payload
 from app_gui.i18n import tr
 from app_gui.ui.icons import Icons, get_icon
 from app_gui.ui.theme import resolve_theme_token
+
+
+def _read_text_widget_value(widget):
+    """Read text from both single-line and multi-line editors."""
+    if isinstance(widget, QPlainTextEdit):
+        return widget.toPlainText()
+    if isinstance(widget, QLineEdit):
+        return widget.text()
+    return str(getattr(widget, "text", lambda: "")() or "")
+
+
+def _write_text_widget_value(widget, value):
+    """Write text to both single-line and multi-line editors."""
+    text = str(value or "")
+    if isinstance(widget, QPlainTextEdit):
+        widget.setPlainText(text)
+        return
+    setter = getattr(widget, "setText", None)
+    if callable(setter):
+        setter(text)
+
+
+def _default_multiline_note_height(widget, *, lines=4):
+    """Compute a readable default height for multi-line note editors."""
+    line_count = max(1, int(lines or 1))
+    metrics = widget.fontMetrics()
+    line_height = int(metrics.lineSpacing()) if metrics is not None else 16
+    frame = int(getattr(widget, "frameWidth", lambda: 1)())
+    # Keep the default compact while showing several full lines.
+    return line_count * line_height + frame * 2 + 8
+
+
+def _configure_multiline_note_editor(widget):
+    """Apply shared geometry defaults for note editors."""
+    if not isinstance(widget, QPlainTextEdit):
+        return
+    widget.setMinimumHeight(_default_multiline_note_height(widget, lines=4))
+    widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
+
 
 def _setup_table(self, table, headers, sortable=True):
     table.setRowCount(0)
@@ -49,7 +90,14 @@ def _make_readonly_history_label(self):
     label.setProperty("role", "readonlyField")
     return label
 
-def _make_editable_field(self, field_name, record_id_getter, refresh_callback=None, choices_provider=None):
+def _make_editable_field(
+    self,
+    field_name,
+    record_id_getter,
+    refresh_callback=None,
+    choices_provider=None,
+    multiline=False,
+):
     """Create a read-only field with lock/unlock/confirm inline edit controls.
 
     Args:
@@ -57,14 +105,18 @@ def _make_editable_field(self, field_name, record_id_getter, refresh_callback=No
         record_id_getter: callable returning current record ID (int).
         refresh_callback: callable to restore original value on cancel.
     Returns:
-        (container_widget, field_widget) - add container to form, use field for setText.
+        (container_widget, field_widget) - add container to form, then use text helpers for I/O.
     """
     container = QWidget()
     row = QHBoxLayout(container)
     row.setContentsMargins(0, 0, 0, 0)
     row.setSpacing(2)
 
-    field = QLineEdit()
+    if multiline:
+        field = QPlainTextEdit()
+        _configure_multiline_note_editor(field)
+    else:
+        field = QLineEdit()
     field.setReadOnly(True)
     field.setProperty("role", "contextEditable")
     row.addWidget(field, 1)
@@ -124,7 +176,8 @@ def _make_editable_field(self, field_name, record_id_getter, refresh_callback=No
             lock_btn.setText("\U0001F513")
             confirm_btn.setVisible(True)
             field.setFocus()
-            field.selectAll()
+            with suppress(Exception):
+                field.selectAll()
         else:
             # Re-lock without saving
             field.setReadOnly(True)
@@ -135,8 +188,10 @@ def _make_editable_field(self, field_name, record_id_getter, refresh_callback=No
                 refresh_callback()
 
     def on_confirm():
+        if bool(getattr(self, "_guard_migration_write_action", lambda: False)()):
+            return
         rid = record_id_getter()
-        new_value = field.text().strip() or None
+        new_value = _read_text_widget_value(field).strip() or None
         options, _allow_empty = _apply_choices()
         if options and new_value:
             canonical = self._canonicalize_choice(new_value, options)
@@ -240,7 +295,8 @@ def _build_add_tab(self):
     self.a_cell_line = QComboBox()
     self.a_cell_line.setEditable(True)
     self.a_cell_line.addItem("")  # allow empty
-    self.a_note = QLineEdit()
+    self.a_note = QPlainTextEdit()
+    _configure_multiline_note_editor(self.a_note)
 
     form.addRow(tr("operations.frozenDate"), self.a_date)
     form.addRow(tr("operations.cellLine"), self.a_cell_line)
@@ -349,7 +405,12 @@ def _build_takeout_tab(self):
 
     # Editable context fields -?frozen_at/note are core fields.
     t_frozen_w, self.t_ctx_frozen = self._make_editable_field("frozen_at", _t_rid, _t_refresh)
-    t_note_w, self.t_ctx_note = self._make_editable_field("note", _t_rid, _t_refresh)
+    t_note_w, self.t_ctx_note = self._make_editable_field(
+        "note",
+        _t_rid,
+        _t_refresh,
+        multiline=True,
+    )
     t_cell_line_w, self.t_ctx_cell_line = self._make_editable_field(
         "cell_line",
         _t_rid,
@@ -481,7 +542,12 @@ def _build_move_tab(self):
 
     # Editable context fields -?frozen_at/note are core fields.
     m_frozen_w, self.m_ctx_frozen = self._make_editable_field("frozen_at", _m_rid, _m_refresh)
-    m_note_w, self.m_ctx_note = self._make_editable_field("note", _m_rid, _m_refresh)
+    m_note_w, self.m_ctx_note = self._make_editable_field(
+        "note",
+        _m_rid,
+        _m_refresh,
+        multiline=True,
+    )
     m_cell_line_w, self.m_ctx_cell_line = self._make_editable_field(
         "cell_line",
         _m_rid,

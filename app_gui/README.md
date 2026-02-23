@@ -52,10 +52,50 @@ python app_gui/main.py
 
 Config paths and defaults:
 
-- GUI settings: `~/.ln2agent/config.yaml`
+- GUI settings: `<install-root>/config/config.yaml`
 - AI default model: `deepseek-chat`
 - Missing key hint: GUI chat shows where to set `DEEPSEEK_API_KEY` or auth file
-- Frozen EXE demo dataset path: `~/.ln2agent/demo/ln2_inventory.demo.yaml`
+- Active inventory datasets: `<install-root>/inventories/<dataset>/inventory.yaml`
+
+Dataset rename behavior:
+
+- Rename is available in `Settings` next to the dataset switch dropdown.
+- Rename is directory-based: the whole dataset folder is renamed (keeps `inventory.yaml`, `audit/`, and `backups/` together).
+- Target name conflicts are blocked (no auto-suffix and no overwrite).
+- Successful rename switches the current GUI session to the new dataset path immediately.
+- A `dataset_rename` audit event is appended after success (if audit append fails, rename still succeeds and GUI shows a warning).
+
+Dataset delete behavior (safe flow):
+
+- Delete is available in `Settings` next to the dataset switch dropdown.
+- Delete is directory-based: the whole dataset folder is removed (`inventory.yaml`, `audit/`, `backups/`).
+- Delete uses multi-step confirmation:
+  - destructive warning dialog;
+  - exact phrase typing (`DELETE DATASET <name>`) with paste blocked;
+  - final destructive confirmation before execution.
+- After delete, GUI auto-switches to the newest remaining dataset; if none remains, a fresh managed dataset is created automatically.
+- A `dataset_delete` audit event is appended to the switched dataset after success (if audit append fails, delete still succeeds and GUI shows a warning).
+
+Release directory layout (installed EXE):
+
+```text
+<install-dir>/
+  SnowFox-<version>.exe
+  inventories/
+    <dataset-1>/
+      inventory.yaml
+      audit/
+        events.jsonl
+      backups/
+        *.bak
+    <dataset-2>/
+      ...
+  config/
+    config.yaml
+```
+
+- Inventory data is fixed under `<install-dir>/inventories/`.
+- GUI config is fixed at `<install-dir>/config/config.yaml` (same path used by app runtime and installer bootstrap).
 
 Packaging notes:
 
@@ -63,6 +103,9 @@ Packaging notes:
 - Inno Setup script is included: `installer/windows/LN2InventoryAgent.iss`
 - Example installer build command: `"C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe" installer\\windows\\LN2InventoryAgent.iss`
 - Output installer: `dist/installer/LN2InventoryAgent-Setup-<version>.exe`
+- macOS self-use app build (must run on macOS): `pyinstaller ln2_inventory.mac.spec`
+- macOS helper script: `bash installer/mac/build_app.sh`
+- macOS app bundle output: `dist/SnowFox.app`
 
 The scaffold is intentionally minimal and exists to unblock M2 implementation.
 

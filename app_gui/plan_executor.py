@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import tempfile
 from contextlib import suppress
 from datetime import date
@@ -434,6 +435,18 @@ def _attach_request_backup(response: Dict[str, object], request_backup_path: Opt
     return patched
 
 
+def _allocate_preflight_yaml_path(yaml_path: str) -> Tuple[str, str]:
+    """Return managed temp dataset dir + inventory.yaml path for preflight writes."""
+    source_yaml = os.path.abspath(str(yaml_path or "").strip())
+    source_dataset_dir = os.path.dirname(source_yaml)
+    inventories_root = os.path.dirname(source_dataset_dir)
+    preflight_dataset_dir = tempfile.mkdtemp(
+        prefix="__preflight__",
+        dir=inventories_root,
+    )
+    return preflight_dataset_dir, os.path.join(preflight_dataset_dir, "inventory.yaml")
+
+
 def preflight_plan(
     yaml_path: str,
     items: List[Dict[str, object]],
@@ -473,14 +486,13 @@ def preflight_plan(
             summary=f"Failed to load YAML: {exc}",
         )
 
-    with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False, mode="w", encoding="utf-8") as tmp:
-        tmp_path = tmp.name
+    tmp_dataset_dir, tmp_path = _allocate_preflight_yaml_path(yaml_path)
 
     try:
         write_yaml(data, tmp_path, auto_backup=False, audit_meta={"action": "preflight", "source": "plan_executor"})
     except Exception as exc:
         with suppress(Exception):
-            os.unlink(tmp_path)
+            shutil.rmtree(tmp_dataset_dir)
         return _build_preflight_blocked_result(
             items,
             error_code="preflight_snapshot_invalid",
@@ -499,7 +511,7 @@ def preflight_plan(
         return result
     finally:
         with suppress(Exception):
-            os.unlink(tmp_path)
+            shutil.rmtree(tmp_dataset_dir)
 
 
 def run_plan(

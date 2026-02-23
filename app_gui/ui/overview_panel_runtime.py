@@ -6,6 +6,30 @@ from PySide6.QtWidgets import QWidget
 from app_gui.i18n import tr
 
 
+def _on_filter_keyword_changed(self, _text=""):
+    # Keep tests/headless behavior synchronous while debouncing visible UI typing.
+    if not self.isVisible():
+        self._apply_filters()
+        return
+    self._schedule_apply_filters()
+
+
+def _schedule_apply_filters(self):
+    timer = getattr(self, "_filter_apply_timer", None)
+    if timer is None:
+        self._apply_filters()
+        return
+    delay_ms = int(getattr(self, "_filter_debounce_ms", 120) or 120)
+    if delay_ms <= 0:
+        self._apply_filters()
+        return
+    timer.start(delay_ms)
+
+
+def _on_filter_debounce_timeout(self):
+    self._apply_filters()
+
+
 def _on_view_mode_changed(self, mode):
     if mode not in {"grid", "table"}:
         mode = "grid"
@@ -41,6 +65,10 @@ def _on_view_mode_changed(self, mode):
     is_grid_mode = mode == "grid"
     self._zoom_container.setVisible(is_grid_mode)
     self._box_nav_container.setVisible(is_grid_mode)
+    if hasattr(self, "ov_export_csv_btn"):
+        self.ov_export_csv_btn.setVisible(is_grid_mode)
+        if is_grid_mode:
+            self._position_floating_actions()
 
     include_inactive = bool(mode == "table" and self._table_include_inactive)
     if include_inactive != bool(getattr(self, "_stats_include_inactive_loaded", False)):
@@ -51,6 +79,9 @@ def _on_view_mode_changed(self, mode):
 
 
 def eventFilter(self, obj, event):
+    if obj is self.ov_scroll.viewport() and event.type() in (QEvent.Resize, QEvent.Show):
+        self._position_floating_actions()
+
     # Ctrl+Wheel zoom on scroll area
     if obj is self.ov_scroll and event.type() == QEvent.Wheel and event.modifiers() & Qt.ControlModifier:
         delta = event.angleDelta().y()
@@ -65,3 +96,8 @@ def eventFilter(self, obj, event):
         if box_num is not None and position is not None:
             self.on_cell_hovered(int(box_num), int(position))
     return QWidget.eventFilter(self, obj, event)
+
+
+def _emit_export_inventory_csv_request(self, checked=False):
+    _ = checked
+    self.request_export_inventory_csv.emit()
