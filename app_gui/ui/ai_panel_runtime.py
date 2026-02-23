@@ -15,6 +15,9 @@ from app_gui.ui.workers import AgentRunWorker
 
 def _on_run_stop_toggle(self):
     """Toggle between run and stop based on current state."""
+    clear_attention = getattr(self, "_clear_run_button_attention", None)
+    if callable(clear_attention):
+        clear_attention()
     if self.ai_run_inflight:
         self.on_stop_ai_agent()
     else:

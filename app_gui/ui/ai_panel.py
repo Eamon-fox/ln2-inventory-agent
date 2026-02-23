@@ -131,6 +131,7 @@ class AIPanel(QWidget):
         self.ai_programmatic_scroll_lock = False
         self.ai_chat_write_in_progress = False
         self._run_btn_attention_timer = None
+        self._run_btn_attention_toggles_remaining = 0
 
         self.setup_ui()
         self.refresh_placeholder()
@@ -414,28 +415,53 @@ class AIPanel(QWidget):
         run_btn.style().polish(run_btn)
 
     def _clear_run_button_attention(self):
+        timer = getattr(self, "_run_btn_attention_timer", None)
+        if timer is not None:
+            timer.stop()
+        self._run_btn_attention_toggles_remaining = 0
         self._set_run_button_attention(False)
 
-    def _flash_run_button_attention(self, duration_ms=2500):
+    def _tick_run_button_attention(self):
+        run_btn = getattr(self, "ai_run_btn", None)
+        timer = getattr(self, "_run_btn_attention_timer", None)
+        if run_btn is None or timer is None:
+            return
+
+        remaining = int(getattr(self, "_run_btn_attention_toggles_remaining", 0) or 0)
+        if remaining <= 0:
+            self._clear_run_button_attention()
+            return
+
+        self._set_run_button_attention(not bool(run_btn.property("migrationAttention")))
+        self._run_btn_attention_toggles_remaining = remaining - 1
+        if self._run_btn_attention_toggles_remaining <= 0:
+            self._clear_run_button_attention()
+
+    def _flash_run_button_attention(self, duration_ms=1200, flashes=2):
         run_btn = getattr(self, "ai_run_btn", None)
         if run_btn is None:
             return
 
         self._set_run_button_attention(True)
+        total_flashes = max(1, int(flashes or 0))
+        total_toggles = max(1, total_flashes * 2 - 1)
+        interval_ms = max(1, int(duration_ms or 0) // total_toggles)
+        self._run_btn_attention_toggles_remaining = total_toggles
+
         timer = getattr(self, "_run_btn_attention_timer", None)
         if timer is None:
             timer = QTimer(self)
-            timer.setSingleShot(True)
-            timer.timeout.connect(self._clear_run_button_attention)
+            timer.setSingleShot(False)
+            timer.timeout.connect(self._tick_run_button_attention)
             self._run_btn_attention_timer = timer
-        timer.start(max(1, int(duration_ms or 0)))
+        timer.start(interval_ms)
 
     def enter_migration_mode(self):
         if self._agent_mode == "migration":
             return
         self._agent_mode = "migration"
         self._set_migration_mode_banner(True)
-        self._flash_run_button_attention(duration_ms=2500)
+        self._flash_run_button_attention(duration_ms=1200, flashes=2)
         clear_fn = getattr(self._plan_store, "clear", None)
         if callable(clear_fn):
             with suppress(Exception):
