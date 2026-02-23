@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
 
 from lib.tool_api import validate_write_tool_call
 from lib.yaml_ops import create_yaml_backup, load_yaml, write_yaml
+from tests.managed_paths import ManagedPathTestCase
 
 
 def _seed_yaml(path, data):
@@ -22,7 +23,7 @@ def _seed_yaml(path, data):
     )
 
 
-class TestWriteGateCellLineMigration(unittest.TestCase):
+class TestWriteGateCellLineMigration(ManagedPathTestCase):
     def test_execute_mode_write_does_not_run_cell_line_migration(self):
         with tempfile.TemporaryDirectory(prefix="ln2_gate_cl_exec_") as td:
             yaml_path = Path(td) / "inventory.yaml"

@@ -56,11 +56,10 @@ REGISTRY_PATH = os.path.join(REGISTRY_DIR, "inventory_index.json")
 
 def _default_yaml_path():
     if getattr(sys, "frozen", False):
-        return os.path.join(os.path.dirname(sys.executable), "demo", "ln2_inventory.demo.yaml")
-
-    # In source mode, use a deterministic project-relative demo path.
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(project_root, "demo", "ln2_inventory.demo.yaml")
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_dir, "inventories", "inventory", "inventory.yaml")
 
 
 DEFAULT_CONFIG = {
@@ -144,11 +143,6 @@ def _build_runtime_config():
 
 
 RUNTIME_CONFIG = _build_runtime_config()
-
-
-def get_runtime_config():
-    """Return a copy of resolved runtime configuration."""
-    return copy.deepcopy(RUNTIME_CONFIG)
 
 
 def _warn_bad_value(name, value, fallback):

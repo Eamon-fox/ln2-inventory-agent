@@ -28,6 +28,7 @@ from lib.tool_api import (
 )
 from lib.validators import validate_inventory
 from lib.yaml_ops import load_yaml, write_yaml
+from tests.managed_paths import ManagedPathTestCase
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +66,7 @@ def write_raw_yaml(path, data):
 # Unit tests: parse_custom_fields
 # ===========================================================================
 
-class TestParseCustomFields(unittest.TestCase):
+class TestParseCustomFields(ManagedPathTestCase):
     """Unit tests for parse_custom_fields()."""
 
     def test_empty_meta_returns_empty(self):
@@ -162,7 +163,7 @@ class TestParseCustomFields(unittest.TestCase):
 # Unit tests: coerce_value
 # ===========================================================================
 
-class TestCoerceValue(unittest.TestCase):
+class TestCoerceValue(ManagedPathTestCase):
     """Unit tests for coerce_value()."""
 
     def test_none_returns_none(self):
@@ -207,7 +208,7 @@ class TestCoerceValue(unittest.TestCase):
 # Integration tests: tool_add_entry with custom_data
 # ===========================================================================
 
-class TestToolAddEntryCustomData(unittest.TestCase):
+class TestToolAddEntryCustomData(ManagedPathTestCase):
     """Integration: custom_data flows through tool_add_entry into YAML."""
 
     def test_add_with_custom_data(self):
@@ -348,7 +349,7 @@ class TestToolAddEntryCustomData(unittest.TestCase):
 # Integration tests: tool_edit_entry with custom fields
 # ===========================================================================
 
-class TestToolEditEntryCustomFields(unittest.TestCase):
+class TestToolEditEntryCustomFields(ManagedPathTestCase):
     """Integration: custom fields are editable via tool_edit_entry."""
 
     def test_edit_custom_field(self):
@@ -436,7 +437,7 @@ class TestToolEditEntryCustomFields(unittest.TestCase):
 # Integration tests: search includes custom field values
 # ===========================================================================
 
-class TestSearchCustomFields(unittest.TestCase):
+class TestSearchCustomFields(ManagedPathTestCase):
     """Integration: search_records finds matches in custom field values."""
 
     def test_search_finds_custom_field_value(self):
@@ -491,7 +492,7 @@ class TestSearchCustomFields(unittest.TestCase):
 # Integration tests: _get_editable_fields
 # ===========================================================================
 
-class TestGetEditableFields(unittest.TestCase):
+class TestGetEditableFields(ManagedPathTestCase):
     """Integration: _get_editable_fields merges custom fields."""
 
     def test_no_custom_fields_returns_base_set(self):
@@ -545,7 +546,7 @@ class TestGetEditableFields(unittest.TestCase):
 # Unit tests: get_color_key
 # ===========================================================================
 
-class TestGetColorKey(unittest.TestCase):
+class TestGetColorKey(ManagedPathTestCase):
     """Unit tests for get_color_key()."""
 
     def test_default_returns_cell_line(self):
@@ -566,7 +567,7 @@ class TestGetColorKey(unittest.TestCase):
 # Unit tests: get_cell_line_options
 # ===========================================================================
 
-class TestGetCellLineOptions(unittest.TestCase):
+class TestGetCellLineOptions(ManagedPathTestCase):
     """Unit tests for get_cell_line_options()."""
 
     def test_default_returns_preset_options(self):
@@ -596,7 +597,7 @@ class TestGetCellLineOptions(unittest.TestCase):
         self.assertEqual(["K562", "HeLa"], result)
 
 
-class TestCellLineRequiredFlag(unittest.TestCase):
+class TestCellLineRequiredFlag(ManagedPathTestCase):
     """Unit tests for is_cell_line_required()."""
 
     def test_default_is_required(self):
@@ -608,7 +609,7 @@ class TestCellLineRequiredFlag(unittest.TestCase):
         self.assertFalse(is_cell_line_required({"cell_line_required": False}))
 
 
-class TestCellLineBaselineValidation(unittest.TestCase):
+class TestCellLineBaselineValidation(ManagedPathTestCase):
     """validate_inventory should tolerate historical cell_line dirtiness."""
 
     def test_non_option_cell_line_is_warning_not_error(self):
@@ -658,7 +659,7 @@ class TestCellLineBaselineValidation(unittest.TestCase):
 # Unit tests: cell_line in STRUCTURAL_FIELD_KEYS
 # ===========================================================================
 
-class TestCellLineStructural(unittest.TestCase):
+class TestCellLineStructural(ManagedPathTestCase):
     """Verify cell_line is a structural field."""
 
     def test_cell_line_in_structural_keys(self):
@@ -675,7 +676,7 @@ class TestCellLineStructural(unittest.TestCase):
 # Integration: cell_line extraction in tool_add_entry
 # ===========================================================================
 
-class TestCellLineAddEntry(unittest.TestCase):
+class TestCellLineAddEntry(ManagedPathTestCase):
     """Integration: cell_line is extracted from fields and stored at record top level."""
 
     def test_cell_line_extracted_to_top_level(self):
@@ -806,7 +807,7 @@ class TestCellLineAddEntry(unittest.TestCase):
 # Integration: cell_line editable via tool_edit_entry
 # ===========================================================================
 
-class TestCellLineEdit(unittest.TestCase):
+class TestCellLineEdit(ManagedPathTestCase):
     """Integration: cell_line can be edited via tool_edit_entry."""
 
     def test_edit_cell_line(self):

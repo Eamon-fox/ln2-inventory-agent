@@ -2,6 +2,7 @@
 
 import os
 
+from .path_policy import PathPolicyError, resolve_dataset_backup_request_path
 from .takeout_parser import normalize_action
 from .validators import validate_date
 from .yaml_ops import append_backup_event, create_yaml_backup
@@ -27,8 +28,8 @@ def resolve_request_backup_path(
     """Return execute-mode request snapshot path, creating it when needed.
 
     - Dry-run or non-execute modes return ``None``.
-    - Execute mode accepts an explicit ``request_backup_path`` and normalizes it
-      to absolute path.
+    - Execute mode accepts an explicit ``request_backup_path`` only when it
+      resolves under current dataset ``backups/``.
     - Otherwise, create one snapshot from ``yaml_path`` and return its absolute
       path, then append one ``action=backup`` audit event. Failure raises
       ``RuntimeError`` for callers to surface consistently.
@@ -40,7 +41,14 @@ def resolve_request_backup_path(
 
     candidate = str(request_backup_path or "").strip()
     if candidate:
-        return os.path.abspath(candidate)
+        resolved = resolve_dataset_backup_request_path(
+            yaml_path=yaml_path,
+            raw_path=candidate,
+            allow_empty=False,
+        )
+        if resolved is None:
+            raise RuntimeError("request_backup_path resolution returned empty path.")
+        return str(resolved)
 
     created = create_yaml_backup(yaml_path)
     if not created:
@@ -273,6 +281,7 @@ def validate_write_tool_call(
             extra=gate_issue.get("extra"),
         )
 
+    normalized_extra = {}
     requires_backup_ref = (
         (not bool(dry_run))
         and normalized_mode == "execute"
@@ -293,6 +302,31 @@ def validate_write_tool_call(
                 before_data=before_data,
                 details={"execution_mode": normalized_mode, "source": source},
             )
+        try:
+            resolved_ref = resolve_dataset_backup_request_path(
+                yaml_path=yaml_path,
+                raw_path=backup_ref,
+                allow_empty=False,
+            )
+        except PathPolicyError as exc:
+            details = {"execution_mode": normalized_mode, "source": source}
+            if exc.details:
+                details.update(exc.details)
+            return failure_result_fn(
+                yaml_path=yaml_path,
+                action=action,
+                source=source,
+                tool_name=tool_name,
+                error_code=exc.code,
+                message=exc.message,
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=before_data,
+                details=details,
+                extra={"resolved_path": exc.resolved_path} if exc.resolved_path else None,
+            )
+        if resolved_ref is not None:
+            normalized_extra["request_backup_path"] = str(resolved_ref)
 
     validator = _WRITE_REQUEST_VALIDATORS.get(tool_name)
     if callable(validator):
@@ -320,8 +354,11 @@ def validate_write_tool_call(
     else:
         normalized = {}
 
+    normalized_payload = dict(normalized_extra)
+    normalized_payload.update(normalized if isinstance(normalized, dict) else {})
+
     return {
         "ok": True,
         "execution_mode": normalized_mode,
-        "normalized": normalized,
+        "normalized": normalized_payload,
     }

@@ -37,13 +37,81 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
         self.assertIn("to_position", move_entry_props)
         self.assertIn("to_box", move_entry_props)
 
-    def test_run_terminal_contract_is_single_string_input_and_not_write_tool(self):
-        self.assertIn("run_terminal", TOOL_CONTRACTS)
-        params = TOOL_CONTRACTS["run_terminal"]["parameters"]
-        self.assertEqual(["command"], params.get("required"))
-        self.assertEqual({"command"}, set((params.get("properties") or {}).keys()))
+    def test_bash_contract_requires_command_and_description(self):
+        self.assertIn("bash", TOOL_CONTRACTS)
+        params = TOOL_CONTRACTS["bash"]["parameters"]
+        self.assertEqual(["command", "description"], params.get("required"))
+        self.assertEqual(
+            {"command", "description", "timeout", "workdir"},
+            set((params.get("properties") or {}).keys()),
+        )
         self.assertEqual(False, params.get("additionalProperties"))
-        self.assertNotIn("run_terminal", WRITE_TOOLS)
+        self.assertNotIn("bash", WRITE_TOOLS)
+
+    def test_powershell_contract_requires_command_and_description(self):
+        self.assertIn("powershell", TOOL_CONTRACTS)
+        params = TOOL_CONTRACTS["powershell"]["parameters"]
+        self.assertEqual(["command", "description"], params.get("required"))
+        self.assertEqual(
+            {"command", "description", "timeout", "workdir"},
+            set((params.get("properties") or {}).keys()),
+        )
+        self.assertEqual(False, params.get("additionalProperties"))
+        self.assertNotIn("powershell", WRITE_TOOLS)
+
+    def test_environment_tool_contracts_exist_with_expected_required_fields(self):
+        required_by_tool = {
+            "fs_list": [],
+            "fs_read": ["path"],
+            "fs_write": ["path", "content"],
+            "fs_edit": ["filePath", "oldString", "newString"],
+        }
+        for tool_name, expected_required in required_by_tool.items():
+            self.assertIn(tool_name, TOOL_CONTRACTS)
+            params = TOOL_CONTRACTS[tool_name]["parameters"]
+            self.assertEqual(expected_required, params.get("required"))
+            self.assertEqual(False, params.get("additionalProperties"))
+
+    def test_environment_tools_are_not_inventory_write_tools(self):
+        for tool_name in ("fs_list", "fs_read", "fs_write", "fs_edit", "bash", "powershell"):
+            self.assertNotIn(tool_name, WRITE_TOOLS)
+
+    def test_migration_import_tool_contracts_exist(self):
+        self.assertIn("validate_migration_output", TOOL_CONTRACTS)
+        self.assertIn("import_migration_output", TOOL_CONTRACTS)
+
+        validate_params = TOOL_CONTRACTS["validate_migration_output"]["parameters"]
+        self.assertEqual([], validate_params.get("required"))
+        self.assertEqual({}, validate_params.get("properties"))
+        self.assertEqual(False, validate_params.get("additionalProperties"))
+
+        import_params = TOOL_CONTRACTS["import_migration_output"]["parameters"]
+        self.assertEqual(
+            ["confirmation_token", "target_dataset_name"],
+            import_params.get("required"),
+        )
+        self.assertEqual(
+            {"confirmation_token", "target_dataset_name"},
+            set((import_params.get("properties") or {}).keys()),
+        )
+        self.assertEqual(False, import_params.get("additionalProperties"))
+        self.assertNotIn("validate_migration_output", WRITE_TOOLS)
+        self.assertNotIn("import_migration_output", WRITE_TOOLS)
+
+    def test_fs_copy_contract_removed(self):
+        self.assertNotIn("fs_copy", TOOL_CONTRACTS)
+        self.assertNotIn("python_run", TOOL_CONTRACTS)
+        self.assertNotIn("edit", TOOL_CONTRACTS)
+
+    def test_fs_edit_contract_shape(self):
+        self.assertIn("fs_edit", TOOL_CONTRACTS)
+        params = TOOL_CONTRACTS["fs_edit"]["parameters"]
+        self.assertEqual(["filePath", "oldString", "newString"], params.get("required"))
+        self.assertEqual(
+            {"filePath", "oldString", "newString", "replaceAll"},
+            set((params.get("properties") or {}).keys()),
+        )
+        self.assertEqual(False, params.get("additionalProperties"))
 
 
 if __name__ == "__main__":

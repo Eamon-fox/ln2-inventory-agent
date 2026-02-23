@@ -2,6 +2,7 @@
 
 import os
 
+from ..path_policy import PathPolicyError, resolve_dataset_backup_read_path
 from ..yaml_ops import load_yaml, rollback_yaml
 from .write_common import api
 
@@ -69,35 +70,85 @@ def tool_rollback(
         current_data = None
 
     normalized = validation.get("normalized") if isinstance(validation, dict) else {}
-    normalized_backup_path = (
-        str((normalized or {}).get("backup_path") or backup_path or "").strip()
-    )
-    if not normalized_backup_path:
-        payload = {
-            "ok": False,
-            "error_code": "missing_backup_path",
-            "message": "backup_path must be a non-empty string",
-        }
-        if not dry_run:
-            return api._failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code=payload["error_code"],
-                message=payload["message"],
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=current_data,
-                details=_details_for_target(),
+    normalized_backup_path = str((normalized or {}).get("backup_path") or backup_path or "").strip()
+    is_preflight_source = str(source or "").strip().lower().startswith("plan_executor.preflight")
+    if is_preflight_source:
+        if not normalized_backup_path:
+            payload = {
+                "ok": False,
+                "error_code": "path.invalid_input",
+                "message": "backup_path must be a non-empty string.",
+                "backup_path": "",
+            }
+            if not dry_run:
+                return api._failure_result(
+                    yaml_path=yaml_path,
+                    action=audit_action,
+                    source=source,
+                    tool_name=tool_name,
+                    error_code=payload["error_code"],
+                    message=payload["message"],
+                    actor_context=actor_context,
+                    tool_input=tool_input,
+                    before_data=current_data,
+                    details=_details_for_target(),
+                )
+            return payload
+        target_backup_path = os.path.abspath(normalized_backup_path)
+        if not os.path.exists(target_backup_path):
+            return {
+                "ok": False,
+                "error_code": "path.not_found",
+                "message": f"Path not found: {target_backup_path}",
+            }
+        if not os.path.isfile(target_backup_path):
+            return {
+                "ok": False,
+                "error_code": "path.not_file",
+                "message": f"Path is not a file: {target_backup_path}",
+            }
+    else:
+        try:
+            target_backup_path = str(
+                resolve_dataset_backup_read_path(
+                    yaml_path=yaml_path,
+                    raw_path=normalized_backup_path,
+                    must_exist=True,
+                    must_be_file=True,
+                )
             )
-        return payload
-    target_backup_path = os.path.abspath(normalized_backup_path)
+        except PathPolicyError as exc:
+            payload = {
+                "ok": False,
+                "error_code": exc.code,
+                "message": exc.message,
+                "backup_path": str(normalized_backup_path or ""),
+            }
+            if not dry_run:
+                return api._failure_result(
+                    yaml_path=yaml_path,
+                    action=audit_action,
+                    source=source,
+                    tool_name=tool_name,
+                    error_code=payload["error_code"],
+                    message=payload["message"],
+                    actor_context=actor_context,
+                    tool_input=tool_input,
+                    before_data=current_data,
+                    details=_details_for_target(normalized_backup_path or None),
+                    extra=(
+                        {"backup_path": payload["backup_path"], "resolved_path": exc.resolved_path}
+                        if exc.resolved_path
+                        else {"backup_path": payload["backup_path"]}
+                    ),
+                )
+            return payload
+
     if dry_run and not os.path.exists(target_backup_path):
         return {
             "ok": False,
-            "error_code": "backup_not_found",
-            "message": f"Backup not found: {target_backup_path}",
+            "error_code": "path.not_found",
+            "message": f"Path not found: {target_backup_path}",
         }
     try:
         backup_data = load_yaml(target_backup_path)

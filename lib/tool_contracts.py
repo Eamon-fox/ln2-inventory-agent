@@ -59,13 +59,13 @@ TOOL_CONTRACTS = {
         },
     },
     "search_records": {
-        "description": "Search inventory records via text and structured filters (active records by default).",
+        "description": "Search inventory records via text and structured filters. Use status=all|active|inactive and optional sort_by/sort_order.",
         "parameters": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Search text (cell line, short name, notes, etc).",
+                    "description": "Optional search text (cell line, short name, notes, etc); empty or '*' skips text filtering.",
                 },
                 "mode": {
                     "type": "string",
@@ -77,9 +77,23 @@ TOOL_CONTRACTS = {
                 "box": {"type": "integer", "minimum": 1},
                 "position": _POSITION_VALUE_SCHEMA,
                 "record_id": {"type": "integer", "minimum": 1},
-                "active_only": {"type": "boolean"},
+                "status": {
+                    "type": "string",
+                    "enum": ["all", "active", "inactive"],
+                    "description": "Record status scope: all records, active only, or inactive only.",
+                },
+                "sort_by": {
+                    "type": "string",
+                    "enum": ["box", "position", "frozen_at", "id"],
+                    "description": "Sort field. Defaults to frozen_at.",
+                },
+                "sort_order": {
+                    "type": "string",
+                    "enum": ["asc", "desc"],
+                    "description": "Sort direction. Defaults to desc.",
+                },
             },
-            "required": ["query"],
+            "required": [],
             "additionalProperties": False,
         },
     },
@@ -146,7 +160,7 @@ TOOL_CONTRACTS = {
         },
     },
     "generate_stats": {
-        "description": "Generate inventory statistics (active records by default).",
+        "description": "Generate inventory statistics. With box set, returns box-only statistics.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -172,8 +186,8 @@ TOOL_CONTRACTS = {
             "additionalProperties": False,
         },
     },
-    "run_terminal": {
-        "description": "Run one terminal command as-is and return raw terminal output.",
+    "bash": {
+        "description": "仅用于 Linux/WSL 环境。检测到 Windows 路径（如 D:\\）时不得使用，必须改用 powershell。",
         "parameters": {
             "type": "object",
             "properties": {
@@ -181,8 +195,140 @@ TOOL_CONTRACTS = {
                     "type": "string",
                     "description": "Terminal command text to execute exactly as provided.",
                 },
+                "description": {
+                    "type": "string",
+                    "description": "Clear and concise command purpose (recommended 5-10 words).",
+                },
+                "timeout": {
+                    "type": "number",
+                    "description": "Optional timeout in milliseconds.",
+                },
+                "workdir": {
+                    "type": "string",
+                    "description": "Optional repository-relative working directory under migrate/ (defaults to migrate/).",
+                },
             },
-            "required": ["command"],
+            "required": ["command", "description"],
+            "additionalProperties": False,
+        },
+    },
+    "powershell": {
+        "description": "Windows 首选执行器。当仓库/路径在 Windows（如 D:\\...）时必须使用本工具。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "Terminal command text to execute exactly as provided.",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Clear and concise command purpose (recommended 5-10 words).",
+                },
+                "timeout": {
+                    "type": "number",
+                    "description": "Optional timeout in milliseconds.",
+                },
+                "workdir": {
+                    "type": "string",
+                    "description": "Optional repository-relative working directory under migrate/ (defaults to migrate/).",
+                },
+            },
+            "required": ["command", "description"],
+            "additionalProperties": False,
+        },
+    },
+    "fs_list": {
+        "description": "List files/directories under repository-relative path.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Repository-relative path (defaults to '.').",
+                },
+                "max_entries": {"type": "integer", "minimum": 1},
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+    "fs_read": {
+        "description": "Read one text file under repository-relative path.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Repository-relative file path.",
+                },
+                "encoding": {"type": "string"},
+            },
+            "required": ["path"],
+            "additionalProperties": False,
+        },
+    },
+    "fs_write": {
+        "description": "Write one text file under repository-relative path (migrate/ only).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Repository-relative file path under migrate/.",
+                },
+                "content": {"type": "string"},
+                "overwrite": {"type": "boolean"},
+            },
+            "required": ["path", "content"],
+            "additionalProperties": False,
+        },
+    },
+    "fs_edit": {
+        "description": "Replace text in one file under migrate/ by old/new string matching.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "filePath": {
+                    "type": "string",
+                    "description": "Repository-relative file path under migrate/.",
+                },
+                "oldString": {
+                    "type": "string",
+                    "description": "The text to replace.",
+                },
+                "newString": {
+                    "type": "string",
+                    "description": "Replacement text; must differ from oldString.",
+                },
+                "replaceAll": {
+                    "type": "boolean",
+                    "description": "Replace all occurrences of oldString (default false).",
+                },
+            },
+            "required": ["filePath", "oldString", "newString"],
+            "additionalProperties": False,
+        },
+    },
+    "validate_migration_output": {
+        "description": "Run strict validation on migrate/output/ln2_inventory.yaml (warnings are blocking).",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+    "import_migration_output": {
+        "description": "Import migrate/output/ln2_inventory.yaml as a new managed dataset after explicit human confirmation.",
+        "notes": "confirmation_token must be exactly CONFIRM_IMPORT. Always ask user for target_dataset_name via question before importing.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "confirmation_token": {"type": "string"},
+                "target_dataset_name": {"type": "string"},
+            },
+            "required": ["confirmation_token", "target_dataset_name"],
             "additionalProperties": False,
         },
     },

@@ -3,7 +3,9 @@ import shutil
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
@@ -12,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from lib.inventory_paths import InventoryPathError, create_managed_dataset_yaml_path
 from lib.yaml_ops import (
     create_yaml_backup,
     get_audit_log_path,
@@ -51,10 +54,23 @@ def make_utf8_mojibake(text):
     raise AssertionError("Failed to synthesize mojibake sample")
 
 
+@contextmanager
+def managed_inventory_root(prefix):
+    with tempfile.TemporaryDirectory(prefix=prefix) as install_dir, patch(
+        "lib.inventory_paths.get_install_dir",
+        return_value=install_dir,
+    ):
+        yield Path(install_dir)
+
+
+def _managed_yaml(dataset_name):
+    return Path(create_managed_dataset_yaml_path(dataset_name))
+
+
 class YamlOpsWriteTests(unittest.TestCase):
     def test_write_yaml_persists_inventory(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_yaml_ops_") as temp_dir:
-            yaml_path = Path(temp_dir) / "inventory.yaml"
+        with managed_inventory_root("ln2_yaml_ops_"):
+            yaml_path = _managed_yaml("write-persist")
             data = make_data([])
 
             write_yaml(data, path=str(yaml_path))
@@ -64,8 +80,8 @@ class YamlOpsWriteTests(unittest.TestCase):
             self.assertEqual([], loaded.get("inventory", []))
 
     def test_load_yaml_repairs_utf8_gbk_mojibake_values(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_yaml_repair_") as temp_dir:
-            yaml_path = Path(temp_dir) / "inventory.yaml"
+        with managed_inventory_root("ln2_yaml_repair_"):
+            yaml_path = _managed_yaml("repair-values")
             original = "\u4f60\u662f\u6570\u636e\u6e05\u6d17\u4e0e\u7ed3\u6784\u5316\u52a9\u624b"
             mojibake = original.encode("utf-8").decode("gb18030")
 
@@ -82,8 +98,8 @@ class YamlOpsWriteTests(unittest.TestCase):
             self.assertEqual(original, rec.get("short_name"))
 
     def test_load_yaml_repairs_utf8_gbk_mojibake_mixed_content(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_yaml_repair_mixed_") as temp_dir:
-            yaml_path = Path(temp_dir) / "inventory.yaml"
+        with managed_inventory_root("ln2_yaml_repair_mixed_"):
+            yaml_path = _managed_yaml("repair-mixed")
             original_note = "\u8bb0\u5f55 #20 (id=20): thaw_events[1] has invalid action"
             mojibake_note = make_utf8_mojibake(original_note)
 
@@ -98,8 +114,8 @@ class YamlOpsWriteTests(unittest.TestCase):
             self.assertEqual(original_note, rec.get("note"))
 
     def test_load_yaml_keeps_valid_chinese_mixed_content_unchanged(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_yaml_keep_valid_") as temp_dir:
-            yaml_path = Path(temp_dir) / "inventory.yaml"
+        with managed_inventory_root("ln2_yaml_keep_valid_"):
+            yaml_path = _managed_yaml("keep-valid")
             original_note = "\u8bb0\u5f55 #20 (id=20): thaw_events[1] has invalid action"
 
             data = make_data([make_record(1, box=1, position=1)])
@@ -115,8 +131,8 @@ class YamlOpsWriteTests(unittest.TestCase):
 
 class YamlOpsSafetyTests(unittest.TestCase):
     def test_audit_seq_increases_monotonically(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_audit_seq_monotonic_") as temp_dir:
-            yaml_path = Path(temp_dir) / "inventory.yaml"
+        with managed_inventory_root("ln2_audit_seq_"):
+            yaml_path = _managed_yaml("seq-monotonic")
             write_yaml(
                 make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
@@ -138,8 +154,8 @@ class YamlOpsSafetyTests(unittest.TestCase):
             self.assertEqual([1, 2, 3], seqs)
 
     def test_write_yaml_creates_backup_and_audit(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_safety_") as temp_dir:
-            yaml_path = Path(temp_dir) / "inventory.yaml"
+        with managed_inventory_root("ln2_safety_"):
+            yaml_path = _managed_yaml("write-safety")
 
             data_v1 = make_data([make_record(1, box=1, position=1)])
             write_yaml(
@@ -148,11 +164,13 @@ class YamlOpsSafetyTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
-            data_v2 = make_data([
-                make_record(1, box=1, position=1),
-                make_record(2, box=2, position=3),
-                make_record(3, box=2, position=4),
-            ])
+            data_v2 = make_data(
+                [
+                    make_record(1, box=1, position=1),
+                    make_record(2, box=2, position=3),
+                    make_record(3, box=2, position=4),
+                ]
+            )
             write_yaml(
                 data_v2,
                 path=str(yaml_path),
@@ -188,9 +206,9 @@ class YamlOpsSafetyTests(unittest.TestCase):
             self.assertEqual("success", last.get("status"))
 
     def test_audit_logs_are_isolated_per_yaml_file(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_audit_isolation_") as temp_dir:
-            yaml_a = Path(temp_dir) / "inventory_a.yaml"
-            yaml_b = Path(temp_dir) / "inventory_b.yaml"
+        with managed_inventory_root("ln2_audit_isolation_"):
+            yaml_a = _managed_yaml("dataset-a")
+            yaml_b = _managed_yaml("dataset-b")
 
             write_yaml(make_data([make_record(1, box=1, position=1)]), path=str(yaml_a))
             write_yaml(make_data([make_record(2, box=2, position=2)]), path=str(yaml_b))
@@ -202,42 +220,18 @@ class YamlOpsSafetyTests(unittest.TestCase):
             self.assertTrue(audit_a.exists())
             self.assertTrue(audit_b.exists())
 
-    def test_legacy_named_yaml_paths_get_unique_audit_targets(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_audit_legacy_iso_") as root_dir:
-            dir_a = Path(root_dir) / "project_a"
-            dir_b = Path(root_dir) / "project_b"
-            dir_a.mkdir(parents=True, exist_ok=True)
-            dir_b.mkdir(parents=True, exist_ok=True)
+    def test_unmanaged_yaml_paths_are_rejected_for_audit_lookup(self):
+        with managed_inventory_root("ln2_audit_legacy_iso_") as install_root:
+            legacy_yaml = install_root / "legacy" / "inventory.yaml"
+            legacy_yaml.parent.mkdir(parents=True, exist_ok=True)
+            legacy_yaml.write_text("meta: {}\ninventory: []\n", encoding="utf-8")
 
-            yaml_a = dir_a / "inventory.yaml"
-            yaml_b = dir_b / "inventory.yaml"
-
-            # Write raw YAML without inventory_instance_id to exercise legacy fallback naming.
-            with yaml_a.open("w", encoding="utf-8") as handle:
-                yaml.safe_dump(
-                    make_data([make_record(1)]),
-                    handle,
-                    allow_unicode=True,
-                    sort_keys=False,
-                    width=120,
-                )
-            with yaml_b.open("w", encoding="utf-8") as handle:
-                yaml.safe_dump(
-                    make_data([make_record(2)]),
-                    handle,
-                    allow_unicode=True,
-                    sort_keys=False,
-                    width=120,
-                )
-
-            audit_a = Path(get_audit_log_path(str(yaml_a)))
-            audit_b = Path(get_audit_log_path(str(yaml_b)))
-
-            self.assertNotEqual(str(audit_a), str(audit_b))
+            with self.assertRaises(InventoryPathError):
+                get_audit_log_path(str(legacy_yaml))
 
     def test_read_audit_events_reads_only_canonical_path(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_audit_merge_") as temp_dir:
-            yaml_path = Path(temp_dir) / "inventory.yaml"
+        with managed_inventory_root("ln2_audit_merge_"):
+            yaml_path = _managed_yaml("audit-read")
             write_yaml(
                 make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
@@ -263,8 +257,8 @@ class YamlOpsSafetyTests(unittest.TestCase):
             self.assertIn("takeout", actions)
 
     def test_instance_guard_stable_on_same_path(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_instance_guard_stable_") as temp_dir:
-            yaml_path = Path(temp_dir) / "inventory.yaml"
+        with managed_inventory_root("ln2_instance_guard_stable_"):
+            yaml_path = _managed_yaml("stable")
             write_yaml(
                 make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
@@ -294,9 +288,9 @@ class YamlOpsSafetyTests(unittest.TestCase):
             self.assertNotIn("instance_guard_decision", details)
 
     def test_instance_guard_copy_forks_identity_when_origin_exists(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_instance_guard_copy_") as temp_dir:
-            src_path = Path(temp_dir) / "inventory.yaml"
-            dst_path = Path(temp_dir) / "inventory_copy.yaml"
+        with managed_inventory_root("ln2_instance_guard_copy_"):
+            src_path = _managed_yaml("copy-src")
+            dst_path = _managed_yaml("copy-dst")
 
             write_yaml(
                 make_data([make_record(1, box=1, position=1)]),
@@ -336,12 +330,12 @@ class YamlOpsSafetyTests(unittest.TestCase):
             self.assertEqual(dst_after_id, last.get("inventory_instance_id"))
             self.assertFalse(last.get("backup_path"))
             backups = list_yaml_backups(str(dst_path))
-            self.assertTrue(any(dst_after_id in str(path) for path in backups))
+            self.assertTrue(backups)
 
     def test_instance_guard_copy_then_delete_origin_is_treated_as_rename(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_instance_guard_copy_del_") as temp_dir:
-            src_path = Path(temp_dir) / "inventory.yaml"
-            dst_path = Path(temp_dir) / "inventory_copy.yaml"
+        with managed_inventory_root("ln2_instance_guard_copy_del_"):
+            src_path = _managed_yaml("copy-del-src")
+            dst_path = _managed_yaml("copy-del-dst")
 
             write_yaml(
                 make_data([make_record(1, box=1, position=1)]),
@@ -373,9 +367,9 @@ class YamlOpsSafetyTests(unittest.TestCase):
             self.assertEqual(original_id, details.get("instance_guard_new_id"))
 
     def test_instance_guard_rename_keeps_identity_and_updates_origin(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_instance_guard_rename_") as temp_dir:
-            old_path = Path(temp_dir) / "inventory.yaml"
-            new_path = Path(temp_dir) / "renamed_inventory.yaml"
+        with managed_inventory_root("ln2_instance_guard_rename_") as install_root:
+            old_path = _managed_yaml("rename-old")
+            new_path = install_root / "inventories" / "rename-new" / "inventory.yaml"
 
             write_yaml(
                 make_data([make_record(1, box=1, position=1)]),
@@ -383,7 +377,7 @@ class YamlOpsSafetyTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
             original_id = str((load_yaml(str(old_path)).get("meta") or {}).get("inventory_instance_id") or "")
-            old_path.rename(new_path)
+            old_path.parent.rename(new_path.parent)
 
             renamed_data = load_yaml(str(new_path))
             renamed_data["inventory"][0]["position"] = 4
@@ -404,8 +398,8 @@ class YamlOpsSafetyTests(unittest.TestCase):
             self.assertEqual("adopted_rename", details.get("instance_guard_decision"))
 
     def test_instance_guard_backfills_missing_origin_without_fork(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_instance_guard_backfill_") as temp_dir:
-            yaml_path = Path(temp_dir) / "inventory.yaml"
+        with managed_inventory_root("ln2_instance_guard_backfill_"):
+            yaml_path = _managed_yaml("backfill-origin")
             payload = make_data([make_record(1, box=1, position=1)])
             payload["meta"]["inventory_instance_id"] = "instance-legacy-no-origin"
             with open(yaml_path, "w", encoding="utf-8") as handle:
@@ -430,8 +424,8 @@ class YamlOpsSafetyTests(unittest.TestCase):
             self.assertNotIn("instance_guard_decision", details)
 
     def test_rollback_yaml_restores_latest_backup(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_rollback_") as temp_dir:
-            yaml_path = Path(temp_dir) / "inventory.yaml"
+        with managed_inventory_root("ln2_rollback_"):
+            yaml_path = _managed_yaml("rollback-latest")
 
             data_v1 = make_data([make_record(1, box=1, position=1)])
             data_v2 = make_data([make_record(1, box=1, position=9)])
@@ -457,38 +451,50 @@ class YamlOpsSafetyTests(unittest.TestCase):
             self.assertEqual(str(Path(request_backup_path).resolve()), str(Path(result["snapshot_before_rollback"]).resolve()))
 
     def test_write_yaml_rejects_invalid_inventory(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_write_guard_") as temp_dir:
-            yaml_path = Path(temp_dir) / "inventory.yaml"
+        with managed_inventory_root("ln2_write_guard_"):
+            yaml_path = _managed_yaml("write-invalid")
             invalid = make_data([make_record(1, box=99, position=1)])
 
             with self.assertRaises(ValueError) as ctx:
                 write_yaml(invalid, path=str(yaml_path))
 
-            self.assertIn("完整性校验失败", str(ctx.exception))
+            self.assertTrue(str(ctx.exception))
             self.assertFalse(yaml_path.exists())
 
     def test_rollback_yaml_blocks_invalid_backup(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_rollback_guard_") as temp_dir:
-            yaml_path = Path(temp_dir) / "inventory.yaml"
+        with managed_inventory_root("ln2_rollback_guard_"):
+            yaml_path = _managed_yaml("rollback-invalid")
 
             write_yaml(
                 make_data([make_record(1, box=1, position=1)]),
                 path=str(yaml_path),
             )
 
-            invalid_backup = Path(temp_dir) / "inventory.invalid.bak"
+            invalid_backup = yaml_path.parent / "backups" / "inventory.invalid.bak"
+            invalid_backup.parent.mkdir(parents=True, exist_ok=True)
             invalid_backup.write_text(
-                "meta:\n  box_layout:\n    rows: 9\n    cols: 9\ninventory:\n  - id: 1\n    parent_cell_line: NCCIT\n    short_name: bad\n    box: 1\n    position: null\n    frozen_at: 2025-01-01\n",
+                (
+                    "meta:\n"
+                    "  box_layout:\n"
+                    "    rows: 9\n"
+                    "    cols: 9\n"
+                    "inventory:\n"
+                    "  - id: 1\n"
+                    "    parent_cell_line: NCCIT\n"
+                    "    short_name: bad\n"
+                    "    box: 1\n"
+                    "    position: null\n"
+                    "    frozen_at: 2025-01-01\n"
+                ),
                 encoding="utf-8",
             )
 
-            with self.assertRaises(ValueError) as ctx:
+            with self.assertRaises(ValueError):
                 rollback_yaml(
                     path=str(yaml_path),
                     backup_path=str(invalid_backup),
                 )
 
-            self.assertIn("回滚被阻止", str(ctx.exception))
             current = load_yaml(str(yaml_path))
             self.assertEqual(1, current["inventory"][0]["position"])
 

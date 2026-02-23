@@ -518,7 +518,9 @@ def tool_search_records(
     box=None,
     position=None,
     record_id=None,
-    active_only=True,
+    status="all",
+    sort_by=None,
+    sort_order="desc",
 ):
     from .tool_api_impl import read_ops as _read_ops
 
@@ -531,7 +533,9 @@ def tool_search_records(
         box=box,
         position=position,
         record_id=record_id,
-        active_only=active_only,
+        status=status,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
     return _format_tool_response_positions(response, yaml_path=yaml_path)
 
@@ -677,13 +681,19 @@ def tool_recommend_positions(yaml_path, count, box_preference=None, strategy="co
     return _format_tool_response_positions(response, yaml_path=yaml_path)
 
 
-def tool_generate_stats(yaml_path, box=None, include_inactive=False):
+def tool_generate_stats(
+    yaml_path,
+    box=None,
+    include_inactive=False,
+    full_records_for_gui=False,
+):
     from .tool_api_impl import read_ops as _read_ops
 
     response = _read_ops.tool_generate_stats(
         yaml_path=yaml_path,
         box=box,
         include_inactive=include_inactive,
+        full_records_for_gui=full_records_for_gui,
     )
     return _format_tool_response_positions(response, yaml_path=yaml_path)
 

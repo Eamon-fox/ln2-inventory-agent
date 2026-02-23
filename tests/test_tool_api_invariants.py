@@ -21,6 +21,7 @@ from lib.tool_api import (
     tool_takeout,
 )
 from lib.yaml_ops import load_yaml, write_yaml, read_audit_events
+from tests.managed_paths import ManagedPathTestCase
 
 
 def tool_batch_takeout(*args, **kwargs):
@@ -178,7 +179,7 @@ def _read_audit(temp_dir):
 # --- parse_batch_entries ---
 
 
-class ParseBatchEntriesTests(unittest.TestCase):
+class ParseBatchEntriesTests(ManagedPathTestCase):
     def test_csv_string(self):
         result = parse_batch_entries("1:5,2:10")
         self.assertEqual([(1, 5), (2, 10)], result)
@@ -199,7 +200,7 @@ class ParseBatchEntriesTests(unittest.TestCase):
 # --- Position consistency invariants ---
 
 
-class PositionConsistencyTests(unittest.TestCase):
+class PositionConsistencyTests(ManagedPathTestCase):
     """After any write operation, the resulting YAML must satisfy these invariants."""
 
     def test_takeout_removes_position_completely(self):
@@ -327,7 +328,7 @@ class PositionConsistencyTests(unittest.TestCase):
 # --- Batch same-record edge cases ---
 
 
-class BatchSameRecordTests(unittest.TestCase):
+class BatchSameRecordTests(ManagedPathTestCase):
     """All same-record batch scenarios that previously had a bug."""
 
     def test_takeout_all_positions_of_one_record(self):
@@ -422,7 +423,7 @@ class BatchSameRecordTests(unittest.TestCase):
 # --- Audit trail invariants ---
 
 
-class AuditTrailTests(unittest.TestCase):
+class AuditTrailTests(ManagedPathTestCase):
     """Every write operation must produce an audit trail entry."""
 
     def test_successful_add_writes_audit(self):
@@ -488,7 +489,7 @@ class AuditTrailTests(unittest.TestCase):
 # --- Boundary values on tool_api ---
 
 
-class BoundaryValueTests(unittest.TestCase):
+class BoundaryValueTests(ManagedPathTestCase):
     def test_position_at_min_max_boundary(self):
         """Operations at position=1 and position=81 should work."""
         with tempfile.TemporaryDirectory() as td:
@@ -581,7 +582,7 @@ class BoundaryValueTests(unittest.TestCase):
 # --- Error path tests ---
 
 
-class ErrorPathTests(unittest.TestCase):
+class ErrorPathTests(ManagedPathTestCase):
     def test_thaw_nonexistent_record(self):
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [make_record(1, box=1, position=1)])
@@ -672,7 +673,7 @@ class ErrorPathTests(unittest.TestCase):
 # --- Cross-box move tests ---
 
 
-class CrossBoxMoveTests(unittest.TestCase):
+class CrossBoxMoveTests(ManagedPathTestCase):
     """Tests for the to_box parameter in move operations."""
 
     def test_record_takeout_move_cross_box_updates_box_field(self):

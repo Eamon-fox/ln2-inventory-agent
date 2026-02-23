@@ -33,6 +33,7 @@ from lib.tool_api import (
     tool_generate_stats,
     tool_list_empty_positions,
 )
+from lib.path_policy import PathPolicyError
 from lib.tool_api_write_validation import resolve_request_backup_path
 from lib.yaml_ops import (
     create_yaml_backup,
@@ -41,6 +42,7 @@ from lib.yaml_ops import (
     read_audit_events,
     write_yaml,
 )
+from tests.managed_paths import ManagedPathTestCase
 
 
 def tool_batch_takeout(*args, **kwargs):
@@ -190,7 +192,7 @@ def read_audit_rows(temp_dir):
     return read_audit_events(str(yaml_path))
 
 
-class ToolApiTests(unittest.TestCase):
+class ToolApiTests(ManagedPathTestCase):
     def test_resolve_request_backup_path_appends_backup_audit_event(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_request_backup_event_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
@@ -215,6 +217,46 @@ class ToolApiTests(unittest.TestCase):
             self.assertEqual("backup", last.get("action"))
             self.assertEqual(str(Path(request_backup).resolve()), str(Path(last.get("backup_path")).resolve()))
             self.assertGreater(int(last.get("audit_seq") or 0), 0)
+
+    def test_resolve_request_backup_path_accepts_relative_path_under_dataset_backups(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_request_backup_relative_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            resolved = resolve_request_backup_path(
+                yaml_path=str(yaml_path),
+                execution_mode="execute",
+                dry_run=False,
+                request_backup_path="manual/request-backup.bak",
+                backup_event_source="tests.request_backup_relative",
+            )
+
+            expected = Path(yaml_path).resolve().parent / "backups" / "manual" / "request-backup.bak"
+            self.assertEqual(str(expected.resolve()), str(Path(resolved).resolve()))
+
+    def test_resolve_request_backup_path_rejects_path_outside_dataset_backups(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_request_backup_scope_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            outside = Path(yaml_path).resolve().parent / "manual_invalid_backup.yaml"
+            with self.assertRaises(PathPolicyError) as exc:
+                resolve_request_backup_path(
+                    yaml_path=str(yaml_path),
+                    execution_mode="execute",
+                    dry_run=False,
+                    request_backup_path=str(outside),
+                    backup_event_source="tests.request_backup_scope",
+                )
+            self.assertEqual("path.backup_scope_denied", exc.exception.code)
 
     def test_tool_add_entry_writes_trace_session_metadata(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_add_") as temp_dir:
@@ -732,7 +774,8 @@ class ToolApiTests(unittest.TestCase):
             good = make_data([make_record(1, box=1, position=1)])
             write_yaml(good, path=str(yaml_path))
 
-            bad_backup = Path(temp_dir) / "manual_invalid_backup.yaml"
+            bad_backup = Path(yaml_path).parent / "backups" / "manual_invalid_backup.yaml"
+            bad_backup.parent.mkdir(parents=True, exist_ok=True)
             bad_payload = make_data([make_record(1, box=99, position=1)])
             write_raw_yaml(bad_backup, bad_payload)
 
@@ -966,9 +1009,16 @@ class ToolApiTests(unittest.TestCase):
             self.assertTrue(response["ok"])
             result = response["result"]
             self.assertEqual(1, result.get("box"))
+            self.assertEqual(81, result.get("box_total_slots"))
+            self.assertEqual(2, result.get("box_occupied"))
+            self.assertEqual(79, result.get("box_empty"))
+            self.assertAlmostEqual(2 / 81 * 100, float(result.get("box_occupancy_rate") or 0.0), places=6)
             self.assertEqual(2, result.get("box_record_count"))
             ids = [item.get("id") for item in result.get("box_records", [])]
             self.assertEqual([1, 2], ids)
+            self.assertNotIn("occupancy_rate", result)
+            self.assertNotIn("stats", result)
+            self.assertNotIn("occupancy", result)
 
     def test_tool_generate_stats_include_inactive_returns_taken_out_records(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_stats_box_inactive_") as temp_dir:
@@ -1008,10 +1058,13 @@ class ToolApiTests(unittest.TestCase):
             self.assertTrue(response["ok"])
             result = response["result"]
             self.assertEqual(1, result.get("box"))
+            self.assertEqual(2, result.get("box_occupied"))
             self.assertEqual(3, result.get("box_record_count"))
             self.assertTrue(result.get("include_inactive"))
             ids = [item.get("id") for item in result.get("box_records", [])]
             self.assertEqual([1, 2, 3], ids)
+            self.assertNotIn("occupancy_rate", result)
+            self.assertNotIn("stats", result)
 
     def test_tool_generate_stats_default_record_count_excludes_taken_out(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_stats_record_count_") as temp_dir:
@@ -1115,6 +1168,52 @@ class ToolApiTests(unittest.TestCase):
             self.assertNotIn("inventory", (result.get("data") or {}))
             self.assertGreaterEqual(len(result.get("next_actions", [])), 2)
 
+    def test_tool_generate_stats_returns_full_preview_when_gui_flag_enabled(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_stats_full_preview_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            records = []
+            for idx in range(1, 202):
+                box = ((idx - 1) // 81) + 1
+                position = ((idx - 1) % 81) + 1
+                records.append(make_record(idx, box=box, position=position))
+
+            write_yaml(
+                make_data(records),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            response = tool_generate_stats(
+                yaml_path=str(yaml_path),
+                full_records_for_gui=True,
+            )
+
+            self.assertTrue(response["ok"])
+            result = response["result"]
+            self.assertEqual(201, result.get("record_count"))
+            self.assertFalse(result.get("inventory_omitted"))
+            self.assertEqual(100, result.get("inventory_limit"))
+            self.assertEqual(201, len(result.get("inventory_preview", [])))
+            self.assertTrue(result.get("full_records_for_gui"))
+
+    def test_tool_generate_stats_rejects_invalid_gui_flag(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_stats_invalid_gui_flag_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            response = tool_generate_stats(
+                yaml_path=str(yaml_path),
+                full_records_for_gui="not-a-bool",
+            )
+
+            self.assertFalse(response["ok"])
+            self.assertEqual("invalid_tool_input", response.get("error_code"))
+            self.assertIn("full_records_for_gui", str(response.get("message") or ""))
+
     def test_tool_generate_stats_box_records_still_return_when_over_limit(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_stats_box_large_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
@@ -1138,12 +1237,15 @@ class ToolApiTests(unittest.TestCase):
             self.assertTrue(response["ok"])
             result = response["result"]
             self.assertEqual(2, result.get("box"))
+            self.assertEqual(65, result.get("box_occupied"))
             self.assertEqual(65, result.get("box_record_count"))
             self.assertEqual(65, len(result.get("box_records", [])))
-            self.assertTrue(result.get("inventory_omitted"))
+            self.assertFalse(result.get("inventory_omitted"))
+            self.assertEqual(65, len(result.get("inventory_preview", [])))
+            self.assertNotIn("stats", result)
 
-    def test_tool_search_records_requires_non_empty_query(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_tool_search_query_required_") as temp_dir:
+    def test_tool_search_records_allows_empty_query_and_asterisk(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_search_query_optional_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
                 make_data([make_record(1, box=1, position=1)]),
@@ -1151,14 +1253,25 @@ class ToolApiTests(unittest.TestCase):
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
-            response = tool_search_records(
+            empty_response = tool_search_records(
                 yaml_path=str(yaml_path),
                 query="   ",
             )
+            wildcard_response = tool_search_records(
+                yaml_path=str(yaml_path),
+                query="*",
+            )
 
-            self.assertFalse(response["ok"])
-            self.assertEqual("invalid_tool_input", response["error_code"])
-            self.assertEqual("未输入检索词", response["message"])
+            self.assertTrue(empty_response["ok"])
+            self.assertEqual(1, empty_response["result"]["total_count"])
+            self.assertEqual(1, empty_response["result"]["records"][0]["id"])
+            self.assertEqual("", empty_response["result"]["normalized_query"])
+            self.assertTrue(wildcard_response["ok"])
+            self.assertEqual(
+                empty_response["result"]["total_count"],
+                wildcard_response["result"]["total_count"],
+            )
+            self.assertEqual("", wildcard_response["result"]["normalized_query"])
 
     def test_tool_search_records_supports_location_shortcut_query(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_search_shortcut_") as temp_dir:
@@ -1220,7 +1333,7 @@ class ToolApiTests(unittest.TestCase):
             self.assertEqual(1, response["result"]["total_count"])
             self.assertEqual(7, response["result"]["records"][0]["id"])
 
-    def test_tool_search_records_default_excludes_taken_out_records(self):
+    def test_tool_search_records_status_filters_active_and_inactive(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_search_active_default_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -1254,18 +1367,211 @@ class ToolApiTests(unittest.TestCase):
                 query="K562",
             )
             self.assertTrue(response["ok"])
-            self.assertEqual(1, response["result"]["total_count"])
-            self.assertEqual([7], [item.get("id") for item in response["result"]["records"]])
-            self.assertTrue(response["result"]["applied_filters"]["active_only"])
+            self.assertEqual(2, response["result"]["total_count"])
+            self.assertEqual([8, 7], [item.get("id") for item in response["result"]["records"]])
+            self.assertEqual("all", response["result"]["applied_filters"]["status"])
 
-            include_inactive = tool_search_records(
+            active_only = tool_search_records(
                 yaml_path=str(yaml_path),
                 query="K562",
-                active_only=False,
+                status="active",
             )
-            self.assertTrue(include_inactive["ok"])
-            self.assertEqual(1, include_inactive["result"]["total_count"])
-            self.assertEqual([8], [item.get("id") for item in include_inactive["result"]["records"]])
+            self.assertTrue(active_only["ok"])
+            self.assertEqual(1, active_only["result"]["total_count"])
+            self.assertEqual([7], [item.get("id") for item in active_only["result"]["records"]])
+            self.assertEqual("active", active_only["result"]["applied_filters"]["status"])
+
+            inactive_only = tool_search_records(
+                yaml_path=str(yaml_path),
+                query="K562",
+                status="inactive",
+            )
+            self.assertTrue(inactive_only["ok"])
+            self.assertEqual(1, inactive_only["result"]["total_count"])
+            self.assertEqual([8], [item.get("id") for item in inactive_only["result"]["records"]])
+            self.assertEqual("inactive", inactive_only["result"]["applied_filters"]["status"])
+
+    def test_tool_search_records_default_sort_is_recent_frozen_desc(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_search_default_sort_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        {
+                            "id": 1,
+                            "parent_cell_line": "K562",
+                            "short_name": "older",
+                            "box": 1,
+                            "position": 1,
+                            "frozen_at": "2026-02-10",
+                        },
+                        {
+                            "id": 2,
+                            "parent_cell_line": "K562",
+                            "short_name": "newer",
+                            "box": 1,
+                            "position": 2,
+                            "frozen_at": "2026-02-11",
+                        },
+                        {
+                            "id": 3,
+                            "parent_cell_line": "K562",
+                            "short_name": "newer-high-id",
+                            "box": 1,
+                            "position": 3,
+                            "frozen_at": "2026-02-11",
+                        },
+                    ]
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            response = tool_search_records(
+                yaml_path=str(yaml_path),
+                query="K562",
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertEqual([3, 2, 1], [item.get("id") for item in response["result"]["records"]])
+            self.assertEqual("frozen_at", response["result"]["applied_filters"]["sort_by"])
+            self.assertEqual("desc", response["result"]["applied_filters"]["sort_order"])
+            self.assertEqual("last", response["result"]["applied_filters"]["sort_nulls"])
+
+    def test_tool_search_records_supports_sort_by_position_with_nulls_last(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_search_sort_position_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        {
+                            "id": 11,
+                            "parent_cell_line": "K562",
+                            "short_name": "p2",
+                            "box": 1,
+                            "position": 2,
+                            "frozen_at": "2026-02-10",
+                        },
+                        {
+                            "id": 12,
+                            "parent_cell_line": "K562",
+                            "short_name": "p1",
+                            "box": 1,
+                            "position": 1,
+                            "frozen_at": "2026-02-10",
+                        },
+                        {
+                            "id": 13,
+                            "parent_cell_line": "K562",
+                            "short_name": "p-none",
+                            "box": 1,
+                            "position": None,
+                            "frozen_at": "2026-02-10",
+                            "thaw_events": [{"date": "2026-02-12", "action": "takeout", "positions": [3]}],
+                        },
+                    ]
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            response = tool_search_records(
+                yaml_path=str(yaml_path),
+                query="K562",
+                sort_by="position",
+                sort_order="asc",
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertEqual([12, 11, 13], [item.get("id") for item in response["result"]["records"]])
+            self.assertEqual("position", response["result"]["applied_filters"]["sort_by"])
+            self.assertEqual("asc", response["result"]["applied_filters"]["sort_order"])
+            self.assertEqual("last", response["result"]["applied_filters"]["sort_nulls"])
+
+    def test_tool_search_records_applies_sort_before_max_results(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_search_sort_limit_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        {
+                            "id": 1,
+                            "parent_cell_line": "K562",
+                            "short_name": "old",
+                            "box": 1,
+                            "position": 1,
+                            "frozen_at": "2026-02-09",
+                        },
+                        {
+                            "id": 2,
+                            "parent_cell_line": "K562",
+                            "short_name": "new",
+                            "box": 1,
+                            "position": 2,
+                            "frozen_at": "2026-02-11",
+                        },
+                    ]
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            response = tool_search_records(
+                yaml_path=str(yaml_path),
+                query="K562",
+                max_results=1,
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(2, response["result"]["total_count"])
+            self.assertEqual(1, response["result"]["display_count"])
+            self.assertEqual([2], [item.get("id") for item in response["result"]["records"]])
+
+    def test_tool_search_records_rejects_invalid_status(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_search_status_invalid_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            response = tool_search_records(
+                yaml_path=str(yaml_path),
+                query="rec-1",
+                status="archived",
+            )
+
+            self.assertFalse(response["ok"])
+            self.assertEqual("invalid_tool_input", response.get("error_code"))
+            self.assertIn("status", str(response.get("message") or ""))
+
+    def test_tool_search_records_rejects_invalid_sort_options(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_search_sort_invalid_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bad_field = tool_search_records(
+                yaml_path=str(yaml_path),
+                query="rec-1",
+                sort_by="created_at",
+            )
+            self.assertFalse(bad_field["ok"])
+            self.assertEqual("invalid_tool_input", bad_field.get("error_code"))
+            self.assertIn("sort_by", str(bad_field.get("message") or ""))
+
+            bad_order = tool_search_records(
+                yaml_path=str(yaml_path),
+                query="rec-1",
+                sort_order="newest",
+            )
+            self.assertFalse(bad_order["ok"])
+            self.assertEqual("invalid_tool_input", bad_order.get("error_code"))
+            self.assertIn("sort_order", str(bad_order.get("message") or ""))
 
     def test_tool_query_takeout_events_single_date_and_action(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_thaw_query_") as temp_dir:
@@ -1443,7 +1749,7 @@ class ToolApiTests(unittest.TestCase):
             self.assertEqual([99], raw_response["result"]["missing_ids"])
 
 
-class TestToolEditEntry(unittest.TestCase):
+class TestToolEditEntry(ManagedPathTestCase):
     def test_edit_entry_updates_allowed_fields(self):
         with tempfile.TemporaryDirectory(prefix="ln2_edit_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
@@ -1570,12 +1876,12 @@ def make_data_custom(records, rows=9, cols=9, box_count=None, indexing=None):
     return {"meta": {"box_layout": layout, "cell_line_required": False}, "inventory": records}
 
 
-class TestCustomLayout10x10(unittest.TestCase):
+class TestCustomLayout10x10(ManagedPathTestCase):
     """Integration: 10x10 grid with 8 boxes."""
 
     def _seed(self, records, rows=10, cols=10, box_count=8):
         d = tempfile.mkdtemp()
-        p = str(Path(d) / "inv.yaml")
+        p = str(Path(d) / "inventory.yaml")
         write_raw_yaml(p, make_data_custom(records, rows, cols, box_count))
         return p, d
 
@@ -1665,12 +1971,12 @@ class TestCustomLayout10x10(unittest.TestCase):
         self.assertEqual(100, data["inventory"][0]["position"])
 
 
-class TestCustomLayout8x12(unittest.TestCase):
+class TestCustomLayout8x12(ManagedPathTestCase):
     """Integration: 8x12 grid (96 slots, like microplates)."""
 
     def _seed(self, records):
         d = tempfile.mkdtemp()
-        p = str(Path(d) / "inv.yaml")
+        p = str(Path(d) / "inventory.yaml")
         write_raw_yaml(p, make_data_custom(records, rows=8, cols=12, box_count=3))
         return p, d
 
@@ -1716,7 +2022,7 @@ class TestCustomLayout8x12(unittest.TestCase):
         self.assertEqual(2, result["result"]["count"])
 
 
-class TestValidatorsWithLayout(unittest.TestCase):
+class TestValidatorsWithLayout(ManagedPathTestCase):
     """Integration: validators respect per-dataset layout."""
 
     def test_validate_inventory_10x10(self):
@@ -1753,10 +2059,10 @@ class TestValidatorsWithLayout(unittest.TestCase):
             parse_positions("1,2", layout)
 
 
-class TestAdjustBoxCount(unittest.TestCase):
+class TestAdjustBoxCount(ManagedPathTestCase):
     def _seed(self, records, layout):
         d = tempfile.mkdtemp()
-        p = str(Path(d) / "inv.yaml")
+        p = str(Path(d) / "inventory.yaml")
         write_raw_yaml(p, {"meta": {"box_layout": dict(layout)}, "inventory": list(records)})
         return p, d
 

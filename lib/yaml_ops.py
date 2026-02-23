@@ -1,7 +1,6 @@
 """
 YAML file operations for LN2 inventory
 """
-import hashlib
 import json
 import os
 import shutil
@@ -13,15 +12,14 @@ from typing import Any
 
 import yaml
 from .config import (
-    AUDIT_DIR,
-    AUDIT_LOG_FILE,
-    BACKUP_DIR,
-    BACKUP_DIR_NAME,
     BACKUP_KEEP_COUNT,
     BOX_EMPTY_WARNING_THRESHOLD,
     TOTAL_EMPTY_WARNING_THRESHOLD,
     YAML_PATH,
     YAML_SIZE_WARNING_MB,
+)
+from .inventory_paths import (
+    assert_allowed_inventory_yaml_path,
 )
 from .position_fmt import get_box_numbers, get_total_slots
 from .validators import format_validation_errors, validate_inventory
@@ -35,9 +33,6 @@ _COMMON_CJK_CHARS = set(
 
 _MOJIBAKE_SOURCE_ENCODINGS = ("gb18030", "gbk", "cp936")
 _MOJIBAKE_MARKER_CHARS = set("\u95c4\u7039\u951b\u9350\u93b4\u935a\u7ec9\u93bf\u7481\u9286\u93c4\u9225\u7f01\u9428\u5a13\u9359\u5bee\u6fb6\u6d63")
-_AUDIT_SCHEMA_VERSION = "trace-session-v1"
-_AUDIT_SCHEMA_MARKER_FILE = os.path.join(AUDIT_DIR, ".audit_schema_version")
-_AUDIT_SCHEMA_READY = False
 
 
 def _ensure_inventory_integrity(data, prefix="完整性校验失败"):
@@ -64,6 +59,10 @@ def resolve_instance_id(yaml_path, mode="read"):
         FileNotFoundError: If file doesn't exist in write mode
     """
     yaml_abs = _abs_path(yaml_path)
+    yaml_abs = assert_allowed_inventory_yaml_path(
+        yaml_abs,
+        must_exist=(mode in {"read", "write"}),
+    )
     
     if mode == "read":
         if not os.path.exists(yaml_abs):
@@ -106,35 +105,24 @@ def get_instance_backup_dir(yaml_path):
     """Return the backup directory for a specific inventory instance.
     
     Returns:
-        str: Path like <BACKUP_DIR>/<instance_id>/
+        str: Path like <dataset_dir>/backups
     """
     yaml_abs = _abs_path(yaml_path)
-    instance_id = resolve_instance_id(yaml_abs, mode="read")
-    if instance_id:
-        return os.path.join(BACKUP_DIR, instance_id)
-    
-    stem = os.path.splitext(os.path.basename(yaml_abs))[0] or "inventory"
-    return os.path.join(BACKUP_DIR, f"legacy-{stem}")
+    managed_yaml = assert_allowed_inventory_yaml_path(yaml_abs)
+    dataset_dir = os.path.dirname(managed_yaml)
+    return os.path.join(dataset_dir, "backups")
 
 
 def get_instance_audit_path(yaml_path):
     """Return the audit log path for a specific inventory instance.
     
     Returns:
-        str: Path like <AUDIT_DIR>/<instance_id>.audit.jsonl
+        str: Path like <dataset_dir>/audit/events.jsonl
     """
     yaml_abs = _abs_path(yaml_path)
-    instance_id = resolve_instance_id(yaml_abs, mode="read")
-    if instance_id:
-        return os.path.join(AUDIT_DIR, f"{instance_id}.audit.jsonl")
-
-    # Legacy files without instance_id can collide by stem (e.g. many
-    # inventory.yaml files in different directories). Use a stable path hash to
-    # keep per-dataset isolation while still supporting reads from old stem-only
-    # paths.
-    stem = os.path.splitext(os.path.basename(yaml_abs))[0] or "inventory"
-    digest = hashlib.sha1(yaml_abs.encode("utf-8")).hexdigest()[:10]
-    return os.path.join(AUDIT_DIR, f"legacy-{stem}-{digest}.audit.jsonl")
+    managed_yaml = assert_allowed_inventory_yaml_path(yaml_abs)
+    dataset_dir = os.path.dirname(managed_yaml)
+    return os.path.join(dataset_dir, "audit", "events.jsonl")
 
 
 def _abs_path(path):
@@ -319,42 +307,25 @@ def load_yaml(path=YAML_PATH):
 
 
 def _backup_dir(yaml_path, instance_id_override=None):
-    """Return the backup directory for a YAML file (instance-based)."""
-    if instance_id_override:
-        return os.path.join(BACKUP_DIR, str(instance_id_override))
+    """Return the dataset-local backup directory for a YAML file."""
+    _ = instance_id_override
     return get_instance_backup_dir(yaml_path)
 
 
 def list_yaml_backups(yaml_path=YAML_PATH, limit=None):
     """List backups for a YAML file, newest first.
     
-    Searches in the instance-based backup directory. Also checks legacy
-    backup locations (both old per-file and new centralized) for backward compatibility.
+    Searches in the dataset-local backup directory.
     """
     yaml_abs = _abs_path(yaml_path)
+    yaml_abs = assert_allowed_inventory_yaml_path(yaml_abs)
     
     backups = []
-    instance_id = resolve_instance_id(yaml_abs, mode="read")
-    
-    if instance_id:
-        backup_dir = get_instance_backup_dir(yaml_abs)
-        if os.path.isdir(backup_dir):
-            for name in os.listdir(backup_dir):
-                if name.endswith(".bak"):
-                    backups.append(os.path.join(backup_dir, name))
-    else:
-        legacy_stem_dir = get_instance_backup_dir(yaml_abs)
-        if os.path.isdir(legacy_stem_dir):
-            for name in os.listdir(legacy_stem_dir):
-                if name.endswith(".bak"):
-                    backups.append(os.path.join(legacy_stem_dir, name))
-    
-    legacy_dir = os.path.join(os.path.dirname(yaml_abs), BACKUP_DIR_NAME)
-    if os.path.isdir(legacy_dir):
-        base = os.path.basename(yaml_abs)
-        for name in os.listdir(legacy_dir):
-            if name.startswith(f"{base}.") and name.endswith(".bak"):
-                backups.append(os.path.join(legacy_dir, name))
+    backup_dir = get_instance_backup_dir(yaml_abs)
+    if os.path.isdir(backup_dir):
+        for name in os.listdir(backup_dir):
+            if name.endswith(".bak"):
+                backups.append(os.path.join(backup_dir, name))
 
     backups.sort(key=lambda p: os.path.getmtime(p), reverse=True)
     if limit is not None:
@@ -369,6 +340,7 @@ def create_yaml_backup(yaml_path=YAML_PATH, keep=BACKUP_KEEP_COUNT, instance_id_
         str|None: backup path if source exists, else None
     """
     src = _abs_path(yaml_path)
+    src = assert_allowed_inventory_yaml_path(src)
     if not os.path.exists(src):
         return None
 
@@ -399,39 +371,10 @@ def _audit_log_path(yaml_path):
     return get_audit_log_path(yaml_path)
 
 
-def _ensure_audit_schema_ready():
-    """Hard-cut audit schema and clear legacy rows when version changes."""
-    global _AUDIT_SCHEMA_READY
-    if _AUDIT_SCHEMA_READY:
-        return
-
-    os.makedirs(AUDIT_DIR, exist_ok=True)
-
-    existing_version = ""
-    with suppress(OSError, UnicodeDecodeError):
-        with open(_AUDIT_SCHEMA_MARKER_FILE, "r", encoding="utf-8") as f:
-            existing_version = str(f.read() or "").strip()
-
-    if existing_version != _AUDIT_SCHEMA_VERSION:
-        with suppress(OSError):
-            for entry in os.listdir(AUDIT_DIR):
-                candidate = os.path.join(AUDIT_DIR, entry)
-                if not os.path.isfile(candidate):
-                    continue
-                if entry.endswith(".audit.jsonl") or entry == AUDIT_LOG_FILE:
-                    with suppress(OSError):
-                        os.remove(candidate)
-        with suppress(OSError):
-            with open(_AUDIT_SCHEMA_MARKER_FILE, "w", encoding="utf-8") as f:
-                f.write(_AUDIT_SCHEMA_VERSION)
-
-    _AUDIT_SCHEMA_READY = True
-
-
 def get_audit_log_path(yaml_path=YAML_PATH):
-    """Return per-inventory audit log path in centralized audit directory."""
-    _ensure_audit_schema_ready()
-    return get_instance_audit_path(yaml_path)
+    """Return per-inventory audit log path in dataset-local audit directory."""
+    managed_yaml = assert_allowed_inventory_yaml_path(yaml_path)
+    return get_instance_audit_path(managed_yaml)
 
 
 def get_audit_log_paths(yaml_path=YAML_PATH):
@@ -442,6 +385,7 @@ def get_audit_log_paths(yaml_path=YAML_PATH):
 def read_audit_events(yaml_path=YAML_PATH, limit=None):
     """Read audit events for a YAML file from the active schema path."""
     yaml_abs = _abs_path(yaml_path)
+    yaml_abs = assert_allowed_inventory_yaml_path(yaml_abs)
 
     events = []
     path = get_audit_log_path(yaml_abs)
@@ -765,7 +709,7 @@ def write_yaml(
             Common keys: action/source/details, plus session_id, trace_id,
             tool_name, tool_input, status, error.
     """
-    yaml_abs = _abs_path(path)
+    yaml_abs = assert_allowed_inventory_yaml_path(_abs_path(path))
 
     _ensure_inventory_integrity(data, prefix="完整性校验失败")
 
@@ -857,7 +801,7 @@ def rollback_yaml(
     Returns:
         dict: restored_from, snapshot_before_rollback
     """
-    yaml_abs = _abs_path(path)
+    yaml_abs = assert_allowed_inventory_yaml_path(_abs_path(path), must_exist=True)
     if not os.path.exists(yaml_abs):
         raise FileNotFoundError(f"YAML not found: {yaml_abs}")
 

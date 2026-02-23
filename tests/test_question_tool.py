@@ -2,17 +2,27 @@
 
 import threading
 import time
+import tempfile
+from unittest.mock import patch
 
 import pytest
 
 from agent.tool_runner import AgentToolRunner
+from lib.inventory_paths import create_managed_dataset_yaml_path
+
+OTHER_OPTION = "\u5176\u4ed6\uff1a\u8bf7\u8f93\u5165"
 
 
 @pytest.fixture
-def runner(tmp_path):
-    yaml_path = tmp_path / "test_inventory.yaml"
-    yaml_path.write_text("inventory: []\nmeta:\n  box_layout: {rows: 9, cols: 9}\n")
-    return AgentToolRunner(yaml_path=str(yaml_path))
+def runner():
+    with tempfile.TemporaryDirectory(prefix="ln2_question_") as install_root, patch(
+        "lib.inventory_paths.get_install_dir",
+        return_value=install_root,
+    ):
+        yaml_path = create_managed_dataset_yaml_path("question")
+        with open(yaml_path, "w", encoding="utf-8") as handle:
+            handle.write("inventory: []\nmeta:\n  box_layout: {rows: 9, cols: 9}\n")
+        yield AgentToolRunner(yaml_path=str(yaml_path))
 
 
 # --- Validation ---
@@ -63,7 +73,16 @@ class TestQuestionValidation:
         assert result["waiting_for_user"] is True
         assert "question_id" in result
         assert result["question"] == "Continue?"
-        assert result["options"] == ["yes", "no"]
+        assert result["options"] == ["yes", "no", OTHER_OPTION]
+
+    def test_rejects_reserved_other_option(self, runner):
+        result = runner.run(
+            "question",
+            {"question": "Continue?", "options": ["yes", OTHER_OPTION]},
+        )
+        assert result["ok"] is False
+        assert result["error_code"] == "invalid_tool_input"
+        assert OTHER_OPTION in result["message"]
 
     def test_rejects_legacy_questions_payload(self, runner):
         result = runner.run(

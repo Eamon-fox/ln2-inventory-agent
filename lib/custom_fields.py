@@ -112,13 +112,16 @@ def get_effective_fields(meta):
 def get_display_key(meta):
     """Return the field key used for grid cell labels.
 
-    Uses ``meta.display_key`` if set, otherwise the first effective field's key.
+    Uses ``meta.display_key`` if set, otherwise the first effective field's key,
+    falling back to ``"cell_line"`` when no custom fields are defined.
     """
     dk = (meta or {}).get("display_key")
     if dk and isinstance(dk, str):
         return dk
     fields = get_effective_fields(meta)
-    return fields[0]["key"] if fields else "id"
+    if fields:
+        return fields[0]["key"]
+    return "cell_line"
 
 
 def get_color_key(meta):

@@ -25,6 +25,7 @@ from lib.tool_api import (
     tool_recommend_positions,
 )
 from lib.yaml_ops import write_yaml
+from tests.managed_paths import ManagedPathTestCase
 
 
 def make_record(rec_id=1, box=1, position=None, **kwargs):
@@ -50,7 +51,7 @@ def make_data(records):
 # --- tool_recent_frozen Tests ---
 
 
-class RecentFrozenTests(unittest.TestCase):
+class RecentFrozenTests(ManagedPathTestCase):
     """Tests for tool_recent_frozen."""
 
     def test_recent_frozen_with_days_parameter(self):
@@ -122,7 +123,7 @@ class RecentFrozenTests(unittest.TestCase):
 # --- tool_recommend_positions Tests ---
 
 
-class RecommendPositionsTests(unittest.TestCase):
+class RecommendPositionsTests(ManagedPathTestCase):
     """Tests for tool_recommend_positions."""
 
     def test_recommend_positions_with_box_preference(self):
@@ -211,7 +212,7 @@ class RecommendPositionsTests(unittest.TestCase):
 # --- tool_query_takeout_events Tests ---
 
 
-class QueryThawEventsExtendedTests(unittest.TestCase):
+class QueryThawEventsExtendedTests(ManagedPathTestCase):
     """Extended tests for tool_query_takeout_events."""
 
     def test_query_takeout_events_start_end_date(self):
@@ -301,7 +302,7 @@ class QueryThawEventsExtendedTests(unittest.TestCase):
 # --- tool_collect_timeline Tests ---
 
 
-class CollectTimelineExtendedTests(unittest.TestCase):
+class CollectTimelineExtendedTests(ManagedPathTestCase):
     """Extended tests for tool_collect_timeline."""
 
     def test_collect_timeline_all_history_true(self):
@@ -360,7 +361,7 @@ class CollectTimelineExtendedTests(unittest.TestCase):
 # --- tool_generate_stats Tests ---
 
 
-class GenerateStatsTests(unittest.TestCase):
+class GenerateStatsTests(ManagedPathTestCase):
     """Tests for tool_generate_stats."""
 
     def test_generate_stats_structure(self):
