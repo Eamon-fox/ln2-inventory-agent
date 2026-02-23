@@ -1,7 +1,14 @@
 """Dispatch handlers for AgentToolRunner."""
 
+from contextlib import suppress
 import os
+import re
 
+from lib.import_acceptance import import_validated_yaml, validate_candidate_yaml
+from lib.inventory_paths import (
+    create_managed_dataset_yaml_path,
+)
+from lib.path_policy import PathPolicyError, resolve_dataset_backup_read_path
 from lib.tool_api import (
     tool_add_entry,
     tool_adjust_box_count,
@@ -21,7 +28,11 @@ from lib.tool_api import (
 )
 from lib.position_fmt import pos_to_display
 from lib.tool_api_write_validation import resolve_request_backup_path
-from .terminal_tool import run_terminal_command
+from .file_ops_client import run_file_tool
+
+
+_IMPORT_CONFIRMATION_TOKEN = "CONFIRM_IMPORT"
+_TARGET_DATASET_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def _resolve_write_execution_kwargs(self, payload):
@@ -62,7 +73,24 @@ def _validate_rollback_backup_candidate(yaml_path, backup_path):
             "error_code": "missing_backup_path",
             "message": "backup_path must be a non-empty string",
         }
-    target_abs = os.path.abspath(target_path)
+    try:
+        target_abs = str(
+            resolve_dataset_backup_read_path(
+                yaml_path=yaml_path,
+                raw_path=target_path,
+                must_exist=True,
+                must_be_file=True,
+            )
+        )
+    except PathPolicyError as exc:
+        payload = {
+            "ok": False,
+            "error_code": exc.code,
+            "message": exc.message,
+        }
+        if exc.resolved_path:
+            payload["resolved_path"] = exc.resolved_path
+        return payload
 
     timeline = tool_list_audit_timeline(
         yaml_path=yaml_path,
@@ -89,7 +117,11 @@ def _validate_rollback_backup_candidate(yaml_path, backup_path):
         candidate_path = str(event.get("backup_path") or "").strip()
         if not candidate_path:
             continue
-        if os.path.abspath(candidate_path) != target_abs:
+        try:
+            candidate_abs = str(resolve_dataset_backup_read_path(yaml_path=yaml_path, raw_path=candidate_path))
+        except PathPolicyError:
+            continue
+        if candidate_abs != target_abs:
             continue
         if _coerce_positive_int(event.get("audit_seq")) is None:
             return {
@@ -128,6 +160,32 @@ def _to_tool_positions(values, layout, *, field_name="positions"):
             converted.append(_to_tool_position(value, layout, field_name=f"{field_name}[{idx}]"))
         return converted
     return [_to_tool_position(values, layout, field_name=field_name)]
+
+
+def _extract_staged_item_positions(item):
+    """Extract one-or-many source positions from a staged plan item."""
+    if not isinstance(item, dict):
+        return []
+
+    candidates = []
+    top_positions = item.get("positions")
+    if isinstance(top_positions, (list, tuple, set)):
+        candidates.append(top_positions)
+
+    payload = item.get("payload")
+    payload_positions = payload.get("positions") if isinstance(payload, dict) else None
+    if isinstance(payload_positions, (list, tuple, set)):
+        candidates.append(payload_positions)
+
+    for raw_values in candidates:
+        values = [value for value in list(raw_values) if value not in (None, "")]
+        if values:
+            return values
+
+    fallback_pos = item.get("position")
+    if fallback_pos not in (None, ""):
+        return [fallback_pos]
+    return []
 
 
 def _run_manage_boxes(self, payload, trace_id=None):
@@ -240,7 +298,9 @@ def _run_search_records(self, payload, _trace_id=None):
             box=self._optional_int(payload, "box"),
             position=position,
             record_id=self._optional_int(payload, "record_id"),
-            active_only=(payload.get("active_only") if "active_only" in payload else None),
+            status=payload.get("status"),
+            sort_by=payload.get("sort_by"),
+            sort_order=payload.get("sort_order"),
         ),
     )
 
@@ -362,6 +422,15 @@ def _run_recommend_positions(self, payload, _trace_id=None):
 
 
 def _run_generate_stats(self, payload, _trace_id=None):
+    if "full_records_for_gui" in payload:
+        return self._with_hint(
+            "generate_stats",
+            {
+                "ok": False,
+                "error_code": "invalid_tool_input",
+                "message": "full_records_for_gui is reserved for GUI runtime and is not allowed in agent tool calls.",
+            },
+        )
     return self._safe_call(
         "generate_stats",
         lambda: tool_generate_stats(
@@ -385,21 +454,147 @@ def _run_get_raw_entries(self, payload, _trace_id=None):
     return self._safe_call(tool_name, _call_get_raw_entries, include_expected_schema=True)
 
 
-def _run_run_terminal(self, payload, _trace_id=None):
-    tool_name = "run_terminal"
+def _run_bash(self, payload, _trace_id=None):
+    tool_name = "bash"
+    return self._safe_call(
+        tool_name,
+        lambda: run_file_tool(tool_name, payload, yaml_path=self._yaml_path),
+        include_expected_schema=True,
+    )
 
-    def _call_run_terminal():
-        command = payload.get("command")
-        if not isinstance(command, str) or not command.strip():
-            raise ValueError(
-                self._msg(
-                    "terminal.commandMustBeNonEmpty",
-                    "command must be a non-empty string.",
-                )
+
+def _run_powershell(self, payload, _trace_id=None):
+    tool_name = "powershell"
+    return self._safe_call(
+        tool_name,
+        lambda: run_file_tool(tool_name, payload, yaml_path=self._yaml_path),
+        include_expected_schema=True,
+    )
+
+
+def _run_fs_list(self, payload, _trace_id=None):
+    tool_name = "fs_list"
+    return self._safe_call(
+        tool_name,
+        lambda: run_file_tool(tool_name, payload, yaml_path=self._yaml_path),
+        include_expected_schema=True,
+    )
+
+
+def _run_fs_read(self, payload, _trace_id=None):
+    tool_name = "fs_read"
+    return self._safe_call(
+        tool_name,
+        lambda: run_file_tool(tool_name, payload, yaml_path=self._yaml_path),
+        include_expected_schema=True,
+    )
+
+
+def _run_fs_write(self, payload, _trace_id=None):
+    tool_name = "fs_write"
+    return self._safe_call(
+        tool_name,
+        lambda: run_file_tool(tool_name, payload, yaml_path=self._yaml_path),
+        include_expected_schema=True,
+    )
+
+
+def _run_fs_edit(self, payload, _trace_id=None):
+    tool_name = "fs_edit"
+    return self._safe_call(
+        tool_name,
+        lambda: run_file_tool(tool_name, payload, yaml_path=self._yaml_path),
+        include_expected_schema=True,
+    )
+
+
+def _migration_output_yaml_path():
+    from lib import inventory_paths as _inventory_paths
+
+    root = os.path.abspath(_inventory_paths.get_install_dir())
+    return os.path.join(root, "migrate", "output", "ln2_inventory.yaml")
+
+
+def _build_import_target_path(dataset_name):
+    return create_managed_dataset_yaml_path(dataset_name)
+
+
+def _run_validate_migration_output(self, payload, _trace_id=None):
+    _ = payload
+    tool_name = "validate_migration_output"
+
+    def _call_validate_migration_output():
+        result = validate_candidate_yaml(_migration_output_yaml_path(), fail_on_warnings=True)
+        if isinstance(result, dict) and result.get("ok"):
+            result = dict(result)
+            result["next_step_hint"] = self._msg(
+                "hint.migrationValidateNextStep",
+                "Validation passed. Update `migrate/output/migration_checklist.md` (mark all blocking checks) before import confirmation.",
             )
-        return run_terminal_command(command)
+        return result
 
-    return self._safe_call(tool_name, _call_run_terminal, include_expected_schema=True)
+    return self._safe_call(
+        tool_name,
+        _call_validate_migration_output,
+        include_expected_schema=True,
+    )
+
+
+def _run_import_migration_output(self, payload, _trace_id=None):
+    tool_name = "import_migration_output"
+
+    def _call_import_migration_output():
+        token = str(payload.get("confirmation_token") or "").strip()
+        if token != _IMPORT_CONFIRMATION_TOKEN:
+            return {
+                "ok": False,
+                "error_code": "invalid_confirmation_token",
+                "message": f"confirmation_token must be exactly {_IMPORT_CONFIRMATION_TOKEN}.",
+            }
+
+        dataset_name = str(payload.get("target_dataset_name") or "").strip()
+        if not dataset_name:
+            return {
+                "ok": False,
+                "error_code": "invalid_target_dataset_name",
+                "message": "target_dataset_name must be a non-empty string.",
+            }
+        if not _TARGET_DATASET_NAME_RE.fullmatch(dataset_name):
+            return {
+                "ok": False,
+                "error_code": "invalid_target_dataset_name",
+                "message": "target_dataset_name must match ^[A-Za-z0-9_-]+$.",
+                "details": {"target_dataset_name": dataset_name},
+            }
+
+        candidate = _migration_output_yaml_path()
+        validation = validate_candidate_yaml(candidate, fail_on_warnings=True)
+        if not validation.get("ok"):
+            return {
+                "ok": False,
+                "error_code": "validation_failed",
+                "message": str(validation.get("message") or "Candidate YAML failed validation."),
+                "report": validation.get("report") or {},
+            }
+
+        target_path = _build_import_target_path(dataset_name)
+        result = import_validated_yaml(
+            candidate,
+            target_path,
+            mode="create_new",
+            overwrite=False,
+        )
+        if result.get("ok"):
+            return result
+
+        # Best-effort cleanup when import fails before writing inventory.yaml.
+        with suppress(Exception):
+            dataset_dir = os.path.dirname(target_path)
+            if dataset_dir and os.path.isdir(dataset_dir) and not os.path.exists(target_path):
+                os.rmdir(dataset_dir)
+        return result
+
+    return self._safe_call(tool_name, _call_import_migration_output, include_expected_schema=True)
 
 
 def _run_edit_entry(self, payload, trace_id=None):
@@ -586,12 +781,13 @@ def _run_staged_plan(self, payload, _trace_id=None):
         items = self._plan_store.list_items()
         summary = []
         for index, item in enumerate(items):
+            positions = _extract_staged_item_positions(item)
             entry = {
                 "index": index,
                 "action": item.get("action"),
                 "record_id": item.get("record_id"),
                 "box": item.get("box"),
-                "position": item.get("position"),
+                "positions": positions,
                 "label": item.get("label"),
                 "source": item.get("source"),
             }

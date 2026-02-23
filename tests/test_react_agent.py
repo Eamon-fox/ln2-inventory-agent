@@ -3,12 +3,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.managed_paths import ManagedPathTestCase
+
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agent.react_agent import ReactAgent
+from agent.tool_access_profiles import MIGRATION_AGENT_MODE, resolve_allowed_tools
 from agent.tool_runner import AgentToolRunner
 from lib.yaml_ops import write_yaml
 
@@ -102,7 +105,7 @@ class _StreamingToolThenAnswerLLM:
         yield {"type": "answer", "text": "done"}
 
 
-class ReactAgentTests(unittest.TestCase):
+class ReactAgentTests(ManagedPathTestCase):
     def test_react_agent_calls_tool_then_finishes(self):
         with tempfile.TemporaryDirectory(prefix="ln2_react_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
@@ -162,6 +165,7 @@ class ReactAgentTests(unittest.TestCase):
             if not isinstance(tool_start, dict):
                 self.fail("tool_start event should be emitted")
             self.assertIn("tool_call_id", (tool_start.get("data") or {}).get("input", {}))
+            self.assertEqual("Search inventory: K562", tool_start.get("status_text"))
 
             tool_end_data = tool_end_events[0].get("data") or {}
             output = tool_end_data.get("output") or {}
@@ -197,7 +201,7 @@ class ReactAgentTests(unittest.TestCase):
                 },
             ]
         )
-        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=3)
         events = []
 
@@ -212,6 +216,52 @@ class ReactAgentTests(unittest.TestCase):
         self.assertFalse(obs["ok"])
         self.assertEqual("unknown_tool", obs["error_code"])
         self.assertTrue(obs.get("_hint"))
+
+    def test_react_agent_allows_repeated_failing_tool_call(self):
+        llm = _SequenceLLM(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "name": "fs_read",
+                            "arguments": {"path": "../outside.txt"},
+                        }
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_2",
+                            "name": "fs_read",
+                            "arguments": {"path": "../outside.txt"},
+                        }
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": "done",
+                    "tool_calls": [],
+                },
+            ]
+        )
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=4)
+        events = []
+
+        result = agent.run("Read outside file", on_event=lambda e: events.append(dict(e)))
+
+        self.assertTrue(result["ok"])
+        tool_end_events = [e for e in events if e.get("event") == "tool_end"]
+        self.assertGreaterEqual(len(tool_end_events), 2)
+        first_obs = tool_end_events[0].get("observation") or {}
+        second_obs = tool_end_events[1].get("observation") or {}
+        self.assertEqual("path.escape_detected", first_obs.get("error_code"))
+        self.assertEqual("path.escape_detected", second_obs.get("error_code"))
 
     def test_react_agent_manage_boxes_waits_for_gui_confirmation(self):
         llm = _SequenceLLM(
@@ -290,7 +340,7 @@ class ReactAgentTests(unittest.TestCase):
             ]
         )
 
-        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=3)
         events = []
 
@@ -319,24 +369,85 @@ class ReactAgentTests(unittest.TestCase):
         self.assertEqual("no", obs.get("answer"))
         self.assertEqual(1, obs.get("index"))
 
+    def test_react_agent_question_accepts_other_text_answer(self):
+        llm = _SequenceLLM(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_question",
+                            "name": "question",
+                            "arguments": {
+                                "question": "Name the target dataset",
+                                "options": ["use-default", "cancel"],
+                            },
+                        }
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": "ok",
+                    "tool_calls": [],
+                },
+            ]
+        )
+
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=3)
+        events = []
+
+        def _on_event(evt):
+            payload = dict(evt or {})
+            events.append(payload)
+            if payload.get("type") == "question":
+                options = payload.get("options") or []
+                runner._set_answer(
+                    {
+                        "selected": options[-1],
+                        "text": "dataset_mvp_01",
+                    }
+                )
+
+        result = agent.run("confirm", on_event=_on_event)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("ok", result["final"])
+        tool_end = next(
+            (
+                e
+                for e in events
+                if e.get("event") == "tool_end" and e.get("action") == "question"
+            ),
+            None,
+        )
+        if not isinstance(tool_end, dict):
+            self.fail("question tool_end event should exist")
+        obs = tool_end.get("observation") or {}
+        self.assertTrue(obs.get("ok"))
+        self.assertEqual("dataset_mvp_01", obs.get("answer"))
+        self.assertEqual("other_text", obs.get("source"))
+        self.assertEqual("dataset_mvp_01", obs.get("other_text"))
+
     def test_react_agent_includes_conversation_history_in_prompt(self):
         llm = _CapturePromptLLM()
-        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=2)
 
         history = [
             {"role": "user", "content": "hi"},
             {"role": "assistant", "content": "hello there"},
-            {"role": "tool", "content": "ignored"},
+            {"role": "tool", "tool_call_id": "call_hist_1", "content": "ignored"},
         ]
         result = agent.run("repeat your last response", conversation_history=history)
 
         self.assertTrue(result["ok"])
-        self.assertEqual(2, result.get("conversation_history_used"))
+        self.assertEqual(3, result.get("conversation_history_used"))
         messages = llm.last_messages
         if not isinstance(messages, list):
             self.fail("LLM should receive a message list")
-        self.assertGreaterEqual(len(messages), 4)
+        self.assertGreaterEqual(len(messages), 5)
 
         self.assertEqual("system", messages[0].get("role"))
 
@@ -360,6 +471,10 @@ class ReactAgentTests(unittest.TestCase):
         self.assertEqual("hi", memory[0]["content"])
         self.assertEqual("assistant", memory[1]["role"])
         self.assertEqual("hello there", memory[1]["content"])
+
+        tool_msgs = [m for m in messages if m.get("role") == "tool"]
+        self.assertEqual(1, len(tool_msgs))
+        self.assertEqual("ignored", tool_msgs[0].get("content"))
 
     def test_react_agent_retries_when_final_text_empty(self):
         llm = _SequenceLLM(
@@ -387,7 +502,7 @@ class ReactAgentTests(unittest.TestCase):
                 },
             ]
         )
-        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=4)
 
         result = agent.run("say something")
@@ -398,7 +513,7 @@ class ReactAgentTests(unittest.TestCase):
 
     def test_react_agent_uses_direct_answer_when_tool_mode_returns_empty(self):
         llm = _ToolsSensitiveLLM()
-        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=2)
 
         result = agent.run("say hello")
@@ -411,7 +526,7 @@ class ReactAgentTests(unittest.TestCase):
 
     def test_react_agent_emits_incremental_chunk_events_from_stream_chat(self):
         llm = _StreamingLLM()
-        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=2)
         events = []
 
@@ -425,7 +540,7 @@ class ReactAgentTests(unittest.TestCase):
 
     def test_react_agent_emits_thought_chunks_on_thought_channel(self):
         llm = _StreamingThoughtLLM()
-        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=2)
         events = []
 
@@ -442,7 +557,7 @@ class ReactAgentTests(unittest.TestCase):
 
     def test_react_agent_keeps_reasoning_content_in_tool_assistant_message(self):
         llm = _StreamingToolThenAnswerLLM()
-        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=3)
 
         result = agent.run("lookup")
@@ -488,7 +603,7 @@ class ReactAgentTests(unittest.TestCase):
                 },
             ]
         )
-        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=3)
 
         result = agent.run("overview")
@@ -498,7 +613,7 @@ class ReactAgentTests(unittest.TestCase):
 
     def test_custom_prompt_appended_to_system_message(self):
         llm = _CapturePromptLLM()
-        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         agent = ReactAgent(
             llm_client=llm, tool_runner=runner,
             custom_prompt="请用中文回答所有问题",
@@ -518,7 +633,7 @@ class ReactAgentTests(unittest.TestCase):
 
     def test_system_prompt_avoids_hardcoded_v2_parameter_templates(self):
         llm = _CapturePromptLLM()
-        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         agent = ReactAgent(llm_client=llm, tool_runner=runner)
 
         agent.run("check prompt")
@@ -533,7 +648,7 @@ class ReactAgentTests(unittest.TestCase):
 
     def test_system_prompt_includes_current_inventory_yaml_path(self):
         llm = _CapturePromptLLM()
-        yaml_path = "/tmp/current_inventory.yaml"
+        yaml_path = self.ensure_dataset_yaml("current_inventory")
         runner = AgentToolRunner(yaml_path=yaml_path)
         agent = ReactAgent(llm_client=llm, tool_runner=runner)
 
@@ -545,9 +660,34 @@ class ReactAgentTests(unittest.TestCase):
         self.assertIn(f"Current inventory (yaml_path): {yaml_path}", content)
         self.assertNotIn("Current time:", content)
 
+    def test_system_prompt_hides_inventory_path_in_migration_mode(self):
+        llm = _CapturePromptLLM()
+        yaml_path = self.ensure_dataset_yaml("migration_context_hidden")
+        runner = AgentToolRunner(
+            yaml_path=yaml_path,
+            allowed_tools=resolve_allowed_tools(MIGRATION_AGENT_MODE),
+            expose_inventory_context=False,
+        )
+        agent = ReactAgent(llm_client=llm, tool_runner=runner)
+
+        agent.run("check migration prompt context")
+
+        system_msg = llm.last_messages[0]
+        self.assertEqual("system", system_msg["role"])
+        content = str(system_msg.get("content") or "")
+        self.assertIn("Current inventory (yaml_path): (hidden in migration mode)", content)
+        self.assertNotIn(yaml_path, content)
+        tools = llm.last_tools if isinstance(llm.last_tools, list) else []
+        tool_names = {item.get("function", {}).get("name") for item in tools if isinstance(item, dict)}
+        self.assertIn("fs_read", tool_names)
+        self.assertIn("bash", tool_names)
+        self.assertIn("powershell", tool_names)
+        self.assertIn("import_migration_output", tool_names)
+        self.assertNotIn("search_records", tool_names)
+
     def test_numeric_option_reply_is_expanded_from_recent_assistant_options(self):
         llm = _CapturePromptLLM()
-        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         agent = ReactAgent(llm_client=llm, tool_runner=runner)
 
         history = [
@@ -568,7 +708,7 @@ class ReactAgentTests(unittest.TestCase):
 
     def test_empty_custom_prompt_not_appended(self):
         llm = _CapturePromptLLM()
-        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         agent = ReactAgent(llm_client=llm, tool_runner=runner, custom_prompt="")
 
         agent.run("hello")
@@ -578,7 +718,7 @@ class ReactAgentTests(unittest.TestCase):
 
     def test_no_custom_prompt_by_default(self):
         llm = _CapturePromptLLM()
-        runner = AgentToolRunner(yaml_path="/tmp/nonexistent.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         agent = ReactAgent(llm_client=llm, tool_runner=runner)
 
         agent.run("hello")
@@ -589,3 +729,4 @@ class ReactAgentTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

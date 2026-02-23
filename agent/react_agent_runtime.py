@@ -5,6 +5,9 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from pathlib import Path
+
+from .tool_status_formatter import format_tool_status
 
 
 def _is_stop_requested(stop_event):
@@ -101,7 +104,21 @@ def _run_tool_call(self, call, tool_names, trace_id, stop_event=None):
         else:
             raw_answer = runner._pending_answer
             answer_text = ""
-            if isinstance(raw_answer, str):
+            selected_option = ""
+            other_text = ""
+            source = "option"
+            other_option = options[-1] if options else ""
+
+            if isinstance(raw_answer, dict):
+                selected_option = str(raw_answer.get("selected") or "").strip()
+                other_text = str(raw_answer.get("text") or "").strip()
+                if selected_option == other_option:
+                    source = "other_text"
+                    answer_text = other_text
+                elif selected_option:
+                    answer_text = selected_option
+                    source = "option"
+            elif isinstance(raw_answer, str):
                 answer_text = raw_answer.strip()
             elif isinstance(raw_answer, list):
                 # Defensive fallback if caller still provides list-like answers.
@@ -118,7 +135,20 @@ def _run_tool_call(self, call, tool_names, trace_id, stop_event=None):
                     "error_code": "invalid_question_answer",
                     "message": "User answer is empty.",
                 }
-            elif answer_text not in options:
+            elif source == "other_text" and not other_option:
+                observation = {
+                    "ok": False,
+                    "error_code": "invalid_question_answer",
+                    "message": "Question is missing free-text option.",
+                }
+            elif source == "other_text" and selected_option != other_option:
+                observation = {
+                    "ok": False,
+                    "error_code": "invalid_question_answer",
+                    "message": "User answer does not match free-text option.",
+                    "details": {"selected": selected_option},
+                }
+            elif source == "option" and answer_text not in options:
                 observation = {
                     "ok": False,
                     "error_code": "invalid_question_answer",
@@ -126,10 +156,19 @@ def _run_tool_call(self, call, tool_names, trace_id, stop_event=None):
                     "details": {"answer": answer_text},
                 }
             else:
+                if source == "option":
+                    selected_option = answer_text
+                    other_text = ""
+                selected_index = -1
+                if selected_option in options:
+                    selected_index = options.index(selected_option)
                 observation = {
                     "ok": True,
                     "answer": answer_text,
-                    "index": options.index(answer_text),
+                    "source": source,
+                    "selected_option": selected_option,
+                    "other_text": other_text,
+                    "index": selected_index,
                     "message": f"User answered: {answer_text}",
                 }
 
@@ -384,9 +423,21 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
     memory = self._normalize_history(conversation_history)
 
     yaml_path = str(getattr(self._tools, "_yaml_path", "") or "").strip()
+    expose_inventory_context = bool(getattr(self._tools, "_expose_inventory_context", True))
+    context_yaml = yaml_path if expose_inventory_context else "(hidden in migration mode)"
+    fileops_repo_root = ""
+    fileops_migrate_root = ""
+    if yaml_path:
+        try:
+            inventory_path = Path(yaml_path).resolve(strict=False)
+            fileops_repo_root = str(inventory_path.parents[2])
+            fileops_migrate_root = str((Path(fileops_repo_root) / "migrate").resolve(strict=False))
+        except Exception:
+            fileops_repo_root = ""
+            fileops_migrate_root = ""
     system_sections = [
         self.SYSTEM_PROMPT,
-        f"Current inventory (yaml_path): {yaml_path or '(unknown)'}",
+        f"Current inventory (yaml_path): {context_yaml or '(unknown)'}",
     ]
     if self._custom_prompt:
         system_sections.append(
@@ -398,20 +449,19 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
     system_content = "\n\n".join(section.strip() for section in system_sections if section)
 
     normalized_query = self._resolve_numeric_choice_query(user_query, memory)
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     messages = [
         {
             "role": "system",
             "content": system_content,
-            "timestamp": datetime.now().timestamp(),
         },
     ]
     messages.extend(memory)
     messages.append(
         {
             "role": "user",
-            "content": str(normalized_query or ""),
-            "timestamp": datetime.now().timestamp(),
+            "content": f"${ts}\n{str(normalized_query or '')}",
         }
     )
 
@@ -423,6 +473,11 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
             "trace_id": trace_id,
             "max_steps": self._max_steps,
             "tool_count": len(tool_schemas),
+            "fileops_roots": {
+                "read_root": fileops_repo_root,
+                "write_root": fileops_migrate_root,
+                "write_scope": "migrate/",
+            },
         },
     )
 
@@ -540,11 +595,11 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
                     "data": observation.get("message"),
                 },
             )
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             messages.append(
                 {
                     "role": "user",
-                    "content": "Previous tool call format was invalid. Retry with valid function name and JSON-object arguments.",
-                    "timestamp": datetime.now().timestamp(),
+                    "content": f"{ts}\nPrevious tool call format was invalid. Retry with valid function name and JSON-object arguments.",
                 }
             )
             step += 1
@@ -566,6 +621,7 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
             )
 
             for call in normalized_tool_calls:
+                status_text = format_tool_status(call.get("name"), call.get("arguments"))
                 self._emit_event(
                     on_event,
                     {
@@ -582,6 +638,7 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
                         },
                         "action": call["name"],
                         "action_input": call["arguments"],
+                        "status_text": status_text,
                         "tool_call_id": call["id"],
                     },
                 )
@@ -699,11 +756,11 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
 
         if not assistant_content and not forced_final_retry and step < self._max_steps:
             forced_final_retry = True
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             messages.append(
                 {
                     "role": "user",
-                    "content": "Please provide a concise final answer to the user now.",
-                    "timestamp": datetime.now().timestamp(),
+                    "content": f"{ts}\nPlease provide a concise final answer to the user now.",
                 }
             )
             step += 1
@@ -750,7 +807,6 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
                 {
                     "role": "assistant",
                     "content": "".join(current_answer_buf),
-                    "timestamp": datetime.now().timestamp(),
                 }
             )
 

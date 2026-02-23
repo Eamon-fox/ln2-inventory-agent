@@ -26,6 +26,14 @@ PROVIDER_DEFAULTS = {
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
         "help_url": "https://open.bigmodel.cn",
     },
+    "minimax": {
+        "model": "MiniMax-M2.5-highspeed",
+        "models": ["MiniMax-M2.5-highspeed", "MiniMax-M2.5"],
+        "env_key": "MINIMAX_API_KEY",
+        "display_name": "MiniMax",
+        "base_url": "https://api.minimaxi.com/v1",
+        "help_url": "https://platform.minimaxi.com",
+    },
 }
 
 DEFAULT_PROVIDER = "deepseek"
@@ -661,6 +669,211 @@ class ZhipuLLMClient(LLMClient):
                     tool_calls.append(tool_call)
             elif event_type == "error":
                 raise RuntimeError(str(event.get("error") or "Zhipu stream failed"))
+
+        return {
+            "role": "assistant",
+            "content": "".join(content_parts).strip(),
+            "tool_calls": tool_calls,
+        }
+
+
+class MiniMaxLLMClient(LLMClient):
+    """MiniMax (M2.5) 客户端，OpenAI 兼容接口。"""
+
+    def __init__(self, model=None, api_key=None, base_url=None, timeout=180, thinking_enabled=True):
+        self._model = (model or os.environ.get("MINIMAX_MODEL") or "MiniMax-M2.5-highspeed").strip()
+        self._base_url = (base_url or os.environ.get("MINIMAX_BASE_URL") or "https://api.minimaxi.com/v1").rstrip("/")
+        self._timeout = int(timeout)
+        self._thinking_enabled = bool(thinking_enabled)
+        self._api_key = api_key or os.environ.get("MINIMAX_API_KEY")
+        self._stop_lock = threading.Lock()
+        self._active_response = None
+        self._local_stop = threading.Event()
+
+        if not self._api_key:
+            raise RuntimeError("MINIMAX_API_KEY is required")
+
+    def _is_stopping(self, stop_event=None):
+        return self._local_stop.is_set() or _is_stop_requested(stop_event)
+
+    def request_stop(self):
+        self._local_stop.set()
+        resp = None
+        with self._stop_lock:
+            resp = self._active_response
+        if resp is not None and hasattr(resp, "close"):
+            try:
+                resp.close()
+            except Exception:
+                pass
+
+    def _build_request(self, messages, tools=None, temperature=0.0):
+        use_temp = temperature if temperature > 0 else 1.0
+        payload = {
+            "model": self._model,
+            "messages": messages,
+            "stream": True,
+            "temperature": use_temp,
+        }
+        if self._thinking_enabled:
+            payload["reasoning_split"] = True
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        endpoint = f"{self._base_url}/chat/completions"
+        return urlrequest.Request(
+            endpoint,
+            data=body,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "Cline-VSCode-Extension",
+                "HTTP-Referer": "https://cline.bot",
+                "X-Title": "Cline",
+                "X-Cline-Version": "3.42.0",
+            },
+        )
+
+    def _yield_events_from_chunk(self, chunk, pending_tool_calls):
+        choices = chunk.get("choices") if isinstance(chunk, dict) else None
+        if not isinstance(choices, list) or not choices:
+            return
+
+        choice = choices[0] if isinstance(choices[0], dict) else {}
+        delta = choice.get("delta") if isinstance(choice, dict) else {}
+        delta = delta if isinstance(delta, dict) else {}
+
+        reasoning_details = delta.get("reasoning_details") or []
+        if isinstance(reasoning_details, list):
+            for rd in reasoning_details:
+                if isinstance(rd, dict):
+                    reasoning_text = DeepSeekLLMClient._normalize_content(rd.get("text"))
+                    if reasoning_text:
+                        yield {"type": "thought", "text": reasoning_text}
+
+        content = DeepSeekLLMClient._normalize_content(delta.get("content"))
+        if content:
+            yield {"type": "answer", "text": content}
+
+        raw_tool_calls = delta.get("tool_calls") or []
+        if isinstance(raw_tool_calls, list):
+            for tool_call in raw_tool_calls:
+                DeepSeekLLMClient._accumulate_tool_call(pending_tool_calls, tool_call)
+
+        finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+        if finish_reason == "stop" and pending_tool_calls:
+            for tool_call in DeepSeekLLMClient._finalize_tool_calls(pending_tool_calls):
+                yield {"type": "tool_call", "tool_call": tool_call}
+            pending_tool_calls.clear()
+
+    def stream_chat(self, messages, tools=None, temperature=0.0, stop_event=None):
+        self._local_stop.clear()
+        req = self._build_request(messages, tools=tools, temperature=temperature)
+
+        pending_tool_calls = {}
+        saw_sse = False
+        plain_lines = []
+
+        try:
+            with urlrequest.urlopen(req, timeout=self._timeout) as resp:
+                with self._stop_lock:
+                    self._active_response = resp
+                try:
+                    for raw_line in resp:
+                        if self._is_stopping(stop_event):
+                            return
+                        line = raw_line.decode("utf-8", errors="replace").strip()
+                        if not line:
+                            continue
+
+                        if not line.startswith("data:"):
+                            plain_lines.append(line)
+                            continue
+
+                        saw_sse = True
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            break
+
+                        try:
+                            chunk = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+
+                        if isinstance(chunk, dict) and chunk.get("error"):
+                            err = chunk.get("error")
+                            if isinstance(err, dict):
+                                message = err.get("message") or json.dumps(err, ensure_ascii=False)
+                            else:
+                                message = str(err)
+                            yield {"type": "error", "error": f"MiniMax API error: {message}"}
+                            return
+
+                        for event in self._yield_events_from_chunk(chunk, pending_tool_calls):
+                            if self._is_stopping(stop_event):
+                                return
+                            yield event
+                finally:
+                    with self._stop_lock:
+                        self._active_response = None
+
+            if not saw_sse and plain_lines:
+                if self._is_stopping(stop_event):
+                    return
+                joined = "\n".join(plain_lines)
+                try:
+                    payload_obj = json.loads(joined)
+                    for event in self._yield_events_from_chunk(payload_obj, pending_tool_calls):
+                        if self._is_stopping(stop_event):
+                            return
+                        yield event
+                except Exception:
+                    pass
+
+            if pending_tool_calls:
+                for tool_call in DeepSeekLLMClient._finalize_tool_calls(pending_tool_calls):
+                    if self._is_stopping(stop_event):
+                        return
+                    yield {"type": "tool_call", "tool_call": tool_call}
+
+        except urlerror.HTTPError as exc:
+            body_text = ""
+            try:
+                body_text = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                body_text = ""
+            detail = f"HTTP {exc.code}"
+            if body_text:
+                detail = f"{detail}: {body_text}"
+            yield {"type": "error", "error": f"MiniMax request failed ({detail})"}
+        except urlerror.URLError as exc:
+            yield {"type": "error", "error": f"MiniMax request failed: {exc.reason}"}
+
+    def chat(self, messages, tools=None, temperature=0.0, stop_event=None):
+        content_parts = []
+        tool_calls = []
+
+        for event in self.stream_chat(messages, tools=tools, temperature=temperature, stop_event=stop_event):
+            if self._is_stopping(stop_event):
+                break
+            if not isinstance(event, dict):
+                continue
+
+            event_type = str(event.get("type") or "").strip().lower()
+            if event_type == "answer":
+                text = str(event.get("text") or "")
+                if text:
+                    content_parts.append(text)
+            elif event_type == "tool_call":
+                tool_call = event.get("tool_call")
+                if isinstance(tool_call, dict):
+                    tool_calls.append(tool_call)
+            elif event_type == "error":
+                raise RuntimeError(str(event.get("error") or "MiniMax stream failed"))
 
         return {
             "role": "assistant",

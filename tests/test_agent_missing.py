@@ -22,6 +22,7 @@ from agent.tool_runner import AgentToolRunner
 from agent.llm_client import DeepSeekLLMClient
 from lib.tool_api_write_validation import resolve_request_backup_path
 from lib.yaml_ops import create_yaml_backup, write_yaml
+from tests.managed_paths import ManagedPathTestCase
 
 
 def make_record(rec_id=1, box=1, position=None):
@@ -48,77 +49,78 @@ def make_data(records):
 # --- tool_runner.py Tests ---
 
 
-class ToolRunnerNormalizationTests(unittest.TestCase):
+class ToolRunnerNormalizationTests(ManagedPathTestCase):
     """Test normalization functions in AgentToolRunner."""
 
     def test_required_int_accepts_integer(self):
         """Test _required_int accepts strict integers."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         payload = {"count": 3}
         self.assertEqual(3, runner._required_int(payload, "count"))
 
     def test_required_int_rejects_string(self):
         """Test _required_int rejects string values in strict mode."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         payload = {"count": "3"}
         with self.assertRaises(ValueError):
             runner._required_int(payload, "count")
 
     def test_as_bool_various_true(self):
         """Test _as_bool recognizes various True representations."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         true_values = [True, 1, "1", "true", "TRUE", "yes", "YES", "y", "Y", "on", "ON"]
         for val in true_values:
             self.assertTrue(runner._as_bool(val), f"Failed for value: {val}")
 
     def test_as_bool_various_false(self):
         """Test _as_bool recognizes various False representations."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         false_values = [False, 0, "0", "false", "FALSE", "no", "NO", "n", "N", "off", "OFF", ""]
         for val in false_values:
             self.assertFalse(runner._as_bool(val), f"Failed for value: {val}")
 
     def test_as_bool_default(self):
         """Test _as_bool default value."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         self.assertTrue(runner._as_bool(None, default=True))
         self.assertFalse(runner._as_bool(None, default=False))
 
     def test_normalize_positions_list(self):
         """Test _normalize_positions with list."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         result = runner._normalize_positions([1, 2, 3])
         self.assertEqual([1, 2, 3], result)
 
     def test_normalize_positions_tuple(self):
         """Test _normalize_positions with tuple."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         result = runner._normalize_positions((1, 2, 3))
         self.assertEqual([1, 2, 3], result)
 
     def test_normalize_positions_single_int(self):
         """Test _normalize_positions rejects scalar int (array-only)."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         with self.assertRaises(ValueError):
             runner._normalize_positions(5)
 
     def test_normalize_positions_string(self):
         """Test _normalize_positions rejects comma string (array-only)."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         with self.assertRaises(ValueError):
             runner._normalize_positions("1,2,3")
 
     def test_normalize_positions_none(self):
         """Test _normalize_positions with None."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         result = runner._normalize_positions(None)
         self.assertIsNone(result)
 
 
-class ToolRunnerPlanStagingTests(unittest.TestCase):
+class ToolRunnerPlanStagingTests(ManagedPathTestCase):
     """Test plan staging functionality in AgentToolRunner."""
 
     def setUp(self):
+        super().setUp()
         from lib.plan_store import PlanStore
         self.plan_store = PlanStore()
 
@@ -152,7 +154,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
 
     def test_stage_to_plan_add_entry(self):
         """Test staging add_entry operation."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "add_entry",
             {
@@ -170,7 +172,8 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
 
     def test_stage_to_plan_takeout(self):
         """Test staging takeout operation."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
+        yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=5)])
+        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "takeout",
             {
@@ -235,7 +238,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
 
     def test_stage_to_plan_takeout_rejects_legacy_action_alias(self):
         """Legacy alias 瑙ｅ喕 should be rejected by strict schema."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "takeout",
             {
@@ -256,7 +259,8 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
 
     def test_stage_to_plan_move(self):
         """Test staging move operation."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
+        yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=5)])
+        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "move",
             {
@@ -279,7 +283,13 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
 
     def test_stage_to_plan_takeout_multiple_entries(self):
         """Test staging takeout operation with multiple entries."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
+        yaml_path = self._seed_yaml(
+            [
+                make_record(rec_id=1, box=1, position=5),
+                make_record(rec_id=2, box=1, position=10),
+            ]
+        )
+        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "takeout",
             {
@@ -296,7 +306,8 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
 
     def test_stage_to_plan_move_multiple_entries(self):
         """Test staging move operation with multiple entries."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
+        yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=5)])
+        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "move",
             {
@@ -319,7 +330,7 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
 
     def test_stage_to_plan_validation_failure(self):
         """Strict input schema should reject invalid box before staging."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=self.plan_store)
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "add_entry",
             {
@@ -499,12 +510,12 @@ class ToolRunnerPlanStagingTests(unittest.TestCase):
         self.assertEqual(1, len(self.plan_store.list_items()))
 
 
-class ToolRunnerHintTests(unittest.TestCase):
+class ToolRunnerHintTests(ManagedPathTestCase):
     """Test error hint generation."""
 
     def test_hint_for_error_invalid_tool_input(self):
         """Test hint for invalid_tool_input."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         payload = {"error_code": "invalid_tool_input"}
         hint = runner._hint_for_error("add_entry", payload)
         self.assertIn("Required", hint)
@@ -512,7 +523,7 @@ class ToolRunnerHintTests(unittest.TestCase):
 
     def test_hint_for_error_unknown_tool(self):
         """Test hint for unknown_tool."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         payload = {"error_code": "unknown_tool", "available_tools": ["tool1", "tool2"]}
         hint = runner._hint_for_error("bad_tool", payload)
         self.assertIn("available tools", hint)
@@ -520,7 +531,7 @@ class ToolRunnerHintTests(unittest.TestCase):
 
     def test_hint_for_error_invalid_mode(self):
         """Test hint for invalid_mode."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         payload = {"error_code": "invalid_mode"}
         hint = runner._hint_for_error("search_records", payload)
         self.assertIn("fuzzy", hint)
@@ -528,63 +539,63 @@ class ToolRunnerHintTests(unittest.TestCase):
 
     def test_hint_for_error_invalid_date(self):
         """Test hint for invalid_date."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         payload = {"error_code": "invalid_date"}
         hint = runner._hint_for_error("add_entry", payload)
         self.assertIn("YYYY-MM-DD", hint)
 
     def test_hint_for_error_record_not_found(self):
         """Test hint for record_not_found."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         payload = {"error_code": "record_not_found"}
         hint = runner._hint_for_error("takeout", payload)
         self.assertIn("search_records", hint)
 
     def test_hint_for_error_position_conflict(self):
         """Test hint for position_conflict."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         payload = {"error_code": "position_conflict"}
         hint = runner._hint_for_error("add_entry", payload)
         self.assertIn("list_empty_positions", hint)
 
     def test_hint_for_error_invalid_move_target(self):
         """Test hint for invalid_move_target."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         payload = {"error_code": "invalid_move_target"}
         hint = runner._hint_for_error("takeout", payload)
         self.assertIn("to_position", hint)
 
     def test_hint_for_error_no_backups(self):
         """Test hint for no_backups."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         payload = {"error_code": "no_backups"}
         hint = runner._hint_for_error("rollback", payload)
         self.assertIn("backup_path", hint)
 
     def test_hint_for_error_missing_backup_path(self):
         """Test hint for missing_backup_path."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         payload = {"error_code": "missing_backup_path"}
         hint = runner._hint_for_error("rollback", payload)
         self.assertIn("list_audit_timeline", hint)
 
     def test_hint_for_error_backup_not_in_timeline(self):
         """Test hint for backup_not_in_timeline."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         payload = {"error_code": "backup_not_in_timeline"}
         hint = runner._hint_for_error("rollback", payload)
         self.assertIn("action=backup", hint)
 
     def test_hint_for_error_missing_audit_seq(self):
         """Test hint for missing_audit_seq."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         payload = {"error_code": "missing_audit_seq"}
         hint = runner._hint_for_error("rollback", payload)
         self.assertIn("audit_seq", hint)
 
     def test_hint_for_error_invalid_box(self):
         """Test hint for invalid_box."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         payload = {"error_code": "invalid_box"}
         hint = runner._hint_for_error("add_entry", payload)
         self.assertIn("valid", hint.lower())
@@ -592,7 +603,7 @@ class ToolRunnerHintTests(unittest.TestCase):
 
     def test_hint_for_error_plan_preflight_failed(self):
         """Test hint for plan_preflight_failed."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         payload = {"error_code": "plan_preflight_failed"}
         hint = runner._hint_for_error("takeout", payload)
         self.assertIn("invalid", hint.lower())
@@ -600,7 +611,7 @@ class ToolRunnerHintTests(unittest.TestCase):
 
     def test_hint_for_error_default_fallback(self):
         """Test default hint fallback."""
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         payload = {"error_code": "unknown_error"}
         hint = runner._hint_for_error("some_tool", payload)
         # When no spec exists for tool, should return general fallback
@@ -656,6 +667,47 @@ class ReactAgentHistoryTests(unittest.TestCase):
         from agent.react_agent import ReactAgent
         result = ReactAgent._normalize_history(history, max_turns=5)
         self.assertEqual(5, len(result))
+
+    def test_normalize_history_default_limit_uses_config_constant(self):
+        """Default history limit should match AGENT_HISTORY_MAX_TURNS."""
+        from app_gui.gui_config import AGENT_HISTORY_MAX_TURNS
+        from agent.react_agent import ReactAgent
+
+        history = [{"role": "user", "content": f"msg{i}"} for i in range(AGENT_HISTORY_MAX_TURNS + 7)]
+        result = ReactAgent._normalize_history(history)
+        self.assertEqual(AGENT_HISTORY_MAX_TURNS, len(result))
+        self.assertEqual(
+            f"msg{AGENT_HISTORY_MAX_TURNS + 6}",
+            str(result[-1].get("content")),
+        )
+
+    def test_normalize_history_keeps_tool_messages_and_tool_calls(self):
+        """Tool-call turns should survive normalization for follow-up runs."""
+        history = [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "query_inventory", "arguments": "{}"},
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": '{"ok":true}',
+            },
+        ]
+        from agent.react_agent import ReactAgent
+        result = ReactAgent._normalize_history(history)
+        self.assertEqual(2, len(result))
+        self.assertEqual("assistant", result[0].get("role"))
+        self.assertTrue(isinstance(result[0].get("tool_calls"), list))
+        self.assertEqual("tool", result[1].get("role"))
+        self.assertEqual("call_1", result[1].get("tool_call_id"))
 
     def test_normalize_history_preserves_timestamps(self):
         """Test _normalize_history preserves timestamps."""

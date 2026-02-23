@@ -1,9 +1,11 @@
-﻿import ast
+import ast
 import json
 import sys
 import tempfile
 import unittest
+from contextlib import suppress
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,8 +13,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agent.tool_runner import AgentToolRunner
+from agent.tool_access_profiles import MIGRATION_AGENT_MODE, resolve_allowed_tools
 from lib.tool_api_write_validation import resolve_request_backup_path
 from lib.yaml_ops import create_yaml_backup, get_audit_log_path, load_yaml, read_audit_events, write_yaml
+from tests.managed_paths import ManagedPathTestCase
 
 
 def _collect_agent_tool_runner_i18n_keys():
@@ -103,9 +107,12 @@ def make_data_alphanumeric(records):
     return data
 
 
-class AgentToolRunnerTests(unittest.TestCase):
+class AgentToolRunnerTests(ManagedPathTestCase):
+    def _repo_root(self):
+        return Path(self.fake_yaml_path).resolve().parents[2]
+
     def test_list_tools_contains_core_entries(self):
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         names = set(runner.list_tools())
         self.assertIn("search_records", names)
         self.assertIn("recent_frozen", names)
@@ -114,7 +121,16 @@ class AgentToolRunnerTests(unittest.TestCase):
         self.assertIn("add_entry", names)
         self.assertIn("takeout", names)
         self.assertIn("move", names)
-        self.assertIn("run_terminal", names)
+        self.assertIn("bash", names)
+        self.assertIn("powershell", names)
+        self.assertIn("fs_list", names)
+        self.assertIn("fs_read", names)
+        self.assertIn("fs_write", names)
+        self.assertIn("fs_edit", names)
+        self.assertNotIn("edit", names)
+        self.assertIn("validate_migration_output", names)
+        self.assertIn("import_migration_output", names)
+        self.assertNotIn("python_run", names)
         self.assertIn("manage_boxes", names)
         self.assertIn("staged_plan", names)
         self.assertNotIn("manage_boxes_add", names)
@@ -127,6 +143,286 @@ class AgentToolRunnerTests(unittest.TestCase):
         self.assertNotIn("list_staged", names)
         self.assertNotIn("remove_staged", names)
         self.assertNotIn("clear_staged", names)
+
+    def test_list_tools_supports_migration_profile_filtering(self):
+        runner = AgentToolRunner(
+            yaml_path=self.fake_yaml_path,
+            allowed_tools=resolve_allowed_tools(MIGRATION_AGENT_MODE),
+        )
+        names = set(runner.list_tools())
+        self.assertEqual(
+            {
+                "question",
+                "fs_list",
+                "fs_read",
+                "fs_write",
+                "fs_edit",
+                "bash",
+                "powershell",
+                "validate_migration_output",
+                "import_migration_output",
+            },
+            names,
+        )
+        self.assertNotIn("search_records", names)
+        self.assertNotIn("add_entry", names)
+        self.assertNotIn("staged_plan", names)
+
+    def test_restricted_runner_rejects_inventory_tool_as_unknown(self):
+        runner = AgentToolRunner(
+            yaml_path=self.fake_yaml_path,
+            allowed_tools=resolve_allowed_tools(MIGRATION_AGENT_MODE),
+        )
+        response = runner.run("search_records", {"query": "K562"})
+        self.assertFalse(response["ok"])
+        self.assertEqual("unknown_tool", response.get("error_code"))
+        available = set(response.get("available_tools") or [])
+        self.assertIn("fs_read", available)
+        self.assertNotIn("search_records", available)
+
+    def test_tool_schemas_follow_allowed_tools_filter(self):
+        runner = AgentToolRunner(
+            yaml_path=self.fake_yaml_path,
+            allowed_tools=resolve_allowed_tools(MIGRATION_AGENT_MODE),
+        )
+        names = {
+            item.get("function", {}).get("name")
+            for item in runner.tool_schemas()
+            if isinstance(item, dict)
+        }
+        self.assertEqual(
+            {
+                "question",
+                "fs_list",
+                "fs_read",
+                "fs_write",
+                "fs_edit",
+                "bash",
+                "powershell",
+                "validate_migration_output",
+                "import_migration_output",
+            },
+            names,
+        )
+
+    def _migration_output_path(self):
+        repo_root = self._repo_root()
+        output_dir = repo_root / "migrate" / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return output_dir / "ln2_inventory.yaml"
+
+    def test_validate_migration_output_returns_file_not_found_when_missing(self):
+        candidate = self._migration_output_path()
+        candidate.unlink(missing_ok=True)
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+
+        response = runner.run("validate_migration_output", {})
+
+        self.assertFalse(response["ok"])
+        self.assertEqual("file_not_found", response.get("error_code"))
+        self.assertIn("Candidate YAML not found", str(response.get("message") or ""))
+        self.assertIn("migration_checklist.md", str(response.get("_hint") or ""))
+
+    def test_validate_migration_output_returns_ok_when_output_yaml_is_valid(self):
+        candidate = self._migration_output_path()
+        candidate.write_text(
+            (
+                "meta:\n"
+                "  box_layout:\n"
+                "    rows: 9\n"
+                "    cols: 9\n"
+                "    box_count: 5\n"
+                "    box_numbers: [1, 2, 3, 4, 5]\n"
+                "  custom_fields: []\n"
+                "inventory:\n"
+                "  - id: 1\n"
+                "    box: 1\n"
+                "    position: 1\n"
+                "    frozen_at: \"2024-01-01\"\n"
+                "    cell_line: K562\n"
+                "    note: null\n"
+                "    thaw_events: null\n"
+            ),
+            encoding="utf-8",
+        )
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+
+        response = runner.run("validate_migration_output", {})
+
+        self.assertTrue(response["ok"])
+        report = response.get("report") or {}
+        self.assertEqual(0, report.get("error_count"))
+        self.assertIn("migration_checklist.md", str(response.get("next_step_hint") or ""))
+
+    def test_validate_migration_output_validation_failed_hint_mentions_checklist(self):
+        candidate = self._migration_output_path()
+        candidate.write_text(
+            (
+                "meta:\n"
+                "  box_layout:\n"
+                "    rows: 9\n"
+                "    cols: 9\n"
+                "    box_count: 5\n"
+                "    box_numbers: [1, 2, 3, 4, 5]\n"
+                "  custom_fields: []\n"
+                "inventory:\n"
+                "  - id: 1\n"
+                "    box: 1\n"
+                "    position: 1\n"
+                "    frozen_at: \"2024-01-01\"\n"
+                "    note: null\n"
+                "    thaw_events: null\n"
+            ),
+            encoding="utf-8",
+        )
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+
+        response = runner.run("validate_migration_output", {})
+
+        self.assertFalse(response["ok"])
+        self.assertEqual("validation_failed", response.get("error_code"))
+        self.assertIn("migration_checklist.md", str(response.get("_hint") or ""))
+
+    def test_validate_migration_output_accepts_valid_box_tags(self):
+        candidate = self._migration_output_path()
+        candidate.write_text(
+            (
+                "meta:\n"
+                "  box_layout:\n"
+                "    rows: 9\n"
+                "    cols: 9\n"
+                "    box_count: 5\n"
+                "    box_numbers: [1, 2, 3, 4, 5]\n"
+                "    box_tags:\n"
+                "      1: Rack A\n"
+                "      3: Shelf B\n"
+                "  custom_fields: []\n"
+                "inventory:\n"
+                "  - id: 1\n"
+                "    box: 1\n"
+                "    position: 1\n"
+                "    frozen_at: \"2024-01-01\"\n"
+                "    cell_line: K562\n"
+                "    note: null\n"
+                "    thaw_events: null\n"
+            ),
+            encoding="utf-8",
+        )
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+
+        response = runner.run("validate_migration_output", {})
+
+        self.assertTrue(response["ok"])
+        report = response.get("report") or {}
+        self.assertEqual(0, report.get("error_count"))
+
+    def test_validate_migration_output_rejects_undeclared_box_tag(self):
+        candidate = self._migration_output_path()
+        candidate.write_text(
+            (
+                "meta:\n"
+                "  box_layout:\n"
+                "    rows: 9\n"
+                "    cols: 9\n"
+                "    box_count: 5\n"
+                "    box_numbers: [1, 2, 3, 4, 5]\n"
+                "    box_tags:\n"
+                "      6: Not Declared\n"
+                "  custom_fields: []\n"
+                "inventory:\n"
+                "  - id: 1\n"
+                "    box: 1\n"
+                "    position: 1\n"
+                "    frozen_at: \"2024-01-01\"\n"
+                "    cell_line: K562\n"
+                "    note: null\n"
+                "    thaw_events: null\n"
+            ),
+            encoding="utf-8",
+        )
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+
+        response = runner.run("validate_migration_output", {})
+
+        self.assertFalse(response["ok"])
+        self.assertEqual("validation_failed", response.get("error_code"))
+        report = response.get("report") or {}
+        errors = list(report.get("errors") or [])
+        self.assertTrue(any("box_tags key '6'" in msg for msg in errors), report)
+
+    def test_import_migration_output_requires_explicit_confirmation_token(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        response = runner.run(
+            "import_migration_output",
+            {
+                "confirmation_token": "confirm_import",
+                "target_dataset_name": "imported_dataset",
+            },
+        )
+
+        self.assertFalse(response["ok"])
+        self.assertEqual("invalid_confirmation_token", response.get("error_code"))
+
+    def test_import_migration_output_requires_target_dataset_name(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        response = runner.run(
+            "import_migration_output",
+            {"confirmation_token": "CONFIRM_IMPORT"},
+        )
+
+        self.assertFalse(response["ok"])
+        self.assertEqual("invalid_tool_input", response.get("error_code"))
+        self.assertIn("target_dataset_name", str(response.get("message") or ""))
+
+    def test_import_migration_output_rejects_invalid_target_dataset_name(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        response = runner.run(
+            "import_migration_output",
+            {
+                "confirmation_token": "CONFIRM_IMPORT",
+                "target_dataset_name": "bad/name",
+            },
+        )
+
+        self.assertFalse(response["ok"])
+        self.assertEqual("invalid_target_dataset_name", response.get("error_code"))
+
+    def test_import_migration_output_creates_new_managed_dataset(self):
+        candidate = self._migration_output_path()
+        candidate.write_text(
+            (
+                "meta:\n"
+                "  box_layout:\n"
+                "    rows: 9\n"
+                "    cols: 9\n"
+                "    box_count: 5\n"
+                "    box_numbers: [1, 2, 3, 4, 5]\n"
+                "  custom_fields: []\n"
+                "inventory:\n"
+                "  - id: 1\n"
+                "    box: 1\n"
+                "    position: 1\n"
+                "    frozen_at: \"2024-01-01\"\n"
+                "    cell_line: K562\n"
+                "    note: null\n"
+                "    thaw_events: null\n"
+            ),
+            encoding="utf-8",
+        )
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+
+        response = runner.run(
+            "import_migration_output",
+            {
+                "confirmation_token": "CONFIRM_IMPORT",
+                "target_dataset_name": "migrated_batch_01",
+            },
+        )
+
+        self.assertTrue(response["ok"])
+        target_path = Path(str(response.get("target_path") or ""))
+        self.assertTrue(target_path.is_file())
+        self.assertIn(str(self.inventories_root), str(target_path))
 
     def test_manage_boxes_ignores_dry_run_input(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_box_dry_") as temp_dir:
@@ -226,7 +522,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             self.assertIn("Required", response.get("_hint", ""))
 
     def test_add_entry_invalid_tool_input_hint_explains_shared_fields(self):
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         payload = {"error_code": "invalid_tool_input"}
 
         hint = runner._hint_for_error("add_entry", payload)
@@ -237,7 +533,7 @@ class AgentToolRunnerTests(unittest.TestCase):
         self.assertIn("Optional", hint)
 
     def test_unknown_tool_returns_hint(self):
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         response = runner.run("nonexistent_tool", {})
 
         self.assertFalse(response["ok"])
@@ -245,41 +541,324 @@ class AgentToolRunnerTests(unittest.TestCase):
         self.assertTrue(response.get("_hint"))
         self.assertIn("available tools", response.get("_hint", "").lower())
 
-    def test_run_terminal_requires_non_empty_command(self):
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
-        response = runner.run("run_terminal", {"command": "   "})
+    def test_bash_requires_non_empty_command(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        response = runner.run("bash", {"command": "   ", "description": "run command"})
 
         self.assertFalse(response["ok"])
         self.assertEqual("invalid_tool_input", response["error_code"])
         self.assertIn("command", str(response.get("message") or ""))
 
-    def test_run_terminal_executes_command_and_returns_raw_output(self):
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+    def test_bash_requires_non_empty_description(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        response = runner.run("bash", {"command": "echo hi", "description": "   "})
+
+        self.assertFalse(response["ok"])
+        self.assertEqual("invalid_tool_input", response["error_code"])
+        self.assertIn("description", str(response.get("message") or ""))
+
+    def test_bash_executes_command_and_returns_raw_output(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         marker = "snowfox_terminal_ok"
-        response = runner.run("run_terminal", {"command": f"echo {marker}"})
+        response = runner.run(
+            "bash",
+            {"command": f"echo {marker}", "description": "echo marker output"},
+        )
 
         self.assertTrue(response["ok"])
         self.assertEqual(0, response.get("exit_code"))
         self.assertIn(marker, str(response.get("raw_output") or ""))
 
-    def test_run_terminal_schema_exposes_single_command_field(self):
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+    def test_bash_schema_exposes_expected_fields(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         schemas = runner.tool_schemas()
         terminal_schema = next(
             (
                 item
                 for item in schemas
-                if item.get("function", {}).get("name") == "run_terminal"
+                if item.get("function", {}).get("name") == "bash"
             ),
             None,
         )
         if not isinstance(terminal_schema, dict):
-            self.fail("run_terminal schema should exist")
+            self.fail("bash schema should exist")
 
         params = terminal_schema.get("function", {}).get("parameters", {})
-        self.assertEqual(["command"], params.get("required", []))
-        self.assertEqual({"command"}, set((params.get("properties") or {}).keys()))
+        self.assertEqual(["command", "description"], params.get("required", []))
+        self.assertEqual(
+            {"command", "description", "timeout", "workdir"},
+            set((params.get("properties") or {}).keys()),
+        )
         self.assertEqual(False, params.get("additionalProperties"))
+
+    def test_powershell_schema_exposes_expected_fields(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        schemas = runner.tool_schemas()
+        powershell_schema = next(
+            (
+                item
+                for item in schemas
+                if item.get("function", {}).get("name") == "powershell"
+            ),
+            None,
+        )
+        if not isinstance(powershell_schema, dict):
+            self.fail("powershell schema should exist")
+
+        params = powershell_schema.get("function", {}).get("parameters", {})
+        self.assertEqual(["command", "description"], params.get("required", []))
+        self.assertEqual(
+            {"command", "description", "timeout", "workdir"},
+            set((params.get("properties") or {}).keys()),
+        )
+        self.assertEqual(False, params.get("additionalProperties"))
+
+    def test_bash_rejects_workdir_outside_scope(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        response = runner.run(
+            "bash",
+            {
+                "command": "echo should_not_run",
+                "description": "verify repository boundary",
+                "workdir": "../outside",
+            },
+        )
+        self.assertFalse(response["ok"])
+        self.assertEqual("path.escape_detected", response.get("error_code"))
+
+    def test_powershell_rejects_workdir_outside_scope(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        response = runner.run(
+            "powershell",
+            {
+                "command": "Write-Output should_not_run",
+                "description": "verify repository boundary",
+                "workdir": "../outside",
+            },
+        )
+        self.assertFalse(response["ok"])
+        self.assertEqual("path.escape_detected", response.get("error_code"))
+
+    def test_bash_timeout_is_milliseconds(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        response = runner.run(
+            "bash",
+            {
+                "command": "python -c \"import time; time.sleep(0.5)\"",
+                "description": "timeout behavior check",
+                "timeout": 10,
+            },
+        )
+        self.assertFalse(response["ok"])
+        self.assertEqual("terminal_timeout", response.get("error_code"))
+
+    def test_bash_unicode_output_does_not_crash_file_ops_service(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        response = runner.run(
+            "bash",
+            {
+                "command": "python -c \"print('\\\\u03f5')\"",
+                "description": "emit unicode output",
+            },
+        )
+        if response.get("error_code") == "bash_unavailable":
+            self.skipTest("bash unavailable in current runtime")
+        self.assertNotEqual("file_ops_service_failed", response.get("error_code"))
+        self.assertNotEqual("file_ops_invalid_response", response.get("error_code"))
+
+    def test_environment_tools_respect_repo_read_and_migrate_write_scope(self):
+        repo_root = self._repo_root()
+        migrate_root = repo_root / "migrate"
+        migrate_root.mkdir(parents=True, exist_ok=True)
+        read_target = repo_root / "README_scope_test.txt"
+        read_target.write_text("hello repo", encoding="utf-8")
+
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+
+        read_resp = runner.run("fs_read", {"path": "README_scope_test.txt"})
+        self.assertTrue(read_resp["ok"])
+        self.assertEqual("hello repo", read_resp.get("content"))
+
+        denied_write = runner.run("fs_write", {"path": "README_scope_test_2.txt", "content": "nope"})
+        self.assertFalse(denied_write["ok"])
+        self.assertEqual("path.scope_write_denied", denied_write.get("error_code"))
+
+        write_resp = runner.run("fs_write", {"path": "migrate/data/input.txt", "content": "hello migrate"})
+        self.assertTrue(write_resp["ok"])
+        self.assertTrue((migrate_root / "data" / "input.txt").exists())
+
+        list_resp = runner.run("fs_list", {"path": "migrate/data"})
+        self.assertTrue(list_resp["ok"])
+        names = {entry.get("name") for entry in list(list_resp.get("entries") or [])}
+        self.assertIn("input.txt", names)
+
+    def test_environment_tools_reject_paths_outside_scope(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        response = runner.run("fs_read", {"path": "../outside.txt"})
+        self.assertFalse(response["ok"])
+        self.assertEqual("path.escape_detected", response.get("error_code"))
+
+    def test_python_run_is_unknown_tool(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        response = runner.run("python_run", {"code": "print('x')"})
+        self.assertFalse(response["ok"])
+        self.assertEqual("unknown_tool", response.get("error_code"))
+
+    def test_fs_write_requires_overwrite_for_existing_destination(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        first = runner.run("fs_write", {"path": "migrate/data/file.txt", "content": "first"})
+        second = runner.run("fs_write", {"path": "migrate/data/file.txt", "content": "second"})
+        third = runner.run("fs_write", {"path": "migrate/data/file.txt", "content": "second", "overwrite": True})
+        self.assertTrue(first["ok"])
+        self.assertFalse(second["ok"])
+        self.assertEqual("file_exists_and_overwrite_false", second.get("error_code"))
+        self.assertTrue(third["ok"])
+
+    def test_fs_copy_is_unknown_tool(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        response = runner.run("fs_copy", {"src": "a", "dst": "b"})
+        self.assertFalse(response["ok"])
+        self.assertEqual("unknown_tool", response.get("error_code"))
+
+    def test_fs_edit_replaces_single_match(self):
+        target = self._repo_root() / "migrate" / "notes.txt"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("alpha OLD omega", encoding="utf-8")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        response = runner.run(
+            "fs_edit",
+            {
+                "filePath": "migrate/notes.txt",
+                "oldString": "OLD",
+                "newString": "NEW",
+            },
+        )
+        self.assertTrue(response["ok"])
+        self.assertEqual(1, response.get("match_count"))
+        self.assertEqual(False, response.get("replace_all"))
+        self.assertEqual("alpha NEW omega", target.read_text(encoding="utf-8"))
+
+    def test_fs_edit_ambiguous_match_when_replace_all_false(self):
+        target = self._repo_root() / "migrate" / "notes.txt"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("A OLD B OLD C", encoding="utf-8")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        response = runner.run(
+            "fs_edit",
+            {
+                "filePath": "migrate/notes.txt",
+                "oldString": "OLD",
+                "newString": "NEW",
+                "replaceAll": False,
+            },
+        )
+        self.assertFalse(response["ok"])
+        self.assertEqual("ambiguous_match", response.get("error_code"))
+        self.assertIn("replaceAll", str(response.get("message") or ""))
+        self.assertEqual("A OLD B OLD C", target.read_text(encoding="utf-8"))
+
+    def test_fs_edit_replace_all_replaces_every_match(self):
+        target = self._repo_root() / "migrate" / "notes.txt"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("A OLD B OLD C", encoding="utf-8")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        response = runner.run(
+            "fs_edit",
+            {
+                "filePath": "migrate/notes.txt",
+                "oldString": "OLD",
+                "newString": "NEW",
+                "replaceAll": True,
+            },
+        )
+        self.assertTrue(response["ok"])
+        self.assertEqual(2, response.get("match_count"))
+        self.assertEqual(True, response.get("replace_all"))
+        self.assertEqual("A NEW B NEW C", target.read_text(encoding="utf-8"))
+
+    def test_fs_edit_returns_not_found_when_old_string_missing(self):
+        target = self._repo_root() / "migrate" / "notes.txt"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("hello world", encoding="utf-8")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        response = runner.run(
+            "fs_edit",
+            {
+                "filePath": "migrate/notes.txt",
+                "oldString": "absent",
+                "newString": "NEW",
+            },
+        )
+        self.assertFalse(response["ok"])
+        self.assertEqual("old_string_not_found", response.get("error_code"))
+
+    def test_fs_edit_rejects_identical_old_and_new_strings(self):
+        target = self._repo_root() / "migrate" / "notes.txt"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("OLD", encoding="utf-8")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        response = runner.run(
+            "fs_edit",
+            {
+                "filePath": "migrate/notes.txt",
+                "oldString": "OLD",
+                "newString": "OLD",
+            },
+        )
+        self.assertFalse(response["ok"])
+        self.assertEqual("invalid_tool_input", response.get("error_code"))
+        self.assertIn("must differ", str(response.get("message") or ""))
+
+    def test_fs_edit_rejects_absolute_file_path(self):
+        target = self._repo_root() / "migrate" / "notes.txt"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("OLD", encoding="utf-8")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        response = runner.run(
+            "fs_edit",
+            {
+                "filePath": str(target.resolve()),
+                "oldString": "OLD",
+                "newString": "NEW",
+            },
+        )
+        self.assertFalse(response["ok"])
+        self.assertEqual("invalid_tool_input", response.get("error_code"))
+
+    def test_fs_edit_rejects_write_outside_migrate(self):
+        outside = self._repo_root() / "inventories" / "_fake" / "outside_edit_target.txt"
+        outside.write_text("OLD", encoding="utf-8")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        try:
+            response = runner.run(
+                "fs_edit",
+                {
+                    "filePath": "inventories/_fake/outside_edit_target.txt",
+                    "oldString": "OLD",
+                    "newString": "NEW",
+                },
+            )
+            self.assertFalse(response["ok"])
+            self.assertEqual("path.scope_write_denied", response.get("error_code"))
+        finally:
+            with suppress(FileNotFoundError):
+                outside.unlink()
+
+    def test_fs_edit_rejects_non_utf8_files(self):
+        target = self._repo_root() / "migrate" / "notes_latin1.txt"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes("caf\xe9 OLD".encode("latin-1"))
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        response = runner.run(
+            "fs_edit",
+            {
+                "filePath": "migrate/notes_latin1.txt",
+                "oldString": "OLD",
+                "newString": "NEW",
+            },
+        )
+        self.assertFalse(response["ok"])
+        self.assertEqual("file_read_failed", response.get("error_code"))
 
     def test_search_records_rejects_keyword_mode_alias(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_search_alias_") as temp_dir:
@@ -329,13 +908,40 @@ class AgentToolRunnerTests(unittest.TestCase):
             self.assertFalse(response["ok"])
             self.assertEqual("invalid_tool_input", response["error_code"])
 
-    def test_search_records_requires_non_empty_query(self):
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
-        response = runner.run("search_records", {})
+    def test_search_records_allows_empty_query_and_wildcard(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_search_empty_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        {
+                            "id": 1,
+                            "parent_cell_line": "NCCIT",
+                            "short_name": "active-rec",
+                            "box": 1,
+                            "position": 2,
+                            "frozen_at": "2026-02-10",
+                        },
+                    ]
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
 
-        self.assertFalse(response["ok"])
-        self.assertEqual("invalid_tool_input", response["error_code"])
-        self.assertEqual("未输入检索词", response.get("message"))
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            empty_response = runner.run("search_records", {})
+            wildcard_response = runner.run("search_records", {"query": "*"})
+
+            self.assertTrue(empty_response["ok"])
+            self.assertEqual(1, empty_response["result"]["total_count"])
+            self.assertEqual(1, empty_response["result"]["records"][0]["id"])
+            self.assertEqual("", empty_response["result"]["normalized_query"])
+            self.assertTrue(wildcard_response["ok"])
+            self.assertEqual(
+                empty_response["result"]["total_count"],
+                wildcard_response["result"]["total_count"],
+            )
+            self.assertEqual("", wildcard_response["result"]["normalized_query"])
 
     def test_search_records_supports_structured_slot_filters(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_search_slot_") as temp_dir:
@@ -417,7 +1023,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             self.assertEqual(3, response["result"]["records"][0]["id"])
             self.assertEqual("2:15", response["result"]["applied_filters"]["query_shortcut"])
 
-    def test_search_records_default_excludes_taken_out_records(self):
+    def test_search_records_default_includes_active_and_inactive_records(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_search_active_default_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -450,9 +1056,93 @@ class AgentToolRunnerTests(unittest.TestCase):
             response = runner.run("search_records", {"query": "K562"})
 
             self.assertTrue(response["ok"])
-            self.assertEqual(1, response["result"]["total_count"])
-            self.assertEqual([1], [item.get("id") for item in response["result"]["records"]])
-            self.assertTrue(response["result"]["applied_filters"]["active_only"])
+            self.assertEqual(2, response["result"]["total_count"])
+            self.assertEqual([2, 1], [item.get("id") for item in response["result"]["records"]])
+            self.assertEqual("all", response["result"]["applied_filters"]["status"])
+            self.assertEqual("frozen_at", response["result"]["applied_filters"]["sort_by"])
+            self.assertEqual("desc", response["result"]["applied_filters"]["sort_order"])
+            self.assertEqual("last", response["result"]["applied_filters"]["sort_nulls"])
+
+            active_only = runner.run("search_records", {"query": "K562", "status": "active"})
+            self.assertTrue(active_only["ok"])
+            self.assertEqual([1], [item.get("id") for item in active_only["result"]["records"]])
+            self.assertEqual("active", active_only["result"]["applied_filters"]["status"])
+
+            inactive_only = runner.run("search_records", {"query": "K562", "status": "inactive"})
+            self.assertTrue(inactive_only["ok"])
+            self.assertEqual([2], [item.get("id") for item in inactive_only["result"]["records"]])
+            self.assertEqual("inactive", inactive_only["result"]["applied_filters"]["status"])
+
+    def test_search_records_supports_explicit_sorting(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_search_sort_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        {
+                            "id": 3,
+                            "parent_cell_line": "K562",
+                            "short_name": "box2",
+                            "box": 2,
+                            "position": 1,
+                            "frozen_at": "2026-02-10",
+                        },
+                        {
+                            "id": 2,
+                            "parent_cell_line": "K562",
+                            "short_name": "box1-p2",
+                            "box": 1,
+                            "position": 2,
+                            "frozen_at": "2026-02-10",
+                        },
+                        {
+                            "id": 1,
+                            "parent_cell_line": "K562",
+                            "short_name": "box1-p1",
+                            "box": 1,
+                            "position": 1,
+                            "frozen_at": "2026-02-10",
+                        },
+                    ]
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run(
+                "search_records",
+                {
+                    "query": "K562",
+                    "sort_by": "box",
+                    "sort_order": "asc",
+                },
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertEqual([1, 2, 3], [item.get("id") for item in response["result"]["records"]])
+            self.assertEqual("box", response["result"]["applied_filters"]["sort_by"])
+            self.assertEqual("asc", response["result"]["applied_filters"]["sort_order"])
+            self.assertEqual("last", response["result"]["applied_filters"]["sort_nulls"])
+
+    def test_search_records_rejects_invalid_sort_by(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_search_sort_invalid_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run(
+                "search_records",
+                {"query": "NCCIT", "sort_by": "created_at"},
+            )
+
+            self.assertFalse(response["ok"])
+            self.assertEqual("invalid_tool_input", response["error_code"])
+            self.assertIn("sort_by", str(response.get("message") or ""))
 
     def test_generate_stats_supports_optional_box_records(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_stats_box_") as temp_dir:
@@ -489,9 +1179,12 @@ class AgentToolRunnerTests(unittest.TestCase):
             self.assertTrue(response["ok"])
             result = response.get("result") or {}
             self.assertEqual(1, result.get("box"))
+            self.assertEqual(1, result.get("box_occupied"))
             self.assertEqual(1, result.get("box_record_count"))
             ids = [item.get("id") for item in result.get("box_records", [])]
             self.assertEqual([1], ids)
+            self.assertNotIn("occupancy_rate", result)
+            self.assertNotIn("stats", result)
 
     def test_generate_stats_include_inactive_adds_taken_out_records(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_stats_box_inactive_") as temp_dir:
@@ -520,10 +1213,20 @@ class AgentToolRunnerTests(unittest.TestCase):
 
             self.assertTrue(response["ok"])
             result = response.get("result") or {}
+            self.assertEqual(1, result.get("box_occupied"))
             self.assertEqual(2, result.get("box_record_count"))
             self.assertTrue(result.get("include_inactive"))
             ids = [item.get("id") for item in result.get("box_records", [])]
             self.assertEqual([1, 2], ids)
+            self.assertNotIn("occupancy_rate", result)
+
+    def test_generate_stats_rejects_full_records_for_gui_flag(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        response = runner.run("generate_stats", {"full_records_for_gui": True})
+
+        self.assertFalse(response["ok"])
+        self.assertEqual("invalid_tool_input", response.get("error_code"))
+        self.assertIn("full_records_for_gui", str(response.get("message") or ""))
 
     def test_recent_frozen_replaces_recent_filters(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_recent_search_") as temp_dir:
@@ -559,7 +1262,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             self.assertEqual("new", response["result"]["records"][0]["short_name"])
 
     def test_search_records_rejects_mixed_recent_and_query_filters(self):
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         response = runner.run("search_records", {"query": "K562", "recent_count": 1})
 
         self.assertFalse(response["ok"])
@@ -590,7 +1293,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             self.assertIn("summary", response["result"])
 
     def test_query_takeout_events_summary_rejects_event_filters(self):
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         response = runner.run("query_takeout_events", {"range": "all", "action": "takeout"})
 
         self.assertFalse(response["ok"])
@@ -781,7 +1484,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             self.assertIn("from_box", response.get("message", ""))
 
     def test_plan_preflight_hint_guides_record_repair_flow(self):
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         payload = {
             "error_code": "plan_preflight_failed",
             "message": "Write blocked: integrity validation failed\n- Record #16 (id=16): invalid cell_line",
@@ -800,7 +1503,7 @@ class AgentToolRunnerTests(unittest.TestCase):
         self.assertIn("16", hint)
 
     def test_tool_schemas_expose_required_fields(self):
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         schemas = runner.tool_schemas()
         names = [item.get("function", {}).get("name") for item in schemas]
 
@@ -828,6 +1531,24 @@ class AgentToolRunnerTests(unittest.TestCase):
         self.assertIn("cell_line", add_entry_fields.get("required", []))
         self.assertNotIn("dry_run", (add_entry_params.get("properties") or {}))
 
+        self.assertIn("fs_edit", names)
+        fs_edit_schema = next(
+            (item for item in schemas if item.get("function", {}).get("name") == "fs_edit"),
+            None,
+        )
+        if not isinstance(fs_edit_schema, dict):
+            self.fail("fs_edit schema should exist")
+        edit_text_params = fs_edit_schema.get("function", {}).get("parameters", {})
+        self.assertEqual(
+            ["filePath", "oldString", "newString"],
+            edit_text_params.get("required", []),
+        )
+        self.assertEqual(
+            {"filePath", "oldString", "newString", "replaceAll"},
+            set((edit_text_params.get("properties") or {}).keys()),
+        )
+        self.assertEqual(False, edit_text_params.get("additionalProperties"))
+
         search_schema = next(
             (
                 item
@@ -839,9 +1560,13 @@ class AgentToolRunnerTests(unittest.TestCase):
         if not isinstance(search_schema, dict):
             self.fail("search_records schema should exist")
         search_params = search_schema.get("function", {}).get("parameters", {})
-        self.assertEqual(["query"], search_params.get("required", []))
+        self.assertEqual([], search_params.get("required", []))
         self.assertIn("box", (search_params.get("properties") or {}))
         self.assertIn("position", (search_params.get("properties") or {}))
+        self.assertIn("status", (search_params.get("properties") or {}))
+        self.assertIn("sort_by", (search_params.get("properties") or {}))
+        self.assertIn("sort_order", (search_params.get("properties") or {}))
+        self.assertNotIn("active_only", (search_params.get("properties") or {}))
         mode_schema = (
             search_schema.get("function", {})
             .get("parameters", {})
@@ -849,6 +1574,20 @@ class AgentToolRunnerTests(unittest.TestCase):
             .get("mode", {})
         )
         self.assertEqual(["fuzzy", "exact", "keywords"], mode_schema.get("enum"))
+        sort_by_schema = (
+            search_schema.get("function", {})
+            .get("parameters", {})
+            .get("properties", {})
+            .get("sort_by", {})
+        )
+        self.assertEqual(["box", "position", "frozen_at", "id"], sort_by_schema.get("enum"))
+        sort_order_schema = (
+            search_schema.get("function", {})
+            .get("parameters", {})
+            .get("properties", {})
+            .get("sort_order", {})
+        )
+        self.assertEqual(["asc", "desc"], sort_order_schema.get("enum"))
         takeout_schema = next(
             (
                 item
@@ -1128,7 +1867,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             self.assertIn("from_position", str(response.get("message") or ""))
 
     def test_rollback_tool_schema_mentions_explicit_backup_path(self):
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         rollback_schema = next(
             (
                 item
@@ -1165,11 +1904,17 @@ class AgentToolRunnerTests(unittest.TestCase):
                 "source": "ai",
             },
         ])
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml", plan_store=store)
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path, plan_store=store)
 
         list_resp = runner.run("staged_plan", {"action": "list"})
         self.assertTrue(list_resp["ok"])
         self.assertEqual(2, list_resp["result"]["count"])
+        items = list_resp["result"]["items"]
+        self.assertEqual([5], items[0]["positions"])
+        self.assertEqual([6], items[1]["positions"])
+        self.assertEqual(7, items[1]["to_position"])
+        self.assertNotIn("position", items[0])
+        self.assertNotIn("position", items[1])
 
         remove_resp = runner.run("staged_plan", {"action": "remove", "index": 0})
         self.assertTrue(remove_resp["ok"])
@@ -1179,8 +1924,48 @@ class AgentToolRunnerTests(unittest.TestCase):
         self.assertTrue(clear_resp["ok"])
         self.assertEqual(1, clear_resp["result"]["cleared_count"])
 
+    def test_staged_plan_list_returns_all_add_positions(self):
+        from lib.plan_item_factory import build_add_plan_item
+        from lib.plan_store import PlanStore
+
+        store = PlanStore()
+        store.add(
+            [
+                build_add_plan_item(
+                    box=1,
+                    positions=[5, 6, 7],
+                    frozen_at="2026-02-10",
+                    fields={"cell_line": "K562"},
+                    source="ai",
+                )
+            ]
+        )
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path, plan_store=store)
+
+        list_resp = runner.run("staged_plan", {"action": "list"})
+        self.assertTrue(list_resp["ok"])
+        self.assertEqual(1, list_resp["result"]["count"])
+        entry = list_resp["result"]["items"][0]
+        self.assertEqual("add", entry["action"])
+        self.assertEqual([5, 6, 7], entry["positions"])
+        self.assertNotIn("position", entry)
+
+    def test_item_desc_add_includes_all_positions(self):
+        from lib.plan_item_factory import build_add_plan_item
+
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        item = build_add_plan_item(
+            box=1,
+            positions=[5, 6, 7],
+            frozen_at="2026-02-10",
+            fields={"cell_line": "K562"},
+            source="ai",
+        )
+        desc = runner._item_desc(item)
+        self.assertIn("5,6,7", desc)
+
     def test_staged_plan_remove_requires_index(self):
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         response = runner.run("staged_plan", {"action": "remove"})
 
         self.assertFalse(response["ok"])
@@ -1202,7 +1987,7 @@ class AgentToolRunnerTests(unittest.TestCase):
             )
 
     def test_removed_tools_are_unknown(self):
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         for name in (
             "collect_timeline",
             "manage_boxes_add",
@@ -1215,13 +2000,14 @@ class AgentToolRunnerTests(unittest.TestCase):
             "list_staged",
             "remove_staged",
             "clear_staged",
+            "edit",
         ):
             response = runner.run(name, {})
             self.assertFalse(response["ok"])
             self.assertEqual("unknown_tool", response["error_code"])
 
 
-class EditEntryToolRunnerTests(unittest.TestCase):
+class EditEntryToolRunnerTests(ManagedPathTestCase):
     """Integration tests for edit_entry through AgentToolRunner."""
 
     def test_edit_entry_stages_plan_item(self):
@@ -1302,11 +2088,11 @@ class EditEntryToolRunnerTests(unittest.TestCase):
             self.assertEqual("invalid_tool_input", response["error_code"])
 
     def test_edit_entry_listed_in_tools(self):
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         self.assertIn("edit_entry", set(runner.list_tools()))
 
     def test_edit_entry_in_tool_schemas(self):
-        runner = AgentToolRunner(yaml_path="/tmp/fake.yaml")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         schemas = runner.tool_schemas()
         names = [item.get("function", {}).get("name") for item in schemas]
         self.assertIn("edit_entry", names)

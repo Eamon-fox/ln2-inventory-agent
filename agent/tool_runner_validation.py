@@ -1,6 +1,7 @@
 """Input/schema validation helpers for AgentToolRunner."""
 
 from copy import deepcopy
+from pathlib import Path
 from lib.tool_contracts import TOOL_CONTRACTS
 
 
@@ -227,7 +228,9 @@ def tool_schemas(self):
     """OpenAI-compatible function tool schemas for native tool calling."""
     schemas = []
 
-    for name, contract in _tool_contracts().items():
+    tool_names = self.list_tools() if hasattr(self, "list_tools") else list(_tool_contracts().keys())
+    for name in tool_names:
+        contract = _tool_contracts().get(name) or {}
         desc_default = contract.get("description") or self._msg(
             "toolContracts.defaultDescription",
             "LN2 inventory tool: {name}",
@@ -256,6 +259,17 @@ def _is_integer(value):
 
 def _is_number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _looks_absolute_path(value):
+    text = str(value or "").strip()
+    if not text:
+        return False
+    if text.startswith(("/", "\\")):
+        return True
+    if len(text) >= 2 and text[1] == ":" and text[0].isalpha():
+        return True
+    return Path(text).is_absolute()
 
 
 def _validate_schema_value(self, value, schema, path):
@@ -426,18 +440,42 @@ def _validate_tool_input(self, tool_name, payload):
     if not contract:
         return None
 
-    if tool_name == "search_records":
-        query_text = payload.get("query")
-        if query_text is None or str(query_text).strip() == "":
-            return self._msg(
-                "input.searchQueryRequired",
-                "未输入检索词",
-            )
-
     schema = _tool_input_schema(self, tool_name)
     schema_error = self._validate_schema_value(payload, schema, "")
     if schema_error:
         return schema_error
+
+    if tool_name in {"fs_read", "fs_write"}:
+        path_value = str(payload.get("path") or "").strip()
+        if _looks_absolute_path(path_value):
+            return self._msg(
+                "input.pathMustBeRepoRelative",
+                "path must be repository-relative (absolute paths are not allowed).",
+            )
+
+    if tool_name == "fs_list":
+        path_value = payload.get("path")
+        if path_value not in (None, "") and _looks_absolute_path(path_value):
+            return self._msg(
+                "input.pathMustBeRepoRelative",
+                "path must be repository-relative (absolute paths are not allowed).",
+            )
+
+    if tool_name == "fs_edit":
+        file_path = str(payload.get("filePath") or "").strip()
+        if _looks_absolute_path(file_path):
+            return self._msg(
+                "input.filePathMustBeRepoRelative",
+                "filePath must be repository-relative (absolute paths are not allowed).",
+            )
+
+    if tool_name in {"bash", "powershell"}:
+        workdir = payload.get("workdir")
+        if workdir not in (None, "") and _looks_absolute_path(workdir):
+            return self._msg(
+                "input.workdirMustBeRepoRelative",
+                "workdir must be repository-relative (absolute paths are not allowed).",
+            )
 
     if tool_name == "recent_frozen":
         basis = str(payload.get("basis") or "").strip().lower()

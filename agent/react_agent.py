@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 
 
-from app_gui.gui_config import DEFAULT_MAX_STEPS
+from app_gui.gui_config import AGENT_HISTORY_MAX_TURNS, DEFAULT_MAX_STEPS
 from . import react_agent_runtime as _runtime
 
 
@@ -17,10 +17,12 @@ Rules:
 2) Tool schemas are the single source of truth for arguments and constraints. Follow `tool_schemas` strictly, never invent aliases, and use `_hint` from tool results to recover from errors.
 3) For greetings/chitchat/clarification-only turns, answer directly without calling tools.
 4) Query before asking: inspect inventory first, and call `question` only when required values remain truly ambiguous. Call `question` alone (no parallel tool calls).
-5) Write operations are stage-only. Do not execute staged operations yourself; only the human user can execute them in GUI. Use `staged_plan` with action=list/remove/clear to inspect or correct staged items.
-6) You do NOT have permission to add, remove, or rename inventory fields. Field management can only be done by the user via Settings > Manage Fields.
-7) High-impact actions require extra care: `manage_boxes` requires human confirmation, and `rollback` must use explicit backup_path selected from `list_audit_timeline` action=backup rows ordered by audit_seq (never infer by timestamp).
-8) Keep replies concise and action-oriented.
+5) Inventory mutation tools (`add_entry`, `edit_entry`, `takeout`, `move`, `rollback`) are stage-only. Do not execute staged operations yourself; only the human user can execute them in GUI. Use `staged_plan` with action=list/remove/clear to inspect or correct staged items.
+6) Migration import is an explicit exception: use `validate_migration_output` and `import_migration_output` for migration onboarding. Before `import_migration_output`, first ask user for target dataset name via `question`, then ask user confirmation via `question` including option `CONFIRM_IMPORT`; import only when user selects that option and pass both `confirmation_token=CONFIRM_IMPORT` and `target_dataset_name`.
+7) You do NOT have permission to add, remove, or rename inventory fields. Field management can only be done by the user via Settings > Manage Fields.
+8) High-impact actions require extra care: `manage_boxes` requires human confirmation, and `rollback` must use explicit backup_path selected from `list_audit_timeline` action=backup rows ordered by audit_seq (never infer by timestamp).
+9) For environment/file/script tasks, prefer `fs_list`/`fs_read`/`fs_write`/`fs_edit` first; use `bash` (bash -lc) or `powershell` (powershell -Command) for command/script execution, and always include a concise `description`.
+10) Keep replies concise and action-oriented.
 """
 
 
@@ -43,7 +45,7 @@ class ReactAgent:
         self._custom_prompt = str(custom_prompt or "")
 
     @staticmethod
-    def _normalize_history(conversation_history, max_turns=12):
+    def _normalize_history(conversation_history, max_turns=AGENT_HISTORY_MAX_TURNS):
         if not isinstance(conversation_history, list):
             return []
 
@@ -52,12 +54,29 @@ class ReactAgent:
             if not isinstance(item, dict):
                 continue
             role = str(item.get("role") or "").strip().lower()
-            if role not in {"user", "assistant"}:
+            if role not in {"user", "assistant", "tool"}:
                 continue
             content = str(item.get("content") or "").strip()
-            if not content:
+            entry: dict = {"role": role, "content": content}
+
+            if role == "assistant":
+                tool_calls = item.get("tool_calls")
+                has_tool_calls = isinstance(tool_calls, list) and len(tool_calls) > 0
+                if not content and not has_tool_calls:
+                    continue
+                if isinstance(tool_calls, list):
+                    entry["tool_calls"] = list(tool_calls)
+                reasoning_content = str(item.get("reasoning_content") or "")
+                if reasoning_content:
+                    entry["reasoning_content"] = reasoning_content
+            elif role == "tool":
+                tool_call_id = str(item.get("tool_call_id") or "").strip()
+                if not content or not tool_call_id:
+                    continue
+                entry["tool_call_id"] = tool_call_id
+            elif not content:
                 continue
-            entry = {"role": role, "content": content}
+
             ts = item.get("timestamp")
             if isinstance(ts, (int, float)):
                 entry = {**entry, "timestamp": float(ts)}

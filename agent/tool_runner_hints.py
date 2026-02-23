@@ -1,10 +1,26 @@
 """Error hint helpers for AgentToolRunner responses."""
 
+_MIGRATION_SESSION_CHECKLIST = "migrate/output/migration_checklist.md"
+
 
 def _hint_for_error(self, tool_name, payload):
     error_code = str(payload.get("error_code") or "").strip()
     input_schema = self._tool_input_schema(tool_name)
     required_fields, optional_fields = self._tool_input_field_sets(tool_name)
+
+    if tool_name == "validate_migration_output":
+        if error_code in {"validation_failed"}:
+            return self._msg(
+                "hint.migrationValidateFailed",
+                "Validation failed. Review blocking items in `{checklist_path}`, fix migration output, then run validate_migration_output again.",
+                checklist_path=_MIGRATION_SESSION_CHECKLIST,
+            )
+        if error_code in {"file_not_found", "load_failed"}:
+            return self._msg(
+                "hint.migrationValidateMissingOutput",
+                "Migration output is missing or unreadable. Confirm precheck/mapping progress in `{checklist_path}`, regenerate migrate/output/ln2_inventory.yaml, then validate again.",
+                checklist_path=_MIGRATION_SESSION_CHECKLIST,
+            )
 
     if tool_name == "add_entry" and error_code in {
         "invalid_tool_input",
@@ -111,6 +127,60 @@ def _hint_for_error(self, tool_name, payload):
         return self._msg(
             "hint.terminalExecFailed",
             "Check `raw_output` for terminal details, fix the command, then retry.",
+        )
+
+    if error_code == "bash_unavailable":
+        return self._msg(
+            "hint.bashUnavailable",
+            "`bash` is unavailable in current runtime. Use `powershell` tool or install bash.",
+        )
+
+    if error_code == "powershell_unavailable":
+        return self._msg(
+            "hint.powershellUnavailable",
+            "`powershell` is unavailable in current runtime. Use `bash` tool or install PowerShell.",
+        )
+
+    if error_code in {"path_outside_scope", "path.escape_detected", "path.scope_read_denied"}:
+        return self._msg(
+            "hint.pathOutsideScope",
+            "Path is outside repository scope. Use repository-relative paths only.",
+        )
+
+    if error_code in {"write_not_allowed", "path.scope_write_denied", "path.scope_workdir_denied"}:
+        return self._msg(
+            "hint.writeNotAllowed",
+            "Write operations are allowed only under migrate/.",
+        )
+
+    if error_code == "path.absolute_not_allowed":
+        return self._msg(
+            "hint.pathOutsideScope",
+            "Path is outside repository scope. Use repository-relative paths only.",
+        )
+
+    if error_code == "path.backup_scope_denied":
+        return self._msg(
+            "hint.backupNotInTimeline",
+            "Selected backup_path is not in timeline backup events. Re-select from `list_audit_timeline` action=backup rows.",
+        )
+
+    if error_code in {"path_not_found", "path_not_directory", "path_is_directory"}:
+        return self._msg(
+            "hint.pathTypeMismatch",
+            "Verify the target path exists and matches required file/directory type.",
+        )
+
+    if error_code in {"file_ops_service_failed", "file_ops_service_timeout", "file_ops_invalid_response"}:
+        return self._msg(
+            "hint.fileOpsServiceFailed",
+            "File operation service failed. Retry once; if it persists, inspect service/runtime configuration.",
+        )
+
+    if error_code == "file_exists_and_overwrite_false":
+        return self._msg(
+            "hint.fileExistsNoOverwrite",
+            "Destination already exists. Set `overwrite=true` if replacement is intended.",
         )
 
     if error_code == "invalid_move_target":

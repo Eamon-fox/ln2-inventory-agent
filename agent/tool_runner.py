@@ -12,6 +12,7 @@ from lib.tool_api import (
 )
 from lib.tool_contracts import TOOL_CONTRACTS, WRITE_TOOLS
 from lib import tool_api_parsers as _tool_parsers
+from lib.inventory_paths import assert_allowed_inventory_yaml_path
 from lib.yaml_ops import load_yaml
 from app_gui.i18n import tr
 from . import tool_runner_handlers as _runner_handlers
@@ -21,6 +22,7 @@ from . import tool_runner_hints as _runner_hints
 
 _TOOL_CONTRACTS = TOOL_CONTRACTS
 _WRITE_TOOLS = WRITE_TOOLS
+_QUESTION_OTHER_OPTION = "\u5176\u4ed6\uff1a\u8bf7\u8f93\u5165"
 
 class AgentToolRunner:
     """Executes named tools with normalized input payloads."""
@@ -44,14 +46,38 @@ class AgentToolRunner:
                     return str(default)
             return str(default)
 
-    def __init__(self, yaml_path, session_id=None, plan_store=None):
-        self._yaml_path = yaml_path
+    def __init__(
+        self,
+        yaml_path,
+        session_id=None,
+        plan_store=None,
+        allowed_tools=None,
+        expose_inventory_context=True,
+    ):
+        self._yaml_path = assert_allowed_inventory_yaml_path(yaml_path, must_exist=True)
         self._session_id = session_id
         self._plan_store = plan_store
+        self._allowed_tools = self._normalize_allowed_tools(allowed_tools)
+        self._expose_inventory_context = bool(expose_inventory_context)
         # Question tool synchronization
         self._answer_event = threading.Event()
         self._pending_answer = None
         self._answer_cancelled = False
+
+    @staticmethod
+    def _normalize_allowed_tools(allowed_tools):
+        if allowed_tools is None:
+            return None
+        names = set()
+        for raw_name in allowed_tools:
+            name = str(raw_name or "").strip()
+            if name and name in TOOL_CONTRACTS:
+                names.add(name)
+        return names
+
+    def _is_tool_allowed(self, tool_name):
+        allowed = self._allowed_tools
+        return allowed is None or tool_name in allowed
 
     def _set_answer(self, answers):
         """Called from GUI main thread to provide user answers."""
@@ -203,7 +229,7 @@ class AgentToolRunner:
     _normalize_search_mode = staticmethod(_runner_validation._normalize_search_mode)
 
     def list_tools(self):
-        return list(TOOL_CONTRACTS.keys())
+        return [name for name in TOOL_CONTRACTS.keys() if self._is_tool_allowed(name)]
 
     tool_schemas = _runner_validation.tool_schemas
     _tool_input_schema = _runner_validation._tool_input_schema
@@ -279,6 +305,21 @@ class AgentToolRunner:
                 }
             options.append(option)
 
+        if _QUESTION_OTHER_OPTION in options:
+            return {
+                "ok": False,
+                "error_code": "invalid_tool_input",
+                "message": self._msg(
+                    "question.reservedOptionForbidden",
+                    "options must not contain reserved option `{option}`.",
+                    option=_QUESTION_OTHER_OPTION,
+                ),
+            }
+
+        # Always add a final free-text entry so users can type an answer
+        # without requiring tool-schema changes.
+        options.append(_QUESTION_OTHER_OPTION)
+
         question_id = str(uuid.uuid4())
 
         # Reset synchronization state for this question round
@@ -298,11 +339,16 @@ class AgentToolRunner:
         try:
             response = fn()
         except Exception as exc:
+            error_code = str(getattr(exc, "code", "") or "invalid_tool_input")
+            message = str(getattr(exc, "message", "") or str(exc))
             payload = {
                 "ok": False,
-                "error_code": "invalid_tool_input",
-                "message": str(exc),
+                "error_code": error_code,
+                "message": message,
             }
+            resolved_path = str(getattr(exc, "resolved_path", "") or "").strip()
+            if resolved_path:
+                payload["resolved_path"] = resolved_path
             if include_expected_schema:
                 payload["expected_schema"] = self._tool_input_schema(tool_name)
             return self._with_hint(tool_name, payload)
@@ -357,6 +403,15 @@ class AgentToolRunner:
         label = str(item.get("label") or item.get("record_id") or "-")
         box = item.get("box", "?")
         pos = item.get("position", "?")
+        if action == "add":
+            positions = item.get("positions")
+            if not isinstance(positions, (list, tuple, set)):
+                payload = item.get("payload")
+                positions = payload.get("positions") if isinstance(payload, dict) else None
+            if isinstance(positions, (list, tuple, set)):
+                normalized_positions = [value for value in list(positions) if value not in (None, "")]
+                if normalized_positions:
+                    pos = ",".join(str(value) for value in normalized_positions)
         target = ""
         if action == "move":
             to_box = item.get("to_box")
@@ -423,7 +478,14 @@ class AgentToolRunner:
     _run_recommend_positions = _runner_handlers._run_recommend_positions
     _run_generate_stats = _runner_handlers._run_generate_stats
     _run_get_raw_entries = _runner_handlers._run_get_raw_entries
-    _run_run_terminal = _runner_handlers._run_run_terminal
+    _run_bash = _runner_handlers._run_bash
+    _run_powershell = _runner_handlers._run_powershell
+    _run_fs_list = _runner_handlers._run_fs_list
+    _run_fs_read = _runner_handlers._run_fs_read
+    _run_fs_write = _runner_handlers._run_fs_write
+    _run_fs_edit = _runner_handlers._run_fs_edit
+    _run_validate_migration_output = _runner_handlers._run_validate_migration_output
+    _run_import_migration_output = _runner_handlers._run_import_migration_output
     _run_edit_entry = _runner_handlers._run_edit_entry
     _run_add_entry = _runner_handlers._run_add_entry
     _run_takeout = _runner_handlers._run_takeout
@@ -432,7 +494,7 @@ class AgentToolRunner:
     _run_staged_plan = _runner_handlers._run_staged_plan
 
     def _run_dispatch(self, tool_name, payload, trace_id=None):
-        if tool_name not in TOOL_CONTRACTS:
+        if tool_name not in TOOL_CONTRACTS or not self._is_tool_allowed(tool_name):
             return self._unknown_tool_response(tool_name)
 
         # Question tool keeps its own detailed validation/error codes.
@@ -464,7 +526,14 @@ class AgentToolRunner:
             "recommend_positions": self._run_recommend_positions,
             "generate_stats": self._run_generate_stats,
             "get_raw_entries": self._run_get_raw_entries,
-            "run_terminal": self._run_run_terminal,
+            "bash": self._run_bash,
+            "powershell": self._run_powershell,
+            "fs_list": self._run_fs_list,
+            "fs_read": self._run_fs_read,
+            "fs_write": self._run_fs_write,
+            "fs_edit": self._run_fs_edit,
+            "validate_migration_output": self._run_validate_migration_output,
+            "import_migration_output": self._run_import_migration_output,
             "edit_entry": self._run_edit_entry,
             "add_entry": self._run_add_entry,
             "takeout": self._run_takeout,
