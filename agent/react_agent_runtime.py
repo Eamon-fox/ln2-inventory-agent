@@ -518,24 +518,32 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
             },
         )
 
-        model_response = self._collect_model_response(
-            messages=messages,
-            tool_schemas=tool_schemas,
-            trace_id=trace_id,
-            step=step,
-            on_event=on_event,
-            stop_event=stop_event,
-        )
-
-        if model_response.get("stopped"):
-            return _stopped_result(
-                self,
-                on_event=on_event,
+        model_response = {}
+        for retry_idx in range(2):
+            model_response = self._collect_model_response(
+                messages=messages,
+                tool_schemas=tool_schemas,
                 trace_id=trace_id,
                 step=step,
-                memory=memory,
-                messages=messages,
+                on_event=on_event,
+                stop_event=stop_event,
             )
+
+            if model_response.get("stopped"):
+                return _stopped_result(
+                    self,
+                    on_event=on_event,
+                    trace_id=trace_id,
+                    step=step,
+                    memory=memory,
+                    messages=messages,
+                )
+
+            if not model_response.get("error"):
+                break
+
+            if retry_idx >= 1 or _is_stop_requested(stop_event):
+                break
 
         if model_response.get("error"):
             observation = {

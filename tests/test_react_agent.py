@@ -105,6 +105,33 @@ class _StreamingToolThenAnswerLLM:
         yield {"type": "answer", "text": "done"}
 
 
+class _StreamingErrorThenAnswerLLM:
+    def __init__(self):
+        self.calls = 0
+
+    def stream_chat(self, messages, tools=None, temperature=0.0):
+        _ = messages
+        _ = tools
+        _ = temperature
+        self.calls += 1
+        if self.calls == 1:
+            yield {"type": "error", "error": "temporary stream error"}
+            return
+        yield {"type": "answer", "text": "Recovered answer"}
+
+
+class _StreamingAlwaysErrorLLM:
+    def __init__(self):
+        self.calls = 0
+
+    def stream_chat(self, messages, tools=None, temperature=0.0):
+        _ = messages
+        _ = tools
+        _ = temperature
+        self.calls += 1
+        yield {"type": "error", "error": "persistent stream error"}
+
+
 class ReactAgentTests(ManagedPathTestCase):
     def test_react_agent_calls_tool_then_finishes(self):
         with tempfile.TemporaryDirectory(prefix="ln2_react_") as temp_dir:
@@ -554,6 +581,42 @@ class ReactAgentTests(ManagedPathTestCase):
             if e.get("event") == "chunk" and ((e.get("meta") or {}).get("channel") == "thought")
         ]
         self.assertEqual(["thinking ", "about it"], thought_chunks)
+
+    def test_react_agent_retries_stream_error_once_then_succeeds(self):
+        llm = _StreamingErrorThenAnswerLLM()
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=2)
+        events = []
+
+        result = agent.run("retry please", on_event=lambda e: events.append(dict(e)))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("Recovered answer", result["final"])
+        self.assertEqual(2, llm.calls)
+        llm_errors = [
+            evt
+            for evt in events
+            if evt.get("event") == "error" and evt.get("action") == "llm_response"
+        ]
+        self.assertEqual([], llm_errors)
+
+    def test_react_agent_stream_error_after_retry_exhausted(self):
+        llm = _StreamingAlwaysErrorLLM()
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=2)
+        events = []
+
+        result = agent.run("still failing", on_event=lambda e: events.append(dict(e)))
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("Agent failed: LLM stream error.", result["final"])
+        self.assertEqual(2, llm.calls)
+        llm_errors = [
+            evt
+            for evt in events
+            if evt.get("event") == "error" and evt.get("action") == "llm_response"
+        ]
+        self.assertEqual(1, len(llm_errors))
 
     def test_react_agent_keeps_reasoning_content_in_tool_assistant_message(self):
         llm = _StreamingToolThenAnswerLLM()

@@ -143,6 +143,15 @@ def test_startup_checks_are_deferred_until_window_show():
     assert "QTimer.singleShot(150, self._run_startup_checks)" in text
     assert "def _run_startup_checks(self):" in text
 
+    startup_checks_match = re.search(
+        r"def _run_startup_checks\(self\):\n(?P<body>(?:\s+.+\n)+)",
+        text,
+    )
+    assert startup_checks_match is not None
+    startup_checks_body = startup_checks_match.group("body")
+    assert "self._check_release_notice_once()" in startup_checks_body
+    assert "self._check_empty_inventory_onboarding()" not in startup_checks_body
+
 
 def test_startup_dialogs_use_non_blocking_open_and_fixed_tag_parsing():
     text = _combined_source_text()
@@ -150,8 +159,5 @@ def test_startup_dialogs_use_non_blocking_open_and_fixed_tag_parsing():
     assert "def _show_nonblocking_dialog(" in text
     assert "dialog.setWindowModality(Qt.NonModal)" in text
     assert "dialog.show()" in text
-    assert 'msg_box.addButton(tr("main.importExistingDataTitle"), QMessageBox.ActionRole)' in text
-    assert 'msg_box.addButton(tr("main.new"), QMessageBox.ActionRole)' in text
-    assert "QMessageBox.Close" in text
     assert '.lstrip("1.0.1")' not in text
     assert '.lstrip("vV")' in text
