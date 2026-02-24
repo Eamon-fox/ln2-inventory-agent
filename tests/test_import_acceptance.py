@@ -155,6 +155,43 @@ class ImportAcceptanceTests(unittest.TestCase):
             result = validate_candidate_yaml(str(candidate))
             self.assertTrue(result.get("ok"), result)
 
+    def test_validate_candidate_yaml_rejects_undeclared_record_fields(self):
+        with tempfile.TemporaryDirectory() as td:
+            payload = _valid_payload()
+            payload["inventory"][0]["short_name"] = "K562-A1"
+            payload["inventory"][0]["plasmid_name"] = "PB-demo"
+            candidate = Path(td) / "bad_undeclared_record_fields.yaml"
+            candidate.write_text(
+                yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
+                encoding="utf-8",
+            )
+            result = validate_candidate_yaml(str(candidate))
+            self.assertFalse(result.get("ok"))
+            self.assertEqual("validation_failed", result.get("error_code"))
+            errors = (result.get("report") or {}).get("errors") or []
+            self.assertTrue(any("Unsupported inventory field(s):" in msg for msg in errors), errors)
+            self.assertTrue(any("short_name" in msg for msg in errors), errors)
+            self.assertTrue(any("plasmid_name" in msg for msg in errors), errors)
+
+    def test_validate_candidate_yaml_accepts_declared_record_fields(self):
+        with tempfile.TemporaryDirectory() as td:
+            payload = _valid_payload()
+            payload["meta"]["custom_fields"] = [
+                {"key": "short_name", "label": "Short Name", "type": "str", "required": False},
+                {"key": "plasmid_name", "label": "Plasmid Name", "type": "str", "required": False},
+                {"key": "plasmid_id", "label": "Plasmid ID", "type": "str", "required": False},
+            ]
+            payload["inventory"][0]["short_name"] = "K562-A1"
+            payload["inventory"][0]["plasmid_name"] = "PB-demo"
+            payload["inventory"][0]["plasmid_id"] = "p-demo-1"
+            candidate = Path(td) / "ok_declared_record_fields.yaml"
+            candidate.write_text(
+                yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
+                encoding="utf-8",
+            )
+            result = validate_candidate_yaml(str(candidate))
+            self.assertTrue(result.get("ok"), result)
+
     def test_validate_candidate_yaml_rejects_missing_box_count(self):
         with tempfile.TemporaryDirectory() as td:
             payload = _valid_payload()
@@ -281,6 +318,23 @@ class ImportAcceptanceTests(unittest.TestCase):
 
             allowed = import_validated_yaml(str(candidate), str(target), overwrite=True)
             self.assertTrue(allowed.get("ok"), allowed)
+
+    def test_import_validated_yaml_rejects_undeclared_record_fields(self):
+        with tempfile.TemporaryDirectory() as td:
+            payload = _valid_payload()
+            payload["inventory"][0]["short_name"] = "K562-A1"
+
+            candidate = Path(td) / "candidate_with_undeclared.yaml"
+            target = Path(td) / "imported.yaml"
+            candidate.write_text(
+                yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
+                encoding="utf-8",
+            )
+
+            result = import_validated_yaml(str(candidate), str(target))
+            self.assertFalse(result.get("ok"))
+            self.assertEqual("validation_failed", result.get("error_code"))
+            self.assertFalse(target.exists())
 
     def test_validate_candidate_yaml_blocks_warnings_in_strict_mode(self):
         with tempfile.TemporaryDirectory() as td:

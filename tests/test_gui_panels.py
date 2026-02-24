@@ -692,6 +692,48 @@ class GuiPanelRegressionTests(_NoStagePreflightMixin, ManagedPathTestCase):
         warning_text = str(warn_mock.call_args[0][2])
         self.assertIn("meta.color_key", warning_text)
 
+    def test_settings_dialog_accept_blocks_undeclared_record_fields_and_reports_names(self):
+        from app_gui.main import SettingsDialog
+
+        payload = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9,
+                    "cols": 9,
+                    "box_count": 5,
+                    "box_numbers": [1, 2, 3, 4, 5],
+                },
+                "custom_fields": [],
+            },
+            "inventory": [
+                {
+                    "id": 1,
+                    "box": 1,
+                    "position": 1,
+                    "frozen_at": "2025-01-01",
+                    "cell_line": "K562",
+                    "short_name": "K562_A1",
+                    "plasmid_name": "PB-demo",
+                    "note": None,
+                    "thaw_events": None,
+                }
+            ],
+        }
+        yaml_path = self.ensure_dataset_yaml("settings-undeclared-record-fields", payload=payload)
+        dialog = SettingsDialog(config={"yaml_path": yaml_path})
+
+        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock, patch(
+            "app_gui.ui.dialogs.settings_dialog.QDialog.accept"
+        ) as accept_mock:
+            dialog.accept()
+
+        warn_mock.assert_called_once()
+        accept_mock.assert_not_called()
+        warning_text = str(warn_mock.call_args[0][2])
+        self.assertIn("Unsupported inventory field(s)", warning_text)
+        self.assertIn("short_name", warning_text)
+        self.assertIn("plasmid_name", warning_text)
+
     def test_settings_dialog_accept_allows_custom_field_color_key(self):
         from app_gui.main import SettingsDialog
 

@@ -70,7 +70,7 @@ from app_gui.dataset_session import DatasetSessionController
 from app_gui.import_journey import ImportJourneyService
 from app_gui.migration_workspace import MigrationWorkspaceService
 
-APP_VERSION = "1.2.5"
+APP_VERSION = "1.2.6"
 APP_RELEASE_URL = "https://github.com/Eamon-fox/snowfox/releases"
 _GITHUB_API_LATEST = "https://api.github.com/repos/Eamon-fox/snowfox/releases/latest"
 _SETTINGS_EXPORTS = (PROVIDER_DEFAULTS,)

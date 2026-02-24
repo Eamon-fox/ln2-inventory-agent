@@ -21,6 +21,7 @@ STRUCTURAL_FIELD_KEYS = frozenset(
 
 _VALID_CUSTOM_TYPES = frozenset({"str", "int", "float", "date"})
 _BOX_TAG_MAX_LENGTH = 80
+_UNDECLARED_FIELD_RECORD_SAMPLE_LIMIT = 20
 
 ACTION_ALIAS = {
     "takeout": "takeout",
@@ -380,6 +381,55 @@ def _required_custom_fields(normalized_custom_fields: List[Dict[str, Any]]) -> L
     return sorted(set(required))
 
 
+def _allowed_record_field_keys(normalized_custom_fields: List[Dict[str, Any]]) -> set:
+    allowed = set(STRUCTURAL_FIELD_KEYS)
+    for item in normalized_custom_fields:
+        key = str((item or {}).get("key") or "").strip()
+        if key:
+            allowed.add(key)
+    return allowed
+
+
+def _check_undeclared_record_fields(
+    records: List[Dict[str, Any]],
+    normalized_custom_fields: List[Dict[str, Any]],
+) -> List[str]:
+    """Reject inventory record keys not declared by structural fields/custom_fields."""
+    allowed = _allowed_record_field_keys(normalized_custom_fields)
+    unknown_global = set()
+    unknown_by_record = []
+
+    for idx, rec in enumerate(records):
+        if not isinstance(rec, dict):
+            continue
+
+        unknown_keys = sorted(
+            {str(raw_key).strip() for raw_key in rec.keys() if str(raw_key).strip() not in allowed}
+        )
+        if not unknown_keys:
+            continue
+
+        unknown_global.update(unknown_keys)
+        unknown_by_record.append((_record_label(rec, idx), unknown_keys))
+
+    if not unknown_global:
+        return []
+
+    errors = [
+        "Unsupported inventory field(s): "
+        f"{', '.join(sorted(unknown_global))}. "
+        "Declare them in meta.custom_fields first."
+    ]
+    for label, keys in unknown_by_record[:_UNDECLARED_FIELD_RECORD_SAMPLE_LIMIT]:
+        errors.append(f"{label}: unsupported field(s): {', '.join(keys)}")
+
+    hidden_count = len(unknown_by_record) - _UNDECLARED_FIELD_RECORD_SAMPLE_LIMIT
+    if hidden_count > 0:
+        errors.append(f"... and {hidden_count} more record(s) with unsupported field(s)")
+
+    return errors
+
+
 def _selector_key_candidates(normalized_custom_fields: List[Dict[str, Any]]) -> List[str]:
     """Return allowed selector keys for meta.display_key/meta.color_key."""
     ordered = ["cell_line"]
@@ -666,6 +716,7 @@ def validate_inventory_document(data: Any) -> Tuple[List[str], List[str]]:
     errors.extend(contract_errors)
     errors.extend(_validate_meta_selection_keys(meta, normalized_custom_fields))
     required_custom_fields = _required_custom_fields(normalized_custom_fields)
+    errors.extend(_check_undeclared_record_fields(inventory, normalized_custom_fields))
 
     errors.extend(_check_inventory_boxes_match_layout(inventory, layout))
 
