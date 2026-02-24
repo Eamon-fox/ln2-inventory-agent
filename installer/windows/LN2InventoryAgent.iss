@@ -6,7 +6,7 @@
 
 #define MyAppVersion GetEnv("LN2_AGENT_VERSION")
 #if MyAppVersion == ""
-  #define MyAppVersion "1.2.4"
+  #define MyAppVersion "1.2.5"
 #endif
 
 #define MyAppExeName "SnowFox-" + MyAppVersion + ".exe"
@@ -142,24 +142,29 @@ begin
     else
       ThemeCode := 'dark';
 
-    StringList := TStringList.Create;
-    try
-      StringList.Add('yaml_path: ""');
-      StringList.Add('api_keys: {}');
-      StringList.Add('language: "' + LangCode + '"');
-      StringList.Add('theme: "' + ThemeCode + '"');
-      StringList.Add('last_notified_release: "0.0.0"');
-      StringList.Add('release_notes_preview: ""');
-      StringList.Add('import_onboarding_seen: false');
-      StringList.Add('ai:');
-      StringList.Add('  provider: deepseek');
-      StringList.Add('  model: null');
-      StringList.Add('  max_steps: 120');
-      StringList.Add('  thinking_enabled: true');
-      StringList.Add('  custom_prompt: ""');
-      StringList.SaveToFile(ConfigFile);
-    finally
-      StringList.Free;
+    // Preserve user config on reinstall/update.
+    // New keys are backfilled by app_gui/gui_config.py when the app launches.
+    if not FileExists(ConfigFile) then
+    begin
+      StringList := TStringList.Create;
+      try
+        StringList.Add('yaml_path: ""');
+        StringList.Add('api_keys: {}');
+        StringList.Add('language: "' + LangCode + '"');
+        StringList.Add('theme: "' + ThemeCode + '"');
+        StringList.Add('last_notified_release: "0.0.0"');
+        StringList.Add('release_notes_preview: ""');
+        StringList.Add('import_onboarding_seen: false');
+        StringList.Add('ai:');
+        StringList.Add('  provider: deepseek');
+        StringList.Add('  model: null');
+        StringList.Add('  max_steps: 120');
+        StringList.Add('  thinking_enabled: true');
+        StringList.Add('  custom_prompt: ""');
+        StringList.SaveToFile(ConfigFile);
+      finally
+        StringList.Free;
+      end;
     end;
   end;
 end;
