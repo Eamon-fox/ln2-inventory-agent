@@ -6,7 +6,7 @@
 
 #define MyAppVersion GetEnv("LN2_AGENT_VERSION")
 #if MyAppVersion == ""
-  #define MyAppVersion "1.2.1"
+  #define MyAppVersion "1.2.2"
 #endif
 
 #define MyAppExeName "SnowFox-" + MyAppVersion + ".exe"
@@ -57,6 +57,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\_internal\migrate\*"; DestDir: "{app}\migrate"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\_internal\migration_assets\*"; DestDir: "{app}\migration_assets"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\..\installer\windows\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]

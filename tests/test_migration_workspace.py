@@ -25,6 +25,38 @@ def test_workspace_init_requires_existing_root():
             MigrationWorkspaceService(str(missing))
 
 
+def test_workspace_init_bootstraps_from_internal_layout_when_available():
+    with tempfile.TemporaryDirectory() as td:
+        install_root = Path(td) / "SnowFox"
+        internal_migrate = install_root / "_internal" / "migrate"
+        (internal_migrate / "inputs").mkdir(parents=True, exist_ok=True)
+        (internal_migrate / "output").mkdir(parents=True, exist_ok=True)
+        (internal_migrate / "README.md").write_text("workspace", encoding="utf-8")
+
+        internal_template = (
+            install_root
+            / "_internal"
+            / "migration_assets"
+            / "templates"
+            / "acceptance_checklist_en.md"
+        )
+        internal_template.parent.mkdir(parents=True, exist_ok=True)
+        internal_template.write_text("# Checklist\n", encoding="utf-8")
+
+        requested_root = install_root / "migrate"
+        svc = MigrationWorkspaceService(str(requested_root))
+
+        assert Path(svc.workspace_root) == requested_root.resolve()
+        assert (install_root / "migrate" / "inputs").is_dir()
+        assert (install_root / "migrate" / "output").is_dir()
+        assert (
+            install_root
+            / "migration_assets"
+            / "templates"
+            / "acceptance_checklist_en.md"
+        ).is_file()
+
+
 def test_stage_input_files_resets_inputs_and_copies_sources():
     with tempfile.TemporaryDirectory() as td:
         root = Path(td) / "migrate"

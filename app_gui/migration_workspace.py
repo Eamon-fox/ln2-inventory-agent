@@ -31,6 +31,7 @@ class MigrationWorkspaceService:
             "acceptance_checklist_en.md",
         )
         self._normalized = os.path.join(self._root, "normalized")
+        self._bootstrap_workspace_from_internal_layout()
         self._assert_workspace_layout()
 
     @property
@@ -147,6 +148,33 @@ class MigrationWorkspaceService:
             raise MigrationWorkspaceError(f"migration normalized path is invalid: {self._normalized}")
         if not os.path.isdir(self._normalized):
             os.makedirs(self._normalized, exist_ok=True)
+
+    def _bootstrap_workspace_from_internal_layout(self) -> None:
+        """Backfill install-root migrate/ + migration_assets/ from PyInstaller _internal."""
+        if os.path.isdir(self._root):
+            return
+
+        internal_root = os.path.join(self._install_root, "_internal")
+        internal_migrate = os.path.join(internal_root, "migrate")
+        internal_assets = os.path.join(internal_root, "migration_assets")
+        if not os.path.isdir(internal_migrate):
+            return
+
+        try:
+            shutil.copytree(internal_migrate, self._root, dirs_exist_ok=True)
+        except Exception as exc:
+            raise MigrationWorkspaceError(
+                f"failed to bootstrap migration workspace: {self._root} ({exc})"
+            ) from exc
+
+        if os.path.isdir(internal_assets):
+            target_assets = os.path.join(self._install_root, "migration_assets")
+            try:
+                shutil.copytree(internal_assets, target_assets, dirs_exist_ok=True)
+            except Exception as exc:
+                raise MigrationWorkspaceError(
+                    f"failed to bootstrap migration assets: {target_assets} ({exc})"
+                ) from exc
 
     @staticmethod
     def _dedupe_name(name: str, used_names: set) -> str:
