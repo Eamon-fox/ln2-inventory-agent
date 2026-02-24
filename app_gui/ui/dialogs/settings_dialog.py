@@ -40,7 +40,7 @@ from lib.import_validation_core import validate_inventory_document
 from lib.validators import format_validation_errors
 from lib.yaml_ops import load_yaml
 
-APP_VERSION = "1.2.2"
+APP_VERSION = "1.2.3"
 APP_RELEASE_URL = "https://github.com/Eamon-fox/snowfox/releases"
 _GITHUB_API_LATEST = "https://api.github.com/repos/Eamon-fox/snowfox/releases/latest"
 

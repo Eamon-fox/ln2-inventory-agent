@@ -295,7 +295,7 @@ class DeepSeekLLMClient(LLMClient):
                 "Authorization": f"Bearer {self._api_key}",
                 "Content-Type": "application/json",
                 "Accept": "text/event-stream",
-                "User-Agent": "SnowFox/1.2.2",
+                "User-Agent": "SnowFox/1.2.3",
             },
         )
 
