@@ -4,7 +4,6 @@ import os
 import sys
 import urllib.request
 import urllib.error
-import json
 import tempfile
 import subprocess
 import shutil
@@ -13,72 +12,22 @@ import shutil
 class AutoUpdater:
     """Handle automatic downloading and installation of updates."""
 
-    def __init__(self, latest_tag, release_notes, on_progress=None, on_complete=None, on_error=None):
-        """
-        Initialize auto updater.
-
-        Args:
-            latest_tag: Latest version tag (e.g., "1.2.0")
-            release_notes: Release notes text
-            on_progress: Callback(progress, message) for download progress
-            on_complete: Callback(success, message) when download/install complete
-            on_error: Callback(error_message) on error
-        """
+    def __init__(self, latest_tag, release_notes, download_url="",
+                 on_progress=None, on_complete=None, on_error=None):
         self.latest_tag = latest_tag
         self.release_notes = release_notes
         self.on_progress = on_progress
         self.on_complete = on_complete
         self.on_error = on_error
-        self.download_url = None
+        self.download_url = download_url
         self.temp_dir = None
-
-    def find_installer_url(self):
-        """Find the installer download URL from GitHub release assets."""
-        try:
-            api_url = "https://api.github.com/repos/Eamon-fox/snowfox/releases/latest"
-            req = urllib.request.Request(
-                api_url,
-                headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "SnowFox"},
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read())
-
-            assets = data.get("assets", [])
-            installer_name = f"SnowFox-Setup-{self.latest_tag}.exe"
-
-            # Look for the installer
-            for asset in assets:
-                if asset.get("name") == installer_name:
-                    self.download_url = asset.get("browser_download_url")
-                    return self.download_url
-
-            # Fallback: try old naming convention
-            installer_name_old = f"LN2InventoryAgent-Setup-{self.latest_tag}.exe"
-            for asset in assets:
-                if asset.get("name") == installer_name_old:
-                    self.download_url = asset.get("browser_download_url")
-                    return self.download_url
-
-            # If not found, use the first .exe asset
-            for asset in assets:
-                if asset.get("name", "").endswith(".exe"):
-                    self.download_url = asset.get("browser_download_url")
-                    return self.download_url
-
-            raise Exception(f"No installer found for version {self.latest_tag}")
-
-        except Exception as e:
-            if self.on_error:
-                self.on_error(f"Failed to find installer: {str(e)}")
-            raise
 
     def download_installer(self):
         """Download the installer to a temporary directory."""
         try:
             if not self.download_url:
-                self.find_installer_url()
+                raise Exception("No download URL provided")
 
-            # Create temp directory
             self.temp_dir = tempfile.mkdtemp(prefix="snowfox_update_")
             installer_path = os.path.join(self.temp_dir, f"SnowFox-Setup-{self.latest_tag}.exe")
 
@@ -122,60 +71,69 @@ class AutoUpdater:
             raise
 
     def install_and_restart(self, installer_path):
-        """Run the installer and restart the application."""
+        """Create an update script and signal ready to exit.
+
+        A batch script is spawned as a detached process that:
+        1. Waits for the current app process to exit (file locks released)
+        2. Runs the Inno Setup installer silently
+        3. Launches the newly installed executable
+        4. Cleans up the temporary download directory
+        The caller (main_window_flows) is responsible for quitting the app.
+        """
         try:
             if self.on_progress:
-                self.on_progress(100, "Starting installer...")
+                self.on_progress(100, "Preparing update...")
 
-            # Get the current executable path
+            current_pid = os.getpid()
+
             if getattr(sys, 'frozen', False):
-                current_exe = sys.executable
+                install_dir = os.path.dirname(sys.executable)
             else:
-                current_exe = os.path.abspath(sys.argv[0])
+                install_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
 
-            # Run the installer silently with auto-upgrade
-            # /SILENT - Silent installation
-            # /DIR="path" - Installation directory
-            # /NORESTART - Don't restart automatically
-            # /UPDATE - Update existing installation
-            installer_cmd = [
-                installer_path,
-                "/SILENT",
-                "/UPDATE",
-                "/NORESTART",
-            ]
+            new_exe = f"SnowFox-{self.latest_tag}.exe"
+            script_path = os.path.join(self.temp_dir, "snowfox_update.bat")
 
-            # Try to install to the same directory as current installation
-            if getattr(sys, 'frozen', False):
-                install_dir = os.path.dirname(current_exe)
-                installer_cmd.append(f'/DIR="{install_dir}"')
-
-            # Start the installer as a separate process
-            subprocess.Popen(
-                installer_cmd,
-                shell=True,
-                close_fds=True
+            script_content = (
+                '@echo off\r\n'
+                ':wait\r\n'
+                f'tasklist /FI "PID eq {current_pid}" 2>NUL | find /I "{current_pid}" >NUL\r\n'
+                'if "%ERRORLEVEL%"=="0" (\r\n'
+                '    timeout /t 1 /nobreak >nul\r\n'
+                '    goto wait\r\n'
+                ')\r\n'
+                'timeout /t 1 /nobreak >nul\r\n'
+                f'"{installer_path}" /SILENT /UPDATE /NORESTART /DIR="{install_dir}"\r\n'
+                f'if exist "{os.path.join(install_dir, new_exe)}" (\r\n'
+                f'    start "" "{os.path.join(install_dir, new_exe)}"\r\n'
+                ')\r\n'
+                'timeout /t 2 /nobreak >nul\r\n'
+                f'cd /d "%TEMP%"\r\n'
+                f'rmdir /s /q "{self.temp_dir}" 2>nul\r\n'
             )
 
-            # Mark that we're updating
+            with open(script_path, 'w', encoding='utf-8') as f:
+                f.write(script_content)
+
+            CREATE_NO_WINDOW = 0x08000000
+            CREATE_NEW_PROCESS_GROUP = 0x00000200
+            subprocess.Popen(
+                ['cmd', '/c', script_path],
+                creationflags=CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP,
+                close_fds=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+
+            # Let the batch script handle temp dir cleanup
+            self.temp_dir = None
+
             if self.on_complete:
-                self.on_complete(True, "Update installed. SnowFox will restart shortly.")
-
-            # Exit the current application
-            QTimer = __import__('PySide6.QtCore').QTimer
-            from PySide6.QtWidgets import QApplication
-            app = QApplication.instance()
-
-            def _exit_app():
-                app.quit()
-
-            QTimer.singleShot(1000, _exit_app)
+                self.on_complete(True, "Update ready. Application will restart.")
 
         except Exception as e:
             if self.on_error:
                 self.on_error(f"Installation failed: {str(e)}")
-            if self.on_complete:
-                self.on_complete(False, str(e))
             raise
 
     def cleanup(self):

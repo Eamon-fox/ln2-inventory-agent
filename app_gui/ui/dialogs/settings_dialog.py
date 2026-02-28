@@ -42,7 +42,7 @@ from lib.yaml_ops import load_yaml
 
 APP_VERSION = "1.2.6"
 APP_RELEASE_URL = "https://github.com/Eamon-fox/snowfox/releases"
-_GITHUB_API_LATEST = "https://api.github.com/repos/Eamon-fox/snowfox/releases/latest"
+_GITHUB_API_LATEST = "https://snowfox-release.oss-cn-beijing.aliyuncs.com/latest.json"
 
 if getattr(sys, "frozen", False):
     ROOT = sys._MEIPASS
@@ -708,7 +708,7 @@ class SettingsDialog(QDialog):
         return final_confirm.clickedButton() == final_delete_btn
 
     def _on_check_update(self):
-        """Manually check for updates from GitHub."""
+        """Manually check for updates from OSS."""
         self._check_update_btn.setEnabled(False)
         self._check_update_btn.setText(tr("settings.checking"))
         import threading
@@ -719,19 +719,20 @@ class SettingsDialog(QDialog):
                 import json
                 req = urllib.request.Request(
                     self._github_api_latest,
-                    headers={"Accept": "application/vnd.github.v3+json",
-                             "User-Agent": "LN2InventoryAgent"},
+                    headers={"User-Agent": "SnowFox"},
                 )
                 with urllib.request.urlopen(req, timeout=8) as resp:
                     data = json.loads(resp.read())
-                latest_tag = data.get("tag_name", "").lstrip("v")
-                body = (data.get("body") or "")[:200]
+                latest_tag = str(data.get("version", "")).strip()
+                body = str(data.get("release_notes", ""))[:200]
+                download_url = str(data.get("download_url", ""))
                 from PySide6.QtCore import QMetaObject, Qt, Q_ARG
                 QMetaObject.invokeMethod(
                     self, "_on_check_update_result",
                     Qt.QueuedConnection,
                     Q_ARG(str, latest_tag),
                     Q_ARG(str, body),
+                    Q_ARG(str, download_url),
                 )
             except Exception as e:
                 from PySide6.QtCore import QMetaObject, Qt, Q_ARG
@@ -740,12 +741,13 @@ class SettingsDialog(QDialog):
                     Qt.QueuedConnection,
                     Q_ARG(str, ""),
                     Q_ARG(str, str(e)),
+                    Q_ARG(str, ""),
                 )
 
         threading.Thread(target=_fetch, daemon=True).start()
 
-    @Slot(str, str)
-    def _on_check_update_result(self, latest_tag, info):
+    @Slot(str, str, str)
+    def _on_check_update_result(self, latest_tag, info, download_url):
         """Handle update check result in main thread."""
         self._check_update_btn.setEnabled(True)
         self._check_update_btn.setText(tr("settings.checkUpdate"))
@@ -754,9 +756,19 @@ class SettingsDialog(QDialog):
                                 t("settings.checkUpdateFailed", error=info))
             return
         if _is_version_newer(latest_tag, self._app_version):
-            QMessageBox.information(
-                self, tr("settings.checkUpdate"),
-                t("settings.newVersionAvailable", version=latest_tag, notes=info))
+            box = QMessageBox(self)
+            box.setWindowTitle(tr("settings.checkUpdate"))
+            box.setText(t("settings.newVersionAvailable", version=latest_tag, notes=info))
+            box.setIcon(QMessageBox.Information)
+            update_btn = box.addButton(tr("main.newReleaseUpdate"), QMessageBox.AcceptRole)
+            box.addButton(tr("main.newReleaseLater"), QMessageBox.RejectRole)
+            box.exec()
+            if box.clickedButton() == update_btn:
+                main_window = self.parent()
+                if hasattr(main_window, "_startup_flow"):
+                    self.close()
+                    main_window._startup_flow.start_automatic_update(
+                        latest_tag, info, download_url)
         else:
             QMessageBox.information(
                 self, tr("settings.checkUpdate"),

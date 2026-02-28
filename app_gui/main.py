@@ -72,7 +72,7 @@ from app_gui.migration_workspace import MigrationWorkspaceService
 
 APP_VERSION = "1.2.6"
 APP_RELEASE_URL = "https://github.com/Eamon-fox/snowfox/releases"
-_GITHUB_API_LATEST = "https://api.github.com/repos/Eamon-fox/snowfox/releases/latest"
+_UPDATE_CHECK_URL = "https://snowfox-release.oss-cn-beijing.aliyuncs.com/latest.json"
 _SETTINGS_EXPORTS = (PROVIDER_DEFAULTS,)
 
 
@@ -270,7 +270,7 @@ class MainWindow(QMainWindow):
             self,
             app_version=APP_VERSION,
             release_url=APP_RELEASE_URL,
-            github_api_latest=_GITHUB_API_LATEST,
+            github_api_latest=_UPDATE_CHECK_URL,
             is_version_newer=_is_version_newer,
             show_nonblocking_dialog=self._show_nonblocking_dialog,
             start_import_journey=self.on_import_existing_data,
@@ -491,9 +491,9 @@ class MainWindow(QMainWindow):
     def _check_release_notice_once(self):
         self._startup_flow.check_release_notice_once()
 
-    @Slot(str, str)
-    def _show_update_dialog(self, latest_tag, release_notes):
-        self._startup_flow.show_update_dialog(latest_tag, release_notes)
+    @Slot(str, str, str)
+    def _show_update_dialog(self, latest_tag, release_notes, download_url):
+        self._startup_flow.show_update_dialog(latest_tag, release_notes, download_url)
 
     def _check_empty_inventory_onboarding(self):
         self._startup_flow.check_empty_inventory_onboarding()
@@ -572,7 +572,7 @@ class MainWindow(QMainWindow):
             on_data_changed=self._on_settings_data_changed,
             app_version=APP_VERSION,
             app_release_url=APP_RELEASE_URL,
-            github_api_latest=_GITHUB_API_LATEST,
+            github_api_latest=_UPDATE_CHECK_URL,
             root_dir=ROOT,
             on_import_existing_data=self.on_import_existing_data,
             on_export_inventory_csv=self.operations_panel.on_export_inventory_csv,

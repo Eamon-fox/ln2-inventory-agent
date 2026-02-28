@@ -59,7 +59,7 @@ class StartupFlow:
         save_gui_config(window.gui_config)
 
     def check_release_notice_once(self):
-        """Fetch latest release in background and notify if newer."""
+        """Fetch latest release info from OSS and notify if newer."""
         import threading
 
         window = self._window
@@ -72,33 +72,32 @@ class StartupFlow:
 
                 req = urllib.request.Request(
                     self._github_api_latest,
-                    headers={
-                        "Accept": "application/vnd.github.v3+json",
-                        "User-Agent": "LN2InventoryAgent",
-                    },
+                    headers={"User-Agent": "SnowFox"},
                 )
                 with urllib.request.urlopen(req, timeout=8) as resp:
                     data = json.loads(resp.read())
-                latest_tag = str(data.get("tag_name", "")).strip().lstrip("vV")
-                if not self._is_version_newer(latest_tag, self._app_version):
+                latest_tag = str(data.get("version", "")).strip()
+                if not latest_tag or not self._is_version_newer(latest_tag, self._app_version):
                     return
                 last_notified = window.gui_config.get("last_notified_release", "0.0.0")
                 if not self._is_version_newer(latest_tag, last_notified):
                     return
-                body = (data.get("body") or "")[:200]
+                body = str(data.get("release_notes", ""))[:200]
+                download_url = str(data.get("download_url", ""))
                 QMetaObject.invokeMethod(
                     window,
                     "_show_update_dialog",
                     Qt.QueuedConnection,
                     Q_ARG(str, latest_tag),
                     Q_ARG(str, body),
+                    Q_ARG(str, download_url),
                 )
             except Exception as exc:
                 print("[VersionCheck] %s" % exc)
 
         threading.Thread(target=_fetch_and_notify, daemon=True).start()
 
-    def show_update_dialog(self, latest_tag, release_notes):
+    def show_update_dialog(self, latest_tag, release_notes, download_url=""):
         """Show update notification dialog in main thread."""
         try:
             title = tr("main.newReleaseTitle")
@@ -126,7 +125,7 @@ class StartupFlow:
 
             def _handle_button(clicked):
                 if clicked == update_btn:
-                    self.start_automatic_update(latest_tag, release_notes)
+                    self.start_automatic_update(latest_tag, release_notes, download_url)
                 elif clicked == copy_btn:
                     try:
                         QApplication.clipboard().setText(self._release_url)
@@ -147,9 +146,9 @@ class StartupFlow:
         except Exception as exc:
             print("[VersionCheck] Dialog failed: %s" % exc)
 
-    def start_automatic_update(self, latest_tag, release_notes):
+    def start_automatic_update(self, latest_tag, release_notes, download_url=""):
         """Run automatic update with progress dialog."""
-        from PySide6.QtCore import Qt
+        from PySide6.QtCore import Qt, QObject, Signal
         from PySide6.QtWidgets import QApplication, QProgressDialog
 
         from app_gui.auto_updater import AutoUpdater
@@ -163,15 +162,24 @@ class StartupFlow:
         progress.setCancelButton(None)
         progress.show()
 
+        # Signal bridge: marshal callbacks from download thread → main thread
+        class _UpdateBridge(QObject):
+            sig_progress = Signal(int, str)
+            sig_complete = Signal(bool, str)
+            sig_error = Signal(str)
+
+        bridge = _UpdateBridge(parent=window)
+
         def _on_progress(progress_value, message):
             progress.setValue(progress_value)
             progress.setLabelText(message)
-            QApplication.processEvents()
 
         def _on_complete(success, message):
             progress.close()
             if success:
                 self._show_status_box(tr("main.updateComplete"), message, QMessageBox.Information)
+                app = QApplication.instance()
+                QTimer.singleShot(300, app.quit)
             else:
                 self._show_status_box(
                     tr("main.updateFailed"),
@@ -183,12 +191,17 @@ class StartupFlow:
             progress.close()
             self._show_status_box(tr("main.updateFailed"), error_message, QMessageBox.Warning)
 
+        bridge.sig_progress.connect(_on_progress)
+        bridge.sig_complete.connect(_on_complete)
+        bridge.sig_error.connect(_on_error)
+
         updater = AutoUpdater(
             latest_tag=latest_tag,
             release_notes=release_notes,
-            on_progress=lambda p, msg: _on_progress(p, msg),
-            on_complete=lambda success, msg: _on_complete(success, msg),
-            on_error=lambda err: _on_error(err),
+            download_url=download_url,
+            on_progress=bridge.sig_progress.emit,
+            on_complete=bridge.sig_complete.emit,
+            on_error=bridge.sig_error.emit,
         )
         updater.start_update()
 
