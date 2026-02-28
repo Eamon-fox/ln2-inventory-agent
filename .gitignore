@@ -62,3 +62,6 @@ migrate/output/*
 htmlcov/
 .tox/
 *.cover
+
+# Local changelog (use GitHub Releases for published notes)
+CHANGELOG.md
