@@ -73,67 +73,71 @@ def execute_plan(self):
         return
 
     original_plan = list(plan_items)
-    report = run_plan(yaml_path, plan_items, self.bridge, mode="execute")
-    results = self._collect_execution_results(report)
-    _, rollback_info, fail_count = self._finalize_plan_store_after_execution(
-        report=report,
-        results=results,
-        original_plan=original_plan,
-        yaml_path=yaml_path,
-    )
+    try:
+        report = run_plan(yaml_path, plan_items, self.bridge, mode="execute")
+        results = self._collect_execution_results(report)
+        _, rollback_info, fail_count = self._finalize_plan_store_after_execution(
+            report=report,
+            results=results,
+            original_plan=original_plan,
+            yaml_path=yaml_path,
+        )
 
-    self._run_plan_preflight(trigger="post_execute")
-    self._refresh_after_plan_items_changed()
-    execution_stats = summarize_plan_execution(report, rollback_info)
-    self._show_plan_result(
-        results,
-        report=report,
-        rollback_info=rollback_info,
-        execution_stats=execution_stats,
-    )
+        self._run_plan_preflight(trigger="post_execute")
+        self._refresh_after_plan_items_changed()
+        execution_stats = summarize_plan_execution(report, rollback_info)
+        self._show_plan_result(
+            results,
+            report=report,
+            rollback_info=rollback_info,
+            execution_stats=execution_stats,
+        )
 
-    executed_items = [r[1] for r in results if r[0] == "OK"]
-    if execution_stats.get("rollback_ok"):
-        executed_items = []
-    self._last_executed_plan = list(executed_items)
+        executed_items = [r[1] for r in results if r[0] == "OK"]
+        if execution_stats.get("rollback_ok"):
+            executed_items = []
+        self._last_executed_plan = list(executed_items)
 
-    if report.get("ok") and any(r[0] == "OK" for r in results):
-        self.operation_completed.emit(True)
-    elif fail_count:
-        self.operation_completed.emit(False)
+        if report.get("ok") and any(r[0] == "OK" for r in results):
+            self.operation_completed.emit(True)
+        elif fail_count:
+            self.operation_completed.emit(False)
 
-    last_backup = report.get("backup_path")
-    undo_eligible_items = [it for it in executed_items if _is_undo_eligible_item(it)]
-    if last_backup and undo_eligible_items:
-        self._last_operation_backup = last_backup
-        self._enable_undo(timeout_sec=30)
-    else:
-        self._disable_undo(clear_last_executed=not bool(executed_items))
+        last_backup = report.get("backup_path")
+        undo_eligible_items = [it for it in executed_items if _is_undo_eligible_item(it)]
+        if last_backup and undo_eligible_items:
+            self._last_operation_backup = last_backup
+            self._enable_undo(timeout_sec=30)
+        else:
+            self._disable_undo(clear_last_executed=not bool(executed_items))
 
-    summary_text = self._build_execution_summary_text(execution_stats)
-    notice_level = "success"
-    if execution_stats.get("fail_count", 0) > 0:
-        notice_level = _execution_failure_level(execution_stats)
-    base_stats = report.get("stats") if isinstance(report.get("stats"), dict) else {}
-    stats_payload = dict(base_stats) if isinstance(base_stats, dict) else {}
-    stats_payload["applied"] = execution_stats.get("applied_count", 0)
-    stats_payload["failed"] = execution_stats.get("fail_count", 0)
-    stats_payload["rolled_back"] = bool(execution_stats.get("rollback_ok"))
-    result_sample = self._build_execution_result_sample(results)
-    self._publish_system_notice(
-        code="plan.execute.result",
-        text=summary_text,
-        level=notice_level,
-        timeout=5000,
-        details=summary_text,
-        data={
-            "ok": bool(report.get("ok")),
-            "stats": stats_payload,
-            "report": report,
-            "rollback": rollback_info,
-            "sample": result_sample,
-        },
-    )
+        summary_text = self._build_execution_summary_text(execution_stats)
+        notice_level = "success"
+        if execution_stats.get("fail_count", 0) > 0:
+            notice_level = _execution_failure_level(execution_stats)
+        base_stats = report.get("stats") if isinstance(report.get("stats"), dict) else {}
+        stats_payload = dict(base_stats) if isinstance(base_stats, dict) else {}
+        stats_payload["applied"] = execution_stats.get("applied_count", 0)
+        stats_payload["failed"] = execution_stats.get("fail_count", 0)
+        stats_payload["rolled_back"] = bool(execution_stats.get("rollback_ok"))
+        result_sample = self._build_execution_result_sample(results)
+        self._publish_system_notice(
+            code="plan.execute.result",
+            text=summary_text,
+            level=notice_level,
+            timeout=5000,
+            details=summary_text,
+            data={
+                "ok": bool(report.get("ok")),
+                "stats": stats_payload,
+                "report": report,
+                "rollback": rollback_info,
+                "sample": result_sample,
+            },
+        )
+    finally:
+        from app_gui.plan_executor import clear_write_through_cache
+        clear_write_through_cache()
 
 def _build_execute_confirmation_lines(self, plan_items, yaml_path):
     lines = []

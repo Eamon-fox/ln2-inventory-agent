@@ -15,6 +15,34 @@ from lib.tool_api_write_validation import resolve_request_backup_path
 from lib.yaml_ops import load_yaml, write_yaml
 
 
+_source_yaml_cache: dict = {}  # {(abs_path, mtime): data}
+
+
+def clear_write_through_cache():
+    """Clear the write-through cache after all post-execution work is done."""
+    from lib.yaml_ops import _write_through_cache
+    _write_through_cache.clear()
+
+
+def _load_source_yaml_cached(yaml_path):
+    """Load source YAML with mtime-based caching for repeated preflight calls."""
+    abs_path = os.path.abspath(yaml_path)
+    try:
+        mtime = os.path.getmtime(abs_path)
+    except OSError:
+        return load_yaml(yaml_path)
+    key = (abs_path, mtime)
+    cached = _source_yaml_cache.get(key)
+    if cached is not None:
+        from copy import deepcopy
+        return deepcopy(cached)
+    data = load_yaml(yaml_path)
+    _source_yaml_cache.clear()
+    _source_yaml_cache[key] = data
+    from copy import deepcopy
+    return deepcopy(data)
+
+
 def _make_error_item(item: Dict[str, object], error_code: str, message: str) -> Dict[str, object]:
     """Create an error report for a plan item."""
     return {
@@ -477,7 +505,7 @@ def preflight_plan(
         )
 
     try:
-        data = load_yaml(yaml_path)
+        data = _load_source_yaml_cached(yaml_path)
     except Exception as exc:
         return _build_preflight_blocked_result(
             items,
@@ -489,26 +517,27 @@ def preflight_plan(
     tmp_dataset_dir, tmp_path = _allocate_preflight_yaml_path(yaml_path)
 
     try:
-        write_yaml(data, tmp_path, auto_backup=False, audit_meta={"action": "preflight", "source": "plan_executor"})
-    except Exception as exc:
-        with suppress(Exception):
-            shutil.rmtree(tmp_dataset_dir)
-        return _build_preflight_blocked_result(
-            items,
-            error_code="preflight_snapshot_invalid",
-            message=str(exc),
-            summary=f"Preflight blocked before simulation: {exc}",
-        )
+        from pathlib import Path
+        from copy import deepcopy
 
-    try:
-        result = run_plan(
-            yaml_path=tmp_path,
-            items=items,
-            bridge=bridge,
-            date_str=date_str,
-            mode="preflight",
-        )
-        return result
+        Path(tmp_path).touch()  # marker for os.path.isfile/exists checks
+
+        # Seed the source-level cache in yaml_ops
+        from lib.yaml_ops import _preflight_cache
+        cache_key = os.path.normcase(os.path.normpath(os.path.abspath(tmp_path)))
+        _preflight_cache[cache_key] = deepcopy(data)
+
+        try:
+            result = run_plan(
+                yaml_path=tmp_path,
+                items=items,
+                bridge=bridge,
+                date_str=date_str,
+                mode="preflight",
+            )
+            return result
+        finally:
+            _preflight_cache.pop(cache_key, None)
     finally:
         with suppress(Exception):
             shutil.rmtree(tmp_dataset_dir)
@@ -595,6 +624,17 @@ def run_plan(
             # In-memory/test execution may run with a virtual path. Let tool-level
             # validation report the concrete failure instead of hard-blocking here.
             request_backup_path = None
+
+    # Seed write-through cache for execute mode to avoid redundant disk reads
+    _wt_cache_key = None
+    if mode == "execute":
+        from lib.yaml_ops import _write_through_cache
+        from copy import deepcopy
+        _wt_cache_key = os.path.normcase(os.path.normpath(os.path.abspath(yaml_path)))
+        try:
+            _write_through_cache[_wt_cache_key] = deepcopy(load_yaml(yaml_path))
+        except Exception:
+            _wt_cache_key = None
 
     remaining = list(items)
 

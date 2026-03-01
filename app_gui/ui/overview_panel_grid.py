@@ -188,7 +188,12 @@ def _on_plan_store_changed(self):
 
 
 def _repaint_all_cells(self):
-    """Repaint all cell buttons using cached data."""
+    """Repaint all cell buttons using cached data.
+
+    Uses render-signature caching (same as refresh()) to skip cells
+    whose visual state has not changed, avoiding expensive setStyleSheet
+    calls on every plan-store mutation.
+    """
     record_map = {}
     cached_map = getattr(self, "overview_pos_map", None)
     if isinstance(cached_map, dict) and cached_map:
@@ -203,8 +208,16 @@ def _repaint_all_cells(self):
             if box is not None and pos is not None:
                 record_map[(box, pos)] = rec
 
+    signatures = getattr(self, "_cell_render_signatures", None)
+    if not isinstance(signatures, dict):
+        signatures = {}
+        self._cell_render_signatures = signatures
+
     for (box_num, position), button in self.overview_cells.items():
         record = record_map.get((box_num, position))
+        sig = _build_cell_render_signature(self, box_num, position, record)
+        if signatures.get((box_num, position)) == sig:
+            continue
         self._paint_cell(button, box_num, position, record)
 
 

@@ -24,6 +24,18 @@ from .inventory_paths import (
 from .position_fmt import get_box_numbers, get_total_slots
 from .validators import format_validation_errors, validate_inventory
 
+# ── Preflight I/O cache (populated by plan_executor) ──────────────
+# key = normcase(normpath(abspath(path)))
+# value = deep-copied inventory data dict
+# When a path is present here, load_yaml returns deepcopy(cached),
+# and write_yaml updates the cache instead of writing to disk.
+_preflight_cache: dict = {}
+
+# ── Write-through cache (populated by plan_executor during execute) ───
+# Same key scheme as _preflight_cache.
+# Reads serve from cache; writes go to disk AND update cache.
+_write_through_cache: dict = {}
+
 _COMMON_CJK_CHARS = set(
     "\u7684\u4e00\u662f\u5728\u4e0d\u4e86\u6709\u548c\u4eba\u8fd9\u4e2d\u5927\u4e0a\u4e2a\u56fd"
     "\u6211\u4ee5\u8981\u4ed6\u65f6\u6765\u7528\u4eec\u5230\u4f5c\u5730\u4e8e\u51fa\u5c31\u5206\u5bf9"
@@ -301,6 +313,14 @@ def _repair_mojibake_values(node: Any) -> Any:
 def load_yaml(path=YAML_PATH):
     """Load YAML file and return data."""
     abs_path = _abs_path(path)
+    # Preflight cache: serve from memory if path is cached
+    cache_key = os.path.normcase(os.path.normpath(abs_path))
+    if cache_key in _preflight_cache:
+        from copy import deepcopy
+        return deepcopy(_preflight_cache[cache_key])
+    if cache_key in _write_through_cache:
+        from copy import deepcopy
+        return deepcopy(_write_through_cache[cache_key])
     with open(abs_path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
     return _repair_mojibake_values(data)
@@ -711,6 +731,13 @@ def write_yaml(
     """
     yaml_abs = assert_allowed_inventory_yaml_path(_abs_path(path))
 
+    # Preflight cache: store in memory instead of writing to disk
+    cache_key = os.path.normcase(os.path.normpath(yaml_abs))
+    if cache_key in _preflight_cache:
+        from copy import deepcopy
+        _preflight_cache[cache_key] = deepcopy(data)
+        return None
+
     _ensure_inventory_integrity(data, prefix="完整性校验失败")
 
     existing_instance_id = None
@@ -754,6 +781,11 @@ def write_yaml(
 
     with open(yaml_abs, "w", encoding="utf-8") as f:
         yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False, width=120)
+
+    # Update write-through cache if active
+    if cache_key in _write_through_cache:
+        from copy import deepcopy
+        _write_through_cache[cache_key] = deepcopy(data)
 
     warnings = []
     warnings.extend(emit_capacity_warnings(data))
