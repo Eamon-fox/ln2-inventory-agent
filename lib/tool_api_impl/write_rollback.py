@@ -4,6 +4,7 @@ import os
 
 from ..path_policy import PathPolicyError, resolve_dataset_backup_read_path
 from ..yaml_ops import load_yaml, rollback_yaml
+from .audit_details import rollback_details as _rollback_details
 from .write_common import api
 
 
@@ -31,12 +32,10 @@ def tool_rollback(
         }
 
     def _details_for_target(target_path=None):
-        details = {}
-        if target_path not in (None, ""):
-            details["requested_backup"] = target_path
-        if normalized_source_event:
-            details["requested_from_event"] = dict(normalized_source_event)
-        return details or None
+        return _rollback_details(
+            requested_backup=target_path,
+            requested_from_event=normalized_source_event or None,
+        )
 
     tool_input = {
         "backup_path": backup_path,

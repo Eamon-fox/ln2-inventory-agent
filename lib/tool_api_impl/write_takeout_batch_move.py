@@ -6,10 +6,10 @@ from copy import deepcopy
 from ..operations import find_record_by_id
 from ..validators import validate_box
 from ..yaml_ops import write_yaml
+from .audit_details import _extract_custom_fields, move_details
 from .write_common import (
     api,
     append_record_events_or_failure,
-    build_batch_write_details,
     build_integrity_failure,
     build_write_failed_result,
     get_candidate_inventory_or_failure,
@@ -371,7 +371,7 @@ def _persist_move_plan(
     simulated_position = plan["simulated_position"]
     simulated_box = plan["simulated_box"]
     events_by_idx = plan["events_by_idx"]
-    details = build_batch_write_details(operations=operations, action_en=action_en, date_str=date_str)
+    _fail_details = {"op": "move", "count": len(operations), "date": date_str}
 
     try:
         candidate_data = deepcopy(data)
@@ -423,10 +423,29 @@ def _persist_move_plan(
                 actor_context=actor_context,
                 tool_input=tool_input,
                 before_data=data,
-                details=details,
+                details=_fail_details,
             )
 
         affected_ids = sorted({records[idx].get("id") for idx in touched_indices})
+        _details = move_details(
+            date=date_str,
+            moves=[
+                {
+                    "record_id": op["record_id"],
+                    "cell_line": op["record"].get("cell_line"),
+                    "short_name": op["record"].get("short_name"),
+                    "from_box": op["record"].get("box"),
+                    "from_position": op["old_position"],
+                    "to_box": op.get("to_box", op["record"].get("box")),
+                    "to_position": op["to_position"],
+                    "swap_with_record_id": op.get("swap_with_record_id"),
+                    "note": op["record"].get("note"),
+                    "custom_fields": _extract_custom_fields(op["record"]),
+                }
+                for op in operations
+            ],
+            affected_record_ids=affected_ids,
+        )
         _backup_path = write_yaml(
             candidate_data,
             yaml_path,
@@ -437,11 +456,7 @@ def _persist_move_plan(
                 source=source,
                 tool_name=tool_name,
                 actor_context=actor_context,
-                details={
-                    **details,
-                    "record_ids": [op["record_id"] for op in operations],
-                    "affected_record_ids": affected_ids,
-                },
+                details=_details,
                 tool_input={
                     "entries": list(normalized_entries),
                     "date": date_str,
@@ -460,7 +475,7 @@ def _persist_move_plan(
             before_data=data,
             exc=exc,
             message_prefix="Move update failed",
-            details=details,
+            details=_fail_details,
         )
 
     return _backup_path, affected_ids, None

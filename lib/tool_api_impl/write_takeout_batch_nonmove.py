@@ -4,10 +4,10 @@ from copy import deepcopy
 
 from ..operations import find_record_by_id
 from ..yaml_ops import write_yaml
+from .audit_details import _extract_custom_fields, failure_details, takeout_details
 from .write_common import (
     api,
     append_record_events_or_failure,
-    build_batch_write_details,
     build_integrity_failure,
     build_write_failed_result,
     get_candidate_inventory_or_failure,
@@ -116,7 +116,22 @@ def _persist_batch_nonmove_plan(
     auto_backup,
     request_backup_path,
 ):
-    details = build_batch_write_details(operations=operations, action_en=action_en, date_str=date_str)
+    _details = takeout_details(
+        action=action_en,
+        date=date_str,
+        records=[
+            {
+                "record_id": op["record_id"],
+                "cell_line": op["record"].get("cell_line"),
+                "short_name": op["record"].get("short_name"),
+                "box": op["record"].get("box"),
+                "position": op["position"],
+                "note": op["record"].get("note"),
+                "custom_fields": _extract_custom_fields(op["record"]),
+            }
+            for op in operations
+        ],
+    )
     try:
         candidate_data = deepcopy(data)
         candidate_records, failure = get_candidate_inventory_or_failure(
@@ -168,7 +183,7 @@ def _persist_batch_nonmove_plan(
                 actor_context=actor_context,
                 tool_input=tool_input,
                 before_data=data,
-                details=details,
+                details=_details,
             )
 
         _backup_path = write_yaml(
@@ -181,10 +196,7 @@ def _persist_batch_nonmove_plan(
                 source=source,
                 tool_name=tool_name,
                 actor_context=actor_context,
-                details={
-                    **details,
-                    "record_ids": [op["record_id"] for op in operations],
-                },
+                details=_details,
                 tool_input={
                     "entries": list(normalized_entries),
                     "date": date_str,
@@ -203,7 +215,7 @@ def _persist_batch_nonmove_plan(
             before_data=data,
             exc=exc,
             message_prefix="Batch update failed",
-            details=details,
+            details=_details,
         )
 
     return _backup_path, None

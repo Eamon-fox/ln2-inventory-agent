@@ -141,14 +141,6 @@ def append_record_events_or_failure(
     return None
 
 
-def build_batch_write_details(*, operations, action_en, date_str):
-    return {
-        "count": len(operations),
-        "action": action_en,
-        "date": date_str,
-    }
-
-
 def build_write_failed_result(
     *,
     yaml_path,

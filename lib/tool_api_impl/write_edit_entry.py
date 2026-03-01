@@ -6,6 +6,7 @@ from ..custom_fields import get_cell_line_options, get_effective_fields, is_cell
 from ..migrate_cell_line_policy import normalize_cell_line_policy_data
 from ..operations import find_record_by_id
 from ..yaml_ops import load_yaml, write_yaml
+from .audit_details import _extract_custom_fields, edit_entry_details, failure_details
 from .write_common import api
 
 _EDITABLE_FIELDS = {"frozen_at", "cell_line", "note"}
@@ -73,7 +74,7 @@ def tool_edit_entry(
             message=f"These fields are not editable: {', '.join(sorted(bad_keys))}",
             actor_context=actor_context,
             tool_input=tool_input,
-            details={"forbidden": sorted(bad_keys), "allowed": sorted(allowed)},
+            details=failure_details(op="edit_entry", forbidden=sorted(bad_keys), allowed=sorted(allowed)),
         )
 
     try:
@@ -148,7 +149,7 @@ def tool_edit_entry(
                     actor_context=actor_context,
                     tool_input=tool_input,
                     before_data=data,
-                    details={"cell_line": cell_line_text, "options": cell_line_options},
+                    details=failure_details(op="edit_entry", cell_line=cell_line_text, options=cell_line_options),
                 )
 
         normalized_fields["cell_line"] = cell_line_text
@@ -210,7 +211,16 @@ def tool_edit_entry(
                 source=source,
                 tool_name=tool_name,
                 actor_context=actor_context,
-                details={"record_id": record_id, "before": before, "after": dict(normalized_fields)},
+                details=edit_entry_details(
+                    record_id=record_id,
+                    cell_line=record.get("cell_line"),
+                    short_name=record.get("short_name"),
+                    box=record.get("box"),
+                    position=record.get("position"),
+                    field_changes={k: (before[k], normalized_fields[k]) for k in normalized_fields},
+                    note=record.get("note"),
+                    custom_fields=_extract_custom_fields(record),
+                ),
                 tool_input=tool_input,
             ),
         )

@@ -5,6 +5,7 @@ from copy import deepcopy
 from ..migrate_cell_line_policy import normalize_cell_line_policy_data
 from ..position_fmt import get_box_numbers
 from ..yaml_ops import load_yaml, write_yaml
+from .audit_details import failure_details, set_box_tag_details
 from .write_common import api
 
 
@@ -91,7 +92,7 @@ def tool_set_box_tag(
             message="box must be an integer",
             actor_context=actor_context,
             tool_input=tool_input,
-            details={"box": box},
+            details=failure_details(op="set_box_tag", box=box),
         )
     if box_num <= 0:
         return api._failure_result(
@@ -103,7 +104,7 @@ def tool_set_box_tag(
             message="box must be >= 1",
             actor_context=actor_context,
             tool_input=tool_input,
-            details={"box": box},
+            details=failure_details(op="set_box_tag", box=box),
         )
 
     normalized_tag, tag_error = _normalize_box_tag_value(tag)
@@ -117,7 +118,7 @@ def tool_set_box_tag(
             message=tag_error,
             actor_context=actor_context,
             tool_input=tool_input,
-            details={"max_length": _BOX_TAG_MAX_LENGTH},
+            details=failure_details(op="set_box_tag", max_length=_BOX_TAG_MAX_LENGTH),
         )
 
     try:
@@ -161,7 +162,7 @@ def tool_set_box_tag(
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=data,
-            details={"box": box_num},
+            details=failure_details(op="set_box_tag", box=box_num),
         )
 
     candidate_data = deepcopy(data if isinstance(data, dict) else {})
@@ -218,7 +219,7 @@ def tool_set_box_tag(
             tool_input=tool_input,
             before_data=data,
             errors=integrity_error.get("errors"),
-            details={"box": box_num},
+            details=failure_details(op="set_box_tag", box=box_num),
         )
 
     preview = {
@@ -236,6 +237,11 @@ def tool_set_box_tag(
             "preview": preview,
         }
 
+    _audit_details = set_box_tag_details(
+        box=box_num,
+        tag_before=box_tags_before.get(str(box_num), ""),
+        tag_after=box_tags_after.get(str(box_num), ""),
+    )
     try:
         backup_path = write_yaml(
             candidate_data,
@@ -247,7 +253,7 @@ def tool_set_box_tag(
                 source=source,
                 tool_name=tool_name,
                 actor_context=actor_context,
-                details=preview,
+                details=_audit_details,
                 tool_input=tool_input,
             ),
         )
@@ -262,7 +268,7 @@ def tool_set_box_tag(
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=data,
-            details=preview,
+            details=_audit_details,
         )
 
     return {

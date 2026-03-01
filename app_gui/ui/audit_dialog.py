@@ -20,6 +20,243 @@ def _safe_html(value):
     return _escape_html(str(value or ""), quote=True)
 
 
+def _format_record_label(rec):
+    """Format a compact label like '#101 HeLa Box2:5 [Note: xxx] [key: val]'."""
+    rid = rec.get("record_id", "?")
+    parts = [f"#{rid}"]
+    cl = rec.get("cell_line") or rec.get("short_name")
+    if cl:
+        parts.append(str(cl))
+    box = rec.get("box")
+    pos = rec.get("position")
+    if box is not None and pos is not None:
+        parts.append(f"{tr('operations.auditDetailBox')}{box}:{pos}")
+    note = rec.get("note")
+    if note:
+        parts.append(f"[{tr('operations.auditDetailNote')}: {note}]")
+    custom = rec.get("custom_fields") or {}
+    for k, v in custom.items():
+        parts.append(f"[{k}: {v}]")
+    return " ".join(parts)
+
+
+def _format_audit_details(details, muted_color):
+    """Return HTML lines for structured audit details rendering."""
+    if not isinstance(details, dict):
+        return []
+    op = details.get("op")
+    h = _safe_html
+    m = lambda label: f"<span style='color: {muted_color};'>{h(label)}</span>"
+
+    if op == "add_entry":
+        ids = details.get("record_ids") or []
+        box = details.get("box")
+        positions = details.get("positions") or []
+        frozen = details.get("frozen_at") or ""
+        cell_line = details.get("cell_line") or ""
+        note = details.get("note")
+        pos_str = ",".join(str(p) for p in positions)
+        line1 = (
+            f"{m(tr('operations.auditDetailBox'))} {h(box)}  "
+            f"{m(tr('operations.auditDetailPos'))} {h(pos_str)}  "
+            f"{m('ID')} {h(','.join(str(i) for i in ids))}"
+        )
+        line2_parts = []
+        if cell_line:
+            line2_parts.append(h(cell_line))
+        if frozen:
+            line2_parts.append(f"{m(tr('operations.auditDetailFrozenAt'))} {h(frozen)}")
+        if note:
+            line2_parts.append(f"{m(tr('operations.auditDetailNote'))} {h(note)}")
+        custom = details.get("custom_fields") or {}
+        for k, v in custom.items():
+            line2_parts.append(f"{m(h(k))} {h(v)}")
+        lines = [line1]
+        if line2_parts:
+            lines.append(" &nbsp;|&nbsp; ".join(line2_parts))
+        return lines
+
+    if op == "edit_entry":
+        rid = details.get("record_id")
+        cl = details.get("cell_line") or details.get("short_name") or ""
+        box = details.get("box")
+        pos = details.get("position")
+        loc = f"{tr('operations.auditDetailBox')}{box}:{pos}" if box is not None else ""
+        header = f"#{h(rid)}"
+        if cl:
+            header += f" {h(cl)}"
+        if loc:
+            header += f" ({h(loc)})"
+        note = details.get("note")
+        if note:
+            header += f" &nbsp;{m(tr('operations.auditDetailNote'))} {h(note)}"
+        custom = details.get("custom_fields") or {}
+        for k, v in custom.items():
+            header += f" &nbsp;{m(h(k))} {h(v)}"
+        lines = [header]
+        changes = details.get("field_changes") or {}
+        for field, diff in changes.items():
+            before = diff.get("before") if isinstance(diff, dict) else "?"
+            after = diff.get("after") if isinstance(diff, dict) else "?"
+            lines.append(f"{m(h(field))} {h(before)} → {h(after)}")
+        return lines
+
+    if op in ("takeout", "thaw", "discard"):
+        date = details.get("date") or ""
+        records = details.get("records") or []
+        rec_labels = [_format_record_label(r) for r in records]
+        lines = []
+        if date:
+            lines.append(f"{m(tr('operations.auditDetailDate'))} {h(date)}")
+        lines.append(", ".join(h(lbl) for lbl in rec_labels))
+        return lines
+
+    if op == "move":
+        date = details.get("date") or ""
+        moves = details.get("moves") or []
+        lines = []
+        if date:
+            lines.append(f"{m(tr('operations.auditDetailDate'))} {h(date)}")
+        for mv in moves:
+            rid = mv.get("record_id", "?")
+            cl = mv.get("cell_line") or mv.get("short_name") or ""
+            fb, fp = mv.get("from_box"), mv.get("from_position")
+            tb, tp = mv.get("to_box"), mv.get("to_position")
+            label = f"#{h(rid)}"
+            if cl:
+                label += f" {h(cl)}"
+            if fb == tb:
+                label += f" {tr('operations.auditDetailBox')}{h(fb)}:{h(fp)}→{h(tp)}"
+            else:
+                label += f" {tr('operations.auditDetailBox')}{h(fb)}:{h(fp)}→{tr('operations.auditDetailBox')}{h(tb)}:{h(tp)}"
+            swap = mv.get("swap_with_record_id")
+            if swap is not None:
+                label += f" (↔ #{h(swap)})"
+            note = mv.get("note")
+            if note:
+                label += f" [{h(tr('operations.auditDetailNote'))}: {h(note)}]"
+            custom = mv.get("custom_fields") or {}
+            for k, v in custom.items():
+                label += f" [{h(k)}: {h(v)}]"
+            lines.append(label)
+        return lines
+
+    if op == "set_box_tag":
+        box = details.get("box")
+        before = details.get("tag_before") or "''"
+        after = details.get("tag_after") or "''"
+        return [f"{tr('operations.auditDetailBox')} {h(box)}: '{h(before)}' → '{h(after)}'"]
+
+    if op == "adjust_box_count":
+        sub = details.get("sub_op")
+        cb = details.get("box_count_before")
+        ca = details.get("box_count_after")
+        if sub == "add":
+            added = details.get("added_boxes") or []
+            return [
+                f"{h(cb)} → {h(ca)} {tr('operations.auditDetailBoxes')}  "
+                f"{m('+' + ','.join(str(b) for b in added))}"
+            ]
+        else:
+            removed = details.get("removed_box")
+            mode = details.get("renumber_mode") or ""
+            line = f"{h(cb)} → {h(ca)} {tr('operations.auditDetailBoxes')}"
+            if removed is not None:
+                line += f"  {m(tr('operations.auditDetailRemoved'))} {tr('operations.auditDetailBox')}{h(removed)}"
+            if mode:
+                line += f"  ({h(mode)})"
+            return [line]
+
+    if op == "rollback":
+        restored = details.get("restored_from") or details.get("requested_backup") or ""
+        lines = []
+        if restored:
+            import os as _os
+            lines.append(f"{m(tr('operations.auditDetailFrom'))} {h(_os.path.basename(str(restored)))}")
+        return lines
+
+    # Fallback — unknown op or no op: show JSON
+    return []
+
+
+def _summarize_details(details):
+    """Return a concise plain-text summary for the table column."""
+    if not isinstance(details, dict) or not details:
+        return ""
+    op = details.get("op")
+
+    if op == "add_entry":
+        box = details.get("box", "?")
+        positions = details.get("positions") or []
+        cl = details.get("cell_line") or ""
+        parts = [f"Box{box} Pos{','.join(str(p) for p in positions)}"]
+        if cl:
+            parts.append(cl)
+        count = details.get("count")
+        if count:
+            parts.append(f"x{count}")
+        return " | ".join(parts)
+
+    if op == "edit_entry":
+        rid = details.get("record_id", "?")
+        changes = details.get("field_changes") or {}
+        fields = ", ".join(changes.keys()) if changes else ""
+        return f"#{rid} [{fields}]" if fields else f"#{rid}"
+
+    if op in ("takeout", "thaw", "discard"):
+        count = details.get("count", 0)
+        date = details.get("date") or ""
+        return f"{op} x{count} ({date})" if date else f"{op} x{count}"
+
+    if op == "move":
+        count = details.get("count", 0)
+        return f"move x{count}"
+
+    if op == "set_box_tag":
+        box = details.get("box", "?")
+        after = details.get("tag_after") or "''"
+        return f"Box{box} → '{after}'"
+
+    if op == "adjust_box_count":
+        sub = details.get("sub_op", "?")
+        cb = details.get("box_count_before")
+        ca = details.get("box_count_after")
+        return f"{sub} {cb}→{ca} boxes"
+
+    if op == "rollback":
+        bak = details.get("restored_from") or details.get("requested_backup") or ""
+        if bak:
+            return os.path.basename(str(bak))
+        return "rollback"
+
+    try:
+        return json.dumps(details, ensure_ascii=False)[:80]
+    except Exception:
+        return str(details)[:80]
+
+
+_ACTION_TR_KEYS = {
+    "add_entry": "operations.auditActionAddEntry",
+    "takeout": "operations.auditActionTakeout",
+    "thaw": "operations.auditActionTakeout",
+    "discard": "operations.auditActionTakeout",
+    "move": "operations.auditActionMove",
+    "rollback": "operations.auditActionRollback",
+    "backup": "operations.auditActionBackup",
+    "edit_entry": "operations.auditActionEditEntry",
+    "set_box_tag": "operations.auditActionSetBoxTag",
+    "adjust_box_count": "operations.auditActionAdjustBoxCount",
+}
+
+
+def _translate_action(action):
+    """Return translated display name for an audit action."""
+    key = _ACTION_TR_KEYS.get(action)
+    if key:
+        return tr(key)
+    return action
+
+
 _AUDIT_BACKUP_ROW_ROLE = Qt.UserRole + 101
 
 
@@ -255,7 +492,7 @@ class AuditLogDialog(QDialog):
             ts_item = QTableWidgetItem(ev.get("timestamp", ""))
             ts_item.setData(Qt.UserRole, row)
             self.audit_table.setItem(row, 0, ts_item)
-            action_item = QTableWidgetItem(ev.get("action", ""))
+            action_item = QTableWidgetItem(_translate_action(ev.get("action", "")))
             self.audit_table.setItem(row, 1, action_item)
             self.audit_table.setItem(row, 2, QTableWidgetItem(ev.get("status", "")))
 
@@ -267,7 +504,7 @@ class AuditLogDialog(QDialog):
                 else:
                     summary = str(error)[:80] if error else str(details)[:80]
             else:
-                summary = json.dumps(details, ensure_ascii=False)[:80] if details else ""
+                summary = _summarize_details(details)
             self.audit_table.setItem(row, 3, QTableWidgetItem(summary))
             if self._is_backup_event(ev):
                 self._highlight_backup_row(row)
@@ -338,9 +575,10 @@ class AuditLogDialog(QDialog):
         error_color = resolve_theme_token("status-error", fallback="#ef4444")
         muted_color = resolve_theme_token("status-muted", fallback="#94a3b8")
         title_color = success_color if status == "success" else error_color
+        action_display = _translate_action(action)
         lines = [
             f"<b style='color: {title_color};'>{_safe_html(tr('operations.audit'))}: "
-            f"{_safe_html(action)} ({_safe_html(status)})</b>"
+            f"{_safe_html(action_display)} ({_safe_html(status)})</b>"
         ]
         if ts:
             lines.append(
@@ -362,14 +600,18 @@ class AuditLogDialog(QDialog):
             if error.get("message"):
                 lines.append(_safe_html(error.get("message")))
         elif isinstance(details, dict) and details:
-            try:
-                preview = json.dumps(details, ensure_ascii=False)
-            except Exception:
-                preview = str(details)
-            lines.append(
-                f"<span style='color: {muted_color};'>{_safe_html(tr('operations.detailsLabel'))}</span> "
-                f"{_safe_html(preview)}"
-            )
+            detail_lines = _format_audit_details(details, muted_color)
+            if detail_lines:
+                lines.extend(detail_lines)
+            else:
+                try:
+                    preview = json.dumps(details, ensure_ascii=False)
+                except Exception:
+                    preview = str(details)
+                lines.append(
+                    f"<span style='color: {muted_color};'>{_safe_html(tr('operations.detailsLabel'))}</span> "
+                    f"{_safe_html(preview)}"
+                )
 
         self.event_detail.setText("<br/>".join(lines))
         self.event_detail.setProperty("state", "success" if status == "success" else "error")

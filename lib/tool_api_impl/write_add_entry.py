@@ -13,6 +13,7 @@ from ..operations import check_position_conflicts, get_next_id
 from ..position_fmt import get_position_range
 from ..validators import validate_box, validate_position
 from ..yaml_ops import load_yaml, write_yaml
+from .audit_details import add_entry_details, failure_details
 from .write_common import api
 
 
@@ -59,7 +60,7 @@ def _validate_add_entry_request_data(
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=data,
-            details={"positions": positions},
+            details=failure_details(op="add_entry", positions=positions),
         )
 
     if not normalized_positions:
@@ -87,7 +88,7 @@ def _validate_add_entry_request_data(
                 actor_context=actor_context,
                 tool_input=tool_input,
                 before_data=data,
-                details={"position": pos},
+                details=failure_details(op="add_entry", position=pos),
             )
 
     if not validate_box(box, layout):
@@ -100,7 +101,7 @@ def _validate_add_entry_request_data(
             message=f"Box must be within {api._format_box_constraint(layout)}",
             actor_context=actor_context,
             tool_input=tool_input,
-            details={"box": box},
+            details=failure_details(op="add_entry", box=box),
         )
 
     records = data.get("inventory", [])
@@ -116,7 +117,7 @@ def _validate_add_entry_request_data(
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=data,
-            details={"box": box, "positions": list(normalized_positions), "conflict_count": len(conflicts)},
+            details=failure_details(op="add_entry", box=box, positions=list(normalized_positions), conflict_count=len(conflicts)),
             extra={"conflicts": conflicts},
         )
 
@@ -134,7 +135,7 @@ def _validate_add_entry_request_data(
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=data,
-            details={"forbidden": bad_keys, "allowed": sorted(allowed_field_keys)},
+            details=failure_details(op="add_entry", forbidden=bad_keys, allowed=sorted(allowed_field_keys)),
         )
 
     required_keys = get_required_field_keys(meta)
@@ -155,7 +156,7 @@ def _validate_add_entry_request_data(
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=data,
-            details={"missing": missing},
+            details=failure_details(op="add_entry", missing=missing),
         )
 
     if cell_line_text:
@@ -183,7 +184,7 @@ def _validate_add_entry_request_data(
                 actor_context=actor_context,
                 tool_input=tool_input,
                 before_data=data,
-                details={"cell_line": cell_line_text, "options": cell_line_options},
+                details=failure_details(op="add_entry", cell_line=cell_line_text, options=cell_line_options),
             )
 
         fields["cell_line"] = cell_line_text
@@ -303,14 +304,17 @@ def _persist_add_entry(
                 tool_input=tool_input,
                 before_data=data,
                 errors=validation_error.get("errors"),
-                details={
-                    "new_ids": [item["id"] for item in created],
-                    "count": len(created),
-                    "box": box,
-                    "positions": list(int(p) for p in positions),
-                },
+                details=failure_details(
+                    op="add_entry",
+                    record_ids=[item["id"] for item in created],
+                    box=box,
+                    positions=list(int(p) for p in positions),
+                ),
             )
 
+        _cell_line = new_records[0].get("cell_line") if new_records else None
+        _note = new_records[0].get("note") if new_records else None
+        _custom = {k: v for k, v in fields.items()} if fields else None
         _backup_path = write_yaml(
             candidate_data,
             yaml_path,
@@ -321,13 +325,15 @@ def _persist_add_entry(
                 source=source,
                 tool_name=tool_name,
                 actor_context=actor_context,
-                details={
-                    "new_ids": [item["id"] for item in created],
-                    "count": len(created),
-                    "box": box,
-                    "positions": list(int(p) for p in positions),
-                    "fields": fields,
-                },
+                details=add_entry_details(
+                    record_ids=[item["id"] for item in created],
+                    box=box,
+                    positions=list(int(p) for p in positions),
+                    frozen_at=frozen_at,
+                    cell_line=_cell_line,
+                    note=_note,
+                    custom_fields=_custom,
+                ),
                 tool_input={
                     "box": box,
                     "positions": list(int(p) for p in positions),
@@ -347,11 +353,11 @@ def _persist_add_entry(
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=data,
-            details={
-                "new_ids": [item["id"] for item in created],
-                "count": len(created),
-                "box": box,
-            },
+            details=failure_details(
+                op="add_entry",
+                record_ids=[item["id"] for item in created],
+                box=box,
+            ),
         )
 
     return _backup_path, None
@@ -416,7 +422,7 @@ def _tool_add_entry_impl(
             message=f"Failed to load YAML file: {exc}",
             actor_context=actor_context,
             tool_input=tool_input,
-            details={"load_error": str(exc)},
+            details=failure_details(op="add_entry", load_error=str(exc)),
         )
     normalized = normalize_cell_line_policy_data(data)
     if not normalized.get("ok"):
