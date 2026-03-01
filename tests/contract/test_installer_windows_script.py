@@ -11,7 +11,7 @@ import pathlib
 import re
 
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 INSTALLER_SCRIPT = ROOT / "installer" / "windows" / "LN2InventoryAgent.iss"
 
 

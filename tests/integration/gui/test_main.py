@@ -11,7 +11,7 @@ import ast
 import pathlib
 import re
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(__file__).resolve().parents[3]
 MAIN_FILE = ROOT / "app_gui" / "main.py"
 FLOW_FILE = ROOT / "app_gui" / "main_window_flows.py"
 DIALOG_FILES = [

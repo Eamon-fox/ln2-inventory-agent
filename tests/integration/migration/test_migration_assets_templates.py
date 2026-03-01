@@ -10,7 +10,7 @@ Covers: migration_assets/templates/*.md
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 PROMPT_TEMPLATE = ROOT / "migration_assets" / "templates" / "prompt_en.md"
 RUNBOOK_TEMPLATE = ROOT / "migration_assets" / "templates" / "runbook_en.md"
 CHECKLIST_TEMPLATE = ROOT / "migration_assets" / "templates" / "acceptance_checklist_en.md"

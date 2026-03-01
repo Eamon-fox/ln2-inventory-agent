@@ -251,10 +251,17 @@ _ACTION_TR_KEYS = {
 
 def _translate_action(action):
     """Return translated display name for an audit action."""
-    key = _ACTION_TR_KEYS.get(action)
-    if key:
-        return tr(key)
-    return action
+    action_text = str(action or "")
+    key = _ACTION_TR_KEYS.get(action_text)
+    if not key:
+        return action_text
+
+    translated = tr(key)
+    # i18n may not be initialized in some contexts (tests/startup), where tr()
+    # returns the key itself. Fall back to the raw action value in that case.
+    if not translated or translated == key:
+        return action_text
+    return translated
 
 
 _AUDIT_BACKUP_ROW_ROLE = Qt.UserRole + 101

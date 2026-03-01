@@ -25,6 +25,9 @@ python app_gui/main.py
 
 # Windows packaging
 pyinstaller ln2_inventory.spec
+
+# Windows installer (Inno Setup)
+iscc installer/windows/LN2InventoryAgent.iss
 ```
 
 ## Testing

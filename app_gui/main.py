@@ -70,7 +70,7 @@ from app_gui.dataset_session import DatasetSessionController
 from app_gui.import_journey import ImportJourneyService
 from app_gui.migration_workspace import MigrationWorkspaceService
 
-APP_VERSION = "1.2.6"
+APP_VERSION = "1.2.7"
 APP_RELEASE_URL = "https://github.com/Eamon-fox/snowfox/releases"
 _UPDATE_CHECK_URL = "https://snowfox-release.oss-cn-beijing.aliyuncs.com/latest.json"
 _SETTINGS_EXPORTS = (PROVIDER_DEFAULTS,)
@@ -79,7 +79,8 @@ _SETTINGS_EXPORTS = (PROVIDER_DEFAULTS,)
 def _parse_version(v: str) -> tuple:
     """Parse version string like '1.0.2' to tuple (1, 0, 2) for comparison."""
     try:
-        return tuple(int(x) for x in v.split("."))
+        normalized = str(v or "").strip().lstrip("vV")
+        return tuple(int(x) for x in normalized.split("."))
     except (ValueError, AttributeError):
         return (0, 0, 0)
 
