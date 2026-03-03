@@ -729,7 +729,22 @@ def _check_position_conflicts(records: List[Dict[str, Any]]) -> List[str]:
     return conflicts
 
 
-def validate_inventory_document(data: Any) -> Tuple[List[str], List[str]]:
+def validate_inventory_document(
+    data: Any,
+    *,
+    skip_record_validation: bool = False,
+) -> Tuple[List[str], List[str]]:
+    """Validate an in-memory inventory document.
+
+    Args:
+        data: The full YAML dict (``meta`` + ``inventory``).
+        skip_record_validation: When ``True``, skip per-record value checks
+            (options, required, types) and global record checks (duplicate IDs,
+            position conflicts).  Meta-level validation (schema, layout,
+            custom-fields contract, undeclared record keys) still runs.
+            Use this when saving field-definition changes so that stale
+            record data does not block meta updates.
+    """
     errors = []
     warnings = []
 
@@ -747,26 +762,28 @@ def validate_inventory_document(data: Any) -> Tuple[List[str], List[str]]:
     contract_errors, normalized_custom_fields = validate_custom_fields_contract(meta)
     errors.extend(contract_errors)
     errors.extend(_validate_meta_selection_keys(meta, normalized_custom_fields))
-    required_custom_fields = _required_custom_fields(normalized_custom_fields)
     errors.extend(_check_undeclared_record_fields(inventory, normalized_custom_fields))
 
     errors.extend(_check_inventory_boxes_match_layout(inventory, layout))
 
-    for idx, rec in enumerate(inventory):
-        if not isinstance(rec, dict):
-            errors.append(f"Record #{idx + 1}: must be an object")
-            continue
-        rec_errors, rec_warnings = _validate_record(
-            rec,
-            idx=idx,
-            layout=layout,
-            meta=meta,
-            required_custom_field_keys=required_custom_fields,
-            normalized_custom_fields=normalized_custom_fields,
-        )
-        errors.extend(rec_errors)
-        warnings.extend(rec_warnings)
+    if not skip_record_validation:
+        required_custom_fields = _required_custom_fields(normalized_custom_fields)
+        for idx, rec in enumerate(inventory):
+            if not isinstance(rec, dict):
+                errors.append(f"Record #{idx + 1}: must be an object")
+                continue
+            rec_errors, rec_warnings = _validate_record(
+                rec,
+                idx=idx,
+                layout=layout,
+                meta=meta,
+                required_custom_field_keys=required_custom_fields,
+                normalized_custom_fields=normalized_custom_fields,
+            )
+            errors.extend(rec_errors)
+            warnings.extend(rec_warnings)
 
-    errors.extend(_check_duplicate_ids(inventory))
-    errors.extend(_check_position_conflicts(inventory))
+        errors.extend(_check_duplicate_ids(inventory))
+        errors.extend(_check_position_conflicts(inventory))
+
     return errors, warnings

@@ -396,5 +396,173 @@ class ImportAcceptanceTests(unittest.TestCase):
             self.assertTrue(any("not in configured options" in msg for msg in warnings), report)
 
 
+class SkipRecordValidationTests(unittest.TestCase):
+    """Tests for validate_inventory_document(skip_record_validation=True)."""
+
+    def test_skip_record_validation_ignores_option_mismatch(self):
+        from lib.import_validation_core import validate_inventory_document
+
+        data = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9, "cols": 9,
+                    "box_count": 2, "box_numbers": [1, 2],
+                },
+                "custom_fields": [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str",
+                     "options": ["HeLa"]},
+                ],
+            },
+            "inventory": [
+                {"id": 1, "box": 1, "position": 1, "frozen_at": "2025-01-01",
+                 "cell_line": "K562"},
+            ],
+        }
+        errors, warnings = validate_inventory_document(
+            data, skip_record_validation=True,
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(warnings, [])
+
+    def test_skip_record_validation_ignores_missing_required_custom_field(self):
+        from lib.import_validation_core import validate_inventory_document
+
+        data = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9, "cols": 9,
+                    "box_count": 2, "box_numbers": [1, 2],
+                },
+                "custom_fields": [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                    {"key": "passage", "label": "Passage", "type": "int",
+                     "required": True},
+                ],
+            },
+            "inventory": [
+                {"id": 1, "box": 1, "position": 1, "frozen_at": "2025-01-01",
+                 "cell_line": "K562"},
+            ],
+        }
+        errors, warnings = validate_inventory_document(
+            data, skip_record_validation=True,
+        )
+        self.assertEqual(errors, [])
+
+    def test_skip_record_validation_ignores_duplicate_ids(self):
+        from lib.import_validation_core import validate_inventory_document
+
+        data = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9, "cols": 9,
+                    "box_count": 2, "box_numbers": [1, 2],
+                },
+                "custom_fields": [],
+            },
+            "inventory": [
+                {"id": 1, "box": 1, "position": 1, "frozen_at": "2025-01-01",
+                 "cell_line": "K562"},
+                {"id": 1, "box": 1, "position": 2, "frozen_at": "2025-01-01",
+                 "cell_line": "HeLa"},
+            ],
+        }
+        errors, _warnings = validate_inventory_document(
+            data, skip_record_validation=True,
+        )
+        self.assertEqual(errors, [])
+
+    def test_skip_record_validation_still_catches_meta_errors(self):
+        from lib.import_validation_core import validate_inventory_document
+
+        data = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9, "cols": 9,
+                    "box_count": 2, "box_numbers": [1, 2],
+                },
+                "custom_fields": [],
+                "color_key": "nonexistent ",
+            },
+            "inventory": [
+                {"id": 1, "box": 1, "position": 1, "frozen_at": "2025-01-01",
+                 "cell_line": "K562"},
+            ],
+        }
+        errors, _warnings = validate_inventory_document(
+            data, skip_record_validation=True,
+        )
+        self.assertTrue(len(errors) > 0)
+        self.assertTrue(any("color_key" in e for e in errors))
+
+    def test_skip_record_validation_still_catches_undeclared_fields(self):
+        from lib.import_validation_core import validate_inventory_document
+
+        data = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9, "cols": 9,
+                    "box_count": 2, "box_numbers": [1, 2],
+                },
+                "custom_fields": [],
+            },
+            "inventory": [
+                {"id": 1, "box": 1, "position": 1, "frozen_at": "2025-01-01",
+                 "cell_line": "K562", "totally_unknown": "x"},
+            ],
+        }
+        errors, _warnings = validate_inventory_document(
+            data, skip_record_validation=True,
+        )
+        self.assertTrue(len(errors) > 0)
+        self.assertTrue(any("totally_unknown" in e for e in errors))
+
+    def test_skip_record_validation_still_catches_invalid_custom_field_schema(self):
+        from lib.import_validation_core import validate_inventory_document
+
+        data = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9, "cols": 9,
+                    "box_count": 2, "box_numbers": [1, 2],
+                },
+                "custom_fields": [
+                    {"key": "id", "type": "str"},
+                ],
+            },
+            "inventory": [],
+        }
+        errors, _warnings = validate_inventory_document(
+            data, skip_record_validation=True,
+        )
+        self.assertTrue(len(errors) > 0)
+        self.assertTrue(any("structural" in e.lower() for e in errors))
+
+    def test_full_validation_still_catches_option_mismatch_as_warning(self):
+        """Verify the default (skip_record_validation=False) still works."""
+        from lib.import_validation_core import validate_inventory_document
+
+        data = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9, "cols": 9,
+                    "box_count": 2, "box_numbers": [1, 2],
+                },
+                "custom_fields": [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str",
+                     "options": ["HeLa"]},
+                ],
+            },
+            "inventory": [
+                {"id": 1, "box": 1, "position": 1, "frozen_at": "2025-01-01",
+                 "cell_line": "K562"},
+            ],
+        }
+        errors, warnings = validate_inventory_document(data)
+        self.assertEqual(errors, [])
+        self.assertTrue(len(warnings) > 0)
+        self.assertTrue(any("not in configured options" in w for w in warnings))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -586,7 +586,7 @@ class GuiPanelRegressionTests(_NoStagePreflightMixin, ManagedPathTestCase):
 
         reject_mock.assert_called_once()
 
-    def test_settings_dialog_custom_fields_blocks_non_option_cell_line_early(self):
+    def test_settings_dialog_custom_fields_allows_option_removal_even_when_records_use_old_value(self):
         from app_gui.main import SettingsDialog
         from lib.yaml_ops import load_yaml
 
@@ -654,14 +654,350 @@ class GuiPanelRegressionTests(_NoStagePreflightMixin, ManagedPathTestCase):
         with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock:
             dialog._open_custom_fields_editor()
 
-        warn_mock.assert_called_once()
-        on_data_changed.assert_not_called()
+        # Meta-only validation: removing an option should NOT be blocked
+        # even though a record still uses the removed value.
+        warn_mock.assert_not_called()
+        on_data_changed.assert_called_once()
 
         saved = load_yaml(yaml_path) or {}
         saved_meta = saved.get("meta") or {}
-        self.assertEqual(["K562", "HeLa"], saved_meta.get("cell_line_options"))
+        self.assertEqual(["HeLa"], saved_meta.get("cell_line_options"))
 
-    def test_settings_dialog_accept_blocks_invalid_color_key_in_yaml(self):
+    def test_settings_dialog_custom_fields_allows_adding_required_field(self):
+        """Scenario 2: adding a new required field should not be blocked
+        by existing records that lack the field."""
+        from app_gui.main import SettingsDialog
+        from lib.yaml_ops import load_yaml
+
+        payload = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9, "cols": 9,
+                    "box_count": 2, "box_numbers": [1, 2],
+                },
+                "custom_fields": [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                ],
+            },
+            "inventory": [
+                {"id": 1, "box": 1, "position": 1, "frozen_at": "2025-01-01",
+                 "cell_line": "K562"},
+            ],
+        }
+        yaml_path = self.ensure_dataset_yaml("cf-add-required", payload=payload)
+
+        class _FakeDialog:
+            def __init__(self, *a, **kw): pass
+            @staticmethod
+            def exec(): return 1
+            @staticmethod
+            def get_custom_fields():
+                return [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                    {"key": "passage", "label": "Passage", "type": "int", "required": True},
+                ]
+            @staticmethod
+            def get_display_key(): return ""
+            @staticmethod
+            def get_color_key(): return ""
+            @staticmethod
+            def get_cell_line_options(): return None
+            @staticmethod
+            def get_cell_line_required(): return False
+
+        on_data_changed = MagicMock()
+        dialog = SettingsDialog(
+            config={"yaml_path": yaml_path},
+            on_data_changed=on_data_changed,
+            custom_fields_dialog_cls=_FakeDialog,
+        )
+
+        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock:
+            dialog._open_custom_fields_editor()
+
+        warn_mock.assert_not_called()
+        on_data_changed.assert_called_once()
+
+        saved = load_yaml(yaml_path) or {}
+        saved_cf_keys = [f["key"] for f in saved.get("meta", {}).get("custom_fields", [])]
+        self.assertIn("passage", saved_cf_keys)
+
+    def test_settings_dialog_custom_fields_allows_making_field_required(self):
+        """Scenario 3: changing a field from optional to required should not
+        be blocked by records with empty values."""
+        from app_gui.main import SettingsDialog
+        from lib.yaml_ops import load_yaml
+
+        payload = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9, "cols": 9,
+                    "box_count": 2, "box_numbers": [1, 2],
+                },
+                "custom_fields": [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                    {"key": "tissue", "label": "Tissue", "type": "str"},
+                ],
+            },
+            "inventory": [
+                {"id": 1, "box": 1, "position": 1, "frozen_at": "2025-01-01",
+                 "cell_line": "K562", "tissue": ""},
+            ],
+        }
+        yaml_path = self.ensure_dataset_yaml("cf-make-required", payload=payload)
+
+        class _FakeDialog:
+            def __init__(self, *a, **kw): pass
+            @staticmethod
+            def exec(): return 1
+            @staticmethod
+            def get_custom_fields():
+                return [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                    {"key": "tissue", "label": "Tissue", "type": "str", "required": True},
+                ]
+            @staticmethod
+            def get_display_key(): return ""
+            @staticmethod
+            def get_color_key(): return ""
+            @staticmethod
+            def get_cell_line_options(): return None
+            @staticmethod
+            def get_cell_line_required(): return False
+
+        on_data_changed = MagicMock()
+        dialog = SettingsDialog(
+            config={"yaml_path": yaml_path},
+            on_data_changed=on_data_changed,
+            custom_fields_dialog_cls=_FakeDialog,
+        )
+
+        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock:
+            dialog._open_custom_fields_editor()
+
+        warn_mock.assert_not_called()
+        on_data_changed.assert_called_once()
+
+        saved_cf = (load_yaml(yaml_path) or {}).get("meta", {}).get("custom_fields", [])
+        tissue = next(f for f in saved_cf if f["key"] == "tissue")
+        self.assertTrue(tissue.get("required"))
+
+    def test_settings_dialog_custom_fields_allows_adding_options_to_freetext(self):
+        """Scenario 4: adding options to a free-text field should not be
+        blocked by records whose values are not in the new options list."""
+        from app_gui.main import SettingsDialog
+        from lib.yaml_ops import load_yaml
+
+        payload = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9, "cols": 9,
+                    "box_count": 2, "box_numbers": [1, 2],
+                },
+                "custom_fields": [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                    {"key": "source", "label": "Source", "type": "str"},
+                ],
+            },
+            "inventory": [
+                {"id": 1, "box": 1, "position": 1, "frozen_at": "2025-01-01",
+                 "cell_line": "K562", "source": "custom_value"},
+            ],
+        }
+        yaml_path = self.ensure_dataset_yaml("cf-add-options", payload=payload)
+
+        class _FakeDialog:
+            def __init__(self, *a, **kw): pass
+            @staticmethod
+            def exec(): return 1
+            @staticmethod
+            def get_custom_fields():
+                return [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                    {"key": "source", "label": "Source", "type": "str",
+                     "options": ["Lab A", "Lab B"]},
+                ]
+            @staticmethod
+            def get_display_key(): return ""
+            @staticmethod
+            def get_color_key(): return ""
+            @staticmethod
+            def get_cell_line_options(): return None
+            @staticmethod
+            def get_cell_line_required(): return False
+
+        on_data_changed = MagicMock()
+        dialog = SettingsDialog(
+            config={"yaml_path": yaml_path},
+            on_data_changed=on_data_changed,
+            custom_fields_dialog_cls=_FakeDialog,
+        )
+
+        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock:
+            dialog._open_custom_fields_editor()
+
+        warn_mock.assert_not_called()
+        on_data_changed.assert_called_once()
+
+        saved_cf = (load_yaml(yaml_path) or {}).get("meta", {}).get("custom_fields", [])
+        source_def = next(f for f in saved_cf if f["key"] == "source")
+        self.assertEqual(["Lab A", "Lab B"], source_def.get("options"))
+        # Record data kept intact — "custom_value" NOT removed
+        inv = (load_yaml(yaml_path) or {}).get("inventory", [])
+        self.assertEqual("custom_value", inv[0].get("source"))
+
+    def test_settings_dialog_custom_fields_still_blocks_meta_errors(self):
+        """Scenario 9: invalid display_key / structural meta errors must
+        still block saving."""
+        from app_gui.main import SettingsDialog
+        from lib.yaml_ops import load_yaml
+
+        payload = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9, "cols": 9,
+                    "box_count": 2, "box_numbers": [1, 2],
+                },
+                "custom_fields": [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                ],
+            },
+            "inventory": [
+                {"id": 1, "box": 1, "position": 1, "frozen_at": "2025-01-01",
+                 "cell_line": "K562"},
+            ],
+        }
+        yaml_path = self.ensure_dataset_yaml("cf-bad-display-key", payload=payload)
+
+        class _FakeDialog:
+            def __init__(self, *a, **kw): pass
+            @staticmethod
+            def exec(): return 1
+            @staticmethod
+            def get_custom_fields():
+                return [{"key": "cell_line", "label": "Cell Line", "type": "str"}]
+            @staticmethod
+            def get_display_key(): return "nonexistent_field"
+            @staticmethod
+            def get_color_key(): return ""
+            @staticmethod
+            def get_cell_line_options(): return None
+            @staticmethod
+            def get_cell_line_required(): return False
+
+        on_data_changed = MagicMock()
+        dialog = SettingsDialog(
+            config={"yaml_path": yaml_path},
+            on_data_changed=on_data_changed,
+            custom_fields_dialog_cls=_FakeDialog,
+        )
+
+        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock:
+            dialog._open_custom_fields_editor()
+
+        warn_mock.assert_called_once()
+        on_data_changed.assert_not_called()
+
+        # YAML should NOT have been modified
+        saved_meta = (load_yaml(yaml_path) or {}).get("meta", {})
+        self.assertNotEqual("nonexistent_field", saved_meta.get("display_key"))
+
+    def test_settings_dialog_accept_still_blocks_on_path_change_to_invalid_yaml(self):
+        """accept() must still enforce strict validation when the user
+        selects a different YAML file."""
+        from app_gui.main import SettingsDialog
+
+        # Create a YAML with a meta-level error (trailing-space color_key)
+        bad_payload = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9, "cols": 9,
+                    "box_count": 2, "box_numbers": [1, 2],
+                },
+                "color_key": "cell_line ",
+            },
+            "inventory": [
+                {"id": 1, "box": 1, "position": 1, "frozen_at": "2025-01-01",
+                 "cell_line": "K562"},
+            ],
+        }
+        bad_path = self.ensure_dataset_yaml("accept-bad-path-change", payload=bad_payload)
+        good_path = self.ensure_dataset_yaml("accept-good-origin")
+
+        dialog = SettingsDialog(config={"yaml_path": good_path})
+        # Simulate user changing the path to the bad file
+        dialog.yaml_edit.setText(bad_path)
+
+        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock, \
+             patch("app_gui.ui.dialogs.settings_dialog.QDialog.accept") as accept_mock:
+            dialog.accept()
+
+        warn_mock.assert_called_once()
+        accept_mock.assert_not_called()
+
+    def test_settings_dialog_accept_allows_close_when_path_unchanged(self):
+        """accept() should not block when the YAML path is unchanged, even
+        if records have stale option values from a field-definition edit."""
+        from app_gui.main import SettingsDialog
+
+        payload = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9, "cols": 9,
+                    "box_count": 2, "box_numbers": [1, 2],
+                },
+                "custom_fields": [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str",
+                     "options": ["HeLa"]},
+                ],
+                "cell_line_options": ["HeLa"],
+            },
+            "inventory": [
+                {"id": 1, "box": 1, "position": 1, "frozen_at": "2025-01-01",
+                 "cell_line": "K562"},
+            ],
+        }
+        yaml_path = self.ensure_dataset_yaml("accept-path-unchanged", payload=payload)
+        dialog = SettingsDialog(config={"yaml_path": yaml_path})
+
+        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock, \
+             patch("app_gui.ui.dialogs.settings_dialog.QDialog.accept") as accept_mock:
+            dialog.accept()
+
+        # record has "K562" not in options ["HeLa"], but path unchanged
+        # → meta-only validation → no per-record blocking
+        warn_mock.assert_not_called()
+        accept_mock.assert_called_once()
+
+    def test_settings_dialog_accept_blocks_meta_error_even_when_path_unchanged(self):
+        """accept() must still block meta-level errors (undeclared fields)
+        even when the YAML path is unchanged."""
+        from app_gui.main import SettingsDialog
+
+        payload = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9, "cols": 9,
+                    "box_count": 2, "box_numbers": [1, 2],
+                },
+                "custom_fields": [],
+            },
+            "inventory": [
+                {"id": 1, "box": 1, "position": 1, "frozen_at": "2025-01-01",
+                 "cell_line": "K562", "undeclared_xyz": "bad"},
+            ],
+        }
+        yaml_path = self.ensure_dataset_yaml("accept-meta-err-same-path", payload=payload)
+        dialog = SettingsDialog(config={"yaml_path": yaml_path})
+
+        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock, \
+             patch("app_gui.ui.dialogs.settings_dialog.QDialog.accept") as accept_mock:
+            dialog.accept()
+
+        warn_mock.assert_called_once()
+        accept_mock.assert_not_called()
+        warning_text = str(warn_mock.call_args[0][2])
+        self.assertIn("undeclared_xyz", warning_text)
         from app_gui.main import SettingsDialog
 
         payload = {

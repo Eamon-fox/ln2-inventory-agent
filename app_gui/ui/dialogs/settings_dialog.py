@@ -197,6 +197,9 @@ class SettingsDialog(QDialog):
 
         yaml_row = QHBoxLayout()
         self.yaml_edit = QLineEdit(self._config.get("yaml_path", ""))
+        self._initial_yaml_path = self._normalize_yaml_path(
+            self._config.get("yaml_path", "")
+        )
         self.yaml_edit.setReadOnly(self._inventory_path_locked)
         self.yaml_new_btn = QPushButton(tr("main.new"))
         self.yaml_new_btn.setIcon(get_icon(Icons.FILE_PLUS))
@@ -537,10 +540,33 @@ class SettingsDialog(QDialog):
         }
 
     def accept(self):
-        """Block saving settings when selected dataset YAML fails strict validation."""
+        """Block saving settings when selected dataset YAML fails validation.
+
+        When the YAML path has not changed, use meta-only validation (skip
+        per-record checks) so that field-definition edits made by the custom
+        fields editor don't block closing the dialog.  When the path *has*
+        changed the user is loading a different file, so full strict
+        validation applies.
+        """
         yaml_path = self._normalize_yaml_path(self.yaml_edit.text().strip())
         if self._is_valid_inventory_file_path(yaml_path):
-            result = validate_candidate_yaml(yaml_path, fail_on_warnings=True)
+            yaml_path_changed = yaml_path != getattr(self, "_initial_yaml_path", "")
+            if yaml_path_changed:
+                result = validate_candidate_yaml(yaml_path, fail_on_warnings=True)
+            else:
+                from lib.yaml_ops import load_yaml as _load_yaml
+                try:
+                    _data = _load_yaml(yaml_path) or {}
+                except Exception:
+                    _data = {}
+                _errors, _warnings = validate_inventory_document(
+                    _data, skip_record_validation=True,
+                )
+                result = {
+                    "ok": not _errors,
+                    "message": format_validation_errors(_errors, prefix="Validation failed") if _errors else "",
+                    "report": {"errors": _errors, "warnings": _warnings},
+                }
             if not result.get("ok"):
                 report_text = self._render_validation_report(result.get("report") or {})
                 message = t(
@@ -896,20 +922,27 @@ class SettingsDialog(QDialog):
             del pending_meta["cell_line_options"]
         pending_meta["cell_line_required"] = bool(new_cl_required)
 
-        # Run the same strict validation used by Settings OK to fail fast here.
+        # Meta-only validation: skip per-record checks since field
+        # definitions are being intentionally changed.  Structural checks
+        # (schema, selector keys, undeclared record fields) still run.
         pending_data = dict(data)
         pending_data["meta"] = pending_meta
         pending_data["inventory"] = inventory
-        validation = self._validate_inventory_payload_strict(pending_data)
-        if not validation.get("ok"):
-            report_text = self._render_validation_report(validation.get("report") or {})
+        meta_errors, _warnings = validate_inventory_document(
+            pending_data, skip_record_validation=True,
+        )
+        if meta_errors:
+            report_text = self._render_validation_report({
+                "errors": meta_errors,
+            })
             message = t(
                 "main.datasetYamlValidationBlocked",
-                message=validation.get("message") or tr("main.importValidationFailed"),
+                message=format_validation_errors(
+                    meta_errors, prefix="Validation failed",
+                ),
             )
             if report_text:
                 message += "\n\n" + report_text
-            message += "\n\n" + tr("main.datasetYamlValidationHint")
             QMessageBox.warning(self, tr("main.importValidatedTitle"), message)
             return
 
