@@ -26,7 +26,7 @@ Run focused subsets:
 
     pytest -q tests/test_agent_tool_runner.py tests/test_react_agent.py
     pytest -q tests/test_plan_model.py tests/test_plan_executor.py
-    pytest -q tests/test_gui_panels.py tests/test_main_window_flows.py
+    pytest -q tests/integration/gui
 
 Collect-only (discovery check):
 

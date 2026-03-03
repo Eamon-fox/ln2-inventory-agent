@@ -48,7 +48,11 @@
 
 ### gui/ — GUI 面板与主窗口
 
-- test_gui_panels.py - Overview, operations, and table panel behavior. <!-- 概览、操作、表格面板行为 -->
+- test_gui_panels_ops_settings.py - Operations + settings panel behavior split from legacy monolith. <!-- Operations 与 Settings 面板行为（由原超大文件拆分） -->
+- test_gui_panels_overview.py - Overview panel interactions and marker rendering split from legacy monolith. <!-- Overview 面板交互与标记渲染（由原超大文件拆分） -->
+- test_gui_panels_ai.py - AI panel streaming + event-feed behavior split from legacy monolith. <!-- AI 面板流式输出与事件流行为（由原超大文件拆分） -->
+- test_gui_panels_plan_flows.py - Plan dedup/fallback/undo/print/preflight regressions split from legacy monolith. <!-- Plan 去重/回退/撤销/打印/预检回归（由原超大文件拆分） -->
+- test_gui_panels_data_views.py - Cell-line dropdown + overview data-view behavior split from legacy monolith. <!-- Cell-line 下拉与 Overview 数据视图行为（由原超大文件拆分） -->
 - test_gui_panels_new.py - Additional panel and recent interaction cases. <!-- 面板补充测试与最新交互场景 -->
 - test_gui_config.py - GUI config persistence, defaults, and migration. <!-- GUI 配置持久化、默认值与迁移 -->
 - test_gui_tool_bridge.py - GUI-to-tool bridge invocation and payload mapping. <!-- GUI 到工具桥接的调用与参数映射 -->

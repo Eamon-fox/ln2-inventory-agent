@@ -43,7 +43,7 @@ pytest tests/test_tool_api.py -v
 pytest tests/test_tool_api.py::TestToolAddEntry::test_basic_add -v
 
 # GUI tests (need PySide6)
-pytest tests/test_gui_panels.py -v
+pytest tests/integration/gui -v
 ```
 
 No mocking framework required — tests use real YAML in temp directories.
