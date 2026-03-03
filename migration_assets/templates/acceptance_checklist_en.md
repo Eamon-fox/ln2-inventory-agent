@@ -13,14 +13,14 @@ At migration start, this template is copied to `migrate/output/migration_checkli
 - [ ] `meta.box_layout.rows` and `meta.box_layout.cols` are positive integers.
 - [ ] If `meta.box_layout.box_tags` is present, each key maps to a declared box number and each tag is a non-empty single-line string (<= 80 chars).
 - [ ] Every inventory record has required fields: `id`, `box`, `frozen_at`.
-- [ ] Every inventory record has non-empty `cell_line` (`"Unknown"` is acceptable only when source value is truly unavailable).
-- [ ] Every non-empty `cell_line` belongs to `meta.cell_line_options` (or default options when this list is absent).
+- [ ] When `cell_line` is required, every inventory record has non-empty `cell_line` (`"Unknown"` is acceptable only when source value is truly unavailable).
+- [ ] For any field with `options` defined, non-empty values belong to the declared options list.
 - [ ] `id` values are unique positive integers.
 - [ ] Active tubes do not conflict on `(box, position)`.
 - [ ] `frozen_at` and takeout-event dates use `YYYY-MM-DD` and are not future dates.
 - [ ] `position` is integer or `null`; `null` is only used when rules allow it.
 - [ ] `meta.custom_fields`, if present, uses structured objects with `key` + `type` (optional `label` / `required` / `default`).
-- [ ] `meta.custom_fields` keys do not collide with structural keys (`id`, `box`, `position`, `frozen_at`, `thaw_events`, `cell_line`, `note`).
+- [ ] `meta.custom_fields` keys do not collide with structural keys (`id`, `box`, `position`, `frozen_at`, `thaw_events`).
 - [ ] No invented records or fabricated values were introduced.
 - [ ] No unresolved ambiguity remains for required fields.
 

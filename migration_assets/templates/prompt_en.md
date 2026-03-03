@@ -11,9 +11,9 @@ Hard requirements:
 - Do not invent records, fields, dates, or positions.
 - Use `null` only when allowed by `migration_assets/schema/validation_rules.md`.
 - Keep active tubes unique on `(box, position)`.
-- Ensure every inventory record has non-empty `cell_line`; use `"Unknown"` only when the source truly cannot provide it.
-- Ensure each non-empty `cell_line` value is included in `meta.cell_line_options` (or default options if no override is provided).
-- Keep `meta.custom_fields` strictly non-structural (`note`, `cell_line`, `id`, `box`, etc. must not appear there).
+- When `cell_line` is configured as required, ensure every inventory record has non-empty `cell_line`; use `"Unknown"` only when the source truly cannot provide it.
+- For any field with `options` defined (including `cell_line`), ensure non-empty values are in the declared options list.
+- Keep `meta.custom_fields` strictly non-structural (`id`, `box`, `position`, `frozen_at`, `thaw_events` must not appear there). Note: `cell_line` and `note` are default custom fields and belong in `meta.custom_fields`.
 - If source data includes per-box labels (rack/shelf/layer), map them to optional `meta.box_layout.box_tags` using box-number keys.
 - If required fields are ambiguous, ask clarifying questions before final output.
 - If clarification is unavailable, write blockers in `migrate/output/conversion_report.md` and avoid fake completion.

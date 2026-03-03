@@ -12,8 +12,8 @@ The generated file **must** be `migrate/output/ln2_inventory.yaml`.
 - `id`: unique positive integer.
 - `box`: positive integer within configured box layout.
 - `frozen_at`: date in `YYYY-MM-DD`.
-- To pass strict import mode in this app, include non-empty `cell_line` for every record. If source value is unknown, use `"Unknown"`.
-- In strict validation, non-empty `cell_line` must also be in `meta.cell_line_options` (or default options when `meta.cell_line_options` is absent).
+- If `cell_line` is configured as required (via `meta.cell_line_required` or field-level `required: true` in `meta.custom_fields`), include non-empty `cell_line` for every record. If source value is unknown, use `"Unknown"`.
+- For any field with `options` defined (in `meta.custom_fields` or legacy `meta.cell_line_options`), non-empty values must be in that options list.
 
 ## Position rules
 
@@ -26,7 +26,7 @@ The generated file **must** be `migrate/output/ln2_inventory.yaml`.
 
 - `meta.custom_fields` is optional.
 - If present, each item should be a structured object with `key` (identifier-style) and `type` (for example `str`, `int`, `float`, `date`).
-- `meta.custom_fields` must not reuse structural keys (`id`, `box`, `position`, `frozen_at`, `thaw_events`, `cell_line`, `note`).
+- `meta.custom_fields` must not reuse structural keys (`id`, `box`, `position`, `frozen_at`, `thaw_events`). Note: `cell_line` and `note` are default custom fields and may appear in `meta.custom_fields`.
 - Optional keys such as `label`, `required`, and `default` are allowed.
 - `meta.box_layout.box_tags` is optional. If provided, each key must map to a declared box number and each value must be a non-empty single-line tag (<= 80 chars).
 
