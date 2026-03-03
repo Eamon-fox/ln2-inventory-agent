@@ -9,6 +9,8 @@ from app_gui.ui.theme import cell_empty_style, cell_occupied_style
 from app_gui.ui.utils import cell_color
 from lib.position_fmt import box_to_display, pos_to_display
 
+_BOX_TAG_TITLE_MAX_CHARS = 18
+
 
 def _normalize_positive_int(raw):
     try:
@@ -107,7 +109,24 @@ def _get_box_tag(layout, box_num):
     return text.strip()
 
 
+def _truncate_box_tag_for_title(tag_text, max_chars=_BOX_TAG_TITLE_MAX_CHARS):
+    text = str(tag_text or "").strip()
+    limit = max(1, int(max_chars or 1))
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}..."
+
+
 def _format_box_group_title(box_num, layout):
+    box_label = box_to_display(box_num, layout)
+    title = t("overview.boxLabel", box=box_label)
+    box_tag = _get_box_tag(layout, box_num)
+    if not box_tag:
+        return title
+    return f"{title} | {_truncate_box_tag_for_title(box_tag)}"
+
+
+def _format_box_group_tooltip(box_num, layout):
     box_label = box_to_display(box_num, layout)
     title = t("overview.boxLabel", box=box_label)
     box_tag = _get_box_tag(layout, box_num)
@@ -228,6 +247,7 @@ def _update_box_titles(self, box_numbers):
         if group is None:
             continue
         group.setTitle(_format_box_group_title(box_num, layout))
+        group.setToolTip(_format_box_group_tooltip(box_num, layout))
 
 
 def _warm_hover_animation(self):
@@ -270,6 +290,7 @@ def _rebuild_boxes(self, rows, cols, box_numbers):
     for idx, box_num in enumerate(box_numbers):
         group = QGroupBox(_format_box_group_title(box_num, layout))
         group.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        group.setToolTip(_format_box_group_tooltip(box_num, layout))
         group.setContextMenuPolicy(Qt.CustomContextMenu)
         group.customContextMenuRequested.connect(
             lambda point, b=box_num, grp=group: self.on_box_context_menu(
