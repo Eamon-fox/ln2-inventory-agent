@@ -140,6 +140,45 @@ class _FakeMessageBox:
         self.default_button = button
 
 
+class _FakeComboBox:
+    def __init__(self):
+        self.items = []
+        self.current_index = -1
+        self.enabled = True
+        self.tooltip = ""
+        self.blocked = False
+
+    def blockSignals(self, value):
+        self.blocked = bool(value)
+
+    def clear(self):
+        self.items = []
+        self.current_index = -1
+
+    def addItem(self, text, data):
+        self.items.append((str(text), data))
+
+    def setEnabled(self, value):
+        self.enabled = bool(value)
+
+    def findData(self, data):
+        for idx, item in enumerate(self.items):
+            if item[1] == data:
+                return idx
+        return -1
+
+    def setCurrentIndex(self, index):
+        self.current_index = int(index)
+
+    def currentData(self):
+        if self.current_index < 0 or self.current_index >= len(self.items):
+            return None
+        return self.items[self.current_index][1]
+
+    def setToolTip(self, text):
+        self.tooltip = str(text)
+
+
 def _build_settings_window(path_text):
     status = MagicMock()
     window = SimpleNamespace()
@@ -695,6 +734,83 @@ def test_main_window_on_delete_dataset_creates_fallback_when_empty():
     write_mock.assert_called_once_with(fallback_yaml)
     window._dataset_session.switch_to.assert_called_once_with(fallback_yaml, reason="dataset_delete")
     status_message.assert_called_once()
+
+
+def test_main_window_refresh_home_dataset_choices_selects_current_path():
+    from app_gui.main import MainWindow
+
+    path_a = os.path.abspath("D:/inventories/a/inventory.yaml")
+    path_b = os.path.abspath("D:/inventories/b/inventory.yaml")
+    window = MainWindow.__new__(MainWindow)
+    window.current_yaml_path = path_b
+    window.home_dataset_switch_combo = _FakeComboBox()
+
+    with patch(
+        "app_gui.main.list_managed_datasets",
+        return_value=[
+            {"name": "dataset-a", "yaml_path": path_a},
+            {"name": "dataset-b", "yaml_path": path_b},
+        ],
+    ):
+        MainWindow._refresh_home_dataset_choices(window)
+
+    assert window.home_dataset_switch_combo.enabled is True
+    assert window.home_dataset_switch_combo.current_index == 1
+    assert window.home_dataset_switch_combo.currentData() == path_b
+    assert window.home_dataset_switch_combo.tooltip == path_b
+
+
+def test_main_window_home_dataset_switch_uses_session_controller():
+    from app_gui.main import MainWindow
+
+    target_path = os.path.abspath("D:/inventories/next/inventory.yaml")
+    switched_path = os.path.abspath("D:/inventories/switched/inventory.yaml")
+    window = MainWindow.__new__(MainWindow)
+    window.current_yaml_path = os.path.abspath("D:/inventories/current/inventory.yaml")
+    window.home_dataset_switch_combo = SimpleNamespace(currentData=MagicMock(return_value=target_path))
+    window._dataset_session = SimpleNamespace(switch_to=MagicMock(return_value=switched_path))
+    window._refresh_home_dataset_choices = MagicMock()
+    window.statusBar = MagicMock(return_value=SimpleNamespace(showMessage=MagicMock()))
+
+    MainWindow._on_home_dataset_switch_changed(window)
+
+    window._dataset_session.switch_to.assert_called_once_with(target_path, reason="manual_switch")
+    window._refresh_home_dataset_choices.assert_called_once_with(selected_yaml=switched_path)
+
+
+def test_main_window_home_dataset_switch_failure_rolls_back_selection():
+    from app_gui.main import MainWindow
+
+    current_path = os.path.abspath("D:/inventories/current/inventory.yaml")
+    target_path = os.path.abspath("D:/inventories/bad/inventory.yaml")
+    status_message = MagicMock()
+    window = MainWindow.__new__(MainWindow)
+    window.current_yaml_path = current_path
+    window.home_dataset_switch_combo = SimpleNamespace(currentData=MagicMock(return_value=target_path))
+    window._dataset_session = SimpleNamespace(switch_to=MagicMock(side_effect=RuntimeError("boom")))
+    window._refresh_home_dataset_choices = MagicMock()
+    window.statusBar = MagicMock(return_value=SimpleNamespace(showMessage=status_message))
+
+    MainWindow._on_home_dataset_switch_changed(window)
+
+    window._dataset_session.switch_to.assert_called_once_with(target_path, reason="manual_switch")
+    status_message.assert_called_once()
+    window._refresh_home_dataset_choices.assert_called_once_with(selected_yaml=current_path)
+
+
+def test_main_window_update_dataset_label_also_refreshes_home_switcher():
+    from app_gui.main import MainWindow
+
+    current_path = os.path.abspath("D:/inventories/current/inventory.yaml")
+    window = MainWindow.__new__(MainWindow)
+    window.current_yaml_path = current_path
+    window.dataset_label = SimpleNamespace(setText=MagicMock())
+    window._refresh_home_dataset_choices = MagicMock()
+
+    MainWindow._update_dataset_label(window)
+
+    window.dataset_label.setText.assert_called_once_with(current_path)
+    window._refresh_home_dataset_choices.assert_called_once_with(selected_yaml=current_path)
 
 
 def test_main_window_migration_mode_change_forwards_to_operations_panel():

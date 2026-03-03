@@ -50,6 +50,14 @@ def test_main_keeps_settings_entry_and_missing_file_hint():
     assert "main.fileNotFound" in text
 
 
+def test_main_home_top_bar_has_dataset_switcher():
+    text = _source_text()
+
+    assert 'self.home_dataset_switch_label = QLabel(tr("main.datasetSwitch"))' in text
+    assert "self.home_dataset_switch_combo = QComboBox()" in text
+    assert "self.home_dataset_switch_combo.currentIndexChanged.connect(self._on_home_dataset_switch_changed)" in text
+
+
 def test_main_creates_dataset_under_managed_root():
     text = _source_text()
 

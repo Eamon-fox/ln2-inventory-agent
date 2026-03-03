@@ -58,6 +58,7 @@
   },
   "main": {
     "settings": "Settings",
+    "datasetSwitch": "Dataset:",
     "auditLog": "Log",
     "fileNotFound": "File not found: {path}",
     "new": "New Inventory",

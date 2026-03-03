@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt, QSettings, Slot, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
-    QHBoxLayout, QPushButton, QLabel, QSplitter,
+    QHBoxLayout, QPushButton, QLabel, QSplitter, QComboBox,
     QDialog, QLineEdit, QInputDialog, QMessageBox, QTextEdit, QPlainTextEdit, QCheckBox,
 )
 
@@ -316,6 +316,14 @@ class MainWindow(QMainWindow):
 
         # Top Bar
         top = QHBoxLayout()
+        self.home_dataset_switch_label = QLabel(tr("main.datasetSwitch"))
+        top.addWidget(self.home_dataset_switch_label)
+
+        self.home_dataset_switch_combo = QComboBox()
+        self.home_dataset_switch_combo.setMinimumWidth(180)
+        self.home_dataset_switch_combo.currentIndexChanged.connect(self._on_home_dataset_switch_changed)
+        top.addWidget(self.home_dataset_switch_combo)
+
         self.dataset_label = QLabel()
         self._update_dataset_label()
         top.addWidget(self.dataset_label, 1)
@@ -345,6 +353,8 @@ class MainWindow(QMainWindow):
         settings_btn.setIcon(get_icon(Icons.SETTINGS))
         settings_btn.clicked.connect(self.on_open_settings)
         top.addWidget(settings_btn)
+
+        self._refresh_home_dataset_choices(selected_yaml=self.current_yaml_path)
 
         root.addLayout(top)
 
@@ -551,8 +561,58 @@ class MainWindow(QMainWindow):
     def _update_dataset_label(self):
         if hasattr(self, "_state_flow"):
             self._state_flow.update_dataset_label()
+        else:
+            self.dataset_label.setText(self.current_yaml_path)
+        self._refresh_home_dataset_choices(selected_yaml=self.current_yaml_path)
+
+    def _refresh_home_dataset_choices(self, selected_yaml=""):
+        combo = getattr(self, "home_dataset_switch_combo", None)
+        if combo is None:
             return
-        self.dataset_label.setText(self.current_yaml_path)
+
+        rows = list_managed_datasets()
+        current_yaml = _normalize_inventory_yaml_path(selected_yaml or self.current_yaml_path)
+        combo.blockSignals(True)
+        combo.clear()
+        for row in rows:
+            name = str(row.get("name") or "").strip()
+            yaml_path = _normalize_inventory_yaml_path(row.get("yaml_path"))
+            if not yaml_path:
+                continue
+            if not name:
+                name = os.path.basename(os.path.dirname(yaml_path)) or yaml_path
+            combo.addItem(name, yaml_path)
+
+        combo.setEnabled(bool(rows))
+        tooltip_text = ""
+        if rows:
+            idx = combo.findData(current_yaml)
+            if idx < 0:
+                idx = 0
+            combo.setCurrentIndex(idx)
+            selected_path = combo.currentData()
+            tooltip_text = str(selected_path or "")
+        combo.setToolTip(tooltip_text)
+        combo.blockSignals(False)
+
+    def _on_home_dataset_switch_changed(self):
+        combo = getattr(self, "home_dataset_switch_combo", None)
+        if combo is None:
+            return
+
+        selected_path = _normalize_inventory_yaml_path(combo.currentData())
+        if not selected_path:
+            return
+        try:
+            switched_path = self._dataset_session.switch_to(
+                selected_path,
+                reason="manual_switch",
+            )
+        except Exception as exc:
+            self.statusBar().showMessage(str(exc), 5000)
+            self._refresh_home_dataset_choices(selected_yaml=self.current_yaml_path)
+            return
+        self._refresh_home_dataset_choices(selected_yaml=switched_path)
 
     def on_open_settings(self):
         dialog = SettingsDialog(
@@ -591,6 +651,7 @@ class MainWindow(QMainWindow):
             return
         self._settings_flow.apply_dialog_values(values)
         self._settings_flow.finalize_after_settings()
+        self._refresh_home_dataset_choices(selected_yaml=self.current_yaml_path)
 
     def _on_settings_data_changed(self, *, yaml_path=None, meta=None):
         self._settings_flow.handle_data_changed(yaml_path=yaml_path, meta=meta)
@@ -649,6 +710,7 @@ class MainWindow(QMainWindow):
             imported_yaml_path,
             reason="import_success",
         )
+        self._refresh_home_dataset_choices(selected_yaml=switched_path)
         self.statusBar().showMessage(
             t("main.importOpened", path=switched_path),
             4000,
@@ -686,6 +748,7 @@ class MainWindow(QMainWindow):
             new_yaml_path,
             reason="dataset_rename",
         )
+        self._refresh_home_dataset_choices(selected_yaml=switched)
         if audit_failed:
             self.statusBar().showMessage(
                 t("settings.renameDatasetSuccessWithAuditWarning", path=switched, error=audit_failed),
@@ -739,6 +802,7 @@ class MainWindow(QMainWindow):
             fallback_yaml,
             reason="dataset_delete",
         )
+        self._refresh_home_dataset_choices(selected_yaml=switched)
         if audit_failed:
             self.statusBar().showMessage(
                 t("settings.deleteDatasetSuccessWithAuditWarning", path=switched, error=audit_failed),
@@ -787,10 +851,11 @@ class MainWindow(QMainWindow):
             return created_path
 
         try:
-            self._dataset_session.switch_to(created_path, reason="new_dataset")
+            switched_path = self._dataset_session.switch_to(created_path, reason="new_dataset")
         except Exception as exc:
             self.statusBar().showMessage(str(exc), 5000)
             return
+        self._refresh_home_dataset_choices(selected_yaml=switched_path)
         self.statusBar().showMessage(
             t("main.fileCreated", path=self.current_yaml_path),
             4000,

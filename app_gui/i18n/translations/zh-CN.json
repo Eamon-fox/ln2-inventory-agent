@@ -58,6 +58,7 @@
   },
   "main": {
     "settings": "设置",
+    "datasetSwitch": "\u6570\u636e\u96c6\uff1a",
     "auditLog": "日志",
     "fileNotFound": "文件未找到：{path}",
     "new": "新建库存",
