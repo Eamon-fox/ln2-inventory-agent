@@ -345,6 +345,7 @@ def _get_theme_vars(mode):
             --status-muted: #64748b;
             --table-gridline: rgba(15,23,42,0.10);
             --cell-border-default: #95adc6;
+            --cell-selected-border: #0f172a;
             --cell-empty-bg: #eef3f8;
             --cell-empty-selected-bg: #deebf8;
             --cell-empty-text: #6b7f95;
@@ -471,6 +472,7 @@ def _get_theme_vars(mode):
             --status-muted: #94a3b8;
             --table-gridline: rgba(159,179,200,0.20);
             --cell-border-default: #4e6a88;
+            --cell-selected-border: #ffffff;
             --cell-empty-bg: #1a2a40;
             --cell-empty-selected-bg: #223956;
             --cell-empty-text: #86a0bb;
@@ -837,7 +839,7 @@ def cell_occupied_style(color="#22c55e", is_selected=False, font_size=9):
             QPushButton {{
                 background-color: {color};
                 color: {text_color};
-                border: 2px solid var(--accent);
+                border: 3px solid var(--cell-selected-border);
                 border-radius: var(--radius-xs);
                 font-size: {font_size}px;
                 font-weight: 500;
@@ -845,7 +847,7 @@ def cell_occupied_style(color="#22c55e", is_selected=False, font_size=9):
 
             }}
             QPushButton:hover {{
-                border: 2px solid var(--accent);
+                border: 3px solid var(--cell-selected-border);
             }}
         """)
     return _resolve_inline_qss(f"""
@@ -871,14 +873,14 @@ def cell_empty_style(is_selected=False, font_size=8):
             QPushButton {{
                 background-color: var(--cell-empty-selected-bg);
                 color: var(--cell-empty-selected-text);
-                border: 2px solid var(--accent);
+                border: 3px solid var(--cell-selected-border);
                 border-radius: var(--radius-xs);
                 font-size: {font_size}px;
                 padding: 1px;
 
             }}
             QPushButton:hover {{
-                border: 2px solid var(--accent);
+                border: 3px solid var(--cell-selected-border);
                 background-color: var(--background-raised);
                 color: var(--text-weak);
             }}

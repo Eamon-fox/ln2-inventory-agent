@@ -81,7 +81,10 @@ def _marker_border_color(marker_type):
     return ""
 
 
-def _marker_css_overlay(marker_type):
+def _marker_css_overlay(marker_type, *, is_selected=False):
+    if bool(is_selected):
+        # Keep selected state visually dominant when plan markers coexist.
+        return ""
     color = _marker_border_color(marker_type)
     if not color:
         return ""
@@ -410,7 +413,9 @@ def _paint_cell(self, button, box_num, position, record):
     marker_type = str((marker or {}).get("type") or "").strip().lower()
     move_id = (marker or {}).get("move_id")
     if marker_type:
-        button.setStyleSheet((button.styleSheet() or "") + _marker_css_overlay(marker_type))
+        button.setStyleSheet(
+            (button.styleSheet() or "") + _marker_css_overlay(marker_type, is_selected=is_selected)
+        )
 
     if hasattr(button, "set_operation_marker"):
         button.set_operation_marker(marker_type if marker_type else None, move_id if marker_type else None)

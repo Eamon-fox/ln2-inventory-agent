@@ -10,6 +10,7 @@ import sys
 import unittest
 import importlib.util
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
@@ -302,6 +303,35 @@ class TestColorPalette(unittest.TestCase):
 
         self.assertIn("color: #ffffff;", dark_bg_style)
         self.assertIn("color: #0f172a;", light_bg_style)
+
+    def test_cell_occupied_style_selected_border_follows_theme_mode(self):
+        from app_gui.ui import theme as _theme
+
+        with patch.object(_theme, "_current_theme_mode", return_value="light"):
+            light_style = _theme.cell_occupied_style("#f39c12", is_selected=True, font_size=9).lower()
+        with patch.object(_theme, "_current_theme_mode", return_value="dark"):
+            dark_style = _theme.cell_occupied_style("#f39c12", is_selected=True, font_size=9).lower()
+
+        self.assertIn("border: 3px solid #0f172a;", light_style)
+        self.assertIn("border: 3px solid #ffffff;", dark_style)
+
+    def test_cell_empty_style_selected_border_follows_theme_mode(self):
+        from app_gui.ui import theme as _theme
+
+        with patch.object(_theme, "_current_theme_mode", return_value="light"):
+            light_style = _theme.cell_empty_style(is_selected=True, font_size=8).lower()
+        with patch.object(_theme, "_current_theme_mode", return_value="dark"):
+            dark_style = _theme.cell_empty_style(is_selected=True, font_size=8).lower()
+
+        self.assertIn("border: 3px solid #0f172a;", light_style)
+        self.assertIn("border: 3px solid #ffffff;", dark_style)
+
+    @unittest.skipIf(not QT_AVAILABLE, "PySide6 not available")
+    def test_marker_overlay_skips_border_when_cell_selected(self):
+        from app_gui.ui.overview_panel_grid import _marker_css_overlay
+
+        self.assertEqual("", _marker_css_overlay("takeout", is_selected=True))
+        self.assertIn("#ef4444", _marker_css_overlay("takeout", is_selected=False))
 
 
 if __name__ == "__main__":
