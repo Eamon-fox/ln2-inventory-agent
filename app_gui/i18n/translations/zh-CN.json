@@ -446,6 +446,7 @@
     "auditActionMove": "移动",
     "auditActionRollback": "回滚",
     "auditActionBackup": "备份",
+    "auditActionEditCustomFields": "????",
     "auditRollbackFromSelected": "从所选回滚",
     "clickLoadAudit": "点击“加载审计日志”查看事件。",
     "auditFileNotFound": "未找到审计文件：{path}",

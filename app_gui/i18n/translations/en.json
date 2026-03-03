@@ -453,6 +453,7 @@
     "auditActionMove": "Move",
     "auditActionRollback": "Rollback",
     "auditActionBackup": "Backup",
+    "auditActionEditCustomFields": "Edit Custom Fields",
     "auditRollbackFromSelected": "Rollback from Selected",
     "clickLoadAudit": "Click \"Load Audit Log\" to view events.",
     "auditFileNotFound": "Audit file not found: {path}",

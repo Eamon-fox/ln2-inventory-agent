@@ -891,6 +891,84 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         self.assertEqual("tag-A", record.get("new_tag"))
         self.assertNotIn("old_tag", record)
 
+    def test_settings_dialog_custom_fields_save_creates_backup_and_audit(self):
+        from app_gui.main import SettingsDialog
+        from lib.yaml_ops import list_yaml_backups, load_yaml, read_audit_events
+
+        payload = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9, "cols": 9,
+                    "box_count": 2, "box_numbers": [1, 2],
+                },
+                "custom_fields": [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                    {"key": "short_name", "label": "Short Name", "type": "str"},
+                ],
+                "display_key": "short_name",
+                "color_key": "short_name",
+            },
+            "inventory": [
+                {
+                    "id": 1,
+                    "box": 1,
+                    "position": 1,
+                    "frozen_at": "2025-01-01",
+                    "cell_line": "K562",
+                    "short_name": "clone-A",
+                },
+            ],
+        }
+        yaml_path = self.ensure_dataset_yaml("cf-save-backup-audit", payload=payload)
+
+        class _FakeDialog:
+            def __init__(self, *a, **kw): pass
+            @staticmethod
+            def exec(): return 1
+            @staticmethod
+            def get_custom_fields():
+                return [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                    {"key": "alias", "label": "Alias", "type": "str", "_original_key": "short_name"},
+                ]
+            @staticmethod
+            def get_display_key(): return ""
+            @staticmethod
+            def get_color_key(): return ""
+            @staticmethod
+            def get_cell_line_options(): return None
+            @staticmethod
+            def get_cell_line_required(): return False
+
+        on_data_changed = MagicMock()
+        dialog = SettingsDialog(
+            config={"yaml_path": yaml_path},
+            on_data_changed=on_data_changed,
+            custom_fields_dialog_cls=_FakeDialog,
+        )
+
+        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock:
+            dialog._open_custom_fields_editor()
+
+        warn_mock.assert_not_called()
+        on_data_changed.assert_called_once()
+
+        saved = load_yaml(yaml_path) or {}
+        saved_meta = saved.get("meta") or {}
+        self.assertEqual("alias", saved_meta.get("display_key"))
+        self.assertEqual("alias", saved_meta.get("color_key"))
+        self.assertTrue(list_yaml_backups(yaml_path))
+
+        events = read_audit_events(yaml_path) or []
+        actions = [str(ev.get("action") or "") for ev in events]
+        self.assertIn("backup", actions)
+        self.assertIn("edit_custom_fields", actions)
+        edit_events = [ev for ev in events if str(ev.get("action") or "") == "edit_custom_fields"]
+        self.assertTrue(edit_events)
+        details = dict(edit_events[-1].get("details") or {})
+        self.assertEqual("edit_custom_fields", details.get("op"))
+        self.assertIn({"from": "short_name", "to": "alias"}, details.get("renames") or [])
+
     def test_settings_dialog_custom_fields_rename_cell_line_to_type_has_no_ghost_field(self):
         from app_gui.main import SettingsDialog
         from lib.custom_fields import get_effective_fields

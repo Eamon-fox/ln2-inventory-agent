@@ -46,10 +46,26 @@ _COMMON_CJK_CHARS = set(
 _MOJIBAKE_SOURCE_ENCODINGS = ("gb18030", "gbk", "cp936")
 _MOJIBAKE_MARKER_CHARS = set("\u95c4\u7039\u951b\u9350\u93b4\u935a\u7ec9\u93bf\u7481\u9286\u93c4\u9225\u7f01\u9428\u5a13\u9359\u5bee\u6fb6\u6d63")
 
+_VALIDATION_SCOPES = {"full", "meta_only"}
 
-def _ensure_inventory_integrity(data, prefix="完整性校验失败"):
+
+def _ensure_inventory_integrity(data, prefix="Integrity validation failed", validation_scope="full"):
     """Raise ValueError when inventory invariants are broken."""
-    errors, _warnings = validate_inventory(data)
+    scope = str(validation_scope or "full").strip().lower()
+    if scope not in _VALIDATION_SCOPES:
+        raise ValueError(
+            f"invalid validation_scope={validation_scope!r}; expected one of {sorted(_VALIDATION_SCOPES)}"
+        )
+
+    if scope == "meta_only":
+        from .import_validation_core import validate_inventory_document
+
+        errors, _warnings = validate_inventory_document(
+            data,
+            skip_record_validation=True,
+        )
+    else:
+        errors, _warnings = validate_inventory(data)
     if errors:
         raise ValueError(format_validation_errors(errors, prefix=prefix))
 
@@ -715,6 +731,7 @@ def write_yaml(
     auto_backup=True,
     backup_path=None,
     audit_meta=None,
+    validation_scope="full",
 ):
     """Write data to YAML file.
 
@@ -728,6 +745,9 @@ def write_yaml(
         audit_meta: Optional dict for audit fields.
             Common keys: action/source/details, plus session_id, trace_id,
             tool_name, tool_input, status, error.
+        validation_scope: ``"full"`` (default) validates full record invariants;
+            ``"meta_only"`` validates metadata/schema and undeclared-field
+            constraints while skipping per-record value checks.
     """
     yaml_abs = assert_allowed_inventory_yaml_path(_abs_path(path))
 
@@ -737,8 +757,11 @@ def write_yaml(
         from copy import deepcopy
         _preflight_cache[cache_key] = deepcopy(data)
         return None
-
-    _ensure_inventory_integrity(data, prefix="完整性校验失败")
+    _ensure_inventory_integrity(
+        data,
+        prefix="Integrity validation failed",
+        validation_scope=validation_scope,
+    )
 
     existing_instance_id = None
     before_data = None

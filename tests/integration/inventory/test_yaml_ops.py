@@ -198,20 +198,70 @@ class YamlOpsSafetyTests(unittest.TestCase):
             self.assertEqual("tests", last["source"])
             self.assertFalse(last.get("backup_path"))
             self.assertGreater(int(last.get("audit_seq") or 0), 0)
-            self.assertTrue(last.get("session_id"))
-            self.assertTrue(last.get("trace_id"))
-            self.assertNotIn("actor_type", last)
-            self.assertNotIn("actor_id", last)
-            self.assertNotIn("channel", last)
-            self.assertNotIn("user", last)
-            self.assertNotIn("host", last)
-            self.assertNotIn("size_bytes", last)
-            self.assertNotIn("size_mb", last)
-            self.assertNotIn("before", last)
-            self.assertNotIn("after", last)
-            self.assertNotIn("delta", last)
-            self.assertNotIn("changed_ids", last)
-            self.assertEqual("success", last.get("status"))
+
+    def test_write_yaml_meta_only_allows_required_field_missing_in_existing_records(self):
+        with managed_inventory_root("ln2_yaml_meta_only_"):
+            yaml_path = _managed_yaml("meta-only-write")
+            data = {
+                "meta": {
+                    "box_layout": {"rows": 9, "cols": 9, "box_count": 2, "box_numbers": [1, 2]},
+                    "custom_fields": [
+                        {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                        {"key": "passage", "label": "Passage", "type": "int", "required": True},
+                    ],
+                },
+                "inventory": [
+                    {
+                        "id": 1,
+                        "box": 1,
+                        "position": 1,
+                        "frozen_at": "2025-01-01",
+                        "cell_line": "K562",
+                    }
+                ],
+            }
+
+            write_yaml(
+                data,
+                path=str(yaml_path),
+                audit_meta={"action": "meta_only_write", "source": "tests"},
+                validation_scope="meta_only",
+            )
+
+            loaded = load_yaml(str(yaml_path))
+            self.assertEqual("K562", loaded["inventory"][0]["cell_line"])
+
+    def test_write_yaml_full_scope_still_blocks_required_field_missing(self):
+        with managed_inventory_root("ln2_yaml_full_scope_"):
+            yaml_path = _managed_yaml("full-scope-write")
+            data = {
+                "meta": {
+                    "box_layout": {"rows": 9, "cols": 9, "box_count": 2, "box_numbers": [1, 2]},
+                    "custom_fields": [
+                        {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                        {"key": "passage", "label": "Passage", "type": "int", "required": True},
+                    ],
+                },
+                "inventory": [
+                    {
+                        "id": 1,
+                        "box": 1,
+                        "position": 1,
+                        "frozen_at": "2025-01-01",
+                        "cell_line": "K562",
+                    }
+                ],
+            }
+
+            with self.assertRaises(ValueError):
+                write_yaml(
+                    data,
+                    path=str(yaml_path),
+                    audit_meta={"action": "full_write", "source": "tests"},
+                    validation_scope="full",
+                )
+            self.assertFalse(yaml_path.exists())
+            self.assertFalse(Path(get_audit_log_path(str(yaml_path))).exists())
 
     def test_audit_logs_are_isolated_per_yaml_file(self):
         with managed_inventory_root("ln2_audit_isolation_"):

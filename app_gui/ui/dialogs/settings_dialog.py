@@ -3,7 +3,6 @@
 import os
 import sys
 
-import yaml
 from PySide6.QtCore import Qt, Slot, QSize
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
@@ -37,6 +36,13 @@ from lib.inventory_paths import (
 )
 from lib.import_acceptance import validate_candidate_yaml
 from lib.import_validation_core import validate_inventory_document
+from lib.custom_fields_update_service import (
+    build_custom_fields_update_audit_details,
+    drop_removed_fields_from_inventory,
+    prepare_custom_fields_update,
+    validate_custom_fields_update_draft,
+)
+from lib.settings_write_gateway import persist_custom_fields_update
 from lib.validators import format_validation_errors
 from lib.yaml_ops import load_yaml
 
@@ -799,13 +805,6 @@ class SettingsDialog(QDialog):
                 tr("settings.alreadyLatest"))
 
     def _open_custom_fields_editor(self):
-        def _has_nonempty_value(value):
-            if value is None:
-                return False
-            if isinstance(value, str):
-                return bool(value.strip())
-            return True
-
         yaml_path = self.yaml_edit.text().strip()
         if not yaml_path or not os.path.isfile(yaml_path):
             QMessageBox.warning(self, tr("common.info"),
@@ -850,160 +849,73 @@ class SettingsDialog(QDialog):
         if not isinstance(inventory, list):
             inventory = []
 
-        # --- Step 1: handle renames (old_key -> new_key) ---
-        renames = {}  # old_key -> new_key
-        for f in new_fields:
-            orig = f.pop("_original_key", None)
-            if orig and orig != f["key"]:
-                renames[orig] = f["key"]
+        draft = prepare_custom_fields_update(
+            meta=meta,
+            inventory=inventory,
+            existing_fields=existing,
+            new_fields=new_fields,
+            current_display_key=current_dk,
+            current_color_key=current_ck,
+            requested_display_key=new_dk,
+            requested_color_key=new_ck,
+            requested_cell_line_options=new_clo,
+            requested_cell_line_required=new_cl_required,
+        )
 
-        if renames and inventory:
-            conflicts = []
-            for rec in inventory:
-                if not isinstance(rec, dict):
-                    continue
-                rid = rec.get("id")
-                for old, new in renames.items():
-                    if old not in rec or new not in rec:
-                        continue
-                    old_value = rec.get(old)
-                    new_value = rec.get(new)
-                    if not _has_nonempty_value(old_value) or not _has_nonempty_value(new_value):
-                        continue
-                    if str(old_value).strip() == str(new_value).strip():
-                        continue
-                    conflicts.append(
-                        {
-                            "record_id": rid,
-                            "from_key": old,
-                            "to_key": new,
-                            "from_value": old_value,
-                            "to_value": new_value,
-                        }
-                    )
-            if conflicts:
-                sample_lines = []
-                for item in conflicts[:20]:
-                    sample_lines.append(
-                        f"id={item.get('record_id', '?')}: "
-                        f"{item['from_key']}={item['from_value']!r} vs {item['to_key']}={item['to_value']!r}"
-                    )
-                hidden_count = len(conflicts) - len(sample_lines)
-                detail_text = "\n".join(sample_lines)
-                if hidden_count > 0:
-                    detail_text += f"\n... and {hidden_count} more conflict(s)"
-                QMessageBox.warning(
-                    self,
-                    tr("main.customFieldsTitle"),
-                    (
-                        "Field rename conflict detected. "
-                        "The target field already contains different values.\n\n"
-                        f"{detail_text}\n\n"
-                        "Please resolve conflicts in data before renaming."
-                    ),
+        if draft.rename_conflicts:
+            sample_lines = []
+            for item in draft.rename_conflicts[:20]:
+                sample_lines.append(
+                    f"id={item.get('record_id', '?')}: "
+                    f"{item['from_key']}={item['from_value']!r} vs {item['to_key']}={item['to_value']!r}"
                 )
+            hidden_count = len(draft.rename_conflicts) - len(sample_lines)
+            detail_text = "\n".join(sample_lines)
+            if hidden_count > 0:
+                detail_text += f"\n... and {hidden_count} more conflict(s)"
+            QMessageBox.warning(
+                self,
+                tr("main.customFieldsTitle"),
+                (
+                    "Field rename conflict detected. "
+                    "The target field already contains different values.\n\n"
+                    f"{detail_text}\n\n"
+                    "Please resolve conflicts in data before renaming."
+                ),
+            )
+            return
+
+        removed_data_cleaned = False
+        removed_records_count = 0
+        if draft.removed_keys_with_data and draft.pending_inventory:
+            names = ", ".join(sorted(draft.removed_keys))
+            msg = QMessageBox(self)
+            msg.setWindowTitle(tr("main.customFieldsTitle"))
+            msg.setText(t("main.cfRemoveDataPrompt", fields=names))
+            btn_clean = msg.addButton(tr("main.cfRemoveDataClean"), QMessageBox.DestructiveRole)
+            msg.addButton(QMessageBox.Cancel)
+            msg.setDefaultButton(msg.button(QMessageBox.Cancel))
+            msg.exec()
+            clicked = msg.clickedButton()
+            if clicked != btn_clean:
                 return
 
-            for rec in inventory:
-                if not isinstance(rec, dict):
-                    continue
-                for old, new in renames.items():
-                    if old not in rec:
-                        continue
-                    old_value = rec.get(old)
-                    target_value = rec.get(new)
-                    if _has_nonempty_value(target_value):
-                        rec.pop(old, None)
-                        continue
-                    rec[new] = rec.pop(old)
+            confirm_phrase = "DELETE"
+            if not self._confirm_phrase_dialog(
+                title=tr("main.customFieldsTitle"),
+                prompt_text=t("main.cfRemoveDataConfirm", phrase=confirm_phrase),
+                phrase=confirm_phrase,
+                strip_input=True,
+            ):
+                return
 
-        # --- Step 2: handle pure deletes ---
-        new_keys = {f["key"] for f in new_fields}
-        old_keys = {f["key"] for f in existing if isinstance(f, dict) and f.get("key")}
-        # Keys that were renamed are not "deleted" - exclude them
-        renamed_old_keys = set(renames.keys())
-        # Keep fixed system fields.
-        protected_keys = {"note"}
-        removed_keys = {
-            key for key in (old_keys - new_keys - renamed_old_keys) if key not in protected_keys
-        }
-
-        if removed_keys and inventory:
-            has_data = any(
-                rec.get(k) is not None
-                for rec in inventory
-                for k in removed_keys
-                if isinstance(rec, dict)
+            removed_records_count = drop_removed_fields_from_inventory(
+                draft.pending_inventory,
+                draft.removed_keys,
             )
-            if has_data:
-                names = ", ".join(sorted(removed_keys))
-                msg = QMessageBox(self)
-                msg.setWindowTitle(tr("main.customFieldsTitle"))
-                msg.setText(t("main.cfRemoveDataPrompt", fields=names))
-                btn_clean = msg.addButton(tr("main.cfRemoveDataClean"), QMessageBox.DestructiveRole)
-                msg.addButton(QMessageBox.Cancel)
-                msg.setDefaultButton(msg.button(QMessageBox.Cancel))
-                msg.exec()
-                clicked = msg.clickedButton()
-                if clicked != btn_clean:
-                    return  # cancelled
+            removed_data_cleaned = True
 
-                # Second confirmation: require typing a phrase
-                confirm_phrase = "DELETE"
-                if not self._confirm_phrase_dialog(
-                    title=tr("main.customFieldsTitle"),
-                    prompt_text=t("main.cfRemoveDataConfirm", phrase=confirm_phrase),
-                    phrase=confirm_phrase,
-                    strip_input=True,
-                ):
-                    return  # cancelled
-
-                for rec in inventory:
-                    if isinstance(rec, dict):
-                        for k in removed_keys:
-                            rec.pop(k, None)
-
-        if not new_dk and isinstance(current_dk, str):
-            new_dk = current_dk
-        if not new_ck and isinstance(current_ck, str):
-            new_ck = current_ck
-        if isinstance(new_dk, str):
-            new_dk = renames.get(new_dk, new_dk)
-        if isinstance(new_ck, str):
-            new_ck = renames.get(new_ck, new_ck)
-
-        # Build pending meta exactly as it would be saved.
-        pending_meta = dict(meta)
-        pending_meta["custom_fields"] = new_fields
-        if new_dk and new_dk in new_keys:
-            pending_meta["display_key"] = new_dk
-        elif "display_key" in pending_meta:
-            del pending_meta["display_key"]
-        if new_ck and new_ck in new_keys:
-            pending_meta["color_key"] = new_ck
-        elif "color_key" in pending_meta:
-            del pending_meta["color_key"]
-
-        # Derive legacy cell_line keys only when cell_line exists in schema.
-        if "cell_line" in new_keys:
-            if new_clo:
-                pending_meta["cell_line_options"] = new_clo
-            elif "cell_line_options" in pending_meta:
-                del pending_meta["cell_line_options"]
-            pending_meta["cell_line_required"] = bool(new_cl_required)
-        else:
-            pending_meta.pop("cell_line_options", None)
-            pending_meta.pop("cell_line_required", None)
-
-        # Meta-only validation: skip per-record checks since field
-        # definitions are being intentionally changed.  Structural checks
-        # (schema, selector keys, undeclared record fields) still run.
-        pending_data = dict(data) if isinstance(data, dict) else {}
-        pending_data["meta"] = pending_meta
-        pending_data["inventory"] = inventory
-        meta_errors, _warnings = validate_inventory_document(
-            pending_data, skip_record_validation=True,
-        )
+        meta_errors, _warnings = validate_custom_fields_update_draft(draft)
         if meta_errors:
             report_text = self._render_validation_report({
                 "errors": meta_errors,
@@ -1019,10 +931,28 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, tr("main.importValidatedTitle"), message)
             return
 
-        # --- Step 3: save ---
-        with open(yaml_path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(pending_data, f, allow_unicode=True, sort_keys=False)
-        self._notify_data_changed(yaml_path=yaml_path, meta=pending_meta)
+        pending_data = dict(data) if isinstance(data, dict) else {}
+        pending_data["meta"] = draft.pending_meta
+        pending_data["inventory"] = draft.pending_inventory
+
+        persist_result = persist_custom_fields_update(
+            yaml_path=yaml_path,
+            pending_data=pending_data,
+            audit_details=build_custom_fields_update_audit_details(
+                draft,
+                removed_data_cleaned=removed_data_cleaned,
+                removed_records_count=removed_records_count,
+            ),
+        )
+        if not persist_result.get("ok"):
+            QMessageBox.warning(
+                self,
+                tr("main.customFieldsTitle"),
+                str(persist_result.get("message") or "Failed to save custom fields."),
+            )
+            return
+
+        self._notify_data_changed(yaml_path=yaml_path, meta=draft.pending_meta)
 
     def _open_manage_boxes(self):
         if callable(self._on_manage_boxes):

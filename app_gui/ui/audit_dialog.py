@@ -229,6 +229,39 @@ def _format_audit_details(details, muted_color, field_order=None):
             lines.append(f"{m(tr('operations.auditDetailFrom'))} {h(_os.path.basename(str(restored)))}")
         return lines
 
+    if op == "edit_custom_fields":
+        lines = []
+        added = [str(k) for k in (details.get("added_keys") or []) if str(k).strip()]
+        removed = [str(k) for k in (details.get("removed_keys") or []) if str(k).strip()]
+        renames = [
+            f"{str(item.get('from') or '').strip()}->{str(item.get('to') or '').strip()}"
+            for item in (details.get("renames") or [])
+            if isinstance(item, dict)
+            and str(item.get("from") or "").strip()
+            and str(item.get("to") or "").strip()
+        ]
+        if added:
+            lines.append(f"{m(tr('operations.auditDetailAdded'))} {h(', '.join(added))}")
+        if removed:
+            lines.append(f"{m(tr('operations.auditDetailRemoved'))} {h(', '.join(removed))}")
+        if renames:
+            lines.append(f"{m(tr('operations.auditDetailChanges'))} {h(', '.join(renames))}")
+
+        display_before = str(details.get("display_key_before") or "").strip() or "(empty)"
+        display_after = str(details.get("display_key_after") or "").strip() or "(empty)"
+        color_before = str(details.get("color_key_before") or "").strip() or "(empty)"
+        color_after = str(details.get("color_key_after") or "").strip() or "(empty)"
+        lines.append(f"{m('display_key')} {h(display_before)} -> {h(display_after)}")
+        lines.append(f"{m('color_key')} {h(color_before)} -> {h(color_after)}")
+
+        touched_rename = int(details.get("records_touched_by_rename") or 0)
+        touched_remove = int(details.get("records_touched_by_remove") or 0)
+        if touched_rename or touched_remove:
+            lines.append(
+                f"{m('records')} rename={h(touched_rename)} remove={h(touched_remove)}"
+            )
+        return lines
+
     # Fallback: unknown op or no op.
     return []
 
@@ -282,6 +315,15 @@ def _summarize_details(details, field_order=None):
             return os.path.basename(str(bak))
         return "rollback"
 
+    if op == "edit_custom_fields":
+        added = len(details.get("added_keys") or [])
+        removed = len(details.get("removed_keys") or [])
+        renames = len(details.get("renames") or [])
+        parts = [f"+{added}", f"-{removed}", f"rename={renames}"]
+        if details.get("removed_data_cleaned"):
+            parts.append("cleaned")
+        return " ".join(parts)
+
     try:
         return json.dumps(details, ensure_ascii=False)[:80]
     except Exception:
@@ -295,6 +337,7 @@ _ACTION_TR_KEYS = {
     "move": "operations.auditActionMove",
     "rollback": "operations.auditActionRollback",
     "backup": "operations.auditActionBackup",
+    "edit_custom_fields": "operations.auditActionEditCustomFields",
     "edit_entry": "operations.auditActionEditEntry",
     "set_box_tag": "operations.auditActionSetBoxTag",
     "adjust_box_count": "operations.auditActionAdjustBoxCount",
@@ -372,6 +415,7 @@ class AuditLogDialog(QDialog):
         self.audit_action_filter.addItem(tr("operations.auditActionMove"), "move")
         self.audit_action_filter.addItem(tr("operations.auditActionRollback"), "rollback")
         self.audit_action_filter.addItem(tr("operations.auditActionBackup"), "backup")
+        self.audit_action_filter.addItem(tr("operations.auditActionEditCustomFields"), "edit_custom_fields")
         filter_form.addRow(tr("operations.auditAction"), self.audit_action_filter)
 
         self.audit_status_filter = QComboBox()
