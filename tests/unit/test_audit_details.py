@@ -33,9 +33,10 @@ class TestAddEntryDetails:
         assert d["box"] == 2
         assert d["positions"] == [5, 6]
         assert d["frozen_at"] == "2025-01-15"
-        assert d["cell_line"] == "HeLa"
-        assert d["note"] == "passage 3"
-        assert d["custom_fields"] == {"source": "lab-A"}
+        # cell_line, note, and custom_fields are merged into "fields"
+        assert d["fields"]["cell_line"] == "HeLa"
+        assert d["fields"]["note"] == "passage 3"
+        assert d["fields"]["source"] == "lab-A"
 
     def test_minimal(self):
         d = add_entry_details(
@@ -46,21 +47,19 @@ class TestAddEntryDetails:
         )
         assert d["op"] == "add_entry"
         assert d["count"] == 1
-        assert "cell_line" not in d
-        assert "note" not in d
-        assert "custom_fields" not in d
+        assert "fields" not in d
 
     def test_note_none_omitted(self):
         d = add_entry_details(
             record_ids=[1], box=1, positions=[1], frozen_at="2025-01-01", note=None,
         )
-        assert "note" not in d
+        assert "fields" not in d
 
     def test_empty_cell_line_omitted(self):
         d = add_entry_details(
             record_ids=[1], box=1, positions=[1], frozen_at="2025-01-01", cell_line="",
         )
-        assert "cell_line" not in d
+        assert "fields" not in d
 
     def test_positions_coerced_to_int(self):
         d = add_entry_details(
@@ -87,8 +86,8 @@ class TestEditEntryDetails:
         )
         assert d["op"] == "edit_entry"
         assert d["record_id"] == 101
-        assert d["cell_line"] == "HeLa"
-        assert d["short_name"] == "H-001"
+        assert d["fields"]["cell_line"] == "HeLa"
+        assert d["fields"]["short_name"] == "H-001"
         assert d["box"] == 2
         assert d["position"] == 5
         assert d["field_changes"]["frozen_at"] == {"before": "2025-01-15", "after": "2025-01-20"}
@@ -97,21 +96,20 @@ class TestEditEntryDetails:
     def test_empty_changes(self):
         d = edit_entry_details(record_id=1, box=1, position=1, field_changes={})
         assert d["field_changes"] == {}
-        assert d["cell_line"] is None
-        assert d["short_name"] is None
+        # No cell_line/short_name passed → no fields dict
+        assert "fields" not in d
 
     def test_note_and_custom_fields(self):
         d = edit_entry_details(
             record_id=1, box=1, position=1, field_changes={},
             note="passage 3", custom_fields={"source": "lab-A"},
         )
-        assert d["note"] == "passage 3"
-        assert d["custom_fields"] == {"source": "lab-A"}
+        assert d["fields"]["note"] == "passage 3"
+        assert d["fields"]["source"] == "lab-A"
 
     def test_note_none_omitted(self):
         d = edit_entry_details(record_id=1, box=1, position=1, field_changes={}, note=None)
-        assert "note" not in d
-        assert "custom_fields" not in d
+        assert "fields" not in d
 
 
 # ── takeout_details ────────────────────────────────────────────────
@@ -131,18 +129,18 @@ class TestTakeoutDetails:
         assert d["date"] == "2025-03-01"
         assert d["count"] == 2
         assert d["records"][0]["record_id"] == 1
-        assert d["records"][0]["cell_line"] == "HeLa"
-        assert d["records"][0]["short_name"] == "H-001"
+        assert d["records"][0]["fields"]["cell_line"] == "HeLa"
+        assert d["records"][0]["fields"]["short_name"] == "H-001"
         assert d["records"][0]["box"] == 2
         assert d["records"][0]["position"] == 5
         assert d["records"][1]["record_id"] == 2
-        assert d["records"][1]["cell_line"] == "293T"
+        assert d["records"][1]["fields"]["cell_line"] == "293T"
 
     def test_thaw_action(self):
         d = takeout_details(action="thaw", date="2025-01-01", records=[{"record_id": 1, "box": 1, "position": 1}])
         assert d["op"] == "thaw"
-        assert d["records"][0]["cell_line"] is None
-        assert d["records"][0]["short_name"] is None
+        # No cell_line/short_name → no fields dict
+        assert "fields" not in d["records"][0]
 
     def test_discard_action(self):
         d = takeout_details(action="discard", date="2025-01-01", records=[{"record_id": 1, "box": 1, "position": 1}])
@@ -159,16 +157,15 @@ class TestTakeoutDetails:
                 },
             ],
         )
-        assert d["records"][0]["note"] == "passage 3"
-        assert d["records"][0]["custom_fields"] == {"source": "lab-A"}
+        assert d["records"][0]["fields"]["note"] == "passage 3"
+        assert d["records"][0]["fields"]["source"] == "lab-A"
 
     def test_note_none_omitted(self):
         d = takeout_details(
             action="takeout", date="2025-01-01",
             records=[{"record_id": 1, "box": 1, "position": 1, "note": None}],
         )
-        assert "note" not in d["records"][0]
-        assert "custom_fields" not in d["records"][0]
+        assert "fields" not in d["records"][0]
 
 
 # ── move_details ───────────────────────────────────────────────────
@@ -194,8 +191,8 @@ class TestMoveDetails:
         )
         assert d["op"] == "move"
         assert d["count"] == 1
-        assert d["moves"][0]["cell_line"] == "HeLa"
-        assert d["moves"][0]["short_name"] == "H-001"
+        assert d["moves"][0]["fields"]["cell_line"] == "HeLa"
+        assert d["moves"][0]["fields"]["short_name"] == "H-001"
         assert d["moves"][0]["swap_with_record_id"] == 3
         assert d["affected_record_ids"] == [1, 3]
 
@@ -214,8 +211,8 @@ class TestMoveDetails:
             affected_record_ids=[1],
         )
         assert "swap_with_record_id" not in d["moves"][0]
-        assert d["moves"][0]["cell_line"] is None
-        assert d["moves"][0]["short_name"] is None
+        # No cell_line/short_name → no fields dict
+        assert "fields" not in d["moves"][0]
 
     def test_affected_ids_sorted(self):
         d = move_details(
@@ -240,8 +237,8 @@ class TestMoveDetails:
             ],
             affected_record_ids=[1],
         )
-        assert d["moves"][0]["note"] == "passage 3"
-        assert d["moves"][0]["custom_fields"] == {"source": "lab-A"}
+        assert d["moves"][0]["fields"]["note"] == "passage 3"
+        assert d["moves"][0]["fields"]["source"] == "lab-A"
 
     def test_note_none_omitted_in_move(self):
         d = move_details(
@@ -251,8 +248,7 @@ class TestMoveDetails:
             ],
             affected_record_ids=[1],
         )
-        assert "note" not in d["moves"][0]
-        assert "custom_fields" not in d["moves"][0]
+        assert "fields" not in d["moves"][0]
 
 
 # ── set_box_tag_details ───────────────────────────────────────────
@@ -376,10 +372,16 @@ class TestExtractCustomFields:
             "source": "lab-A", "batch": "B001",
         }
         custom = _extract_custom_fields(record)
-        assert custom == {"source": "lab-A", "batch": "B001"}
+        # cell_line and note are now non-structural (custom fields)
+        assert custom == {
+            "cell_line": "HeLa",
+            "note": "passage 3",
+            "source": "lab-A",
+            "batch": "B001",
+        }
 
     def test_empty_for_structural_only(self):
-        record = {"id": 1, "cell_line": "HeLa", "box": 2, "position": 5}
+        record = {"id": 1, "box": 2, "position": 5, "frozen_at": "2025-01-01"}
         assert _extract_custom_fields(record) == {}
 
     def test_none_values_excluded(self):

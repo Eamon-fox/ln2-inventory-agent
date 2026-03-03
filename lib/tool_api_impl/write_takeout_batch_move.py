@@ -3,10 +3,11 @@
 from collections import defaultdict
 from copy import deepcopy
 
+from ..field_schema import split_record_fields
 from ..operations import find_record_by_id
 from ..validators import validate_box
 from ..yaml_ops import write_yaml
-from .audit_details import _extract_custom_fields, move_details
+from .audit_details import move_details
 from .write_common import (
     api,
     append_record_events_or_failure,
@@ -372,6 +373,7 @@ def _persist_move_plan(
     simulated_box = plan["simulated_box"]
     events_by_idx = plan["events_by_idx"]
     _fail_details = {"op": "move", "count": len(operations), "date": date_str}
+    meta = data.get("meta", {}) if isinstance(data, dict) else {}
 
     try:
         candidate_data = deepcopy(data)
@@ -427,23 +429,24 @@ def _persist_move_plan(
             )
 
         affected_ids = sorted({records[idx].get("id") for idx in touched_indices})
-        _details = move_details(
-            date=date_str,
-            moves=[
+        detail_moves = []
+        for op in operations:
+            split = split_record_fields(op["record"], meta)
+            detail_moves.append(
                 {
                     "record_id": op["record_id"],
-                    "cell_line": op["record"].get("cell_line"),
-                    "short_name": op["record"].get("short_name"),
                     "from_box": op["record"].get("box"),
                     "from_position": op["old_position"],
                     "to_box": op.get("to_box", op["record"].get("box")),
                     "to_position": op["to_position"],
                     "swap_with_record_id": op.get("swap_with_record_id"),
-                    "note": op["record"].get("note"),
-                    "custom_fields": _extract_custom_fields(op["record"]),
+                    "fields": split.get("fields"),
+                    "legacy_fields": split.get("legacy_fields"),
                 }
-                for op in operations
-            ],
+            )
+        _details = move_details(
+            date=date_str,
+            moves=detail_moves,
             affected_record_ids=affected_ids,
         )
         _backup_path = write_yaml(

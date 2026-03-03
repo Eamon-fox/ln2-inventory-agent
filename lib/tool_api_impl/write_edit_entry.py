@@ -3,10 +3,12 @@
 from copy import deepcopy
 
 from ..custom_fields import get_effective_fields
+from ..field_schema import normalize_input_fields
+from ..field_schema import split_record_fields
 from ..migrate_cell_line_policy import normalize_cell_line_policy_data
 from ..operations import find_record_by_id
 from ..yaml_ops import load_yaml, write_yaml
-from .audit_details import _extract_custom_fields, edit_entry_details, failure_details
+from .audit_details import edit_entry_details, failure_details
 from .write_common import api
 
 _EDITABLE_FIELDS = {"frozen_at"}
@@ -62,21 +64,6 @@ def tool_edit_entry(
     if not validation.get("ok"):
         return validation
 
-    allowed = _get_editable_fields(yaml_path)
-    bad_keys = set(fields.keys()) - allowed
-    if bad_keys:
-        return api._failure_result(
-            yaml_path=yaml_path,
-            action=action,
-            source=source,
-            tool_name=tool_name,
-            error_code="forbidden_fields",
-            message=f"These fields are not editable: {', '.join(sorted(bad_keys))}",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            details=failure_details(op="edit_entry", forbidden=sorted(bad_keys), allowed=sorted(allowed)),
-        )
-
     try:
         data = load_yaml(yaml_path)
     except Exception as exc:
@@ -106,10 +93,44 @@ def tool_edit_entry(
     data = normalized.get("data")
 
     meta = data.get("meta", {})
-    normalized_fields = dict(fields)
+    alias_result = normalize_input_fields(fields, meta)
+    if not alias_result.get("ok"):
+        return api._failure_result(
+            yaml_path=yaml_path,
+            action=action,
+            source=source,
+            tool_name=tool_name,
+            error_code=alias_result.get("error_code", "deprecated_field_alias_removed"),
+            message=alias_result.get("message", "Deprecated field alias is no longer accepted."),
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+            details=failure_details(
+                op="edit_entry",
+                alias_hits=alias_result.get("alias_hits"),
+            ),
+        )
+    alias_warnings = list(alias_result.get("warnings") or [])
+    normalized_fields = dict(alias_result.get("fields") or {})
 
     # Validate all option-bearing fields generically
     effective = get_effective_fields(meta)
+    allowed = _EDITABLE_FIELDS | {field["key"] for field in effective}
+    bad_keys = set(normalized_fields.keys()) - allowed
+    if bad_keys:
+        return api._failure_result(
+            yaml_path=yaml_path,
+            action=action,
+            source=source,
+            tool_name=tool_name,
+            error_code="forbidden_fields",
+            message=f"These fields are not editable: {', '.join(sorted(bad_keys))}",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+            details=failure_details(op="edit_entry", forbidden=sorted(bad_keys), allowed=sorted(allowed)),
+        )
+
     for field_def in effective:
         fkey = field_def["key"]
         if fkey not in normalized_fields:
@@ -189,7 +210,7 @@ def tool_edit_entry(
         )
 
     if dry_run:
-        return {
+        payload = {
             "ok": True,
             "dry_run": True,
             "preview": {
@@ -198,8 +219,12 @@ def tool_edit_entry(
                 "after": dict(normalized_fields),
             },
         }
+        if alias_warnings:
+            payload["warnings"] = list(alias_warnings)
+        return payload
 
     try:
+        split_fields = split_record_fields(record, meta)
         _backup_path = write_yaml(
             candidate_data,
             yaml_path,
@@ -212,13 +237,11 @@ def tool_edit_entry(
                 actor_context=actor_context,
                 details=edit_entry_details(
                     record_id=record_id,
-                    cell_line=record.get("cell_line"),
-                    short_name=record.get("short_name"),
                     box=record.get("box"),
                     position=record.get("position"),
                     field_changes={k: (before[k], normalized_fields[k]) for k in normalized_fields},
-                    note=record.get("note"),
-                    custom_fields=_extract_custom_fields(record),
+                    fields=split_fields.get("fields"),
+                    legacy_fields=split_fields.get("legacy_fields"),
                 ),
                 tool_input=tool_input,
             ),
@@ -236,7 +259,7 @@ def tool_edit_entry(
             before_data=data,
         )
 
-    return {
+    payload = {
         "ok": True,
         "result": {
             "record_id": record_id,
@@ -245,3 +268,6 @@ def tool_edit_entry(
         },
         "backup_path": _backup_path,
     }
+    if alias_warnings:
+        payload["warnings"] = list(alias_warnings)
+    return payload

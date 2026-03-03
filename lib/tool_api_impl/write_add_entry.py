@@ -6,6 +6,7 @@ from ..custom_fields import (
     get_effective_fields,
     get_required_field_keys,
 )
+from ..field_schema import normalize_input_fields
 from ..migrate_cell_line_policy import normalize_cell_line_policy_data
 from ..operations import check_position_conflicts, get_next_id
 from ..position_fmt import get_position_range
@@ -116,6 +117,26 @@ def _validate_add_entry_request_data(
         )
 
     meta = data.get("meta", {})
+    alias_result = normalize_input_fields(fields, meta)
+    if not alias_result.get("ok"):
+        return None, api._failure_result(
+            yaml_path=yaml_path,
+            action=action,
+            source=source,
+            tool_name=tool_name,
+            error_code=alias_result.get("error_code", "deprecated_field_alias_removed"),
+            message=alias_result.get("message", "Deprecated field alias is no longer accepted."),
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+            details=failure_details(
+                op="add_entry",
+                alias_hits=alias_result.get("alias_hits"),
+            ),
+        )
+    fields = dict(alias_result.get("fields") or {})
+    alias_warnings = list(alias_result.get("warnings") or [])
+
     allowed_field_keys, effective_field_keys = _get_addable_field_keys(meta)
     bad_keys = sorted(set(fields.keys()) - allowed_field_keys)
     if bad_keys:
@@ -180,6 +201,7 @@ def _validate_add_entry_request_data(
         "records": records,
         "fields": fields,
         "user_field_keys": effective_field_keys,
+        "alias_warnings": alias_warnings,
     }, None
 
 
@@ -292,9 +314,6 @@ def _persist_add_entry(
                 ),
             )
 
-        _cell_line = new_records[0].get("cell_line") if new_records else None
-        _note = new_records[0].get("note") if new_records else None
-        _custom = {k: v for k, v in fields.items()} if fields else None
         _backup_path = write_yaml(
             candidate_data,
             yaml_path,
@@ -310,9 +329,7 @@ def _persist_add_entry(
                     box=box,
                     positions=list(int(p) for p in positions),
                     frozen_at=frozen_at,
-                    cell_line=_cell_line,
-                    note=_note,
-                    custom_fields=_custom,
+                    fields=fields,
                 ),
                 tool_input={
                     "box": box,
@@ -438,6 +455,7 @@ def _tool_add_entry_impl(
     records = prepared["records"]
     fields = prepared["fields"]
     user_field_keys = prepared["user_field_keys"]
+    alias_warnings = prepared.get("alias_warnings") or []
 
     built = _build_add_entry_records(
         records,
@@ -453,7 +471,7 @@ def _tool_add_entry_impl(
     fields = built["fields"]
 
     if dry_run:
-        return {
+        payload = {
             "ok": True,
             "dry_run": True,
             "preview": preview,
@@ -465,6 +483,9 @@ def _tool_add_entry_impl(
                 "records": new_records,
             },
         }
+        if alias_warnings:
+            payload["warnings"] = list(alias_warnings)
+        return payload
 
     _backup_path, failure = _persist_add_entry(
         data=data,
@@ -486,7 +507,7 @@ def _tool_add_entry_impl(
     if failure:
         return failure
 
-    return {
+    payload = {
         "ok": True,
         "dry_run": False,
         "preview": preview,
@@ -499,3 +520,6 @@ def _tool_add_entry_impl(
         },
         "backup_path": _backup_path,
     }
+    if alias_warnings:
+        payload["warnings"] = list(alias_warnings)
+    return payload

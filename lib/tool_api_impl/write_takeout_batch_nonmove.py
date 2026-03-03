@@ -2,9 +2,10 @@
 
 from copy import deepcopy
 
+from ..field_schema import split_record_fields
 from ..operations import find_record_by_id
 from ..yaml_ops import write_yaml
-from .audit_details import _extract_custom_fields, failure_details, takeout_details
+from .audit_details import failure_details, takeout_details
 from .write_common import (
     api,
     append_record_events_or_failure,
@@ -116,21 +117,23 @@ def _persist_batch_nonmove_plan(
     auto_backup,
     request_backup_path,
 ):
+    meta = data.get("meta", {}) if isinstance(data, dict) else {}
+    detail_records = []
+    for op in operations:
+        split = split_record_fields(op["record"], meta)
+        detail_records.append(
+            {
+                "record_id": op["record_id"],
+                "box": op["record"].get("box"),
+                "position": op["position"],
+                "fields": split.get("fields"),
+                "legacy_fields": split.get("legacy_fields"),
+            }
+        )
     _details = takeout_details(
         action=action_en,
         date=date_str,
-        records=[
-            {
-                "record_id": op["record_id"],
-                "cell_line": op["record"].get("cell_line"),
-                "short_name": op["record"].get("short_name"),
-                "box": op["record"].get("box"),
-                "position": op["position"],
-                "note": op["record"].get("note"),
-                "custom_fields": _extract_custom_fields(op["record"]),
-            }
-            for op in operations
-        ],
+        records=detail_records,
     )
     try:
         candidate_data = deepcopy(data)

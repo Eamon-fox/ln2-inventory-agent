@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 from html import escape as _escape_html
 from PySide6.QtCore import Qt, QDate, QSize
@@ -12,7 +12,9 @@ from PySide6.QtWidgets import (
 from app_gui.i18n import tr
 from app_gui.ui.icons import get_icon, Icons
 from app_gui.ui.theme import resolve_theme_token
-from lib.yaml_ops import get_audit_log_paths, read_audit_events
+from lib.custom_fields import get_effective_fields
+from lib.field_schema import ordered_field_items
+from lib.yaml_ops import get_audit_log_paths, load_yaml, read_audit_events
 from lib.plan_item_factory import build_rollback_plan_item
 
 
@@ -20,27 +22,92 @@ def _safe_html(value):
     return _escape_html(str(value or ""), quote=True)
 
 
-def _format_record_label(rec):
-    """Format a compact label like '#101 HeLa Box2:5 [Note: xxx] [key: val]'."""
+_FIELD_LABEL_KEYS = {
+    "cell_line": "operations.cellLine",
+    "short_name": "operations.shortName",
+    "note": "operations.note",
+}
+
+
+def _field_label(field_key):
+    key = _FIELD_LABEL_KEYS.get(str(field_key or ""))
+    if not key:
+        return str(field_key or "")
+    translated = tr(key)
+    if not translated or translated == key:
+        return str(field_key or "")
+    return translated
+
+
+def _extract_field_payload(payload):
+    if not isinstance(payload, dict):
+        return {}, {}
+
+    fields = {}
+    raw_fields = payload.get("fields")
+    if isinstance(raw_fields, dict):
+        for key, value in raw_fields.items():
+            text_key = str(key or "").strip()
+            if not text_key or value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            fields[text_key] = value
+    else:
+        # Backward compatibility for old audit event structures.
+        for key in ("cell_line", "short_name", "note"):
+            value = payload.get(key)
+            if value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            fields[key] = value
+        custom = payload.get("custom_fields")
+        if isinstance(custom, dict):
+            for key, value in custom.items():
+                text_key = str(key or "").strip()
+                if not text_key or value is None:
+                    continue
+                if isinstance(value, str) and not value.strip():
+                    continue
+                fields.setdefault(text_key, value)
+
+    legacy_fields = {}
+    raw_legacy = payload.get("legacy_fields")
+    if isinstance(raw_legacy, dict):
+        for key, value in raw_legacy.items():
+            text_key = str(key or "").strip()
+            if not text_key or value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            legacy_fields[text_key] = value
+    return fields, legacy_fields
+
+
+def _format_field_pairs(payload, field_order=None):
+    fields, legacy_fields = _extract_field_payload(payload)
+    pairs = []
+    for key, value in ordered_field_items(fields, field_order=field_order or []):
+        pairs.append((_field_label(key), value))
+    for key, value in ordered_field_items(legacy_fields):
+        pairs.append((f"legacy.{key}", value))
+    return pairs
+
+
+def _format_record_label(rec, *, field_order=None):
     rid = rec.get("record_id", "?")
     parts = [f"#{rid}"]
-    cl = rec.get("cell_line") or rec.get("short_name")
-    if cl:
-        parts.append(str(cl))
     box = rec.get("box")
     pos = rec.get("position")
     if box is not None and pos is not None:
         parts.append(f"{tr('operations.auditDetailBox')}{box}:{pos}")
-    note = rec.get("note")
-    if note:
-        parts.append(f"[{tr('operations.auditDetailNote')}: {note}]")
-    custom = rec.get("custom_fields") or {}
-    for k, v in custom.items():
-        parts.append(f"[{k}: {v}]")
+    for label, value in _format_field_pairs(rec, field_order=field_order):
+        parts.append(f"[{label}: {value}]")
     return " ".join(parts)
 
 
-def _format_audit_details(details, muted_color):
+def _format_audit_details(details, muted_color, field_order=None):
     """Return HTML lines for structured audit details rendering."""
     if not isinstance(details, dict):
         return []
@@ -53,8 +120,6 @@ def _format_audit_details(details, muted_color):
         box = details.get("box")
         positions = details.get("positions") or []
         frozen = details.get("frozen_at") or ""
-        cell_line = details.get("cell_line") or ""
-        note = details.get("note")
         pos_str = ",".join(str(p) for p in positions)
         line1 = (
             f"{m(tr('operations.auditDetailBox'))} {h(box)}  "
@@ -62,15 +127,10 @@ def _format_audit_details(details, muted_color):
             f"{m('ID')} {h(','.join(str(i) for i in ids))}"
         )
         line2_parts = []
-        if cell_line:
-            line2_parts.append(h(cell_line))
         if frozen:
             line2_parts.append(f"{m(tr('operations.auditDetailFrozenAt'))} {h(frozen)}")
-        if note:
-            line2_parts.append(f"{m(tr('operations.auditDetailNote'))} {h(note)}")
-        custom = details.get("custom_fields") or {}
-        for k, v in custom.items():
-            line2_parts.append(f"{m(h(k))} {h(v)}")
+        for label, value in _format_field_pairs(details, field_order=field_order):
+            line2_parts.append(f"{m(label)} {h(value)}")
         lines = [line1]
         if line2_parts:
             lines.append(" &nbsp;|&nbsp; ".join(line2_parts))
@@ -78,33 +138,32 @@ def _format_audit_details(details, muted_color):
 
     if op == "edit_entry":
         rid = details.get("record_id")
-        cl = details.get("cell_line") or details.get("short_name") or ""
         box = details.get("box")
         pos = details.get("position")
         loc = f"{tr('operations.auditDetailBox')}{box}:{pos}" if box is not None else ""
         header = f"#{h(rid)}"
-        if cl:
-            header += f" {h(cl)}"
         if loc:
             header += f" ({h(loc)})"
-        note = details.get("note")
-        if note:
-            header += f" &nbsp;{m(tr('operations.auditDetailNote'))} {h(note)}"
-        custom = details.get("custom_fields") or {}
-        for k, v in custom.items():
-            header += f" &nbsp;{m(h(k))} {h(v)}"
         lines = [header]
+
+        field_parts = [
+            f"{m(label)} {h(value)}"
+            for label, value in _format_field_pairs(details, field_order=field_order)
+        ]
+        if field_parts:
+            lines.append(" &nbsp;|&nbsp; ".join(field_parts))
+
         changes = details.get("field_changes") or {}
         for field, diff in changes.items():
             before = diff.get("before") if isinstance(diff, dict) else "?"
             after = diff.get("after") if isinstance(diff, dict) else "?"
-            lines.append(f"{m(h(field))} {h(before)} → {h(after)}")
+            lines.append(f"{m(_field_label(field))} {h(before)} -> {h(after)}")
         return lines
 
     if op in ("takeout", "thaw", "discard"):
         date = details.get("date") or ""
         records = details.get("records") or []
-        rec_labels = [_format_record_label(r) for r in records]
+        rec_labels = [_format_record_label(r, field_order=field_order) for r in records]
         lines = []
         if date:
             lines.append(f"{m(tr('operations.auditDetailDate'))} {h(date)}")
@@ -119,25 +178,21 @@ def _format_audit_details(details, muted_color):
             lines.append(f"{m(tr('operations.auditDetailDate'))} {h(date)}")
         for mv in moves:
             rid = mv.get("record_id", "?")
-            cl = mv.get("cell_line") or mv.get("short_name") or ""
             fb, fp = mv.get("from_box"), mv.get("from_position")
             tb, tp = mv.get("to_box"), mv.get("to_position")
             label = f"#{h(rid)}"
-            if cl:
-                label += f" {h(cl)}"
             if fb == tb:
-                label += f" {tr('operations.auditDetailBox')}{h(fb)}:{h(fp)}→{h(tp)}"
+                label += f" {tr('operations.auditDetailBox')}{h(fb)}:{h(fp)}->{h(tp)}"
             else:
-                label += f" {tr('operations.auditDetailBox')}{h(fb)}:{h(fp)}→{tr('operations.auditDetailBox')}{h(tb)}:{h(tp)}"
+                label += (
+                    f" {tr('operations.auditDetailBox')}{h(fb)}:{h(fp)}->"
+                    f"{tr('operations.auditDetailBox')}{h(tb)}:{h(tp)}"
+                )
             swap = mv.get("swap_with_record_id")
             if swap is not None:
-                label += f" (↔ #{h(swap)})"
-            note = mv.get("note")
-            if note:
-                label += f" [{h(tr('operations.auditDetailNote'))}: {h(note)}]"
-            custom = mv.get("custom_fields") or {}
-            for k, v in custom.items():
-                label += f" [{h(k)}: {h(v)}]"
+                label += f" (->#{h(swap)})"
+            for field_label, value in _format_field_pairs(mv, field_order=field_order):
+                label += f" [{h(field_label)}: {h(value)}]"
             lines.append(label)
         return lines
 
@@ -145,7 +200,7 @@ def _format_audit_details(details, muted_color):
         box = details.get("box")
         before = details.get("tag_before") or "''"
         after = details.get("tag_after") or "''"
-        return [f"{tr('operations.auditDetailBox')} {h(box)}: '{h(before)}' → '{h(after)}'"]
+        return [f"{tr('operations.auditDetailBox')} {h(box)}: '{h(before)}' -> '{h(after)}'"]
 
     if op == "adjust_box_count":
         sub = details.get("sub_op")
@@ -154,18 +209,17 @@ def _format_audit_details(details, muted_color):
         if sub == "add":
             added = details.get("added_boxes") or []
             return [
-                f"{h(cb)} → {h(ca)} {tr('operations.auditDetailBoxes')}  "
+                f"{h(cb)} -> {h(ca)} {tr('operations.auditDetailBoxes')}  "
                 f"{m('+' + ','.join(str(b) for b in added))}"
             ]
-        else:
-            removed = details.get("removed_box")
-            mode = details.get("renumber_mode") or ""
-            line = f"{h(cb)} → {h(ca)} {tr('operations.auditDetailBoxes')}"
-            if removed is not None:
-                line += f"  {m(tr('operations.auditDetailRemoved'))} {tr('operations.auditDetailBox')}{h(removed)}"
-            if mode:
-                line += f"  ({h(mode)})"
-            return [line]
+        removed = details.get("removed_box")
+        mode = details.get("renumber_mode") or ""
+        line = f"{h(cb)} -> {h(ca)} {tr('operations.auditDetailBoxes')}"
+        if removed is not None:
+            line += f"  {m(tr('operations.auditDetailRemoved'))} {tr('operations.auditDetailBox')}{h(removed)}"
+        if mode:
+            line += f"  ({h(mode)})"
+        return [line]
 
     if op == "rollback":
         restored = details.get("restored_from") or details.get("requested_backup") or ""
@@ -175,11 +229,10 @@ def _format_audit_details(details, muted_color):
             lines.append(f"{m(tr('operations.auditDetailFrom'))} {h(_os.path.basename(str(restored)))}")
         return lines
 
-    # Fallback — unknown op or no op: show JSON
+    # Fallback: unknown op or no op.
     return []
 
-
-def _summarize_details(details):
+def _summarize_details(details, field_order=None):
     """Return a concise plain-text summary for the table column."""
     if not isinstance(details, dict) or not details:
         return ""
@@ -188,10 +241,10 @@ def _summarize_details(details):
     if op == "add_entry":
         box = details.get("box", "?")
         positions = details.get("positions") or []
-        cl = details.get("cell_line") or ""
         parts = [f"Box{box} Pos{','.join(str(p) for p in positions)}"]
-        if cl:
-            parts.append(cl)
+        field_pairs = _format_field_pairs(details, field_order=field_order)
+        if field_pairs:
+            parts.append(", ".join(f"{label}={value}" for label, value in field_pairs))
         count = details.get("count")
         if count:
             parts.append(f"x{count}")
@@ -215,13 +268,13 @@ def _summarize_details(details):
     if op == "set_box_tag":
         box = details.get("box", "?")
         after = details.get("tag_after") or "''"
-        return f"Box{box} → '{after}'"
+        return f"Box{box} -> '{after}'"
 
     if op == "adjust_box_count":
         sub = details.get("sub_op", "?")
         cb = details.get("box_count_before")
         ca = details.get("box_count_after")
-        return f"{sub} {cb}→{ca} boxes"
+        return f"{sub} {cb}->{ca} boxes"
 
     if op == "rollback":
         bak = details.get("restored_from") or details.get("requested_backup") or ""
@@ -233,7 +286,6 @@ def _summarize_details(details):
         return json.dumps(details, ensure_ascii=False)[:80]
     except Exception:
         return str(details)[:80]
-
 
 _ACTION_TR_KEYS = {
     "add_entry": "operations.auditActionAddEntry",
@@ -291,6 +343,7 @@ class AuditLogDialog(QDialog):
         self.yaml_path_getter = yaml_path_getter
         self.bridge = bridge
         self._audit_events = []
+        self._audit_field_order = []
 
         self.setWindowTitle(tr("operations.auditLog"))
         self.resize(1000, 700)
@@ -428,6 +481,17 @@ class AuditLogDialog(QDialog):
         self.audit_rollback_selected_btn.setEnabled(False)
         yaml_path = self.yaml_path_getter()
         yaml_abs = os.path.abspath(str(yaml_path or ""))
+        self._audit_field_order = []
+        try:
+            data = load_yaml(yaml_abs)
+            meta = data.get("meta", {}) if isinstance(data, dict) else {}
+            self._audit_field_order = [
+                str(field.get("key"))
+                for field in get_effective_fields(meta)
+                if isinstance(field, dict) and field.get("key")
+            ]
+        except Exception:
+            self._audit_field_order = []
 
         start = self.audit_start_date.date().toString("yyyy-MM-dd")
         end = self.audit_end_date.date().toString("yyyy-MM-dd")
@@ -511,7 +575,7 @@ class AuditLogDialog(QDialog):
                 else:
                     summary = str(error)[:80] if error else str(details)[:80]
             else:
-                summary = _summarize_details(details)
+                summary = _summarize_details(details, field_order=self._audit_field_order)
             self.audit_table.setItem(row, 3, QTableWidgetItem(summary))
             if self._is_backup_event(ev):
                 self._highlight_backup_row(row)
@@ -607,7 +671,11 @@ class AuditLogDialog(QDialog):
             if error.get("message"):
                 lines.append(_safe_html(error.get("message")))
         elif isinstance(details, dict) and details:
-            detail_lines = _format_audit_details(details, muted_color)
+            detail_lines = _format_audit_details(
+                details,
+                muted_color,
+                field_order=self._audit_field_order,
+            )
             if detail_lines:
                 lines.extend(detail_lines)
             else:
@@ -679,5 +747,6 @@ class AuditLogDialog(QDialog):
             self.audit_info.setText(
                 tr("operations.auditRollbackStaged", backup=os.path.basename(str(backup_path)))
             )
+
 
 

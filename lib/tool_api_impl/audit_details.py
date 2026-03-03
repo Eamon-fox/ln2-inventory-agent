@@ -8,11 +8,62 @@ All returned dicts include an ``"op"`` key so every audit event is
 self-describing.
 """
 
+from ..custom_fields import STRUCTURAL_FIELD_KEYS
+
 # Keys that are part of the record structure, not user-defined custom fields.
-_RECORD_STRUCTURAL_KEYS = frozenset({
-    "id", "box", "position", "frozen_at", "thaw_events",
-    "cell_line", "short_name", "note",
-})
+_RECORD_STRUCTURAL_KEYS = frozenset(set(STRUCTURAL_FIELD_KEYS) | {"thaw_events"})
+
+
+def _normalize_field_value(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        return text if text else None
+    return value
+
+
+def _coerce_field_payload(value):
+    if not isinstance(value, dict):
+        return {}
+    payload = {}
+    for key, raw in value.items():
+        text_key = str(key or "").strip()
+        if not text_key:
+            continue
+        normalized = _normalize_field_value(raw)
+        if normalized is None:
+            continue
+        payload[text_key] = normalized
+    return payload
+
+
+def _merge_fields_payload(
+    *,
+    fields=None,
+    legacy_fields=None,
+    cell_line=None,
+    short_name=None,
+    note=None,
+    custom_fields=None,
+):
+    """Build schema-first fields payload with backward-compatible fallbacks."""
+    merged_fields = _coerce_field_payload(fields)
+    for key, value in (
+        ("cell_line", cell_line),
+        ("short_name", short_name),
+        ("note", note),
+    ):
+        normalized = _normalize_field_value(value)
+        if normalized is None:
+            continue
+        merged_fields.setdefault(key, normalized)
+
+    for key, value in _coerce_field_payload(custom_fields).items():
+        merged_fields.setdefault(key, value)
+
+    merged_legacy = _coerce_field_payload(legacy_fields)
+    return merged_fields, merged_legacy
 
 
 def _extract_custom_fields(record):
@@ -28,6 +79,8 @@ def add_entry_details(
     box,
     positions,
     frozen_at,
+    fields=None,
+    legacy_fields=None,
     cell_line=None,
     note=None,
     custom_fields=None,
@@ -41,16 +94,33 @@ def add_entry_details(
         "positions": [int(p) for p in positions],
         "frozen_at": frozen_at,
     }
-    if cell_line:
-        details["cell_line"] = cell_line
-    if note is not None:
-        details["note"] = note
-    if custom_fields:
-        details["custom_fields"] = dict(custom_fields)
+    field_payload, legacy_payload = _merge_fields_payload(
+        fields=fields,
+        legacy_fields=legacy_fields,
+        cell_line=cell_line,
+        note=note,
+        custom_fields=custom_fields,
+    )
+    if field_payload:
+        details["fields"] = field_payload
+    if legacy_payload:
+        details["legacy_fields"] = legacy_payload
     return details
 
 
-def edit_entry_details(*, record_id, cell_line=None, short_name=None, box, position, field_changes, note=None, custom_fields=None):
+def edit_entry_details(
+    *,
+    record_id,
+    box,
+    position,
+    field_changes,
+    fields=None,
+    legacy_fields=None,
+    cell_line=None,
+    short_name=None,
+    note=None,
+    custom_fields=None,
+):
     """Build details for a successful edit_entry audit event.
 
     *field_changes* maps field names to ``(before, after)`` tuples.
@@ -58,8 +128,6 @@ def edit_entry_details(*, record_id, cell_line=None, short_name=None, box, posit
     details = {
         "op": "edit_entry",
         "record_id": record_id,
-        "cell_line": cell_line,
-        "short_name": short_name,
         "box": box,
         "position": position,
         "field_changes": {
@@ -67,10 +135,18 @@ def edit_entry_details(*, record_id, cell_line=None, short_name=None, box, posit
             for k, pair in field_changes.items()
         },
     }
-    if note is not None:
-        details["note"] = note
-    if custom_fields:
-        details["custom_fields"] = dict(custom_fields)
+    field_payload, legacy_payload = _merge_fields_payload(
+        fields=fields,
+        legacy_fields=legacy_fields,
+        cell_line=cell_line,
+        short_name=short_name,
+        note=note,
+        custom_fields=custom_fields,
+    )
+    if field_payload:
+        details["fields"] = field_payload
+    if legacy_payload:
+        details["legacy_fields"] = legacy_payload
     return details
 
 
@@ -83,18 +159,23 @@ def takeout_details(*, action, date, records):
     """
     formatted = []
     for r in records:
+        field_payload, legacy_payload = _merge_fields_payload(
+            fields=r.get("fields"),
+            legacy_fields=r.get("legacy_fields"),
+            cell_line=r.get("cell_line"),
+            short_name=r.get("short_name"),
+            note=r.get("note"),
+            custom_fields=r.get("custom_fields"),
+        )
         entry = {
             "record_id": r["record_id"],
-            "cell_line": r.get("cell_line"),
-            "short_name": r.get("short_name"),
             "box": r["box"],
             "position": r["position"],
         }
-        if r.get("note") is not None:
-            entry["note"] = r["note"]
-        custom = r.get("custom_fields")
-        if custom:
-            entry["custom_fields"] = dict(custom)
+        if field_payload:
+            entry["fields"] = field_payload
+        if legacy_payload:
+            entry["legacy_fields"] = legacy_payload
         formatted.append(entry)
     return {
         "op": action,
@@ -114,10 +195,16 @@ def move_details(*, date, moves, affected_record_ids):
     """
     formatted = []
     for m in moves:
+        field_payload, legacy_payload = _merge_fields_payload(
+            fields=m.get("fields"),
+            legacy_fields=m.get("legacy_fields"),
+            cell_line=m.get("cell_line"),
+            short_name=m.get("short_name"),
+            note=m.get("note"),
+            custom_fields=m.get("custom_fields"),
+        )
         entry = {
             "record_id": m["record_id"],
-            "cell_line": m.get("cell_line"),
-            "short_name": m.get("short_name"),
             "from_box": m["from_box"],
             "from_position": m["from_position"],
             "to_box": m["to_box"],
@@ -125,11 +212,10 @@ def move_details(*, date, moves, affected_record_ids):
         }
         if m.get("swap_with_record_id") is not None:
             entry["swap_with_record_id"] = m["swap_with_record_id"]
-        if m.get("note") is not None:
-            entry["note"] = m["note"]
-        custom = m.get("custom_fields")
-        if custom:
-            entry["custom_fields"] = dict(custom)
+        if field_payload:
+            entry["fields"] = field_payload
+        if legacy_payload:
+            entry["legacy_fields"] = legacy_payload
         formatted.append(entry)
     return {
         "op": "move",

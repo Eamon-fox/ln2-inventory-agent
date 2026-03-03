@@ -15,6 +15,7 @@ from .custom_fields import (
     DEFAULT_UNKNOWN_CELL_LINE,
     get_effective_fields,
 )
+from .field_schema import migrate_record_aliases
 from .yaml_ops import load_yaml, write_yaml
 
 
@@ -90,6 +91,25 @@ def normalize_field_options_policy_data(data: Dict[str, Any]) -> Dict[str, Any]:
 
     # Get effective fields (auto-injects cell_line/note from legacy meta)
     effective = get_effective_fields(meta)
+
+    # Migrate legacy alias keys (for example: parent_cell_line -> cell_line)
+    # before options/default normalization so the rest of the pipeline works
+    # on canonical field names.
+    alias_records_changed = 0
+    alias_conflict_count = 0
+    alias_changes: List[Dict[str, Any]] = []
+    alias_changed_record_ids: List[int] = []
+    for rec in candidate_inventory:
+        if not isinstance(rec, dict):
+            continue
+        migrated = migrate_record_aliases(rec, meta)
+        if not migrated.get("changed"):
+            continue
+        alias_records_changed += 1
+        alias_conflict_count += int(migrated.get("conflicts") or 0)
+        alias_changes.extend(list(migrated.get("alias_changes") or []))
+        with suppress(Exception):
+            alias_changed_record_ids.append(int(rec.get("id")))
 
     total_records_changed = 0
     total_changed_record_ids: List[int] = []
@@ -192,10 +212,16 @@ def normalize_field_options_policy_data(data: Dict[str, Any]) -> Dict[str, Any]:
         meta_changed = True
 
     changed = bool(meta_changed or total_records_changed > 0)
+    if alias_records_changed > 0:
+        changed = True
     summary = {
         "records_total": len(candidate_inventory),
         "records_changed": total_records_changed,
         "changed_record_ids": sorted(set(total_changed_record_ids)),
+        "alias_records_changed": alias_records_changed,
+        "alias_changed_record_ids": sorted(set(alias_changed_record_ids)),
+        "alias_conflict_count": alias_conflict_count,
+        "alias_changes": alias_changes,
         "required_flag_added": required_flag_added,
         "unknown_added_to_options": DEFAULT_UNKNOWN_CELL_LINE in [v for v in total_values_added],
         "existing_values_added_to_options": total_values_added,
