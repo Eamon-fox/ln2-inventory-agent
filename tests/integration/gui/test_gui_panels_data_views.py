@@ -802,6 +802,27 @@ class OverviewTableViewTests(ManagedPathTestCase):
         finally:
             self._cleanup(tmpdir)
 
+    def test_table_view_row_text_uses_contrasting_color_for_dark_tint(self):
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "clone-A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            with patch("app_gui.ui.overview_panel_table.cell_color", return_value="#000000"):
+                panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+                panel.refresh()
+                self._switch_to_table(panel)
+
+            self.assertEqual(1, panel.ov_table.rowCount())
+            first_cell = panel.ov_table.item(0, 0)
+            self.assertIsNotNone(first_cell)
+            self.assertEqual("#000000", str(first_cell.data(int(TABLE_ROW_TINT_ROLE)) or "").lower())
+            self.assertEqual("#ffffff", first_cell.foreground().color().name())
+        finally:
+            self._cleanup(tmpdir)
+
     def test_table_mode_switches_show_empty_toggle_to_show_taken_out(self):
         records = [
             {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},

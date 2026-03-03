@@ -393,6 +393,46 @@ class PlanTableColumnsTests(unittest.TestCase):
         self.assertNotIn("batch-x", cell_text)
         self.assertNotIn("Box", cell_text)
 
+    def test_plan_table_row_uses_contrasting_foreground_for_dark_tint(self):
+        from unittest.mock import patch
+
+        panel = self._new_operations_panel()
+        panel.update_records_cache(
+            {
+                11: {
+                    "id": 11,
+                    "cell_line": "K562",
+                    "short_name": "clone-z",
+                    "box": 1,
+                    "position": 4,
+                    "frozen_at": "2025-01-01",
+                }
+            }
+        )
+
+        with patch("app_gui.ui.operations_panel_plan_table.cell_color", return_value="#000000"):
+            panel.add_plan_items(
+                [
+                    {
+                        "action": "takeout",
+                        "record_id": 11,
+                        "box": 1,
+                        "position": 4,
+                        "payload": {
+                            "record_id": 11,
+                            "position": 4,
+                            "date_str": "2025-02-19",
+                        },
+                    }
+                ]
+            )
+
+        self.assertEqual(1, panel.plan_table.rowCount())
+        first_cell = panel.plan_table.item(0, 0)
+        self.assertIsNotNone(first_cell)
+        self.assertEqual("#000000", first_cell.background().color().name())
+        self.assertEqual("#ffffff", first_cell.foreground().color().name())
+
 
 if __name__ == "__main__":
     unittest.main()

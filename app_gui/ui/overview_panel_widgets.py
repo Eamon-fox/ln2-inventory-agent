@@ -1,7 +1,7 @@
 """Reusable widget classes for OverviewPanel."""
 
 from PySide6.QtCore import QRect, Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QCheckBox,
     QDateEdit,
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QScrollArea,
     QStyle,
+    QStyleOptionViewItem,
     QStyledItemDelegate,
     QVBoxLayout,
     QWidget,
@@ -27,26 +28,29 @@ class _OverviewTableTintDelegate(QStyledItemDelegate):
     """Paint row-level color tint for table view cells."""
 
     def paint(self, painter, option, index):
-        super().paint(painter, option, index)
-
         # Keep selected row highlight from theme unchanged.
         if option.state & QStyle.State_Selected:
+            super().paint(painter, option, index)
             return
 
         from app_gui.ui import overview_panel as _ov_panel
 
         tint_hex = index.data(_ov_panel.TABLE_ROW_TINT_ROLE)
         if not tint_hex:
+            super().paint(painter, option, index)
             return
 
         tint = QColor(str(tint_hex))
         if not tint.isValid():
+            super().paint(painter, option, index)
             return
 
+        # Apply row tint as background brush before default text painting so
+        # foreground contrast remains readable.
+        opt = QStyleOptionViewItem(option)
         tint.setAlpha(128)
-        painter.save()
-        painter.fillRect(option.rect, tint)
-        painter.restore()
+        opt.backgroundBrush = QBrush(tint)
+        super().paint(painter, opt, index)
 
 
 class _FilterableHeaderView(QHeaderView):

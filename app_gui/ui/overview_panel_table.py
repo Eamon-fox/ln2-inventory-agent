@@ -3,9 +3,11 @@
 from contextlib import suppress
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import QHeaderView, QTableWidgetItem
 
 from app_gui.i18n import t
+from app_gui.ui.theme import pick_contrasting_text_color
 from app_gui.ui.utils import cell_color
 from lib.csv_export import build_export_rows
 
@@ -105,6 +107,7 @@ def _render_table_rows(self, rows):
             values = row_data.get("values") or {}
             color_value = str(row_data.get("color_value") or "")
             row_tint = cell_color(color_value or None)
+            row_text_brush = QBrush(QColor(pick_contrasting_text_color(row_tint)))
             record = row_data.get("record")
             self._table_row_records[row_index] = record
 
@@ -112,6 +115,7 @@ def _render_table_rows(self, rows):
                 value = values.get(column, "")
                 item = QTableWidgetItem(str(value))
                 item.setData(_ov_panel.TABLE_ROW_TINT_ROLE, row_tint)
+                item.setForeground(row_text_brush)
 
                 if col_index == 0:
                     item.setData(RECORD_ROLE, record)

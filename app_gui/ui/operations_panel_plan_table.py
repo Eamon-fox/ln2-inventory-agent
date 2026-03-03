@@ -5,10 +5,11 @@ import os
 from datetime import datetime
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import QHeaderView, QTableWidgetItem
 
 from app_gui.error_localizer import localize_error_payload
+from app_gui.ui.theme import pick_contrasting_text_color
 from app_gui.ui.utils import cell_color
 
 
@@ -336,10 +337,13 @@ def _refresh_plan_table(self):
                 color_value = record.get(color_key, "")
                 row_color = cell_color(color_value if color_value else None)
                 qcolor = QColor(row_color)
+                text_color = QColor(pick_contrasting_text_color(qcolor))
+                text_brush = QBrush(text_color)
                 for col in range(self.plan_table.columnCount()):
                     cell_item = self.plan_table.item(row, col)
                     if cell_item:
                         cell_item.setBackground(qcolor)
+                        cell_item.setForeground(text_brush)
 
     for col in range(self.plan_table.columnCount()):
         self.plan_table.resizeColumnToContents(col)

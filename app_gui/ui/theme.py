@@ -235,6 +235,61 @@ def resolve_theme_token(token_name, mode=None, fallback=""):
     return str(get_theme_tokens(mode).get(key, fallback))
 
 
+def _coerce_qcolor(value):
+    if isinstance(value, QColor):
+        color = QColor(value)
+    else:
+        color = QColor(str(value or ""))
+    return color if color.isValid() else QColor()
+
+
+def _srgb_channel_to_linear(channel):
+    c = float(channel)
+    if c <= 0.04045:
+        return c / 12.92
+    return ((c + 0.055) / 1.055) ** 2.4
+
+
+def _relative_luminance(color):
+    if not isinstance(color, QColor) or not color.isValid():
+        return 0.0
+    r = _srgb_channel_to_linear(color.redF())
+    g = _srgb_channel_to_linear(color.greenF())
+    b = _srgb_channel_to_linear(color.blueF())
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _contrast_ratio(lhs_luminance, rhs_luminance):
+    lighter = max(float(lhs_luminance), float(rhs_luminance))
+    darker = min(float(lhs_luminance), float(rhs_luminance))
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def pick_contrasting_text_color(background, light="#ffffff", dark="#0f172a"):
+    """Pick a readable text color for a background.
+
+    Returns either ``light`` or ``dark`` (normalized as hex) based on WCAG
+    contrast ratio against ``background``.
+    """
+    bg_color = _coerce_qcolor(background)
+    if not bg_color.isValid():
+        return str(QColor("#0f172a").name())
+
+    light_color = _coerce_qcolor(light)
+    if not light_color.isValid():
+        light_color = QColor("#ffffff")
+
+    dark_color = _coerce_qcolor(dark)
+    if not dark_color.isValid():
+        dark_color = QColor("#0f172a")
+
+    bg_lum = _relative_luminance(bg_color)
+    light_ratio = _contrast_ratio(bg_lum, _relative_luminance(light_color))
+    dark_ratio = _contrast_ratio(bg_lum, _relative_luminance(dark_color))
+    winner = light_color if light_ratio >= dark_ratio else dark_color
+    return str(winner.name())
+
+
 def _get_theme_vars(mode):
     """Return CSS variables for the given theme mode."""
     if mode == "light":
@@ -776,11 +831,12 @@ def _apply_theme(app, mode):
 
 
 def cell_occupied_style(color="#22c55e", is_selected=False, font_size=9):
+    text_color = pick_contrasting_text_color(color)
     if is_selected:
         return _resolve_inline_qss(f"""
             QPushButton {{
                 background-color: {color};
-                color: white;
+                color: {text_color};
                 border: 2px solid var(--accent);
                 border-radius: var(--radius-xs);
                 font-size: {font_size}px;
@@ -795,7 +851,7 @@ def cell_occupied_style(color="#22c55e", is_selected=False, font_size=9):
     return _resolve_inline_qss(f"""
         QPushButton {{
             background-color: {color};
-            color: white;
+            color: {text_color};
             border: 1px solid var(--cell-border-default);
             border-radius: var(--radius-xs);
             font-size: {font_size}px;

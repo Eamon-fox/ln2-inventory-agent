@@ -284,6 +284,25 @@ class TestColorPalette(unittest.TestCase):
         _utils.build_color_palette([])
         self.assertEqual(0, len(_utils._dynamic_palette))
 
+    def test_pick_contrasting_text_color_dark_background(self):
+        from app_gui.ui.theme import pick_contrasting_text_color
+
+        self.assertEqual("#ffffff", pick_contrasting_text_color("#000000"))
+
+    def test_pick_contrasting_text_color_light_background(self):
+        from app_gui.ui.theme import pick_contrasting_text_color
+
+        self.assertEqual("#0f172a", pick_contrasting_text_color("#f8fafc"))
+
+    def test_cell_occupied_style_uses_adaptive_text_color(self):
+        from app_gui.ui.theme import cell_occupied_style
+
+        dark_bg_style = cell_occupied_style("#000000", is_selected=False, font_size=9).lower()
+        light_bg_style = cell_occupied_style("#f8fafc", is_selected=False, font_size=9).lower()
+
+        self.assertIn("color: #ffffff;", dark_bg_style)
+        self.assertIn("color: #0f172a;", light_bg_style)
+
 
 if __name__ == "__main__":
     unittest.main()
