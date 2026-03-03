@@ -87,15 +87,9 @@ def _run_tool_call(self, call, tool_names, trace_id, stop_event=None):
         )
 
         runner = self._tools
-        answered = runner._answer_event.wait(timeout=300)
+        runner._answer_event.wait()
 
-        if not answered:
-            observation = {
-                "ok": False,
-                "error_code": "question_timeout",
-                "message": "User did not answer within timeout.",
-            }
-        elif runner._answer_cancelled:
+        if runner._answer_cancelled:
             observation = {
                 "ok": False,
                 "error_code": "question_cancelled",
@@ -193,14 +187,8 @@ def _run_tool_call(self, call, tool_names, trace_id, stop_event=None):
             },
         )
 
-        answered = runner._answer_event.wait(timeout=300)
-        if not answered:
-            observation = {
-                "ok": False,
-                "error_code": "manage_boxes_timeout",
-                "message": "User did not confirm box adjustment within timeout.",
-            }
-        elif runner._answer_cancelled:
+        runner._answer_event.wait()
+        if runner._answer_cancelled:
             observation = {
                 "ok": False,
                 "error_code": "user_cancelled",

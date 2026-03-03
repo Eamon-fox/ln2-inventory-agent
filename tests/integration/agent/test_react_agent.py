@@ -8,6 +8,7 @@ ReAct 循环、工具调用、重试与结束
 
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -29,6 +30,27 @@ def make_data(records):
         "meta": {"box_layout": {"rows": 9, "cols": 9}},
         "inventory": records,
     }
+
+
+class _SpyAnswerEvent:
+    """Threading.Event wrapper that records wait() call signatures."""
+
+    def __init__(self):
+        self._event = threading.Event()
+        self.wait_calls = []
+
+    def wait(self, *args, **kwargs):
+        self.wait_calls.append((args, kwargs))
+        return self._event.wait(*args, **kwargs)
+
+    def clear(self):
+        self._event.clear()
+
+    def set(self):
+        self._event.set()
+
+    def is_set(self):
+        return self._event.is_set()
 
 
 class _SequenceLLM:
@@ -350,6 +372,52 @@ class ReactAgentTests(ManagedPathTestCase):
             self.assertEqual("done", result["final"])
             self.assertTrue(any(e.get("type") == "manage_boxes_confirm" for e in events))
 
+    def test_react_agent_manage_boxes_wait_uses_blocking_event_wait(self):
+        llm = _SequenceLLM(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_manage_boxes",
+                            "name": "manage_boxes",
+                            "arguments": {"action": "add", "count": 1},
+                        }
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": "done",
+                    "tool_calls": [],
+                },
+            ]
+        )
+
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        spy_event = _SpyAnswerEvent()
+        runner._answer_event = spy_event
+        agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=3)
+
+        def _on_event(evt):
+            payload = dict(evt or {})
+            if payload.get("type") == "manage_boxes_confirm":
+                runner._set_answer(
+                    {
+                        "ok": True,
+                        "result": {"confirmed": True},
+                        "message": "confirmed by user",
+                    }
+                )
+
+        result = agent.run("add one box", on_event=_on_event)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(1, len(spy_event.wait_calls))
+        args, kwargs = spy_event.wait_calls[0]
+        self.assertEqual((), args)
+        self.assertEqual({}, kwargs)
+
     def test_react_agent_question_returns_answer_and_index(self):
         llm = _SequenceLLM(
             [
@@ -403,6 +471,49 @@ class ReactAgentTests(ManagedPathTestCase):
         self.assertTrue(obs.get("ok"))
         self.assertEqual("no", obs.get("answer"))
         self.assertEqual(1, obs.get("index"))
+
+    def test_react_agent_question_wait_uses_blocking_event_wait(self):
+        llm = _SequenceLLM(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_question",
+                            "name": "question",
+                            "arguments": {
+                                "question": "Proceed with takeout?",
+                                "options": ["yes", "no"],
+                            },
+                        }
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": "ok",
+                    "tool_calls": [],
+                },
+            ]
+        )
+
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        spy_event = _SpyAnswerEvent()
+        runner._answer_event = spy_event
+        agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=3)
+
+        def _on_event(evt):
+            payload = dict(evt or {})
+            if payload.get("type") == "question":
+                runner._set_answer("yes")
+
+        result = agent.run("confirm", on_event=_on_event)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(1, len(spy_event.wait_calls))
+        args, kwargs = spy_event.wait_calls[0]
+        self.assertEqual((), args)
+        self.assertEqual({}, kwargs)
 
     def test_react_agent_question_accepts_other_text_answer(self):
         llm = _SequenceLLM(
