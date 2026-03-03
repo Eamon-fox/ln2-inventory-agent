@@ -1,6 +1,7 @@
 """Cell interaction helpers for OverviewPanel."""
 
 from app_gui.i18n import tr, t
+from app_gui.system_notice import build_system_notice
 
 
 def on_cell_clicked(self, box_num, position):
@@ -150,6 +151,25 @@ def _current_box_tag(self, box_num):
     return str(raw_value).replace("\r", " ").replace("\n", " ").strip()
 
 
+def _emit_box_tag_notice(self, *, operation, box_num, tag_value, response, text, level, timeout_ms):
+    payload = response if isinstance(response, dict) else {}
+    notice = build_system_notice(
+        code=f"box.tag.{str(operation or 'set').lower()}",
+        text=str(text or ""),
+        level=str(level or "info"),
+        source="overview_panel",
+        timeout_ms=int(timeout_ms or 0),
+        data={
+            "operation": str(operation or ""),
+            "box": int(box_num),
+            "tag": str(tag_value or ""),
+            "ok": bool(payload.get("ok")),
+            "error_code": payload.get("error_code"),
+        },
+    )
+    self.operation_event.emit(notice)
+
+
 def on_box_context_menu(self, box_num, global_pos):
     from PySide6.QtWidgets import QInputDialog
 
@@ -168,7 +188,18 @@ def on_box_context_menu(self, box_num, global_pos):
 
     yaml_path = self.yaml_path_getter()
     if not yaml_path:
-        self.status_message.emit(tr("overview.boxTagUpdateFailed"), 2500)
+        msg = tr("overview.boxTagUpdateFailed")
+        self.status_message.emit(msg, 2500)
+        _emit_box_tag_notice(
+            self,
+            operation="set",
+            box_num=box_num,
+            tag_value="",
+            response={"ok": False, "error_code": "yaml_path_missing"},
+            text=msg,
+            level="error",
+            timeout_ms=2500,
+        )
         return
 
     if selected == act_set_tag:
@@ -187,12 +218,34 @@ def on_box_context_menu(self, box_num, global_pos):
             execution_mode="execute",
         )
         if response.get("ok"):
+            msg = t("overview.boxTagUpdated", box=box_num)
             self.refresh()
-            self.status_message.emit(t("overview.boxTagUpdated", box=box_num), 2500)
+            self.status_message.emit(msg, 2500)
+            _emit_box_tag_notice(
+                self,
+                operation="updated",
+                box_num=box_num,
+                tag_value=str(tag_text or ""),
+                response=response,
+                text=msg,
+                level="success",
+                timeout_ms=2500,
+            )
         else:
+            error_text = localize_error_payload(response, fallback=tr("overview.boxTagUpdateFailed"))
             self.status_message.emit(
-                localize_error_payload(response, fallback=tr("overview.boxTagUpdateFailed")),
+                error_text,
                 3500,
+            )
+            _emit_box_tag_notice(
+                self,
+                operation="updated",
+                box_num=box_num,
+                tag_value=str(tag_text or ""),
+                response=response,
+                text=error_text,
+                level="error",
+                timeout_ms=3500,
             )
         return
 
@@ -204,12 +257,34 @@ def on_box_context_menu(self, box_num, global_pos):
             execution_mode="execute",
         )
         if response.get("ok"):
+            msg = t("overview.boxTagCleared", box=box_num)
             self.refresh()
-            self.status_message.emit(t("overview.boxTagCleared", box=box_num), 2500)
+            self.status_message.emit(msg, 2500)
+            _emit_box_tag_notice(
+                self,
+                operation="cleared",
+                box_num=box_num,
+                tag_value="",
+                response=response,
+                text=msg,
+                level="success",
+                timeout_ms=2500,
+            )
         else:
+            error_text = localize_error_payload(response, fallback=tr("overview.boxTagUpdateFailed"))
             self.status_message.emit(
-                localize_error_payload(response, fallback=tr("overview.boxTagUpdateFailed")),
+                error_text,
                 3500,
+            )
+            _emit_box_tag_notice(
+                self,
+                operation="cleared",
+                box_num=box_num,
+                tag_value="",
+                response=response,
+                text=error_text,
+                level="error",
+                timeout_ms=3500,
             )
 
 

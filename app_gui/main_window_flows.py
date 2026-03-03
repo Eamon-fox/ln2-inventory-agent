@@ -420,6 +420,19 @@ class SettingsFlow:
 
         window.operations_panel.apply_meta_update(meta if isinstance(meta, dict) else None)
         window.overview_panel.refresh()
+        meta_payload = meta if isinstance(meta, dict) else {}
+        if "custom_fields" in meta_payload:
+            window._emit_system_notice(
+                code="settings.custom_fields.updated",
+                text=tr("operations.contextSuccess", context=tr("main.customFieldsTitle")),
+                level="success",
+                source="settings_dialog",
+                timeout_ms=3000,
+                data={
+                    "yaml_path": target_yaml,
+                    "custom_field_count": len(meta_payload.get("custom_fields") or []),
+                },
+            )
 
     def ask_restart(self, message):
         window = self._window

@@ -214,6 +214,7 @@ def _build_settings_window(path_text):
     window.overview_panel = SimpleNamespace(refresh=MagicMock())
     window.operations_panel = SimpleNamespace(apply_meta_update=MagicMock())
     window.statusBar = MagicMock(return_value=SimpleNamespace(showMessage=status))
+    window._emit_system_notice = MagicMock()
     return window, status
 
 
@@ -262,6 +263,23 @@ def test_settings_flow_data_change_ignores_other_dataset():
     flow.handle_data_changed(yaml_path="D:/tmp/current.yaml", meta={"box_layout": {"A": 1}})
     window.operations_panel.apply_meta_update.assert_called_once_with({"box_layout": {"A": 1}})
     window.overview_panel.refresh.assert_called_once()
+    window._emit_system_notice.assert_not_called()
+
+
+def test_settings_flow_data_change_emits_custom_fields_notice():
+    window, _status_message = _build_settings_window("D:/tmp/current.yaml")
+    flow = SettingsFlow(window, normalize_yaml_path=lambda x: os.path.abspath(str(x or "")))
+
+    flow.handle_data_changed(
+        yaml_path="D:/tmp/current.yaml",
+        meta={"custom_fields": [{"key": "short_name"}]},
+    )
+
+    window._emit_system_notice.assert_called_once()
+    notice_kwargs = window._emit_system_notice.call_args.kwargs
+    assert notice_kwargs["code"] == "settings.custom_fields.updated"
+    assert notice_kwargs["source"] == "settings_dialog"
+    assert notice_kwargs["data"]["custom_field_count"] == 1
 
 
 def test_dataset_flow_writes_new_dataset_yaml():

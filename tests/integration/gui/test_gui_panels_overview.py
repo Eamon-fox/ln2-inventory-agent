@@ -502,3 +502,54 @@ class GuiPanelsOverviewTests(GuiPanelsBaseCase):
 
         self.assertEqual((1, 1), panel.overview_selected_key)
         self.assertEqual([{"box": 1, "position": 1}], emitted_add)
+
+    def test_overview_set_box_tag_emits_system_notice_event(self):
+        panel = self._new_overview_panel()
+        panel.bridge = SimpleNamespace(
+            set_box_tag=MagicMock(return_value={"ok": True, "result": {"box": 1, "tag_after": "virus"}})
+        )
+        panel.refresh = MagicMock()
+        events = []
+        panel.operation_event.connect(lambda payload: events.append(payload))
+
+        with patch("app_gui.ui.overview_panel.QMenu") as menu_cls, patch(
+            "PySide6.QtWidgets.QInputDialog.getText",
+            return_value=("virus", True),
+        ):
+            menu = MagicMock()
+            menu_cls.return_value = menu
+            act_set = MagicMock()
+            act_clear = MagicMock()
+            menu.addAction.side_effect = [act_set, act_clear]
+            menu.exec.return_value = act_set
+            panel.on_box_context_menu(1, panel.mapToGlobal(panel.rect().center()))
+
+        self.assertEqual(1, len(events))
+        self.assertEqual("system_notice", events[0].get("type"))
+        self.assertEqual("box.tag.updated", events[0].get("code"))
+        self.assertEqual("success", events[0].get("level"))
+        self.assertEqual(1, int((events[0].get("data") or {}).get("box")))
+
+    def test_overview_clear_box_tag_failure_emits_error_system_notice(self):
+        panel = self._new_overview_panel()
+        panel.bridge = SimpleNamespace(
+            set_box_tag=MagicMock(return_value={"ok": False, "error_code": "write_failed", "message": "boom"})
+        )
+        panel.refresh = MagicMock()
+        events = []
+        panel.operation_event.connect(lambda payload: events.append(payload))
+
+        with patch("app_gui.ui.overview_panel.QMenu") as menu_cls:
+            menu = MagicMock()
+            menu_cls.return_value = menu
+            act_set = MagicMock()
+            act_clear = MagicMock()
+            menu.addAction.side_effect = [act_set, act_clear]
+            menu.exec.return_value = act_clear
+            panel.on_box_context_menu(1, panel.mapToGlobal(panel.rect().center()))
+
+        self.assertEqual(1, len(events))
+        self.assertEqual("system_notice", events[0].get("type"))
+        self.assertEqual("box.tag.cleared", events[0].get("code"))
+        self.assertEqual("error", events[0].get("level"))
+        self.assertEqual("write_failed", (events[0].get("data") or {}).get("error_code"))

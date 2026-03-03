@@ -59,6 +59,7 @@ from app_gui.ui.dialogs import (
     CustomFieldsDialog,
 )
 from app_gui.ui.icons import get_icon, Icons, set_icon_color
+from app_gui.system_notice import build_system_notice
 from app_gui.main_window_flows import (
     StartupFlow,
     WindowStateFlow,
@@ -261,6 +262,7 @@ class MainWindow(QMainWindow):
         self._dataset_session = DatasetSessionController(
             self,
             normalize_yaml_path=_normalize_inventory_yaml_path,
+            publish_system_notice=self._emit_system_notice,
         )
         self._import_journey = ImportJourneyService(
             workspace_service=MigrationWorkspaceService(),
@@ -425,6 +427,7 @@ class MainWindow(QMainWindow):
         self.overview_panel.request_add_prefill_background.connect(self.operations_panel.set_add_prefill_background)
         self.overview_panel.request_export_inventory_csv.connect(self.operations_panel.on_export_inventory_csv)
         self.overview_panel.data_loaded.connect(self.operations_panel.update_records_cache)
+        self.overview_panel.operation_event.connect(self.operations_panel.emit_external_operation_event)
 
         # Operations -> Overview (refresh after execution)
         self.operations_panel.operation_completed.connect(self.on_operation_completed)
@@ -475,6 +478,29 @@ class MainWindow(QMainWindow):
 
     def show_status(self, msg, timeout=2000, level="info"):
         self.statusBar().showMessage(msg, timeout)
+
+    def _emit_system_notice(
+        self,
+        *,
+        code,
+        text,
+        level="info",
+        source="main_window",
+        timeout_ms=2000,
+        details=None,
+        data=None,
+    ):
+        notice = build_system_notice(
+            code=str(code or "notice"),
+            text=str(text or ""),
+            level=str(level or "info"),
+            source=str(source or "main_window"),
+            timeout_ms=int(timeout_ms or 0),
+            details=str(details) if details else None,
+            data=data if isinstance(data, dict) else None,
+        )
+        self.operations_panel.emit_external_operation_event(notice)
+        return notice
 
     def _update_stats_bar(self, stats):
         self._state_flow.update_stats_bar(stats)
@@ -684,9 +710,20 @@ class MainWindow(QMainWindow):
         )
         if result.ok:
             self._handoff_import_journey_to_ai(result)
+            staged_text = tr("main.importJourneyStaged")
             self.statusBar().showMessage(
-                tr("main.importJourneyStaged"),
+                staged_text,
                 4000,
+            )
+            self._emit_system_notice(
+                code="import.journey.staged",
+                text=staged_text,
+                level="info",
+                source="import_journey",
+                timeout_ms=4000,
+                data={
+                    "stage": str(result.stage or ""),
+                },
             )
             return result.stage
         if result.error_code == "user_cancelled":
@@ -696,7 +733,19 @@ class MainWindow(QMainWindow):
             tr("main.importExistingDataTitle"),
             result.message or tr("main.importValidatedFailed"),
         )
-        self.statusBar().showMessage(result.message or tr("main.importValidatedFailed"), 6000)
+        failed_text = result.message or tr("main.importValidatedFailed")
+        self.statusBar().showMessage(failed_text, 6000)
+        self._emit_system_notice(
+            code="import.journey.failed",
+            text=failed_text,
+            level="error",
+            source="import_journey",
+            timeout_ms=6000,
+            data={
+                "stage": str(result.stage or ""),
+                "error_code": str(result.error_code or ""),
+            },
+        )
         return ""
 
     def _handoff_import_journey_to_ai(self, result):
@@ -710,10 +759,19 @@ class MainWindow(QMainWindow):
             imported_yaml_path,
             reason="import_success",
         )
+        opened_text = t("main.importOpened", path=switched_path)
         self._refresh_home_dataset_choices(selected_yaml=switched_path)
         self.statusBar().showMessage(
-            t("main.importOpened", path=switched_path),
+            opened_text,
             4000,
+        )
+        self._emit_system_notice(
+            code="import.journey.opened",
+            text=opened_text,
+            level="success",
+            source="import_journey",
+            timeout_ms=4000,
+            data={"yaml_path": switched_path},
         )
         return switched_path
 

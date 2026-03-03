@@ -25,7 +25,12 @@ def _build_window(current_path):
 
 def test_switch_to_updates_path_and_refreshes_state():
     window = _build_window("D:/data/old/inventory.yaml")
-    controller = DatasetSessionController(window, normalize_yaml_path=lambda p: str(p))
+    publish_notice = MagicMock()
+    controller = DatasetSessionController(
+        window,
+        normalize_yaml_path=lambda p: str(p),
+        publish_system_notice=publish_notice,
+    )
     target = "D:/data/new/inventory.yaml"
 
     with patch(
@@ -42,12 +47,20 @@ def test_switch_to_updates_path_and_refreshes_state():
     assert window.gui_config["yaml_path"] == target
     assert_mock.assert_called_once_with(target, must_exist=True)
     save_mock.assert_called_once_with(window.gui_config)
+    publish_notice.assert_called_once()
+    assert publish_notice.call_args.kwargs["code"] == "dataset.switch"
+    assert publish_notice.call_args.kwargs["data"]["reason"] == "manual_switch"
 
 
 def test_switch_to_skips_reset_for_same_path_in_manual_mode():
     path = os.path.abspath("D:/data/same/inventory.yaml")
     window = _build_window(path)
-    controller = DatasetSessionController(window, normalize_yaml_path=lambda p: str(p))
+    publish_notice = MagicMock()
+    controller = DatasetSessionController(
+        window,
+        normalize_yaml_path=lambda p: str(p),
+        publish_system_notice=publish_notice,
+    )
 
     with patch(
         "app_gui.dataset_session.assert_allowed_inventory_yaml_path",
@@ -60,12 +73,18 @@ def test_switch_to_skips_reset_for_same_path_in_manual_mode():
     window._update_dataset_label.assert_not_called()
     window.overview_panel.refresh.assert_not_called()
     save_mock.assert_not_called()
+    publish_notice.assert_not_called()
 
 
 def test_switch_to_forces_refresh_for_import_success_even_same_path():
     path = os.path.abspath("D:/data/same/inventory.yaml")
     window = _build_window(path)
-    controller = DatasetSessionController(window, normalize_yaml_path=lambda p: str(p))
+    publish_notice = MagicMock()
+    controller = DatasetSessionController(
+        window,
+        normalize_yaml_path=lambda p: str(p),
+        publish_system_notice=publish_notice,
+    )
 
     with patch(
         "app_gui.dataset_session.assert_allowed_inventory_yaml_path",
@@ -77,4 +96,6 @@ def test_switch_to_forces_refresh_for_import_success_even_same_path():
     window.operations_panel.reset_for_dataset_switch.assert_called_once()
     window._update_dataset_label.assert_called_once()
     window.overview_panel.refresh.assert_called_once()
+    publish_notice.assert_called_once()
+    assert publish_notice.call_args.kwargs["data"]["reason"] == "import_success"
 

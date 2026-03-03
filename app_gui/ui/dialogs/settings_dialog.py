@@ -581,13 +581,10 @@ class SettingsDialog(QDialog):
         super().accept()
 
     def _notify_data_changed(self, *, yaml_path=None, meta=None):
-        """Notify parent window after metadata edits (best-effort backward compatible)."""
+        """Notify parent window after metadata edits."""
         if not callable(self._on_data_changed):
             return
-        try:
-            self._on_data_changed(yaml_path=yaml_path, meta=meta)
-        except TypeError:
-            self._on_data_changed()
+        self._on_data_changed(yaml_path=yaml_path, meta=meta)
 
     def _emit_create_new_dataset_request(self):
         if not callable(self._on_create_new_dataset):
