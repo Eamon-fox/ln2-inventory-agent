@@ -105,10 +105,19 @@ class DeepSeekLLMClient(LLMClient):
         with self._stop_lock:
             resp = self._active_response
         if resp is not None and hasattr(resp, "close"):
-            try:
-                resp.close()
-            except Exception:
-                pass
+            # Close in a daemon thread to avoid blocking the caller (UI thread).
+            threading.Thread(
+                target=self._close_response_quietly,
+                args=(resp,),
+                daemon=True,
+            ).start()
+
+    @staticmethod
+    def _close_response_quietly(resp):
+        try:
+            resp.close()
+        except Exception:
+            pass
 
     @classmethod
     def _normalize_content(cls, raw_content):
@@ -503,10 +512,18 @@ class ZhipuLLMClient(LLMClient):
         with self._stop_lock:
             resp = self._active_response
         if resp is not None and hasattr(resp, "close"):
-            try:
-                resp.close()
-            except Exception:
-                pass
+            threading.Thread(
+                target=self._close_response_quietly,
+                args=(resp,),
+                daemon=True,
+            ).start()
+
+    @staticmethod
+    def _close_response_quietly(resp):
+        try:
+            resp.close()
+        except Exception:
+            pass
 
     def _build_request(self, messages, tools=None, temperature=0.0):
         payload = {
@@ -702,10 +719,18 @@ class MiniMaxLLMClient(LLMClient):
         with self._stop_lock:
             resp = self._active_response
         if resp is not None and hasattr(resp, "close"):
-            try:
-                resp.close()
-            except Exception:
-                pass
+            threading.Thread(
+                target=self._close_response_quietly,
+                args=(resp,),
+                daemon=True,
+            ).start()
+
+    @staticmethod
+    def _close_response_quietly(resp):
+        try:
+            resp.close()
+        except Exception:
+            pass
 
     def _build_request(self, messages, tools=None, temperature=0.0):
         use_temp = temperature if temperature > 0 else 1.0
