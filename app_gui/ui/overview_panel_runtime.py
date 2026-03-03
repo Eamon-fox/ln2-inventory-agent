@@ -82,8 +82,14 @@ def eventFilter(self, obj, event):
     if obj is self.ov_scroll.viewport() and event.type() in (QEvent.Resize, QEvent.Show):
         self._position_floating_actions()
 
-    # Ctrl+Wheel zoom on scroll area
-    if obj is self.ov_scroll and event.type() == QEvent.Wheel and event.modifiers() & Qt.ControlModifier:
+    # Ctrl+Wheel zoom on scroll area or its viewport (throttled to ~25 fps)
+    if (obj is self.ov_scroll or obj is self.ov_scroll.viewport()) and event.type() == QEvent.Wheel and event.modifiers() & Qt.ControlModifier:
+        import time
+        from app_gui.ui.overview_panel_zoom import _WHEEL_ZOOM_MIN_INTERVAL
+        now = time.monotonic()
+        if now - getattr(self, "_last_wheel_zoom_time", 0) < _WHEEL_ZOOM_MIN_INTERVAL:
+            return True  # consume but skip — too soon
+        self._last_wheel_zoom_time = now
         delta = event.angleDelta().y()
         if delta > 0:
             self._set_zoom(self._zoom_level + 0.1)

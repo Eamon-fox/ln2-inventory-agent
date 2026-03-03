@@ -1,10 +1,15 @@
 """Zoom and navigation helpers for OverviewPanel."""
 
+import time
+
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QTimer
 from PySide6.QtWidgets import QLabel, QPushButton
 
 from app_gui.i18n import t
 from app_gui.ui.theme import FONT_SIZE_CELL
+
+# Minimum interval between Ctrl+Wheel zoom steps (seconds).
+_WHEEL_ZOOM_MIN_INTERVAL = 0.04  # ~25 fps cap
 
 
 def _set_zoom(self, level, animated=False):
@@ -40,16 +45,37 @@ def _set_zoom(self, level, animated=False):
 
 
 def _apply_zoom(self):
-    """Resize all existing cell buttons and repaint with scaled font."""
+    """Resize all existing cell buttons and update font sizes.
+
+    Font size is set via ``QFont.setPixelSize()`` (fast) instead of
+    rebuilding stylesheets, so ``_repaint_all_cells()`` is no longer
+    needed on zoom — signatures stay valid because they exclude
+    zoom/font fields.
+    """
     cell_size = max(12, int(self._base_cell_size * self._zoom_level))
     font_size_occupied = max(9, int(FONT_SIZE_CELL * self._zoom_level))
     font_size_empty = max(8, int((FONT_SIZE_CELL - 1) * self._zoom_level))
     self._current_font_sizes = (font_size_occupied, font_size_empty)
-    for button in self.overview_cells.values():
-        if hasattr(button, "reset_hover_state"):
-            button.reset_hover_state(clear_base=True)
-        button.setFixedSize(cell_size, cell_size)
-    self._repaint_all_cells()
+
+    container = getattr(self, "ov_boxes_widget", None)
+    if container is not None:
+        container.setUpdatesEnabled(False)
+    try:
+        for button in self.overview_cells.values():
+            # Only reset hover on the actually-hovered cell (not all 1500+).
+            if getattr(button, "_is_hovered", False) and hasattr(button, "reset_hover_state"):
+                button.reset_hover_state(clear_base=True)
+            button.setFixedSize(cell_size, cell_size)
+            # Update font size directly — much cheaper than setStyleSheet.
+            is_empty = button.property("is_empty")
+            fs = font_size_empty if is_empty else font_size_occupied
+            font = button.font()
+            if font.pixelSize() != fs:
+                font.setPixelSize(fs)
+                button.setFont(font)
+    finally:
+        if container is not None:
+            container.setUpdatesEnabled(True)
 
 
 def _animate_scroll_to(self, target_h=None, target_v=None, duration=400):

@@ -87,12 +87,6 @@ class OverviewPanel(QWidget):
         self._zoom_animation = None
         self._scroll_h_animation = None
         self._scroll_v_animation = None
-        self._zoom_repaint_timer = QTimer(self)
-        self._zoom_repaint_timer.setSingleShot(True)
-        self._zoom_repaint_timer.setInterval(80)
-        self._zoom_repaint_timer.timeout.connect(
-            lambda: self._apply_zoom(resize_only=False)
-        )
 
         self.setup_ui()
 

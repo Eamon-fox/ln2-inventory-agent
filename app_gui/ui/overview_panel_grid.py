@@ -12,6 +12,14 @@ from lib.position_fmt import box_to_display, pos_to_display
 _BOX_TAG_TITLE_MAX_CHARS = 18
 
 
+def _set_button_font_size(button, pixel_size):
+    """Set font pixel size on a button without touching the stylesheet."""
+    font = button.font()
+    if font.pixelSize() != pixel_size:
+        font.setPixelSize(pixel_size)
+        button.setFont(font)
+
+
 def _normalize_positive_int(raw):
     try:
         value = int(raw)
@@ -43,8 +51,9 @@ def _build_cell_render_signature(self, box_num, position, record):
     marker_type = str((marker or {}).get("type") or "").strip().lower()
     move_id = (marker or {}).get("move_id")
     selected = bool(getattr(self, "overview_selected_key", None) == (box_num, position))
-    zoom = round(float(getattr(self, "_zoom_level", 1.0) or 1.0), 3)
-    fonts = tuple(getattr(self, "_current_font_sizes", (9, 8)) or (9, 8))
+    # NOTE: zoom / fonts are intentionally excluded from the signature.
+    # Font size is set via QFont.setPixelSize() in _apply_zoom(), not in
+    # the stylesheet, so zoom changes should NOT invalidate cell styles.
     display_key = str(get_display_key(meta) or "")
     color_key = str(get_color_key(meta) or "")
     layout_signature = (
@@ -62,8 +71,6 @@ def _build_cell_render_signature(self, box_num, position, record):
         selected,
         marker_type,
         move_id,
-        zoom,
-        fonts,
         record_signature,
     )
 
@@ -382,8 +389,9 @@ def _paint_cell(self, button, box_num, position, record):
         tt.append(f"{tr('overview.tooltipDate')}: {record.get('frozen_at', '-')}")
 
         button.setToolTip("\n".join(tt))
-        base_style = cell_occupied_style(color, is_selected, font_size=fs_occ)
+        base_style = cell_occupied_style(color, is_selected)
         button.setStyleSheet(base_style)
+        _set_button_font_size(button, fs_occ)
         parts = [
             str(record.get("id", "")),
             str(box_num),
@@ -401,8 +409,9 @@ def _paint_cell(self, button, box_num, position, record):
     else:
         button.setText(display_pos)
         button.setToolTip(t("overview.emptyCellTooltip", box=box_num, position=position))
-        base_style = cell_empty_style(is_selected, font_size=fs_empty)
+        base_style = cell_empty_style(is_selected)
         button.setStyleSheet(base_style)
+        _set_button_font_size(button, fs_empty)
         button.setProperty("search_text", f"empty box {box_num} position {position}".lower())
         button.setProperty("color_key_value", "")
         button.setProperty("is_empty", True)

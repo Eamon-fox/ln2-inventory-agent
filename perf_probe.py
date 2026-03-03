@@ -71,6 +71,23 @@ def _wrap_instance_method(obj, method_name, probe_name=None):
     return original
 
 
+def _wrap_class_method(cls, method_name, probe_name=None):
+    """Wrap a method on a class (for functions bound as class attributes)."""
+    original = getattr(cls, method_name)
+    label = probe_name or f"{cls.__name__}.{method_name}"
+
+    @functools.wraps(original)
+    def wrapper(*args, **kwargs):
+        t0 = time.perf_counter()
+        result = original(*args, **kwargs)
+        dt = (time.perf_counter() - t0) * 1000
+        _record(label, dt)
+        return result
+
+    setattr(cls, method_name, wrapper)
+    return original
+
+
 # ── Count-only wrapper (for very hot functions) ──────────────────────
 
 _paint_cell_count = 0
@@ -114,18 +131,28 @@ def install(window=None):
     from app_gui.ui import overview_panel_grid as _grid
     from app_gui.ui import overview_panel_refresh as _refresh
     from app_gui.ui import overview_panel_filters as _filters
+    from app_gui.ui import overview_panel_zoom as _zoom
+    from app_gui.ui.overview_panel import OverviewPanel as _OvCls
+
+    # ── Class-bound methods (must patch the class, not the module) ────
+    # These functions are bound as class attributes at import time, so
+    # module-level wrapping has no effect on self.method() calls.
+
+    # 0. Zoom probes
+    _wrap_class_method(_OvCls, "_set_zoom", "set_zoom")
+    _wrap_class_method(_OvCls, "_apply_zoom", "apply_zoom")
 
     # 1. _repaint_all_cells — the hot path without signature optimization
-    _wrap_method(_grid, "_repaint_all_cells", "repaint_all_cells")
+    _wrap_class_method(_OvCls, "_repaint_all_cells", "repaint_all_cells")
 
-    # 2. _paint_cell — per-cell cost
-    _wrap_paint_cell(_grid)
+    # 2. _paint_cell — per-cell cost (class-bound)
+    _wrap_class_method(_OvCls, "_paint_cell", "paint_cell")
 
     # 3. refresh — the full refresh path (has signature optimization)
-    _wrap_method(_refresh, "refresh", "refresh")
+    _wrap_class_method(_OvCls, "refresh", "refresh")
 
     # 4. _apply_filters_grid
-    _wrap_method(_filters, "_apply_filters_grid", "apply_filters_grid")
+    _wrap_class_method(_OvCls, "_apply_filters_grid", "apply_filters_grid")
 
     # 5. _build_cell_render_signature
     _wrap_method(_grid, "_build_cell_render_signature", "build_cell_render_signature")
@@ -207,7 +234,7 @@ def report():
         avg = s["total_ms"] / s["calls"] if s["calls"] else 0
         print(f"  {name:<35} {s['calls']:>7} {s['total_ms']:>10.1f} {avg:>9.2f} {s['max_ms']:>9.2f}")
 
-    # Paint cell stats (separate counter for per-cell granularity)
+    # Legacy paint cell stats (if old-style wrapper was used)
     if _paint_cell_count > 0:
         avg_pc = _paint_cell_total_ms / _paint_cell_count
         print("-" * 78)
@@ -253,12 +280,25 @@ def report():
     repaint = snapshot.get("repaint_all_cells", {})
     plan_table = snapshot.get("refresh_plan_table", {})
 
+    paint = snapshot.get("paint_cell", {})
     if repaint.get("calls", 0) > 0:
-        cells_per_repaint = _paint_cell_count / repaint["calls"] if repaint["calls"] else 0
+        pc_count = paint.get("calls", _paint_cell_count) or 0
+        cells_per_repaint = pc_count / repaint["calls"] if repaint["calls"] else 0
         print()
         print("  GRID RENDERING:")
         print(f"  - Cells per repaint_all_cells:    {cells_per_repaint:.0f}")
         print(f"  - Avg repaint_all_cells cost:     {repaint['total_ms']/repaint['calls']:.1f} ms")
+
+    zoom_calls = snapshot.get("set_zoom", {})
+    apply_calls = snapshot.get("apply_zoom", {})
+    if zoom_calls.get("calls", 0) > 0:
+        print()
+        print("  ZOOM:")
+        print(f"  - set_zoom calls:                 {zoom_calls['calls']}")
+        print(f"  - apply_zoom calls:               {apply_calls.get('calls', 0)}")
+        if repaint.get("calls", 0) > 0:
+            ratio = repaint["calls"] / zoom_calls["calls"]
+            print(f"  - repaints per zoom:              {ratio:.2f}  (ideal ≤1.0)")
 
     if plan_table.get("calls", 0) > 0 and add_items.get("calls", 0) > 0:
         ratio = plan_table["calls"] / add_items["calls"]

@@ -1,5 +1,6 @@
 import os
 import re
+from functools import lru_cache
 
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 from PySide6.QtCore import Qt
@@ -830,9 +831,23 @@ def _apply_theme(app, mode):
     common_qss = _get_common_qss()
     qss = f":root {{ {theme_vars} }}\n{common_qss}"
     app.setStyleSheet(_resolve_qss_vars(qss))
+    _cell_occupied_style_cached.cache_clear()
+    _cell_empty_style_cached.cache_clear()
 
 
-def cell_occupied_style(color="#22c55e", is_selected=False, font_size=9):
+def cell_occupied_style(color="#22c55e", is_selected=False, font_size=None):
+    """Return QSS for an occupied cell.
+
+    *font_size* is accepted for API compatibility but ignored — callers
+    should set the pixel size via ``QFont.setPixelSize()`` instead so that
+    zoom-level changes do not invalidate cached stylesheets.
+    """
+    mode = _current_theme_mode()
+    return _cell_occupied_style_cached(color, is_selected, mode)
+
+
+@lru_cache(maxsize=128)
+def _cell_occupied_style_cached(color, is_selected, mode):
     text_color = pick_contrasting_text_color(color)
     if is_selected:
         return _resolve_inline_qss(f"""
@@ -841,7 +856,6 @@ def cell_occupied_style(color="#22c55e", is_selected=False, font_size=9):
                 color: {text_color};
                 border: 3px solid var(--cell-selected-border);
                 border-radius: var(--radius-xs);
-                font-size: {font_size}px;
                 font-weight: 500;
                 padding: 1px;
 
@@ -849,14 +863,13 @@ def cell_occupied_style(color="#22c55e", is_selected=False, font_size=9):
             QPushButton:hover {{
                 border: 3px solid var(--cell-selected-border);
             }}
-        """)
+        """, mode=mode)
     return _resolve_inline_qss(f"""
         QPushButton {{
             background-color: {color};
             color: {text_color};
             border: 1px solid var(--cell-border-default);
             border-radius: var(--radius-xs);
-            font-size: {font_size}px;
             font-weight: 500;
             padding: 1px;
 
@@ -864,43 +877,51 @@ def cell_occupied_style(color="#22c55e", is_selected=False, font_size=9):
         QPushButton:hover {{
             border: 2px solid var(--accent);
         }}
-    """)
+    """, mode=mode)
 
 
-def cell_empty_style(is_selected=False, font_size=8):
+def cell_empty_style(is_selected=False, font_size=None):
+    """Return QSS for an empty cell.
+
+    *font_size* is accepted for API compatibility but ignored.
+    """
+    mode = _current_theme_mode()
+    return _cell_empty_style_cached(is_selected, mode)
+
+
+@lru_cache(maxsize=32)
+def _cell_empty_style_cached(is_selected, mode):
     if is_selected:
-        return _resolve_inline_qss(f"""
-            QPushButton {{
+        return _resolve_inline_qss("""
+            QPushButton {
                 background-color: var(--cell-empty-selected-bg);
                 color: var(--cell-empty-selected-text);
                 border: 3px solid var(--cell-selected-border);
                 border-radius: var(--radius-xs);
-                font-size: {font_size}px;
                 padding: 1px;
 
-            }}
-            QPushButton:hover {{
+            }
+            QPushButton:hover {
                 border: 3px solid var(--cell-selected-border);
                 background-color: var(--background-raised);
                 color: var(--text-weak);
-            }}
-        """)
-    return _resolve_inline_qss(f"""
-        QPushButton {{
+            }
+        """, mode=mode)
+    return _resolve_inline_qss("""
+        QPushButton {
             background-color: var(--cell-empty-bg);
             color: var(--cell-empty-text);
             border: 1px solid var(--cell-border-default);
             border-radius: var(--radius-xs);
-            font-size: {font_size}px;
             padding: 1px;
 
-        }}
-        QPushButton:hover {{
+        }
+        QPushButton:hover {
             border: 2px solid var(--accent);
             background-color: var(--background-raised);
             color: var(--text-weak);
-        }}
-    """)
+        }
+    """, mode=mode)
 
 
 _THEME_COLORS = {
