@@ -1,8 +1,9 @@
 """Reusable widget classes for OverviewPanel."""
 
 from PySide6.QtCore import QRect, Qt, Signal
-from PySide6.QtGui import QBrush, QColor
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QDateEdit,
     QDialog,
@@ -45,12 +46,46 @@ class _OverviewTableTintDelegate(QStyledItemDelegate):
             super().paint(painter, option, index)
             return
 
-        # Apply row tint as background brush before default text painting so
-        # foreground contrast remains readable.
+        # Draw standard visuals without display text to avoid ghosting.
         opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        text = str(opt.text or "")
+        opt.text = ""
+        opt.features = opt.features & ~QStyleOptionViewItem.HasDisplay
+        style = opt.widget.style() if opt.widget is not None else QApplication.style()
+        style.drawControl(QStyle.CE_ItemViewItem, opt, painter, opt.widget)
+
+        # Overlay tint first, then redraw text so background stays visible
+        # without reducing text contrast.
         tint.setAlpha(128)
-        opt.backgroundBrush = QBrush(tint)
-        super().paint(painter, opt, index)
+        painter.save()
+        painter.fillRect(opt.rect, tint)
+        painter.restore()
+
+        display_text = str(index.data(Qt.DisplayRole) or text)
+        text = display_text
+        if not text:
+            return
+
+        alignment = int(getattr(opt, "displayAlignment", Qt.AlignLeft | Qt.AlignVCenter))
+
+        text_color = QColor(option.palette.color(QPalette.Text))
+        fg_role = index.data(Qt.ForegroundRole)
+        if hasattr(fg_role, "color"):
+            with_color = fg_role.color()
+            if isinstance(with_color, QColor) and with_color.isValid():
+                text_color = with_color
+        elif isinstance(fg_role, QColor) and fg_role.isValid():
+            text_color = fg_role
+
+        text_rect = style.subElementRect(QStyle.SE_ItemViewItemText, opt, opt.widget)
+        if not text_rect.isValid():
+            text_rect = opt.rect.adjusted(6, 0, -6, 0)
+        elided = painter.fontMetrics().elidedText(text, Qt.ElideRight, max(0, text_rect.width()))
+        painter.save()
+        painter.setPen(text_color)
+        painter.drawText(text_rect, alignment | int(Qt.TextSingleLine), elided)
+        painter.restore()
 
 
 class _FilterableHeaderView(QHeaderView):

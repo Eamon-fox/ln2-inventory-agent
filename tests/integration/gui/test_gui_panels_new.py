@@ -433,6 +433,41 @@ class PlanTableColumnsTests(unittest.TestCase):
         self.assertEqual("#000000", first_cell.background().color().name())
         self.assertEqual("#ffffff", first_cell.foreground().color().name())
 
+    def test_plan_table_add_row_tints_from_payload_fields_color_key(self):
+        from unittest.mock import patch
+
+        panel = self._new_operations_panel()
+        panel.apply_meta_update(
+            {
+                "box_layout": {"rows": 9, "cols": 9},
+                "color_key": "cell_line",
+                "custom_fields": [{"key": "cell_line", "label": "Cell Line", "type": "str"}],
+            }
+        )
+
+        with patch("app_gui.ui.operations_panel_plan_table.cell_color", return_value="#000000"):
+            panel.add_plan_items(
+                [
+                    {
+                        "action": "add",
+                        "box": 1,
+                        "position": 1,
+                        "payload": {
+                            "box": 1,
+                            "positions": [1],
+                            "frozen_at": "2025-02-19",
+                            "fields": {"cell_line": "K562"},
+                        },
+                    }
+                ]
+            )
+
+        self.assertEqual(1, panel.plan_table.rowCount())
+        first_cell = panel.plan_table.item(0, 0)
+        self.assertIsNotNone(first_cell)
+        self.assertEqual("#000000", first_cell.background().color().name())
+        self.assertEqual("#ffffff", first_cell.foreground().color().name())
+
 
 if __name__ == "__main__":
     unittest.main()

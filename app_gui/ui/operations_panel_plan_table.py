@@ -5,12 +5,82 @@ import os
 from datetime import datetime
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QBrush, QColor
-from PySide6.QtWidgets import QHeaderView, QTableWidgetItem
+from PySide6.QtGui import QBrush, QColor, QPalette
+from PySide6.QtWidgets import (
+    QApplication,
+    QHeaderView,
+    QStyle,
+    QStyleOptionViewItem,
+    QStyledItemDelegate,
+    QTableWidgetItem,
+)
 
 from app_gui.error_localizer import localize_error_payload
 from app_gui.ui.theme import pick_contrasting_text_color
 from app_gui.ui.utils import cell_color
+
+PLAN_ROW_TINT_ROLE = int(Qt.UserRole) + 201
+
+
+class _PlanTableTintDelegate(QStyledItemDelegate):
+    """Render row tint for plan table items under QSS-themed tables."""
+
+    def paint(self, painter, option, index):
+        tint_hex = index.data(PLAN_ROW_TINT_ROLE)
+        if not tint_hex:
+            super().paint(painter, option, index)
+            return
+
+        tint = QColor(str(tint_hex))
+        if not tint.isValid():
+            super().paint(painter, option, index)
+            return
+
+        # Draw the standard item visuals without display text to avoid
+        # text ghosting under tint overlays.
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        text = str(opt.text or "")
+        opt.text = ""
+        opt.features = opt.features & ~QStyleOptionViewItem.HasDisplay
+
+        style = opt.widget.style() if opt.widget is not None else QApplication.style()
+        style.drawControl(QStyle.CE_ItemViewItem, opt, painter, opt.widget)
+
+        # Overlay tint and redraw text to keep row color visible under QSS.
+        tint.setAlpha(176)
+        painter.save()
+        painter.fillRect(opt.rect, tint)
+        painter.restore()
+
+        if not text:
+            return
+
+        # Respect display role in case style option text was normalized.
+        display_text = str(index.data(Qt.DisplayRole) or text)
+        text = display_text
+        if not text:
+            return
+
+        alignment = int(getattr(opt, "displayAlignment", Qt.AlignLeft | Qt.AlignVCenter))
+
+        text_color = QColor(option.palette.color(QPalette.Text))
+        fg_role = index.data(Qt.ForegroundRole)
+        if hasattr(fg_role, "color"):
+            role_color = fg_role.color()
+            if isinstance(role_color, QColor) and role_color.isValid():
+                text_color = role_color
+        elif isinstance(fg_role, QColor) and fg_role.isValid():
+            text_color = fg_role
+
+        text_rect = style.subElementRect(QStyle.SE_ItemViewItemText, opt, opt.widget)
+        if not text_rect.isValid():
+            text_rect = opt.rect.adjusted(6, 0, -6, 0)
+        elided = painter.fontMetrics().elidedText(text, Qt.ElideRight, max(0, text_rect.width()))
+        painter.save()
+        painter.setPen(text_color)
+        painter.drawText(text_rect, alignment | int(Qt.TextSingleLine), elided)
+        painter.restore()
 
 
 def _tr(key, **kwargs):
@@ -278,6 +348,10 @@ def _build_plan_row_semantics(self, item, custom_fields=None):
 def _refresh_plan_table(self):
     from lib.custom_fields import get_color_key
 
+    if not hasattr(self, "_plan_table_tint_delegate"):
+        self._plan_table_tint_delegate = _PlanTableTintDelegate(self.plan_table)
+        self.plan_table.setItemDelegate(self._plan_table_tint_delegate)
+
     has_items = bool(self._plan_store.count())
     self.plan_empty_label.setVisible(not has_items)
     self.plan_table.setVisible(has_items)
@@ -331,19 +405,28 @@ def _refresh_plan_table(self):
         self.plan_table.setItem(row, 4, status_item)
 
         record_id = item.get("record_id")
-        if record_id:
-            record = self.records_cache.get(record_id)
-            if record:
-                color_value = record.get(color_key, "")
-                row_color = cell_color(color_value if color_value else None)
-                qcolor = QColor(row_color)
-                text_color = QColor(pick_contrasting_text_color(qcolor))
-                text_brush = QBrush(text_color)
-                for col in range(self.plan_table.columnCount()):
-                    cell_item = self.plan_table.item(row, col)
-                    if cell_item:
-                        cell_item.setBackground(qcolor)
-                        cell_item.setForeground(text_brush)
+        record = self.records_cache.get(record_id) if record_id else None
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+        payload_fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
+
+        color_value = ""
+        if isinstance(record, dict):
+            color_value = str(record.get(color_key) or "")
+        elif isinstance(payload_fields, dict):
+            color_value = str(payload_fields.get(color_key) or "")
+
+        should_tint_row = bool(record is not None) or bool(color_value)
+        if should_tint_row:
+            row_color = cell_color(color_value if color_value else None)
+            qcolor = QColor(row_color)
+            text_color = QColor(pick_contrasting_text_color(qcolor))
+            text_brush = QBrush(text_color)
+            for col in range(self.plan_table.columnCount()):
+                cell_item = self.plan_table.item(row, col)
+                if cell_item:
+                    cell_item.setData(PLAN_ROW_TINT_ROLE, row_color)
+                    cell_item.setBackground(qcolor)
+                    cell_item.setForeground(text_brush)
 
     for col in range(self.plan_table.columnCount()):
         self.plan_table.resizeColumnToContents(col)
