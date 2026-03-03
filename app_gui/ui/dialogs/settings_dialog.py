@@ -788,7 +788,8 @@ class SettingsDialog(QDialog):
             data = {}
 
         meta = data.get("meta", {})
-        existing = meta.get("custom_fields", [])
+        from lib.custom_fields import get_effective_fields
+        existing = get_effective_fields(meta)
         current_dk = meta.get("display_key")
         current_ck = meta.get("color_key")
         current_clo = meta.get("cell_line_options")
@@ -884,6 +885,7 @@ class SettingsDialog(QDialog):
             pending_meta["display_key"] = new_dk
         if new_ck:
             pending_meta["color_key"] = new_ck
+        # Derive legacy cell_line keys from the custom_fields for backward compat
         if new_clo:
             pending_meta["cell_line_options"] = new_clo
         elif "cell_line_options" in pending_meta:

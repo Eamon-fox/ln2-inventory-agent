@@ -346,20 +346,14 @@ def _paint_cell(self, button, box_num, position, record):
         color = cell_color(ck_val or None)
         button.setText(label)
 
-        cl = record.get("cell_line")
         tt = [
             f"{tr('overview.tooltipId')}: {record.get('id', '-')}",
             f"{tr('overview.tooltipPos')}: {box_num}:{position}",
         ]
-        if cl:
-            tt.append(f"{tr('overview.tooltipCellLine')}: {cl}")
-        note_value = record.get("note")
-        if note_value is not None and str(note_value).strip():
-            tt.append(f"{tr('operations.note')}: {note_value}")
         for fdef in get_effective_fields(meta):
             fk = fdef["key"]
             fv = record.get(fk)
-            if fv is not None and str(fv):
+            if fv is not None and str(fv).strip():
                 tt.append(f"{fdef.get('label', fk)}: {fv}")
         tt.append(f"{tr('overview.tooltipDate')}: {record.get('frozen_at', '-')}")
 
@@ -370,8 +364,6 @@ def _paint_cell(self, button, box_num, position, record):
             str(record.get("id", "")),
             str(box_num),
             str(position),
-            str(record.get("cell_line") or ""),
-            str(record.get("note") or ""),
             str(record.get("frozen_at") or ""),
         ]
         for key, value in record.items():

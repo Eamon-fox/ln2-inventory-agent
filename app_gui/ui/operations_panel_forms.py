@@ -164,7 +164,7 @@ def _make_editable_field(
             field,
             options=options,
             allow_empty=bool(allow_empty),
-            show_all_popup=(field_name == "cell_line"),
+            show_all_popup=bool(choices_provider),
         )
         return options, bool(allow_empty)
 
@@ -285,26 +285,20 @@ def _build_add_tab(self):
 
     form.addRow(tr("operations.to"), target_row)
 
-    # Other fields
+    # Frozen date
     self.a_date = QDateEdit()
     self.a_date.setCalendarPopup(True)
     self.a_date.setDisplayFormat("yyyy-MM-dd")
     self.a_date.setDate(QDate.currentDate())
 
-    # Cell line dropdown (structural, optional)
-    self.a_cell_line = QComboBox()
-    self.a_cell_line.setEditable(True)
-    self.a_cell_line.addItem("")  # allow empty
-    self.a_note = QPlainTextEdit()
-    _configure_multiline_note_editor(self.a_note)
-
     form.addRow(tr("operations.frozenDate"), self.a_date)
-    form.addRow(tr("operations.cellLine"), self.a_cell_line)
-    form.addRow(tr("operations.note"), self.a_note)
 
-    # User fields placeholder -?populated by _rebuild_custom_add_fields()
+    # Effective field widgets are populated dynamically by _rebuild_custom_add_fields()
     self._add_custom_form = form
     self._add_custom_widgets = {}
+    # Backward-compat aliases (set by _rebuild_custom_add_fields)
+    self.a_cell_line = None
+    self.a_note = None
 
     self.a_apply_btn, a_btn_row = self._build_stage_action_button(
         tr("operations.add"),
@@ -316,12 +310,18 @@ def _build_add_tab(self):
     return tab
 
 def _rebuild_custom_add_fields(self, custom_fields):
-    """Rebuild user field rows in the add form based on effective fields."""
+    """Rebuild all effective field rows in the add form.
+
+    Handles ``options`` (QComboBox), ``multiline`` (QPlainTextEdit),
+    and standard type widgets (QLineEdit, QSpinBox, etc.).
+    """
     form = self._add_custom_form
-    # Remove old user field widgets
+    # Remove old field widgets
     for key, widget in self._add_custom_widgets.items():
         form.removeRow(widget)
     self._add_custom_widgets = {}
+    self.a_cell_line = None
+    self.a_note = None
 
     if not custom_fields:
         return
@@ -332,8 +332,27 @@ def _rebuild_custom_add_fields(self, custom_fields):
         label = field_def.get("label", key)
         ftype = field_def.get("type", "str")
         default = field_def.get("default")
+        options = field_def.get("options")
+        multiline = field_def.get("multiline", False)
 
-        if ftype == "int":
+        if options:
+            # Field with predefined options → dropdown
+            widget = QComboBox()
+            widget.setEditable(True)
+            required = field_def.get("required", False)
+            if not required:
+                widget.addItem("")
+            for opt in options:
+                widget.addItem(str(opt))
+            if default and isinstance(default, str):
+                widget.setCurrentText(default)
+        elif multiline or key == "note":
+            # Multiline text field
+            widget = QPlainTextEdit()
+            _configure_multiline_note_editor(widget)
+            if default is not None:
+                widget.setPlainText(str(default))
+        elif ftype == "int":
             widget = QSpinBox()
             widget.setRange(-999999, 999999)
             if default is not None:
@@ -360,6 +379,12 @@ def _rebuild_custom_add_fields(self, custom_fields):
         btn_row_idx = form.rowCount() - 1
         form.insertRow(btn_row_idx, label, widget)
         self._add_custom_widgets[key] = widget
+
+        # Maintain backward-compat attribute aliases
+        if key == "cell_line":
+            self.a_cell_line = widget
+        elif key == "note":
+            self.a_note = widget
 
 # --- TAKEOUT TAB ---
 def _build_takeout_tab(self):

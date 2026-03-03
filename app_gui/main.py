@@ -182,7 +182,6 @@ def _default_inventory_payload():
                 "box_numbers": [1, 2, 3, 4, 5],
             },
             "custom_fields": [],
-            "cell_line_required": True,
         },
         "inventory": [],
     }

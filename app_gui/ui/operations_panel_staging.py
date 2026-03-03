@@ -24,13 +24,8 @@ def on_add_entry(self):
 
     fields = self._collect_custom_add_values() or {}
 
-    # cell_line is structural but passed through fields (tool_api extracts it)
-    cl = self.a_cell_line.currentText().strip()
-    if cl:
-        fields["cell_line"] = cl
-    note = self._read_text_widget_value(getattr(self, "a_note", None)).strip()
-    if note:
-        fields["note"] = note
+    # cell_line and note are now collected by _collect_custom_add_values()
+    # via the _add_custom_widgets dict; no special handling needed.
 
     item = build_add_plan_item(
         box=self.a_box.value(),

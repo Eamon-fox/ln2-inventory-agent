@@ -141,14 +141,9 @@ def _build_plan_changes(self, action_norm, item, payload, custom_fields):
             if not isinstance(source, dict):
                 continue
 
-            for key in ("cell_line", "short_name"):
-                text = self._plan_value_text(source.get(key)).strip()
-                if text and text not in tokens:
-                    tokens.append(text)
-
             for fdef in custom_fields:
                 key = str((fdef or {}).get("key") or "")
-                if not key or key in {"cell_line", "short_name", "note"}:
+                if not key or key == "note":
                     continue
                 text = self._plan_value_text(source.get(key)).strip()
                 if text and text not in tokens:

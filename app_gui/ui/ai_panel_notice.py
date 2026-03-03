@@ -66,10 +66,12 @@ def _format_notice_operation(self, item, row=None):
     fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
 
     desc = self._format_blocked_item(item if isinstance(item, dict) else {})
-    cell_line = item.get("cell_line") if isinstance(item, dict) else None
+    from lib.custom_fields import get_display_key
+    dk = get_display_key(None)
+    dk_val = item.get(dk) if isinstance(item, dict) else None
     short_name = item.get("short_name") if isinstance(item, dict) else None
-    if cell_line in (None, ""):
-        cell_line = fields.get("cell_line")
+    if dk_val in (None, ""):
+        dk_val = fields.get(dk)
     if short_name in (None, ""):
         short_name = fields.get("short_name")
 
@@ -79,14 +81,14 @@ def _format_notice_operation(self, item, row=None):
         operations = preview.get("operations") if isinstance(preview.get("operations"), list) else []
         if operations and isinstance(operations[0], dict):
             op0 = operations[0]
-            if cell_line in (None, ""):
-                cell_line = op0.get("cell_line")
+            if dk_val in (None, ""):
+                dk_val = op0.get(dk)
             if short_name in (None, ""):
                 short_name = op0.get("short_name")
 
     tags = []
-    if cell_line not in (None, ""):
-        tags.append(f"cell_line={cell_line}")
+    if dk_val not in (None, ""):
+        tags.append(f"{dk}={dk_val}")
     if short_name not in (None, ""):
         tags.append(f"short_name={short_name}")
     if tags:

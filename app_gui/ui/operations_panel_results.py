@@ -67,8 +67,8 @@ def _build_add_entry_result_lines(self, preview, result):
     from lib.custom_fields import get_display_key
 
     dk = get_display_key(None)
-    cell = str(fields.get("cell_line", ""))
-    short = str(fields.get(dk, ""))
+    cell = str(fields.get(dk, ""))
+    short = str(fields.get("short_name", "") if dk != "short_name" else "")
     box = preview.get("box", "")
     positions = preview.get("positions", [])
     pos_text = self._positions_to_display_text(positions)

@@ -470,10 +470,11 @@ class DatasetFlow:
             "version": "1.0",
             "box_layout": box_layout,
             "custom_fields": custom_fields,
-            "cell_line_required": bool(cell_line_required),
         }
         if display_key:
             meta["display_key"] = display_key
+        if cell_line_required:
+            meta["cell_line_required"] = True
         if cell_line_options:
             meta["cell_line_options"] = cell_line_options
 

@@ -608,8 +608,8 @@ class OperationsPanel(QWidget):
         self._rebuild_custom_add_fields(custom_fields)
         self._rebuild_ctx_user_fields("takeout", custom_fields)
         self._rebuild_ctx_user_fields("move", custom_fields)
-        # Refresh cell_line dropdown options
-        self._refresh_cell_line_options(meta)
+        # Refresh dropdown options for all option-bearing fields
+        self._refresh_field_options(meta)
 
         # Re-evaluate staged plan immediately against latest rules.
         if self._plan_store.count() > 0:
@@ -620,88 +620,95 @@ class OperationsPanel(QWidget):
             self._refresh_plan_table()
             self._update_execute_button_state()
 
-    def _refresh_cell_line_options(self, meta):
-        """Populate the cell_line combo box from meta.cell_line_options."""
-        from lib.custom_fields import get_cell_line_options, is_cell_line_required
+    def _refresh_field_options(self, meta):
+        """Populate dropdown options for all option-bearing fields in the add form."""
+        from lib.custom_fields import get_effective_fields
 
-        combo = getattr(self, "a_cell_line", None)
-        if combo is None:
-            return
-
-        required = is_cell_line_required(meta)
-        options = []
-        seen = set()
-        for raw in get_cell_line_options(meta):
-            text = str(raw or "").strip()
-            if not text:
+        for field_def in get_effective_fields(meta):
+            fkey = field_def["key"]
+            foptions = field_def.get("options")
+            if not foptions:
                 continue
-            key = text.casefold()
-            if key in seen:
+            frequired = field_def.get("required", False)
+
+            combo = self._add_custom_widgets.get(fkey)
+            if not isinstance(combo, QComboBox):
                 continue
-            seen.add(key)
-            options.append(text)
-        hint_lines = self._cell_line_hint_lines()
-        prev = combo.currentText()
 
-        combo.blockSignals(True)
+            options = []
+            seen = set()
+            for raw in foptions:
+                text = str(raw or "").strip()
+                if not text:
+                    continue
+                key = text.casefold()
+                if key in seen:
+                    continue
+                seen.add(key)
+                options.append(text)
 
-        display_options = []
-        if not required:
-            display_options.append("")
-        display_options.extend(options)
+            hint_lines = self._cell_line_hint_lines() if fkey == "cell_line" else []
+            prev = combo.currentText()
 
-        combo_model = self._build_choice_display_model(
-            display_options,
-            hint_lines=hint_lines,
-            parent=combo,
-        )
-        combo.setModel(combo_model)
-        combo.setEditable(True)
-        combo.setInsertPolicy(QComboBox.NoInsert)
-        combo_row_count = combo_model.rowCount()
-        combo.setMaxVisibleItems(max(1, combo_row_count))
-        try:
-            view = combo.view()
-            if view is not None:
-                view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-                view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-                popup_height = self._popup_height_for_rows(view, combo_row_count)
-                if popup_height > 0:
-                    view.setMinimumHeight(popup_height)
-                    view.setMaximumHeight(popup_height)
-        except Exception:
-            pass
+            combo.blockSignals(True)
 
-        target_index = -1
-        if prev:
-            idx = combo.findText(prev, Qt.MatchFixedString)
-            if idx >= 0:
-                model_item = combo_model.item(idx, 0)
-                if model_item is not None and not bool(model_item.data(_CHOICE_HINT_ROLE)):
-                    target_index = idx
+            display_options = []
+            if not frequired:
+                display_options.append("")
+            display_options.extend(options)
 
-        if target_index < 0 and not required and combo.count() > 0:
-            target_index = 0
-
-        if target_index < 0 and required and options:
-            target_index = 0
-
-        if target_index >= 0:
-            combo.setCurrentIndex(target_index)
-
-        combo.blockSignals(False)
-
-        combo_line = combo.lineEdit()
-        if combo_line is not None:
-            self._configure_choice_line_edit(
-                combo_line,
-                options=options,
-                allow_empty=(not required),
+            combo_model = self._build_choice_display_model(
+                display_options,
                 hint_lines=hint_lines,
-                show_all_popup=True,
+                parent=combo,
             )
+            combo.setModel(combo_model)
+            combo.setEditable(True)
+            combo.setInsertPolicy(QComboBox.NoInsert)
+            combo_row_count = combo_model.rowCount()
+            combo.setMaxVisibleItems(max(1, combo_row_count))
+            try:
+                view = combo.view()
+                if view is not None:
+                    view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                    view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                    popup_height = self._popup_height_for_rows(view, combo_row_count)
+                    if popup_height > 0:
+                        view.setMinimumHeight(popup_height)
+                        view.setMaximumHeight(popup_height)
+            except Exception:
+                pass
 
-        self._refresh_context_cell_line_constraints()
+            target_index = -1
+            if prev:
+                idx = combo.findText(prev, Qt.MatchFixedString)
+                if idx >= 0:
+                    model_item = combo_model.item(idx, 0)
+                    if model_item is not None and not bool(model_item.data(_CHOICE_HINT_ROLE)):
+                        target_index = idx
+
+            if target_index < 0 and not frequired and combo.count() > 0:
+                target_index = 0
+
+            if target_index < 0 and frequired and options:
+                target_index = 0
+
+            if target_index >= 0:
+                combo.setCurrentIndex(target_index)
+
+            combo.blockSignals(False)
+
+            combo_line = combo.lineEdit()
+            if combo_line is not None:
+                self._configure_choice_line_edit(
+                    combo_line,
+                    options=options,
+                    allow_empty=(not frequired),
+                    hint_lines=hint_lines,
+                    show_all_popup=True,
+                )
+
+        self._refresh_context_field_constraints()
 
     @staticmethod
     def _build_choice_display_model(options, *, hint_lines=None, parent=None):
@@ -741,13 +748,17 @@ class OperationsPanel(QWidget):
         return lines
 
     def _cell_line_choice_config(self):
-        from lib.custom_fields import get_cell_line_options, is_cell_line_required
+        return self._field_choice_config("cell_line")
+
+    def _field_choice_config(self, field_key):
+        """Return (options, allow_empty) for any option-bearing field."""
+        from lib.custom_fields import get_field_options, is_field_required
 
         meta = self._current_meta if isinstance(self._current_meta, dict) else {}
-        required = is_cell_line_required(meta)
+        required = is_field_required(meta, field_key)
         options = []
         seen = set()
-        for raw in get_cell_line_options(meta):
+        for raw in get_field_options(meta, field_key):
             text = str(raw or "").strip()
             if not text:
                 continue
@@ -858,16 +869,41 @@ class OperationsPanel(QWidget):
 
         return max(1, count * row_height + frame)
 
-    def _refresh_context_cell_line_constraints(self):
-        options, allow_empty = self._cell_line_choice_config()
-        for field in (getattr(self, "t_ctx_cell_line", None), getattr(self, "m_ctx_cell_line", None)):
-            if isinstance(field, QLineEdit):
-                self._configure_choice_line_edit(
-                    field,
-                    options=options,
-                    allow_empty=allow_empty,
-                    show_all_popup=True,
-                )
+    def _refresh_context_field_constraints(self):
+        """Refresh choice constraints on editable context fields (takeout/move tabs)."""
+        from lib.custom_fields import get_effective_fields
+
+        meta = self._current_meta if isinstance(self._current_meta, dict) else {}
+        for field_def in get_effective_fields(meta):
+            fkey = field_def["key"]
+            foptions = field_def.get("options")
+            if not foptions:
+                continue
+            frequired = field_def.get("required", False)
+
+            options, allow_empty = [], True
+            seen = set()
+            for raw in foptions:
+                text = str(raw or "").strip()
+                if not text:
+                    continue
+                k = text.casefold()
+                if k in seen:
+                    continue
+                seen.add(k)
+                options.append(text)
+            allow_empty = not frequired
+
+            # Apply to takeout and move context widgets
+            for prefix in ("t_ctx_", "m_ctx_"):
+                field_widget = getattr(self, f"{prefix}{fkey}", None)
+                if isinstance(field_widget, QLineEdit):
+                    self._configure_choice_line_edit(
+                        field_widget,
+                        options=options,
+                        allow_empty=allow_empty,
+                        show_all_popup=True,
+                    )
 
     _takeout_record_id = _ops_context._takeout_record_id
     _move_record_id = _ops_context._move_record_id
@@ -889,8 +925,10 @@ class OperationsPanel(QWidget):
                 raw = widget.value()
             elif isinstance(widget, QDateEdit):
                 raw = widget.date().toString("yyyy-MM-dd")
+            elif isinstance(widget, QComboBox):
+                raw = widget.currentText().strip()
             else:
-                raw = widget.text().strip()
+                raw = _ops_forms._read_text_widget_value(widget).strip()
             try:
                 val = coerce_value(raw, field_def.get("type", "str"))
             except (ValueError, TypeError):

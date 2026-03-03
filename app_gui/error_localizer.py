@@ -37,6 +37,7 @@ _ERROR_DEFAULTS_EN = {
     "invalid_box_layout": "Invalid box layout metadata.",
     "invalid_cell_line": "Invalid cell line.",
     "invalid_cell_line_options": "Cell line options are not configured.",
+    "invalid_field_options": "Value is not in the allowed options for this field.",
     "invalid_count": "Count must be greater than 0.",
     "invalid_date": "Invalid date format. Use YYYY-MM-DD.",
     "invalid_execution_mode": "Invalid execution mode.",
