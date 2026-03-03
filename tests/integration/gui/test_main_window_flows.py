@@ -19,18 +19,23 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from lib.inventory_paths import create_managed_dataset_yaml_path
 
 try:
-    from PySide6.QtWidgets import QDialog, QMessageBox
+    from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
     from app_gui.main_window_flows import DatasetFlow, ManageBoxesFlow, SettingsFlow, WindowStateFlow
+    from app_gui.ui.dialogs.new_dataset_dialog import NewDatasetDialog
+    from app_gui.ui.limits import MAX_BOX_COUNT_UI
 
     PYSIDE_AVAILABLE = True
 except Exception:
+    QApplication = None
     QDialog = None
     QMessageBox = None
     DatasetFlow = None
     ManageBoxesFlow = None
     SettingsFlow = None
     WindowStateFlow = None
+    NewDatasetDialog = None
+    MAX_BOX_COUNT_UI = 200
     PYSIDE_AVAILABLE = False
 
 
@@ -179,6 +184,13 @@ class _FakeComboBox:
         self.tooltip = str(text)
 
 
+def _ensure_qapp():
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+    return app
+
+
 def _build_settings_window(path_text):
     status = MagicMock()
     window = SimpleNamespace()
@@ -293,6 +305,13 @@ def test_dataset_flow_writes_new_dataset_yaml():
         assert payload["meta"]["cell_line_options"] == ["K562", "HeLa"]
 
 
+def test_new_dataset_dialog_box_count_limit_is_ui_max():
+    _ensure_qapp()
+    dialog = NewDatasetDialog()
+    assert dialog.box_count_spin.minimum() == 1
+    assert dialog.box_count_spin.maximum() == MAX_BOX_COUNT_UI
+
+
 def test_manage_boxes_flow_add_request_executes_and_emits_notice():
     with tempfile.TemporaryDirectory() as tmpdir:
         yaml_path = os.path.join(tmpdir, "inventory.yaml")
@@ -330,6 +349,33 @@ def test_manage_boxes_flow_add_request_executes_and_emits_notice():
         window.on_operation_completed.assert_called_once_with(True)
         window.show_status.assert_called_once()
         window.operations_panel.emit_external_operation_event.assert_called_once()
+
+
+def test_manage_boxes_prompt_add_uses_ui_max_limit():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yaml_path = os.path.join(tmpdir, "inventory.yaml")
+        Path(yaml_path).write_text("meta: {}\ninventory: []\n", encoding="utf-8")
+
+        window = SimpleNamespace(current_yaml_path=yaml_path)
+        flow = ManageBoxesFlow(window)
+
+        with patch(
+            "app_gui.main_window_flows.QInputDialog.getItem",
+            return_value=("Add boxes", True),
+        ), patch(
+            "app_gui.main_window_flows.tr",
+            side_effect=lambda key, **kwargs: (
+                "Add boxes" if key == "main.boxOpAdd" else str(key)
+            ),
+        ), patch(
+            "app_gui.main_window_flows.QInputDialog.getInt",
+            return_value=(MAX_BOX_COUNT_UI, True),
+        ) as get_int_mock:
+            result = flow.prompt_request(yaml_path_override=yaml_path)
+
+        assert result == {"operation": "add", "count": MAX_BOX_COUNT_UI}
+        assert get_int_mock.call_count == 1
+        assert get_int_mock.call_args.args[5] == MAX_BOX_COUNT_UI
 
 
 def test_manage_boxes_flow_add_requires_explicit_count():

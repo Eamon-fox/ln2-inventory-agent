@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 from app_gui.i18n import tr
+from app_gui.ui.limits import MAX_BOX_COUNT_UI
 
 _BOX_PRESETS = [
     ("9 x 9  (81)", 9, 9),
@@ -51,7 +52,7 @@ class NewDatasetDialog(QDialog):
         form.addRow(tr("main.cols"), self.cols_spin)
 
         self.box_count_spin = QSpinBox()
-        self.box_count_spin.setRange(1, 50)
+        self.box_count_spin.setRange(1, MAX_BOX_COUNT_UI)
         self.box_count_spin.setValue(5)
         form.addRow(tr("main.boxCount"), self.box_count_spin)
 

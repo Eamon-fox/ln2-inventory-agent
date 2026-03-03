@@ -14,6 +14,7 @@ from agent.llm_client import DEFAULT_PROVIDER, PROVIDER_DEFAULTS
 from app_gui.gui_config import DEFAULT_MAX_STEPS, save_gui_config
 from app_gui.i18n import t, tr
 from app_gui.system_notice import build_system_notice
+from app_gui.ui.limits import MAX_BOX_COUNT_UI
 from lib.inventory_paths import assert_allowed_inventory_yaml_path
 from lib.position_fmt import get_box_numbers
 from lib.yaml_ops import load_yaml
@@ -546,7 +547,7 @@ class ManageBoxesFlow:
                 tr("main.boxAddCountPrompt"),
                 1,
                 1,
-                20,
+                MAX_BOX_COUNT_UI,
                 1,
             )
             if not ok:
