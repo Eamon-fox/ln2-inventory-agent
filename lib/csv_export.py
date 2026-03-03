@@ -40,8 +40,8 @@ def build_export_columns(meta=None, *, split_location=False):
     """Build stable column order for inventory export and table views.
 
     Columns are dynamically generated from:
-    - Structural fields (id, location, frozen_at, thaw_events, cell_line)
-    - User-defined custom fields (from meta.custom_fields)
+    - Structural fields (id, location, frozen_at, thaw_events)
+    - Effective fields (cell_line, note, user-defined custom fields)
 
     Args:
         meta: Inventory metadata.
@@ -49,12 +49,13 @@ def build_export_columns(meta=None, *, split_location=False):
             columns (CSV-friendly). When False, emit merged ``location``.
     """
     if split_location:
-        structural_columns = ["id", "box", "position", "frozen_at", "cell_line", "note", "thaw_events"]
+        structural_columns = ["id", "box", "position", "frozen_at"]
     else:
-        structural_columns = ["id", "location", "frozen_at", "cell_line", "note", "thaw_events"]
+        structural_columns = ["id", "location", "frozen_at"]
 
     columns = list(structural_columns)
 
+    # Add all effective fields (cell_line, note, custom fields) in order
     for field_def in get_effective_fields(meta or {}):
         key = str(field_def.get("key") or "").strip()
         if not key:
@@ -63,6 +64,7 @@ def build_export_columns(meta=None, *, split_location=False):
             continue
         columns.append(key)
 
+    columns.append("thaw_events")
     return columns
 
 
@@ -93,7 +95,7 @@ def _row_value(record, column, *, split_location=False):
             else:
                 parts.append(f"{date} {action}")
         return "; ".join(parts) if parts else ""
-    value = record.get("cell_line") if column == "cell_line" else record.get(column)
+    value = record.get(column)
     if value is None:
         return ""
     # Serialize complex types (list, dict) to JSON for display

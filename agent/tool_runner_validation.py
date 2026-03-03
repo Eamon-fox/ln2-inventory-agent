@@ -60,34 +60,28 @@ def _custom_field_value_schema(field_type):
 
 def _dynamic_fields_schema(meta, *, include_frozen_at):
     from lib.custom_fields import (
-        get_cell_line_options,
         get_effective_fields,
         get_required_field_keys,
-        is_cell_line_required,
     )
 
     field_properties = {}
     if include_frozen_at:
         field_properties["frozen_at"] = {"type": "string", "description": "Date in YYYY-MM-DD format."}
 
-    cell_line_schema = {"type": "string"}
-    cell_line_options = [str(option).strip() for option in get_cell_line_options(meta) if str(option).strip()]
-    if cell_line_options:
-        cell_line_schema["enum"] = cell_line_options
-    field_properties["cell_line"] = cell_line_schema
-    field_properties["note"] = {"type": "string"}
-
+    # Build schemas for all effective fields (cell_line, note, custom fields)
     for field in get_effective_fields(meta):
         if not isinstance(field, dict):
             continue
         key = str(field.get("key") or "").strip()
         if not key:
             continue
-        field_properties[key] = _custom_field_value_schema(field.get("type"))
+        schema = _custom_field_value_schema(field.get("type"))
+        options = field.get("options")
+        if isinstance(options, list) and options:
+            schema["enum"] = [str(o).strip() for o in options if str(o).strip()]
+        field_properties[key] = schema
 
     required_for_add = set(get_required_field_keys(meta))
-    if is_cell_line_required(meta):
-        required_for_add.add("cell_line")
 
     return field_properties, sorted(required_for_add)
 

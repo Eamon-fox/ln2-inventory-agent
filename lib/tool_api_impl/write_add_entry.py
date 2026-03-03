@@ -3,10 +3,8 @@
 from copy import deepcopy
 
 from ..custom_fields import (
-    get_cell_line_options,
     get_effective_fields,
     get_required_field_keys,
-    is_cell_line_required,
 )
 from ..migrate_cell_line_policy import normalize_cell_line_policy_data
 from ..operations import check_position_conflicts, get_next_id
@@ -17,18 +15,14 @@ from .audit_details import add_entry_details, failure_details
 from .write_common import api
 
 
-_ADD_STRUCTURAL_FIELDS = {"cell_line", "note"}
-
-
 def _get_addable_field_keys(meta):
-    """Return (allowed_keys, user_field_keys) for add_entry fields payload."""
-    user_field_keys = {
+    """Return (allowed_keys, effective_field_keys) for add_entry fields payload."""
+    effective_field_keys = {
         str(field.get("key"))
         for field in get_effective_fields(meta)
         if isinstance(field, dict) and field.get("key")
     }
-    allowed_keys = set(_ADD_STRUCTURAL_FIELDS) | user_field_keys
-    return allowed_keys, user_field_keys
+    return effective_field_keys, effective_field_keys
 
 
 def _validate_add_entry_request_data(
@@ -122,7 +116,7 @@ def _validate_add_entry_request_data(
         )
 
     meta = data.get("meta", {})
-    allowed_field_keys, user_field_keys = _get_addable_field_keys(meta)
+    allowed_field_keys, effective_field_keys = _get_addable_field_keys(meta)
     bad_keys = sorted(set(fields.keys()) - allowed_field_keys)
     if bad_keys:
         return None, api._failure_result(
@@ -138,12 +132,9 @@ def _validate_add_entry_request_data(
             details=failure_details(op="add_entry", forbidden=bad_keys, allowed=sorted(allowed_field_keys)),
         )
 
+    # Check required fields (including option-bearing ones like cell_line)
     required_keys = get_required_field_keys(meta)
-    missing = [k for k in sorted(required_keys) if not fields.get(k)]
-
-    cell_line_text = str(fields.get("cell_line") or "").strip()
-    if is_cell_line_required(meta) and not cell_line_text:
-        missing.append("cell_line")
+    missing = [k for k in sorted(required_keys) if not str(fields.get(k) or "").strip()]
 
     if missing:
         return None, api._failure_result(
@@ -159,41 +150,36 @@ def _validate_add_entry_request_data(
             details=failure_details(op="add_entry", missing=missing),
         )
 
-    if cell_line_text:
-        cell_line_options = get_cell_line_options(meta)
-        if not cell_line_options:
+    # Validate option-bearing fields
+    effective = get_effective_fields(meta)
+    for field_def in effective:
+        fkey = field_def["key"]
+        foptions = field_def.get("options")
+        if not foptions:
+            continue
+        field_val = str(fields.get(fkey) or "").strip()
+        if not field_val:
+            continue
+        if field_val not in foptions:
             return None, api._failure_result(
                 yaml_path=yaml_path,
                 action=action,
                 source=source,
                 tool_name=tool_name,
-                error_code="invalid_cell_line_options",
-                message="cell_line requires predefined options, but meta.cell_line_options is empty",
+                error_code="invalid_field_options",
+                message=f"'{fkey}' must come from predefined options",
                 actor_context=actor_context,
                 tool_input=tool_input,
                 before_data=data,
+                details={"field": fkey, "value": field_val, "options": foptions},
             )
-        if cell_line_text not in cell_line_options:
-            return None, api._failure_result(
-                yaml_path=yaml_path,
-                action=action,
-                source=source,
-                tool_name=tool_name,
-                error_code="invalid_cell_line",
-                message="cell_line must come from predefined options",
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=data,
-                details=failure_details(op="add_entry", cell_line=cell_line_text, options=cell_line_options),
-            )
-
-        fields["cell_line"] = cell_line_text
+        fields[fkey] = field_val
 
     return {
         "positions": normalized_positions,
         "records": records,
         "fields": fields,
-        "user_field_keys": user_field_keys,
+        "user_field_keys": effective_field_keys,
     }, None
 
 
@@ -203,26 +189,21 @@ def _build_add_entry_records(records, *, box, positions, frozen_at, fields, user
     next_id = get_next_id(records)
     new_records = []
     created = []
-    cell_line = fields.pop("cell_line", None)
-    raw_note = fields.pop("note", None)
-    note_value = None
-    if raw_note is not None:
-        note_text = str(raw_note).strip()
-        note_value = note_text or None
 
     for offset, pos in enumerate(list(positions)):
         tube_id = next_id + offset
         rec = {
             "id": tube_id,
-            "cell_line": cell_line or "",
-            "note": note_value,
             "box": box,
             "position": int(pos),
             "frozen_at": frozen_at,
         }
-        for key, value in fields.items():
-            if key in user_field_keys:
-                rec[key] = value
+        # Write all effective fields (cell_line, note, custom fields) uniformly
+        for key in user_field_keys:
+            value = fields.get(key)
+            if isinstance(value, str):
+                value = value.strip() or None
+            rec[key] = value if value is not None else ""
         new_records.append(rec)
         created.append({"id": tube_id, "box": box, "position": int(pos)})
 
@@ -232,8 +213,7 @@ def _build_add_entry_records(records, *, box, positions, frozen_at, fields, user
         "box": box,
         "positions": list(int(p) for p in positions),
         "frozen_at": frozen_at,
-        "note": note_value,
-        "fields": fields,
+        "fields": dict(fields),
         "created": created,
     }
 

@@ -14,10 +14,12 @@ STRUCTURAL_FIELD_KEYS = frozenset(
         "position",
         "frozen_at",
         "thaw_events",
-        "cell_line",
-        "note",
     }
 )
+
+# Fields that are auto-injected as default custom fields when not explicitly
+# declared.  Kept here so _allowed_record_field_keys can include them.
+_DEFAULT_FIELD_KEYS = frozenset({"cell_line", "note"})
 
 _VALID_CUSTOM_TYPES = frozenset({"str", "int", "float", "date"})
 _BOX_TAG_MAX_LENGTH = 80
@@ -361,13 +363,15 @@ def validate_custom_fields_contract(meta: Dict[str, Any]) -> Tuple[List[str], Li
             continue
 
         seen.add(key)
-        normalized.append(
-            {
-                "key": key,
-                "required": bool(item.get("required")),
-                "type": field_type,
-            }
-        )
+        entry = {
+            "key": key,
+            "required": bool(item.get("required")),
+            "type": field_type,
+        }
+        raw_options = item.get("options")
+        if isinstance(raw_options, list):
+            entry["options"] = [str(o) for o in raw_options if o]
+        normalized.append(entry)
 
     return errors, normalized
 
@@ -382,7 +386,7 @@ def _required_custom_fields(normalized_custom_fields: List[Dict[str, Any]]) -> L
 
 
 def _allowed_record_field_keys(normalized_custom_fields: List[Dict[str, Any]]) -> set:
-    allowed = set(STRUCTURAL_FIELD_KEYS)
+    allowed = set(STRUCTURAL_FIELD_KEYS) | _DEFAULT_FIELD_KEYS
     for item in normalized_custom_fields:
         key = str((item or {}).get("key") or "").strip()
         if key:
@@ -432,8 +436,13 @@ def _check_undeclared_record_fields(
 
 def _selector_key_candidates(normalized_custom_fields: List[Dict[str, Any]]) -> List[str]:
     """Return allowed selector keys for meta.display_key/meta.color_key."""
-    ordered = ["cell_line"]
-    seen = {"cell_line"}
+    ordered = []
+    seen: set = set()
+    # Auto-injected default fields first (cell_line always valid as selector)
+    for dk in sorted(_DEFAULT_FIELD_KEYS):
+        if dk not in seen:
+            seen.add(dk)
+            ordered.append(dk)
     for item in normalized_custom_fields:
         key = str((item or {}).get("key") or "").strip()
         if not key or key in seen:
@@ -527,6 +536,7 @@ def _validate_record(
     layout: Dict[str, Any],
     meta: Dict[str, Any],
     required_custom_field_keys: List[str],
+    normalized_custom_fields: List[Dict[str, Any]] | None = None,
 ) -> Tuple[List[str], List[str]]:
     errors = []
     warnings = []
@@ -624,31 +634,53 @@ def _validate_record(
                         )
                     seen_ev_pos.add(ev_pos)
 
-    cell_line_options = _cell_line_options(meta)
-    cell_line_required = _is_cell_line_required(meta)
-    has_cell_line_key = "cell_line" in rec
-    if not has_cell_line_key:
-        warnings.append(f"{rec_id}: missing 'cell_line' (legacy-compatible warning)")
-    else:
-        raw_cell_line = rec.get("cell_line")
-        if raw_cell_line is None:
-            cell_line = ""
-        elif isinstance(raw_cell_line, str):
-            cell_line = raw_cell_line.strip()
-        else:
-            cell_line = str(raw_cell_line).strip()
-            warnings.append(f"{rec_id}: 'cell_line' is not a string (legacy-compatible warning)")
+    # Relaxed validation for all option-bearing fields.
+    # Build the list: explicit custom fields with options + legacy cell_line
+    option_fields: List[Dict[str, Any]] = []
+    cf_keys_with_options: set = set()
+    for cf in (normalized_custom_fields or []):
+        cf_opts = cf.get("options")
+        if cf_opts:
+            option_fields.append(cf)
+            cf_keys_with_options.add(cf["key"])
 
-        if cell_line_required and not cell_line:
+    # If cell_line is not in custom_fields, use legacy meta keys
+    if "cell_line" not in cf_keys_with_options:
+        option_fields.append({
+            "key": "cell_line",
+            "options": _cell_line_options(meta),
+            "required": _is_cell_line_required(meta),
+        })
+
+    for field_def in option_fields:
+        fkey = field_def["key"]
+        foptions = field_def.get("options") or []
+        frequired = field_def.get("required", False)
+
+        has_key = fkey in rec
+        if not has_key:
+            warnings.append(f"{rec_id}: missing '{fkey}' (legacy-compatible warning)")
+            continue
+
+        raw_val = rec.get(fkey)
+        if raw_val is None:
+            val = ""
+        elif isinstance(raw_val, str):
+            val = raw_val.strip()
+        else:
+            val = str(raw_val).strip()
+            warnings.append(f"{rec_id}: '{fkey}' is not a string (legacy-compatible warning)")
+
+        if frequired and not val:
             warnings.append(
-                f"{rec_id}: 'cell_line' is empty while required=true (legacy-compatible warning)"
+                f"{rec_id}: '{fkey}' is empty while required=true (legacy-compatible warning)"
             )
-        elif cell_line and cell_line_options and cell_line not in cell_line_options:
-            opts_str = ", ".join(cell_line_options[:5])
-            if len(cell_line_options) > 5:
-                opts_str += f" ... total {len(cell_line_options)}"
+        elif val and foptions and val not in foptions:
+            opts_str = ", ".join(foptions[:5])
+            if len(foptions) > 5:
+                opts_str += f" ... total {len(foptions)}"
             warnings.append(
-                f"{rec_id}: 'cell_line' not in configured options ({opts_str}) "
+                f"{rec_id}: '{fkey}' not in configured options ({opts_str}) "
                 "(legacy-compatible warning)"
             )
 
@@ -730,6 +762,7 @@ def validate_inventory_document(data: Any) -> Tuple[List[str], List[str]]:
             layout=layout,
             meta=meta,
             required_custom_field_keys=required_custom_fields,
+            normalized_custom_fields=normalized_custom_fields,
         )
         errors.extend(rec_errors)
         warnings.extend(rec_warnings)

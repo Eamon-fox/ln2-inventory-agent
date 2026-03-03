@@ -2,18 +2,18 @@
 
 from copy import deepcopy
 
-from ..custom_fields import get_cell_line_options, get_effective_fields, is_cell_line_required
+from ..custom_fields import get_effective_fields
 from ..migrate_cell_line_policy import normalize_cell_line_policy_data
 from ..operations import find_record_by_id
 from ..yaml_ops import load_yaml, write_yaml
 from .audit_details import _extract_custom_fields, edit_entry_details, failure_details
 from .write_common import api
 
-_EDITABLE_FIELDS = {"frozen_at", "cell_line", "note"}
+_EDITABLE_FIELDS = {"frozen_at"}
 
 
 def _get_editable_fields(yaml_path):
-    """Return editable field set: frozen_at + cell_line + note + user fields from meta."""
+    """Return editable field set: frozen_at + all effective fields from meta."""
     try:
         data = load_yaml(yaml_path)
         meta = data.get("meta", {})
@@ -107,52 +107,51 @@ def tool_edit_entry(
 
     meta = data.get("meta", {})
     normalized_fields = dict(fields)
-    if "cell_line" in normalized_fields:
-        raw_cell_line = normalized_fields.get("cell_line")
-        cell_line_text = str(raw_cell_line or "").strip()
 
-        if is_cell_line_required(meta) and not cell_line_text:
+    # Validate all option-bearing fields generically
+    effective = get_effective_fields(meta)
+    for field_def in effective:
+        fkey = field_def["key"]
+        if fkey not in normalized_fields:
+            continue
+        foptions = field_def.get("options")
+        frequired = field_def.get("required", False)
+        raw_val = normalized_fields.get(fkey)
+        field_text = str(raw_val or "").strip()
+
+        if frequired and not field_text:
             return api._failure_result(
                 yaml_path=yaml_path,
                 action=action,
                 source=source,
                 tool_name=tool_name,
-                error_code="invalid_cell_line",
-                message="cell_line is required and cannot be empty",
+                error_code="invalid_field_options",
+                message=f"'{fkey}' is required and cannot be empty",
                 actor_context=actor_context,
                 tool_input=tool_input,
                 before_data=data,
             )
 
-        if cell_line_text:
-            cell_line_options = get_cell_line_options(meta)
-            if not cell_line_options:
-                return api._failure_result(
-                    yaml_path=yaml_path,
-                    action=action,
-                    source=source,
-                    tool_name=tool_name,
-                    error_code="invalid_cell_line_options",
-                    message="cell_line requires predefined options, but meta.cell_line_options is empty",
-                    actor_context=actor_context,
-                    tool_input=tool_input,
-                    before_data=data,
-                )
-            if cell_line_text not in cell_line_options:
-                return api._failure_result(
-                    yaml_path=yaml_path,
-                    action=action,
-                    source=source,
-                    tool_name=tool_name,
-                    error_code="invalid_cell_line",
-                    message="cell_line must come from predefined options",
-                    actor_context=actor_context,
-                    tool_input=tool_input,
-                    before_data=data,
-                    details=failure_details(op="edit_entry", cell_line=cell_line_text, options=cell_line_options),
-                )
+        if field_text and foptions and field_text not in foptions:
+            return api._failure_result(
+                yaml_path=yaml_path,
+                action=action,
+                source=source,
+                tool_name=tool_name,
+                error_code="invalid_field_options",
+                message=f"'{fkey}' must come from predefined options",
+                actor_context=actor_context,
+                tool_input=tool_input,
+                before_data=data,
+                details={"field": fkey, "value": field_text, "options": foptions},
+            )
 
-        normalized_fields["cell_line"] = cell_line_text
+        # Only coerce to string for option-bearing or text fields;
+        # preserve original type for others (int, float, etc.)
+        if foptions or field_def.get("type") in (None, "str"):
+            normalized_fields[fkey] = field_text
+        else:
+            normalized_fields[fkey] = raw_val
 
     _idx, record = find_record_by_id(data.get("inventory", []), record_id)
     if record is None:

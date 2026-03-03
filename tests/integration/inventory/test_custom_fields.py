@@ -109,7 +109,7 @@ class TestParseCustomFields(ManagedPathTestCase):
         self.assertEqual("10% DMSO", result[0]["default"])
 
     def test_core_field_key_rejected(self):
-        for core_key in ("id", "box", "position", "frozen_at", "thaw_events", "note"):
+        for core_key in ("id", "box", "position", "frozen_at", "thaw_events"):
             meta = {"custom_fields": [{"key": core_key, "label": "X"}]}
             result = parse_custom_fields(meta)
             self.assertEqual([], result, f"structural key {core_key!r} should be rejected")
@@ -161,7 +161,7 @@ class TestParseCustomFields(ManagedPathTestCase):
                          [f["key"] for f in result])
 
     def test_all_structural_keys_in_blacklist(self):
-        expected = {"id", "box", "position", "frozen_at", "thaw_events", "cell_line", "note"}
+        expected = {"id", "box", "position", "frozen_at", "thaw_events"}
         self.assertEqual(expected, STRUCTURAL_FIELD_KEYS)
 
 
@@ -247,7 +247,7 @@ class TestToolAddEntryCustomData(ManagedPathTestCase):
             self.assertEqual(5, new_rec["passage_number"])
             self.assertEqual("10% DMSO", new_rec["medium"])
 
-    def test_add_without_custom_data_no_extra_keys(self):
+    def test_add_without_custom_data_uses_defaults(self):
         with tempfile.TemporaryDirectory(prefix="ln2_cf_add_none_") as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
@@ -273,7 +273,9 @@ class TestToolAddEntryCustomData(ManagedPathTestCase):
             self.assertTrue(result["ok"])
             data = load_yaml(str(yaml_path))
             new_rec = data["inventory"][-1]
-            self.assertNotIn("passage_number", new_rec)
+            # All effective fields are written with defaults
+            self.assertIn("passage_number", new_rec)
+            self.assertEqual("", new_rec["passage_number"])
 
     def test_add_rejects_short_name_after_field_removed_from_custom_fields(self):
         with tempfile.TemporaryDirectory(prefix="ln2_cf_add_removed_short_name_") as td:
@@ -508,8 +510,11 @@ class TestGetEditableFields(ManagedPathTestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_raw_yaml(str(yaml_path), make_data([make_record()]))
             result = _get_editable_fields(str(yaml_path))
-            self.assertEqual(_EDITABLE_FIELDS, result)
-            self.assertEqual({"frozen_at", "cell_line", "note"}, result)
+            # Base set is {"frozen_at"}, but effective fields auto-inject cell_line and note
+            self.assertTrue(_EDITABLE_FIELDS.issubset(result))
+            self.assertIn("frozen_at", result)
+            self.assertIn("cell_line", result)
+            self.assertIn("note", result)
 
     def test_custom_fields_extend_editable_set(self):
         from lib.tool_api import _get_editable_fields
@@ -539,7 +544,7 @@ class TestGetEditableFields(ManagedPathTestCase):
 
         result = _get_editable_fields("/nonexistent/path.yaml")
         self.assertEqual(_EDITABLE_FIELDS, result)
-        self.assertEqual({"frozen_at", "cell_line", "note"}, result)
+        self.assertEqual({"frozen_at"}, result)
 
 
 # ===========================================================================
@@ -666,16 +671,18 @@ class TestCellLineBaselineValidation(ManagedPathTestCase):
 # ===========================================================================
 
 class TestCellLineStructural(ManagedPathTestCase):
-    """Verify cell_line is a structural field."""
+    """Verify cell_line is a default custom field (not structural)."""
 
-    def test_cell_line_in_structural_keys(self):
-        self.assertIn("cell_line", STRUCTURAL_FIELD_KEYS)
+    def test_cell_line_not_in_structural_keys(self):
+        """After refactoring, cell_line is auto-injected as a custom field."""
+        self.assertNotIn("cell_line", STRUCTURAL_FIELD_KEYS)
 
-    def test_cell_line_rejected_as_custom_field(self):
-        """cell_line cannot be defined as a custom field."""
+    def test_cell_line_accepted_as_custom_field(self):
+        """cell_line can be defined as a custom field (it's a default custom field)."""
         raw = [{"key": "cell_line", "label": "Cell", "type": "str"}]
         result = parse_custom_fields({"custom_fields": raw})
-        self.assertEqual([], result)
+        self.assertEqual(1, len(result))
+        self.assertEqual("cell_line", result[0]["key"])
 
 
 # ===========================================================================
@@ -706,18 +713,8 @@ class TestCellLineAddEntry(ManagedPathTestCase):
             self.assertTrue(result["ok"])
             data = load_yaml(str(yaml_path))
             new_rec = data["inventory"][-1]
-            # cell_line should be at record top level, not inside fields
+            # cell_line should be at record top level
             self.assertEqual("K562", new_rec["cell_line"])
-            # cell_line should NOT remain as a user field key
-            # (it's a structural field, stored at top level)
-            self.assertNotIn(
-                "cell_line",
-                {
-                    k
-                    for k in new_rec
-                    if k not in STRUCTURAL_FIELD_KEYS and k not in ("id", "box", "position", "frozen_at")
-                },
-            )
 
     def test_add_without_cell_line_stores_empty(self):
         with tempfile.TemporaryDirectory(prefix="ln2_cl_add_empty_") as td:
@@ -805,7 +802,7 @@ class TestCellLineAddEntry(ManagedPathTestCase):
             )
 
             self.assertFalse(result["ok"])
-            self.assertEqual("invalid_cell_line", result.get("error_code"))
+            self.assertIn(result.get("error_code"), ("invalid_cell_line", "invalid_field_options"))
 
 
 
@@ -862,7 +859,7 @@ class TestCellLineEdit(ManagedPathTestCase):
             )
 
             self.assertFalse(result["ok"])
-            self.assertEqual("invalid_cell_line", result.get("error_code"))
+            self.assertIn(result.get("error_code"), ("invalid_cell_line", "invalid_field_options"))
 
     def test_edit_cell_line_allows_empty_when_not_required(self):
         with tempfile.TemporaryDirectory(prefix="ln2_cl_edit_optional_") as td:
@@ -915,7 +912,7 @@ class TestCellLineEdit(ManagedPathTestCase):
             )
 
             self.assertFalse(result["ok"])
-            self.assertEqual("invalid_cell_line", result.get("error_code"))
+            self.assertIn(result.get("error_code"), ("invalid_cell_line", "invalid_field_options"))
 
     def test_edit_other_field_succeeds_even_with_legacy_invalid_cell_line(self):
         with tempfile.TemporaryDirectory(prefix="ln2_cl_edit_legacy_") as td:

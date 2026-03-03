@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from functools import cmp_to_key
 
 from ..csv_export import export_inventory_to_csv
+from ..custom_fields import get_color_key
 from ..position_fmt import (
     display_to_box,
     get_box_numbers,
@@ -1015,9 +1016,10 @@ def tool_generate_stats(
         box_empty = per_box_slots - box_occupied
         box_rate = (box_occupied / per_box_slots * 100) if per_box_slots > 0 else 0
 
-        cell_lines = defaultdict(int)
+        color_key = get_color_key((data or {}).get("meta"))
+        value_counts = defaultdict(int)
         for rec in box_records:
-            cell_lines[rec.get("cell_line", "Unknown")] += 1
+            value_counts[rec.get(color_key, "Unknown")] += 1
 
         stats_result = {
             "data": {"meta": (data or {}).get("meta", {})},
@@ -1030,7 +1032,8 @@ def tool_generate_stats(
             "box_occupancy_rate": box_rate,
             "box_record_count": len(box_records),
             "box_records": box_records,
-            "cell_lines": dict(sorted(cell_lines.items(), key=lambda x: x[1], reverse=True)),
+            "cell_lines": dict(sorted(value_counts.items(), key=lambda x: x[1], reverse=True)),
+            "field_value_counts": {"key": color_key, "counts": dict(sorted(value_counts.items(), key=lambda x: x[1], reverse=True))},
             "record_count": len(box_records),
             "include_inactive": include_inactive_flag,
             "full_records_for_gui": full_records_for_gui_flag,
@@ -1062,9 +1065,11 @@ def tool_generate_stats(
             "rate": rate,
         }
 
-    cell_lines = defaultdict(int)
+    color_key = get_color_key((data or {}).get("meta"))
+    value_counts = defaultdict(int)
     for rec in records:
-        cell_lines[rec.get("cell_line", "Unknown")] += 1
+        value_counts[rec.get(color_key, "Unknown")] += 1
+    sorted_value_counts = dict(sorted(value_counts.items(), key=lambda x: x[1], reverse=True))
 
     # Flatten the stats structure for easier access, but keep nested structure for backward compatibility
     stats_nested = {
@@ -1075,7 +1080,7 @@ def tool_generate_stats(
             "occupancy_rate": overall_rate,
         },
         "boxes": box_stats,
-        "cell_lines": dict(sorted(cell_lines.items(), key=lambda x: x[1], reverse=True)),
+        "cell_lines": sorted_value_counts,
     }
 
     stats_result = {
@@ -1093,7 +1098,8 @@ def tool_generate_stats(
         "total_capacity": total_capacity,
         "occupancy_rate": overall_rate,
         "boxes": box_stats,
-        "cell_lines": dict(sorted(cell_lines.items(), key=lambda x: x[1], reverse=True)),
+        "cell_lines": sorted_value_counts,
+        "field_value_counts": {"key": color_key, "counts": sorted_value_counts},
         "record_count": len(records),
         "include_inactive": include_inactive_flag,
         "full_records_for_gui": full_records_for_gui_flag,

@@ -239,7 +239,7 @@ def validate_record(rec, idx=None, layout=None, meta=None):
     Returns:
         tuple[list[str], list[str]]: (errors, warnings)
     """
-    from .custom_fields import get_required_field_keys, get_cell_line_options, is_cell_line_required
+    from .custom_fields import get_effective_fields
 
     errors = []
     warnings = []
@@ -248,10 +248,18 @@ def validate_record(rec, idx=None, layout=None, meta=None):
     box_rule = _format_box_constraint(layout)
     pos_lo, pos_hi = get_position_range(layout) if layout else (POSITION_RANGE[0], POSITION_RANGE[1])
 
-    # Structural required fields + user-defined required fields
+    # Structural required fields
     structural_required = ["id", "box", "frozen_at"]
-    user_required = get_required_field_keys(meta)
-    required_fields = structural_required + sorted(user_required)
+
+    # Separate effective fields into option-bearing (relaxed) vs others (strict)
+    effective = get_effective_fields(meta) if isinstance(meta, dict) else []
+    option_field_keys = {f["key"] for f in effective if f.get("options")}
+    strict_required_keys = {
+        f["key"] for f in effective
+        if f.get("required") and not f.get("options")
+    }
+
+    required_fields = structural_required + sorted(strict_required_keys)
     for field in required_fields:
         if field not in rec or rec[field] is None:
             errors.append(f"{rec_id}: missing required field '{field}'")
@@ -266,40 +274,45 @@ def validate_record(rec, idx=None, layout=None, meta=None):
     elif not validate_box(box, layout):
         errors.append(f"{rec_id}: 'box' out of range ({box_rule})")
 
-    # Validate required user fields are non-empty strings
-    for field in sorted(user_required):
+    # Validate strict required user fields are non-empty strings
+    for field in sorted(strict_required_keys):
         value = rec.get(field)
         if isinstance(value, str) and not value.strip():
             errors.append(f"{rec_id}: '{field}' must be a non-empty string")
 
-    # Relaxed baseline validation for cell_line:
+    # Relaxed validation for all option-bearing fields:
     # - Do not block historical inventory due to non-option / empty values.
     # - Enforce strict options only during write tools (add/edit).
     if isinstance(meta, dict):
-        cell_line_options = get_cell_line_options(meta)
-        cell_line_required = is_cell_line_required(meta)
-        has_cell_line_key = "cell_line" in rec
+        for field_def in effective:
+            fkey = field_def["key"]
+            foptions = field_def.get("options")
+            if not foptions:
+                continue
+            frequired = field_def.get("required", False)
+            has_key = fkey in rec
 
-        if not has_cell_line_key:
-            warnings.append(f"{rec_id}: missing 'cell_line' (legacy-compatible warning)")
-        else:
-            raw_cell_line = rec.get("cell_line")
-            if raw_cell_line is None:
-                cell_line = ""
-            elif isinstance(raw_cell_line, str):
-                cell_line = raw_cell_line.strip()
+            if not has_key:
+                warnings.append(f"{rec_id}: missing '{fkey}' (legacy-compatible warning)")
+                continue
+
+            raw_val = rec.get(fkey)
+            if raw_val is None:
+                val = ""
+            elif isinstance(raw_val, str):
+                val = raw_val.strip()
             else:
-                cell_line = str(raw_cell_line).strip()
-                warnings.append(f"{rec_id}: 'cell_line' is not a string (legacy-compatible warning)")
+                val = str(raw_val).strip()
+                warnings.append(f"{rec_id}: '{fkey}' is not a string (legacy-compatible warning)")
 
-            if cell_line_required and not cell_line:
-                warnings.append(f"{rec_id}: 'cell_line' is empty while required=true (legacy-compatible warning)")
-            elif cell_line and cell_line_options and cell_line not in cell_line_options:
-                opts_str = ", ".join(cell_line_options[:5])
-                if len(cell_line_options) > 5:
-                    opts_str += f" ... total {len(cell_line_options)}"
+            if frequired and not val:
+                warnings.append(f"{rec_id}: '{fkey}' is empty while required=true (legacy-compatible warning)")
+            elif val and foptions and val not in foptions:
+                opts_str = ", ".join(foptions[:5])
+                if len(foptions) > 5:
+                    opts_str += f" ... total {len(foptions)}"
                 warnings.append(
-                    f"{rec_id}: 'cell_line' not in configured options ({opts_str}) "
+                    f"{rec_id}: '{fkey}' not in configured options ({opts_str}) "
                     "(legacy-compatible warning)"
                 )
 

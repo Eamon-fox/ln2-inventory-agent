@@ -77,8 +77,9 @@ class ImportAcceptanceTests(unittest.TestCase):
     def test_validate_candidate_yaml_rejects_structural_custom_field_key(self):
         with tempfile.TemporaryDirectory() as td:
             payload = _valid_payload()
+            # Use a truly structural key (e.g. "position") — note and cell_line are now valid custom fields
             payload["meta"]["custom_fields"] = [
-                {"key": "note", "label": "Note", "type": "str", "required": False}
+                {"key": "position", "label": "Position", "type": "int", "required": False}
             ]
             candidate = Path(td) / "bad_structural_custom_field.yaml"
             candidate.write_text(
@@ -90,7 +91,7 @@ class ImportAcceptanceTests(unittest.TestCase):
             self.assertEqual("validation_failed", result.get("error_code"))
             errors = (result.get("report") or {}).get("errors") or []
             self.assertTrue(
-                any("conflicts with structural field" in msg and "note" in msg for msg in errors),
+                any("conflicts with structural field" in msg and "position" in msg for msg in errors),
                 errors,
             )
 

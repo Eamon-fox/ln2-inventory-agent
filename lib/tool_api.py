@@ -330,7 +330,7 @@ def _tool_add_entry_impl(
     return _format_tool_response_positions(response, yaml_path=yaml_path)
 
 
-_EDITABLE_FIELDS = {"frozen_at", "cell_line", "note"}
+_EDITABLE_FIELDS = {"frozen_at"}
 
 
 def _get_editable_fields(yaml_path):
