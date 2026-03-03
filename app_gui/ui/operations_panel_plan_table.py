@@ -137,6 +137,7 @@ def _build_plan_changes(self, action_norm, item, payload, custom_fields):
 
     def _collect_sample_tokens(*sources):
         tokens = []
+        preferred_fallback_keys = ("short_name", "cell_line", "parent_cell_line")
         for source in sources:
             if not isinstance(source, dict):
                 continue
@@ -150,6 +151,14 @@ def _build_plan_changes(self, action_norm, item, payload, custom_fields):
                     tokens.append(text)
                 if len(tokens) >= 3:
                     break
+
+            for key in preferred_fallback_keys:
+                text = self._plan_value_text(source.get(key)).strip()
+                if text and text not in tokens:
+                    tokens.append(text)
+                if len(tokens) >= 3:
+                    break
+
             if len(tokens) >= 3:
                 break
         return tokens[:2]

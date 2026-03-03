@@ -153,6 +153,10 @@ class OperationsPanel(QWidget):
         self._current_layout = {}
 
         self.setup_ui()
+        # Initialize dynamic fields with a permissive startup profile so the
+        # add-form widgets are immediately available even before dataset meta
+        # is loaded from disk.
+        self.apply_meta_update({"custom_fields": [], "cell_line_required": False})
         self._apply_migration_mode_ui_state()
 
     @property
@@ -697,7 +701,6 @@ class OperationsPanel(QWidget):
                 combo.setCurrentIndex(target_index)
 
             combo.blockSignals(False)
-
             combo_line = combo.lineEdit()
             if combo_line is not None:
                 self._configure_choice_line_edit(
@@ -709,6 +712,10 @@ class OperationsPanel(QWidget):
                 )
 
         self._refresh_context_field_constraints()
+
+    # Backward-compatible helper kept for tests and legacy callsites.
+    def _refresh_cell_line_options(self, meta):
+        self._refresh_field_options(meta or {})
 
     @staticmethod
     def _build_choice_display_model(options, *, hint_lines=None, parent=None):

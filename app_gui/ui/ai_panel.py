@@ -418,6 +418,9 @@ class AIPanel(QWidget):
         timer = getattr(self, "_run_btn_attention_timer", None)
         if timer is not None:
             timer.stop()
+        clear_timer = getattr(self, "_run_btn_attention_clear_timer", None)
+        if clear_timer is not None:
+            clear_timer.stop()
         self._run_btn_attention_toggles_remaining = 0
         self._set_run_button_attention(False)
 
@@ -455,6 +458,15 @@ class AIPanel(QWidget):
             timer.timeout.connect(self._tick_run_button_attention)
             self._run_btn_attention_timer = timer
         timer.start(interval_ms)
+
+        # Failsafe: always clear attention state by the requested duration.
+        clear_timer = getattr(self, "_run_btn_attention_clear_timer", None)
+        if clear_timer is None:
+            clear_timer = QTimer(self)
+            clear_timer.setSingleShot(True)
+            clear_timer.timeout.connect(self._clear_run_button_attention)
+            self._run_btn_attention_clear_timer = clear_timer
+        clear_timer.start(max(interval_ms, int(duration_ms or 0)))
 
     def enter_migration_mode(self):
         if self._agent_mode == "migration":

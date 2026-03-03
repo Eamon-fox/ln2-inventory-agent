@@ -841,7 +841,11 @@ class SettingsDialog(QDialog):
         old_keys = {f["key"] for f in existing if isinstance(f, dict) and f.get("key")}
         # Keys that were renamed are not "deleted" - exclude them
         renamed_old_keys = set(renames.keys())
-        removed_keys = old_keys - new_keys - renamed_old_keys
+        # Ignore always-available legacy fields that are synthesized at runtime.
+        protected_keys = {"cell_line", "note"}
+        removed_keys = {
+            key for key in (old_keys - new_keys - renamed_old_keys) if key not in protected_keys
+        }
 
         if removed_keys and inventory:
             has_data = any(
