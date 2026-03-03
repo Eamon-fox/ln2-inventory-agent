@@ -784,6 +784,120 @@ class PrintPlanRegressionTests(_NoStagePreflightMixin, ManagedPathTestCase):
 
         open_url.assert_called_once()
 
+    def test_print_last_executed_uses_execution_snapshot_after_refresh(self):
+        bridge = _UndoBridge()
+        overview = SimpleNamespace(
+            overview_shape=(1, 5, [1]),
+            _current_meta={},
+            _current_layout={},
+            overview_pos_map={
+                (1, 5): {
+                    "id": 1,
+                    "box": 1,
+                    "position": 5,
+                    "cell_line": "K562",
+                    "short_name": "clone-A",
+                }
+            },
+        )
+        panel = OperationsPanel(
+            bridge=bridge,
+            yaml_path_getter=lambda: self.fake_yaml_path,
+            overview_panel=overview,
+        )
+        panel.update_records_cache(
+            {
+                1: {
+                    "id": 1,
+                    "box": 1,
+                    "position": 5,
+                    "cell_line": "K562",
+                    "short_name": "clone-A",
+                }
+            }
+        )
+        panel.add_plan_items([_make_takeout_item(record_id=1, position=5)])
+
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        self.assertIsInstance(panel._last_executed_print_snapshot, dict)
+        overview.overview_pos_map = {}
+        panel.update_records_cache({})
+
+        captured = {}
+
+        def _capture_html(html_text, suffix=".html", open_url_fn=None):
+            captured["html"] = str(html_text or "")
+            captured["suffix"] = suffix
+            captured["open_url_fn"] = open_url_fn
+            return "/tmp/fake_last_executed_snapshot.html"
+
+        with patch(
+            "app_gui.ui.operations_panel_actions.open_html_in_browser",
+            side_effect=_capture_html,
+        ):
+            panel.print_last_executed()
+
+        html = str(captured.get("html") or "")
+        self.assertIn("K562", html)
+
+    def test_print_last_executed_status_uses_executed_label(self):
+        bridge = _UndoBridge()
+        overview = SimpleNamespace(
+            overview_shape=(1, 5, [1]),
+            _current_meta={},
+            _current_layout={},
+            overview_pos_map={(1, 5): {"id": 1, "box": 1, "position": 5, "cell_line": "K562"}},
+        )
+        panel = OperationsPanel(
+            bridge=bridge,
+            yaml_path_getter=lambda: self.fake_yaml_path,
+            overview_panel=overview,
+        )
+
+        panel.add_plan_items([_make_takeout_item(record_id=1, position=5)])
+
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        captured = {}
+
+        def _capture_html(html_text, suffix=".html", open_url_fn=None):
+            captured["html"] = str(html_text or "")
+            captured["suffix"] = suffix
+            captured["open_url_fn"] = open_url_fn
+            return "/tmp/fake_last_executed_status.html"
+
+        with patch(
+            "app_gui.ui.operations_panel_actions.open_html_in_browser",
+            side_effect=_capture_html,
+        ):
+            panel.print_last_executed()
+
+        html = str(captured.get("html") or "")
+        executed_status = tr("operations.planStatusExecuted")
+        self.assertTrue(
+            (f">{executed_status}<" in html) or (">operations.planStatusExecuted<" in html)
+        )
+        self.assertNotIn(">operations.planStatusReady<", html)
+
+    def test_undo_clears_last_executed_print_snapshot(self):
+        bridge = _UndoBridge()
+        panel = self._new_panel(bridge)
+        panel.add_plan_items([_make_takeout_item(record_id=1, position=5)])
+
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        self.assertIsInstance(panel._last_executed_print_snapshot, dict)
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.on_undo_last()
+        self.assertIsNone(panel._last_executed_print_snapshot)
+
     def test_print_plan_does_not_fallback_to_last_executed(self):
         bridge = _UndoBridge()
         panel = self._new_panel(bridge)

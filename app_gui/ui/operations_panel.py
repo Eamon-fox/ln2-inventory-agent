@@ -144,6 +144,7 @@ class OperationsPanel(QWidget):
         self._default_date_anchor = QDate.currentDate()
         self._last_operation_backup = None
         self._last_executed_plan = []
+        self._last_executed_print_snapshot = None
         self._plan_preflight_report = None
         self._plan_validation_by_key = {}
         self._undo_timer = None
@@ -1190,6 +1191,8 @@ class OperationsPanel(QWidget):
     _print_items_with_grid = _ops_actions._print_items_with_grid
     _build_print_grid_state = _ops_actions._build_print_grid_state
     _build_print_table_rows = _ops_actions._build_print_table_rows
+    _build_last_executed_print_table_rows = _ops_actions._build_last_executed_print_table_rows
+    _capture_last_executed_print_snapshot = _ops_actions._capture_last_executed_print_snapshot
     _print_operation_sheet_with_grid = _ops_actions._print_operation_sheet_with_grid
     clear_plan = _ops_actions.clear_plan
     reset_for_dataset_switch = _ops_actions.reset_for_dataset_switch

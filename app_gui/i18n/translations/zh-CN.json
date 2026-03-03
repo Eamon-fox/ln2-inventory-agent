@@ -397,6 +397,7 @@
     "executePlanBlocked": "执行（{count} 条阻塞）",
     "planStatusBlocked": "已阻塞",
     "planStatusReady": "可执行",
+    "planStatusExecuted": "\u5df2\u6267\u884c",
     "planRollbackLatest": "最新",
     "planRollbackRestore": "恢复自 {backup}",
     "planRollbackYamlPath": "库存 YAML：{path}",

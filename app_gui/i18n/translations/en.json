@@ -398,6 +398,7 @@
     "executePlanBlocked": "Execute ({count} blocked)",
     "planStatusBlocked": "BLOCKED",
     "planStatusReady": "READY",
+    "planStatusExecuted": "EXECUTED",
     "planRollbackLatest": "Latest",
     "planRollbackRestore": "rollback restore from {backup}",
     "planRollbackYamlPath": "Inventory YAML: {path}",

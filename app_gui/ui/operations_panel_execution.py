@@ -97,6 +97,7 @@ def execute_plan(self):
         if execution_stats.get("rollback_ok"):
             executed_items = []
         self._last_executed_plan = list(executed_items)
+        self._last_executed_print_snapshot = self._capture_last_executed_print_snapshot(executed_items)
 
         if report.get("ok") and any(r[0] == "OK" for r in results):
             self.operation_completed.emit(True)

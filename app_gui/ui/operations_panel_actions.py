@@ -1,6 +1,7 @@
 """Action helpers for OperationsPanel print/export/undo flows."""
 
 import os
+from copy import deepcopy
 from datetime import date
 
 from PySide6.QtCore import QTimer
@@ -10,15 +11,18 @@ from app_gui.i18n import tr
 from app_gui.ui.utils import open_html_in_browser
 
 
-def _print_items_with_grid(self, items_to_print, *, empty_message, opened_message):
-    if not items_to_print:
+def _print_items_with_grid(self, items_to_print, *, empty_message, opened_message, grid_state=None, table_rows=None):
+    items = list(items_to_print or [])
+    if not items:
         self.status_message.emit(str(empty_message), 3000, "error")
         return
 
-    grid_state = self._build_print_grid_state(items_to_print)
-    table_rows = self._build_print_table_rows(items_to_print)
+    if grid_state is None:
+        grid_state = self._build_print_grid_state(items)
+    if table_rows is None:
+        table_rows = self._build_print_table_rows(items)
     self._print_operation_sheet_with_grid(
-        items_to_print,
+        items,
         grid_state,
         table_rows=table_rows,
         opened_message=str(opened_message),
@@ -36,11 +40,54 @@ def print_plan(self):
 
 def print_last_executed(self):
     """Print the last successfully applied execution result."""
+    snapshot = self._last_executed_print_snapshot if isinstance(self._last_executed_print_snapshot, dict) else {}
+    snapshot_items = snapshot.get("items")
+    use_snapshot = isinstance(snapshot_items, list) and bool(snapshot_items)
+    items_to_print = list(snapshot_items if use_snapshot else (self._last_executed_plan or []))
+
+    if not items_to_print:
+        self.status_message.emit(str(tr("operations.noLastExecutedToPrint")), 3000, "error")
+        return
+
+    grid_state = deepcopy(snapshot.get("grid_state")) if use_snapshot else None
+    table_rows = deepcopy(snapshot.get("table_rows")) if use_snapshot else None
+    if not isinstance(table_rows, list) or len(table_rows) != len(items_to_print):
+        table_rows = self._build_last_executed_print_table_rows(items_to_print)
+
     self._print_items_with_grid(
-        self._last_executed_plan,
+        items_to_print,
         empty_message=tr("operations.noLastExecutedToPrint"),
         opened_message=tr("operations.lastExecutedPrintOpened"),
+        grid_state=grid_state,
+        table_rows=table_rows,
     )
+
+
+def _build_last_executed_print_table_rows(self, items_to_print):
+    rows = self._build_print_table_rows(items_to_print)
+    executed_status = tr("operations.planStatusExecuted")
+    normalized_rows = []
+    for row in list(rows or []):
+        merged = dict(row) if isinstance(row, dict) else {}
+        merged["status"] = executed_status
+        merged["status_detail"] = ""
+        merged["status_blocked"] = False
+        normalized_rows.append(merged)
+    return normalized_rows
+
+
+def _capture_last_executed_print_snapshot(self, items_to_print):
+    items = list(items_to_print or [])
+    if not items:
+        return None
+
+    grid_state = self._build_print_grid_state(items)
+    table_rows = self._build_last_executed_print_table_rows(items)
+    return {
+        "items": deepcopy(items),
+        "grid_state": deepcopy(grid_state),
+        "table_rows": deepcopy(table_rows),
+    }
 
 
 def _build_print_grid_state(self, items_to_print):
@@ -247,6 +294,7 @@ def _disable_undo(self, *, clear_last_executed=False):
     self._last_operation_backup = None
     if clear_last_executed:
         self._last_executed_plan = []
+        self._last_executed_print_snapshot = None
     self._sync_result_actions()
 
 
