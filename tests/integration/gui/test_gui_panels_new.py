@@ -347,7 +347,7 @@ class PlanTableColumnsTests(unittest.TestCase):
         cell_text = panel.plan_table.item(0, changes_col).text()
 
         self.assertIn("K562", cell_text)
-        self.assertIn("clone-1", cell_text)
+        self.assertNotIn("clone-1", cell_text)
         self.assertNotIn("Box", cell_text)
         self.assertNotIn("2025-02-19", cell_text)
 
@@ -390,7 +390,7 @@ class PlanTableColumnsTests(unittest.TestCase):
         cell_text = panel.plan_table.item(0, changes_col).text()
 
         self.assertIn("A549", cell_text)
-        self.assertIn("batch-x", cell_text)
+        self.assertNotIn("batch-x", cell_text)
         self.assertNotIn("Box", cell_text)
 
 
