@@ -258,6 +258,68 @@ class AuditDialogTests(ManagedPathTestCase):
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", detail_html)
         self.assertNotIn("<script>alert(1)</script>", detail_html)
 
+    def test_schema_first_fields_are_visible_in_summary_and_detail(self):
+        add_summary = audit_dialog_module._summarize_details(
+            {
+                "op": "add_entry",
+                "box": 1,
+                "positions": [2],
+                "count": 1,
+                "fields": {
+                    "short_name": "clone-2",
+                    "plasmid_name": "pDemo",
+                },
+            },
+            field_order=["short_name", "plasmid_name"],
+        )
+        self.assertIn("short_name=clone-2", add_summary)
+        self.assertIn("plasmid_name=pDemo", add_summary)
+
+        dialog = self._new_dialog("D:/tmp/inventory.yaml")
+        dialog._audit_field_order = ["short_name", "plasmid_name", "plasmid_id"]
+        dialog._audit_events = [
+            {
+                "timestamp": "2026-02-20T09:00:00",
+                "action": "takeout",
+                "status": "success",
+                "details": {
+                    "op": "takeout",
+                    "date": "2026-02-20",
+                    "count": 1,
+                    "records": [
+                        {
+                            "record_id": 9,
+                            "box": 1,
+                            "position": 2,
+                            "fields": {
+                                "short_name": "clone-2",
+                                "plasmid_name": "pDemo",
+                                "plasmid_id": "PID-2",
+                            },
+                        }
+                    ],
+                },
+            }
+        ]
+        dialog._setup_table(
+            dialog.audit_table,
+            ["timestamp", "action", "status", "details"],
+            sortable=True,
+        )
+        dialog.audit_table.insertRow(0)
+        ts_item = QTableWidgetItem("2026-02-20T09:00:00")
+        ts_item.setData(Qt.UserRole, 0)
+        dialog.audit_table.setItem(0, 0, ts_item)
+        dialog.audit_table.setItem(0, 1, QTableWidgetItem("takeout"))
+        dialog.audit_table.setItem(0, 2, QTableWidgetItem("success"))
+        dialog.audit_table.setItem(0, 3, QTableWidgetItem(""))
+
+        dialog._on_audit_row_clicked(0, 0)
+        detail_html = dialog.event_detail.text()
+        self.assertIn("short_name", detail_html)
+        self.assertIn("plasmid_name", detail_html)
+        self.assertIn("plasmid_id", detail_html)
+
     def test_backup_path_rows_bold_with_subtle_bg_and_rollback_button_requires_backup_path(self):
         events = [
             {

@@ -114,6 +114,55 @@ class TestMigrateCellLinePolicy(ManagedPathTestCase):
             self.assertNotIn("cell_line_required", data["meta"])
             self.assertNotIn("cell_line", data["inventory"][0])
 
+    def test_migrate_aliases_parent_cell_line_and_reports_conflicts(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_migrate_alias_") as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            _seed_yaml(
+                yaml_path,
+                {
+                    "meta": {"box_layout": {"rows": 9, "cols": 9}},
+                    "inventory": [
+                        {
+                            "id": 1,
+                            "parent_cell_line": "K562",
+                            "box": 1,
+                            "position": 1,
+                            "frozen_at": "2026-02-10",
+                        },
+                        {
+                            "id": 2,
+                            "parent_cell_line": "NCCIT",
+                            "cell_line": "HeLa",
+                            "box": 1,
+                            "position": 2,
+                            "frozen_at": "2026-02-10",
+                        },
+                    ],
+                },
+            )
+
+            result = migrate_cell_line_policy(
+                yaml_path=str(yaml_path),
+                dry_run=False,
+                auto_backup=False,
+                audit_source="tests",
+            )
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["changed"])
+
+            summary = result.get("summary") or {}
+            self.assertEqual(2, summary.get("alias_records_changed"))
+            self.assertEqual([1, 2], summary.get("alias_changed_record_ids"))
+            self.assertEqual(1, summary.get("alias_conflict_count"))
+            self.assertTrue(summary.get("alias_changes"))
+
+            data = load_yaml(str(yaml_path))
+            by_id = {int(rec["id"]): rec for rec in data["inventory"]}
+            self.assertEqual("K562", by_id[1]["cell_line"])
+            self.assertEqual("HeLa", by_id[2]["cell_line"])
+            self.assertNotIn("parent_cell_line", by_id[1])
+            self.assertNotIn("parent_cell_line", by_id[2])
+
 
 if __name__ == "__main__":
     unittest.main()
