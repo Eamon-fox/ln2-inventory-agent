@@ -1,4 +1,4 @@
-"""Custom fields dialog extracted from main window module."""
+﻿"""Custom fields dialog extracted from main window module."""
 
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -18,17 +18,19 @@ from PySide6.QtWidgets import (
 )
 
 from app_gui.i18n import t, tr
+
 _FIELD_TYPES = ["str", "int", "float", "date"]
+_SYSTEM_NOTE_KEY = "note"
+_OPTIONS_EMPTY_TEXT = "..."
 
 
 def _merge_legacy_cell_line_into_fields(custom_fields, cell_line_options, cell_line_required):
-    """Ensure cell_line and note appear in the fields list (legacy compat)."""
+    """Build effective fields using custom definitions + optional legacy policy."""
     from lib.custom_fields import get_effective_fields
 
-    # Build a pseudo-meta to drive get_effective_fields
     meta = {"custom_fields": list(custom_fields or [])}
-    if cell_line_options:
-        meta["cell_line_options"] = list(cell_line_options)
+    if cell_line_options is not None:
+        meta["cell_line_options"] = list(cell_line_options or [])
     if cell_line_required is not None:
         meta["cell_line_required"] = bool(cell_line_required)
     return get_effective_fields(meta)
@@ -44,7 +46,7 @@ class CustomFieldsDialog(QDialog):
         display_key=None,
         color_key=None,
         cell_line_options=None,
-        cell_line_required=True,
+        cell_line_required=None,
     ):
         super().__init__(parent)
         self.setWindowTitle(tr("main.customFieldsTitle"))
@@ -58,7 +60,6 @@ class CustomFieldsDialog(QDialog):
         desc.setProperty("role", "dialogHint")
         root.addWidget(desc)
 
-        # Scrollable area for everything
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
@@ -69,19 +70,21 @@ class CustomFieldsDialog(QDialog):
         scroll.setWidget(scroll_content)
         root.addWidget(scroll, 1)
 
-        # Unified fields area (structural + custom)
         fields_group = QGroupBox(tr("main.cfFields"))
         fields_layout = QVBoxLayout(fields_group)
         fields_layout.setContentsMargins(8, 4, 8, 4)
         fields_layout.setSpacing(6)
 
-        # Column header
         header = QWidget()
         header_l = QHBoxLayout(header)
         header_l.setContentsMargins(0, 0, 0, 0)
         header_l.setSpacing(4)
-        for text, width in [(tr("main.cfKey"), 140), (tr("main.cfLabel"), 120),
-                            (tr("main.cfType"), 70), (tr("main.cfDefault"), 100)]:
+        for text, width in [
+            (tr("main.cfKey"), 140),
+            (tr("main.cfLabel"), 120),
+            (tr("main.cfType"), 70),
+            (tr("main.cfDefault"), 100),
+        ]:
             lbl = QLabel(text)
             lbl.setFixedWidth(width)
             lbl.setProperty("role", "cfHeaderLabel")
@@ -94,32 +97,48 @@ class CustomFieldsDialog(QDialog):
         header_l.addWidget(action_lbl)
         fields_layout.addWidget(header)
 
-        # Only truly structural fields shown as read-only
-        _STRUCTURAL_DISPLAY = [
+        structural_display = [
             ("id", "ID", "int", True),
             ("box", "Box", "int", True),
             ("position", "Position", "int", True),
             ("frozen_at", "Frozen At", "date", True),
             ("thaw_events", "Takeout Events", "str", True),
         ]
-        for s_key, s_label, s_type, s_required in _STRUCTURAL_DISPLAY:
+        for s_key, s_label, s_type, s_required in structural_display:
             row_w = QWidget()
             row_l = QHBoxLayout(row_w)
             row_l.setContentsMargins(0, 0, 0, 0)
             row_l.setSpacing(4)
-            k_edit = QLineEdit(s_key); k_edit.setFixedWidth(140); k_edit.setReadOnly(True); k_edit.setEnabled(False)
+            k_edit = QLineEdit(s_key)
+            k_edit.setFixedWidth(140)
+            k_edit.setReadOnly(True)
+            k_edit.setEnabled(False)
             row_l.addWidget(k_edit)
-            l_edit = QLineEdit(s_label); l_edit.setFixedWidth(120); l_edit.setReadOnly(True); l_edit.setEnabled(False)
+
+            l_edit = QLineEdit(s_label)
+            l_edit.setFixedWidth(120)
+            l_edit.setReadOnly(True)
+            l_edit.setEnabled(False)
             row_l.addWidget(l_edit)
-            t_combo = QComboBox(); t_combo.addItem(s_type); t_combo.setFixedWidth(70); t_combo.setEnabled(False)
+
+            t_combo = QComboBox()
+            t_combo.addItem(s_type)
+            t_combo.setFixedWidth(70)
+            t_combo.setEnabled(False)
             row_l.addWidget(t_combo)
-            d_edit = QLineEdit(); d_edit.setFixedWidth(100); d_edit.setEnabled(False)
+
+            d_edit = QLineEdit()
+            d_edit.setFixedWidth(100)
+            d_edit.setEnabled(False)
             row_l.addWidget(d_edit)
+
             r_cb = QCheckBox(tr("main.cfRequired"))
             r_cb.setChecked(bool(s_required))
             r_cb.setEnabled(False)
             row_l.addWidget(r_cb)
-            spacer = QWidget(); spacer.setFixedWidth(100)
+
+            spacer = QWidget()
+            spacer.setFixedWidth(100)
             row_l.addWidget(spacer)
             fields_layout.addWidget(row_w)
 
@@ -130,31 +149,30 @@ class CustomFieldsDialog(QDialog):
 
         self._field_rows = []
 
-        # Merge legacy cell_line_options into effective fields
         effective = _merge_legacy_cell_line_into_fields(
-            custom_fields, cell_line_options, cell_line_required,
+            custom_fields,
+            cell_line_options,
+            cell_line_required,
         )
-        for f in effective:
-            k = f.get("key", "")
+        for field in effective:
+            key = field.get("key", "")
             self._add_row(
-                k,
-                f.get("label", ""),
-                f.get("type", "str"),
-                f.get("default"),
-                required=f.get("required", False),
-                options=f.get("options"),
-                original_key=k,
+                key,
+                field.get("label", ""),
+                field.get("type", "str"),
+                field.get("default"),
+                required=field.get("required", False),
+                options=field.get("options"),
+                original_key=key,
             )
 
         add_btn = QPushButton(tr("main.cfAdd"))
-        add_btn.clicked.connect(lambda: self._add_row())
+        add_btn.clicked.connect(self._on_add_row_clicked)
         fields_layout.addWidget(add_btn)
 
         scroll_layout.addWidget(fields_group)
-
         scroll_layout.addStretch()
 
-        # Display key selector
         dk_row = QHBoxLayout()
         dk_row.addWidget(QLabel(tr("main.cfDisplayKey")))
         self._display_key_combo = QComboBox()
@@ -162,13 +180,13 @@ class CustomFieldsDialog(QDialog):
         dk_row.addWidget(self._display_key_combo, 1)
         root.addLayout(dk_row)
 
-        # Color key selector
         ck_row = QHBoxLayout()
         ck_row.addWidget(QLabel(tr("main.cfColorKey")))
         self._color_key_combo = QComboBox()
         self._refresh_color_key_combo(color_key)
         ck_row.addWidget(self._color_key_combo, 1)
         root.addLayout(ck_row)
+        self._sync_selector_combos()
 
         buttons = QDialogButtonBox()
         ok_btn = QPushButton(tr("common.ok"))
@@ -181,33 +199,41 @@ class CustomFieldsDialog(QDialog):
 
     def _refresh_display_key_combo(self, current_dk=None):
         combo = self._display_key_combo
+        previous = current_dk if current_dk is not None else combo.currentData()
         combo.clear()
         for entry in self._field_rows:
             key = entry["key"].text().strip()
             if key:
                 combo.addItem(key, key)
-        if current_dk:
-            idx = combo.findData(current_dk)
+        if previous:
+            idx = combo.findData(previous)
             if idx >= 0:
                 combo.setCurrentIndex(idx)
+                return
+        if combo.count() > 0:
+            combo.setCurrentIndex(0)
 
     def _refresh_color_key_combo(self, current_ck=None):
         combo = self._color_key_combo
+        previous = current_ck if current_ck is not None else combo.currentData()
         combo.clear()
         for entry in self._field_rows:
             key = entry["key"].text().strip()
             if key:
                 combo.addItem(key, key)
-        if current_ck:
-            idx = combo.findData(current_ck)
+        if previous:
+            idx = combo.findData(previous)
             if idx >= 0:
                 combo.setCurrentIndex(idx)
+                return
+        if combo.count() > 0:
+            combo.setCurrentIndex(0)
 
     def get_display_key(self):
         return self._display_key_combo.currentData() or ""
 
     def get_color_key(self):
-        return self._color_key_combo.currentData() or "cell_line"
+        return self._color_key_combo.currentData() or ""
 
     def get_cell_line_options(self):
         """Backward compat: extract options from the cell_line field row."""
@@ -221,10 +247,19 @@ class CustomFieldsDialog(QDialog):
         for entry in self._field_rows:
             if entry["key"].text().strip() == "cell_line":
                 return bool(entry["required"].isChecked())
-        return True
+        return False
 
-    def _add_row(self, key="", label="", ftype="str", default=None,
-                 *, required=False, options=None, original_key=None):
+    def _add_row(
+        self,
+        key="",
+        label="",
+        ftype="str",
+        default=None,
+        *,
+        required=False,
+        options=None,
+        original_key=None,
+    ):
         row_widget = QWidget()
         row_layout = QHBoxLayout(row_widget)
         row_layout.setContentsMargins(0, 0, 0, 0)
@@ -241,8 +276,8 @@ class CustomFieldsDialog(QDialog):
         row_layout.addWidget(label_edit)
 
         type_combo = QComboBox()
-        for t in _FIELD_TYPES:
-            type_combo.addItem(t, t)
+        for field_type in _FIELD_TYPES:
+            type_combo.addItem(field_type, field_type)
         idx = type_combo.findData(ftype)
         if idx >= 0:
             type_combo.setCurrentIndex(idx)
@@ -258,9 +293,8 @@ class CustomFieldsDialog(QDialog):
         required_cb.setChecked(bool(required))
         row_layout.addWidget(required_cb)
 
-        # Options button
         opts_list = list(options) if options else []
-        opts_btn = QPushButton(str(len(opts_list)) if opts_list else "—")
+        opts_btn = QPushButton(str(len(opts_list)) if opts_list else _OPTIONS_EMPTY_TEXT)
         opts_btn.setFixedWidth(36)
         opts_btn.setToolTip(tr("main.cfEditOptions"))
         row_layout.addWidget(opts_btn)
@@ -280,14 +314,34 @@ class CustomFieldsDialog(QDialog):
             "_options_data": opts_list,
             "_options_btn": opts_btn,
         }
+
+        is_note = key_edit.text().strip() == _SYSTEM_NOTE_KEY
+        entry["_is_system_note"] = bool(is_note)
+        if is_note:
+            key_edit.setReadOnly(True)
+            idx_note = type_combo.findData("str")
+            if idx_note >= 0:
+                type_combo.setCurrentIndex(idx_note)
+            type_combo.setEnabled(False)
+            default_edit.clear()
+            default_edit.setEnabled(False)
+            required_cb.setChecked(False)
+            required_cb.setEnabled(False)
+            opts_btn.setEnabled(False)
+            remove_btn.setEnabled(False)
+
         self._field_rows.append(entry)
         self._rows_layout.addWidget(row_widget)
 
         opts_btn.clicked.connect(lambda: self._edit_options(entry))
         remove_btn.clicked.connect(lambda: self._remove_row(entry))
+        key_edit.textChanged.connect(lambda _text: self._sync_selector_combos())
+        self._sync_selector_combos()
 
     def _edit_options(self, entry):
         """Open a small dialog to edit options for a field."""
+        if entry.get("_is_system_note"):
+            return
         dlg = QDialog(self)
         field_key = entry["key"].text().strip() or "?"
         dlg.setWindowTitle(t("main.cfFieldOptionsTitle", field=field_key))
@@ -302,7 +356,7 @@ class CustomFieldsDialog(QDialog):
         text_edit = QTextEdit()
         text_edit.setMaximumHeight(120)
         current_opts = entry.get("_options_data") or []
-        text_edit.setPlainText("\n".join(str(o) for o in current_opts))
+        text_edit.setPlainText("\n".join(str(option) for option in current_opts))
         layout.addWidget(text_edit)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -319,10 +373,12 @@ class CustomFieldsDialog(QDialog):
         else:
             new_opts = []
         entry["_options_data"] = new_opts
-        entry["_options_btn"].setText(str(len(new_opts)) if new_opts else "—")
+        entry["_options_btn"].setText(str(len(new_opts)) if new_opts else _OPTIONS_EMPTY_TEXT)
 
     def _remove_row(self, entry):
         if entry not in self._field_rows:
+            return
+        if entry.get("_is_system_note"):
             return
         key_name = entry["key"].text().strip() or "?"
         reply = QMessageBox.question(
@@ -337,6 +393,19 @@ class CustomFieldsDialog(QDialog):
         self._field_rows.remove(entry)
         entry["widget"].setParent(None)
         entry["widget"].deleteLater()
+        self._sync_selector_combos()
+
+    def _on_add_row_clicked(self):
+        self._add_row()
+        self._sync_selector_combos()
+
+    def _sync_selector_combos(self):
+        if not hasattr(self, "_display_key_combo") or not hasattr(self, "_color_key_combo"):
+            return
+        current_dk = self._display_key_combo.currentData()
+        current_ck = self._color_key_combo.currentData()
+        self._refresh_display_key_combo(current_dk)
+        self._refresh_color_key_combo(current_ck)
 
     def get_custom_fields(self):
         """Return validated list of custom field dicts.
@@ -355,29 +424,38 @@ class CustomFieldsDialog(QDialog):
             if key in STRUCTURAL_FIELD_KEYS or key in seen:
                 continue
             seen.add(key)
+
             label = entry["label"].text().strip() or key
             ftype = entry["type"].currentData() or "str"
             default_text = entry["default"].text().strip()
             default = default_text if default_text else None
             req = entry["required"].isChecked()
             opts = entry.get("_options_data") or []
+
             item = {
                 "key": key,
                 "label": label,
                 "type": ftype,
             }
+            if key == _SYSTEM_NOTE_KEY:
+                item["type"] = "str"
+                item["multiline"] = True
+                default = None
+                req = False
+                opts = []
+
             if default is not None:
                 item["default"] = default
             if req:
                 item["required"] = True
             if opts:
                 item["options"] = list(opts)
+
             orig = entry.get("original_key")
             if orig and orig != key:
                 item["_original_key"] = orig
             result.append(item)
         return result
-
 
 
 __all__ = ["CustomFieldsDialog"]

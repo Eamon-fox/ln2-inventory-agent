@@ -854,6 +854,7 @@ class ToolApiTests(ManagedPathTestCase):
                 "meta": {
                     "box_layout": {"rows": 9, "cols": 9},
                     "custom_fields": [
+                        {"key": "cell_line", "label": "Cell Line", "type": "str"},
                         {"key": "passage_number", "label": "Passage #", "type": "int"},
                     ],
                 },

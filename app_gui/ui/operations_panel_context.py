@@ -48,6 +48,9 @@ def _rebuild_ctx_user_fields(self, prefix, custom_fields):
     # Insert new user field rows
     for fdef in (custom_fields or []):
         key = fdef["key"]
+        if key in {"note", "cell_line"}:
+            # ``note`` and ``cell_line`` keep dedicated context rows.
+            continue
         flabel = fdef.get("label", key)
         container, lbl_widget = self._make_editable_field(key, rid_fn, refresh_fn)
         form.insertRow(form.rowCount(), flabel, container)

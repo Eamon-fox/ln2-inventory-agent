@@ -613,6 +613,7 @@ class OperationsPanel(QWidget):
         self._rebuild_custom_add_fields(custom_fields)
         self._rebuild_ctx_user_fields("takeout", custom_fields)
         self._rebuild_ctx_user_fields("move", custom_fields)
+        self._sync_cell_line_context_visibility(custom_fields)
         # Refresh dropdown options for all option-bearing fields
         self._refresh_field_options(meta)
 
@@ -624,6 +625,22 @@ class OperationsPanel(QWidget):
             self._plan_validation_by_key = {}
             self._refresh_plan_table()
             self._update_execute_button_state()
+
+    def _sync_cell_line_context_visibility(self, custom_fields):
+        has_cell_line = any(
+            isinstance(field, dict) and str(field.get("key") or "") == "cell_line"
+            for field in (custom_fields or [])
+        )
+        for attr_name in (
+            "_t_ctx_cell_line_label",
+            "_t_ctx_cell_line_container",
+            "_m_ctx_cell_line_label",
+            "_m_ctx_cell_line_container",
+        ):
+            widget = getattr(self, attr_name, None)
+            if widget is None:
+                continue
+            widget.setVisible(has_cell_line)
 
     def _refresh_field_options(self, meta):
         """Populate dropdown options for all option-bearing fields in the add form."""

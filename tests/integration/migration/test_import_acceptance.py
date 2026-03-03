@@ -31,7 +31,9 @@ def _valid_payload():
                 "box_count": 5,
                 "box_numbers": [1, 2, 3, 4, 5],
             },
-            "custom_fields": [],
+            "custom_fields": [
+                {"key": "cell_line", "label": "Cell Line", "type": "str", "required": False},
+            ],
         },
         "inventory": [
             {
@@ -153,6 +155,7 @@ class ImportAcceptanceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             payload = _valid_payload()
             payload["meta"]["custom_fields"] = [
+                {"key": "cell_line", "label": "Cell Line", "type": "str", "required": False},
                 {"key": "short_name", "label": "Short Name", "type": "str", "required": False}
             ]
             payload["meta"]["color_key"] = "short_name"
@@ -187,6 +190,7 @@ class ImportAcceptanceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             payload = _valid_payload()
             payload["meta"]["custom_fields"] = [
+                {"key": "cell_line", "label": "Cell Line", "type": "str", "required": False},
                 {"key": "short_name", "label": "Short Name", "type": "str", "required": False},
                 {"key": "plasmid_name", "label": "Plasmid Name", "type": "str", "required": False},
                 {"key": "plasmid_id", "label": "Plasmid ID", "type": "str", "required": False},
@@ -349,7 +353,8 @@ class ImportAcceptanceTests(unittest.TestCase):
     def test_validate_candidate_yaml_blocks_warnings_in_strict_mode(self):
         with tempfile.TemporaryDirectory() as td:
             payload = _valid_payload()
-            # Missing cell_line triggers legacy-compatible warning in validators.
+            # Trigger legacy compatibility mode and then remove cell_line to get a warning.
+            payload["meta"].pop("custom_fields", None)
             payload["inventory"][0].pop("cell_line", None)
             candidate = Path(td) / "warn.yaml"
             candidate.write_text(
@@ -365,6 +370,7 @@ class ImportAcceptanceTests(unittest.TestCase):
     def test_validate_candidate_yaml_blocks_non_option_cell_line_in_strict_mode(self):
         with tempfile.TemporaryDirectory() as td:
             payload = _valid_payload()
+            payload["meta"].pop("custom_fields", None)
             payload["meta"]["cell_line_options"] = ["K562", "HeLa"]
             payload["inventory"][0]["cell_line"] = "H1299"
             candidate = Path(td) / "warn_non_option.yaml"
@@ -382,6 +388,7 @@ class ImportAcceptanceTests(unittest.TestCase):
     def test_validate_candidate_yaml_allows_non_option_cell_line_in_non_strict_mode(self):
         with tempfile.TemporaryDirectory() as td:
             payload = _valid_payload()
+            payload["meta"].pop("custom_fields", None)
             payload["meta"]["cell_line_options"] = ["K562", "HeLa"]
             payload["inventory"][0]["cell_line"] = "H1299"
             candidate = Path(td) / "warn_non_option_non_strict.yaml"
@@ -458,7 +465,9 @@ class SkipRecordValidationTests(unittest.TestCase):
                     "rows": 9, "cols": 9,
                     "box_count": 2, "box_numbers": [1, 2],
                 },
-                "custom_fields": [],
+                "custom_fields": [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                ],
             },
             "inventory": [
                 {"id": 1, "box": 1, "position": 1, "frozen_at": "2025-01-01",

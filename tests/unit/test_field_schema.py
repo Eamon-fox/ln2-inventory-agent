@@ -77,6 +77,7 @@ class TestRecordFieldSplit:
     def test_split_record_fields_emits_schema_and_legacy(self):
         meta = {
             "custom_fields": [
+                {"key": "cell_line", "label": "Cell Line", "type": "str"},
                 {"key": "short_name", "label": "Short Name", "type": "str"},
                 {"key": "plasmid_name", "label": "Plasmid Name", "type": "str"},
             ],

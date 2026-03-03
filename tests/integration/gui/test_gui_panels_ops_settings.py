@@ -70,6 +70,48 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         self.assertEqual(today, panel.t_date.date())
         self.assertEqual(today, panel.b_date.date())
 
+    def test_operations_panel_cell_line_context_visibility_tracks_effective_schema(self):
+        panel = self._new_operations_panel()
+
+        panel.apply_meta_update(
+            {
+                "custom_fields": [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                    {"key": "sample_type", "label": "Sample Type", "type": "str"},
+                ]
+            }
+        )
+        self.assertFalse(panel._t_ctx_cell_line_label.isHidden())
+        self.assertFalse(panel._t_ctx_cell_line_container.isHidden())
+        self.assertFalse(panel._m_ctx_cell_line_label.isHidden())
+        self.assertFalse(panel._m_ctx_cell_line_container.isHidden())
+
+        panel.apply_meta_update(
+            {
+                "custom_fields": [
+                    {"key": "sample_type", "label": "Sample Type", "type": "str"},
+                ]
+            }
+        )
+        self.assertTrue(panel._t_ctx_cell_line_label.isHidden())
+        self.assertTrue(panel._t_ctx_cell_line_container.isHidden())
+        self.assertTrue(panel._m_ctx_cell_line_label.isHidden())
+        self.assertTrue(panel._m_ctx_cell_line_container.isHidden())
+
+        # Legacy keys still reactivate the compatibility cell_line field.
+        panel.apply_meta_update(
+            {
+                "custom_fields": [
+                    {"key": "sample_type", "label": "Sample Type", "type": "str"},
+                ],
+                "cell_line_required": False,
+            }
+        )
+        self.assertFalse(panel._t_ctx_cell_line_label.isHidden())
+        self.assertFalse(panel._t_ctx_cell_line_container.isHidden())
+        self.assertFalse(panel._m_ctx_cell_line_label.isHidden())
+        self.assertFalse(panel._m_ctx_cell_line_container.isHidden())
+
     def test_operations_panel_does_not_override_user_selected_date(self):
         panel = self._new_operations_panel()
         today = QDate.currentDate()
@@ -430,7 +472,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
 
             @staticmethod
             def get_custom_fields():
-                return []
+                return [{"key": "cell_line", "label": "Cell Line", "type": "str"}]
 
             @staticmethod
             def get_display_key():
@@ -650,8 +692,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         self.assertEqual("custom_value", inv[0].get("source"))
 
     def test_settings_dialog_custom_fields_still_blocks_meta_errors(self):
-        """Scenario 9: invalid display_key / structural meta errors must
-        still block saving."""
+        """Scenario 9: structural meta errors must still block saving."""
         from app_gui.main import SettingsDialog
         from lib.yaml_ops import load_yaml
 
@@ -678,9 +719,13 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             def exec(): return 1
             @staticmethod
             def get_custom_fields():
-                return [{"key": "cell_line", "label": "Cell Line", "type": "str"}]
+                # Structural key cannot be declared as a custom field.
+                return [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                    {"key": "box", "label": "Box", "type": "str"},
+                ]
             @staticmethod
-            def get_display_key(): return "nonexistent_field"
+            def get_display_key(): return "cell_line"
             @staticmethod
             def get_color_key(): return ""
             @staticmethod
@@ -703,7 +748,226 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
 
         # YAML should NOT have been modified
         saved_meta = (load_yaml(yaml_path) or {}).get("meta", {})
-        self.assertNotEqual("nonexistent_field", saved_meta.get("display_key"))
+        self.assertEqual(
+            [{"key": "cell_line", "label": "Cell Line", "type": "str"}],
+            saved_meta.get("custom_fields"),
+        )
+
+    def test_settings_dialog_custom_fields_blocks_conflicting_rename(self):
+        from app_gui.main import SettingsDialog
+        from lib.yaml_ops import load_yaml
+
+        payload = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9, "cols": 9,
+                    "box_count": 2, "box_numbers": [1, 2],
+                },
+                "custom_fields": [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                    {"key": "short_name", "label": "Short Name", "type": "str"},
+                    {"key": "alias", "label": "Alias", "type": "str"},
+                ],
+            },
+            "inventory": [
+                {
+                    "id": 1,
+                    "box": 1,
+                    "position": 1,
+                    "frozen_at": "2025-01-01",
+                    "cell_line": "K562",
+                    "short_name": "clone-A",
+                    "alias": "alpha",
+                },
+            ],
+        }
+        yaml_path = self.ensure_dataset_yaml("cf-rename-conflict", payload=payload)
+
+        class _FakeDialog:
+            def __init__(self, *a, **kw): pass
+            @staticmethod
+            def exec(): return 1
+            @staticmethod
+            def get_custom_fields():
+                return [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                    {"key": "alias", "label": "Alias", "type": "str", "_original_key": "short_name"},
+                ]
+            @staticmethod
+            def get_display_key(): return "alias"
+            @staticmethod
+            def get_color_key(): return "alias"
+            @staticmethod
+            def get_cell_line_options(): return None
+            @staticmethod
+            def get_cell_line_required(): return False
+
+        on_data_changed = MagicMock()
+        dialog = SettingsDialog(
+            config={"yaml_path": yaml_path},
+            on_data_changed=on_data_changed,
+            custom_fields_dialog_cls=_FakeDialog,
+        )
+
+        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock:
+            dialog._open_custom_fields_editor()
+
+        warn_mock.assert_called_once()
+        self.assertIn("Field rename conflict detected", str(warn_mock.call_args[0][2]))
+        on_data_changed.assert_not_called()
+
+        saved = load_yaml(yaml_path) or {}
+        record = (saved.get("inventory") or [{}])[0]
+        self.assertEqual("clone-A", record.get("short_name"))
+        self.assertEqual("alpha", record.get("alias"))
+
+    def test_settings_dialog_custom_fields_selector_keys_follow_rename(self):
+        from app_gui.main import SettingsDialog
+        from lib.yaml_ops import load_yaml
+
+        payload = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9, "cols": 9,
+                    "box_count": 2, "box_numbers": [1, 2],
+                },
+                "custom_fields": [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                    {"key": "old_tag", "label": "Old Tag", "type": "str"},
+                ],
+                "display_key": "old_tag",
+                "color_key": "old_tag",
+            },
+            "inventory": [
+                {
+                    "id": 1,
+                    "box": 1,
+                    "position": 1,
+                    "frozen_at": "2025-01-01",
+                    "cell_line": "K562",
+                    "old_tag": "tag-A",
+                },
+            ],
+        }
+        yaml_path = self.ensure_dataset_yaml("cf-rename-selector-follow", payload=payload)
+
+        class _FakeDialog:
+            def __init__(self, *a, **kw): pass
+            @staticmethod
+            def exec(): return 1
+            @staticmethod
+            def get_custom_fields():
+                return [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                    {"key": "new_tag", "label": "New Tag", "type": "str", "_original_key": "old_tag"},
+                ]
+            @staticmethod
+            def get_display_key(): return ""
+            @staticmethod
+            def get_color_key(): return ""
+            @staticmethod
+            def get_cell_line_options(): return None
+            @staticmethod
+            def get_cell_line_required(): return False
+
+        on_data_changed = MagicMock()
+        dialog = SettingsDialog(
+            config={"yaml_path": yaml_path},
+            on_data_changed=on_data_changed,
+            custom_fields_dialog_cls=_FakeDialog,
+        )
+
+        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock:
+            dialog._open_custom_fields_editor()
+
+        warn_mock.assert_not_called()
+        on_data_changed.assert_called_once()
+
+        saved = load_yaml(yaml_path) or {}
+        saved_meta = saved.get("meta") or {}
+        self.assertEqual("new_tag", saved_meta.get("display_key"))
+        self.assertEqual("new_tag", saved_meta.get("color_key"))
+        record = (saved.get("inventory") or [{}])[0]
+        self.assertEqual("tag-A", record.get("new_tag"))
+        self.assertNotIn("old_tag", record)
+
+    def test_settings_dialog_custom_fields_rename_cell_line_to_type_has_no_ghost_field(self):
+        from app_gui.main import SettingsDialog
+        from lib.custom_fields import get_effective_fields
+        from lib.yaml_ops import load_yaml
+
+        payload = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9, "cols": 9,
+                    "box_count": 2, "box_numbers": [1, 2],
+                },
+                "custom_fields": [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                ],
+                "display_key": "cell_line",
+                "color_key": "cell_line",
+                "cell_line_required": True,
+                "cell_line_options": ["K562", "HeLa"],
+            },
+            "inventory": [
+                {
+                    "id": 1,
+                    "box": 1,
+                    "position": 1,
+                    "frozen_at": "2025-01-01",
+                    "cell_line": "K562",
+                },
+            ],
+        }
+        yaml_path = self.ensure_dataset_yaml("cf-rename-cell-line-to-type", payload=payload)
+
+        class _FakeDialog:
+            def __init__(self, *a, **kw): pass
+            @staticmethod
+            def exec(): return 1
+            @staticmethod
+            def get_custom_fields():
+                return [{"key": "type", "label": "Type", "type": "str", "_original_key": "cell_line"}]
+            @staticmethod
+            def get_display_key(): return ""
+            @staticmethod
+            def get_color_key(): return ""
+            @staticmethod
+            def get_cell_line_options(): return []
+            @staticmethod
+            def get_cell_line_required(): return False
+
+        on_data_changed = MagicMock()
+        dialog = SettingsDialog(
+            config={"yaml_path": yaml_path},
+            on_data_changed=on_data_changed,
+            custom_fields_dialog_cls=_FakeDialog,
+        )
+
+        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock:
+            dialog._open_custom_fields_editor()
+
+        warn_mock.assert_not_called()
+        on_data_changed.assert_called_once()
+
+        saved = load_yaml(yaml_path) or {}
+        saved_meta = saved.get("meta") or {}
+        custom_keys = [f.get("key") for f in (saved_meta.get("custom_fields") or []) if isinstance(f, dict)]
+        self.assertEqual(["type"], custom_keys)
+        self.assertNotIn("cell_line_required", saved_meta)
+        self.assertNotIn("cell_line_options", saved_meta)
+        self.assertEqual("type", saved_meta.get("display_key"))
+        self.assertEqual("type", saved_meta.get("color_key"))
+
+        record = (saved.get("inventory") or [{}])[0]
+        self.assertEqual("K562", record.get("type"))
+        self.assertNotIn("cell_line", record)
+
+        effective_keys = [f.get("key") for f in get_effective_fields(saved_meta)]
+        self.assertIn("type", effective_keys)
+        self.assertIn("note", effective_keys)
+        self.assertNotIn("cell_line", effective_keys)
 
     def test_settings_dialog_accept_still_blocks_on_path_change_to_invalid_yaml(self):
         """accept() must still enforce strict validation when the user
@@ -893,6 +1157,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
                     "box_numbers": [1, 2, 3, 4, 5],
                 },
                 "custom_fields": [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str", "required": False},
                     {"key": "short_name", "label": "Short Name", "type": "str", "required": False}
                 ],
                 "color_key": "short_name",

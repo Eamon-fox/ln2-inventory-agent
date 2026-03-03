@@ -479,6 +479,10 @@ class DatasetFlow:
         display_key = cf_dlg.get_display_key()
         cell_line_required = cf_dlg.get_cell_line_required()
         cell_line_options = cf_dlg.get_cell_line_options()
+        has_cell_line = any(
+            isinstance(field, dict) and str(field.get("key", "")).strip() == "cell_line"
+            for field in (custom_fields or [])
+        )
 
         meta = {
             "version": "1.0",
@@ -487,10 +491,11 @@ class DatasetFlow:
         }
         if display_key:
             meta["display_key"] = display_key
-        if cell_line_required:
-            meta["cell_line_required"] = True
-        if cell_line_options:
-            meta["cell_line_options"] = cell_line_options
+        if has_cell_line:
+            if cell_line_required:
+                meta["cell_line_required"] = True
+            if cell_line_options:
+                meta["cell_line_options"] = cell_line_options
 
         new_payload = {
             "meta": meta,

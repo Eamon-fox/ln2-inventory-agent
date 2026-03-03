@@ -21,6 +21,7 @@ from lib.custom_fields import (
     STRUCTURAL_FIELD_KEYS,
     coerce_value,
     parse_custom_fields,
+    get_effective_fields,
     get_color_key,
     get_cell_line_options,
     DEFAULT_CELL_LINE_OPTIONS,
@@ -164,6 +165,39 @@ class TestParseCustomFields(ManagedPathTestCase):
         expected = {"id", "box", "position", "frozen_at", "thaw_events"}
         self.assertEqual(expected, STRUCTURAL_FIELD_KEYS)
 
+    def test_note_field_is_canonicalized_to_fixed_system_semantics(self):
+        meta = {
+            "custom_fields": [
+                {
+                    "key": "note",
+                    "label": "Free Text",
+                    "type": "int",
+                    "required": True,
+                    "default": "x",
+                    "options": ["a", "b"],
+                }
+            ]
+        }
+        result = parse_custom_fields(meta)
+        self.assertEqual(1, len(result))
+        note = result[0]
+        self.assertEqual("note", note["key"])
+        self.assertEqual("Free Text", note["label"])
+        self.assertEqual("str", note["type"])
+        self.assertIsNone(note["default"])
+        self.assertFalse(note["required"])
+        self.assertTrue(note.get("multiline"))
+        self.assertNotIn("options", note)
+
+    def test_effective_fields_do_not_auto_inject_cell_line_when_schema_declared_without_it(self):
+        meta = {
+            "custom_fields": [
+                {"key": "sample_type", "label": "Sample Type", "type": "str"},
+            ]
+        }
+        keys = [f["key"] for f in get_effective_fields(meta)]
+        self.assertEqual(["note", "sample_type"], keys)
+
 
 # ===========================================================================
 # Unit tests: coerce_value
@@ -224,6 +258,7 @@ class TestToolAddEntryCustomData(ManagedPathTestCase):
                 make_data(
                     [make_record(1, box=1, position=1)],
                     custom_fields=[
+                        {"key": "cell_line", "label": "Cell Line", "type": "str"},
                         {"key": "passage_number", "label": "Passage #", "type": "int"},
                         {"key": "medium", "label": "Medium", "type": "str"},
                     ],
@@ -254,6 +289,7 @@ class TestToolAddEntryCustomData(ManagedPathTestCase):
                 make_data(
                     [make_record(1, box=1, position=1)],
                     custom_fields=[
+                        {"key": "cell_line", "label": "Cell Line", "type": "str"},
                         {"key": "passage_number", "label": "Passage #", "type": "int"},
                     ],
                 ),
@@ -284,6 +320,7 @@ class TestToolAddEntryCustomData(ManagedPathTestCase):
                 make_data(
                     [make_record(1, box=1, position=1)],
                     custom_fields=[
+                        {"key": "cell_line", "label": "Cell Line", "type": "str"},
                         {"key": "short_name", "label": "Short", "type": "str"},
                     ],
                 ),
@@ -302,7 +339,9 @@ class TestToolAddEntryCustomData(ManagedPathTestCase):
             self.assertTrue(first["ok"])
 
             data = load_yaml(str(yaml_path))
-            data.setdefault("meta", {})["custom_fields"] = []
+            data.setdefault("meta", {})["custom_fields"] = [
+                {"key": "cell_line", "label": "Cell Line", "type": "str"},
+            ]
             write_yaml(
                 data,
                 path=str(yaml_path),
@@ -572,6 +611,14 @@ class TestGetColorKey(ManagedPathTestCase):
 
     def test_non_string_falls_back_to_default(self):
         self.assertEqual("cell_line", get_color_key({"color_key": 123}))
+
+    def test_schema_without_cell_line_falls_back_to_first_non_note_field(self):
+        meta = {
+            "custom_fields": [
+                {"key": "sample_type", "label": "Sample Type", "type": "str"},
+            ]
+        }
+        self.assertEqual("sample_type", get_color_key(meta))
 
 
 # ===========================================================================

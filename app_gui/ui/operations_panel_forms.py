@@ -458,7 +458,9 @@ def _build_takeout_tab(self):
 
     form.addRow(tr("overview.ctxFrozen"), t_frozen_w)
     form.addRow(tr("operations.note"), t_note_w)
-    form.addRow(tr("operations.cellLine"), t_cell_line_w)
+    self._t_ctx_cell_line_label = QLabel(tr("operations.cellLine"))
+    self._t_ctx_cell_line_container = t_cell_line_w
+    form.addRow(self._t_ctx_cell_line_label, t_cell_line_w)
     form.addRow(tr("overview.ctxHistory"), self.t_ctx_events)
 
     # Editable: target position (hidden, kept for compat - single value now)
@@ -594,7 +596,9 @@ def _build_move_tab(self):
 
     form.addRow(tr("overview.ctxFrozen"), m_frozen_w)
     form.addRow(tr("operations.note"), m_note_w)
-    form.addRow(tr("operations.cellLine"), m_cell_line_w)
+    self._m_ctx_cell_line_label = QLabel(tr("operations.cellLine"))
+    self._m_ctx_cell_line_container = m_cell_line_w
+    form.addRow(self._m_ctx_cell_line_label, m_cell_line_w)
     form.addRow(tr("overview.ctxHistory"), self.m_ctx_events)
 
     # Editable fields

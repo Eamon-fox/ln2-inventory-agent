@@ -19,7 +19,7 @@ STRUCTURAL_FIELD_KEYS = frozenset(
 
 # Fields that are auto-injected as default custom fields when not explicitly
 # declared.  Kept here so _allowed_record_field_keys can include them.
-_DEFAULT_FIELD_KEYS = frozenset({"cell_line", "note"})
+_DEFAULT_FIELD_KEYS = frozenset({"note"})
 
 _VALID_CUSTOM_TYPES = frozenset({"str", "int", "float", "date"})
 _BOX_TAG_MAX_LENGTH = 80
@@ -351,6 +351,18 @@ def validate_custom_fields_contract(meta: Dict[str, Any]) -> Tuple[List[str], Li
             errors.append(f"meta.custom_fields[{idx}] duplicate key='{key}'")
             continue
 
+        if key == "note":
+            # ``note`` is a fixed system field: always text + optional.
+            seen.add(key)
+            normalized.append(
+                {
+                    "key": "note",
+                    "required": False,
+                    "type": "str",
+                }
+            )
+            continue
+
         field_type = str(item.get("type") or "str").strip().lower()
         if field_type not in _VALID_CUSTOM_TYPES:
             errors.append(
@@ -385,21 +397,43 @@ def _required_custom_fields(normalized_custom_fields: List[Dict[str, Any]]) -> L
     return sorted(set(required))
 
 
-def _allowed_record_field_keys(normalized_custom_fields: List[Dict[str, Any]]) -> set:
-    allowed = set(STRUCTURAL_FIELD_KEYS) | _DEFAULT_FIELD_KEYS
+def _legacy_cell_line_compat_enabled(meta: Dict[str, Any]) -> bool:
+    meta = meta or {}
+    if not isinstance(meta, dict):
+        return True
+    if "cell_line_options" in meta or "cell_line_required" in meta:
+        return True
+    # Legacy datasets may omit ``meta.custom_fields`` entirely.
+    return "custom_fields" not in meta
+
+
+def _declared_custom_field_keys(normalized_custom_fields: List[Dict[str, Any]]) -> set:
+    keys = set()
     for item in normalized_custom_fields:
         key = str((item or {}).get("key") or "").strip()
         if key:
-            allowed.add(key)
+            keys.add(key)
+    return keys
+
+
+def _allowed_record_field_keys(
+    meta: Dict[str, Any],
+    normalized_custom_fields: List[Dict[str, Any]],
+) -> set:
+    declared = _declared_custom_field_keys(normalized_custom_fields)
+    allowed = set(STRUCTURAL_FIELD_KEYS) | set(_DEFAULT_FIELD_KEYS) | declared
+    if "cell_line" in declared or _legacy_cell_line_compat_enabled(meta):
+        allowed.add("cell_line")
     return allowed
 
 
 def _check_undeclared_record_fields(
+    meta: Dict[str, Any],
     records: List[Dict[str, Any]],
     normalized_custom_fields: List[Dict[str, Any]],
 ) -> List[str]:
     """Reject inventory record keys not declared by structural fields/custom_fields."""
-    allowed = _allowed_record_field_keys(normalized_custom_fields)
+    allowed = _allowed_record_field_keys(meta, normalized_custom_fields)
     unknown_global = set()
     unknown_by_record = []
 
@@ -434,12 +468,18 @@ def _check_undeclared_record_fields(
     return errors
 
 
-def _selector_key_candidates(normalized_custom_fields: List[Dict[str, Any]]) -> List[str]:
+def _selector_key_candidates(
+    meta: Dict[str, Any],
+    normalized_custom_fields: List[Dict[str, Any]],
+) -> List[str]:
     """Return allowed selector keys for meta.display_key/meta.color_key."""
     ordered = []
     seen: set = set()
-    # Auto-injected default fields first (cell_line always valid as selector)
-    for dk in sorted(_DEFAULT_FIELD_KEYS):
+    declared = _declared_custom_field_keys(normalized_custom_fields)
+    default_keys = set(_DEFAULT_FIELD_KEYS)
+    if "cell_line" in declared or _legacy_cell_line_compat_enabled(meta):
+        default_keys.add("cell_line")
+    for dk in sorted(default_keys):
         if dk not in seen:
             seen.add(dk)
             ordered.append(dk)
@@ -466,7 +506,7 @@ def _validate_meta_selection_keys(
 ) -> List[str]:
     """Validate ``meta.display_key`` and ``meta.color_key`` against known keys."""
     errors: List[str] = []
-    allowed_keys = _selector_key_candidates(normalized_custom_fields)
+    allowed_keys = _selector_key_candidates(meta, normalized_custom_fields)
     allowed_set = set(allowed_keys)
     allowed_text = _format_allowed_selector_keys(allowed_keys)
 
@@ -635,17 +675,19 @@ def _validate_record(
                     seen_ev_pos.add(ev_pos)
 
     # Relaxed validation for all option-bearing fields.
-    # Build the list: explicit custom fields with options + legacy cell_line
+    # Build the list: explicit custom fields with options + legacy cell_line.
     option_fields: List[Dict[str, Any]] = []
-    cf_keys_with_options: set = set()
+    declared_custom_keys: set = set()
     for cf in (normalized_custom_fields or []):
+        key = str(cf.get("key") or "").strip()
+        if key:
+            declared_custom_keys.add(key)
         cf_opts = cf.get("options")
         if cf_opts:
             option_fields.append(cf)
-            cf_keys_with_options.add(cf["key"])
 
-    # If cell_line is not in custom_fields, use legacy meta keys
-    if "cell_line" not in cf_keys_with_options:
+    # If cell_line is not explicitly declared, use legacy meta keys.
+    if "cell_line" not in declared_custom_keys and _legacy_cell_line_compat_enabled(meta):
         option_fields.append({
             "key": "cell_line",
             "options": _cell_line_options(meta),
@@ -762,7 +804,7 @@ def validate_inventory_document(
     contract_errors, normalized_custom_fields = validate_custom_fields_contract(meta)
     errors.extend(contract_errors)
     errors.extend(_validate_meta_selection_keys(meta, normalized_custom_fields))
-    errors.extend(_check_undeclared_record_fields(inventory, normalized_custom_fields))
+    errors.extend(_check_undeclared_record_fields(meta, inventory, normalized_custom_fields))
 
     errors.extend(_check_inventory_boxes_match_layout(inventory, layout))
 

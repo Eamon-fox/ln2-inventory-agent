@@ -291,7 +291,10 @@ def test_dataset_flow_writes_new_dataset_yaml():
             return QDialog.Accepted
 
         def get_custom_fields(self):
-            return [{"key": "short_name", "label": "Short Name", "type": "str", "required": False}]
+            return [
+                {"key": "short_name", "label": "Short Name", "type": "str", "required": False},
+                {"key": "cell_line", "label": "Cell Line", "type": "str", "required": True},
+            ]
 
         def get_display_key(self):
             return "short_name"
@@ -321,6 +324,47 @@ def test_dataset_flow_writes_new_dataset_yaml():
         assert payload["meta"]["display_key"] == "short_name"
         assert payload["meta"]["cell_line_required"] is True
         assert payload["meta"]["cell_line_options"] == ["K562", "HeLa"]
+
+
+def test_dataset_flow_omits_legacy_cell_line_meta_when_field_removed():
+    class _AcceptedCustomFieldsDialog:
+        def __init__(self, _parent):
+            pass
+
+        def exec(self):
+            return QDialog.Accepted
+
+        def get_custom_fields(self):
+            return [{"key": "short_name", "label": "Short Name", "type": "str", "required": False}]
+
+        def get_display_key(self):
+            return "short_name"
+
+        def get_cell_line_required(self):
+            return True
+
+        def get_cell_line_options(self):
+            return ["K562", "HeLa"]
+
+    flow = DatasetFlow(SimpleNamespace())
+    with tempfile.TemporaryDirectory() as tmpdir, patch(
+        "lib.inventory_paths.get_install_dir",
+        return_value=tmpdir,
+    ):
+        target = create_managed_dataset_yaml_path("new_inventory_no_cell_line")
+        created_path = flow.create_dataset_file(
+            target_path=target,
+            box_layout={"box_1": {"rows": 9, "cols": 9}},
+            custom_fields_dialog_cls=_AcceptedCustomFieldsDialog,
+        )
+
+        assert created_path == target
+        payload = yaml.safe_load(Path(target).read_text(encoding="utf-8"))
+        assert payload["inventory"] == []
+        assert payload["meta"]["box_layout"] == {"box_1": {"rows": 9, "cols": 9}}
+        assert payload["meta"]["display_key"] == "short_name"
+        assert "cell_line_required" not in payload["meta"]
+        assert "cell_line_options" not in payload["meta"]
 
 
 def test_new_dataset_dialog_box_count_limit_is_ui_max():

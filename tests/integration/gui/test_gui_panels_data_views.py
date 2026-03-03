@@ -491,7 +491,10 @@ class OverviewTableViewTests(ManagedPathTestCase):
             },
         ]
         meta_extra = {
-            "custom_fields": [{"key": "passage_number", "label": "Passage #", "type": "int"}],
+            "custom_fields": [
+                {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                {"key": "passage_number", "label": "Passage #", "type": "int"},
+            ],
             "color_key": "cell_line",
         }
         yaml_path, tmpdir = self._seed_yaml(records, meta_extra=meta_extra)

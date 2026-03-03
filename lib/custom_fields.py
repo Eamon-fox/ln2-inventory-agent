@@ -54,6 +54,30 @@ DEFAULT_NOTE_FIELD = {
 }
 
 
+def _has_legacy_cell_line_policy(meta):
+    """Return True when legacy cell_line behavior should remain enabled."""
+    meta = meta or {}
+    if not isinstance(meta, dict):
+        return True
+    if "cell_line_options" in meta or "cell_line_required" in meta:
+        return True
+    # Legacy datasets may not have declared ``meta.custom_fields``.
+    return "custom_fields" not in meta
+
+
+def _has_declared_custom_field(meta, key):
+    raw = (meta or {}).get("custom_fields")
+    if not isinstance(raw, list):
+        return False
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("key") or "").strip()
+        if text == key:
+            return True
+    return False
+
+
 def _build_default_cell_line_field(meta):
     """Synthesize a cell_line field def from legacy ``meta`` keys.
 
@@ -114,6 +138,14 @@ def parse_custom_fields(meta):
             continue
 
         label = str(item.get("label") or key)
+        if key == "note":
+            # ``note`` is a fixed system field: only label is customizable.
+            entry = dict(DEFAULT_NOTE_FIELD)
+            entry["label"] = label or DEFAULT_NOTE_FIELD["label"]
+            seen_keys.add(key)
+            result.append(entry)
+            continue
+
         field_type = str(item.get("type") or "str").strip().lower()
         if field_type not in _VALID_TYPES:
             print(f"warning: meta.custom_fields[{idx}] unknown type={field_type!r}, defaulting to str", file=sys.stderr)
@@ -148,20 +180,23 @@ def parse_custom_fields(meta):
 def get_effective_fields(meta):
     """Return the full list of user-configurable field definitions.
 
-    Always includes ``cell_line`` and ``note`` (auto-injected from legacy
-    ``meta`` keys when not explicitly declared in ``meta.custom_fields``).
+    Always includes fixed ``note``.
+    Includes ``cell_line`` only when explicitly declared or legacy metadata
+    indicates compatibility mode.
     """
+    meta = meta or {}
     fields = parse_custom_fields(meta)
     keys = {f["key"] for f in fields}
 
-    # Auto-inject cell_line if not explicitly declared
-    if "cell_line" not in keys:
+    # Auto-inject cell_line only for legacy compatibility windows.
+    if "cell_line" not in keys and _has_legacy_cell_line_policy(meta):
         fields.insert(0, _build_default_cell_line_field(meta))
+        keys.add("cell_line")
 
-    # Auto-inject note if not explicitly declared
+    # Auto-inject fixed note if not explicitly declared.
     if "note" not in keys:
-        # Insert after cell_line
-        idx = next((i for i, f in enumerate(fields) if f["key"] == "cell_line"), 0) + 1
+        # Insert after cell_line when present so legacy defaults remain familiar.
+        idx = next((i for i, f in enumerate(fields) if f["key"] == "cell_line"), -1) + 1
         fields.insert(idx, dict(DEFAULT_NOTE_FIELD))
 
     return fields
@@ -190,12 +225,16 @@ def get_display_key(meta):
     falling back to ``"cell_line"`` when no custom fields are defined.
     """
     dk = (meta or {}).get("display_key")
-    if dk and isinstance(dk, str):
+    if isinstance(dk, str) and dk.strip():
         return dk
     fields = get_effective_fields(meta)
+    for field in fields:
+        key = str((field or {}).get("key") or "").strip()
+        if key and key != "note":
+            return key
     if fields:
-        return fields[0]["key"]
-    return "cell_line"
+        return str(fields[0].get("key") or "note")
+    return "note"
 
 
 def get_color_key(meta):
@@ -204,9 +243,16 @@ def get_color_key(meta):
     Uses ``meta.color_key`` if set, otherwise ``"cell_line"``.
     """
     ck = (meta or {}).get("color_key")
-    if ck and isinstance(ck, str):
+    if isinstance(ck, str) and ck.strip():
         return ck
-    return "cell_line"
+    fields = get_effective_fields(meta)
+    keys = [str((field or {}).get("key") or "").strip() for field in fields]
+    if "cell_line" in keys:
+        return "cell_line"
+    for key in keys:
+        if key and key != "note":
+            return key
+    return "note"
 
 
 def get_cell_line_options(meta):
@@ -215,7 +261,17 @@ def get_cell_line_options(meta):
     Backward-compatible wrapper around :func:`get_field_options`.
     """
     opts = get_field_options(meta, "cell_line")
-    return opts if isinstance(opts, list) else list(DEFAULT_CELL_LINE_OPTIONS)
+    if isinstance(opts, list):
+        if opts:
+            return opts
+        if _has_declared_custom_field(meta, "cell_line"):
+            return []
+    raw = (meta or {}).get("cell_line_options")
+    if isinstance(raw, list):
+        return [str(o) for o in raw if o]
+    if _has_legacy_cell_line_policy(meta):
+        return list(DEFAULT_CELL_LINE_OPTIONS)
+    return []
 
 
 def get_color_key_options(meta):
@@ -249,7 +305,12 @@ def is_cell_line_required(meta):
 
     Backward-compatible wrapper around :func:`is_field_required`.
     """
-    return is_field_required(meta, "cell_line")
+    for field in get_effective_fields(meta):
+        if field.get("key") == "cell_line":
+            return bool(field.get("required", False))
+    if isinstance(meta, dict) and "cell_line_required" in meta:
+        return bool(meta.get("cell_line_required"))
+    return bool(_has_legacy_cell_line_policy(meta))
 
 
 def coerce_value(value, field_type):

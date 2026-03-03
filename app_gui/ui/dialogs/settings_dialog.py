@@ -799,6 +799,13 @@ class SettingsDialog(QDialog):
                 tr("settings.alreadyLatest"))
 
     def _open_custom_fields_editor(self):
+        def _has_nonempty_value(value):
+            if value is None:
+                return False
+            if isinstance(value, str):
+                return bool(value.strip())
+            return True
+
         yaml_path = self.yaml_edit.text().strip()
         if not yaml_path or not os.path.isfile(yaml_path):
             QMessageBox.warning(self, tr("common.info"),
@@ -811,12 +818,14 @@ class SettingsDialog(QDialog):
             data = {}
 
         meta = data.get("meta", {})
+        if not isinstance(meta, dict):
+            meta = {}
         from lib.custom_fields import get_effective_fields
         existing = get_effective_fields(meta)
         current_dk = meta.get("display_key")
         current_ck = meta.get("color_key")
-        current_clo = meta.get("cell_line_options")
-        current_cl_required = bool(meta.get("cell_line_required", True))
+        current_clo = meta.get("cell_line_options") if "cell_line_options" in meta else None
+        current_cl_required = meta.get("cell_line_required") if "cell_line_required" in meta else None
 
         dialog_cls = self._custom_fields_dialog_cls
         if dialog_cls is None:
@@ -837,35 +846,84 @@ class SettingsDialog(QDialog):
         new_ck = dlg.get_color_key()
         new_clo = dlg.get_cell_line_options()
         new_cl_required = dlg.get_cell_line_required()
-        inventory = data.get("inventory") or []
+        inventory = data.get("inventory")
+        if not isinstance(inventory, list):
+            inventory = []
 
         # --- Step 1: handle renames (old_key -> new_key) ---
         renames = {}  # old_key -> new_key
         for f in new_fields:
             orig = f.pop("_original_key", None)
-            if orig:
+            if orig and orig != f["key"]:
                 renames[orig] = f["key"]
 
         if renames and inventory:
-            renames_with_data = {
-                old: new for old, new in renames.items()
-                if any(isinstance(r, dict) and r.get(old) is not None for r in inventory)
-            }
-            if renames_with_data:
-                for rec in inventory:
-                    if not isinstance(rec, dict):
+            conflicts = []
+            for rec in inventory:
+                if not isinstance(rec, dict):
+                    continue
+                rid = rec.get("id")
+                for old, new in renames.items():
+                    if old not in rec or new not in rec:
                         continue
-                    for old, new in renames_with_data.items():
-                        if old in rec:
-                            rec[new] = rec.pop(old)
+                    old_value = rec.get(old)
+                    new_value = rec.get(new)
+                    if not _has_nonempty_value(old_value) or not _has_nonempty_value(new_value):
+                        continue
+                    if str(old_value).strip() == str(new_value).strip():
+                        continue
+                    conflicts.append(
+                        {
+                            "record_id": rid,
+                            "from_key": old,
+                            "to_key": new,
+                            "from_value": old_value,
+                            "to_value": new_value,
+                        }
+                    )
+            if conflicts:
+                sample_lines = []
+                for item in conflicts[:20]:
+                    sample_lines.append(
+                        f"id={item.get('record_id', '?')}: "
+                        f"{item['from_key']}={item['from_value']!r} vs {item['to_key']}={item['to_value']!r}"
+                    )
+                hidden_count = len(conflicts) - len(sample_lines)
+                detail_text = "\n".join(sample_lines)
+                if hidden_count > 0:
+                    detail_text += f"\n... and {hidden_count} more conflict(s)"
+                QMessageBox.warning(
+                    self,
+                    tr("main.customFieldsTitle"),
+                    (
+                        "Field rename conflict detected. "
+                        "The target field already contains different values.\n\n"
+                        f"{detail_text}\n\n"
+                        "Please resolve conflicts in data before renaming."
+                    ),
+                )
+                return
+
+            for rec in inventory:
+                if not isinstance(rec, dict):
+                    continue
+                for old, new in renames.items():
+                    if old not in rec:
+                        continue
+                    old_value = rec.get(old)
+                    target_value = rec.get(new)
+                    if _has_nonempty_value(target_value):
+                        rec.pop(old, None)
+                        continue
+                    rec[new] = rec.pop(old)
 
         # --- Step 2: handle pure deletes ---
         new_keys = {f["key"] for f in new_fields}
         old_keys = {f["key"] for f in existing if isinstance(f, dict) and f.get("key")}
         # Keys that were renamed are not "deleted" - exclude them
         renamed_old_keys = set(renames.keys())
-        # Ignore always-available legacy fields that are synthesized at runtime.
-        protected_keys = {"cell_line", "note"}
+        # Keep fixed system fields.
+        protected_keys = {"note"}
         removed_keys = {
             key for key in (old_keys - new_keys - renamed_old_keys) if key not in protected_keys
         }
@@ -905,24 +963,42 @@ class SettingsDialog(QDialog):
                         for k in removed_keys:
                             rec.pop(k, None)
 
+        if not new_dk and isinstance(current_dk, str):
+            new_dk = current_dk
+        if not new_ck and isinstance(current_ck, str):
+            new_ck = current_ck
+        if isinstance(new_dk, str):
+            new_dk = renames.get(new_dk, new_dk)
+        if isinstance(new_ck, str):
+            new_ck = renames.get(new_ck, new_ck)
+
         # Build pending meta exactly as it would be saved.
         pending_meta = dict(meta)
         pending_meta["custom_fields"] = new_fields
-        if new_dk:
+        if new_dk and new_dk in new_keys:
             pending_meta["display_key"] = new_dk
-        if new_ck:
+        elif "display_key" in pending_meta:
+            del pending_meta["display_key"]
+        if new_ck and new_ck in new_keys:
             pending_meta["color_key"] = new_ck
-        # Derive legacy cell_line keys from the custom_fields for backward compat
-        if new_clo:
-            pending_meta["cell_line_options"] = new_clo
-        elif "cell_line_options" in pending_meta:
-            del pending_meta["cell_line_options"]
-        pending_meta["cell_line_required"] = bool(new_cl_required)
+        elif "color_key" in pending_meta:
+            del pending_meta["color_key"]
+
+        # Derive legacy cell_line keys only when cell_line exists in schema.
+        if "cell_line" in new_keys:
+            if new_clo:
+                pending_meta["cell_line_options"] = new_clo
+            elif "cell_line_options" in pending_meta:
+                del pending_meta["cell_line_options"]
+            pending_meta["cell_line_required"] = bool(new_cl_required)
+        else:
+            pending_meta.pop("cell_line_options", None)
+            pending_meta.pop("cell_line_required", None)
 
         # Meta-only validation: skip per-record checks since field
         # definitions are being intentionally changed.  Structural checks
         # (schema, selector keys, undeclared record fields) still run.
-        pending_data = dict(data)
+        pending_data = dict(data) if isinstance(data, dict) else {}
         pending_data["meta"] = pending_meta
         pending_data["inventory"] = inventory
         meta_errors, _warnings = validate_inventory_document(
@@ -944,9 +1020,8 @@ class SettingsDialog(QDialog):
             return
 
         # --- Step 3: save ---
-        data["meta"] = pending_meta
         with open(yaml_path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+            yaml.safe_dump(pending_data, f, allow_unicode=True, sort_keys=False)
         self._notify_data_changed(yaml_path=yaml_path, meta=pending_meta)
 
     def _open_manage_boxes(self):

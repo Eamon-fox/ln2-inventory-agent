@@ -10,11 +10,7 @@ from contextlib import suppress
 from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
-from .custom_fields import (
-    DEFAULT_CELL_LINE_OPTIONS,
-    DEFAULT_UNKNOWN_CELL_LINE,
-    get_effective_fields,
-)
+from .custom_fields import DEFAULT_UNKNOWN_CELL_LINE, get_effective_fields
 from .field_schema import migrate_record_aliases
 from .yaml_ops import load_yaml, write_yaml
 
@@ -53,8 +49,8 @@ def normalize_field_options_policy_data(data: Dict[str, Any]) -> Dict[str, Any]:
     - Append unknown record values to the options list.
     - Materialize the updated options back into ``meta.custom_fields``.
 
-    Also keeps legacy ``meta.cell_line_options`` / ``meta.cell_line_required``
-    in sync for backward compatibility.
+    Keeps legacy ``meta.cell_line_options`` / ``meta.cell_line_required`` in
+    sync only when ``cell_line`` exists in effective fields.
     """
     if not isinstance(data, dict):
         return {
@@ -82,14 +78,7 @@ def normalize_field_options_policy_data(data: Dict[str, Any]) -> Dict[str, Any]:
         meta_changed = True
     meta = raw_meta
 
-    # --- Legacy cell_line compat: ensure required flag exists ---
-    required_flag_added = False
-    if "cell_line_required" not in meta:
-        meta["cell_line_required"] = True
-        required_flag_added = True
-        meta_changed = True
-
-    # Get effective fields (auto-injects cell_line/note from legacy meta)
+    # Get effective fields (includes fixed note + conditional legacy cell_line).
     effective = get_effective_fields(meta)
 
     # Migrate legacy alias keys (for example: parent_cell_line -> cell_line)
@@ -126,14 +115,7 @@ def normalize_field_options_policy_data(data: Dict[str, Any]) -> Dict[str, Any]:
         field_default = field_def.get("default")
         field_required = field_def.get("required", False)
 
-        # For cell_line, use legacy meta.cell_line_options as canonical source
-        if field_key == "cell_line":
-            normalized_options = _normalize_options_list(
-                meta.get("cell_line_options"),
-                fallback=DEFAULT_CELL_LINE_OPTIONS,
-            )
-        else:
-            normalized_options = _normalize_options_list(field_options)
+        normalized_options = _normalize_options_list(field_options)
 
         options_seen = set(normalized_options)
 
@@ -179,13 +161,32 @@ def normalize_field_options_policy_data(data: Dict[str, Any]) -> Dict[str, Any]:
 
         total_values_added.extend(existing_values_added)
 
-        # Write back normalized options: keep legacy cell_line_options in sync
-        if field_key == "cell_line":
-            if meta.get("cell_line_options") != normalized_options:
-                meta["cell_line_options"] = normalized_options
-                meta_changed = True
-        # Update field options in custom_fields definition
+        # Update field options in custom_fields definition.
         field_def["options"] = normalized_options
+
+    # Keep legacy keys in sync only when cell_line exists in schema.
+    cell_line_def = next((f for f in effective if str(f.get("key") or "") == "cell_line"), None)
+    if cell_line_def is None:
+        if "cell_line_options" in meta:
+            del meta["cell_line_options"]
+            meta_changed = True
+        if "cell_line_required" in meta:
+            del meta["cell_line_required"]
+            meta_changed = True
+    else:
+        line_options = list(cell_line_def.get("options") or [])
+        if line_options:
+            if meta.get("cell_line_options") != line_options:
+                meta["cell_line_options"] = line_options
+                meta_changed = True
+        elif "cell_line_options" in meta:
+            del meta["cell_line_options"]
+            meta_changed = True
+
+        line_required = bool(cell_line_def.get("required", False))
+        if meta.get("cell_line_required") != line_required:
+            meta["cell_line_required"] = line_required
+            meta_changed = True
 
     # Materialize effective field definitions into meta.custom_fields
     # so old YAML files self-upgrade on first write.
@@ -222,7 +223,7 @@ def normalize_field_options_policy_data(data: Dict[str, Any]) -> Dict[str, Any]:
         "alias_changed_record_ids": sorted(set(alias_changed_record_ids)),
         "alias_conflict_count": alias_conflict_count,
         "alias_changes": alias_changes,
-        "required_flag_added": required_flag_added,
+        "required_flag_added": False,
         "unknown_added_to_options": DEFAULT_UNKNOWN_CELL_LINE in [v for v in total_values_added],
         "existing_values_added_to_options": total_values_added,
         "empty_or_missing_records": total_empty_or_missing,
@@ -254,7 +255,6 @@ def migrate_cell_line_policy(
     """Normalize field-options defaults and legacy record values.
 
     Migration behavior:
-    - missing ``meta.cell_line_required`` -> ``True``
     - normalize ``meta.cell_line_options`` to a list and ensure ``"Unknown"``
     - missing/blank record ``cell_line`` -> ``"Unknown"``
     - legacy non-empty record values not in options -> append to options
