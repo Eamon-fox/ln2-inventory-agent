@@ -1,5 +1,7 @@
 """Record context helpers for OperationsPanel."""
 
+from contextlib import suppress
+
 from app_gui.i18n import tr
 
 
@@ -66,9 +68,40 @@ def _set_text_widget_value(widget, value):
     text = str(value or "")
     if hasattr(widget, "setPlainText"):
         widget.setPlainText(text)
+        is_read_only = getattr(widget, "isReadOnly", None)
+        if callable(is_read_only) and bool(is_read_only()):
+            cursor_getter = getattr(widget, "textCursor", None)
+            cursor_setter = getattr(widget, "setTextCursor", None)
+            if callable(cursor_getter) and callable(cursor_setter):
+                with suppress(Exception):
+                    cursor = cursor_getter()
+                    if cursor is not None and hasattr(cursor, "setPosition"):
+                        cursor.setPosition(0)
+                        cursor_setter(cursor)
+            for bar_name in ("verticalScrollBar", "horizontalScrollBar"):
+                bar_getter = getattr(widget, bar_name, None)
+                if callable(bar_getter):
+                    with suppress(Exception):
+                        bar = bar_getter()
+                        if bar is not None and hasattr(bar, "setValue") and hasattr(bar, "minimum"):
+                            bar.setValue(int(bar.minimum()))
+            ensure_visible = getattr(widget, "ensureCursorVisible", None)
+            if callable(ensure_visible):
+                with suppress(Exception):
+                    ensure_visible()
         return
     if hasattr(widget, "setText"):
         widget.setText(text)
+        is_read_only = getattr(widget, "isReadOnly", None)
+        if callable(is_read_only) and bool(is_read_only()):
+            set_cursor = getattr(widget, "setCursorPosition", None)
+            if callable(set_cursor):
+                with suppress(Exception):
+                    set_cursor(0)
+            deselect = getattr(widget, "deselect", None)
+            if callable(deselect):
+                with suppress(Exception):
+                    deselect()
 
 
 def _clear_context_label_groups(base_labels, extra_widgets):

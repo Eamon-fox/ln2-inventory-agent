@@ -1310,6 +1310,103 @@ class GuiPanelRegressionTests(_NoStagePreflightMixin, ManagedPathTestCase):
         self.assertFalse(panel.t_ctx_status.isHidden())
         self.assertEqual(tr("operations.recordNotFound"), panel.t_ctx_status.text())
 
+    def test_operations_panel_readonly_context_fields_reset_cursor_to_start(self):
+        panel = self._new_operations_panel()
+        long_cell_line = "K562_" + ("X" * 96)
+        long_note = "\n".join([f"note line {idx}" for idx in range(1, 30)])
+        panel.update_records_cache(
+            {
+                42: {
+                    "id": 42,
+                    "cell_line": long_cell_line,
+                    "note": long_note,
+                    "box": 1,
+                    "position": 30,
+                    "frozen_at": "2026-02-10",
+                }
+            }
+        )
+
+        panel.set_prefill({"box": 1, "position": 30, "record_id": 42})
+        panel.m_from_box.setValue(1)
+        panel.m_from_position.setText("30")
+        panel._refresh_move_record_context()
+
+        self.assertTrue(panel.t_ctx_cell_line.isReadOnly())
+        self.assertEqual(0, panel.t_ctx_cell_line.cursorPosition())
+        self.assertTrue(panel.m_ctx_cell_line.isReadOnly())
+        self.assertEqual(0, panel.m_ctx_cell_line.cursorPosition())
+
+        self.assertTrue(panel.t_ctx_note.isReadOnly())
+        self.assertEqual(0, panel.t_ctx_note.textCursor().position())
+        self.assertTrue(panel.m_ctx_note.isReadOnly())
+        self.assertEqual(0, panel.m_ctx_note.textCursor().position())
+
+    def test_operations_panel_readonly_custom_context_fields_reset_cursor_to_start(self):
+        panel = self._new_operations_panel()
+        panel.apply_meta_update(
+            {
+                "custom_fields": [
+                    {"key": "custom_tag", "label": "Custom Tag", "type": "str"},
+                ]
+            }
+        )
+        panel._refresh_custom_fields = lambda: None
+        long_tag = "TAG_" + ("Y" * 120)
+        panel.update_records_cache(
+            {
+                43: {
+                    "id": 43,
+                    "box": 2,
+                    "position": 11,
+                    "frozen_at": "2026-02-10",
+                    "custom_tag": long_tag,
+                }
+            }
+        )
+
+        panel.set_prefill({"box": 2, "position": 11, "record_id": 43})
+        panel.m_from_box.setValue(2)
+        panel.m_from_position.setText("11")
+        panel._refresh_move_record_context()
+
+        t_custom = panel._takeout_ctx_widgets["custom_tag"][1]
+        m_custom = panel._move_ctx_widgets["custom_tag"][1]
+
+        self.assertIsInstance(t_custom, QLineEdit)
+        self.assertTrue(t_custom.isReadOnly())
+        self.assertEqual(0, t_custom.cursorPosition())
+
+        self.assertIsInstance(m_custom, QLineEdit)
+        self.assertTrue(m_custom.isReadOnly())
+        self.assertEqual(0, m_custom.cursorPosition())
+
+    def test_operations_panel_editable_context_fields_are_not_forced_to_cursor_start(self):
+        panel = self._new_operations_panel()
+        long_cell_line = "HeLa_" + ("Z" * 80)
+        panel.update_records_cache(
+            {
+                44: {
+                    "id": 44,
+                    "cell_line": long_cell_line,
+                    "box": 1,
+                    "position": 1,
+                    "frozen_at": "2026-02-10",
+                }
+            }
+        )
+
+        panel.t_id.setValue(44)
+        panel._refresh_takeout_record_context()
+        container = panel.t_ctx_cell_line.parentWidget()
+        lock_btn = container.findChild(QPushButton, "inlineLockBtn")
+        lock_btn.click()
+        self.assertFalse(panel.t_ctx_cell_line.isReadOnly())
+
+        panel._refresh_takeout_record_context()
+
+        self.assertGreater(panel.t_ctx_cell_line.cursorPosition(), 0)
+
     def test_operations_panel_move_source_change_updates_record_id_and_target_box(self):
         panel = self._new_operations_panel()
         panel.update_records_cache({
