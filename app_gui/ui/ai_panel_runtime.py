@@ -50,6 +50,10 @@ def on_run_ai_agent(self):
 
     self._append_chat("You", prompt)
     self._current_user_prompt = prompt
+    # Record prompt history for Up/Down key recall.
+    if not self._prompt_history or self._prompt_history[-1] != prompt:
+        self._prompt_history.append(prompt)
+    self._prompt_history_index = -1
     self._history_snapshot_from_stream_end = False
     self.ai_prompt.clear()
     self.ai_active_trace_id = None

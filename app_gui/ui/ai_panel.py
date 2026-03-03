@@ -106,6 +106,9 @@ class AIPanel(QWidget):
         self._agent_mode = "default"
         
         self.ai_history = []
+        self._prompt_history = []      # past user prompts (oldest first)
+        self._prompt_history_index = -1  # -1 = not browsing
+        self._prompt_history_stash = ""  # stash current input while browsing
         self.ai_operation_events = []
         self.ai_run_inflight = False
         self.ai_stop_requested = False
@@ -351,6 +354,15 @@ class AIPanel(QWidget):
             self.on_run_ai_agent()
             return True
         if (
+            event.type() == QEvent.KeyPress
+            and obj is self.ai_prompt
+            and event.key() in (Qt.Key_Up, Qt.Key_Down)
+            and not (event.modifiers() & (Qt.ShiftModifier | Qt.ControlModifier | Qt.AltModifier))
+            and self._prompt_history
+        ):
+            if self._browse_prompt_history(event.key() == Qt.Key_Up):
+                return True
+        if (
             event.type() == QEvent.MouseButtonRelease
             and obj is self.ai_chat.viewport()
         ):
@@ -384,6 +396,50 @@ class AIPanel(QWidget):
         lang = get_language()
         pool = PLACEHOLDER_EXAMPLES_ZH if lang.startswith("zh") else PLACEHOLDER_EXAMPLES_EN
         self.ai_prompt.setPlaceholderText(random.choice(pool))
+
+    def _browse_prompt_history(self, going_up):
+        """Recall previous/next user prompt with Up/Down keys.
+
+        Returns True if the event was consumed."""
+        # Only intercept when the input is single-line (no newlines) or empty.
+        current_text = self.ai_prompt.toPlainText()
+        if "\n" in current_text.strip():
+            return False
+
+        history = self._prompt_history
+        if not history:
+            return False
+
+        if self._prompt_history_index == -1:
+            # First press — stash current input
+            self._prompt_history_stash = current_text
+
+        if going_up:
+            if self._prompt_history_index == -1:
+                new_index = len(history) - 1
+            elif self._prompt_history_index > 0:
+                new_index = self._prompt_history_index - 1
+            else:
+                return True  # already at oldest
+        else:
+            if self._prompt_history_index == -1:
+                return False  # not browsing, let default behavior
+            new_index = self._prompt_history_index + 1
+            if new_index >= len(history):
+                # Restore stashed input
+                self._prompt_history_index = -1
+                self.ai_prompt.setPlainText(self._prompt_history_stash)
+                cursor = self.ai_prompt.textCursor()
+                cursor.movePosition(QTextCursor.End)
+                self.ai_prompt.setTextCursor(cursor)
+                return True
+
+        self._prompt_history_index = new_index
+        self.ai_prompt.setPlainText(history[new_index])
+        cursor = self.ai_prompt.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        self.ai_prompt.setTextCursor(cursor)
+        return True
 
     def prepare_import_migration(self, prompt_text, *, focus=True):
         self.enter_migration_mode()
