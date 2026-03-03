@@ -311,7 +311,7 @@ TOOL_CONTRACTS = {
         },
     },
     "validate_migration_output": {
-        "description": "Run strict validation on migrate/output/ln2_inventory.yaml (warnings are blocking).",
+        "description": "Run strict validation on migrate/output/ln2_inventory.yaml (warnings are blocking) and write migrate/output/validation_report.json.",
         "parameters": {
             "type": "object",
             "properties": {},

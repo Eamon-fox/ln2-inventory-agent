@@ -1,6 +1,8 @@
 """Dispatch handlers for AgentToolRunner."""
 
 from contextlib import suppress
+from datetime import datetime, timezone
+import json
 import os
 import re
 
@@ -515,6 +517,36 @@ def _migration_output_yaml_path():
     return os.path.join(root, "migrate", "output", "ln2_inventory.yaml")
 
 
+def _migration_validation_report_path():
+    from lib import inventory_paths as _inventory_paths
+
+    root = os.path.abspath(_inventory_paths.get_install_dir())
+    return os.path.join(root, "migrate", "output", "validation_report.json")
+
+
+def _persist_migration_validation_report(validation_result, candidate_path):
+    report_path = _migration_validation_report_path()
+    payload = {
+        "ok": bool((validation_result or {}).get("ok")),
+        "validated_at_utc": (
+            datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        ),
+        "input_path": str(candidate_path or ""),
+        "validation_tool": "validate_migration_output",
+        "error_code": str((validation_result or {}).get("error_code") or ""),
+        "message": str((validation_result or {}).get("message") or ""),
+        "report": dict((validation_result or {}).get("report") or {}),
+    }
+    try:
+        os.makedirs(os.path.dirname(report_path), exist_ok=True)
+        with open(report_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+        return report_path, True, ""
+    except Exception as exc:
+        return report_path, False, str(exc)
+
+
 def _build_import_target_path(dataset_name):
     return create_managed_dataset_yaml_path(dataset_name)
 
@@ -524,7 +556,14 @@ def _run_validate_migration_output(self, payload, _trace_id=None):
     tool_name = "validate_migration_output"
 
     def _call_validate_migration_output():
-        result = validate_candidate_yaml(_migration_output_yaml_path(), fail_on_warnings=True)
+        candidate_path = _migration_output_yaml_path()
+        result = validate_candidate_yaml(candidate_path, fail_on_warnings=True)
+        result = dict(result or {})
+        report_path, report_written, report_error = _persist_migration_validation_report(result, candidate_path)
+        result["validation_report_path"] = report_path
+        result["validation_report_written"] = bool(report_written)
+        if report_error:
+            result["validation_report_error"] = report_error
         if isinstance(result, dict) and result.get("ok"):
             result = dict(result)
             result["next_step_hint"] = self._msg(

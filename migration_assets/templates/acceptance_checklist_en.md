@@ -6,7 +6,7 @@ At migration start, this template is copied to `migrate/output/migration_checkli
 ## Blocking checks
 
 - [ ] Output file path is exactly `migrate/output/ln2_inventory.yaml`.
-- [ ] Run `python migration_assets/validate.py --input migrate/output/ln2_inventory.yaml` and confirm exit code is 0.
+- [ ] Run `validate_migration_output` and confirm response `ok=true` (do not run `migration_assets/validate.py`).
 - [ ] `migrate/output/expected_schema.json` exists and was finalized before record conversion.
 - [ ] User explicitly approved the field mapping/schema plan after precheck and before conversion.
 - [ ] Top-level keys are exactly `meta` and `inventory`.
@@ -17,7 +17,7 @@ At migration start, this template is copied to `migrate/output/migration_checkli
 - [ ] Every non-empty `cell_line` belongs to `meta.cell_line_options` (or default options when this list is absent).
 - [ ] `id` values are unique positive integers.
 - [ ] Active tubes do not conflict on `(box, position)`.
-- [ ] `frozen_at` and thaw-event dates use `YYYY-MM-DD` and are not future dates.
+- [ ] `frozen_at` and takeout-event dates use `YYYY-MM-DD` and are not future dates.
 - [ ] `position` is integer or `null`; `null` is only used when rules allow it.
 - [ ] `meta.custom_fields`, if present, uses structured objects with `key` + `type` (optional `label` / `required` / `default`).
 - [ ] `meta.custom_fields` keys do not collide with structural keys (`id`, `box`, `position`, `frozen_at`, `thaw_events`, `cell_line`, `note`).

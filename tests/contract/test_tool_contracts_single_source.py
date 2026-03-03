@@ -88,6 +88,8 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
     def test_migration_import_tool_contracts_exist(self):
         self.assertIn("validate_migration_output", TOOL_CONTRACTS)
         self.assertIn("import_migration_output", TOOL_CONTRACTS)
+        validate_desc = str(TOOL_CONTRACTS["validate_migration_output"].get("description") or "")
+        self.assertIn("validation_report.json", validate_desc)
 
         validate_params = TOOL_CONTRACTS["validate_migration_output"]["parameters"]
         self.assertEqual([], validate_params.get("required"))

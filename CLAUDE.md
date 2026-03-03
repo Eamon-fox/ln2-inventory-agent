@@ -62,11 +62,11 @@ Agent (agent/)  ─┘           │                              │
 
 ### Key modules
 
-- **`lib/tool_api.py`** — 13 tool functions (add, thaw, batch_thaw, query, search, stats, recommend, rollback, etc.). Every write goes through validate → backup → write → audit.
+- **`lib/tool_api.py`** — unified tool functions (add, takeout, move, query, search, stats, recommend, rollback, etc.). Every write goes through validate → backup → write → audit.
 - **`lib/config.py`** — Runtime configuration with priority: built-in defaults → `LN2_CONFIG_FILE` env JSON → PyInstaller frozen detection. Exports `YAML_PATH`, `BOX_RANGE`, `POSITION_RANGE`, etc.
 - **`lib/yaml_ops.py`** — YAML I/O with atomic backup-before-write and JSONL audit logging.
 - **`lib/validators.py`** — Date/box/position validation, position-conflict and duplicate-ID checks.
-- **`lib/thaw_parser.py`** — Chinese/English action normalization (取出/takeout, 复苏/thaw, 扔掉/discard, 移动/move).
+- **`lib/takeout_parser.py`** — Chinese/English action normalization (取出/takeout, 复苏/thaw, 扔掉/discard, 移动/move).
 - **`agent/react_agent.py`** — ReAct loop: LLM call → tool dispatch (parallel via ThreadPoolExecutor) → observation → repeat until max_steps or direct answer.
 - **`agent/tool_runner.py`** — Dispatches named tool calls to `tool_api`, with plan-stashing for write operations (human approval required in GUI).
 - **`app_gui/tool_bridge.py`** — Adapter stamping GUI metadata (actor_id) onto tool_api calls.

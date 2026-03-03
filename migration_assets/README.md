@@ -11,7 +11,7 @@ Contents:
 - `templates/*`: migration instructions, runbook, acceptance checklist.
 - `schema/*`: schema/rule references used by migration guidance.
 - `examples/*`: reference output examples.
-- `validate.py`: validation script that loads `lib.import_validation_core` from this repository.
+- Validation runs through the `validate_migration_output` tool (which writes `migrate/output/validation_report.json`).
 
 Runtime writable workspace stays in:
 - `migrate/inputs/*`

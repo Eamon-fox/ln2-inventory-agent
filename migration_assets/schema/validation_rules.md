@@ -32,7 +32,7 @@ The generated file **must** be `migrate/output/ln2_inventory.yaml`.
 
 ## Date rules
 
-- `frozen_at` and thaw-event dates must be `YYYY-MM-DD`.
+- `frozen_at` and takeout-event dates must be `YYYY-MM-DD`.
 - If a source date is an Excel serial number (for example `45072`), convert it to `YYYY-MM-DD` before writing output.
 - Future dates are invalid.
 

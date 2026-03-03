@@ -105,6 +105,9 @@ def test_run_success_stages_inputs_and_hands_off_to_ai():
     assert "APPROVE_MAPPING" in result.ai_prompt
     assert "REVISE_MAPPING" in result.ai_prompt
     assert "validate_migration_output" in result.ai_prompt
+    assert "do not run migration_assets/validate.py" in result.ai_prompt
+    assert "validation_report.json" in result.ai_prompt
+    assert "migration_assets/validate.py --input" not in result.ai_prompt
     assert "import_migration_output" in result.ai_prompt
     assert "target_dataset_name" in result.ai_prompt
     assert "CONFIRM_IMPORT" in result.ai_prompt

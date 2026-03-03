@@ -1,7 +1,7 @@
 """
 Module: test_takeout_parser
 Layer: unit
-Covers: lib/thaw_parser.py
+Covers: lib/takeout_parser.py
 
 测试取出操作解析与别名标准化。
 """

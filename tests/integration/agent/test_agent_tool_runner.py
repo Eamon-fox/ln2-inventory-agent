@@ -219,9 +219,17 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         output_dir.mkdir(parents=True, exist_ok=True)
         return output_dir / "ln2_inventory.yaml"
 
+    def _migration_validation_report_path(self):
+        repo_root = self._repo_root()
+        output_dir = repo_root / "migrate" / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return output_dir / "validation_report.json"
+
     def test_validate_migration_output_returns_file_not_found_when_missing(self):
         candidate = self._migration_output_path()
+        report_path = self._migration_validation_report_path()
         candidate.unlink(missing_ok=True)
+        report_path.unlink(missing_ok=True)
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
 
         response = runner.run("validate_migration_output", {})
@@ -230,9 +238,16 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         self.assertEqual("file_not_found", response.get("error_code"))
         self.assertIn("Candidate YAML not found", str(response.get("message") or ""))
         self.assertIn("migration_checklist.md", str(response.get("_hint") or ""))
+        self.assertEqual(str(report_path), str(response.get("validation_report_path") or ""))
+        self.assertTrue(response.get("validation_report_written"))
+        self.assertTrue(report_path.is_file())
+        persisted = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertFalse(persisted.get("ok"))
+        self.assertEqual("validate_migration_output", persisted.get("validation_tool"))
 
     def test_validate_migration_output_returns_ok_when_output_yaml_is_valid(self):
         candidate = self._migration_output_path()
+        report_path = self._migration_validation_report_path()
         candidate.write_text(
             (
                 "meta:\n"
@@ -253,6 +268,7 @@ class AgentToolRunnerTests(ManagedPathTestCase):
             ),
             encoding="utf-8",
         )
+        report_path.unlink(missing_ok=True)
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
 
         response = runner.run("validate_migration_output", {})
@@ -261,9 +277,16 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         report = response.get("report") or {}
         self.assertEqual(0, report.get("error_count"))
         self.assertIn("migration_checklist.md", str(response.get("next_step_hint") or ""))
+        self.assertEqual(str(report_path), str(response.get("validation_report_path") or ""))
+        self.assertTrue(response.get("validation_report_written"))
+        self.assertTrue(report_path.is_file())
+        persisted = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertTrue(persisted.get("ok"))
+        self.assertEqual(0, ((persisted.get("report") or {}).get("error_count") or 0))
 
     def test_validate_migration_output_validation_failed_hint_mentions_checklist(self):
         candidate = self._migration_output_path()
+        report_path = self._migration_validation_report_path()
         candidate.write_text(
             (
                 "meta:\n"
@@ -283,6 +306,7 @@ class AgentToolRunnerTests(ManagedPathTestCase):
             ),
             encoding="utf-8",
         )
+        report_path.unlink(missing_ok=True)
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
 
         response = runner.run("validate_migration_output", {})
@@ -290,6 +314,12 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         self.assertFalse(response["ok"])
         self.assertEqual("validation_failed", response.get("error_code"))
         self.assertIn("migration_checklist.md", str(response.get("_hint") or ""))
+        self.assertEqual(str(report_path), str(response.get("validation_report_path") or ""))
+        self.assertTrue(response.get("validation_report_written"))
+        self.assertTrue(report_path.is_file())
+        persisted = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertFalse(persisted.get("ok"))
+        self.assertEqual("validation_failed", str(persisted.get("error_code") or ""))
 
     def test_validate_migration_output_accepts_valid_box_tags(self):
         candidate = self._migration_output_path()

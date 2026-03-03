@@ -13,7 +13,7 @@ Static guidance moved to:
 - `migration_assets/templates/*`
 - `migration_assets/schema/*`
 - `migration_assets/examples/*`
-- `migration_assets/validate.py`
+- `validate_migration_output` tool (writes `migrate/output/validation_report.json`)
 
 Required output contract stays unchanged:
 - Output YAML path: `migrate/output/ln2_inventory.yaml`
