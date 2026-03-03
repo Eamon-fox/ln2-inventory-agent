@@ -955,6 +955,48 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
                 --cell-gap: var(--cell-gap-print-mm, 0.6mm);
                 --cell-size: var(--cell-size-print-mm, 7.2mm);
             }}
+
+            /* Ink-saving print overrides: only lighten grid box/cell surfaces. */
+            .box {{
+                background: #f6f8fb;
+                border-color: #9fb2c8;
+            }}
+
+            .box-header-main {{
+                color: #334155;
+            }}
+
+            .box-header-tag {{
+                color: #64748b;
+            }}
+
+            .box-header-num {{
+                border-color: #b8c7d8;
+                background: rgba(255, 255, 255, 0.92);
+                color: #334155;
+            }}
+
+            .cell {{
+                border-color: #8fa4ba;
+            }}
+
+            .cell-occupied {{
+                background-color: transparent !important;
+                color: #334155;
+            }}
+
+            .cell-empty {{
+                background-color: transparent !important;
+                color: #617183;
+            }}
+
+            .cell[data-operation="add"]::after,
+            .cell[data-operation="takeout"]::after,
+            .cell[data-operation="edit"]::after,
+            .cell[data-operation="move-source"]::after,
+            .cell[data-operation="move-target"]::after {{
+                background: rgba(255, 255, 255, 0.82);
+            }}
         }}
 
         @media (max-width: 180mm) {{

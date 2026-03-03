@@ -394,6 +394,31 @@ class RenderOperationSheetWithGridTests(unittest.TestCase):
         self.assertIn("break-inside: auto;", html)
         self.assertIn("page-break-inside: auto;", html)
 
+    def test_print_css_lightens_grid_box_surfaces(self):
+        html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
+        self.assertIn("background: #f6f8fb;", html)
+        self.assertIn("border-color: #9fb2c8;", html)
+        self.assertIn("background-color: transparent !important;", html)
+        self.assertIn("color: #334155;", html)
+        self.assertIn("color: #617183;", html)
+
+    def test_print_css_uses_light_marker_backdrops(self):
+        html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
+        self.assertIn("background: rgba(255, 255, 255, 0.82);", html)
+
+    def test_operation_cell_borders_and_labels_remain_colored(self):
+        html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
+        self.assertIn('.cell[data-operation="add"] {', html)
+        self.assertIn("border: 2px solid #22c55e;", html)
+        self.assertIn('.cell[data-operation="edit"]::after', html)
+        self.assertIn('content: "EDIT";', html)
+
+    def test_summary_chips_keep_existing_palette(self):
+        html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
+        self.assertIn('style="background: #fef3c7;">Takeout:', html)
+        self.assertIn('style="background: #dbeafe;">Move:', html)
+        self.assertIn('style="background: #ede9fe;">Add:', html)
+
     def test_grid_header_emphasizes_box_number(self):
         html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
         self.assertIn('class="box-header-main">BOX 1</span>', html)
