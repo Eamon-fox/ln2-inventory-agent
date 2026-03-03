@@ -313,6 +313,23 @@ class RenderOperationSheetTests(unittest.TestCase):
         html = render_operation_sheet([item])
         self.assertIn("my special note", html)
 
+    def test_sample_label_falls_back_to_item_label(self):
+        item = _base_item(
+            label="declared-label",
+            payload={},
+            cell_line="UNDECLARED_SHOULD_NOT_APPEAR",
+            short_name="UNDECLARED_SHORT_SHOULD_NOT_APPEAR",
+        )
+        html = render_operation_sheet([item])
+        self.assertIn("declared-label", html)
+        self.assertNotIn("UNDECLARED_SHOULD_NOT_APPEAR", html)
+        self.assertNotIn("UNDECLARED_SHORT_SHOULD_NOT_APPEAR", html)
+
+    def test_sample_label_uses_dash_when_label_and_fields_empty(self):
+        item = _base_item(label="", payload={})
+        html = render_operation_sheet([item])
+        self.assertIn('<div class="sample-name">-</div>', html)
+
 
 class RenderOperationSheetWithGridTests(unittest.TestCase):
     def test_print_css_has_a4_page_rule(self):

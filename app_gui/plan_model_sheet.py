@@ -145,15 +145,9 @@ def _extract_sample_info(item):
             text = str(v or "").strip()
             if text:
                 user_vals.append(text)
-    # Fallback to top-level keys on item/payload (legacy compat)
-    if not user_vals:
-        for src in (item, payload):
-            for k in ("cell_line", "short_name"):
-                text = str(src.get(k) or "").strip()
-                if text and text not in user_vals:
-                    user_vals.append(text)
+    fallback_label = str(item.get("label") or "").strip()
     return {
-        "label": " / ".join(user_vals[:2]) if user_vals else "",
+        "label": " / ".join(user_vals[:2]) if user_vals else fallback_label,
         "frozen_at": fields.get("frozen_at") or item.get("frozen_at") or payload.get("frozen_at") or "",
     }
 
@@ -206,7 +200,7 @@ def render_operation_sheet(items):
             sample = _extract_sample_info(item)
             rid = item.get("record_id")
             
-            sample_label = sample['label'] or item.get("label", "-")
+            sample_label = str(sample.get("label") or "").strip() or "-"
             
             _payload = item.get("payload") or {}
             _fields = _payload.get("fields") or {}

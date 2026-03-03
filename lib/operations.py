@@ -30,7 +30,9 @@ def check_position_conflicts(records, box, positions):
         positions: List of positions to check
 
     Returns:
-        list: List of conflict dicts with keys: id, short_name, position
+        list: List of conflict dicts with keys: id, short_name, position.
+              ``short_name`` is a legacy compatibility field retained for
+              existing callers.
     """
     conflicts = []
     for rec in records:

@@ -6,19 +6,6 @@ import os
 from .custom_fields import get_effective_fields
 
 
-CORE_EXPORT_COLUMNS = [
-    "id",
-    "cell_line",
-    "short_name",
-    "box",
-    "position",
-    "frozen_at",
-    "plasmid_name",
-    "plasmid_id",
-    "note",
-]
-
-
 def _safe_int(value, default):
     try:
         return int(value)
