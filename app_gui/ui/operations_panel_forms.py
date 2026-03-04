@@ -190,6 +190,9 @@ def _make_editable_field(
     def on_confirm():
         if bool(getattr(self, "_guard_migration_write_action", lambda: False)()):
             return
+        from app_gui.ui import operations_panel_context as _ops_context
+        from app_gui.ui import operations_panel_execution as _ops_exec
+
         rid = record_id_getter()
         new_value = _read_text_widget_value(field).strip() or None
         options, _allow_empty = _apply_choices()
@@ -197,7 +200,7 @@ def _make_editable_field(
             canonical = self._canonicalize_choice(new_value, options)
             if canonical is not None:
                 new_value = canonical
-        record = self._lookup_record(rid)
+        record = _ops_context._lookup_record(self, rid)
         if not record:
             self.status_message.emit(tr("operations.recordNotFound"), 3000, "error")
             return
@@ -224,7 +227,8 @@ def _make_editable_field(
             field.setReadOnly(True)
             lock_btn.setText("\U0001F512")
             confirm_btn.setVisible(False)
-            self._publish_system_notice(
+            _ops_exec._publish_system_notice(
+                self,
                 code="record.edit.saved",
                 text=tr("operations.editFieldSaved", field=field_name, before=old_str, after=new_str),
                 level="success",
@@ -239,7 +243,8 @@ def _make_editable_field(
             self.operation_completed.emit(True)
         else:
             error_text = localize_error_payload(result)
-            self._publish_system_notice(
+            _ops_exec._publish_system_notice(
+                self,
                 code="record.edit.failed",
                 text=tr("operations.editFieldFailed", error=error_text),
                 level="error",
@@ -300,7 +305,8 @@ def _build_add_tab(self):
     self.a_cell_line = None
     self.a_note = None
 
-    self.a_apply_btn, a_btn_row = self._build_stage_action_button(
+    self.a_apply_btn, a_btn_row = _build_stage_action_button(
+        self,
         tr("operations.add"),
         self.on_add_entry,
     )
@@ -388,6 +394,9 @@ def _rebuild_custom_add_fields(self, custom_fields):
 
 # --- TAKEOUT TAB ---
 def _build_takeout_tab(self):
+    from app_gui.ui import operations_panel_context as _ops_context
+    from app_gui.ui import operations_panel_staging as _ops_staging
+
     tab = QWidget()
     layout = QVBoxLayout(tab)
 
@@ -402,7 +411,7 @@ def _build_takeout_tab(self):
     self.t_from_box = QSpinBox()
     self.t_from_box.setRange(1, 99)
     self.t_from_box.setFixedWidth(60)
-    self.t_from_box.valueChanged.connect(self._refresh_takeout_record_context)
+    self.t_from_box.valueChanged.connect(lambda *_args: _ops_context._refresh_takeout_record_context(self))
     source_row.addWidget(self.t_from_box)
 
     colon_label = QLabel(":")
@@ -411,7 +420,7 @@ def _build_takeout_tab(self):
 
     self.t_from_position = QLineEdit()
     self.t_from_position.setFixedWidth(60)
-    self.t_from_position.textChanged.connect(self._refresh_takeout_record_context)
+    self.t_from_position.textChanged.connect(lambda *_args: _ops_context._refresh_takeout_record_context(self))
     source_row.addWidget(self.t_from_position)
 
     source_row.addStretch()
@@ -423,20 +432,22 @@ def _build_takeout_tab(self):
     self.t_id.setRange(1, 999999)
     self.t_id.setVisible(False)
     # Connect signal to refresh context when ID is changed (for reverse lookup)
-    self.t_id.valueChanged.connect(self._refresh_takeout_record_context)
+    self.t_id.valueChanged.connect(lambda *_args: _ops_context._refresh_takeout_record_context(self))
 
-    _t_rid = self._takeout_record_id
-    _t_refresh = self._refresh_takeout_record_context
+    _t_rid = lambda: self.t_id.value()
+    _t_refresh = lambda: _ops_context._refresh_takeout_record_context(self)
 
     # Editable context fields -?frozen_at/note are core fields.
-    t_frozen_w, self.t_ctx_frozen = self._make_editable_field("frozen_at", _t_rid, _t_refresh)
-    t_note_w, self.t_ctx_note = self._make_editable_field(
+    t_frozen_w, self.t_ctx_frozen = _make_editable_field(self, "frozen_at", _t_rid, _t_refresh)
+    t_note_w, self.t_ctx_note = _make_editable_field(
+        self,
         "note",
         _t_rid,
         _t_refresh,
         multiline=True,
     )
-    t_cell_line_w, self.t_ctx_cell_line = self._make_editable_field(
+    t_cell_line_w, self.t_ctx_cell_line = _make_editable_field(
+        self,
         "cell_line",
         _t_rid,
         _t_refresh,
@@ -448,10 +459,10 @@ def _build_takeout_tab(self):
     self._takeout_ctx_widgets = {}  # key -> (container_widget, label_widget)
 
     # Read-only context fields (not editable via inline edit) - kept for compatibility
-    self.t_ctx_box = self._make_readonly_field()
-    self.t_ctx_position = self._make_readonly_field()
-    self.t_ctx_events = self._make_readonly_history_label()
-    self.t_ctx_source = self._make_readonly_field()
+    self.t_ctx_box = _make_readonly_field(self)
+    self.t_ctx_position = _make_readonly_field(self)
+    self.t_ctx_events = _make_readonly_history_label(self)
+    self.t_ctx_source = _make_readonly_field(self)
 
     # User fields placeholder -?will be rebuilt dynamically
     self._takeout_ctx_insert_row = form.rowCount()
@@ -489,9 +500,10 @@ def _build_takeout_tab(self):
     self.t_action.addItem(tr("overview.takeout"), "Takeout")
 
     # Action button at bottom
-    self.t_takeout_btn, btn_row = self._build_stage_action_button(
+    self.t_takeout_btn, btn_row = _build_stage_action_button(
+        self,
         tr("overview.takeout"),
-        lambda: self._record_takeout_with_action("Takeout"),
+        lambda: _ops_staging._record_takeout_with_action(self, "Takeout"),
     )
     # Keep t_apply_btn as alias for the first button (compat)
     self.t_apply_btn = self.t_takeout_btn
@@ -500,12 +512,14 @@ def _build_takeout_tab(self):
     layout.addLayout(form)
 
     # Keep batch controls instantiated for programmatic/API paths, but hide from manual UI.
-    self._init_hidden_batch_takeout_controls(tab)
+    _init_hidden_batch_takeout_controls(self, tab)
     layout.addStretch(1)
     return tab
 
 # --- MOVE TAB ---
 def _build_move_tab(self):
+    from app_gui.ui import operations_panel_context as _ops_context
+
     tab = QWidget()
     layout = QVBoxLayout(tab)
 
@@ -520,7 +534,7 @@ def _build_move_tab(self):
     self.m_from_box = QSpinBox()
     self.m_from_box.setRange(1, 99)
     self.m_from_box.setFixedWidth(60)
-    self.m_from_box.valueChanged.connect(self._on_move_source_changed)
+    self.m_from_box.valueChanged.connect(lambda *_args: _ops_context._on_move_source_changed(self))
     source_row.addWidget(self.m_from_box)
 
     colon_label = QLabel(":")
@@ -529,7 +543,7 @@ def _build_move_tab(self):
 
     self.m_from_position = QLineEdit()
     self.m_from_position.setFixedWidth(60)
-    self.m_from_position.textChanged.connect(self._on_move_source_changed)
+    self.m_from_position.textChanged.connect(lambda *_args: _ops_context._on_move_source_changed(self))
     source_row.addWidget(self.m_from_position)
 
     source_row.addStretch()
@@ -564,18 +578,20 @@ def _build_move_tab(self):
     self.m_id.setRange(1, 999999)
     self.m_id.setVisible(False)
 
-    _m_rid = self._move_record_id
-    _m_refresh = self._refresh_move_record_context
+    _m_rid = lambda: self.m_id.value()
+    _m_refresh = lambda: _ops_context._refresh_move_record_context(self)
 
     # Editable context fields -?frozen_at/note are core fields.
-    m_frozen_w, self.m_ctx_frozen = self._make_editable_field("frozen_at", _m_rid, _m_refresh)
-    m_note_w, self.m_ctx_note = self._make_editable_field(
+    m_frozen_w, self.m_ctx_frozen = _make_editable_field(self, "frozen_at", _m_rid, _m_refresh)
+    m_note_w, self.m_ctx_note = _make_editable_field(
+        self,
         "note",
         _m_rid,
         _m_refresh,
         multiline=True,
     )
-    m_cell_line_w, self.m_ctx_cell_line = self._make_editable_field(
+    m_cell_line_w, self.m_ctx_cell_line = _make_editable_field(
+        self,
         "cell_line",
         _m_rid,
         _m_refresh,
@@ -587,9 +603,9 @@ def _build_move_tab(self):
     self._move_ctx_widgets = {}  # key -> (container_widget, label_widget)
 
     # Read-only context fields (not editable via inline edit) - kept for compat
-    self.m_ctx_box = self._make_readonly_field()
-    self.m_ctx_position = self._make_readonly_field()
-    self.m_ctx_events = self._make_readonly_history_label()
+    self.m_ctx_box = _make_readonly_field(self)
+    self.m_ctx_position = _make_readonly_field(self)
+    self.m_ctx_events = _make_readonly_history_label(self)
 
     # User fields placeholder -?will be rebuilt dynamically
     self._move_ctx_insert_row = form.rowCount()
@@ -620,7 +636,8 @@ def _build_move_tab(self):
     self.m_ctx_check = QLabel()  # hidden, kept for refresh method compat
 
     # Action button at bottom
-    self.m_apply_btn, m_btn_row = self._build_stage_action_button(
+    self.m_apply_btn, m_btn_row = _build_stage_action_button(
+        self,
         tr("operations.move"),
         self.on_record_move,
     )
@@ -629,7 +646,7 @@ def _build_move_tab(self):
     layout.addLayout(form)
 
     # Keep batch controls instantiated for programmatic/API paths, but hide from manual UI.
-    self._init_hidden_batch_move_controls(tab)
+    _init_hidden_batch_move_controls(self, tab)
     layout.addStretch(1)
     return tab
 
@@ -667,7 +684,7 @@ def _init_hidden_batch_takeout_controls(self, parent):
 def _init_hidden_batch_move_controls(self, parent):
     self.m_batch_toggle_btn = QPushButton(tr("operations.showBatchMove"), parent)
     self.m_batch_toggle_btn.setCheckable(True)
-    self.m_batch_toggle_btn.toggled.connect(self._on_toggle_move_batch_section)
+    self.m_batch_toggle_btn.toggled.connect(lambda checked: _on_toggle_move_batch_section(self, checked))
     self.m_batch_toggle_btn.setVisible(False)
 
     self.m_batch_group = QGroupBox(tr("operations.batchMove"), parent)
@@ -694,6 +711,8 @@ def _init_hidden_batch_move_controls(self, parent):
 
 # --- PLAN TAB ---
 def _build_plan_tab(self):
+    from app_gui.ui import operations_panel_plan_toolbar as _ops_plan_toolbar
+
     tab = QWidget()
     layout = QVBoxLayout(tab)
     layout.setContentsMargins(9, 0, 9, 0)
@@ -707,7 +726,8 @@ def _build_plan_tab(self):
     self.plan_table = QTableWidget()
     self.plan_table.setObjectName("operationsPlanTable")
     self.plan_table.setMouseTracking(True)
-    self._setup_table(
+    _setup_table(
+        self,
         self.plan_table,
         [
             tr("operations.colAction"),
@@ -720,7 +740,7 @@ def _build_plan_tab(self):
     )
     self.plan_table.setVisible(False)
     self.plan_table.selectionModel().selectionChanged.connect(
-        lambda *_args: self._refresh_plan_toolbar_state()
+        lambda *_args: _ops_plan_toolbar._refresh_plan_toolbar_state(self)
     )
     self.plan_table.setContextMenuPolicy(Qt.CustomContextMenu)
     self.plan_table.customContextMenuRequested.connect(self.on_plan_table_context_menu)
@@ -735,7 +755,7 @@ def _build_plan_tab(self):
         )
     )
     self.plan_exec_btn.setIconSize(QSize(16, 16))
-    self._style_execute_button(self.plan_exec_btn)
+    _style_execute_button(self, self.plan_exec_btn)
     self.plan_exec_btn.clicked.connect(self.execute_plan)
     self.plan_exec_btn.setEnabled(False)
     toolbar.addWidget(self.plan_exec_btn)
@@ -782,7 +802,7 @@ def _style_stage_button(self, btn):
 def _build_stage_action_button(self, label, callback):
     """Create a standardized primary action button row for operation forms."""
     btn = QPushButton(label)
-    self._style_stage_button(btn)
+    _style_stage_button(self, btn)
     btn.clicked.connect(callback)
     row = QHBoxLayout()
     row.addWidget(btn)

@@ -20,6 +20,12 @@ else:
         sys.path.insert(0, ROOT)
 
 from app_gui.tool_bridge import GuiToolBridge
+from app_gui.application import (
+    DatasetUseCase,
+    EventBus,
+    MigrationModeUseCase,
+    PlanExecutionUseCase,
+)
 from app_gui.gui_config import (
     DEFAULT_CONFIG_FILE,
     DEFAULT_MAX_STEPS,
@@ -70,6 +76,7 @@ from app_gui.main_window_flows import (
 from app_gui.dataset_session import DatasetSessionController
 from app_gui.import_journey import ImportJourneyService
 from app_gui.migration_workspace import MigrationWorkspaceService
+from lib.domain.events import DatasetSwitched, MigrationModeChanged, OperationExecuted
 
 APP_VERSION = "1.3.2"
 APP_RELEASE_URL = "https://github.com/Eamon-fox/snowfox/releases"
@@ -259,10 +266,31 @@ class MainWindow(QMainWindow):
         save_gui_config(self.gui_config)
 
         self.setup_ui()
+        self._app_event_bus = EventBus()
+        self._dataset_use_case = DatasetUseCase(
+            normalize_yaml_path=_normalize_inventory_yaml_path,
+            assert_allowed_path=assert_allowed_inventory_yaml_path,
+            save_gui_config=save_gui_config,
+            event_bus=self._app_event_bus,
+        )
+        self._migration_mode_use_case = MigrationModeUseCase(
+            event_bus=self._app_event_bus,
+        )
+        self._plan_execution_use_case = PlanExecutionUseCase(
+            event_bus=self._app_event_bus,
+        )
         self._dataset_session = DatasetSessionController(
             self,
-            normalize_yaml_path=_normalize_inventory_yaml_path,
-            publish_system_notice=self._emit_system_notice,
+            dataset_use_case=self._dataset_use_case,
+        )
+        self._app_event_bus.subscribe(DatasetSwitched, self._on_dataset_switched_event)
+        self._app_event_bus.subscribe(
+            MigrationModeChanged,
+            lambda event: self._on_migration_mode_changed(bool(getattr(event, "enabled", False))),
+        )
+        self._app_event_bus.subscribe(
+            OperationExecuted,
+            lambda event: self.on_operation_completed(bool(getattr(event, "success", False))),
         )
         self._import_journey = ImportJourneyService(
             workspace_service=MigrationWorkspaceService(),
@@ -342,6 +370,16 @@ class MainWindow(QMainWindow):
         new_dataset_btn.setAccessibleName(tr("main.new"))
         new_dataset_btn.clicked.connect(self.on_create_new_dataset)
         top.addWidget(new_dataset_btn)
+
+        import_dataset_btn = QPushButton()
+        import_dataset_btn.setObjectName("mainToolbarIconBtn")
+        import_dataset_btn.setIcon(get_icon(Icons.FOLDER_OPEN))
+        import_dataset_btn.setIconSize(QSize(16, 16))
+        import_dataset_btn.setFixedSize(28, 28)
+        import_dataset_btn.setToolTip(tr("main.importExistingDataTitle"))
+        import_dataset_btn.setAccessibleName(tr("main.importExistingDataTitle"))
+        import_dataset_btn.clicked.connect(self.on_import_existing_data)
+        top.addWidget(import_dataset_btn)
 
         audit_log_btn = QPushButton()
         audit_log_btn.setObjectName("mainToolbarIconBtn")
@@ -437,15 +475,32 @@ class MainWindow(QMainWindow):
         self.overview_panel.operation_event.connect(self.operations_panel.emit_external_operation_event)
 
         # Operations -> Overview (refresh after execution)
-        self.operations_panel.operation_completed.connect(self.on_operation_completed)
+        self.operations_panel.operation_completed.connect(
+            lambda success: self._dispatch_operation_completed(
+                success,
+                operation="plan_execute",
+                source="operations_panel",
+            )
+        )
 
         # Operations -> AI (operation events for context)
         self.operations_panel.operation_event.connect(self.ai_panel.on_operation_event)
 
         # AI -> Operations: agent writes to plan_store directly;
         # on_change callback triggers GUI refresh (see _wire_plan_store below).
-        self.ai_panel.operation_completed.connect(self.on_operation_completed)
-        self.ai_panel.migration_mode_changed.connect(self._on_migration_mode_changed)
+        self.ai_panel.operation_completed.connect(
+            lambda success: self._dispatch_operation_completed(
+                success,
+                operation="ai_operation",
+                source="ai_panel",
+            )
+        )
+        self.ai_panel.migration_mode_changed.connect(
+            lambda enabled: self._dispatch_migration_mode_change(
+                enabled,
+                reason="ai_panel",
+            )
+        )
 
         # Plan store -> Operations panel (thread-safe refresh)
         self._wire_plan_store()
@@ -546,6 +601,54 @@ class MainWindow(QMainWindow):
 
     def on_operation_completed(self, success):
         self._state_flow.on_operation_completed(success)
+
+    def _on_dataset_switched_event(self, event):
+        target = str(getattr(event, "new_path", "") or getattr(self, "current_yaml_path", "") or "")
+        old_abs = os.path.abspath(str(getattr(event, "old_path", "") or ""))
+        new_abs = os.path.abspath(target) if target else ""
+
+        for owner, method_name in (
+            (getattr(self, "operations_panel", None), "reset_for_dataset_switch"),
+            (self, "_update_dataset_label"),
+            (getattr(self, "overview_panel", None), "refresh"),
+        ):
+            callback = getattr(owner, method_name, None) if owner is not None else None
+            if callable(callback):
+                callback()
+
+        self._emit_system_notice(
+            code="dataset.switch",
+            text=f"{tr('settings.datasetSwitch')} {target}",
+            level="info",
+            source="main_window",
+            timeout_ms=3000,
+            data={
+                "reason": str(getattr(event, "reason", "manual_switch") or "manual_switch"),
+                "from_path": old_abs,
+                "to_path": new_abs,
+            },
+        )
+
+    def _dispatch_operation_completed(self, success, *, operation, source):
+        use_case = getattr(self, "_plan_execution_use_case", None)
+        if use_case is None:
+            self.on_operation_completed(success)
+            return
+        use_case.report_operation_completed(
+            success=bool(success),
+            operation=str(operation or "plan_execute"),
+            source=str(source or "ui"),
+        )
+
+    def _dispatch_migration_mode_change(self, enabled, *, reason):
+        use_case = getattr(self, "_migration_mode_use_case", None)
+        if use_case is None:
+            self._on_migration_mode_changed(enabled)
+            return
+        use_case.set_mode(
+            enabled=bool(enabled),
+            reason=str(reason or "ai_panel"),
+        )
 
     def _on_migration_mode_changed(self, enabled):
         locked = bool(enabled)

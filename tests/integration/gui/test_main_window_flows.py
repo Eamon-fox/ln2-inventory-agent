@@ -921,6 +921,124 @@ def test_main_window_update_dataset_label_also_refreshes_home_switcher():
     window._refresh_home_dataset_choices.assert_called_once_with(selected_yaml=current_path)
 
 
+def test_main_window_dataset_switched_event_refreshes_and_emits_notice():
+    from app_gui.main import MainWindow
+
+    old_path = os.path.abspath("D:/inventories/old/inventory.yaml")
+    new_path = os.path.abspath("D:/inventories/new/inventory.yaml")
+    window = MainWindow.__new__(MainWindow)
+    window.current_yaml_path = new_path
+    window.operations_panel = SimpleNamespace(reset_for_dataset_switch=MagicMock())
+    window.overview_panel = SimpleNamespace(refresh=MagicMock())
+    window._update_dataset_label = MagicMock()
+    window._emit_system_notice = MagicMock()
+
+    MainWindow._on_dataset_switched_event(
+        window,
+        SimpleNamespace(old_path=old_path, new_path=new_path, reason="manual_switch"),
+    )
+
+    window.operations_panel.reset_for_dataset_switch.assert_called_once_with()
+    window._update_dataset_label.assert_called_once_with()
+    window.overview_panel.refresh.assert_called_once_with()
+    window._emit_system_notice.assert_called_once()
+    notice_kwargs = window._emit_system_notice.call_args.kwargs
+    assert notice_kwargs["code"] == "dataset.switch"
+    assert notice_kwargs["source"] == "main_window"
+    assert notice_kwargs["data"]["reason"] == "manual_switch"
+    assert notice_kwargs["data"]["from_path"] == old_path
+    assert notice_kwargs["data"]["to_path"] == new_path
+
+
+def test_main_window_dataset_switched_event_tolerates_missing_optional_hooks():
+    from app_gui.main import MainWindow
+
+    new_path = os.path.abspath("D:/inventories/new/inventory.yaml")
+    window = MainWindow.__new__(MainWindow)
+    window.current_yaml_path = new_path
+    window.operations_panel = SimpleNamespace()
+    window.overview_panel = SimpleNamespace()
+    window._emit_system_notice = MagicMock()
+
+    MainWindow._on_dataset_switched_event(
+        window,
+        SimpleNamespace(old_path="", new_path="", reason="import_success"),
+    )
+
+    window._emit_system_notice.assert_called_once()
+    notice_kwargs = window._emit_system_notice.call_args.kwargs
+    assert notice_kwargs["data"]["reason"] == "import_success"
+    assert notice_kwargs["data"]["to_path"] == new_path
+
+
+@pytest.mark.parametrize(
+    "success,operation,source",
+    [
+        (True, "plan_execute", "operations_panel"),
+        (False, "ai_operation", "ai_panel"),
+    ],
+)
+def test_main_window_operation_completed_signal_routes_through_use_case(success, operation, source):
+    from app_gui.main import MainWindow
+
+    window = MainWindow.__new__(MainWindow)
+    window._plan_execution_use_case = SimpleNamespace(report_operation_completed=MagicMock())
+
+    MainWindow._dispatch_operation_completed(
+        window,
+        success,
+        operation=operation,
+        source=source,
+    )
+
+    window._plan_execution_use_case.report_operation_completed.assert_called_once_with(
+        success=success,
+        operation=operation,
+        source=source,
+    )
+
+
+def test_main_window_operation_completed_dispatch_falls_back_to_state_flow():
+    from app_gui.main import MainWindow
+
+    window = MainWindow.__new__(MainWindow)
+    window._state_flow = SimpleNamespace(on_operation_completed=MagicMock())
+
+    MainWindow._dispatch_operation_completed(
+        window,
+        True,
+        operation="plan_execute",
+        source="operations_panel",
+    )
+
+    window._state_flow.on_operation_completed.assert_called_once_with(True)
+
+
+def test_main_window_ai_migration_mode_signal_routes_through_use_case():
+    from app_gui.main import MainWindow
+
+    window = MainWindow.__new__(MainWindow)
+    window._migration_mode_use_case = SimpleNamespace(set_mode=MagicMock())
+
+    MainWindow._dispatch_migration_mode_change(window, True, reason="ai_panel")
+
+    window._migration_mode_use_case.set_mode.assert_called_once_with(
+        enabled=True,
+        reason="ai_panel",
+    )
+
+
+def test_main_window_migration_mode_dispatch_falls_back_to_existing_handler():
+    from app_gui.main import MainWindow
+
+    window = MainWindow.__new__(MainWindow)
+    window._on_migration_mode_changed = MagicMock()
+
+    MainWindow._dispatch_migration_mode_change(window, False, reason="ai_panel")
+
+    window._on_migration_mode_changed.assert_called_once_with(False)
+
+
 def test_main_window_migration_mode_change_forwards_to_operations_panel():
     from app_gui.main import MainWindow
 

@@ -13,6 +13,8 @@
 - test_tool_status_formatter.py - Tool status output formatting. <!-- 工具状态消息格式化 -->
 - test_config.py - Config loading, overrides, and defaults. <!-- 配置加载、覆盖与默认值 -->
 - test_error_localizer.py - Error code to localized message mapping. <!-- 错误码到本地化消息的映射 -->
+- test_event_bus_dispatch.py - Event bus dispatch, unsubscribe, and failure isolation. <!-- 事件总线分发、取消订阅与异常隔离 -->
+- test_dataset_use_case.py - Dataset/migration/operation application use cases. <!-- 数据集切换与迁移/执行状态应用层用例 -->
 
 ## integration/ — 多模块协作，读写真实文件
 
@@ -79,6 +81,7 @@
 - test_i18n_hygiene.py - Translation key hygiene and coverage. <!-- 翻译键卫生与中英文覆盖完整性 -->
 - test_path_policy.py - Path escape and security policy enforcement. <!-- 路径逃逸与安全策略执行 -->
 - test_installer_windows_script.py - Windows installer script config preservation. <!-- Windows 安装脚本配置保留检查 -->
+- test_architecture_dependencies.py - Layer dependency boundaries for domain/UI modules. <!-- domain/UI 分层依赖边界约束 -->
 
 ## 新增测试规则
 

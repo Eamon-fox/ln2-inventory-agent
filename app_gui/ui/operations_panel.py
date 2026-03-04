@@ -15,6 +15,7 @@ from app_gui.ui.theme import (
 )
 from app_gui.ui.icons import get_icon, Icons
 from app_gui.ui.watermark_overlay import SvgWatermarkLabel
+from app_gui.application import PlanRunUseCase
 from app_gui.gui_config import load_gui_config
 from app_gui.i18n import tr
 from lib.position_fmt import pos_to_display
@@ -23,12 +24,10 @@ from lib.plan_store import PlanStore
 from app_gui.ui import operations_panel_execution as _ops_exec
 from app_gui.ui import operations_panel_actions as _ops_actions
 from app_gui.ui import operations_panel_plan_table as _ops_plan_table
-from app_gui.ui import operations_panel_results as _ops_results
 from app_gui.ui import operations_panel_plan_store as _ops_plan_store
 from app_gui.ui import operations_panel_forms as _ops_forms
 from app_gui.ui import operations_panel_context as _ops_context
 from app_gui.ui import operations_panel_staging as _ops_staging
-from app_gui.ui import operations_panel_confirm as _ops_confirm
 from app_gui.ui import operations_panel_plan_toolbar as _ops_plan_toolbar
 
 # Keep these Qt symbols imported here as stable monkeypatch targets used by
@@ -152,6 +151,7 @@ class OperationsPanel(QWidget):
         self._current_custom_fields = []
         self._current_meta = {}
         self._current_layout = {}
+        self._plan_run_use_case = PlanRunUseCase()
 
         self.setup_ui()
         # Initialize dynamic fields with a permissive startup profile so the
@@ -179,7 +179,7 @@ class OperationsPanel(QWidget):
         layout.addWidget(self._build_operation_stack(), 2)
         layout.addLayout(self._build_feedback_row())
         # Plan Queue is always visible to reduce context switching.
-        self.plan_panel = self._build_plan_tab()
+        self.plan_panel = _ops_forms._build_plan_tab(self)
         layout.addWidget(self.plan_panel, 3)
         self._op_watermark_host = self.plan_panel
         self._op_watermark = self._create_operation_watermark(self.plan_panel)
@@ -218,9 +218,9 @@ class OperationsPanel(QWidget):
 
         self.op_stack = QStackedWidget(host)
         self.op_mode_indexes = {
-            "add": self.op_stack.addWidget(self._build_add_tab()),
-            "takeout": self.op_stack.addWidget(self._build_takeout_tab()),
-            "move": self.op_stack.addWidget(self._build_move_tab()),
+            "add": self.op_stack.addWidget(_ops_forms._build_add_tab(self)),
+            "takeout": self.op_stack.addWidget(_ops_forms._build_takeout_tab(self)),
+            "move": self.op_stack.addWidget(_ops_forms._build_move_tab(self)),
         }
         host_layout.addWidget(self.op_stack)
         return host
@@ -436,7 +436,7 @@ class OperationsPanel(QWidget):
     def _on_hide_result_card(self):
         """Hide last result card and dismiss quick actions."""
         self.result_card.setVisible(False)
-        self._disable_undo(clear_last_executed=True)
+        _ops_actions._disable_undo(self, clear_last_executed=True)
 
     def _sync_result_actions(self):
         """Sync visibility/enabled state of result-card action buttons."""
@@ -449,7 +449,7 @@ class OperationsPanel(QWidget):
         self.undo_btn.setVisible(has_undo)
         self.undo_btn.setEnabled(has_undo)
         if has_undo and self._undo_remaining > 0:
-            self._update_undo_button_text()
+            _ops_actions._update_undo_button_text(self)
         else:
             self.undo_btn.setText(tr("operations.undoLast"))
 
@@ -492,12 +492,8 @@ class OperationsPanel(QWidget):
                     widget.setEnabled(False)
             return
 
-        update_exec_fn = getattr(self, "_update_execute_button_state", None)
-        if callable(update_exec_fn):
-            update_exec_fn()
-        refresh_toolbar_fn = getattr(self, "_refresh_plan_toolbar_state", None)
-        if callable(refresh_toolbar_fn):
-            refresh_toolbar_fn()
+        _ops_plan_store._update_execute_button_state(self)
+        _ops_plan_toolbar._refresh_plan_toolbar_state(self)
         self._sync_result_actions()
 
     def set_migration_mode(self, enabled):
@@ -578,8 +574,8 @@ class OperationsPanel(QWidget):
             normalized[rid_int] = normalized_record
 
         self.records_cache = normalized
-        self._refresh_takeout_record_context()
-        self._refresh_move_record_context()
+        _ops_context._refresh_takeout_record_context(self)
+        _ops_context._refresh_move_record_context(self)
 
     def _refresh_custom_fields(self):
         """Reload custom field definitions from YAML meta and rebuild dynamic forms."""
@@ -610,21 +606,21 @@ class OperationsPanel(QWidget):
         self._current_layout = dict((meta or {}).get("box_layout") or {})
         custom_fields = get_effective_fields(meta)
         self._current_custom_fields = custom_fields
-        self._rebuild_custom_add_fields(custom_fields)
-        self._rebuild_ctx_user_fields("takeout", custom_fields)
-        self._rebuild_ctx_user_fields("move", custom_fields)
+        _ops_forms._rebuild_custom_add_fields(self, custom_fields)
+        _ops_context._rebuild_ctx_user_fields(self, "takeout", custom_fields)
+        _ops_context._rebuild_ctx_user_fields(self, "move", custom_fields)
         self._sync_cell_line_context_visibility(custom_fields)
         # Refresh dropdown options for all option-bearing fields
         self._refresh_field_options(meta)
 
         # Re-evaluate staged plan immediately against latest rules.
         if self._plan_store.count() > 0:
-            self._run_plan_preflight(trigger="meta_updated")
+            _ops_plan_store._run_plan_preflight(self, trigger="meta_updated")
         else:
             self._plan_preflight_report = None
             self._plan_validation_by_key = {}
-            self._refresh_plan_table()
-            self._update_execute_button_state()
+            _ops_plan_table._refresh_plan_table(self)
+            _ops_plan_store._update_execute_button_state(self)
 
     def _sync_cell_line_context_visibility(self, custom_fields):
         has_cell_line = any(
@@ -930,10 +926,6 @@ class OperationsPanel(QWidget):
                         show_all_popup=True,
                     )
 
-    _takeout_record_id = _ops_context._takeout_record_id
-    _move_record_id = _ops_context._move_record_id
-    _rebuild_ctx_user_fields = _ops_context._rebuild_ctx_user_fields
-
     def _collect_custom_add_values(self):
         """Collect values from custom field widgets in the add form."""
         from lib.custom_fields import coerce_value
@@ -1058,7 +1050,7 @@ class OperationsPanel(QWidget):
         if "position" in payload:
             self.t_from_position.setText(self._position_to_display(payload["position"]))
         self.t_action.setCurrentIndex(0)
-        self._refresh_takeout_record_context()
+        _ops_context._refresh_takeout_record_context(self)
         self.set_mode("takeout")
 
     def set_prefill(self, source_info):
@@ -1083,25 +1075,6 @@ class OperationsPanel(QWidget):
         """Pre-fill the Add Entry form and switch to Add mode."""
         self._apply_add_prefill(source_info)
 
-    _setup_table = _ops_forms._setup_table
-    _make_readonly_field = _ops_forms._make_readonly_field
-    _make_readonly_history_label = _ops_forms._make_readonly_history_label
-    _make_editable_field = _ops_forms._make_editable_field
-    _build_add_tab = _ops_forms._build_add_tab
-    _rebuild_custom_add_fields = _ops_forms._rebuild_custom_add_fields
-    _build_takeout_tab = _ops_forms._build_takeout_tab
-    _build_move_tab = _ops_forms._build_move_tab
-    _init_hidden_batch_takeout_controls = _ops_forms._init_hidden_batch_takeout_controls
-    _init_hidden_batch_move_controls = _ops_forms._init_hidden_batch_move_controls
-    _build_plan_tab = _ops_forms._build_plan_tab
-    _on_toggle_move_batch_section = _ops_forms._on_toggle_move_batch_section
-    _style_execute_button = _ops_forms._style_execute_button
-    _style_stage_button = _ops_forms._style_stage_button
-    _build_stage_action_button = _ops_forms._build_stage_action_button
-    _set_plan_feedback = _ops_forms._set_plan_feedback
-    _read_text_widget_value = staticmethod(_ops_forms._read_text_widget_value)
-    _write_text_widget_value = staticmethod(_ops_forms._write_text_widget_value)
-
     def _ensure_today_defaults(self):
         today = QDate.currentDate()
         anchor = getattr(self, "_default_date_anchor", today)
@@ -1115,114 +1088,68 @@ class OperationsPanel(QWidget):
 
         self._default_date_anchor = today
 
-    _lookup_record = _ops_context._lookup_record
-    _clear_context_label_groups = staticmethod(_ops_context._clear_context_label_groups)
-    _populate_record_context_labels = _ops_context._populate_record_context_labels
-    _set_last_event_summary_label = _ops_context._set_last_event_summary_label
-    _refresh_takeout_record_context = _ops_context._refresh_takeout_record_context
-
-    _confirm_warning_dialog = _ops_confirm._confirm_warning_dialog
-    _confirm_execute = _ops_confirm._confirm_execute
-    _format_size_bytes = staticmethod(_ops_confirm._format_size_bytes)
-    _build_rollback_confirmation_lines = _ops_confirm._build_rollback_confirmation_lines
-
     def _emit_exception_status(self, exc, timeout, level="error"):
         self.status_message.emit(str(exc), int(timeout), str(level))
 
-    on_add_entry = _ops_staging.on_add_entry
-    _record_takeout_with_action = _ops_staging._record_takeout_with_action
-    on_record_takeout = _ops_staging.on_record_takeout
-    on_record_move = _ops_staging.on_record_move
-    _read_required_table_texts = staticmethod(_ops_staging._read_required_table_texts)
-    _collect_move_batch_from_table = _ops_staging._collect_move_batch_from_table
-    on_batch_move = _ops_staging.on_batch_move
-    _on_move_source_changed = _ops_context._on_move_source_changed
-    _refresh_move_record_context = _ops_context._refresh_move_record_context
-    _collect_batch_from_table = _ops_staging._collect_batch_from_table
-    _resolve_batch_entries_with_fallback = _ops_staging._resolve_batch_entries_with_fallback
-    _build_human_record_plan_item = _ops_staging._build_human_record_plan_item
-    _build_move_batch_plan_items = _ops_staging._build_move_batch_plan_items
-    _build_takeout_batch_plan_items = _ops_staging._build_takeout_batch_plan_items
-    on_batch_takeout = _ops_staging.on_batch_takeout
+    def on_add_entry(self):
+        return _ops_staging.on_add_entry(self)
 
-    _handle_response = _ops_results._handle_response
-    _result_header_html = staticmethod(_ops_results._result_header_html)
-    _build_add_entry_result_lines = _ops_results._build_add_entry_result_lines
-    _build_single_operation_result_lines = _ops_results._build_single_operation_result_lines
-    _build_batch_operation_result_lines = staticmethod(_ops_results._build_batch_operation_result_lines)
-    _build_restore_result_lines = staticmethod(_ops_results._build_restore_result_lines)
-    _build_success_result_lines = _ops_results._build_success_result_lines
-    _display_result_summary = _ops_results._display_result_summary
+    def on_record_takeout(self):
+        return _ops_staging.on_record_takeout(self)
+
+    def on_record_move(self):
+        return _ops_staging.on_record_move(self)
+
+    def on_batch_move(self):
+        return _ops_staging.on_batch_move(self)
+
+    def on_batch_takeout(self):
+        return _ops_staging.on_batch_takeout(self)
 
     # --- PLAN OPERATIONS ---
-
-    _get_selected_plan_rows = _ops_plan_toolbar._get_selected_plan_rows
-    _refresh_plan_toolbar_state = _ops_plan_toolbar._refresh_plan_toolbar_state
 
     @Slot()
     def _on_store_changed(self):
         """Slot invoked (via QueuedConnection) when PlanStore mutates from any thread."""
         _ops_plan_toolbar._refresh_after_plan_items_changed(self)
 
-    _refresh_after_plan_items_changed = _ops_plan_toolbar._refresh_after_plan_items_changed
-    remove_selected_plan_items = _ops_plan_toolbar.remove_selected_plan_items
-    on_plan_table_context_menu = _ops_plan_toolbar.on_plan_table_context_menu
+    # Stable public API: these wrappers keep the call surface fixed while the
+    # implementation lives in extracted helper modules.
+    def add_plan_items(self, items):
+        return _ops_plan_store.add_plan_items(self, items)
 
-    _plan_item_key = _ops_plan_store._plan_item_key
-    _build_notice_plan_item_desc = _ops_plan_store._build_notice_plan_item_desc
-    _collect_notice_action_counts_and_sample = _ops_plan_store._collect_notice_action_counts_and_sample
-    _collect_plan_notice_summary = _ops_plan_store._collect_plan_notice_summary
-    _publish_plan_items_notice = _ops_plan_store._publish_plan_items_notice
-    _apply_preflight_report = _ops_plan_store._apply_preflight_report
-    _reset_plan_feedback_and_validation = _ops_plan_store._reset_plan_feedback_and_validation
-    add_plan_items = _ops_plan_store.add_plan_items
-    _run_plan_preflight = _ops_plan_store._run_plan_preflight
-    _update_execute_button_state = _ops_plan_store._update_execute_button_state
+    def execute_plan(self):
+        return _ops_exec.execute_plan(self)
 
-    _plan_value_text = staticmethod(_ops_plan_table._plan_value_text)
-    _summarize_change_parts = staticmethod(_ops_plan_table._summarize_change_parts)
-    _build_plan_action_text = _ops_plan_table._build_plan_action_text
-    _build_plan_target_text = _ops_plan_table._build_plan_target_text
-    _build_plan_date_text = _ops_plan_table._build_plan_date_text
-    _build_plan_changes = _ops_plan_table._build_plan_changes
-    _build_plan_status = _ops_plan_table._build_plan_status
-    _build_plan_row_semantics = _ops_plan_table._build_plan_row_semantics
-    _refresh_plan_table = _ops_plan_table._refresh_plan_table
+    def clear_plan(self):
+        return _ops_actions.clear_plan(self)
 
-    execute_plan = _ops_exec.execute_plan
-    _build_execute_confirmation_lines = _ops_exec._build_execute_confirmation_lines
-    _confirm_execute_plan = _ops_exec._confirm_execute_plan
-    _collect_execution_results = staticmethod(_ops_exec._collect_execution_results)
-    _finalize_plan_store_after_execution = _ops_exec._finalize_plan_store_after_execution
-    _build_execution_result_sample = _ops_exec._build_execution_result_sample
-    _attempt_atomic_rollback = _ops_exec._attempt_atomic_rollback
-    _emit_operation_event = _ops_exec._emit_operation_event
-    _publish_system_notice = _ops_exec._publish_system_notice
-    emit_external_operation_event = _ops_exec.emit_external_operation_event
-    _build_execution_summary_text = _ops_exec._build_execution_summary_text
-    _build_execution_rollback_notice = _ops_exec._build_execution_rollback_notice
-    _build_execution_failure_lines = _ops_exec._build_execution_failure_lines
-    _show_plan_result = _ops_exec._show_plan_result
-    print_plan = _ops_actions.print_plan
-    print_last_executed = _ops_actions.print_last_executed
-    _print_items_with_grid = _ops_actions._print_items_with_grid
-    _build_print_grid_state = _ops_actions._build_print_grid_state
-    _build_print_table_rows = _ops_actions._build_print_table_rows
-    _build_last_executed_print_table_rows = _ops_actions._build_last_executed_print_table_rows
-    _capture_last_executed_print_snapshot = _ops_actions._capture_last_executed_print_snapshot
-    _print_operation_sheet_with_grid = _ops_actions._print_operation_sheet_with_grid
-    clear_plan = _ops_actions.clear_plan
-    reset_for_dataset_switch = _ops_actions.reset_for_dataset_switch
-    on_export_inventory_csv = _ops_actions.on_export_inventory_csv
-    _enable_undo = _ops_actions._enable_undo
-    _update_undo_button_text = _ops_actions._update_undo_button_text
-    _undo_tick = _ops_actions._undo_tick
-    _disable_undo = _ops_actions._disable_undo
-    on_undo_last = _ops_actions.on_undo_last
+    def reset_for_dataset_switch(self):
+        return _ops_actions.reset_for_dataset_switch(self)
 
+    def on_export_inventory_csv(self, checked=False, *, parent=None, yaml_path_override=None):
+        return _ops_actions.on_export_inventory_csv(
+            self,
+            checked=checked,
+            parent=parent,
+            yaml_path_override=yaml_path_override,
+        )
 
+    def emit_external_operation_event(self, event):
+        return _ops_exec.emit_external_operation_event(self, event)
 
+    def print_plan(self):
+        return _ops_actions.print_plan(self)
 
+    def print_last_executed(self):
+        return _ops_actions.print_last_executed(self)
 
+    def on_undo_last(self):
+        return _ops_actions.on_undo_last(self)
 
+    def remove_selected_plan_items(self):
+        return _ops_plan_toolbar.remove_selected_plan_items(self)
+
+    def on_plan_table_context_menu(self, pos):
+        return _ops_plan_toolbar.on_plan_table_context_menu(self, pos)
 

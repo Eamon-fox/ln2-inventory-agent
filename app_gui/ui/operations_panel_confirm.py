@@ -27,7 +27,8 @@ def _confirm_warning_dialog(self, *, title, text, informative_text, detailed_tex
 
 
 def _confirm_execute(self, title, details):
-    return self._confirm_warning_dialog(
+    return _confirm_warning_dialog(
+        self,
         title=title,
         text=_ops_tr("operations.confirmModify"),
         informative_text=details,
@@ -74,7 +75,7 @@ def _build_rollback_confirmation_lines(
         try:
             stat = os.stat(backup_abs)
             mtime = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
-            size = self._format_size_bytes(stat.st_size)
+            size = _format_size_bytes(stat.st_size)
             lines.append(_ops_tr("operations.planRollbackBackupMeta", mtime=mtime, size=size))
         except Exception:
             lines.append(_ops_tr("operations.planRollbackBackupMissing", path=backup_abs))

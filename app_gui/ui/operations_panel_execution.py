@@ -3,10 +3,9 @@
 import os
 from datetime import datetime
 
+from app_gui.application import PlanRunUseCase
 from app_gui.i18n import tr
 from app_gui.error_localizer import localize_error_payload
-from app_gui.plan_outcome import summarize_plan_execution
-from app_gui.plan_executor import run_plan
 from app_gui.system_notice import build_system_notice, coerce_system_notice
 
 
@@ -50,14 +49,34 @@ def _is_undo_eligible_item(item):
     return action != "rollback"
 
 
+def _resolve_plan_run_use_case(panel):
+    use_case = getattr(panel, "_plan_run_use_case", None)
+    if use_case is not None:
+        return use_case
+    return PlanRunUseCase()
+
+
+def _summarize_execution(panel, report, rollback_info):
+    use_case = _resolve_plan_run_use_case(panel)
+    summarize_fn = getattr(use_case, "summarize", None)
+    if callable(summarize_fn):
+        return summarize_fn(report=report, rollback_info=rollback_info)
+    return {}
+
+
 def execute_plan(self):
     """Execute all staged plan items after user confirmation."""
+    from app_gui.ui import operations_panel_actions as _ops_actions
+    from app_gui.ui import operations_panel_forms as _ops_forms
+    from app_gui.ui import operations_panel_plan_toolbar as _ops_plan_toolbar
+
     if bool(getattr(self, "_guard_migration_write_action", lambda: False)()):
         return
     if not self._plan_store.count():
         msg = tr("operations.planNoItemsToExecute")
-        self._set_plan_feedback(msg, level="warning")
-        self._publish_system_notice(
+        _ops_forms._set_plan_feedback(self, msg, level="warning")
+        _publish_system_notice(
+            self,
             code="plan.execute.empty",
             text=msg,
             level="error",
@@ -68,25 +87,36 @@ def execute_plan(self):
 
     plan_items = self._plan_store.list_items()
     yaml_path = os.path.abspath(str(self.yaml_path_getter()))
-    summary_lines = self._build_execute_confirmation_lines(plan_items, yaml_path)
-    if not self._confirm_execute_plan(plan_items, summary_lines):
+    summary_lines = _build_execute_confirmation_lines(self, plan_items, yaml_path)
+    if not _confirm_execute_plan(self, plan_items, summary_lines):
         return
 
     original_plan = list(plan_items)
     try:
-        report = run_plan(yaml_path, plan_items, self.bridge, mode="execute")
-        results = self._collect_execution_results(report)
-        _, rollback_info, fail_count = self._finalize_plan_store_after_execution(
+        run_use_case = _resolve_plan_run_use_case(self)
+        run_result = run_use_case.execute(
+            yaml_path=yaml_path,
+            plan_items=plan_items,
+            bridge=self.bridge,
+            mode="execute",
+        )
+        report = run_result.report
+        results = list(run_result.results or [])
+        _, rollback_info, fail_count = _finalize_plan_store_after_execution(
+            self,
             report=report,
             results=results,
             original_plan=original_plan,
             yaml_path=yaml_path,
         )
 
-        self._run_plan_preflight(trigger="post_execute")
-        self._refresh_after_plan_items_changed()
-        execution_stats = summarize_plan_execution(report, rollback_info)
-        self._show_plan_result(
+        from app_gui.ui import operations_panel_plan_store as _ops_plan_store
+
+        _ops_plan_store._run_plan_preflight(self, trigger="post_execute")
+        _ops_plan_toolbar._refresh_after_plan_items_changed(self)
+        execution_stats = _summarize_execution(self, report, rollback_info)
+        _show_plan_result(
+            self,
             results,
             report=report,
             rollback_info=rollback_info,
@@ -97,7 +127,10 @@ def execute_plan(self):
         if execution_stats.get("rollback_ok"):
             executed_items = []
         self._last_executed_plan = list(executed_items)
-        self._last_executed_print_snapshot = self._capture_last_executed_print_snapshot(executed_items)
+        self._last_executed_print_snapshot = _ops_actions._capture_last_executed_print_snapshot(
+            self,
+            executed_items,
+        )
 
         if report.get("ok") and any(r[0] == "OK" for r in results):
             self.operation_completed.emit(True)
@@ -108,11 +141,11 @@ def execute_plan(self):
         undo_eligible_items = [it for it in executed_items if _is_undo_eligible_item(it)]
         if last_backup and undo_eligible_items:
             self._last_operation_backup = last_backup
-            self._enable_undo(timeout_sec=30)
+            _ops_actions._enable_undo(self, timeout_sec=30)
         else:
-            self._disable_undo(clear_last_executed=not bool(executed_items))
+            _ops_actions._disable_undo(self, clear_last_executed=not bool(executed_items))
 
-        summary_text = self._build_execution_summary_text(execution_stats)
+        summary_text = _build_execution_summary_text(self, execution_stats)
         notice_level = "success"
         if execution_stats.get("fail_count", 0) > 0:
             notice_level = _execution_failure_level(execution_stats)
@@ -121,8 +154,9 @@ def execute_plan(self):
         stats_payload["applied"] = execution_stats.get("applied_count", 0)
         stats_payload["failed"] = execution_stats.get("fail_count", 0)
         stats_payload["rolled_back"] = bool(execution_stats.get("rollback_ok"))
-        result_sample = self._build_execution_result_sample(results)
-        self._publish_system_notice(
+        result_sample = _build_execution_result_sample(self, results)
+        _publish_system_notice(
+            self,
             code="plan.execute.result",
             text=summary_text,
             level=notice_level,
@@ -141,6 +175,8 @@ def execute_plan(self):
         clear_write_through_cache()
 
 def _build_execute_confirmation_lines(self, plan_items, yaml_path):
+    from app_gui.ui import operations_panel_confirm as _ops_confirm
+
     lines = []
     for item in plan_items:
         action = item.get("action", "?")
@@ -149,7 +185,8 @@ def _build_execute_confirmation_lines(self, plan_items, yaml_path):
         if str(action).lower() == "rollback":
             payload = item.get("payload") or {}
             lines.extend(
-                self._build_rollback_confirmation_lines(
+                _ops_confirm._build_rollback_confirmation_lines(
+                    self,
                     backup_path=payload.get("backup_path"),
                     yaml_path=yaml_path,
                     source_event=payload.get("source_event"),
@@ -170,27 +207,16 @@ def _build_execute_confirmation_lines(self, plan_items, yaml_path):
     return lines
 
 def _confirm_execute_plan(self, plan_items, summary_lines):
+    from app_gui.ui import operations_panel_confirm as _ops_confirm
+
     detailed_text = "\n".join(summary_lines) if len(summary_lines) > 20 else None
-    return self._confirm_warning_dialog(
+    return _ops_confirm._confirm_warning_dialog(
+        self,
         title=tr("operations.executePlanTitle"),
         text=tr("operations.executePlanConfirm", count=len(plan_items)),
         informative_text="\n".join(summary_lines[:20]),
         detailed_text=detailed_text,
     )
-
-def _collect_execution_results(report):
-    report_items = report.get("items") if isinstance(report.get("items"), list) else []
-    results = []
-    for row in report_items:
-        status = "OK" if row.get("ok") else "FAIL"
-        info = row.get("response") or {}
-        if status == "FAIL":
-            info = {
-                "message": row.get("message"),
-                "error_code": row.get("error_code"),
-            }
-        results.append((status, row.get("item"), info))
-    return results
 
 def _finalize_plan_store_after_execution(self, report, results, original_plan, yaml_path):
     remaining = report.get("remaining_items") if isinstance(report.get("remaining_items"), list) else []
@@ -198,7 +224,7 @@ def _finalize_plan_store_after_execution(self, report, results, original_plan, y
     rollback_info = None
 
     if fail_count:
-        rollback_info = self._attempt_atomic_rollback(yaml_path, results, report=report)
+        rollback_info = _attempt_atomic_rollback(self, yaml_path, results, report=report)
         self._plan_store.replace_all(original_plan)
     elif remaining:
         self._plan_store.replace_all(remaining)
@@ -208,11 +234,13 @@ def _finalize_plan_store_after_execution(self, report, results, original_plan, y
     return remaining, rollback_info, fail_count
 
 def _build_execution_result_sample(self, results):
+    from app_gui.ui import operations_panel_plan_store as _ops_plan_store
+
     sample = []
     for status, plan_item, info in results:
         if not isinstance(plan_item, dict):
             continue
-        line = f"{status}: {self._build_notice_plan_item_desc(plan_item)}"
+        line = f"{status}: {_ops_plan_store._build_notice_plan_item_desc(self, plan_item)}"
         if status != "OK" and isinstance(info, dict):
             msg = localize_error_payload(info)
             if msg:
@@ -332,14 +360,14 @@ def _publish_system_notice(
         details=str(details) if details else None,
         data=data if isinstance(data, dict) else None,
     )
-    self._emit_operation_event(notice)
+    _emit_operation_event(self, notice)
     return notice
 
 def emit_external_operation_event(self, event):
     """Public helper for non-plan modules to emit operation events."""
     if not isinstance(event, dict):
         return
-    self._emit_operation_event(dict(event))
+    _emit_operation_event(self, dict(event))
 
 def _build_execution_summary_text(self, execution_stats):
     """Build a user-facing summary for execution event payloads."""
@@ -414,14 +442,14 @@ def _build_execution_failure_lines(
         tr("operations.planExecutionError", error=error_msg),
         f"<span style='color: var(--status-muted);'>{tr('operations.planExecutionRetry')}</span>",
     ]
-    rollback_notice = self._build_execution_rollback_notice(execution_stats, rollback_info)
+    rollback_notice = _build_execution_rollback_notice(self, execution_stats, rollback_info)
     if rollback_notice:
         lines.append(rollback_notice)
     return lines
 
 def _show_plan_result(self, results, report=None, rollback_info=None, execution_stats=None):
     if not isinstance(execution_stats, dict):
-        execution_stats = summarize_plan_execution(report, rollback_info)
+        execution_stats = _summarize_execution(self, report, rollback_info)
     ok_count = execution_stats.get("ok_count", sum(1 for r in results if r[0] == "OK"))
     fail_count = execution_stats.get("fail_count", sum(1 for r in results if r[0] == "FAIL"))
     applied_count = execution_stats.get("applied_count", ok_count)
@@ -429,7 +457,8 @@ def _show_plan_result(self, results, report=None, rollback_info=None, execution_
     if fail_count:
         fail_item = [r for r in results if r[0] == "FAIL"][-1]
         error_msg = fail_item[2].get("message", "Unknown error")
-        lines = self._build_execution_failure_lines(
+        lines = _build_execution_failure_lines(
+            self,
             execution_stats=execution_stats,
             ok_count=ok_count,
             fail_count=fail_count,

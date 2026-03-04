@@ -152,12 +152,19 @@ def test_settings_dialog_enforces_existing_yaml_file_before_ok():
     assert "self._ok_button.setEnabled(self._is_valid_inventory_file_path(self.yaml_edit.text().strip()))" in text
 
 
-def test_dataset_switch_is_centralized_in_session_controller():
+def test_dataset_switch_command_is_centralized_in_session_controller():
     text = _source_text()
 
     assert "DatasetSessionController" in text
     assert "self._dataset_session.switch_to(" in text
-    assert "self.operations_panel.reset_for_dataset_switch()" not in text
+
+
+def test_main_consumes_dataset_switched_events_for_ui_refresh():
+    text = _source_text()
+
+    assert "DatasetSwitched" in text
+    assert "self._app_event_bus.subscribe(DatasetSwitched, self._on_dataset_switched_event)" in text
+    assert "def _on_dataset_switched_event(self, event):" in text
 
 
 def test_qsettings_migration_is_guarded_by_marker():

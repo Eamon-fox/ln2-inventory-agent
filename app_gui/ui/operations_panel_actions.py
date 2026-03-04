@@ -18,10 +18,11 @@ def _print_items_with_grid(self, items_to_print, *, empty_message, opened_messag
         return
 
     if grid_state is None:
-        grid_state = self._build_print_grid_state(items)
+        grid_state = _build_print_grid_state(self, items)
     if table_rows is None:
-        table_rows = self._build_print_table_rows(items)
-    self._print_operation_sheet_with_grid(
+        table_rows = _build_print_table_rows(self, items)
+    _print_operation_sheet_with_grid(
+        self,
         items,
         grid_state,
         table_rows=table_rows,
@@ -31,7 +32,8 @@ def _print_items_with_grid(self, items_to_print, *, empty_message, opened_messag
 
 def print_plan(self):
     """Print current staged plan (not yet executed)."""
-    self._print_items_with_grid(
+    _print_items_with_grid(
+        self,
         self._plan_store.list_items(),
         empty_message=tr("operations.noCurrentPlanToPrint"),
         opened_message=tr("operations.planPrintOpened"),
@@ -52,9 +54,10 @@ def print_last_executed(self):
     grid_state = deepcopy(snapshot.get("grid_state")) if use_snapshot else None
     table_rows = deepcopy(snapshot.get("table_rows")) if use_snapshot else None
     if not isinstance(table_rows, list) or len(table_rows) != len(items_to_print):
-        table_rows = self._build_last_executed_print_table_rows(items_to_print)
+        table_rows = _build_last_executed_print_table_rows(self, items_to_print)
 
-    self._print_items_with_grid(
+    _print_items_with_grid(
+        self,
         items_to_print,
         empty_message=tr("operations.noLastExecutedToPrint"),
         opened_message=tr("operations.lastExecutedPrintOpened"),
@@ -64,7 +67,7 @@ def print_last_executed(self):
 
 
 def _build_last_executed_print_table_rows(self, items_to_print):
-    rows = self._build_print_table_rows(items_to_print)
+    rows = _build_print_table_rows(self, items_to_print)
     executed_status = tr("operations.planStatusExecuted")
     normalized_rows = []
     for row in list(rows or []):
@@ -81,8 +84,8 @@ def _capture_last_executed_print_snapshot(self, items_to_print):
     if not items:
         return None
 
-    grid_state = self._build_print_grid_state(items)
-    table_rows = self._build_last_executed_print_table_rows(items)
+    grid_state = _build_print_grid_state(self, items)
+    table_rows = _build_last_executed_print_table_rows(self, items)
     return {
         "items": deepcopy(items),
         "grid_state": deepcopy(grid_state),
@@ -149,12 +152,16 @@ def _print_operation_sheet_with_grid(self, items, grid_state, *, table_rows=None
 
 
 def clear_plan(self):
+    from app_gui.ui import operations_panel_plan_store as _ops_plan_store
+    from app_gui.ui import operations_panel_plan_toolbar as _ops_plan_toolbar
+
     if bool(getattr(self, "_guard_migration_write_action", lambda: False)()):
         return
     cleared_items = self._plan_store.clear()
-    self._reset_plan_feedback_and_validation()
-    self._refresh_after_plan_items_changed()
-    self._publish_plan_items_notice(
+    _ops_plan_store._reset_plan_feedback_and_validation(self)
+    _ops_plan_toolbar._refresh_after_plan_items_changed(self)
+    _ops_plan_store._publish_plan_items_notice(
+        self,
         code="plan.cleared",
         text=tr("operations.planCleared"),
         level="info",
@@ -166,12 +173,15 @@ def clear_plan(self):
 
 
 def reset_for_dataset_switch(self):
+    from app_gui.ui import operations_panel_plan_store as _ops_plan_store
+    from app_gui.ui import operations_panel_plan_toolbar as _ops_plan_toolbar
+
     """Clear transient plan/undo/audit state when switching datasets."""
     self._plan_store.clear()
-    self._reset_plan_feedback_and_validation()
-    self._disable_undo(clear_last_executed=True)
+    _ops_plan_store._reset_plan_feedback_and_validation(self)
+    _disable_undo(self, clear_last_executed=True)
 
-    self._refresh_after_plan_items_changed()
+    _ops_plan_toolbar._refresh_after_plan_items_changed(self)
 
 
 def on_export_inventory_csv(self, checked=False, *, parent=None, yaml_path_override=None):
@@ -222,7 +232,10 @@ def on_export_inventory_csv(self, checked=False, *, parent=None, yaml_path_overr
             )
         else:
             notice_text = tr("operations.exportedTo", path=target_path)
-        self._publish_system_notice(
+        from app_gui.ui import operations_panel_execution as _ops_exec
+
+        _ops_exec._publish_system_notice(
+            self,
             code="inventory.export.success",
             text=notice_text,
             level="success",
@@ -232,7 +245,10 @@ def on_export_inventory_csv(self, checked=False, *, parent=None, yaml_path_overr
         return
 
     error_text = localize_error_payload(payload, fallback=tr("operations.unknownError"))
-    self._publish_system_notice(
+    from app_gui.ui import operations_panel_execution as _ops_exec
+
+    _ops_exec._publish_system_notice(
+        self,
         code="inventory.export.failed",
         text=tr(
             "operations.exportFailed",
@@ -260,7 +276,7 @@ def _enable_undo(self, timeout_sec=30):
         self._undo_timer.stop()
 
     self._undo_timer = QTimer(self)
-    self._undo_timer.timeout.connect(self._undo_tick)
+    self._undo_timer.timeout.connect(lambda: _undo_tick(self))
     self._undo_timer.start(1000)
     self._sync_result_actions()
 
@@ -279,9 +295,9 @@ def _update_undo_button_text(self):
 def _undo_tick(self):
     self._undo_remaining -= 1
     if self._undo_remaining <= 0:
-        self._disable_undo()
+        _disable_undo(self)
     else:
-        self._update_undo_button_text()
+        _update_undo_button_text(self)
 
 
 def _disable_undo(self, *, clear_last_executed=False):
@@ -299,10 +315,16 @@ def _disable_undo(self, *, clear_last_executed=False):
 
 
 def on_undo_last(self):
+    from app_gui.ui import operations_panel_confirm as _ops_confirm
+    from app_gui.ui import operations_panel_execution as _ops_exec
+    from app_gui.ui import operations_panel_plan_toolbar as _ops_plan_toolbar
+    from app_gui.ui import operations_panel_results as _ops_results
+
     if bool(getattr(self, "_guard_migration_write_action", lambda: False)()):
         return
     if not self._last_operation_backup:
-        self._publish_system_notice(
+        _ops_exec._publish_system_notice(
+            self,
             code="undo.unavailable",
             text=tr("operations.noOperationToUndo"),
             level="error",
@@ -311,12 +333,14 @@ def on_undo_last(self):
         return
 
     yaml_path = os.path.abspath(str(self.yaml_path_getter()))
-    confirm_lines = self._build_rollback_confirmation_lines(
+    confirm_lines = _ops_confirm._build_rollback_confirmation_lines(
+        self,
         backup_path=self._last_operation_backup,
         yaml_path=yaml_path,
         include_action_prefix=False,
     )
-    if not self._confirm_execute(
+    if not _ops_confirm._confirm_execute(
+        self,
         tr("operations.undo"),
         "\n".join(confirm_lines),
     ):
@@ -328,18 +352,21 @@ def on_undo_last(self):
         backup_path=self._last_operation_backup,
         execution_mode="execute",
     )
-    self._disable_undo(clear_last_executed=True)
+    _disable_undo(self, clear_last_executed=True)
 
     restored_data = None
     if response.get("ok") and executed_plan_backup:
-        summary = self._collect_plan_notice_summary(executed_plan_backup)
+        from app_gui.ui import operations_panel_plan_store as _ops_plan_store
+
+        summary = _ops_plan_store._collect_plan_notice_summary(self, executed_plan_backup)
         restored_data = {
             "restored_count": len(executed_plan_backup),
             "action_counts": summary["action_counts"],
             "sample": summary["sample"],
         }
 
-    self._handle_response(
+    _ops_results._handle_response(
+        self,
         response,
         tr("operations.undo"),
         notice_code="plan.restored" if restored_data else "undo.result",
@@ -348,4 +375,4 @@ def on_undo_last(self):
     )
     if response.get("ok") and executed_plan_backup:
         self._plan_store.replace_all(executed_plan_backup)
-        self._refresh_after_plan_items_changed()
+        _ops_plan_toolbar._refresh_after_plan_items_changed(self)

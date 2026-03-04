@@ -144,7 +144,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             }
         )
 
-        record = panel._lookup_record(1)
+        record = panel.records_cache.get(1)
         self.assertIsInstance(record, dict)
         self.assertEqual(1, int(record.get("id")))
 
@@ -165,7 +165,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             }
         )
 
-        record = panel._lookup_record(1)
+        record = panel.records_cache.get(1)
         self.assertIsInstance(record, dict)
         self.assertEqual(1, record.get("box"))
         self.assertEqual(13, record.get("position"))
@@ -190,7 +190,9 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         panel.t_id.setValue(1)
         panel.t_from_box.setValue(1)
         panel.t_from_position.setText("B4")
-        panel._refresh_takeout_record_context()
+        from app_gui.ui import operations_panel_context as _ops_context
+
+        _ops_context._refresh_takeout_record_context(panel)
 
         self.assertEqual(13, panel.t_position.currentData())
 
@@ -208,7 +210,9 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         panel._current_custom_fields = [
             {"key": "short_name", "label": "Short Name", "type": "str", "required": False}
         ]
-        panel._rebuild_custom_add_fields(panel._current_custom_fields)
+        from app_gui.ui import operations_panel_forms as _ops_forms
+
+        _ops_forms._rebuild_custom_add_fields(panel, panel._current_custom_fields)
 
         panel._add_custom_widgets["short_name"].setText("K562_clone12")
         panel.a_box.setValue(1)
@@ -1426,7 +1430,9 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             },
         })
         panel.t_id.setValue(1)
-        panel._refresh_takeout_record_context()
+        from app_gui.ui import operations_panel_context as _ops_context
+
+        _ops_context._refresh_takeout_record_context(panel)
 
         container = panel.t_ctx_note.parentWidget()
         lock_btn = container.findChild(QPushButton, "inlineLockBtn")
@@ -1477,7 +1483,9 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             },
         })
         panel.t_id.setValue(1)
-        panel._refresh_takeout_record_context()
+        from app_gui.ui import operations_panel_context as _ops_context
+
+        _ops_context._refresh_takeout_record_context(panel)
 
         bridge = SimpleNamespace(
             edit_entry=MagicMock(return_value={"ok": True})
@@ -1643,7 +1651,9 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
 
         panel.plan_table.clearSelection()
         panel.plan_table.selectRow(0)
-        self.assertEqual([0], panel._get_selected_plan_rows())
+        from app_gui.ui import operations_panel_plan_toolbar as _ops_plan_toolbar
+
+        self.assertEqual([0], _ops_plan_toolbar._get_selected_plan_rows(panel))
 
         row_item = panel.plan_table.item(1, 0)
         row_center = panel.plan_table.visualItemRect(row_item).center()
@@ -1656,7 +1666,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
 
             panel.on_plan_table_context_menu(row_center)
 
-        self.assertEqual([1], panel._get_selected_plan_rows())
+        self.assertEqual([1], _ops_plan_toolbar._get_selected_plan_rows(panel))
         self.assertEqual(2, panel._plan_store.count())
 
     def test_operations_panel_move_tab_has_from_and_to_position(self):
@@ -1757,7 +1767,9 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         emitted = []
         panel.operation_completed.connect(lambda success: emitted.append(bool(success)))
 
-        panel._handle_response({"ok": True, "result": {"dry_run": True}}, "Single Operation")
+        from app_gui.ui import operations_panel_results as _ops_results
+
+        _ops_results._handle_response(panel, {"ok": True, "result": {"dry_run": True}}, "Single Operation")
 
         self.assertEqual([True], emitted)
 
@@ -1812,7 +1824,9 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         panel.set_prefill({"box": 1, "position": 30, "record_id": 42})
         panel.m_from_box.setValue(1)
         panel.m_from_position.setText("30")
-        panel._refresh_move_record_context()
+        from app_gui.ui import operations_panel_context as _ops_context
+
+        _ops_context._refresh_move_record_context(panel)
 
         self.assertTrue(panel.t_ctx_cell_line.isReadOnly())
         self.assertEqual(0, panel.t_ctx_cell_line.cursorPosition())
@@ -1850,7 +1864,9 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         panel.set_prefill({"box": 2, "position": 11, "record_id": 43})
         panel.m_from_box.setValue(2)
         panel.m_from_position.setText("11")
-        panel._refresh_move_record_context()
+        from app_gui.ui import operations_panel_context as _ops_context
+
+        _ops_context._refresh_move_record_context(panel)
 
         t_custom = panel._takeout_ctx_widgets["custom_tag"][1]
         m_custom = panel._move_ctx_widgets["custom_tag"][1]
@@ -1879,13 +1895,15 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         )
 
         panel.t_id.setValue(44)
-        panel._refresh_takeout_record_context()
+        from app_gui.ui import operations_panel_context as _ops_context
+
+        _ops_context._refresh_takeout_record_context(panel)
         container = panel.t_ctx_cell_line.parentWidget()
         lock_btn = container.findChild(QPushButton, "inlineLockBtn")
         lock_btn.click()
         self.assertFalse(panel.t_ctx_cell_line.isReadOnly())
 
-        panel._refresh_takeout_record_context()
+        _ops_context._refresh_takeout_record_context(panel)
 
         self.assertGreater(panel.t_ctx_cell_line.cursorPosition(), 0)
 
@@ -1903,7 +1921,9 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
 
         panel.m_from_box.setValue(2)
         panel.m_from_position.setText("15")
-        panel._refresh_move_record_context()
+        from app_gui.ui import operations_panel_context as _ops_context
+
+        _ops_context._refresh_move_record_context(panel)
 
         self.assertEqual(7, panel.m_id.value())
         self.assertEqual(2, panel.m_to_box.value())
@@ -1922,7 +1942,9 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
 
         panel.m_from_box.setValue(3)
         panel.m_from_position.setText("21")
-        panel._refresh_move_record_context()
+        from app_gui.ui import operations_panel_context as _ops_context
+
+        _ops_context._refresh_move_record_context(panel)
 
         self.assertEqual(18, panel.m_id.value())
         self.assertTrue(panel.m_ctx_status.isHidden())
@@ -2154,6 +2176,53 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         self.assertEqual("5", bridge.last_batch_payload["entries"][0]["from"]["position"])
         self.assertEqual(0, len(panel.plan_items))
         self.assertEqual([True], emitted)
+
+    def test_execute_plan_delegates_run_to_plan_run_use_case(self):
+        panel = self._new_operations_panel()
+        panel.yaml_path_getter = lambda: self.fake_yaml_path
+        item = _make_takeout_item(record_id=10, position=5)
+        panel.add_plan_items([item])
+
+        fake_report = {
+            "ok": True,
+            "items": [
+                {
+                    "ok": True,
+                    "item": item,
+                    "response": {"backup_path": "/tmp/bak_10.yaml"},
+                }
+            ],
+            "backup_path": "/tmp/bak_10.yaml",
+            "stats": {},
+            "remaining_items": [],
+        }
+        fake_run_result = SimpleNamespace(
+            report=fake_report,
+            results=[("OK", item, {"backup_path": "/tmp/bak_10.yaml"})],
+        )
+        panel._plan_run_use_case = SimpleNamespace(
+            execute=MagicMock(return_value=fake_run_result),
+            summarize=MagicMock(
+                return_value={
+                    "ok_count": 1,
+                    "fail_count": 0,
+                    "applied_count": 1,
+                    "total_count": 1,
+                    "rollback_ok": False,
+                }
+            ),
+        )
+
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        panel._plan_run_use_case.execute.assert_called_once_with(
+            yaml_path=self.fake_yaml_path,
+            plan_items=[item],
+            bridge=panel.bridge,
+            mode="execute",
+        )
+        panel._plan_run_use_case.summarize.assert_called_once()
 
     def test_operations_panel_record_takeout_creates_plan_item(self):
         panel = self._new_operations_panel()

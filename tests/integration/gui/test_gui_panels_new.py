@@ -93,7 +93,6 @@ class BoxPositionLookupTests(unittest.TestCase):
 
         panel.m_from_box.setValue(1)
         panel.m_from_position.setText("5")
-        panel._refresh_move_record_context()
 
         self.assertEqual(1, panel.m_from_box.value())
         self.assertEqual("5", panel.m_from_position.text())
@@ -108,7 +107,6 @@ class BoxPositionLookupTests(unittest.TestCase):
 
         panel.m_from_box.setValue(2)
         panel.m_from_position.setText("1")
-        panel._refresh_move_record_context()
         panel.m_to_box.setValue(1)
         self.assertEqual(1, panel.m_to_box.value())
 

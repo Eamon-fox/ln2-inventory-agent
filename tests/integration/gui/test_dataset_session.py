@@ -1,101 +1,58 @@
-"""
+﻿"""
 Module: test_dataset_session
 Layer: integration/gui
 Covers: app_gui/dataset_session.py
 
-数据集会话切换与路径刷新测试
+Dataset session command delegation tests.
 """
 
-import os
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from app_gui.dataset_session import DatasetSessionController
+from lib.domain.commands import SwitchDatasetCommand
 
 
-def _build_window(current_path):
-    return SimpleNamespace(
-        current_yaml_path=current_path,
-        operations_panel=SimpleNamespace(reset_for_dataset_switch=MagicMock()),
-        overview_panel=SimpleNamespace(refresh=MagicMock()),
-        gui_config={},
-        _update_dataset_label=MagicMock(),
+def test_switch_to_delegates_to_use_case_with_command_payload():
+    window = SimpleNamespace()
+    use_case = SimpleNamespace(
+        switch_dataset=MagicMock(return_value=SimpleNamespace(target_path="D:/data/new/inventory.yaml"))
     )
+    controller = DatasetSessionController(window, dataset_use_case=use_case)
+
+    result = controller.switch_to("D:/data/new/inventory.yaml", reason="manual_switch")
+
+    assert result == "D:/data/new/inventory.yaml"
+    use_case.switch_dataset.assert_called_once()
+    called_kwargs = use_case.switch_dataset.call_args.kwargs
+    assert called_kwargs["session"] is window
+    command = called_kwargs["command"]
+    assert isinstance(command, SwitchDatasetCommand)
+    assert command.yaml_path == "D:/data/new/inventory.yaml"
+    assert command.reason == "manual_switch"
 
 
-def test_switch_to_updates_path_and_refreshes_state():
-    window = _build_window("D:/data/old/inventory.yaml")
-    publish_notice = MagicMock()
-    controller = DatasetSessionController(
-        window,
-        normalize_yaml_path=lambda p: str(p),
-        publish_system_notice=publish_notice,
+def test_switch_to_uses_default_reason_when_empty():
+    window = SimpleNamespace()
+    use_case = SimpleNamespace(
+        switch_dataset=MagicMock(return_value=SimpleNamespace(target_path="D:/data/default/inventory.yaml"))
     )
-    target = "D:/data/new/inventory.yaml"
+    controller = DatasetSessionController(window, dataset_use_case=use_case)
 
-    with patch(
-        "app_gui.dataset_session.assert_allowed_inventory_yaml_path",
-        return_value=target,
-    ) as assert_mock, patch("app_gui.dataset_session.save_gui_config") as save_mock:
-        result = controller.switch_to(target, reason="manual_switch")
+    result = controller.switch_to("D:/data/default/inventory.yaml", reason="")
 
-    assert result == target
-    assert window.current_yaml_path == target
-    window.operations_panel.reset_for_dataset_switch.assert_called_once()
-    window._update_dataset_label.assert_called_once()
-    window.overview_panel.refresh.assert_called_once()
-    assert window.gui_config["yaml_path"] == target
-    assert_mock.assert_called_once_with(target, must_exist=True)
-    save_mock.assert_called_once_with(window.gui_config)
-    publish_notice.assert_called_once()
-    assert publish_notice.call_args.kwargs["code"] == "dataset.switch"
-    assert publish_notice.call_args.kwargs["data"]["reason"] == "manual_switch"
+    assert result == "D:/data/default/inventory.yaml"
+    command = use_case.switch_dataset.call_args.kwargs["command"]
+    assert command.reason == "manual_switch"
 
 
-def test_switch_to_skips_reset_for_same_path_in_manual_mode():
-    path = os.path.abspath("D:/data/same/inventory.yaml")
-    window = _build_window(path)
-    publish_notice = MagicMock()
-    controller = DatasetSessionController(
-        window,
-        normalize_yaml_path=lambda p: str(p),
-        publish_system_notice=publish_notice,
+def test_switch_to_returns_use_case_target_path_verbatim():
+    window = SimpleNamespace()
+    use_case = SimpleNamespace(
+        switch_dataset=MagicMock(return_value=SimpleNamespace(target_path="D:/data/imported/inventory.yaml"))
     )
+    controller = DatasetSessionController(window, dataset_use_case=use_case)
 
-    with patch(
-        "app_gui.dataset_session.assert_allowed_inventory_yaml_path",
-        return_value=path,
-    ), patch("app_gui.dataset_session.save_gui_config") as save_mock:
-        result = controller.switch_to(path, reason="manual_switch")
+    result = controller.switch_to("D:/ignored/path.yaml", reason="import_success")
 
-    assert result == path
-    window.operations_panel.reset_for_dataset_switch.assert_not_called()
-    window._update_dataset_label.assert_not_called()
-    window.overview_panel.refresh.assert_not_called()
-    save_mock.assert_not_called()
-    publish_notice.assert_not_called()
-
-
-def test_switch_to_forces_refresh_for_import_success_even_same_path():
-    path = os.path.abspath("D:/data/same/inventory.yaml")
-    window = _build_window(path)
-    publish_notice = MagicMock()
-    controller = DatasetSessionController(
-        window,
-        normalize_yaml_path=lambda p: str(p),
-        publish_system_notice=publish_notice,
-    )
-
-    with patch(
-        "app_gui.dataset_session.assert_allowed_inventory_yaml_path",
-        return_value=path,
-    ), patch("app_gui.dataset_session.save_gui_config"):
-        result = controller.switch_to(path, reason="import_success")
-
-    assert result == path
-    window.operations_panel.reset_for_dataset_switch.assert_called_once()
-    window._update_dataset_label.assert_called_once()
-    window.overview_panel.refresh.assert_called_once()
-    publish_notice.assert_called_once()
-    assert publish_notice.call_args.kwargs["data"]["reason"] == "import_success"
-
+    assert result == "D:/data/imported/inventory.yaml"

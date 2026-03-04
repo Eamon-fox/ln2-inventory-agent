@@ -530,7 +530,9 @@ class UndoRestoresPlanRegressionTests(_NoStagePreflightMixin, ManagedPathTestCas
         panel = self._new_panel(bridge)
 
         panel._last_operation_backup = "/tmp/backup.yaml"
-        panel._enable_undo(timeout_sec=30)
+        from app_gui.ui import operations_panel_actions as _ops_actions
+
+        _ops_actions._enable_undo(panel, timeout_sec=30)
 
         from unittest.mock import patch
         with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
@@ -545,7 +547,9 @@ class UndoRestoresPlanRegressionTests(_NoStagePreflightMixin, ManagedPathTestCas
         panel = self._new_panel(bridge)
 
         panel._last_operation_backup = "/tmp/backup.yaml"
-        panel._enable_undo(timeout_sec=30)
+        from app_gui.ui import operations_panel_actions as _ops_actions
+
+        _ops_actions._enable_undo(panel, timeout_sec=30)
 
         from unittest.mock import patch
         with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
@@ -941,25 +945,33 @@ class PrintPlanRegressionTests(_NoStagePreflightMixin, ManagedPathTestCase):
     def test_print_plan_uses_business_table_headers_in_rendered_html(self):
         panel = self._new_panel(_FakeOperationsBridge())
         panel.add_plan_items([_make_takeout_item(record_id=1, position=5)])
-        panel._build_print_grid_state = lambda _items: {
-            "rows": 1,
-            "cols": 1,
-            "boxes": [
-                {
-                    "box_number": 1,
-                    "box_label": "1",
-                    "cells": [
-                        {
-                            "box": 1,
-                            "position": 1,
-                            "display_pos": "1",
-                            "is_occupied": False,
-                        }
-                    ],
-                }
-            ],
-            "theme": "dark",
-        }
+
+        def _fake_build_print_grid_state(_self, _items):
+            return {
+                "rows": 1,
+                "cols": 1,
+                "boxes": [
+                    {
+                        "box_number": 1,
+                        "box_label": "1",
+                        "cells": [
+                            {
+                                "box": 1,
+                                "position": 1,
+                                "display_pos": "1",
+                                "is_occupied": False,
+                            }
+                        ],
+                    }
+                ],
+                "theme": "dark",
+            }
+
+        from app_gui.ui import operations_panel_actions as _ops_actions
+
+        original_build_print_grid_state = _ops_actions._build_print_grid_state
+        _ops_actions._build_print_grid_state = _fake_build_print_grid_state
+        self.addCleanup(setattr, _ops_actions, "_build_print_grid_state", original_build_print_grid_state)
 
         captured = {}
 

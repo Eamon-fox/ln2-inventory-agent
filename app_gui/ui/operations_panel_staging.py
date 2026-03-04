@@ -58,7 +58,8 @@ def on_record_takeout(self):
         self.status_message.emit(tr("operations.positionRequired"), 4000, "error")
         return
 
-    item = self._build_human_record_plan_item(
+    item = _build_human_record_plan_item(
+        self,
         action=action_text,
         record_id=self.t_id.value(),
         position=position,
@@ -74,7 +75,9 @@ def on_record_move(self):
         return
     self._ensure_today_defaults()
 
-    record = self._lookup_record(self.m_id.value())
+    from app_gui.ui import operations_panel_context as _ops_context
+
+    record = _ops_context._lookup_record(self, self.m_id.value())
     if not record:
         from_box = self.m_from_box.value()
         from_pos = self._parse_position_text(self.m_from_position.text(), allow_empty=True)
@@ -131,7 +134,8 @@ def on_record_move(self):
 
     to_box_param = to_box if to_box != from_box else None
 
-    item = self._build_human_record_plan_item(
+    item = _build_human_record_plan_item(
+        self,
         action="move",
         record_id=self.m_id.value(),
         position=from_pos,
@@ -159,7 +163,7 @@ def _collect_move_batch_from_table(self):
     """Collect move entries from the move batch table. Returns list of 3- or 4-tuples or None."""
     entries = []
     for row in range(self.bm_table.rowCount()):
-        required_texts = self._read_required_table_texts(self.bm_table, row, (0, 1, 2))
+        required_texts = _read_required_table_texts(self.bm_table, row, (0, 1, 2))
         if not required_texts:
             continue
         id_text, from_text, to_text = required_texts
@@ -188,8 +192,9 @@ def on_batch_move(self):
         return
     self._ensure_today_defaults()
 
-    entries = self._resolve_batch_entries_with_fallback(
-        table_collector=self._collect_move_batch_from_table,
+    entries = _resolve_batch_entries_with_fallback(
+        self,
+        table_collector=lambda: _collect_move_batch_from_table(self),
         raw_entries_text=self.bm_entries.text(),
         timeout=3000,
     )
@@ -197,14 +202,14 @@ def on_batch_move(self):
         return
 
     date_str = self.bm_date.date().toString("yyyy-MM-dd")
-    items = self._build_move_batch_plan_items(entries, date_str=date_str)
+    items = _build_move_batch_plan_items(self, entries, date_str=date_str)
     self.add_plan_items(items)
 
 def _collect_batch_from_table(self):
     """Collect entries from the mini-table. Returns list of tuples or None if empty."""
     entries = []
     for row in range(self.b_table.rowCount()):
-        required_texts = self._read_required_table_texts(self.b_table, row, (0, 1))
+        required_texts = _read_required_table_texts(self.b_table, row, (0, 1))
         if not required_texts:
             continue
         id_text, pos_text = required_texts
@@ -257,7 +262,9 @@ def _build_human_record_plan_item(
     fallback_box=0,
 ):
     record_id_int = int(record_id)
-    record = self._lookup_record(record_id_int)
+    from app_gui.ui import operations_panel_context as _ops_context
+
+    record = _ops_context._lookup_record(self, record_id_int)
     box = resolve_record_box(record, fallback_box=int(fallback_box or 0))
     position_int = self._normalize_position_value(
         position,
@@ -302,7 +309,8 @@ def _build_move_batch_plan_items(self, entries, *, date_str):
             continue
 
         items.append(
-            self._build_human_record_plan_item(
+            _build_human_record_plan_item(
+                self,
                 action="move",
                 record_id=rid,
                 position=from_pos,
@@ -321,7 +329,8 @@ def _build_takeout_batch_plan_items(self, entries, *, date_str, action_text):
         rid = int(normalized.get("record_id", 0) or 0)
         pos = int(normalized.get("position", 0) or 0)
         items.append(
-            self._build_human_record_plan_item(
+            _build_human_record_plan_item(
+                self,
                 action=action_text,
                 record_id=rid,
                 position=pos,
@@ -336,8 +345,9 @@ def on_batch_takeout(self):
         return
     self._ensure_today_defaults()
 
-    entries = self._resolve_batch_entries_with_fallback(
-        table_collector=self._collect_batch_from_table,
+    entries = _resolve_batch_entries_with_fallback(
+        self,
+        table_collector=lambda: _collect_batch_from_table(self),
         raw_entries_text=self.b_entries.text(),
         timeout=3000,
     )
@@ -346,7 +356,8 @@ def on_batch_takeout(self):
 
     action_text = self.b_action.currentText()
     date_str = self.b_date.date().toString("yyyy-MM-dd")
-    items = self._build_takeout_batch_plan_items(
+    items = _build_takeout_batch_plan_items(
+        self,
         entries,
         date_str=date_str,
         action_text=action_text,

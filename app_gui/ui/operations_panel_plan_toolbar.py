@@ -28,18 +28,23 @@ def _refresh_plan_toolbar_state(self):
 
 
 def _refresh_after_plan_items_changed(self):
-    self._refresh_plan_table()
-    self._update_execute_button_state()
-    self._refresh_plan_toolbar_state()
+    from app_gui.ui import operations_panel_plan_store as _ops_plan_store
+    from app_gui.ui import operations_panel_plan_table as _ops_plan_table
+
+    _ops_plan_table._refresh_plan_table(self)
+    _ops_plan_store._update_execute_button_state(self)
+    _refresh_plan_toolbar_state(self)
     apply_mode_fn = getattr(self, "_apply_migration_mode_ui_state", None)
     if callable(apply_mode_fn):
         apply_mode_fn()
 
 
 def remove_selected_plan_items(self):
+    from app_gui.ui import operations_panel_plan_store as _ops_plan_store
+
     if bool(getattr(self, "_guard_migration_write_action", lambda: False)()):
         return
-    rows = self._get_selected_plan_rows()
+    rows = _get_selected_plan_rows(self)
     if not rows:
         self.status_message.emit(tr("operations.planNoSelection"), 2000, "warning")
         return
@@ -51,7 +56,8 @@ def remove_selected_plan_items(self):
         self.status_message.emit(tr("operations.planNoRemoved"), 2000, "warning")
         return
 
-    self._publish_plan_items_notice(
+    _ops_plan_store._publish_plan_items_notice(
+        self,
         code="plan.removed",
         text=tr("operations.planRemovedCount", count=removed_count),
         level="info",
@@ -72,7 +78,7 @@ def on_plan_table_context_menu(self, pos):
         return
 
     row = item.row()
-    selected_rows = self._get_selected_plan_rows()
+    selected_rows = _get_selected_plan_rows(self)
     if row not in selected_rows:
         self.plan_table.clearSelection()
         self.plan_table.selectRow(row)

@@ -20,25 +20,18 @@ def _record_matches_slot(record, box, position):
         and _coerce_int_or_none(record.get("position")) == _coerce_int_or_none(position)
     )
 
-
-def _takeout_record_id(self):
-    return self.t_id.value()
-
-def _move_record_id(self):
-    return self.m_id.value()
-
 def _rebuild_ctx_user_fields(self, prefix, custom_fields):
     """Rebuild user field context rows in takeout/move form."""
     if prefix == "takeout":
         form = getattr(self, "_takeout_ctx_form", None)
         widgets = getattr(self, "_takeout_ctx_widgets", {})
-        rid_fn = self._takeout_record_id
-        refresh_fn = self._refresh_takeout_record_context
+        rid_fn = lambda: self.t_id.value()
+        refresh_fn = lambda: _refresh_takeout_record_context(self)
     else:
         form = getattr(self, "_move_ctx_form", None)
         widgets = getattr(self, "_move_ctx_widgets", {})
-        rid_fn = self._move_record_id
-        refresh_fn = self._refresh_move_record_context
+        rid_fn = lambda: self.m_id.value()
+        refresh_fn = lambda: _refresh_move_record_context(self)
     if form is None:
         return
     # Remove old user field rows
@@ -52,7 +45,9 @@ def _rebuild_ctx_user_fields(self, prefix, custom_fields):
             # ``note`` and ``cell_line`` keep dedicated context rows.
             continue
         flabel = fdef.get("label", key)
-        container, lbl_widget = self._make_editable_field(key, rid_fn, refresh_fn)
+        from app_gui.ui import operations_panel_forms as _ops_forms
+
+        container, lbl_widget = _ops_forms._make_editable_field(self, key, rid_fn, refresh_fn)
         form.insertRow(form.rowCount(), flabel, container)
         widgets[key] = (container, lbl_widget)
     if prefix == "takeout":
@@ -229,7 +224,7 @@ def _refresh_takeout_record_context(self):
         self.t_ctx_status.setProperty("role", "statusWarning")
         self.t_ctx_status.setVisible(True)
         self.t_position.clear()
-        self._clear_context_label_groups(
+        _clear_context_label_groups(
             [
                 self.t_ctx_box,
                 self.t_ctx_position,
@@ -244,7 +239,8 @@ def _refresh_takeout_record_context(self):
 
     self.t_ctx_status.setVisible(False)
 
-    _box, position = self._populate_record_context_labels(
+    _box, position = _populate_record_context_labels(
+        self,
         record=record,
         box_label=self.t_ctx_box,
         position_label=self.t_ctx_position,
@@ -262,11 +258,11 @@ def _refresh_takeout_record_context(self):
         self.t_position.setCurrentIndex(0)
     self.t_position.blockSignals(False)
 
-    self._set_last_event_summary_label(self.t_ctx_events, record.get("thaw_events"))
+    _set_last_event_summary_label(self, self.t_ctx_events, record.get("thaw_events"))
 
 def _on_move_source_changed(self):
     """Called when user manually changes source box/position."""
-    self._refresh_move_record_context()
+    _refresh_move_record_context(self)
 
 def _refresh_move_record_context(self):
     if not hasattr(self, "m_ctx_status"):
@@ -296,7 +292,7 @@ def _refresh_move_record_context(self):
         self.m_ctx_status.setText(tr("operations.recordNotFound"))
         self.m_ctx_status.setProperty("role", "statusWarning")
         self.m_ctx_status.setVisible(True)
-        self._clear_context_label_groups(
+        _clear_context_label_groups(
             [
                 self.m_ctx_box,
                 self.m_ctx_position,
@@ -322,7 +318,8 @@ def _refresh_move_record_context(self):
         self.m_to_box.setValue(int(box_num))
         self.m_to_box.blockSignals(False)
 
-    self._populate_record_context_labels(
+    _populate_record_context_labels(
+        self,
         record=record,
         box_label=self.m_ctx_box,
         position_label=self.m_ctx_position,
@@ -331,5 +328,5 @@ def _refresh_move_record_context(self):
         cell_line_label=self.m_ctx_cell_line,
         extra_widgets=self._move_ctx_widgets,
     )
-    self._set_last_event_summary_label(self.m_ctx_events, record.get("thaw_events"))
+    _set_last_event_summary_label(self, self.m_ctx_events, record.get("thaw_events"))
 

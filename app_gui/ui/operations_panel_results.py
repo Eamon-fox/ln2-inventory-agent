@@ -21,15 +21,19 @@ def _handle_response(
     notice_data=None,
     allow_undo_from_backup=True,
 ):
+    from app_gui.ui import operations_panel_actions as _ops_actions
+    from app_gui.ui import operations_panel_execution as _ops_exec
+
     payload = response if isinstance(response, dict) else {}
-    self._display_result_summary(response, context)
+    _display_result_summary(self, response, context)
 
     ok = payload.get("ok", False)
     msg = localize_error_payload(payload, fallback=_tr("operations.unknownResult"))
     code = str(notice_code or ("operation.success" if ok else "operation.failed"))
 
     if ok:
-        self._publish_system_notice(
+        _ops_exec._publish_system_notice(
+            self,
             code=code,
             text=_tr("operations.contextSuccess", context=context),
             level="success",
@@ -40,9 +44,10 @@ def _handle_response(
         backup_path = payload.get("backup_path")
         if backup_path and allow_undo_from_backup:
             self._last_operation_backup = backup_path
-            self._enable_undo(timeout_sec=30)
+            _ops_actions._enable_undo(self, timeout_sec=30)
     else:
-        self._publish_system_notice(
+        _ops_exec._publish_system_notice(
+            self,
             code=code,
             text=_tr("operations.contextFailed", context=context, error=msg),
             level="error",
@@ -149,13 +154,13 @@ def _build_restore_result_lines(result):
 
 def _build_success_result_lines(self, context, preview, result):
     if context == "Add Entry":
-        return self._build_add_entry_result_lines(preview, result)
+        return _build_add_entry_result_lines(self, preview, result)
     if context == "Single Operation":
-        return self._build_single_operation_result_lines(preview)
+        return _build_single_operation_result_lines(self, preview)
     if context == "Batch Operation":
-        return self._build_batch_operation_result_lines(preview, result)
+        return _build_batch_operation_result_lines(preview, result)
     if context == "Rollback" or context == "Undo":
-        return self._build_restore_result_lines(result)
+        return _build_restore_result_lines(result)
     return []
 
 
@@ -167,13 +172,13 @@ def _display_result_summary(self, response, context):
     result = payload.get("result", {}) or {}
 
     if ok:
-        lines = [self._result_header_html(context, ok=True)]
-        lines.extend(self._build_success_result_lines(context, preview, result))
+        lines = [_result_header_html(context, ok=True)]
+        lines.extend(_build_success_result_lines(self, context, preview, result))
         self._show_result_card(lines, "success")
     else:
         msg = localize_error_payload(payload, fallback=_tr("operations.unknownError"))
         error_code = payload.get("error_code", "")
-        lines = [self._result_header_html(context, ok=False)]
+        lines = [_result_header_html(context, ok=False)]
         lines.append(str(msg))
         if error_code:
             lines.append(

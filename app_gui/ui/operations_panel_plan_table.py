@@ -216,7 +216,7 @@ def _build_plan_changes(self, action_norm, item, payload, custom_fields):
                 key = str((fdef or {}).get("key") or "")
                 if not key or key == "note":
                     continue
-                text = self._plan_value_text(source.get(key)).strip()
+                text = _plan_value_text(source.get(key)).strip()
                 if text and text not in tokens:
                     tokens.append(text)
                 if len(tokens) >= 3:
@@ -254,7 +254,9 @@ def _build_plan_changes(self, action_norm, item, payload, custom_fields):
             try:
                 stat = os.stat(backup_abs)
                 mtime = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
-                size = self._format_size_bytes(stat.st_size)
+                from app_gui.ui import operations_panel_confirm as _ops_confirm
+
+                size = _ops_confirm._format_size_bytes(stat.st_size)
                 detail_parts.append(_tr("operations.planRollbackBackupMeta", mtime=mtime, size=size))
             except Exception:
                 detail_parts.append(_tr("operations.planRollbackBackupMissing", path=backup_abs))
@@ -267,7 +269,7 @@ def _build_plan_changes(self, action_norm, item, payload, custom_fields):
         else:
             parts.append(_tr("operations.add"))
         for key, value in fields.items():
-            value_text = self._plan_value_text(value)
+            value_text = _plan_value_text(value)
             if not value_text:
                 continue
             label = label_map.get(str(key), str(key))
@@ -278,8 +280,8 @@ def _build_plan_changes(self, action_norm, item, payload, custom_fields):
         for key, new_value in fields.items():
             label = label_map.get(str(key), str(key))
             old_value = record.get(key, "") if isinstance(record, dict) else ""
-            old_text = self._plan_value_text(old_value)
-            new_text = self._plan_value_text(new_value)
+            old_text = _plan_value_text(old_value)
+            new_text = _plan_value_text(new_value)
             if old_text != new_text:
                 parts.append(f"{label}: {old_text} -> {new_text}")
         if not parts:
@@ -302,7 +304,7 @@ def _build_plan_changes(self, action_norm, item, payload, custom_fields):
         else:
             parts.append(_tr("overview.takeout", default="Takeout"))
 
-    summary, base_detail = self._summarize_change_parts(parts, max_parts=summary_limit)
+    summary, base_detail = _summarize_change_parts(parts, max_parts=summary_limit)
     if detail_parts:
         combined_detail = base_detail + "\n" + "\n".join(detail_parts) if base_detail else "\n".join(detail_parts)
         return summary, combined_detail
@@ -310,7 +312,9 @@ def _build_plan_changes(self, action_norm, item, payload, custom_fields):
 
 
 def _build_plan_status(self, item):
-    validation = self._plan_validation_by_key.get(self._plan_item_key(item)) or {}
+    from app_gui.ui import operations_panel_plan_store as _ops_plan_store
+
+    validation = self._plan_validation_by_key.get(_ops_plan_store._plan_item_key(self, item)) or {}
     if validation.get("blocked"):
         return _tr("operations.planStatusBlocked"), localize_error_payload(validation)
     return _tr("operations.planStatusReady"), localize_error_payload(validation, fallback="")
@@ -323,13 +327,15 @@ def _build_plan_row_semantics(self, item, custom_fields=None):
     payload = item.get("payload") or {}
     fields = custom_fields if custom_fields is not None else self._current_custom_fields
 
-    action_display = self._build_plan_action_text(action_norm, item)
-    target_display = self._build_plan_target_text(action_norm, item, payload)
-    date_display = self._build_plan_date_text(action_norm, payload)
-    changes_summary, changes_detail = self._build_plan_changes(action_norm, item, payload, fields)
-    status_text, status_detail = self._build_plan_status(item)
+    action_display = _build_plan_action_text(self, action_norm, item)
+    target_display = _build_plan_target_text(self, action_norm, item, payload)
+    date_display = _build_plan_date_text(self, action_norm, payload)
+    changes_summary, changes_detail = _build_plan_changes(self, action_norm, item, payload, fields)
+    status_text, status_detail = _build_plan_status(self, item)
 
-    validation = self._plan_validation_by_key.get(self._plan_item_key(item)) or {}
+    from app_gui.ui import operations_panel_plan_store as _ops_plan_store
+
+    validation = self._plan_validation_by_key.get(_ops_plan_store._plan_item_key(self, item)) or {}
     status_blocked = bool(validation.get("blocked"))
 
     return {
@@ -347,6 +353,8 @@ def _build_plan_row_semantics(self, item, custom_fields=None):
 
 def _refresh_plan_table(self):
     from lib.custom_fields import get_color_key
+    from app_gui.ui import operations_panel_forms as _ops_forms
+    from app_gui.ui import operations_panel_plan_toolbar as _ops_plan_toolbar
 
     if not hasattr(self, "_plan_table_tint_delegate"):
         self._plan_table_tint_delegate = _PlanTableTintDelegate(self.plan_table)
@@ -367,7 +375,8 @@ def _refresh_plan_table(self):
         _tr("operations.colStatus"),
     ]
 
-    self._setup_table(
+    _ops_forms._setup_table(
+        self,
         self.plan_table,
         headers,
         sortable=False,
@@ -379,7 +388,7 @@ def _refresh_plan_table(self):
     plan_items = self._plan_store.list_items()
     for row, item in enumerate(plan_items):
         self.plan_table.insertRow(row)
-        row_model = self._build_plan_row_semantics(item, custom_fields=custom_fields)
+        row_model = _build_plan_row_semantics(self, item, custom_fields=custom_fields)
 
         action_item = QTableWidgetItem(str(row_model.get("action", "")))
         self.plan_table.setItem(row, 0, action_item)
@@ -432,4 +441,4 @@ def _refresh_plan_table(self):
         self.plan_table.resizeColumnToContents(col)
     header.setSectionResizeMode(QHeaderView.Interactive)
 
-    self._refresh_plan_toolbar_state()
+    _ops_plan_toolbar._refresh_plan_toolbar_state(self)

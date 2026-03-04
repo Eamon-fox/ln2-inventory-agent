@@ -89,12 +89,12 @@ def _collect_notice_action_counts_and_sample(self, items, max_sample=8):
         action = str(item.get("action", "") or "").lower()
         action_counts[action] = action_counts.get(action, 0) + 1
         if len(sample) < max_sample:
-            sample.append(self._build_notice_plan_item_desc(item))
+            sample.append(_build_notice_plan_item_desc(self, item))
     return action_counts, sample
 
 
 def _collect_plan_notice_summary(self, items, max_sample=8):
-    action_counts, sample = self._collect_notice_action_counts_and_sample(items, max_sample=max_sample)
+    action_counts, sample = _collect_notice_action_counts_and_sample(self, items, max_sample=max_sample)
     details = "\n".join(sample[:max_sample]) if sample else None
     return {
         "action_counts": action_counts,
@@ -116,7 +116,9 @@ def _publish_plan_items_notice(
     include_total_count=False,
     extra_data=None,
 ):
-    summary = self._collect_plan_notice_summary(items)
+    from app_gui.ui import operations_panel_execution as _ops_exec
+
+    summary = _collect_plan_notice_summary(self, items)
     data = {
         count_key: count_value,
         "action_counts": summary["action_counts"],
@@ -126,7 +128,8 @@ def _publish_plan_items_notice(
         data["total_count"] = self._plan_store.count()
     if isinstance(extra_data, dict) and extra_data:
         data.update(extra_data)
-    self._publish_system_notice(
+    _ops_exec._publish_system_notice(
+        self,
         code=code,
         text=text,
         level=level,
@@ -146,7 +149,7 @@ def _apply_preflight_report(self, report):
         item = report_item.get("item") if isinstance(report_item, dict) else None
         if not isinstance(item, dict):
             continue
-        self._plan_validation_by_key[self._plan_item_key(item)] = {
+        self._plan_validation_by_key[_plan_item_key(self, item)] = {
             "ok": report_item.get("ok"),
             "blocked": report_item.get("blocked"),
             "error_code": report_item.get("error_code"),
@@ -156,8 +159,10 @@ def _apply_preflight_report(self, report):
 
 def _reset_plan_feedback_and_validation(self):
     """Clear transient plan feedback + validation cache."""
-    self._set_plan_feedback("")
-    self._apply_preflight_report(None)
+    from app_gui.ui import operations_panel_forms as _ops_forms
+
+    _ops_forms._set_plan_feedback(self, "")
+    _apply_preflight_report(self, None)
 
 
 def _is_rollback_replace_request(items):
@@ -170,13 +175,17 @@ def _is_rollback_replace_request(items):
 
 def add_plan_items(self, items):
     """Validate and add items to the plan staging area atomically."""
+    from app_gui.ui import operations_panel_forms as _ops_forms
+    from app_gui.ui import operations_panel_plan_toolbar as _ops_plan_toolbar
+    from app_gui.ui import operations_panel_execution as _ops_exec
+
     if bool(getattr(self, "_guard_migration_write_action", lambda: False)()):
         return
     incoming = list(items or [])
     if not incoming:
         return
 
-    self._set_plan_feedback("")
+    _ops_forms._set_plan_feedback(self, "")
     existing_items = self._plan_store.list_items()
     replace_with_rollback = _is_rollback_replace_request(incoming)
     gate_existing_items = [] if replace_with_rollback else existing_items
@@ -189,7 +198,7 @@ def add_plan_items(self, items):
         run_preflight=True,
     )
 
-    self._apply_preflight_report(gate.get("preflight_report"))
+    _apply_preflight_report(self, gate.get("preflight_report"))
 
     blocked_messages = []
     for blocked in gate.get("blocked_items", []):
@@ -211,8 +220,9 @@ def add_plan_items(self, items):
         feedback = "\n".join(f"- {msg}" for msg in preview)
         if len(blocked_messages) > 3:
             feedback += f"\n... +{len(blocked_messages) - 3}"
-        self._set_plan_feedback(feedback, level="error")
-        self._publish_system_notice(
+        _ops_forms._set_plan_feedback(self, feedback, level="error")
+        _ops_exec._publish_system_notice(
+            self,
             code="plan.stage.blocked",
             text=user_text,
             level="error",
@@ -234,10 +244,11 @@ def add_plan_items(self, items):
     if replace_with_rollback:
         replaced_count = len(existing_items)
         self._plan_store.replace_all(accepted)
-        self._refresh_after_plan_items_changed()
-        self._set_plan_feedback("")
+        _ops_plan_toolbar._refresh_after_plan_items_changed(self)
+        _ops_forms._set_plan_feedback(self, "")
 
-        self._publish_plan_items_notice(
+        _publish_plan_items_notice(
+            self,
             code="plan.stage.replaced_by_rollback",
             text=_tr("operations.planRollbackReplaced", count=replaced_count),
             level="info",
@@ -256,10 +267,11 @@ def add_plan_items(self, items):
     added = self._plan_store.add(accepted)
 
     if added:
-        self._refresh_after_plan_items_changed()
-        self._set_plan_feedback("")
+        _ops_plan_toolbar._refresh_after_plan_items_changed(self)
+        _ops_forms._set_plan_feedback(self, "")
 
-        self._publish_plan_items_notice(
+        _publish_plan_items_notice(
+            self,
             code="plan.stage.accepted",
             text=_tr("operations.planAddedCount", count=added),
             level="info",
@@ -278,12 +290,13 @@ def _run_plan_preflight(self, trigger="manual"):
 
     plan_items = self._plan_store.list_items()
     if not plan_items:
-        self._apply_preflight_report(None)
+        _apply_preflight_report(self, None)
         return
 
     yaml_path = self.yaml_path_getter()
     if not os.path.isfile(yaml_path):
-        self._apply_preflight_report(
+        _apply_preflight_report(
+            self,
             {
                 "ok": True,
                 "blocked": False,
@@ -297,7 +310,7 @@ def _run_plan_preflight(self, trigger="manual"):
         )
         return
 
-    self._apply_preflight_report(preflight_plan(yaml_path, plan_items, self.bridge))
+    _apply_preflight_report(self, preflight_plan(yaml_path, plan_items, self.bridge))
 
 
 def _update_execute_button_state(self):
