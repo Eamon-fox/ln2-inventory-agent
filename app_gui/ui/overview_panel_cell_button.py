@@ -1,7 +1,7 @@
 """Cell widget used by OverviewPanel grid mode."""
 
 from PySide6.QtCore import QEasingCurve, QMimeData, QPropertyAnimation, QRect, Qt, Signal
-from PySide6.QtGui import QDrag
+from PySide6.QtGui import QColor, QDrag
 from PySide6.QtWidgets import QLabel, QPushButton
 
 MIME_TYPE_MOVE = "application/x-ln2-move"
@@ -26,6 +26,8 @@ class CellButton(QPushButton):
         self._hover_anim = None
         self._hover_anim_on_finished = None
         self._hover_proxy = None
+        self._selection_outer_proxy = None
+        self._selection_inner_proxy = None
         self._operation_marker = ""
         self._operation_move_id = None
         self._operation_badge = QLabel(self)
@@ -73,6 +75,83 @@ class CellButton(QPushButton):
         proxy.setToolTip(self.toolTip())
         proxy.setFont(self.font())
         proxy.setGeometry(self._base_rect)
+
+    def _ensure_selection_proxies(self):
+        if self._selection_outer_proxy is not None and self._selection_inner_proxy is not None:
+            return self._selection_outer_proxy, self._selection_inner_proxy
+        parent = self.parentWidget() or self
+        outer = QLabel(parent)
+        outer.setObjectName("OverviewCellSelectionOuterProxy")
+        outer.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        outer.hide()
+        inner = QLabel(parent)
+        inner.setObjectName("OverviewCellSelectionInnerProxy")
+        inner.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        inner.hide()
+        self._selection_outer_proxy = outer
+        self._selection_inner_proxy = inner
+        return outer, inner
+
+    def _selection_rect(self, spread_px):
+        rect = self.geometry()
+        if not rect.isValid():
+            return QRect()
+        spread = max(1, int(spread_px))
+        return rect.adjusted(-spread, -spread, spread, spread)
+
+    def _sync_selection_proxy_geometry(self):
+        outer = self._selection_outer_proxy
+        inner = self._selection_inner_proxy
+        if outer is None or inner is None:
+            return
+        outer_rect = self._selection_rect(4)
+        if outer_rect.isValid():
+            outer.setGeometry(outer_rect)
+        inner_rect = self._selection_rect(2)
+        if inner_rect.isValid():
+            inner.setGeometry(inner_rect)
+
+    def _hide_selection_ring(self):
+        if self._selection_outer_proxy is not None:
+            self._selection_outer_proxy.hide()
+        if self._selection_inner_proxy is not None:
+            self._selection_inner_proxy.hide()
+
+    def set_selection_ring(self, selected=False, ring_color=""):
+        if not bool(selected):
+            self._hide_selection_ring()
+            return
+
+        color = QColor(str(ring_color or "").strip())
+        if not color.isValid():
+            color = QColor("#63b3ff")
+
+        outer, inner = self._ensure_selection_proxies()
+        outer_rgba = f"rgba({color.red()}, {color.green()}, {color.blue()}, 140)"
+        inner_rgba = f"rgba({color.red()}, {color.green()}, {color.blue()}, 255)"
+        outer.setStyleSheet(
+            f"""
+            QLabel#OverviewCellSelectionOuterProxy {{
+                background-color: transparent;
+                border: 2px solid {outer_rgba};
+                border-radius: 6px;
+            }}
+            """
+        )
+        inner.setStyleSheet(
+            f"""
+            QLabel#OverviewCellSelectionInnerProxy {{
+                background-color: transparent;
+                border: 1px solid {inner_rgba};
+                border-radius: 4px;
+            }}
+            """
+        )
+        self._sync_selection_proxy_geometry()
+        outer.show()
+        inner.show()
+        outer.raise_()
+        inner.raise_()
 
     @staticmethod
     def _badge_text_and_color(marker_type, move_id=None):
@@ -208,11 +287,18 @@ class CellButton(QPushButton):
 
     def hideEvent(self, event):
         self.reset_hover_state()
+        self._hide_selection_ring()
         super().hideEvent(event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._reposition_operation_badge()
+        self._sync_selection_proxy_geometry()
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        self._reposition_operation_badge()
+        self._sync_selection_proxy_geometry()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:

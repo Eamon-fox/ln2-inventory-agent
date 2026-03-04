@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QGridLayout, QGroupBox, QLabel, QSizePolicy, QVBox
 
 from app_gui.i18n import t, tr
 from app_gui.ui.overview_panel_cell_button import CellButton
-from app_gui.ui.theme import cell_empty_style, cell_occupied_style
+from app_gui.ui.theme import cell_empty_style, cell_occupied_style, resolve_theme_token
 from app_gui.ui.utils import cell_color
 from lib.position_fmt import box_to_display, pos_to_display
 
@@ -468,6 +468,9 @@ def _paint_cell(self, button, box_num, position, record):
 
     if hasattr(button, "set_operation_marker"):
         button.set_operation_marker(marker_type if marker_type else None, move_id if marker_type else None)
+    if hasattr(button, "set_selection_ring"):
+        ring_color = resolve_theme_token("cell-selected-border", fallback="#63b3ff")
+        button.set_selection_ring(bool(is_selected), ring_color=ring_color)
 
     signatures = getattr(self, "_cell_render_signatures", None)
     if isinstance(signatures, dict):

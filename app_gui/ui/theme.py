@@ -346,11 +346,19 @@ def _get_theme_vars(mode):
             --status-muted: #64748b;
             --table-gridline: rgba(15,23,42,0.10);
             --cell-border-default: #e0e0e0;
-            --cell-selected-border: #0f172a;
+            --cell-selected-border: var(--accent);
             --cell-empty-bg: #eef3f8;
             --cell-empty-selected-bg: #deebf8;
             --cell-empty-text: #6b7f95;
             --cell-empty-selected-text: #34506d;
+            --cell-empty-fresh-bg: #ffffff;
+            --cell-empty-fresh-border: #e7ebf1;
+            --cell-empty-fresh-text: #7a8796;
+            --cell-empty-fresh-selected-bg: #f4f8ff;
+            --cell-empty-fresh-selected-text: #3f5d7d;
+            --cell-occupied-hairline: rgba(0,0,0,0.08);
+            --groupbox-bg: #ffffff;
+            --groupbox-border: #e3e8ef;
             --scrollbar-handle: rgba(0,0,0,0.15);
             --scrollbar-handle-hover: rgba(0,0,0,0.25);
             --splitter-color: rgba(15,23,42,0.12);
@@ -473,11 +481,19 @@ def _get_theme_vars(mode):
             --status-muted: #94a3b8;
             --table-gridline: rgba(159,179,200,0.20);
             --cell-border-default: rgba(230,241,255,0.18);
-            --cell-selected-border: #ffffff;
+            --cell-selected-border: var(--accent);
             --cell-empty-bg: #1a2a40;
             --cell-empty-selected-bg: #223956;
             --cell-empty-text: #86a0bb;
             --cell-empty-selected-text: #c6dbf3;
+            --cell-empty-fresh-bg: #243448;
+            --cell-empty-fresh-border: rgba(230,241,255,0.22);
+            --cell-empty-fresh-text: #bdd0e3;
+            --cell-empty-fresh-selected-bg: #2f465f;
+            --cell-empty-fresh-selected-text: #e3eef9;
+            --cell-occupied-hairline: rgba(255,255,255,0.10);
+            --groupbox-bg: #1f2f43;
+            --groupbox-border: rgba(230,241,255,0.20);
             --scrollbar-handle: rgba(255,255,255,0.1);
             --scrollbar-handle-hover: rgba(255,255,255,0.15);
             --splitter-color: rgba(159,179,200,0.18);
@@ -586,7 +602,7 @@ def _get_common_qss():
             --splitter-radius: 2px;
         }
         QToolTip { color: var(--tooltip-color); background-color: var(--tooltip-bg); border: 1px solid var(--tooltip-border); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); font-size: {FONT_SIZE_SM}px; }
-        QGroupBox {{ border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-lg); margin-top: var(--space-3); font-weight: {FONT_WEIGHT_MEDIUM}; color: var(--text-weak); padding-top: var(--space-2); }}
+        QGroupBox {{ background-color: var(--groupbox-bg); border: var(--border-thin) solid var(--groupbox-border); border-radius: var(--radius-lg); margin-top: var(--space-3); font-weight: {FONT_WEIGHT_MEDIUM}; color: var(--text-weak); padding-top: var(--space-2); }}
         QGroupBox::title {{ subcontrol-origin: margin; subcontrol-position: top left; padding: 0 var(--space-2); left: var(--space-2); color: var(--text-weak); font-size: {FONT_SIZE_MD}px; }}
         QTableWidget {{ gridline-color: var(--table-gridline); background-color: var(--background-inset); selection-background-color: var(--accent-muted); border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-md); }}
         QTableWidget::item {{ padding: var(--space-1) var(--space-2); border: none; }}
@@ -854,21 +870,21 @@ def _cell_occupied_style_cached(color, is_selected, mode):
             QPushButton {{
                 background-color: {color};
                 color: {text_color};
-                border: 3px solid var(--cell-selected-border);
+                border: 1px solid var(--cell-occupied-hairline);
                 border-radius: 2px;
                 font-weight: 500;
                 padding: 1px;
 
             }}
             QPushButton:hover {{
-                border: 3px solid var(--cell-selected-border);
+                border: 1px solid var(--cell-occupied-hairline);
             }}
         """, mode=mode)
     return _resolve_inline_qss(f"""
         QPushButton {{
             background-color: {color};
             color: {text_color};
-            border: 1px solid var(--cell-border-default);
+            border: 1px solid var(--cell-occupied-hairline);
             border-radius: 2px;
             font-weight: 500;
             padding: 1px;
@@ -894,30 +910,30 @@ def _cell_empty_style_cached(is_selected, mode):
     if is_selected:
         return _resolve_inline_qss("""
             QPushButton {
-                background-color: var(--cell-empty-selected-bg);
-                color: var(--cell-empty-selected-text);
-                border: 3px solid var(--cell-selected-border);
+                background-color: var(--cell-empty-fresh-selected-bg);
+                color: var(--cell-empty-fresh-selected-text);
+                border: 1px solid var(--cell-empty-fresh-border);
                 border-radius: 2px;
                 padding: 1px;
 
             }
             QPushButton:hover {
-                border: 3px solid var(--cell-selected-border);
+                border: 1px solid var(--cell-empty-fresh-border);
                 background-color: var(--background-raised);
                 color: var(--text-weak);
             }
         """, mode=mode)
     return _resolve_inline_qss("""
         QPushButton {
-            background-color: var(--cell-empty-bg);
-            color: var(--cell-empty-text);
-            border: 1px solid var(--cell-border-default);
+            background-color: var(--cell-empty-fresh-bg);
+            color: var(--cell-empty-fresh-text);
+            border: 1px solid var(--cell-empty-fresh-border);
             border-radius: 2px;
             padding: 1px;
 
         }
         QPushButton:hover {
-            border: 2px solid var(--accent);
+            border: 1px solid var(--cell-empty-fresh-border);
             background-color: var(--background-raised);
             color: var(--text-weak);
         }
