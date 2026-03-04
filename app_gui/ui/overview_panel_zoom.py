@@ -19,7 +19,7 @@ def _set_zoom(self, level, animated=False):
     if not animated or abs(target_level - self._zoom_level) < 0.05:
         self._zoom_level = target_level
         self._zoom_label.setText(f"{int(self._zoom_level * 100)}%")
-        self._apply_zoom()
+        self._apply_zoom(update_labels=True)
         return
 
     if self._zoom_animation is not None:
@@ -38,19 +38,20 @@ def _set_zoom(self, level, animated=False):
     def update_zoom(value):
         self._zoom_level = value / 100.0
         self._zoom_label.setText(f"{value}%")
-        self._apply_zoom()
+        # Keep zoom animation smooth: defer label visibility reflow.
+        self._apply_zoom(update_labels=False)
 
     self._zoom_animation.valueChanged.connect(update_zoom)
+    self._zoom_animation.finished.connect(lambda: self._apply_zoom(update_labels=True))
     self._zoom_animation.start()
 
 
-def _apply_zoom(self):
+def _apply_zoom(self, update_labels=True):
     """Resize all existing cell buttons and update font sizes.
 
     Font size is set via ``QFont.setPixelSize()`` (fast) instead of
-    rebuilding stylesheets, so ``_repaint_all_cells()`` is no longer
-    needed on zoom — signatures stay valid because they exclude
-    zoom/font fields.
+    rebuilding stylesheets. Optional ``update_labels`` controls whether
+    occupied-cell text visibility is recomputed at this step.
     """
     cell_size = max(12, int(self._base_cell_size * self._zoom_level))
     font_size_occupied = max(9, int(FONT_SIZE_CELL * self._zoom_level))
@@ -58,6 +59,7 @@ def _apply_zoom(self):
     self._current_font_sizes = (font_size_occupied, font_size_empty)
 
     container = getattr(self, "ov_boxes_widget", None)
+    update_cell_label_visibility = getattr(self, "_update_cell_label_visibility", None)
     if container is not None:
         container.setUpdatesEnabled(False)
     try:
@@ -73,6 +75,8 @@ def _apply_zoom(self):
             if font.pixelSize() != fs:
                 font.setPixelSize(fs)
                 button.setFont(font)
+            if update_labels and callable(update_cell_label_visibility):
+                update_cell_label_visibility(button)
     finally:
         if container is not None:
             container.setUpdatesEnabled(True)

@@ -32,10 +32,11 @@ def positions_to_text(positions):
     return ", ".join(str(p) for p in sorted(positions))
 
 
+# Low-saturation Morandi palette for overview grid cells to reduce eye strain.
 _COLOR_CYCLE = [
-    "#4a90d9", "#e67e22", "#27ae60", "#8e44ad", "#2c3e50",
-    "#e74c3c", "#16a085", "#d35400", "#2980b9", "#c0392b",
-    "#1abc9c", "#f39c12", "#9b59b6", "#34495e", "#7f8c8d",
+    "#8FA4B3", "#B7A18A", "#8EA892", "#9C8FA8", "#7F8A93",
+    "#B38D8A", "#7FA39C", "#A98F76", "#7D99A8", "#A07C7A",
+    "#8DA8A2", "#B2A184", "#9C90A8", "#7E8790", "#8A949B",
 ]
 
 _dynamic_palette = {}
@@ -51,9 +52,9 @@ def build_color_palette(options):
 
 def cell_color(value):
     if not value:
-        return "#7f8c8d"
+        return "#8A949B"
     if _dynamic_palette:
-        return _dynamic_palette.get(value, "#7f8c8d")
+        return _dynamic_palette.get(value, "#8A949B")
     # Fallback: hash-based color from cycle
     idx = hash(value) % len(_COLOR_CYCLE)
     return _COLOR_CYCLE[idx]

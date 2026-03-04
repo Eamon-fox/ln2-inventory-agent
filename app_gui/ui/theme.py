@@ -345,7 +345,7 @@ def _get_theme_vars(mode):
             --status-error: #b91c1c;
             --status-muted: #64748b;
             --table-gridline: rgba(15,23,42,0.10);
-            --cell-border-default: #95adc6;
+            --cell-border-default: #e0e0e0;
             --cell-selected-border: #0f172a;
             --cell-empty-bg: #eef3f8;
             --cell-empty-selected-bg: #deebf8;
@@ -472,7 +472,7 @@ def _get_theme_vars(mode):
             --status-error: #ef4444;
             --status-muted: #94a3b8;
             --table-gridline: rgba(159,179,200,0.20);
-            --cell-border-default: #4e6a88;
+            --cell-border-default: rgba(230,241,255,0.18);
             --cell-selected-border: #ffffff;
             --cell-empty-bg: #1a2a40;
             --cell-empty-selected-bg: #223956;
@@ -855,7 +855,7 @@ def _cell_occupied_style_cached(color, is_selected, mode):
                 background-color: {color};
                 color: {text_color};
                 border: 3px solid var(--cell-selected-border);
-                border-radius: var(--radius-xs);
+                border-radius: 2px;
                 font-weight: 500;
                 padding: 1px;
 
@@ -869,7 +869,7 @@ def _cell_occupied_style_cached(color, is_selected, mode):
             background-color: {color};
             color: {text_color};
             border: 1px solid var(--cell-border-default);
-            border-radius: var(--radius-xs);
+            border-radius: 2px;
             font-weight: 500;
             padding: 1px;
 
@@ -897,7 +897,7 @@ def _cell_empty_style_cached(is_selected, mode):
                 background-color: var(--cell-empty-selected-bg);
                 color: var(--cell-empty-selected-text);
                 border: 3px solid var(--cell-selected-border);
-                border-radius: var(--radius-xs);
+                border-radius: 2px;
                 padding: 1px;
 
             }
@@ -912,7 +912,7 @@ def _cell_empty_style_cached(is_selected, mode):
             background-color: var(--cell-empty-bg);
             color: var(--cell-empty-text);
             border: 1px solid var(--cell-border-default);
-            border-radius: var(--radius-xs);
+            border-radius: 2px;
             padding: 1px;
 
         }

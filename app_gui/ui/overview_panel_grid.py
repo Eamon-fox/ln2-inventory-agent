@@ -10,6 +10,7 @@ from app_gui.ui.utils import cell_color
 from lib.position_fmt import box_to_display, pos_to_display
 
 _BOX_TAG_TITLE_MAX_CHARS = 18
+_OCCUPIED_TEXT_SHOW_MIN_CELL_PX = 52
 
 
 def _set_button_font_size(button, pixel_size):
@@ -18,6 +19,31 @@ def _set_button_font_size(button, pixel_size):
     if font.pixelSize() != pixel_size:
         font.setPixelSize(pixel_size)
         button.setFont(font)
+
+
+def _should_show_occupied_label(button, label_text):
+    text = str(label_text or "").strip()
+    if not text:
+        return False
+
+    side = min(int(button.width() or 0), int(button.height() or 0))
+    return side >= _OCCUPIED_TEXT_SHOW_MIN_CELL_PX
+
+
+def _update_cell_label_visibility(self, button):
+    if button is None:
+        return
+
+    label_text = str(button.property("display_label_full") or "")
+    is_empty = bool(button.property("is_empty"))
+
+    if is_empty:
+        target_text = label_text
+    else:
+        target_text = label_text if _should_show_occupied_label(button, label_text) else ""
+
+    if button.text() != target_text:
+        button.setText(target_text)
 
 
 def _normalize_positive_int(raw):
@@ -330,6 +356,7 @@ def _rebuild_boxes(self, rows, cols, box_numbers):
             button.setMouseTracking(True)
             button.setProperty("overview_box", box_num)
             button.setProperty("overview_position", position)
+            button.setProperty("position_display_text", display_text)
             button.installEventFilter(self)
 
             button.clicked.connect(
@@ -372,17 +399,31 @@ def _paint_cell(self, button, box_num, position, record):
         ck = get_color_key(meta)
         dk_val = str(record.get(dk) or "")
         ck_val = str(record.get(ck) or "")
-        max_chars = max(4, int(8 * self._zoom_level))
-        label = dk_val[:max_chars] if dk_val else display_pos
+        display_label = dk_val if dk_val else display_pos
         color = cell_color(ck_val or None)
-        button.setText(label)
+        _set_button_font_size(button, fs_occ)
+        button.setProperty("display_label_full", display_label)
+        button.setProperty("is_empty", False)
+        _update_cell_label_visibility(self, button)
 
         tt = [
             f"{tr('overview.tooltipId')}: {record.get('id', '-')}",
             f"{tr('overview.tooltipPos')}: {box_num}:{position}",
         ]
-        for fdef in get_effective_fields(meta):
+        field_defs = get_effective_fields(meta)
+        field_label_map = {
+            str(fdef.get("key") or ""): str(fdef.get("label") or fdef.get("key") or "")
+            for fdef in field_defs
+            if isinstance(fdef, dict)
+        }
+        if dk_val:
+            tt.append(f"{field_label_map.get(dk, dk)}: {dk_val}")
+        if ck_val and ck != dk:
+            tt.append(f"{field_label_map.get(ck, ck)}: {ck_val}")
+        for fdef in field_defs:
             fk = fdef["key"]
+            if fk in {dk, ck}:
+                continue
             fv = record.get(fk)
             if fv is not None and str(fv).strip():
                 tt.append(f"{fdef.get('label', fk)}: {fv}")
@@ -391,7 +432,6 @@ def _paint_cell(self, button, box_num, position, record):
         button.setToolTip("\n".join(tt))
         base_style = cell_occupied_style(color, is_selected)
         button.setStyleSheet(base_style)
-        _set_button_font_size(button, fs_occ)
         parts = [
             str(record.get("id", "")),
             str(box_num),
@@ -404,17 +444,17 @@ def _paint_cell(self, button, box_num, position, record):
         button.setProperty("search_text", " ".join(parts).lower())
         button.setProperty("display_key_value", dk_val)
         button.setProperty("color_key_value", ck_val)
-        button.setProperty("is_empty", False)
         button.set_record_id(int(record.get("id", 0)))
     else:
-        button.setText(display_pos)
+        _set_button_font_size(button, fs_empty)
+        button.setProperty("display_label_full", display_pos)
+        button.setProperty("is_empty", True)
+        _update_cell_label_visibility(self, button)
         button.setToolTip(t("overview.emptyCellTooltip", box=box_num, position=position))
         base_style = cell_empty_style(is_selected)
         button.setStyleSheet(base_style)
-        _set_button_font_size(button, fs_empty)
         button.setProperty("search_text", f"empty box {box_num} position {position}".lower())
         button.setProperty("color_key_value", "")
-        button.setProperty("is_empty", True)
         button.set_record_id(None)
 
     marker_map = getattr(self, "_operation_markers", {}) or {}

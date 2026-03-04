@@ -117,6 +117,7 @@ class OverviewPanel(QWidget):
     _rebuild_boxes = _ov_grid._rebuild_boxes
     _build_cell_render_signature = _ov_grid._build_cell_render_signature
     _paint_cell = _ov_grid._paint_cell
+    _update_cell_label_visibility = _ov_grid._update_cell_label_visibility
     _set_selected_cell = _ov_grid._set_selected_cell
     _clear_selected_cell = _ov_grid._clear_selected_cell
     _set_plan_store_ref = _ov_grid._set_plan_store_ref
