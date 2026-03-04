@@ -345,6 +345,13 @@ def _get_theme_vars(mode):
             --status-error: #b91c1c;
             --status-muted: #64748b;
             --table-gridline: rgba(15,23,42,0.10);
+            --table-bg: #ffffff;
+            --table-alt-bg: #f8fbff;
+            --table-header-bg: #f3f7fd;
+            --table-header-text: #41576f;
+            --table-border-soft: #dde5ef;
+            --table-hover-bg: rgba(43,127,229,0.08);
+            --table-selection-bg: #e0f2fe;
             --cell-border-default: #e0e0e0;
             --cell-selected-border: var(--accent);
             --cell-empty-bg: #eef3f8;
@@ -480,6 +487,13 @@ def _get_theme_vars(mode):
             --status-error: #ef4444;
             --status-muted: #94a3b8;
             --table-gridline: rgba(159,179,200,0.20);
+            --table-bg: #1f2f43;
+            --table-alt-bg: #25384e;
+            --table-header-bg: #2a3f56;
+            --table-header-text: #d5e5f6;
+            --table-border-soft: rgba(230,241,255,0.22);
+            --table-hover-bg: rgba(99,179,255,0.16);
+            --table-selection-bg: rgba(125,211,252,0.24);
             --cell-border-default: rgba(230,241,255,0.18);
             --cell-selected-border: var(--accent);
             --cell-empty-bg: #1a2a40;
@@ -604,10 +618,11 @@ def _get_common_qss():
         QToolTip { color: var(--tooltip-color); background-color: var(--tooltip-bg); border: 1px solid var(--tooltip-border); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); font-size: {FONT_SIZE_SM}px; }
         QGroupBox {{ background-color: var(--groupbox-bg); border: var(--border-thin) solid var(--groupbox-border); border-radius: var(--radius-lg); margin-top: var(--space-3); font-weight: {FONT_WEIGHT_MEDIUM}; color: var(--text-weak); padding-top: var(--space-2); }}
         QGroupBox::title {{ subcontrol-origin: margin; subcontrol-position: top left; padding: 0 var(--space-2); left: var(--space-2); color: var(--text-weak); font-size: {FONT_SIZE_MD}px; }}
-        QTableWidget {{ gridline-color: var(--table-gridline); background-color: var(--background-inset); selection-background-color: var(--accent-muted); border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-md); }}
+        QTableWidget {{ gridline-color: var(--table-border-soft); background-color: var(--table-bg); alternate-background-color: var(--table-alt-bg); selection-background-color: var(--table-selection-bg); border: var(--border-thin) solid var(--table-border-soft); border-radius: var(--radius-md); }}
         QTableWidget::item {{ padding: var(--space-1) var(--space-2); border: none; }}
-        QTableWidget::item:selected {{ background-color: var(--accent-muted); color: var(--text-strong); }}
-        QHeaderView::section {{ background-color: var(--background-strong); color: var(--text-weak); padding: 6px var(--space-2); border: none; border-bottom: var(--border-thin) solid var(--border-weak); border-right: var(--border-thin) solid var(--border-weak); font-weight: 500; font-size: {FONT_SIZE_SM}px; }}
+        QTableWidget::item:hover {{ background-color: var(--table-hover-bg); }}
+        QTableWidget::item:selected {{ background-color: var(--table-selection-bg); color: var(--text-strong); }}
+        QHeaderView::section {{ background-color: var(--table-header-bg); color: var(--table-header-text); padding: 6px var(--space-2); border: none; border-bottom: var(--border-thin) solid var(--table-border-soft); border-right: var(--border-thin) solid var(--table-border-soft); font-weight: 500; font-size: {FONT_SIZE_SM}px; }}
         QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit {{ min-height: var(--input-height); max-height: var(--input-height); }}
         QLineEdit, QComboBox {{ padding: 0 var(--space-2); }}
         QSpinBox, QDoubleSpinBox, QDateEdit {{ padding: 0; margin: 0; }}
@@ -777,7 +792,7 @@ def _get_common_qss():
         QScrollBar::handle:horizontal {{ min-width: var(--scrollbar-handle-min); background: var(--scrollbar-handle); border-radius: var(--scrollbar-handle-radius); }}
         QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {{ background: var(--scrollbar-handle-hover); }}
         QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; border: none; width: 0; height: 0; }}
-        QTableCornerButton::section {{ background: transparent; border: none; }}
+        QTableCornerButton::section {{ background: var(--table-header-bg); border: none; border-bottom: var(--border-thin) solid var(--table-border-soft); border-right: var(--border-thin) solid var(--table-border-soft); }}
         QWidget#OverviewPanel {{ background-color: var(--overview-bg); }}
         QSplitter#mainSplitter::handle {{ background-color: var(--splitter-color); }}
         QSplitter#mainSplitter::handle:hover {{ background-color: var(--splitter-hover); }}
