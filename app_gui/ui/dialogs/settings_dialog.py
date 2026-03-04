@@ -46,7 +46,7 @@ from lib.settings_write_gateway import persist_custom_fields_update
 from lib.validators import format_validation_errors
 from lib.yaml_ops import load_yaml
 
-APP_VERSION = "1.3.2"
+APP_VERSION = "1.3.3"
 APP_RELEASE_URL = "https://github.com/Eamon-fox/snowfox/releases"
 _GITHUB_API_LATEST = "https://snowfox-release.oss-cn-beijing.aliyuncs.com/latest.json"
 

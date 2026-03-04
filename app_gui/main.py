@@ -78,7 +78,7 @@ from app_gui.import_journey import ImportJourneyService
 from app_gui.migration_workspace import MigrationWorkspaceService
 from lib.domain.events import DatasetSwitched, MigrationModeChanged, OperationExecuted
 
-APP_VERSION = "1.3.2"
+APP_VERSION = "1.3.3"
 APP_RELEASE_URL = "https://github.com/Eamon-fox/snowfox/releases"
 _UPDATE_CHECK_URL = "https://snowfox-release.oss-cn-beijing.aliyuncs.com/latest.json"
 _SETTINGS_EXPORTS = (PROVIDER_DEFAULTS,)
