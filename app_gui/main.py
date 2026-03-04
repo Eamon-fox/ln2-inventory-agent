@@ -326,9 +326,7 @@ class MainWindow(QMainWindow):
         self.home_dataset_switch_combo.currentIndexChanged.connect(self._on_home_dataset_switch_changed)
         top.addWidget(self.home_dataset_switch_combo)
 
-        self.dataset_label = QLabel()
-        self._update_dataset_label()
-        top.addWidget(self.dataset_label, 1)
+        top.addStretch(1)
 
         self.migration_mode_badge = QLabel(tr("main.migrationModeBadge"))
         self.migration_mode_badge.setObjectName("mainMigrationModeBadge")
@@ -588,7 +586,13 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_state_flow"):
             self._state_flow.update_dataset_label()
         else:
-            self.dataset_label.setText(self.current_yaml_path)
+            label = getattr(self, "dataset_label", None)
+            if label is not None and hasattr(label, "setText"):
+                current_path = str(self.current_yaml_path or "")
+                dataset_name = os.path.basename(os.path.dirname(current_path)) or os.path.basename(current_path) or "-"
+                label.setText(dataset_name)
+                if hasattr(label, "setToolTip"):
+                    label.setToolTip(current_path)
         self._refresh_home_dataset_choices(selected_yaml=self.current_yaml_path)
 
     def _refresh_home_dataset_choices(self, selected_yaml=""):

@@ -278,7 +278,20 @@ class WindowStateFlow:
 
     def update_dataset_label(self):
         window = self._window
-        window.dataset_label.setText(window.current_yaml_path)
+        label = getattr(window, "dataset_label", None)
+        if label is None:
+            return
+        current_path = str(window.current_yaml_path or "")
+        label_text = current_path
+        formatter = getattr(window, "_format_dataset_label_text", None)
+        if callable(formatter):
+            label_text = formatter(window.current_yaml_path)
+        else:
+            dataset_name = os.path.basename(os.path.dirname(current_path)) or os.path.basename(current_path) or "-"
+            label_text = dataset_name
+        label.setText(label_text)
+        if hasattr(label, "setToolTip"):
+            label.setToolTip(current_path)
 
     def update_stats_bar(self, stats):
         """Update the stats bar with overview statistics."""

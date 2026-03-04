@@ -601,7 +601,9 @@ def test_window_state_flow_restore_and_label_and_stats():
     assert window.ai_panel.ai_steps.current == 7
     assert window.ai_panel.ai_thinking_enabled.value is False
     assert window.ai_panel.ai_custom_prompt == "abc"
-    dataset_label.setText.assert_called_once_with("D:/tmp/inventory.yaml")
+    dataset_text = dataset_label.setText.call_args.args[0]
+    assert dataset_text.endswith("tmp")
+    assert "inventory.yaml" not in dataset_text
     assert stats_bar.setText.call_count >= 3
 
 
@@ -912,12 +914,10 @@ def test_main_window_update_dataset_label_also_refreshes_home_switcher():
     current_path = os.path.abspath("D:/inventories/current/inventory.yaml")
     window = MainWindow.__new__(MainWindow)
     window.current_yaml_path = current_path
-    window.dataset_label = SimpleNamespace(setText=MagicMock())
     window._refresh_home_dataset_choices = MagicMock()
 
     MainWindow._update_dataset_label(window)
 
-    window.dataset_label.setText.assert_called_once_with(current_path)
     window._refresh_home_dataset_choices.assert_called_once_with(selected_yaml=current_path)
 
 
