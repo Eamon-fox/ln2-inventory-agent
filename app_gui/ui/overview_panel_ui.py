@@ -48,17 +48,20 @@ def setup_ui(self):
     # Filter Row
     filter_row = QHBoxLayout()
     filter_row.setSpacing(6)
-    filter_row.addWidget(QLabel(tr("overview.search")))
 
     self.ov_filter_keyword = QLineEdit()
-    self.ov_filter_keyword.setPlaceholderText(tr("overview.searchPlaceholder"))
+    self.ov_filter_keyword.setPlaceholderText(tr("overview.quickSearchPlaceholder"))
     self.ov_filter_keyword.textChanged.connect(self._on_filter_keyword_changed)
     filter_row.addWidget(self.ov_filter_keyword, 2)
 
-    # More filters button with icon
-    self.ov_filter_toggle_btn = QPushButton(tr("overview.moreFilters"))
+    # More filters button (icon-only)
+    self.ov_filter_toggle_btn = QPushButton()
+    self.ov_filter_toggle_btn.setObjectName("overviewIconButton")
     self.ov_filter_toggle_btn.setIcon(get_icon(Icons.CHEVRON_DOWN))
-    self.ov_filter_toggle_btn.setIconSize(QSize(12, 12))
+    self.ov_filter_toggle_btn.setIconSize(QSize(14, 14))
+    self.ov_filter_toggle_btn.setFixedSize(28, 28)
+    self.ov_filter_toggle_btn.setToolTip(tr("overview.moreFilters"))
+    self.ov_filter_toggle_btn.setAccessibleName(tr("overview.moreFilters"))
     self.ov_filter_toggle_btn.setCheckable(True)
     self.ov_filter_toggle_btn.toggled.connect(self.on_toggle_filters)
     filter_row.addWidget(self.ov_filter_toggle_btn)
@@ -83,10 +86,14 @@ def setup_ui(self):
     self.ov_filter_secondary_toggle.stateChanged.connect(self._apply_filters)
     advanced_filter_row.addWidget(self.ov_filter_secondary_toggle)
 
-    # Clear filter button with icon
-    clear_filter_btn = QPushButton(tr("overview.clearFilter"))
+    # Clear filter button (icon-only)
+    clear_filter_btn = QPushButton()
+    clear_filter_btn.setObjectName("overviewIconButton")
     clear_filter_btn.setIcon(get_icon(Icons.X))
     clear_filter_btn.setIconSize(QSize(14, 14))
+    clear_filter_btn.setFixedSize(28, 28)
+    clear_filter_btn.setToolTip(tr("overview.clearFilter"))
+    clear_filter_btn.setAccessibleName(tr("overview.clearFilter"))
     clear_filter_btn.clicked.connect(self.on_clear_filters)
     advanced_filter_row.addWidget(clear_filter_btn)
     advanced_filter_row.addStretch()
@@ -110,10 +117,14 @@ def setup_ui(self):
     action_row = QHBoxLayout()
     action_row.setSpacing(6)
 
-    # Refresh button with icon
-    refresh_btn = QPushButton(tr("overview.refresh"))
+    # Refresh button (icon-only)
+    refresh_btn = QPushButton()
+    refresh_btn.setObjectName("overviewIconButton")
     refresh_btn.setIcon(get_icon(Icons.REFRESH_CW))
     refresh_btn.setIconSize(QSize(16, 16))
+    refresh_btn.setFixedSize(28, 28)
+    refresh_btn.setToolTip(tr("overview.refresh"))
+    refresh_btn.setAccessibleName(tr("overview.refresh"))
     refresh_btn.clicked.connect(self.refresh)
     action_row.addWidget(refresh_btn)
 

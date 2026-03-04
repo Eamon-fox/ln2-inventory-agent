@@ -674,6 +674,27 @@ def _get_common_qss():
             font-size: {FONT_SIZE_XS}px;
             font-weight: {FONT_WEIGHT_BOLD};
         }}
+        QPushButton#mainToolbarIconBtn {{
+            min-width: 28px;
+            max-width: 28px;
+            min-height: 28px;
+            max-height: 28px;
+            padding: 0;
+            border: var(--border-thin) solid transparent;
+            border-radius: var(--radius-xs);
+            background: transparent;
+        }}
+        QPushButton#mainToolbarIconBtn:hover {{
+            background: var(--background-hover);
+            border-color: var(--border-weak);
+        }}
+        QPushButton#mainToolbarIconBtn:focus {{
+            border-color: var(--accent);
+        }}
+        QPushButton#mainToolbarIconBtn:pressed {{
+            background: var(--background-raised);
+            border-color: var(--border-strong);
+        }}
         QLabel#mainMigrationStatusIndicator {{
             color: var(--status-warning);
             background: var(--status-warning-bg);

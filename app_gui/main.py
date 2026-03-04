@@ -4,7 +4,7 @@ import os
 import sys
 from contextlib import suppress
 import yaml
-from PySide6.QtCore import Qt, QSettings, Slot, QTimer
+from PySide6.QtCore import Qt, QSettings, Slot, QTimer, QSize
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
@@ -333,24 +333,43 @@ class MainWindow(QMainWindow):
         self.migration_mode_badge.setVisible(False)
         top.addWidget(self.migration_mode_badge)
 
-        new_dataset_btn = QPushButton(tr("main.new"))
+        new_dataset_btn = QPushButton()
+        new_dataset_btn.setObjectName("mainToolbarIconBtn")
         new_dataset_btn.setIcon(get_icon(Icons.FILE_PLUS))
+        new_dataset_btn.setIconSize(QSize(16, 16))
+        new_dataset_btn.setFixedSize(28, 28)
+        new_dataset_btn.setToolTip(tr("main.new"))
+        new_dataset_btn.setAccessibleName(tr("main.new"))
         new_dataset_btn.clicked.connect(self.on_create_new_dataset)
         top.addWidget(new_dataset_btn)
 
-        import_dataset_btn = QPushButton(tr("main.importExistingDataTitle"))
+        import_dataset_btn = QPushButton()
+        import_dataset_btn.setObjectName("mainToolbarIconBtn")
         import_dataset_btn.setIcon(get_icon(Icons.FOLDER_OPEN))
-        import_dataset_btn.setToolTip(tr("main.importExistingDataHint"))
+        import_dataset_btn.setIconSize(QSize(16, 16))
+        import_dataset_btn.setFixedSize(28, 28)
+        import_dataset_btn.setToolTip(tr("main.importExistingDataTitle"))
+        import_dataset_btn.setAccessibleName(tr("main.importExistingDataTitle"))
         import_dataset_btn.clicked.connect(self.on_import_existing_data)
         top.addWidget(import_dataset_btn)
 
-        audit_log_btn = QPushButton(tr("main.auditLog"))
+        audit_log_btn = QPushButton()
+        audit_log_btn.setObjectName("mainToolbarIconBtn")
         audit_log_btn.setIcon(get_icon(Icons.FILE_TEXT))
+        audit_log_btn.setIconSize(QSize(16, 16))
+        audit_log_btn.setFixedSize(28, 28)
+        audit_log_btn.setToolTip(tr("main.auditLog"))
+        audit_log_btn.setAccessibleName(tr("main.auditLog"))
         audit_log_btn.clicked.connect(self.on_open_audit_log)
         top.addWidget(audit_log_btn)
 
-        settings_btn = QPushButton(tr("main.settings"))
+        settings_btn = QPushButton()
+        settings_btn.setObjectName("mainToolbarIconBtn")
         settings_btn.setIcon(get_icon(Icons.SETTINGS))
+        settings_btn.setIconSize(QSize(16, 16))
+        settings_btn.setFixedSize(28, 28)
+        settings_btn.setToolTip(tr("main.settings"))
+        settings_btn.setAccessibleName(tr("main.settings"))
         settings_btn.clicked.connect(self.on_open_settings)
         top.addWidget(settings_btn)
 

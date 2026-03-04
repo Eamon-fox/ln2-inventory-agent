@@ -183,6 +183,7 @@
     "quickAdd": "Quick Add",
     "search": "Search",
     "searchPlaceholder": "Search all visible fields...",
+    "quickSearchPlaceholder": "Search...",
     "moreFilters": "More Filters",
     "hideFilters": "Hide Filters",
     "allBoxes": "All boxes",

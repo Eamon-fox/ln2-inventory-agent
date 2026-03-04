@@ -183,6 +183,7 @@
     "quickAdd": "快速存入",
     "search": "搜索",
     "searchPlaceholder": "搜索所有可见字段...",
+    "quickSearchPlaceholder": "搜索...",
     "moreFilters": "更多筛选",
     "hideFilters": "隐藏筛选",
     "allBoxes": "所有盒子",

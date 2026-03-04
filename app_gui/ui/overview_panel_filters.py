@@ -170,9 +170,10 @@ def _apply_filters_table(self, keyword, selected_box, selected_cell):
 
 def on_toggle_filters(self, checked):
     self.ov_filter_advanced_widget.setVisible(bool(checked))
-    self.ov_filter_toggle_btn.setText(
-        tr("overview.hideFilters") if checked else tr("overview.moreFilters")
-    )
+    toggle_label = tr("overview.hideFilters") if checked else tr("overview.moreFilters")
+    self.ov_filter_toggle_btn.setToolTip(toggle_label)
+    if hasattr(self.ov_filter_toggle_btn, "setAccessibleName"):
+        self.ov_filter_toggle_btn.setAccessibleName(toggle_label)
     icon_name = Icons.CHEVRON_UP if checked else Icons.CHEVRON_DOWN
     self.ov_filter_toggle_btn.setIcon(get_icon(icon_name))
 

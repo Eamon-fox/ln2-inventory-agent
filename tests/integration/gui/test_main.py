@@ -14,6 +14,8 @@ import re
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 MAIN_FILE = ROOT / "app_gui" / "main.py"
 FLOW_FILE = ROOT / "app_gui" / "main_window_flows.py"
+OVERVIEW_UI_FILE = ROOT / "app_gui" / "ui" / "overview_panel_ui.py"
+OVERVIEW_FILTERS_FILE = ROOT / "app_gui" / "ui" / "overview_panel_filters.py"
 DIALOG_FILES = [
     ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog.py",
     ROOT / "app_gui" / "ui" / "dialogs" / "new_dataset_dialog.py",
@@ -33,6 +35,14 @@ def _combined_source_text() -> str:
         if dialog_file.exists():
             text += "\n" + dialog_file.read_text(encoding="utf-8")
     return text
+
+
+def _overview_ui_source_text() -> str:
+    return OVERVIEW_UI_FILE.read_text(encoding="utf-8")
+
+
+def _overview_filters_source_text() -> str:
+    return OVERVIEW_FILTERS_FILE.read_text(encoding="utf-8")
 
 
 def test_quick_start_code_paths_removed():
@@ -56,6 +66,53 @@ def test_main_home_top_bar_has_dataset_switcher():
     assert 'self.home_dataset_switch_label = QLabel(tr("main.datasetSwitch"))' in text
     assert "self.home_dataset_switch_combo = QComboBox()" in text
     assert "self.home_dataset_switch_combo.currentIndexChanged.connect(self._on_home_dataset_switch_changed)" in text
+
+
+def test_main_home_top_bar_actions_are_icon_only_with_tooltips():
+    text = _source_text()
+
+    assert "new_dataset_btn = QPushButton()" in text
+    assert "new_dataset_btn = QPushButton(tr(\"main.new\"))" not in text
+    assert 'new_dataset_btn.setToolTip(tr("main.new"))' in text
+
+    assert "import_dataset_btn = QPushButton()" in text
+    assert "import_dataset_btn = QPushButton(tr(\"main.importExistingDataTitle\"))" not in text
+    assert 'import_dataset_btn.setToolTip(tr("main.importExistingDataTitle"))' in text
+
+    assert "audit_log_btn = QPushButton()" in text
+    assert "audit_log_btn = QPushButton(tr(\"main.auditLog\"))" not in text
+    assert 'audit_log_btn.setToolTip(tr("main.auditLog"))' in text
+
+    assert "settings_btn = QPushButton()" in text
+    assert "settings_btn = QPushButton(tr(\"main.settings\"))" not in text
+    assert 'settings_btn.setToolTip(tr("main.settings"))' in text
+
+
+def test_overview_search_uses_placeholder_without_search_label():
+    text = _overview_ui_source_text()
+
+    assert 'self.ov_filter_keyword.setPlaceholderText(tr("overview.quickSearchPlaceholder"))' in text
+    assert 'filter_row.addWidget(QLabel(tr("overview.search")))' not in text
+
+
+def test_overview_top_actions_are_icon_only_with_tooltips():
+    text = _overview_ui_source_text()
+
+    assert "self.ov_filter_toggle_btn = QPushButton()" in text
+    assert 'self.ov_filter_toggle_btn.setToolTip(tr("overview.moreFilters"))' in text
+
+    assert "clear_filter_btn = QPushButton()" in text
+    assert 'clear_filter_btn.setToolTip(tr("overview.clearFilter"))' in text
+
+    assert "refresh_btn = QPushButton()" in text
+    assert 'refresh_btn.setToolTip(tr("overview.refresh"))' in text
+
+
+def test_overview_filter_toggle_updates_tooltip_instead_of_text():
+    text = _overview_filters_source_text()
+
+    assert "self.ov_filter_toggle_btn.setToolTip(toggle_label)" in text
+    assert "self.ov_filter_toggle_btn.setText(" not in text
 
 
 def test_main_creates_dataset_under_managed_root():
