@@ -343,16 +343,6 @@ class MainWindow(QMainWindow):
         new_dataset_btn.clicked.connect(self.on_create_new_dataset)
         top.addWidget(new_dataset_btn)
 
-        import_dataset_btn = QPushButton()
-        import_dataset_btn.setObjectName("mainToolbarIconBtn")
-        import_dataset_btn.setIcon(get_icon(Icons.FOLDER_OPEN))
-        import_dataset_btn.setIconSize(QSize(16, 16))
-        import_dataset_btn.setFixedSize(28, 28)
-        import_dataset_btn.setToolTip(tr("main.importExistingDataTitle"))
-        import_dataset_btn.setAccessibleName(tr("main.importExistingDataTitle"))
-        import_dataset_btn.clicked.connect(self.on_import_existing_data)
-        top.addWidget(import_dataset_btn)
-
         audit_log_btn = QPushButton()
         audit_log_btn.setObjectName("mainToolbarIconBtn")
         audit_log_btn.setIcon(get_icon(Icons.FILE_TEXT))
@@ -898,7 +888,11 @@ class MainWindow(QMainWindow):
 
     def on_create_new_dataset(self, update_window=True):
         layout_dlg = NewDatasetDialog(self)
-        if layout_dlg.exec() != QDialog.Accepted:
+        dialog_result = layout_dlg.exec()
+        if dialog_result == NewDatasetDialog.RESULT_IMPORT_EXISTING:
+            self.on_import_existing_data(parent=self)
+            return
+        if dialog_result != QDialog.Accepted:
             return
         box_layout = layout_dlg.get_layout()
 

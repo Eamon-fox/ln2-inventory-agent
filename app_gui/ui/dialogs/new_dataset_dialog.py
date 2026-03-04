@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QHBoxLayout,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -23,6 +24,8 @@ _BOX_PRESETS = [
 
 class NewDatasetDialog(QDialog):
     """Dialog for choosing box layout when creating a new dataset."""
+
+    RESULT_IMPORT_EXISTING = int(QDialog.DialogCode.Accepted) + 1
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -63,6 +66,13 @@ class NewDatasetDialog(QDialog):
 
         layout.addLayout(form)
 
+        footer = QHBoxLayout()
+        import_btn = QPushButton(tr("main.importExistingDataTitle"))
+        import_btn.setToolTip(tr("main.importExistingDataHint"))
+        import_btn.clicked.connect(self._request_import_existing_data)
+        footer.addWidget(import_btn)
+        footer.addStretch(1)
+
         buttons = QDialogButtonBox()
         ok_btn = QPushButton(tr("common.ok"))
         ok_btn.clicked.connect(self.accept)
@@ -70,7 +80,8 @@ class NewDatasetDialog(QDialog):
         cancel_btn = QPushButton(tr("common.cancel"))
         cancel_btn.clicked.connect(self.reject)
         buttons.addButton(cancel_btn, QDialogButtonBox.RejectRole)
-        layout.addWidget(buttons)
+        footer.addWidget(buttons)
+        layout.addLayout(footer)
 
     def _on_preset_changed(self, index):
         is_custom = index >= len(_BOX_PRESETS)
@@ -80,6 +91,9 @@ class NewDatasetDialog(QDialog):
             _, r, c = _BOX_PRESETS[index]
             self.rows_spin.setValue(r)
             self.cols_spin.setValue(c)
+
+    def _request_import_existing_data(self):
+        self.done(self.RESULT_IMPORT_EXISTING)
 
     def get_layout(self):
         box_count = self.box_count_spin.value()
