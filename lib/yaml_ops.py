@@ -574,7 +574,7 @@ def emit_yaml_size_warning(path=YAML_PATH, warn_mb=YAML_SIZE_WARNING_MB):
     return warning
 
 
-def _coerce_audit_seq(value):
+def coerce_audit_seq(value):
     try:
         seq = int(value)
     except Exception:
@@ -582,6 +582,10 @@ def _coerce_audit_seq(value):
     if seq <= 0:
         return None
     return seq
+
+
+# Backward-compatible alias for existing internal callsites.
+_coerce_audit_seq = coerce_audit_seq
 
 
 def _next_audit_seq(log_path):
@@ -601,7 +605,7 @@ def _next_audit_seq(log_path):
                 except Exception:
                     continue
                 valid_count += 1
-                seq = _coerce_audit_seq((row or {}).get("audit_seq"))
+                seq = coerce_audit_seq((row or {}).get("audit_seq"))
                 if seq and seq > max_seq:
                     max_seq = seq
     except Exception:
@@ -614,7 +618,7 @@ def _append_audit_event(yaml_path, event):
     log_path = _audit_log_path(yaml_path)
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     payload = dict(event or {})
-    seq = _coerce_audit_seq(payload.get("audit_seq"))
+    seq = coerce_audit_seq(payload.get("audit_seq"))
     if seq is None:
         seq = _next_audit_seq(log_path)
     payload["audit_seq"] = seq

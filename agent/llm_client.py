@@ -80,21 +80,11 @@ class LLMClient(ABC):
         return str(response or "")
 
 
-class DeepSeekLLMClient(LLMClient):
-    """DeepSeek-native client with provider-side streaming parser."""
-
-    def __init__(self, model=None, api_key=None, base_url=None, timeout=180, thinking_enabled=True):
-        self._model = (model or os.environ.get("DEEPSEEK_MODEL") or "deepseek-chat").strip()
-        self._base_url = (base_url or os.environ.get("DEEPSEEK_BASE_URL") or "https://api.deepseek.com").rstrip("/")
-        self._timeout = int(timeout)
-        self._thinking_enabled = bool(thinking_enabled)
-        self._api_key = api_key or os.environ.get("DEEPSEEK_API_KEY")
+class _StreamingStopMixin:
+    def _init_stop_state(self):
         self._stop_lock = threading.Lock()
         self._active_response = None
         self._local_stop = threading.Event()
-
-        if not self._api_key:
-            raise RuntimeError("DEEPSEEK_API_KEY is required")
 
     def _is_stopping(self, stop_event=None):
         return self._local_stop.is_set() or _is_stop_requested(stop_event)
@@ -118,6 +108,21 @@ class DeepSeekLLMClient(LLMClient):
             resp.close()
         except Exception:
             pass
+
+
+class DeepSeekLLMClient(_StreamingStopMixin, LLMClient):
+    """DeepSeek-native client with provider-side streaming parser."""
+
+    def __init__(self, model=None, api_key=None, base_url=None, timeout=180, thinking_enabled=True):
+        self._model = (model or os.environ.get("DEEPSEEK_MODEL") or "deepseek-chat").strip()
+        self._base_url = (base_url or os.environ.get("DEEPSEEK_BASE_URL") or "https://api.deepseek.com").rstrip("/")
+        self._timeout = int(timeout)
+        self._thinking_enabled = bool(thinking_enabled)
+        self._api_key = api_key or os.environ.get("DEEPSEEK_API_KEY")
+        self._init_stop_state()
+
+        if not self._api_key:
+            raise RuntimeError("DEEPSEEK_API_KEY is required")
 
     @classmethod
     def _normalize_content(cls, raw_content):
@@ -487,7 +492,7 @@ class DeepSeekLLMClient(LLMClient):
         }
 
 
-class ZhipuLLMClient(LLMClient):
+class ZhipuLLMClient(_StreamingStopMixin, LLMClient):
     """智谱 AI (GLM) 客户端，OpenAI 兼容接口。"""
 
     def __init__(self, model=None, api_key=None, base_url=None, timeout=180, thinking_enabled=False):
@@ -496,34 +501,10 @@ class ZhipuLLMClient(LLMClient):
         self._timeout = int(timeout)
         self._thinking_enabled = bool(thinking_enabled)
         self._api_key = api_key or os.environ.get("ZHIPUAI_API_KEY") or os.environ.get("ZHIPU_API_KEY") or os.environ.get("GLM_API_KEY")
-        self._stop_lock = threading.Lock()
-        self._active_response = None
-        self._local_stop = threading.Event()
+        self._init_stop_state()
 
         if not self._api_key:
             raise RuntimeError("ZHIPUAI_API_KEY is required. Set ZHIPU_API_KEY or ZHIPUAI_API_KEY env var.")
-
-    def _is_stopping(self, stop_event=None):
-        return self._local_stop.is_set() or _is_stop_requested(stop_event)
-
-    def request_stop(self):
-        self._local_stop.set()
-        resp = None
-        with self._stop_lock:
-            resp = self._active_response
-        if resp is not None and hasattr(resp, "close"):
-            threading.Thread(
-                target=self._close_response_quietly,
-                args=(resp,),
-                daemon=True,
-            ).start()
-
-    @staticmethod
-    def _close_response_quietly(resp):
-        try:
-            resp.close()
-        except Exception:
-            pass
 
     def _build_request(self, messages, tools=None, temperature=0.0):
         payload = {
@@ -694,7 +675,7 @@ class ZhipuLLMClient(LLMClient):
         }
 
 
-class MiniMaxLLMClient(LLMClient):
+class MiniMaxLLMClient(_StreamingStopMixin, LLMClient):
     """MiniMax (M2.5) 客户端，OpenAI 兼容接口。"""
 
     def __init__(self, model=None, api_key=None, base_url=None, timeout=180, thinking_enabled=True):
@@ -703,34 +684,10 @@ class MiniMaxLLMClient(LLMClient):
         self._timeout = int(timeout)
         self._thinking_enabled = bool(thinking_enabled)
         self._api_key = api_key or os.environ.get("MINIMAX_API_KEY")
-        self._stop_lock = threading.Lock()
-        self._active_response = None
-        self._local_stop = threading.Event()
+        self._init_stop_state()
 
         if not self._api_key:
             raise RuntimeError("MINIMAX_API_KEY is required")
-
-    def _is_stopping(self, stop_event=None):
-        return self._local_stop.is_set() or _is_stop_requested(stop_event)
-
-    def request_stop(self):
-        self._local_stop.set()
-        resp = None
-        with self._stop_lock:
-            resp = self._active_response
-        if resp is not None and hasattr(resp, "close"):
-            threading.Thread(
-                target=self._close_response_quietly,
-                args=(resp,),
-                daemon=True,
-            ).start()
-
-    @staticmethod
-    def _close_response_quietly(resp):
-        try:
-            resp.close()
-        except Exception:
-            pass
 
     def _build_request(self, messages, tools=None, temperature=0.0):
         use_temp = temperature if temperature > 0 else 1.0

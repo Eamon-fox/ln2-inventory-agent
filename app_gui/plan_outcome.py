@@ -4,12 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping
 
-
-def _to_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
+from app_gui.plan_utils import to_int
 
 
 def collect_blocked_items(report: Mapping[str, Any] | None) -> List[Dict[str, Any]]:
@@ -35,12 +30,12 @@ def summarize_plan_execution(
     stats = payload.get("stats") if isinstance(payload.get("stats"), Mapping) else {}
     items = payload.get("items") if isinstance(payload.get("items"), list) else []
 
-    total_count = _to_int(stats.get("total"), default=len(items))
-    ok_count = _to_int(
+    total_count = to_int(stats.get("total"), default=len(items))
+    ok_count = to_int(
         stats.get("ok"),
         default=sum(1 for item in items if isinstance(item, Mapping) and item.get("ok")),
     )
-    blocked_count = _to_int(
+    blocked_count = to_int(
         stats.get("blocked"),
         default=sum(1 for item in items if isinstance(item, Mapping) and item.get("blocked")),
     )

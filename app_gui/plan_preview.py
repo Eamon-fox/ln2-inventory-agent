@@ -7,16 +7,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
 
+from app_gui.plan_utils import to_int
 from lib.yaml_ops import load_yaml
 
 Loc = Tuple[int, int]  # (box, position)
-
-
-def _to_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def _copy_record(rec: Dict[str, Any]) -> Dict[str, Any]:
@@ -95,7 +89,7 @@ def simulate_plan_pos_map(
         for rec in inv:
             if not isinstance(rec, dict):
                 continue
-            rid = _to_int(rec.get("id"), default=0)
+            rid = to_int(rec.get("id"), default=0)
             if rid <= 0:
                 continue
             records_by_id[rid] = _copy_record(rec)
@@ -114,7 +108,7 @@ def simulate_plan_pos_map(
     for rid, rec in (base_records_by_id or {}).items():
         if not isinstance(rec, dict):
             continue
-        rid_i = _to_int(rid, default=0)
+        rid_i = to_int(rid, default=0)
         if rid_i <= 0:
             continue
         records_by_id[rid_i] = _copy_record(rec)
@@ -133,13 +127,13 @@ def simulate_plan_pos_map(
             continue
 
         payload = item.get("payload") or {}
-        box = _to_int(payload.get("box", item.get("box")), default=0)
+        box = to_int(payload.get("box", item.get("box")), default=0)
         positions = payload.get("positions")
         if not isinstance(positions, list):
             positions = []
 
         for pos_raw in positions:
-            pos = _to_int(pos_raw, default=0)
+            pos = to_int(pos_raw, default=0)
             if box <= 0 or pos <= 0:
                 errors.append("Invalid add preview item (box/position).")
                 continue
@@ -169,9 +163,9 @@ def simulate_plan_pos_map(
         if str(item.get("action") or "").lower() != "move":
             continue
 
-        record_id = _to_int(item.get("record_id"), default=0)
-        from_pos = _to_int(item.get("position"), default=0)
-        to_pos = _to_int(item.get("to_position"), default=0)
+        record_id = to_int(item.get("record_id"), default=0)
+        from_pos = to_int(item.get("position"), default=0)
+        to_pos = to_int(item.get("to_position"), default=0)
         if record_id <= 0 or from_pos <= 0 or to_pos <= 0:
             errors.append("Invalid move preview item (record_id/position/to_position).")
             continue
@@ -181,7 +175,7 @@ def simulate_plan_pos_map(
             errors.append(f"Move preview failed: ID {record_id} not found.")
             continue
 
-        current_box = _to_int(rec.get("box"), default=0)
+        current_box = to_int(rec.get("box"), default=0)
         current_position = rec.get("position")
         if current_position != from_pos:
             errors.append(
@@ -190,7 +184,7 @@ def simulate_plan_pos_map(
             continue
 
         entry_to_box = item.get("to_box")
-        to_box = _to_int(entry_to_box, default=0) if entry_to_box not in (None, "") else 0
+        to_box = to_int(entry_to_box, default=0) if entry_to_box not in (None, "") else 0
         cross_box = bool(to_box) and to_box != current_box
         target_box = to_box if cross_box else current_box
 
@@ -226,7 +220,7 @@ def simulate_plan_pos_map(
             errors.append(f"Move preview failed: swap target ID {dest_owner} missing.")
             continue
 
-        dest_box = _to_int(dest_rec.get("box"), default=0)
+        dest_box = to_int(dest_rec.get("box"), default=0)
         if dest_box != current_box:
             errors.append(f"Move preview failed: swap target ID {dest_owner} is not in the same box.")
             continue
@@ -247,8 +241,8 @@ def simulate_plan_pos_map(
             if str(item.get("action") or "").lower() != action_name:
                 continue
 
-            record_id = _to_int(item.get("record_id"), default=0)
-            pos = _to_int(item.get("position"), default=0)
+            record_id = to_int(item.get("record_id"), default=0)
+            pos = to_int(item.get("position"), default=0)
             if record_id <= 0 or pos <= 0:
                 errors.append(f"Invalid {action_name} preview item (record_id/position).")
                 continue
@@ -258,7 +252,7 @@ def simulate_plan_pos_map(
                 errors.append(f"{action_name.capitalize()} preview failed: ID {record_id} not found.")
                 continue
 
-            current_box = _to_int(rec.get("box"), default=0)
+            current_box = to_int(rec.get("box"), default=0)
             current_position = rec.get("position")
             if current_position != pos:
                 errors.append(

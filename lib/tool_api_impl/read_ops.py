@@ -16,6 +16,7 @@ from ..position_fmt import (
 from ..takeout_parser import extract_events, normalize_action
 from ..validators import normalize_date_arg, parse_date, validate_box, validate_position
 from ..yaml_ops import (
+    coerce_audit_seq,
     compute_occupancy,
     load_yaml,
     read_audit_events,
@@ -690,16 +691,6 @@ def _normalize_timeline_filter_date(name, value):
     return text, None
 
 
-def _coerce_audit_seq(value):
-    try:
-        seq = int(value)
-    except Exception:
-        return None
-    if seq <= 0:
-        return None
-    return seq
-
-
 def tool_list_audit_timeline(
     yaml_path,
     limit=50,
@@ -781,7 +772,7 @@ def tool_list_audit_timeline(
         normalized = dict(row)
         if not str(normalized.get("status") or "").strip():
             normalized["status"] = "success"
-        seq = _coerce_audit_seq(normalized.get("audit_seq"))
+        seq = coerce_audit_seq(normalized.get("audit_seq"))
         if seq is not None:
             normalized["audit_seq"] = seq
         normalized["_audit_sort_seq"] = seq if seq is not None else index
