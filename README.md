@@ -1,5 +1,13 @@
 # SnowFox
 
+## Demo Video
+
+<p align="center">
+  <video src="https://snowfox-release.oss-cn-beijing.aliyuncs.com/snowfox-promo-4k.mp4" controls preload="metadata" width="100%"></video>
+</p>
+
+Direct link: https://snowfox-release.oss-cn-beijing.aliyuncs.com/snowfox-promo-4k.mp4
+
 <p align="center">
   <img src="app_gui/assets/snowfox-icon-v3.png" alt="SnowFox Icon" width="220" />
 </p>
