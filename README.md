@@ -1,18 +1,18 @@
 # SnowFox
 
-## Demo Video
-
-<p align="center">
-  <a href="https://snowfox.bio/product.html">
-    <img src="docs/video-cover.jpg" alt="SnowFox Demo Video" width="80%">
-  </a>
-</p>
-
 <p align="center">
   <img src="app_gui/assets/snowfox-icon-v3.png" alt="SnowFox Icon" width="220" />
 </p>
 
 > 给生医药实验室的液氮冻存盒管理软件：像 Excel 一样好上手，但比 Excel 更不容易出错。
+
+<p align="center">
+  <a href="https://snowfox.bio/product.html">
+    <img src="docs/video-cover.jpg" alt="SnowFox Demo Video" width="80%">
+  </a>
+  <br>
+  <sub>▶ 点击观看产品介绍视频</sub>
+</p>
 
 👉 安装包下载（Releases）：https://github.com/Eamon-fox/snowfox/releases
 
