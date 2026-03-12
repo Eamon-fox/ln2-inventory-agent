@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import sys
 from typing import Iterable, List
 
 from lib.inventory_paths import get_install_dir
@@ -150,31 +151,56 @@ class MigrationWorkspaceService:
             os.makedirs(self._normalized, exist_ok=True)
 
     def _bootstrap_workspace_from_internal_layout(self) -> None:
-        """Backfill install-root migrate/ + migration_assets/ from PyInstaller _internal."""
-        if os.path.isdir(self._root):
+        """Backfill install-root migrate/ + migration_assets/ from bundled layouts."""
+        target_assets = os.path.join(self._install_root, "migration_assets")
+        needs_workspace = not os.path.isdir(self._root)
+        needs_assets = not os.path.isdir(target_assets)
+        if not needs_workspace and not needs_assets:
             return
 
-        internal_root = os.path.join(self._install_root, "_internal")
-        internal_migrate = os.path.join(internal_root, "migrate")
-        internal_assets = os.path.join(internal_root, "migration_assets")
-        if not os.path.isdir(internal_migrate):
-            return
+        for source_root in self._candidate_bundle_roots():
+            source_migrate = os.path.join(source_root, "migrate")
+            source_assets = os.path.join(source_root, "migration_assets")
 
-        try:
-            shutil.copytree(internal_migrate, self._root, dirs_exist_ok=True)
-        except Exception as exc:
-            raise MigrationWorkspaceError(
-                f"failed to bootstrap migration workspace: {self._root} ({exc})"
-            ) from exc
+            if needs_workspace and os.path.isdir(source_migrate):
+                try:
+                    shutil.copytree(source_migrate, self._root, dirs_exist_ok=True)
+                except Exception as exc:
+                    raise MigrationWorkspaceError(
+                        f"failed to bootstrap migration workspace: {self._root} ({exc})"
+                    ) from exc
+                needs_workspace = False
 
-        if os.path.isdir(internal_assets):
-            target_assets = os.path.join(self._install_root, "migration_assets")
-            try:
-                shutil.copytree(internal_assets, target_assets, dirs_exist_ok=True)
-            except Exception as exc:
-                raise MigrationWorkspaceError(
-                    f"failed to bootstrap migration assets: {target_assets} ({exc})"
-                ) from exc
+            if needs_assets and os.path.isdir(source_assets):
+                try:
+                    shutil.copytree(source_assets, target_assets, dirs_exist_ok=True)
+                except Exception as exc:
+                    raise MigrationWorkspaceError(
+                        f"failed to bootstrap migration assets: {target_assets} ({exc})"
+                    ) from exc
+                needs_assets = False
+
+            if not needs_workspace and not needs_assets:
+                break
+
+    def _candidate_bundle_roots(self) -> List[str]:
+        roots: List[str] = []
+        seen = set()
+        candidates = [
+            os.path.join(self._install_root, "_internal"),
+            os.path.join(self._install_root, "..", "Resources"),
+            os.path.join(self._install_root, "..", "Frameworks"),
+        ]
+        if getattr(sys, "frozen", False):
+            candidates.append(getattr(sys, "_MEIPASS", ""))
+
+        for candidate in candidates:
+            root = os.path.abspath(str(candidate or "").strip())
+            if not root or root in seen:
+                continue
+            seen.add(root)
+            roots.append(root)
+        return roots
 
     @staticmethod
     def _dedupe_name(name: str, used_names: set) -> str:

@@ -1,11 +1,11 @@
 # macOS Self-Use Packaging
 
-This folder contains helper assets for building an unsigned macOS app bundle.
+This folder contains helper assets for building an unsigned macOS app bundle and installer package.
 
 ## Prerequisites
 
 - Build must run on macOS (Darwin).
-- Python 3.8+ with project dependencies installed.
+- Python 3.10+ with project dependencies installed. Python 3.11 is recommended.
 - PyInstaller installed in the same environment.
 
 ## Build
@@ -13,19 +13,36 @@ This folder contains helper assets for building an unsigned macOS app bundle.
 From repository root:
 
 ```bash
-python3 -m pip install -r requirements.txt
-python3 -m pip install pyinstaller
-bash installer/mac/build_app.sh
+python3.11 -m pip install -r requirements.txt
+python3.11 -m pip install pyinstaller
+PYTHON=python3.11 bash installer/mac/build_app.sh
 ```
 
 Or run PyInstaller directly:
 
 ```bash
-pyinstaller ln2_inventory.mac.spec
+python3.11 -m PyInstaller ln2_inventory.mac.spec
 ```
 
 ## Output
 
 - App bundle: `dist/SnowFox.app`
+- Installer package: `dist/installer/SnowFox-<version>-macOS.pkg`
 
-This path is intended for self-use testing (unsigned/not notarized).
+These outputs are intended for self-use testing (unsigned/not notarized).
+
+## Build Installer Package
+
+From repository root:
+
+```bash
+python3.11 -m pip install -r requirements.txt
+python3.11 -m pip install pyinstaller
+PYTHON=python3.11 bash installer/mac/build_pkg.sh
+```
+
+If you already built the app bundle and only want to regenerate the installer:
+
+```bash
+PYTHON=python3.11 bash installer/mac/build_pkg.sh --skip-app-build
+```

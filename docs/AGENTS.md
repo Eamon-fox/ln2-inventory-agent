@@ -33,7 +33,7 @@ Config:
 
 ## Coding Style & Naming Conventions
 
-- Python 3.8+, 4-space indentation. Keep changes type-hint friendly.
+- Python 3.10+, 4-space indentation. Keep changes type-hint friendly.
 - Data model: **tube-level**. One `inventory[]` record represents one physical tube; identical tubes are separate records with independent moves/consumption.
 - GUI strings must use i18n keys; update both `en.json` and `zh-CN.json` together.
 
