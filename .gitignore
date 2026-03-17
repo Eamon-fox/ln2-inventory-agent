@@ -18,6 +18,7 @@ build/
 .env.local
 .env.*.local
 .claude/settings.local.json
+.claude/worktrees/
 
 # Project Data
 ln2_inventory.yaml
