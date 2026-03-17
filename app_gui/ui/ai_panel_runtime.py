@@ -215,6 +215,7 @@ def _handle_max_steps_ask(self, event_data):
 
 def _show_question_dialog(self, question_text, options):
     """Modal dialog for one clarifying question with single-choice + free text."""
+    from PySide6.QtCore import Qt
     from PySide6.QtWidgets import (
         QComboBox,
         QDialog,
@@ -224,12 +225,16 @@ def _show_question_dialog(self, question_text, options):
         QVBoxLayout,
     )
 
+    from app_gui.ui.utils import md_to_html
+
     dialog = QDialog(self)
     dialog.setWindowTitle(tr("ai.questionTitle"))
     dialog.setMinimumWidth(400)
     layout = QVBoxLayout(dialog)
 
-    label = QLabel(str(question_text or ""))
+    label = QLabel()
+    label.setTextFormat(Qt.RichText)
+    label.setText(md_to_html(str(question_text or "")))
     label.setWordWrap(True)
     layout.addWidget(label)
 

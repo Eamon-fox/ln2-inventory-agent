@@ -4,6 +4,8 @@ Shared utilities for the UI.
 import json
 import tempfile
 
+import mistune
+
 from app_gui.ui.theme import (
     FONT_SIZE_SM,
 )
@@ -58,6 +60,13 @@ def cell_color(value):
     # Fallback: hash-based color from cycle
     idx = hash(value) % len(_COLOR_CYCLE)
     return _COLOR_CYCLE[idx]
+
+def md_to_html(text):
+    """Convert markdown text to HTML suitable for Qt rich-text widgets."""
+    if not text:
+        return ""
+    return mistune.html(text)
+
 
 def compact_json(value, max_chars=200):
     try:
