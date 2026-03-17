@@ -226,13 +226,13 @@ class AIPanel(QWidget):
 
         action_bar.addStretch()
 
-        ai_clear_btn = QPushButton(tr("ai.clear"))
-        ai_clear_btn.setIcon(get_icon(Icons.X))
-        ai_clear_btn.setIconSize(QSize(16, 16))
-        ai_clear_btn.setMinimumWidth(60)
-        ai_clear_btn.setProperty("variant", "ghost")
-        ai_clear_btn.clicked.connect(self.on_clear)
-        action_bar.addWidget(ai_clear_btn)
+        ai_new_chat_btn = QPushButton(tr("ai.newChat"))
+        ai_new_chat_btn.setIcon(get_icon(Icons.X))
+        ai_new_chat_btn.setIconSize(QSize(16, 16))
+        ai_new_chat_btn.setMinimumWidth(60)
+        ai_new_chat_btn.setProperty("variant", "ghost")
+        ai_new_chat_btn.clicked.connect(self.on_new_chat)
+        action_bar.addWidget(ai_new_chat_btn)
 
         self.ai_run_btn = QPushButton(tr("ai.runAgent"))
         self.ai_run_btn.setObjectName("aiRunActionBtn")
@@ -553,9 +553,23 @@ class AIPanel(QWidget):
         self.ai_stream_has_thought = False
         self.ai_stream_thought_buffer = ""
 
-    def on_clear(self):
+    def on_new_chat(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        if self.ai_history or self.ai_chat.toPlainText().strip():
+            reply = QMessageBox.question(
+                self,
+                tr("ai.newChat"),
+                tr("ai.newChatConfirm"),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+
         self.ai_chat.clear()
         self.ai_history = []
+        self.ai_operation_events = []
         self.ai_collapsible_blocks = []
         self.ai_active_trace_id = None
         self._history_snapshot_from_stream_end = False
@@ -569,7 +583,7 @@ class AIPanel(QWidget):
         self.ai_unseen_message_count = 0
         self._reset_stream_thought_state()
         self._refresh_new_message_button()
-        self.status_message.emit(tr("ai.memoryCleared"), 2000)
+        self.status_message.emit(tr("ai.newChatDone"), 2000)
 
     def _build_header_html(self, role, compact=False, is_dark=True):
         """Return header HTML string (no insertion)."""
