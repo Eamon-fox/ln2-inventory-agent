@@ -1,4 +1,4 @@
-﻿"""
+"""
 Validation functions for LN2 inventory data
 """
 from collections import defaultdict
@@ -10,6 +10,14 @@ from .position_fmt import (
     get_position_range,
     display_to_pos,
     _indexing,
+)
+from .validation_primitives import (
+    is_plain_int as _is_plain_int,
+    validate_date_format,
+    parse_date as _parse_date_impl,
+    record_label as _record_label,
+    has_takeout_history,
+    validate_record_fields,
 )
 
 
@@ -23,16 +31,7 @@ def validate_date(date_str):
     Returns:
         bool: True if valid, False otherwise
     """
-    try:
-        datetime.strptime(date_str, "%Y-%m-%d")
-        return True
-    except (ValueError, TypeError):
-        return False
-
-
-def _is_plain_int(value):
-    """Return True only for integers, excluding booleans."""
-    return isinstance(value, int) and not isinstance(value, bool)
+    return validate_date_format(date_str)
 
 
 def parse_date(date_str):
@@ -44,12 +43,7 @@ def parse_date(date_str):
     Returns:
         datetime or None if invalid
     """
-    if not date_str:
-        return None
-    try:
-        return datetime.strptime(str(date_str), "%Y-%m-%d")
-    except ValueError:
-        return None
+    return _parse_date_impl(date_str)
 
 
 def normalize_date_arg(date_str):
@@ -211,20 +205,7 @@ def has_depletion_history(rec):
 
     Fully consumed records are expected to end with ``position=None``.
     """
-    thaw_events = rec.get("thaw_events") or []
-    for ev in thaw_events:
-        if not isinstance(ev, dict):
-            continue
-        if normalize_action(ev.get("action")) == "takeout":
-            return True
-
-    return False
-
-
-def _record_label(rec, idx):
-    if idx is None:
-        return f"Record (id={rec.get('id', 'N/A')})"
-    return f"Record #{idx + 1} (id={rec.get('id', 'N/A')})"
+    return has_takeout_history(rec, normalize_action)
 
 
 def validate_record(rec, idx=None, layout=None, meta=None):
@@ -241,139 +222,50 @@ def validate_record(rec, idx=None, layout=None, meta=None):
     """
     from .custom_fields import get_effective_fields
 
-    errors = []
-    warnings = []
-    rec_id = _record_label(rec, idx)
-
-    box_rule = _format_box_constraint(layout)
-    pos_lo, pos_hi = get_position_range(layout) if layout else (POSITION_RANGE[0], POSITION_RANGE[1])
+    pos_range = get_position_range(layout) if layout else (POSITION_RANGE[0], POSITION_RANGE[1])
 
     # Structural required fields
     structural_required = ["id", "box", "frozen_at"]
 
     # Separate effective fields into option-bearing (relaxed) vs others (strict)
     effective = get_effective_fields(meta, box=rec.get("box")) if isinstance(meta, dict) else []
-    option_field_keys = {f["key"] for f in effective if f.get("options")}
     strict_required_keys = {
         f["key"] for f in effective
         if f.get("required") and not f.get("options")
     }
 
     required_fields = structural_required + sorted(strict_required_keys)
-    for field in required_fields:
-        if field not in rec or rec[field] is None:
-            errors.append(f"{rec_id}: missing required field '{field}'")
 
-    rec_id_value = rec.get("id")
-    if not _is_plain_int(rec_id_value) or rec_id_value <= 0:
-        errors.append(f"{rec_id}: 'id' must be a positive integer")
+    # Build option fields list from effective fields with options
+    option_fields = []
+    if isinstance(meta, dict):
+        for field_def in effective:
+            foptions = field_def.get("options")
+            if foptions:
+                option_fields.append(field_def)
 
-    box = rec.get("box")
-    if not _is_plain_int(box):
-        errors.append(f"{rec_id}: 'box' must be an integer")
-    elif not validate_box(box, layout):
-        errors.append(f"{rec_id}: 'box' out of range ({box_rule})")
+    # Capture layout for closures
+    _layout = layout
+
+    errors, warnings = validate_record_fields(
+        rec,
+        idx,
+        pos_range=pos_range,
+        validate_box_fn=lambda box: validate_box(box, _layout),
+        format_box_constraint_fn=lambda: _format_box_constraint(_layout),
+        normalize_action_fn=normalize_action,
+        required_fields=required_fields,
+        option_fields=option_fields,
+        check_event_future_dates=True,
+    )
 
     # Validate strict required user fields are non-empty strings
+    # (additional runtime check beyond the shared core)
+    rec_label = _record_label(rec, idx)
     for field in sorted(strict_required_keys):
         value = rec.get(field)
         if isinstance(value, str) and not value.strip():
-            errors.append(f"{rec_id}: '{field}' must be a non-empty string")
-
-    # Relaxed validation for all option-bearing fields:
-    # - Do not block historical inventory due to non-option / empty values.
-    # - Enforce strict options only during write tools (add/edit).
-    if isinstance(meta, dict):
-        for field_def in effective:
-            fkey = field_def["key"]
-            foptions = field_def.get("options")
-            if not foptions:
-                continue
-            frequired = field_def.get("required", False)
-            has_key = fkey in rec
-
-            if not has_key:
-                warnings.append(f"{rec_id}: missing '{fkey}' (legacy-compatible warning)")
-                continue
-
-            raw_val = rec.get(fkey)
-            if raw_val is None:
-                val = ""
-            elif isinstance(raw_val, str):
-                val = raw_val.strip()
-            else:
-                val = str(raw_val).strip()
-                warnings.append(f"{rec_id}: '{fkey}' is not a string (legacy-compatible warning)")
-
-            if frequired and not val:
-                warnings.append(f"{rec_id}: '{fkey}' is empty while required=true (legacy-compatible warning)")
-            elif val and foptions and val not in foptions:
-                opts_str = ", ".join(foptions[:5])
-                if len(foptions) > 5:
-                    opts_str += f" ... total {len(foptions)}"
-                warnings.append(
-                    f"{rec_id}: '{fkey}' not in configured options ({opts_str}) "
-                    "(legacy-compatible warning)"
-                )
-
-    # Validate position (single integer, optional for consumed records)
-    position = rec.get("position")
-    if position is not None:
-        if not _is_plain_int(position):
-            errors.append(f"{rec_id}: 'position' must be an integer")
-        elif not validate_position(position, layout):
-            errors.append(f"{rec_id}: 'position' {position} out of range ({pos_lo}-{pos_hi})")
-    else:
-        # position is None - record should have depletion history
-        if not has_depletion_history(rec):
-            errors.append(f"{rec_id}: 'position' is null but no takeout history found")
-
-    frozen_at = rec.get("frozen_at")
-    if not validate_date(frozen_at):
-        errors.append(f"{rec_id}: 'frozen_at' must be YYYY-MM-DD")
-    else:
-        frozen_date = parse_date(frozen_at)
-        if frozen_date and frozen_date > datetime.now():
-            errors.append(f"{rec_id}: frozen date {frozen_at} is in the future")
-
-    thaw_events = rec.get("thaw_events")
-    if thaw_events is not None:
-        if not isinstance(thaw_events, list):
-            errors.append(f"{rec_id}: 'thaw_events' must be a list")
-        else:
-            for event_idx, ev in enumerate(thaw_events, 1):
-                if not isinstance(ev, dict):
-                    errors.append(f"{rec_id}: thaw_events[{event_idx}] must be an object")
-                    continue
-
-                ev_action = normalize_action(ev.get("action"))
-                if not ev_action:
-                    errors.append(f"{rec_id}: thaw_events[{event_idx}] has invalid action")
-
-                ev_date = ev.get("date")
-                if not validate_date(ev_date):
-                    errors.append(f"{rec_id}: thaw_events[{event_idx}] has invalid date")
-
-                ev_positions = ev.get("positions")
-                if isinstance(ev_positions, int):
-                    ev_positions = [ev_positions]
-                if not isinstance(ev_positions, list) or not ev_positions:
-                    errors.append(f"{rec_id}: thaw_events[{event_idx}] positions must be a non-empty list")
-                    continue
-
-                seen_ev_pos = set()
-                for ev_pos in ev_positions:
-                    if not isinstance(ev_pos, int):
-                        errors.append(f"{rec_id}: thaw_events[{event_idx}] position {ev_pos} must be an integer")
-                        continue
-                    if not validate_position(ev_pos, layout):
-                        errors.append(
-                            f"{rec_id}: thaw_events[{event_idx}] position {ev_pos} out of range ({pos_lo}-{pos_hi})"
-                        )
-                        continue
-                    if ev_pos in seen_ev_pos:
-                        errors.append(f"{rec_id}: thaw_events[{event_idx}] duplicate position {ev_pos}")
-                    seen_ev_pos.add(ev_pos)
+            errors.append(f"{rec_label}: '{field}' must be a non-empty string")
 
     return errors, warnings
 
@@ -522,85 +414,3 @@ def format_validation_errors(errors, prefix="Integrity validation failed"):
     if more > 0:
         lines.append(f"- ... and {more} more")
     return "\n".join(lines)
-
-
-def validate_plan_item_with_history(new_item, existing_items, tr_fn=None):
-    """Validate a new item against all existing items in plan.
-
-    This function is shared between operations_panel (human) and tool_runner (AI agent)
-    to ensure consistent validation behavior.
-
-    Args:
-        new_item: New plan item to validate
-        existing_items: List of existing plan items to check against
-        tr_fn: Optional translation function (i18n.tr). If None, uses default messages.
-
-    Returns:
-        tuple[bool, str]: (is_valid, error_message)
-            is_valid=True, error_message=None if validation passes
-            is_valid=False, error_message="error text" if blocked
-    """
-    if tr_fn is None:
-        # Default fallback without translation
-        def tr_fn(key, **kwargs):
-            return key.format(**kwargs)
-
-    # Collect all positions that will be affected by existing items
-    all_positions = []
-    for existing in existing_items:
-        action = existing.get("action", "").lower()
-        if action == "move":
-            # For move, track both from and to positions
-            box = existing.get("box", 0)
-            pos = existing.get("position")
-            to_box = existing.get("to_box")
-            to_pos = existing.get("to_position")
-            all_positions.append((box, pos))
-            # Track target position (use source box if to_box is None for same-box moves)
-            if to_pos is not None:
-                target_box = to_box if to_box is not None else box
-                all_positions.append((target_box, to_pos))
-        elif action == "add":
-            # For add, track all positions
-            box = existing.get("box", 0)
-            payload = existing.get("payload") or {}
-            positions = payload.get("positions", [])
-            for p in positions:
-                all_positions.append((box, p))
-        else:
-            # takeout: track source position
-            box = existing.get("box", 0)
-            pos = existing.get("position")
-            if pos is not None:
-                all_positions.append((box, pos))
-
-    # Check if new item conflicts with any existing position
-    new_action = new_item.get("action", "").lower()
-    new_box = new_item.get("box", 0)
-
-    if new_action == "add":
-        # Add: check if any target position is occupied
-        payload = new_item.get("payload") or {}
-        positions = payload.get("positions", [])
-        for pos in positions:
-            if (new_box, pos) in all_positions:
-                return False, tr_fn("operations.positionOccupied", box=new_box, position=pos)
-    elif new_action == "move":
-        # Move: check source position, target position (same box or cross-box)
-        new_from_pos = new_item.get("position")
-        new_to_pos = new_item.get("to_position")
-        new_to_box = new_item.get("to_box")
-
-        # Check if source position is still valid (not moved away by another item)
-        if (new_box, new_from_pos) in all_positions:
-            return False, tr_fn("operations.sourcePositionAlreadyMoved")
-
-        # Check target position
-        if new_to_pos is not None:
-            target = (new_to_box, new_to_pos) if new_to_box else (new_box, new_to_pos)
-            if target in all_positions:
-                return False, tr_fn("operations.targetPositionOccupied", box=target[0], position=target[1])
-
-    # takeout: source position check already done by position occupancy check
-    return True, None
-
