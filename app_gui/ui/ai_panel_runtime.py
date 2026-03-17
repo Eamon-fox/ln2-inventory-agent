@@ -311,6 +311,7 @@ def on_stop_ai_agent(self):
 
 def set_busy(self, busy):
     self.ai_run_inflight = busy
+    indicator = getattr(self, "_activity_indicator", None)
     if busy:
         # Show stop button state - use default icon color (no color param)
         self.ai_run_btn.setText(tr("ai.stop"))
@@ -318,6 +319,8 @@ def set_busy(self, busy):
         self.ai_run_btn.setProperty("variant", None)
         self.ai_run_btn.style().unpolish(self.ai_run_btn)
         self.ai_run_btn.style().polish(self.ai_run_btn)
+        if indicator is not None:
+            indicator.start(tr("ai.activityThinking"))
     else:
         # Show run button state - white icon for primary variant
         self.ai_run_btn.setText(tr("ai.runAgent"))
@@ -325,6 +328,8 @@ def set_busy(self, busy):
         self.ai_run_btn.setProperty("variant", "primary")
         self.ai_run_btn.style().unpolish(self.ai_run_btn)
         self.ai_run_btn.style().polish(self.ai_run_btn)
+        if indicator is not None:
+            indicator.stop()
     self.ai_run_btn.setEnabled(True)
     if hasattr(self, "ai_model_switch_btn"):
         self.ai_model_switch_btn.setEnabled((not busy) and bool(self._iter_model_switch_options()))
@@ -419,13 +424,19 @@ def _handle_progress_tool_start(self, event):
     if self.ai_streaming_active:
         self._end_stream_chat()
 
+    data = event.get("data") or {}
+    name = str(data.get("name") or event.get("action") or "tool")
+
+    # Update activity indicator with current tool name
+    indicator = getattr(self, "_activity_indicator", None)
+    if indicator is not None:
+        indicator.set_tool_name(name)
+
     status_text = str(event.get("status_text") or "").strip()
     if status_text:
         self._append_tool_message(status_text)
         return
 
-    data = event.get("data") or {}
-    name = str(data.get("name") or event.get("action") or "tool")
     self._append_tool_message(f"Running `{name}`...")
 
 
@@ -433,6 +444,10 @@ def _handle_progress_chunk(self, event):
     chunk = event.get("data")
     channel = str(((event.get("meta") or {}).get("channel") or "answer")).strip().lower()
     if isinstance(chunk, str) and chunk:
+        # Streaming text means LLM is responding; clear tool name from indicator
+        indicator = getattr(self, "_activity_indicator", None)
+        if indicator is not None:
+            indicator.set_tool_name("")
         self._append_stream_chunk(chunk, channel=channel)
 
 

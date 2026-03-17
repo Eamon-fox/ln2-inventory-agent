@@ -553,7 +553,9 @@
     },
     "migrationModeBanner": "迁移模式进行中：AI 正在准备/导入其他数据集，当前数据集的手动操作已锁定。请点击“发送”继续。",
     "migrationModeEnteredStatus": "已进入迁移模式，手动写操作已锁定。请点击“发送”继续。",
-    "migrationModeExitedStatus": "已退出迁移模式，手动写操作已恢复。"
+    "migrationModeExitedStatus": "已退出迁移模式，手动写操作已恢复。",
+    "activityThinking": "思考中...",
+    "activityRunningTool": "正在执行 {tool}..."
   },
   "common": {
     "info": "信息",
