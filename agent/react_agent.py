@@ -7,6 +7,7 @@ from datetime import datetime
 
 
 from app_gui.gui_config import AGENT_HISTORY_MAX_TURNS, DEFAULT_MAX_STEPS
+from .context_compressor import compress_history
 from . import react_agent_runtime as _runtime
 
 
@@ -83,7 +84,9 @@ class ReactAgent:
             cleaned.append(entry)
 
         if max_turns and len(cleaned) > max_turns:
-            return cleaned[-max_turns:]
+            # Use sliding-window + compression instead of hard truncation.
+            # Keep the recent window verbatim, compress older messages.
+            return compress_history(cleaned, recent_window=max_turns)
         return cleaned
 
     @staticmethod

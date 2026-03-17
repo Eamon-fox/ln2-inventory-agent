@@ -660,22 +660,28 @@ class ReactAgentHistoryTests(unittest.TestCase):
         self.assertEqual(1, len(result))
 
     def test_normalize_history_respects_max_turns(self):
-        """Test _normalize_history respects max_turns parameter."""
+        """Test _normalize_history compresses older messages beyond max_turns."""
         history = [
             {"role": "user", "content": f"msg{i}"} for i in range(20)
         ]
         from agent.react_agent import ReactAgent
         result = ReactAgent._normalize_history(history, max_turns=5)
-        self.assertEqual(5, len(result))
+        # All messages retained (compressed, not truncated).
+        self.assertEqual(20, len(result))
+        # Recent window messages kept verbatim.
+        self.assertEqual("msg19", result[-1]["content"])
+        self.assertEqual("msg15", result[-5]["content"])
 
     def test_normalize_history_default_limit_uses_config_constant(self):
-        """Default history limit should match AGENT_HISTORY_MAX_TURNS."""
+        """History beyond AGENT_HISTORY_MAX_TURNS is compressed, not dropped."""
         from app_gui.gui_config import AGENT_HISTORY_MAX_TURNS
         from agent.react_agent import ReactAgent
 
         history = [{"role": "user", "content": f"msg{i}"} for i in range(AGENT_HISTORY_MAX_TURNS + 7)]
         result = ReactAgent._normalize_history(history)
-        self.assertEqual(AGENT_HISTORY_MAX_TURNS, len(result))
+        # All messages retained via compression.
+        self.assertEqual(AGENT_HISTORY_MAX_TURNS + 7, len(result))
+        # Last message preserved verbatim.
         self.assertEqual(
             f"msg{AGENT_HISTORY_MAX_TURNS + 6}",
             str(result[-1].get("content")),
