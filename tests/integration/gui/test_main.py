@@ -14,6 +14,7 @@ import re
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 MAIN_FILE = ROOT / "app_gui" / "main.py"
 FLOW_FILE = ROOT / "app_gui" / "main_window_flows.py"
+VERSION_FILE = ROOT / "app_gui" / "version.py"
 OVERVIEW_UI_FILE = ROOT / "app_gui" / "ui" / "overview_panel_ui.py"
 OVERVIEW_FILTERS_FILE = ROOT / "app_gui" / "ui" / "overview_panel_filters.py"
 DIALOG_FILES = [
@@ -29,6 +30,8 @@ def _source_text() -> str:
 
 def _combined_source_text() -> str:
     text = _source_text()
+    if VERSION_FILE.exists():
+        text += "\n" + VERSION_FILE.read_text(encoding="utf-8")
     if FLOW_FILE.exists():
         text += "\n" + FLOW_FILE.read_text(encoding="utf-8")
     for dialog_file in DIALOG_FILES:
@@ -205,12 +208,11 @@ def test_tr_not_called_with_keyword_args():
 def test_app_version_constant_exists_and_about_uses_it():
     text = _combined_source_text()
 
-    assert "APP_VERSION = " in text
-    assert re.search(r'APP_VERSION\s*=\s*"[\d.]+"', text)
+    assert re.search(r'APP_VERSION\b.*=\s*"[\d.]+"', text)
     assert re.search(r'v\{APP_VERSION\}', text) or re.search(r'v\{self\._app_version\}', text)
     assert "APP_RELEASE_URL" in text
     assert "_check_release_notice_once" in text
-    assert "_is_version_newer" in text or "_parse_version" in text
+    assert "_is_version_newer" in text or "is_version_newer" in text
 
 
 def test_startup_checks_are_deferred_until_window_show():

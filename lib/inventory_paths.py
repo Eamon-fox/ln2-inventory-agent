@@ -310,3 +310,52 @@ def managed_dataset_name_from_yaml_path(yaml_path):
     """Return dataset directory name from managed yaml path."""
     abs_path = os.path.abspath(str(yaml_path or ""))
     return os.path.basename(os.path.dirname(abs_path))
+
+
+def normalize_inventory_yaml_path(path_text) -> str:
+    """Normalize inventory YAML path to an absolute path.
+
+    Returns empty string for empty/None input.
+    """
+    raw = str(path_text or "").strip()
+    if not raw:
+        return ""
+    return os.path.abspath(raw)
+
+
+def build_dataset_combo_items(rows, current_yaml: str = ""):
+    """Build (name, yaml_path) pairs and locate current selection index.
+
+    Parameters
+    ----------
+    rows : list[dict]
+        Output of :func:`list_managed_datasets`.
+    current_yaml : str
+        Currently active YAML path (will be normalized for comparison).
+
+    Returns
+    -------
+    tuple[list[tuple[str, str]], int]
+        ``(items, selected_index)`` where *items* are ``(display_name, yaml_path)``
+        pairs and *selected_index* is the 0-based index of the item matching
+        *current_yaml* (``0`` as fallback when not found).
+    """
+    current_norm = normalize_inventory_yaml_path(current_yaml)
+    items: list[tuple[str, str]] = []
+    selected_idx = 0
+    for row in rows:
+        name = str(row.get("name") or "").strip()
+        yaml_path = normalize_inventory_yaml_path(row.get("yaml_path"))
+        if not yaml_path:
+            continue
+        if not name:
+            name = os.path.basename(os.path.dirname(yaml_path)) or yaml_path
+        items.append((name, yaml_path))
+
+    if items and current_norm:
+        for i, (_name, yp) in enumerate(items):
+            if yp == current_norm:
+                selected_idx = i
+                break
+
+    return items, selected_idx
