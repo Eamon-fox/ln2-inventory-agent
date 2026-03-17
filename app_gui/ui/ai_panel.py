@@ -19,6 +19,7 @@ from app_gui.i18n import tr
 from app_gui.ui import ai_panel_notice as _ai_notice
 from app_gui.ui import ai_panel_event_details as _ai_event_details
 from app_gui.ui import ai_panel_runtime as _ai_runtime
+from app_gui.ui.activity_indicator import ActivityIndicator
 
 
 _ROLE_COLOR_TOKENS = {
@@ -173,6 +174,11 @@ class AIPanel(QWidget):
         self.ai_chat.viewport().installEventFilter(self)
         self.ai_chat.viewport().setCursor(Qt.ArrowCursor)
         layout.addWidget(self.ai_chat, 1)
+
+        # Activity indicator (shown during agent runs)
+        self._activity_indicator = ActivityIndicator(parent=self)
+        layout.addWidget(self._activity_indicator)
+
         self.ai_new_msg_btn = QPushButton(self.ai_chat.viewport())
         self.ai_new_msg_btn.setObjectName("aiNewMessagesButton")
         self.ai_new_msg_btn.setProperty("variant", "ghost")

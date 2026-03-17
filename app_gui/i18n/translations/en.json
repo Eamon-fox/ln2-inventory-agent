@@ -560,7 +560,9 @@
     },
     "migrationModeBanner": "Migration mode is active: AI is preparing/importing another dataset. Manual Operations on the current dataset are locked. Click \"Send\" to continue.",
     "migrationModeEnteredStatus": "Migration mode enabled. Manual write operations are locked. Click \"Send\" to continue.",
-    "migrationModeExitedStatus": "Migration mode ended. Manual write operations are unlocked."
+    "migrationModeExitedStatus": "Migration mode ended. Manual write operations are unlocked.",
+    "activityThinking": "Thinking...",
+    "activityRunningTool": "Running {tool}..."
   },
   "common": {
     "info": "Info",
