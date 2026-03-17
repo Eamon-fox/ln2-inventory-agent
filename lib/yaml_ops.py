@@ -849,6 +849,123 @@ def write_yaml(
     return effective_backup_path
 
 
+def validate_backup_file(backup_path: str) -> dict:
+    """Validate a backup file for rollback readiness.
+
+    Checks file existence, readability, non-empty content, valid YAML
+    structure, and inventory integrity constraints.
+
+    Returns:
+        dict with keys:
+            valid (bool): True if backup passes all checks.
+            error (str|None): Human-readable error when invalid.
+            error_code (str|None): Machine-readable code when invalid.
+            data (dict|None): Parsed YAML data when valid.
+    """
+    abs_path = _abs_path(backup_path)
+
+    if not os.path.exists(abs_path):
+        return {
+            "valid": False,
+            "error": f"Backup file not found: {abs_path}",
+            "error_code": "backup_not_found",
+            "data": None,
+        }
+
+    if not os.path.isfile(abs_path):
+        return {
+            "valid": False,
+            "error": f"Backup path is not a file: {abs_path}",
+            "error_code": "backup_not_file",
+            "data": None,
+        }
+
+    try:
+        file_size = os.path.getsize(abs_path)
+    except OSError as exc:
+        return {
+            "valid": False,
+            "error": f"Cannot read backup file: {exc}",
+            "error_code": "backup_unreadable",
+            "data": None,
+        }
+
+    if file_size == 0:
+        return {
+            "valid": False,
+            "error": f"Backup file is empty (0 bytes): {os.path.basename(abs_path)}",
+            "error_code": "backup_empty",
+            "data": None,
+        }
+
+    try:
+        data = load_yaml(abs_path)
+    except Exception as exc:
+        return {
+            "valid": False,
+            "error": f"Backup file is not valid YAML: {exc}",
+            "error_code": "backup_parse_failed",
+            "data": None,
+        }
+
+    if not isinstance(data, dict):
+        return {
+            "valid": False,
+            "error": f"Backup file does not contain a YAML mapping (got {type(data).__name__})",
+            "error_code": "backup_invalid_structure",
+            "data": None,
+        }
+
+    if "inventory" not in data:
+        return {
+            "valid": False,
+            "error": "Backup file missing required 'inventory' key",
+            "error_code": "backup_missing_inventory",
+            "data": None,
+        }
+
+    try:
+        _ensure_inventory_integrity(
+            data,
+            prefix=f"Backup integrity check failed ({os.path.basename(abs_path)})",
+        )
+    except ValueError as exc:
+        return {
+            "valid": False,
+            "error": str(exc),
+            "error_code": "backup_integrity_failed",
+            "data": None,
+        }
+
+    return {"valid": True, "error": None, "error_code": None, "data": data}
+
+
+def list_alternative_backups(
+    yaml_path: str,
+    exclude_path: str = None,
+    limit: int = 5,
+) -> list:
+    """Return valid alternative backup paths, excluding a failed one.
+
+    Each entry is a dict with ``path`` and ``mtime`` keys, sorted newest first.
+    """
+    all_backups = list_yaml_backups(yaml_path)
+    exclude_norm = os.path.normcase(os.path.normpath(_abs_path(exclude_path))) if exclude_path else None
+
+    alternatives = []
+    for bp in all_backups:
+        if exclude_norm and os.path.normcase(os.path.normpath(bp)) == exclude_norm:
+            continue
+        try:
+            mtime = os.path.getmtime(bp)
+        except OSError:
+            continue
+        alternatives.append({"path": bp, "mtime": datetime.fromtimestamp(mtime).isoformat(timespec="seconds")})
+        if len(alternatives) >= limit:
+            break
+    return alternatives
+
+
 def rollback_yaml(
     path=YAML_PATH,
     backup_path=None,
@@ -872,14 +989,17 @@ def rollback_yaml(
             raise RuntimeError("没有可用备份可回滚")
         target_backup = backups[0]
 
-    if not os.path.exists(target_backup):
-        raise FileNotFoundError(f"备份不存在: {target_backup}")
+    # Validate backup file before attempting rollback
+    validation = validate_backup_file(target_backup)
+    if not validation["valid"]:
+        alternatives = list_alternative_backups(yaml_abs, exclude_path=target_backup)
+        error_msg = validation["error"]
+        if alternatives:
+            alt_names = [os.path.basename(a["path"]) for a in alternatives[:3]]
+            error_msg += f" | Available alternatives: {', '.join(alt_names)}"
+        raise RuntimeError(error_msg)
 
-    backup_data = load_yaml(target_backup)
-    _ensure_inventory_integrity(
-        backup_data,
-        prefix=f"回滚被阻止：目标备份不满足完整性约束 ({os.path.basename(target_backup)})",
-    )
+    backup_data = validation["data"]
 
     before_data = load_yaml(yaml_abs)
 

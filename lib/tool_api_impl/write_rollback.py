@@ -3,9 +3,25 @@
 import os
 
 from ..path_policy import PathPolicyError, resolve_dataset_backup_read_path
-from ..yaml_ops import load_yaml, rollback_yaml
+from ..yaml_ops import (
+    list_alternative_backups,
+    load_yaml,
+    rollback_yaml,
+    validate_backup_file,
+)
 from .audit_details import rollback_details as _rollback_details
 from .write_common import api
+
+
+def _attach_alternative_backups(payload: dict, yaml_path: str, failed_path: str) -> dict:
+    """Enrich a failure payload with alternative backup suggestions."""
+    try:
+        alternatives = list_alternative_backups(yaml_path, exclude_path=failed_path, limit=5)
+    except Exception:
+        alternatives = []
+    if alternatives:
+        payload["alternative_backups"] = alternatives
+    return payload
 
 
 def tool_rollback(
@@ -123,6 +139,10 @@ def tool_rollback(
                 "message": exc.message,
                 "backup_path": str(normalized_backup_path or ""),
             }
+            extra = {"backup_path": payload["backup_path"]}
+            if exc.resolved_path:
+                extra["resolved_path"] = exc.resolved_path
+            payload = _attach_alternative_backups(payload, yaml_path, normalized_backup_path or "")
             if not dry_run:
                 return api._failure_result(
                     yaml_path=yaml_path,
@@ -135,74 +155,41 @@ def tool_rollback(
                     tool_input=tool_input,
                     before_data=current_data,
                     details=_details_for_target(normalized_backup_path or None),
-                    extra=(
-                        {"backup_path": payload["backup_path"], "resolved_path": exc.resolved_path}
-                        if exc.resolved_path
-                        else {"backup_path": payload["backup_path"]}
-                    ),
+                    extra=extra,
                 )
             return payload
 
-    if dry_run and not os.path.exists(target_backup_path):
-        return {
-            "ok": False,
-            "error_code": "path.not_found",
-            "message": f"Path not found: {target_backup_path}",
-        }
-    try:
-        backup_data = load_yaml(target_backup_path)
-    except Exception as exc:
+    # Pre-rollback validation: check backup file integrity
+    backup_validation = validate_backup_file(target_backup_path)
+    if not backup_validation["valid"]:
+        raw_code = backup_validation["error_code"] or "backup_load_failed"
+        # Map integrity failures to the established API error code for compatibility
+        error_code = "rollback_backup_invalid" if raw_code == "backup_integrity_failed" else raw_code
+        message = backup_validation["error"] or "Backup validation failed"
         payload = {
             "ok": False,
-            "error_code": "backup_load_failed",
-            "message": f"Failed to read backup file: {exc}",
-        }
-        if not dry_run:
-            return api._failure_result(
-                yaml_path=yaml_path,
-                action=audit_action,
-                source=source,
-                tool_name=tool_name,
-                error_code=payload["error_code"],
-                message=payload["message"],
-                actor_context=actor_context,
-                tool_input=tool_input,
-                before_data=current_data,
-                details=_details_for_target(target_backup_path),
-            )
-        return payload
-
-    validation_error = api._validate_data_or_error(
-        backup_data,
-        message_prefix="Rollback blocked: backup does not pass integrity validation",
-    )
-    if validation_error:
-        validation_error = validation_error or {
-            "error_code": "rollback_backup_invalid",
-            "message": "Validation failed",
-            "errors": [],
-        }
-        payload = {
-            "ok": False,
-            "error_code": "rollback_backup_invalid",
-            "message": validation_error.get("message", "Validation failed"),
-            "errors": validation_error.get("errors"),
+            "error_code": error_code,
+            "message": message,
             "backup_path": target_backup_path,
         }
+        payload = _attach_alternative_backups(payload, yaml_path, target_backup_path)
         if not dry_run:
             return api._failure_result(
                 yaml_path=yaml_path,
                 action=audit_action,
                 source=source,
                 tool_name=tool_name,
-                error_code=payload["error_code"],
-                message=payload["message"],
+                error_code=error_code,
+                message=message,
                 actor_context=actor_context,
                 tool_input=tool_input,
                 before_data=current_data,
-                errors=payload.get("errors"),
                 details=_details_for_target(target_backup_path),
-                extra={"backup_path": target_backup_path},
+                extra={
+                    "backup_path": target_backup_path,
+                    **({"alternative_backups": payload["alternative_backups"]}
+                       if "alternative_backups" in payload else {}),
+                },
             )
         return payload
 
@@ -230,6 +217,13 @@ def tool_rollback(
             ),
         )
     except Exception as exc:
+        payload = {
+            "ok": False,
+            "error_code": "rollback_failed",
+            "message": f"Rollback failed: {exc}",
+            "backup_path": target_backup_path,
+        }
+        payload = _attach_alternative_backups(payload, yaml_path, target_backup_path)
         return api._failure_result(
             yaml_path=yaml_path,
             action=audit_action,
@@ -241,6 +235,11 @@ def tool_rollback(
             tool_input=tool_input,
             before_data=current_data,
             details=_details_for_target(target_backup_path),
+            extra={
+                "backup_path": target_backup_path,
+                **({"alternative_backups": payload.get("alternative_backups", [])}
+                   if payload.get("alternative_backups") else {}),
+            },
         )
 
     return {
