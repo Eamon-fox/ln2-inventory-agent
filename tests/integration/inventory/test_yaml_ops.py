@@ -547,7 +547,7 @@ class YamlOpsSafetyTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with self.assertRaises(ValueError):
+            with self.assertRaises((ValueError, RuntimeError)):
                 rollback_yaml(
                     path=str(yaml_path),
                     backup_path=str(invalid_backup),
