@@ -10,10 +10,10 @@ import os
 import re
 import shutil
 
-# Extract APP_VERSION from main.py without triggering full import
-with open("app_gui/main.py", encoding="utf-8") as f:
+# Extract APP_VERSION from version.py without triggering full import
+with open("app_gui/version.py", encoding="utf-8") as f:
     content = f.read()
-    match = re.search(r'APP_VERSION\s*=\s*["\']([^"\']+)["\']', content)
+    match = re.search(r'APP_VERSION[^=]*=\s*["\']([^"\']+)["\']', content)
     if match:
         APP_VERSION = match.group(1)
     else:
