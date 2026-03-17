@@ -583,7 +583,13 @@ class ReactAgentTests(ManagedPathTestCase):
 
         history = [
             {"role": "user", "content": "hi"},
-            {"role": "assistant", "content": "hello there"},
+            {
+                "role": "assistant",
+                "content": "hello there",
+                "tool_calls": [
+                    {"id": "call_hist_1", "type": "function", "function": {"name": "search_records", "arguments": "{}"}},
+                ],
+            },
             {"role": "tool", "tool_call_id": "call_hist_1", "content": "ignored"},
         ]
         result = agent.run("repeat your last response", conversation_history=history)

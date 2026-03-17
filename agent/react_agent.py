@@ -10,6 +10,82 @@ from app_gui.gui_config import AGENT_HISTORY_MAX_TURNS, DEFAULT_MAX_STEPS
 from . import react_agent_runtime as _runtime
 
 
+def _trim_to_consistent_boundary(messages: list[dict]) -> list[dict]:
+    """Ensure messages form complete tool-call/result groups.
+
+    Handles two cases that cause context corruption:
+
+    1. **Orphan tool messages at the head** -- after history truncation the
+       leading entries may be ``tool`` role messages whose parent assistant
+       message was cut.  These are stripped so the LLM never sees dangling
+       tool results.
+
+    2. **Incomplete tool group at the tail** -- an assistant message with
+       ``tool_calls`` must be followed by one ``tool`` message per call ID.
+       If any are missing the whole group (assistant + partial tool results)
+       is removed.
+    """
+    if not messages:
+        return messages
+
+    # --- Head: strip orphan tool messages ---
+    start = 0
+    while start < len(messages) and messages[start].get("role") == "tool":
+        start += 1
+    if start:
+        messages = messages[start:]
+    if not messages:
+        return messages
+
+    # --- Tail: ensure last tool-call group is complete ---
+    # Walk backwards to find the last assistant message (with or without
+    # tool_calls).  Only assistant+tool_calls needs validation.
+    last_assistant_tc_idx: int | None = None
+    for idx in range(len(messages) - 1, -1, -1):
+        msg = messages[idx]
+        if msg.get("role") != "assistant":
+            continue
+        tc = msg.get("tool_calls")
+        if isinstance(tc, list) and tc:
+            last_assistant_tc_idx = idx
+        break  # stop at the first assistant message from the end
+
+    if last_assistant_tc_idx is None:
+        # Strip any orphan tool messages at the tail.
+        while messages and messages[-1].get("role") == "tool":
+            messages = messages[:-1]
+        return messages
+
+    assistant_msg = messages[last_assistant_tc_idx]
+    tool_calls = assistant_msg.get("tool_calls") or []
+    expected_ids: set[str] = set()
+    for tc in tool_calls:
+        tc_id = ""
+        if isinstance(tc, dict):
+            tc_id = str(tc.get("id") or "").strip()
+            if not tc_id:
+                fn = tc.get("function")
+                if isinstance(fn, dict):
+                    tc_id = str(fn.get("id") or "").strip()
+        if tc_id:
+            expected_ids.add(tc_id)
+
+    # Collect tool message IDs after the assistant message.
+    found_ids: set[str] = set()
+    for msg in messages[last_assistant_tc_idx + 1:]:
+        if msg.get("role") == "tool":
+            tid = str(msg.get("tool_call_id") or "").strip()
+            if tid:
+                found_ids.add(tid)
+
+    if expected_ids and expected_ids <= found_ids:
+        # All tool results present -- consistent.
+        return messages
+
+    # Incomplete: trim from the assistant message onward.
+    return messages[:last_assistant_tc_idx]
+
+
 SYSTEM_PROMPT = """You are an LN2 inventory assistant.
 
 Rules:
@@ -49,7 +125,7 @@ class ReactAgent:
         if not isinstance(conversation_history, list):
             return []
 
-        cleaned = []
+        cleaned: list[dict] = []
         for item in conversation_history:
             if not isinstance(item, dict):
                 continue
@@ -83,8 +159,20 @@ class ReactAgent:
             cleaned.append(entry)
 
         if max_turns and len(cleaned) > max_turns:
-            return cleaned[-max_turns:]
-        return cleaned
+            cleaned = cleaned[-max_turns:]
+
+        return _trim_to_consistent_boundary(cleaned)
+
+    @staticmethod
+    def _ensure_tool_results_consistent(messages: list[dict]) -> list[dict]:
+        """Ensure messages end at a consistent tool-call/tool-result boundary.
+
+        If the last assistant message has tool_calls, all referenced tool
+        result messages must follow it. Any orphaned assistant+tool_calls
+        without complete tool results at the tail is stripped so the LLM
+        never sees a broken conversation.
+        """
+        return _trim_to_consistent_boundary(messages)
 
     @staticmethod
     def _emit_event(callback, event):

@@ -18,6 +18,9 @@ def _is_stop_requested(stop_event):
 
 
 def _stopped_result(self, *, on_event, trace_id, step, memory, messages):
+    # Trim messages to a consistent tool-call/result boundary before emitting,
+    # so that conversation history never contains orphaned tool_calls entries.
+    consistent_messages = self._ensure_tool_results_consistent(list(messages))
     final_text = "Run stopped by user."
     self._emit_event(
         on_event,
@@ -29,7 +32,7 @@ def _stopped_result(self, *, on_event, trace_id, step, memory, messages):
             "data": final_text,
         },
     )
-    self._emit_event(on_event, {**self._yield_stream_end(messages, status="stopped"), "trace_id": trace_id})
+    self._emit_event(on_event, {**self._yield_stream_end(consistent_messages, status="stopped"), "trace_id": trace_id})
     return {
         "ok": False,
         "error_code": "run_stopped",
