@@ -75,14 +75,12 @@ def _is_dark_mode(widget):
         return True
 
 
-import mistune
+from app_gui.ui.utils import md_to_html
 
 
 def _md_to_html(text, is_dark=True):
     """Convert markdown text to HTML for QTextEdit.append()."""
-    if not text:
-        return ""
-    return mistune.html(text)
+    return md_to_html(text)
 
 class AIPanel(QWidget):
     operation_completed = Signal(bool)

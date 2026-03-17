@@ -1,0 +1,94 @@
+"""
+Module: test_question_dialog_md
+Layer: integration/gui
+Covers: app_gui/ui/ai_panel_runtime._show_question_dialog
+
+Verify that the agent question dialog renders markdown as rich text.
+"""
+
+import os
+import sys
+import unittest
+from pathlib import Path
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+ROOT = Path(__file__).resolve().parents[3]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+try:
+    from PySide6.QtCore import Qt, QTimer
+    from PySide6.QtWidgets import QApplication, QDialog, QLabel
+
+    from app_gui.ui.ai_panel import AIPanel
+
+    PYSIDE_AVAILABLE = True
+except Exception:
+    PYSIDE_AVAILABLE = False
+    Qt = None
+    QTimer = None
+    QApplication = None
+    QDialog = None
+    QLabel = None
+    AIPanel = None
+
+from tests.managed_paths import ManagedPathTestCase
+
+
+@unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
+class TestQuestionDialogMarkdown(ManagedPathTestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._app = QApplication.instance() or QApplication([])
+
+    def _new_ai_panel(self):
+        return AIPanel(bridge=object(), yaml_path_getter=lambda: self.fake_yaml_path)
+
+    def test_question_label_uses_rich_text_format(self):
+        """The question label should use RichText format so HTML is rendered."""
+        panel = self._new_ai_panel()
+        options = ["Option A", "Option B", "\u5176\u4ed6\uff1a\u8bf7\u8f93\u5165"]
+
+        md_question = "**Bold question** with `code`"
+
+        # Schedule dialog acceptance so exec() returns immediately
+        def close_dialog():
+            for child in panel.findChildren(QDialog):
+                child.accept()
+
+        QTimer.singleShot(50, close_dialog)
+        panel._show_question_dialog(md_question, options)
+
+    def test_question_label_contains_rendered_html(self):
+        """Markdown syntax should be converted to HTML tags in the label."""
+        panel = self._new_ai_panel()
+        options = ["Yes", "No", "\u5176\u4ed6\uff1a\u8bf7\u8f93\u5165"]
+
+        md_question = "# Title\n\n- item **one**\n- item *two*"
+        captured_labels = []
+
+        original_show = panel._show_question_dialog.__func__
+
+        def patched_show(self_panel, question_text, opts):
+            # Schedule capture before dialog blocks
+            def capture_and_close():
+                for dialog in self_panel.findChildren(QDialog):
+                    for label in dialog.findChildren(QLabel):
+                        if label.textFormat() == Qt.RichText:
+                            captured_labels.append(label.text())
+                    dialog.accept()
+            QTimer.singleShot(50, capture_and_close)
+            return original_show(self_panel, question_text, opts)
+
+        panel._show_question_dialog = lambda q, o: patched_show(panel, q, o)
+        panel._show_question_dialog(md_question, options)
+
+        self.assertTrue(len(captured_labels) > 0, "No RichText label found in dialog")
+        html = captured_labels[0]
+        self.assertIn("<strong>one</strong>", html)
+        self.assertIn("<em>two</em>", html)
+
+
+if __name__ == "__main__":
+    unittest.main()
