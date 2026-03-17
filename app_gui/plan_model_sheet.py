@@ -13,8 +13,10 @@ from app_gui.ui.theme import (
     MONO_FONT_CSS_FAMILY,
     resolve_theme_token,
 )
+from lib.plan_item_factory import PlanItem
+from lib.tool_contracts import VALID_PLAN_ACTIONS
 
-_VALID_ACTIONS = {"takeout", "move", "add", "rollback", "edit"}
+_VALID_ACTIONS = VALID_PLAN_ACTIONS
 _SHEET_THEME_MODE = "light"
 
 
@@ -68,7 +70,7 @@ def _pos_to_coord(pos, cols=9):
     return str(pos) if isinstance(pos, int) else str(pos)
 
 
-def validate_plan_item(item: dict) -> Optional[str]:
+def validate_plan_item(item: PlanItem) -> Optional[str]:
     """Return an error message if *item* is invalid, or ``None`` if OK."""
     action = str(item.get("action", "")).lower()
     if action not in _VALID_ACTIONS:

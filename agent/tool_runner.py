@@ -516,7 +516,9 @@ class AgentToolRunner:
         if tool_name in WRITE_TOOLS and self._plan_store is not None:
             return self._stage_to_plan(tool_name, payload, trace_id)
 
-        handlers = {
+        # Dispatch table for all tools except "question" (handled above).
+        # When adding a new tool to TOOL_CONTRACTS, add its handler here too.
+        _DISPATCH_HANDLERS = {
             "manage_boxes": self._run_manage_boxes,
             "list_empty_positions": self._run_list_empty_positions,
             "search_records": self._run_search_records,
@@ -541,7 +543,12 @@ class AgentToolRunner:
             "rollback": self._run_rollback,
             "staged_plan": self._run_staged_plan,
         }
-        handler = handlers.get(tool_name)
+        # Fail-fast: every contract tool (except question) must have a handler.
+        _expected = set(TOOL_CONTRACTS) - {"question"}
+        assert _expected <= _DISPATCH_HANDLERS.keys(), (
+            f"Dispatch handlers missing for tools: {_expected - _DISPATCH_HANDLERS.keys()}"
+        )
+        handler = _DISPATCH_HANDLERS.get(tool_name)
         if callable(handler):
             return handler(payload, trace_id)
         return self._unknown_tool_response(tool_name)

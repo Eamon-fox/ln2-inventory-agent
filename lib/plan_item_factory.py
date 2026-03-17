@@ -6,6 +6,70 @@ from typing import Any, Dict, Iterable, Iterator, Optional
 
 from lib.takeout_parser import normalize_action
 
+# ---------------------------------------------------------------------------
+# PlanItem type definition -- the single structural contract for plan items.
+#
+# Every builder in this module returns a dict satisfying ``PlanItem``.
+# Consumers (plan_gate, plan_executor, plan_model, tool_runner_staging)
+# should import and reference ``PlanItem`` for type-checking and field
+# discovery instead of inventing ad-hoc field sets.
+#
+# We use TypedDict so existing ``dict`` usage works without migration.
+# ---------------------------------------------------------------------------
+
+try:
+    from typing import TypedDict
+except ImportError:  # Python < 3.8
+    from typing_extensions import TypedDict
+
+
+class PlanItemPayload(TypedDict, total=False):
+    """Inner payload dict carried by every PlanItem.
+
+    Which keys are present depends on the action:
+    - add:      box, positions, frozen_at, fields
+    - edit:     record_id, fields
+    - takeout:  record_id, position, date_str, action
+    - move:     record_id, position, date_str, action, to_position, to_box
+    - rollback: backup_path, source_event
+    """
+    # Common
+    record_id: Optional[int]
+    position: int
+    date_str: Optional[str]
+    action: str
+    # Add
+    box: int
+    positions: list[int]
+    frozen_at: Optional[str]
+    fields: Dict[str, Any]
+    # Move
+    to_position: int
+    to_box: int
+    # Rollback
+    backup_path: Optional[str]
+    source_event: Optional[Dict[str, Any]]
+
+
+class PlanItem(TypedDict, total=False):
+    """Structural contract for a single plan-queue item.
+
+    Required keys (always present after builder):
+        action, box, position, record_id, source, payload
+
+    Optional keys (present for move items):
+        to_position, to_box
+    """
+    action: str          # Canonical plan action: add | edit | takeout | move | rollback
+    box: int             # Source box number (0 for rollback)
+    position: int        # Source position (1 for rollback/add-first)
+    record_id: Optional[int]  # None for add / rollback
+    source: str          # "human" | "ai"
+    payload: PlanItemPayload
+    # Move-only fields
+    to_position: int
+    to_box: int
+
 _EXTRA_ACTION_ALIAS = {
     "take out": "takeout",
     "add_entry": "add",
@@ -46,7 +110,7 @@ def build_add_plan_item(
     frozen_at: Optional[str],
     fields: Optional[Dict[str, Any]] = None,
     source: str = "human",
-) -> Dict[str, Any]:
+) -> PlanItem:
     """Build a normalized add PlanItem payload."""
     fields = dict(fields or {})
     normalized_positions = [int(p) for p in list(positions or [])]
@@ -77,7 +141,7 @@ def build_record_plan_item(
     to_box: Optional[int] = None,
     source: str = "human",
     payload_action: Optional[str] = None,
-) -> Dict[str, Any]:
+) -> PlanItem:
     """Build a normalized non-add PlanItem payload."""
     action_norm = normalize_plan_action(action) or "takeout"
     if to_position is not None:
@@ -117,7 +181,7 @@ def build_edit_plan_item(
     box: int = 0,
     position: int = 1,
     source: str = "human",
-) -> Dict[str, Any]:
+) -> PlanItem:
     """Build a normalized edit PlanItem payload."""
     return {
         "action": "edit",
@@ -137,7 +201,7 @@ def build_rollback_plan_item(
     backup_path: Optional[str],
     source: str = "human",
     source_event: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+) -> PlanItem:
     """Build a normalized rollback PlanItem payload.
 
     Rollback items are executed via the Plan queue (human-in-the-loop) and must

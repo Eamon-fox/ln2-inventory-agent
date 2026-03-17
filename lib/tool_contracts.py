@@ -1,7 +1,12 @@
 """Canonical tool contracts shared by AI and GUI layers.
 
 This module is the single source of truth for tool names, request schemas,
-and write-tool identification.
+write-tool identification, migration-mode tool access, and valid plan actions.
+
+Add ``_write: True`` to mark an inventory write tool (staged via plan queue).
+Add ``_migration: True`` to include a tool in migration-agent mode.
+These internal flags are stripped from the public schema returned by
+:func:`get_tool_contracts`.
 """
 
 from __future__ import annotations
@@ -188,6 +193,7 @@ TOOL_CONTRACTS = {
     },
     "bash": {
         "description": "仅用于 Linux/WSL 环境。检测到 Windows 路径（如 D:\\）时不得使用，必须改用 powershell。",
+        "_migration": True,
         "parameters": {
             "type": "object",
             "properties": {
@@ -214,6 +220,7 @@ TOOL_CONTRACTS = {
     },
     "powershell": {
         "description": "Windows 首选执行器。当仓库/路径在 Windows（如 D:\\...）时必须使用本工具。",
+        "_migration": True,
         "parameters": {
             "type": "object",
             "properties": {
@@ -240,6 +247,7 @@ TOOL_CONTRACTS = {
     },
     "fs_list": {
         "description": "List files/directories under repository-relative path.",
+        "_migration": True,
         "parameters": {
             "type": "object",
             "properties": {
@@ -255,6 +263,7 @@ TOOL_CONTRACTS = {
     },
     "fs_read": {
         "description": "Read one text file under repository-relative path.",
+        "_migration": True,
         "parameters": {
             "type": "object",
             "properties": {
@@ -270,6 +279,7 @@ TOOL_CONTRACTS = {
     },
     "fs_write": {
         "description": "Write one text file under repository-relative path (migrate/ only).",
+        "_migration": True,
         "parameters": {
             "type": "object",
             "properties": {
@@ -286,6 +296,7 @@ TOOL_CONTRACTS = {
     },
     "fs_edit": {
         "description": "Replace text in one file under migrate/ by old/new string matching.",
+        "_migration": True,
         "parameters": {
             "type": "object",
             "properties": {
@@ -312,6 +323,7 @@ TOOL_CONTRACTS = {
     },
     "validate_migration_output": {
         "description": "Run strict validation on migrate/output/ln2_inventory.yaml (warnings are blocking) and write migrate/output/validation_report.json.",
+        "_migration": True,
         "parameters": {
             "type": "object",
             "properties": {},
@@ -322,6 +334,7 @@ TOOL_CONTRACTS = {
     "import_migration_output": {
         "description": "Import migrate/output/ln2_inventory.yaml as a new managed dataset after explicit human confirmation.",
         "notes": "confirmation_token must be exactly CONFIRM_IMPORT. Always ask user for target_dataset_name via question before importing.",
+        "_migration": True,
         "parameters": {
             "type": "object",
             "properties": {
@@ -335,6 +348,7 @@ TOOL_CONTRACTS = {
     "add_entry": {
         "description": "Add new frozen tube records in one box; `positions` can be batched, while one shared `fields` object applies to every created tube in that call.",
         "notes": "Provide sample metadata through `fields` using declared keys (e.g. fields.cell_line, fields.note, fields.<custom_field>). Per-position metadata is not supported; split into multiple add_entry calls (or staged items) when cell_line/note differs.",
+        "_write": True,
         "parameters": {
             "type": "object",
             "properties": {
@@ -359,6 +373,7 @@ TOOL_CONTRACTS = {
     },
     "edit_entry": {
         "description": "Edit metadata fields of an existing record.",
+        "_write": True,
         "parameters": {
             "type": "object",
             "properties": {
@@ -371,6 +386,7 @@ TOOL_CONTRACTS = {
     },
     "takeout": {
         "description": "Record takeout for one or more tubes using explicit source box/position.",
+        "_write": True,
         "parameters": {
             "type": "object",
             "properties": {
@@ -388,6 +404,7 @@ TOOL_CONTRACTS = {
     },
     "move": {
         "description": "Record move for one or more tubes using explicit source/target box+position.",
+        "_write": True,
         "parameters": {
             "type": "object",
             "properties": {
@@ -406,6 +423,7 @@ TOOL_CONTRACTS = {
     "rollback": {
         "description": "Rollback inventory YAML to a backup snapshot using explicit backup_path from list_audit_timeline.",
         "notes": "Always provide explicit backup_path selected from action=backup rows in list_audit_timeline.",
+        "_write": True,
         "parameters": {
             "type": "object",
             "properties": {
@@ -436,6 +454,7 @@ TOOL_CONTRACTS = {
     "question": {
         "description": "Ask one clarifying question with explicit options.",
         "notes": "question tool is not a write tool and must run alone.",
+        "_migration": True,
         "parameters": {
             "type": "object",
             "properties": {
@@ -466,15 +485,40 @@ TOOL_CONTRACTS = {
 }
 
 
-WRITE_TOOLS = {
-    "add_entry",
-    "edit_entry",
-    "takeout",
-    "move",
-    "rollback",
+# ---------------------------------------------------------------------------
+# Derived sets -- kept as module-level constants for backward compatibility.
+# Adding a new tool with ``_write: True`` or ``_migration: True`` in
+# TOOL_CONTRACTS automatically includes it here; no second place to update.
+# ---------------------------------------------------------------------------
+
+WRITE_TOOLS: frozenset[str] = frozenset(
+    name for name, spec in TOOL_CONTRACTS.items() if spec.get("_write")
+)
+
+MIGRATION_TOOL_NAMES: frozenset[str] = frozenset(
+    name for name, spec in TOOL_CONTRACTS.items() if spec.get("_migration")
+)
+
+# Canonical plan-item action names recognised by the plan pipeline.
+# Maps each tool-level write tool name to its plan-item action name.
+_WRITE_TOOL_TO_PLAN_ACTION: dict[str, str] = {
+    "add_entry": "add",
+    "edit_entry": "edit",
+    "takeout": "takeout",
+    "move": "move",
+    "rollback": "rollback",
 }
+
+VALID_PLAN_ACTIONS: frozenset[str] = frozenset(_WRITE_TOOL_TO_PLAN_ACTION.values())
+
+# Internal flags are stripped from the public schema copy.
+_INTERNAL_KEYS = {"_write", "_migration"}
 
 
 def get_tool_contracts():
-    """Return a defensive copy of canonical contracts."""
-    return deepcopy(TOOL_CONTRACTS)
+    """Return a defensive copy of canonical contracts without internal flags."""
+    contracts = deepcopy(TOOL_CONTRACTS)
+    for spec in contracts.values():
+        for key in _INTERNAL_KEYS:
+            spec.pop(key, None)
+    return contracts

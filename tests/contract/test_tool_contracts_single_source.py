@@ -17,7 +17,14 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agent import tool_runner
-from lib.tool_contracts import TOOL_CONTRACTS, WRITE_TOOLS
+from lib.tool_contracts import (
+    MIGRATION_TOOL_NAMES,
+    TOOL_CONTRACTS,
+    VALID_PLAN_ACTIONS,
+    WRITE_TOOLS,
+    _WRITE_TOOL_TO_PLAN_ACTION,
+    get_tool_contracts,
+)
 
 
 class ToolContractsSingleSourceTests(unittest.TestCase):
@@ -26,6 +33,52 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
 
     def test_agent_uses_canonical_write_tools(self):
         self.assertIs(tool_runner._WRITE_TOOLS, WRITE_TOOLS)
+
+    def test_write_tools_derived_from_contracts(self):
+        """WRITE_TOOLS must match exactly the set of tools with _write flag."""
+        expected = frozenset(
+            name for name, spec in TOOL_CONTRACTS.items() if spec.get("_write")
+        )
+        self.assertEqual(WRITE_TOOLS, expected)
+        # Verify known members
+        self.assertEqual(
+            WRITE_TOOLS,
+            frozenset({"add_entry", "edit_entry", "takeout", "move", "rollback"}),
+        )
+
+    def test_migration_tools_derived_from_contracts(self):
+        """MIGRATION_TOOL_NAMES must match exactly the set of tools with _migration flag."""
+        expected = frozenset(
+            name for name, spec in TOOL_CONTRACTS.items() if spec.get("_migration")
+        )
+        self.assertEqual(MIGRATION_TOOL_NAMES, expected)
+        # Verify known members
+        for name in ("question", "bash", "powershell", "fs_list", "fs_read",
+                      "fs_write", "fs_edit", "validate_migration_output",
+                      "import_migration_output"):
+            self.assertIn(name, MIGRATION_TOOL_NAMES)
+
+    def test_migration_tools_match_access_profile(self):
+        """agent.tool_access_profiles.MIGRATION_ALLOWED_TOOLS uses contracts."""
+        from agent.tool_access_profiles import MIGRATION_ALLOWED_TOOLS
+        self.assertIs(MIGRATION_ALLOWED_TOOLS, MIGRATION_TOOL_NAMES)
+
+    def test_valid_plan_actions_derived_from_write_tool_map(self):
+        """VALID_PLAN_ACTIONS covers all write tools via _WRITE_TOOL_TO_PLAN_ACTION."""
+        self.assertEqual(set(_WRITE_TOOL_TO_PLAN_ACTION.keys()), set(WRITE_TOOLS))
+        self.assertEqual(VALID_PLAN_ACTIONS, frozenset(_WRITE_TOOL_TO_PLAN_ACTION.values()))
+
+    def test_plan_model_uses_canonical_valid_actions(self):
+        """plan_model_sheet._VALID_ACTIONS should reference contracts."""
+        from app_gui.plan_model_sheet import _VALID_ACTIONS
+        self.assertIs(_VALID_ACTIONS, VALID_PLAN_ACTIONS)
+
+    def test_get_tool_contracts_strips_internal_flags(self):
+        """Public API must not expose _write / _migration flags."""
+        public = get_tool_contracts()
+        for name, spec in public.items():
+            self.assertNotIn("_write", spec, f"{name} leaks _write flag")
+            self.assertNotIn("_migration", spec, f"{name} leaks _migration flag")
 
     def test_v2_move_takeout_contract_shapes(self):
         self.assertIn("move", TOOL_CONTRACTS)
@@ -123,6 +176,67 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
             set((params.get("properties") or {}).keys()),
         )
         self.assertEqual(False, params.get("additionalProperties"))
+
+
+class PlanItemTypeTests(unittest.TestCase):
+    """Verify PlanItem TypedDict is importable and builders return correct shapes."""
+
+    def test_plan_item_type_importable(self):
+        from lib.plan_item_factory import PlanItem, PlanItemPayload
+        # TypedDict classes are importable and usable for isinstance-like checks
+        self.assertTrue(hasattr(PlanItem, "__annotations__"))
+        self.assertTrue(hasattr(PlanItemPayload, "__annotations__"))
+
+    def test_plan_item_required_keys(self):
+        from lib.plan_item_factory import PlanItem
+        annotations = PlanItem.__annotations__
+        for key in ("action", "box", "position", "record_id", "source", "payload"):
+            self.assertIn(key, annotations, f"PlanItem missing key: {key}")
+
+    def test_build_add_plan_item_shape(self):
+        from lib.plan_item_factory import build_add_plan_item
+        item = build_add_plan_item(
+            box=1, positions=[5, 6], frozen_at="2025-01-01", fields={"cell_line": "K562"}
+        )
+        self.assertEqual(item["action"], "add")
+        self.assertEqual(item["box"], 1)
+        self.assertIsNone(item["record_id"])
+        self.assertEqual(item["source"], "human")
+        self.assertIn("payload", item)
+        self.assertEqual(item["payload"]["positions"], [5, 6])
+
+    def test_build_record_plan_item_shape(self):
+        from lib.plan_item_factory import build_record_plan_item
+        item = build_record_plan_item(
+            action="takeout", record_id=42, position=5, box=1, date_str="2025-01-01"
+        )
+        self.assertEqual(item["action"], "takeout")
+        self.assertEqual(item["record_id"], 42)
+        self.assertNotIn("to_position", item)
+
+    def test_build_move_plan_item_shape(self):
+        from lib.plan_item_factory import build_record_plan_item
+        item = build_record_plan_item(
+            action="move", record_id=42, position=5, box=1,
+            date_str="2025-01-01", to_position=10, to_box=2,
+        )
+        self.assertEqual(item["action"], "move")
+        self.assertEqual(item["to_position"], 10)
+        self.assertEqual(item["to_box"], 2)
+
+    def test_build_edit_plan_item_shape(self):
+        from lib.plan_item_factory import build_edit_plan_item
+        item = build_edit_plan_item(record_id=7, fields={"note": "test"}, box=1, position=3)
+        self.assertEqual(item["action"], "edit")
+        self.assertEqual(item["record_id"], 7)
+        self.assertEqual(item["payload"]["fields"], {"note": "test"})
+
+    def test_build_rollback_plan_item_shape(self):
+        from lib.plan_item_factory import build_rollback_plan_item
+        item = build_rollback_plan_item(backup_path="/tmp/backup.yaml")
+        self.assertEqual(item["action"], "rollback")
+        self.assertIsNone(item["record_id"])
+        self.assertEqual(item["payload"]["backup_path"], "/tmp/backup.yaml")
 
 
 if __name__ == "__main__":

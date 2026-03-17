@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from app_gui.plan_executor import preflight_plan
 from app_gui.plan_model import validate_plan_item
+from lib.plan_item_factory import PlanItem
 
 
 def _blocked_item_payload(error: Dict[str, Any]) -> Dict[str, Any]:
@@ -27,7 +28,7 @@ def _is_positive_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
-def _validate_item_payload_schema(item: Dict[str, Any]) -> Optional[str]:
+def _validate_item_payload_schema(item: PlanItem) -> Optional[str]:
     action = str(item.get("action") or "").lower()
     payload = item.get("payload")
     if not isinstance(payload, dict):
@@ -121,7 +122,7 @@ def _validate_item_payload_schema(item: Dict[str, Any]) -> Optional[str]:
 
 def validate_plan_batch(
     *,
-    items: List[Dict[str, Any]],
+    items: List[PlanItem],
     yaml_path: Optional[str],
     bridge: Any = None,
     run_preflight: bool = True,
@@ -237,8 +238,8 @@ def validate_plan_batch(
 
 def validate_stage_request(
     *,
-    existing_items: List[Dict[str, Any]],
-    incoming_items: List[Dict[str, Any]],
+    existing_items: List[PlanItem],
+    incoming_items: List[PlanItem],
     yaml_path: Optional[str],
     bridge: Any = None,
     run_preflight: bool = True,

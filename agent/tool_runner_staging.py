@@ -1,7 +1,10 @@
 """Plan staging helpers for AgentToolRunner."""
 
+from typing import List
+
 from app_gui.plan_gate import validate_stage_request
-from lib.plan_item_factory import build_add_plan_item, build_edit_plan_item, build_record_plan_item, build_rollback_plan_item
+from lib.plan_item_factory import PlanItem, build_add_plan_item, build_edit_plan_item, build_record_plan_item, build_rollback_plan_item
+from lib.tool_contracts import WRITE_TOOLS
 from .tool_runner_handlers import _validate_rollback_backup_candidate
 
 
@@ -82,15 +85,18 @@ def _stage_to_plan_impl(self, tool_name, payload, trace_id=None):
         "result": {"staged_count": len(staged)},
     }
 
-def _build_staged_plan_items(self, tool_name, payload, layout):
-    handlers = {
+def _build_staged_plan_items(self, tool_name, payload, layout) -> List[PlanItem]:
+    _STAGING_HANDLERS = {
         "add_entry": self._stage_items_add_entry,
         "takeout": self._stage_items_takeout,
         "move": self._stage_items_move,
         "edit_entry": self._stage_items_edit_entry,
         "rollback": self._stage_items_rollback,
     }
-    handler = handlers.get(tool_name)
+    assert WRITE_TOOLS <= _STAGING_HANDLERS.keys(), (
+        f"Staging handlers missing for write tools: {WRITE_TOOLS - _STAGING_HANDLERS.keys()}"
+    )
+    handler = _STAGING_HANDLERS.get(tool_name)
     if not callable(handler):
         return []
     return handler(payload, layout)

@@ -1,6 +1,6 @@
 """Tool-access profiles for different agent runtime modes."""
 
-from lib.tool_contracts import TOOL_CONTRACTS
+from lib.tool_contracts import MIGRATION_TOOL_NAMES, TOOL_CONTRACTS
 
 
 DEFAULT_AGENT_MODE = "default"
@@ -8,19 +8,8 @@ MIGRATION_AGENT_MODE = "migration"
 
 # Migration mode is intentionally narrow: no inventory read/write tools,
 # only migration workflow controls plus scoped file/shell operations.
-MIGRATION_ALLOWED_TOOLS = frozenset(
-    {
-        "question",
-        "fs_list",
-        "fs_read",
-        "fs_write",
-        "fs_edit",
-        "bash",
-        "powershell",
-        "validate_migration_output",
-        "import_migration_output",
-    }
-)
+# Derived from ``_migration: True`` flags in TOOL_CONTRACTS.
+MIGRATION_ALLOWED_TOOLS = MIGRATION_TOOL_NAMES
 
 
 def normalize_agent_mode(mode):
