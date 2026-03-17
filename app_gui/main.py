@@ -36,6 +36,7 @@ from agent.llm_client import PROVIDER_DEFAULTS
 from app_gui.i18n import t, tr, set_language
 from lib.inventory_paths import (
     assert_allowed_inventory_yaml_path,
+    build_dataset_combo_items,
     build_dataset_delete_payload,
     build_dataset_rename_payload,
     create_managed_dataset_yaml_path,
@@ -43,6 +44,7 @@ from lib.inventory_paths import (
     ensure_inventories_root,
     list_managed_datasets,
     latest_managed_inventory_yaml_path,
+    normalize_inventory_yaml_path as _normalize_inventory_yaml_path,
     rename_managed_dataset_yaml_path,
     sanitize_dataset_name,
 )
@@ -76,26 +78,10 @@ from app_gui.main_window_flows import (
 from app_gui.dataset_session import DatasetSessionController
 from app_gui.import_journey import ImportJourneyService
 from app_gui.migration_workspace import MigrationWorkspaceService
+from app_gui.version import APP_VERSION, APP_RELEASE_URL, UPDATE_CHECK_URL, is_version_newer
 from lib.domain.events import DatasetSwitched, MigrationModeChanged, OperationExecuted
 
-APP_VERSION = "1.3.4"
-APP_RELEASE_URL = "https://github.com/Eamon-fox/snowfox/releases"
-_UPDATE_CHECK_URL = "https://snowfox-release.oss-cn-beijing.aliyuncs.com/latest.json"
 _SETTINGS_EXPORTS = (PROVIDER_DEFAULTS,)
-
-
-def _parse_version(v: str) -> tuple:
-    """Parse version string like '1.0.2' to tuple (1, 0, 2) for comparison."""
-    try:
-        normalized = str(v or "").strip().lstrip("vV")
-        return tuple(int(x) for x in normalized.split("."))
-    except (ValueError, AttributeError):
-        return (0, 0, 0)
-
-
-def _is_version_newer(new_version: str, old_version: str) -> bool:
-    """Return True if new_version > old_version using semver comparison."""
-    return _parse_version(new_version) > _parse_version(old_version)
 
 
 def _coerce_ui_scale(value, default=1.0) -> float:
@@ -169,14 +155,6 @@ def _resolve_startup_ui_scale(*, config_exists: bool, configured_scale) -> float
     if _is_primary_screen_4k_windows():
         return 1.25
     return scale
-
-
-def _normalize_inventory_yaml_path(path_text) -> str:
-    """Normalize inventory YAML path."""
-    raw = str(path_text or "").strip()
-    if not raw:
-        return ""
-    return os.path.abspath(raw)
 
 
 def _default_inventory_payload():
@@ -300,8 +278,8 @@ class MainWindow(QMainWindow):
             self,
             app_version=APP_VERSION,
             release_url=APP_RELEASE_URL,
-            github_api_latest=_UPDATE_CHECK_URL,
-            is_version_newer=_is_version_newer,
+            github_api_latest=UPDATE_CHECK_URL,
+            is_version_newer=is_version_newer,
             show_nonblocking_dialog=self._show_nonblocking_dialog,
             start_import_journey=self.on_import_existing_data,
         )
@@ -714,24 +692,17 @@ class MainWindow(QMainWindow):
 
         rows = list_managed_datasets()
         current_yaml = _normalize_inventory_yaml_path(selected_yaml or self.current_yaml_path)
+        items, selected_idx = build_dataset_combo_items(rows, current_yaml)
+
         combo.blockSignals(True)
         combo.clear()
-        for row in rows:
-            name = str(row.get("name") or "").strip()
-            yaml_path = _normalize_inventory_yaml_path(row.get("yaml_path"))
-            if not yaml_path:
-                continue
-            if not name:
-                name = os.path.basename(os.path.dirname(yaml_path)) or yaml_path
+        for name, yaml_path in items:
             combo.addItem(name, yaml_path)
 
-        combo.setEnabled(bool(rows))
+        combo.setEnabled(bool(items))
         tooltip_text = ""
-        if rows:
-            idx = combo.findData(current_yaml)
-            if idx < 0:
-                idx = 0
-            combo.setCurrentIndex(idx)
+        if items:
+            combo.setCurrentIndex(selected_idx)
             selected_path = combo.currentData()
             tooltip_text = str(selected_path or "")
         combo.setToolTip(tooltip_text)
@@ -774,7 +745,7 @@ class MainWindow(QMainWindow):
             on_data_changed=self._on_settings_data_changed,
             app_version=APP_VERSION,
             app_release_url=APP_RELEASE_URL,
-            github_api_latest=_UPDATE_CHECK_URL,
+            github_api_latest=UPDATE_CHECK_URL,
             root_dir=ROOT,
             on_import_existing_data=self.on_import_existing_data,
             on_export_inventory_csv=self.operations_panel.on_export_inventory_csv,

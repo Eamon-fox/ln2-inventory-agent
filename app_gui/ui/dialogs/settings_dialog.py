@@ -31,8 +31,10 @@ from app_gui.i18n import t, tr
 from app_gui.ui.icons import Icons, get_icon
 from lib.inventory_paths import (
     assert_allowed_inventory_yaml_path,
+    build_dataset_combo_items,
     list_managed_datasets,
     managed_dataset_name_from_yaml_path,
+    normalize_inventory_yaml_path as _normalize_inventory_yaml_path,
 )
 from lib.import_acceptance import validate_candidate_yaml
 from lib.import_validation_core import validate_inventory_document
@@ -45,10 +47,12 @@ from lib.custom_fields_update_service import (
 from lib.settings_write_gateway import persist_custom_fields_update
 from lib.validators import format_validation_errors
 from lib.yaml_ops import load_yaml
-
-APP_VERSION = "1.3.4"
-APP_RELEASE_URL = "https://github.com/Eamon-fox/snowfox/releases"
-_GITHUB_API_LATEST = "https://snowfox-release.oss-cn-beijing.aliyuncs.com/latest.json"
+from app_gui.version import (
+    APP_VERSION,
+    APP_RELEASE_URL,
+    UPDATE_CHECK_URL as _GITHUB_API_LATEST,
+    is_version_newer as _is_version_newer,
+)
 
 if getattr(sys, "frozen", False):
     ROOT = sys._MEIPASS
@@ -56,25 +60,6 @@ else:
     ROOT = os.path.dirname(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     )
-
-
-def _parse_version(v: str) -> tuple:
-    try:
-        normalized = str(v or "").strip().lstrip("vV")
-        return tuple(int(x) for x in normalized.split("."))
-    except (ValueError, AttributeError):
-        return (0, 0, 0)
-
-
-def _is_version_newer(new_version: str, old_version: str) -> bool:
-    return _parse_version(new_version) > _parse_version(old_version)
-
-
-def _normalize_inventory_yaml_path(path_text) -> str:
-    raw = str(path_text or "").strip()
-    if not raw:
-        return ""
-    return os.path.abspath(raw)
 
 
 def _is_valid_inventory_file_path(path_text):
@@ -474,24 +459,21 @@ class SettingsDialog(QDialog):
 
         rows = list_managed_datasets()
         combo = self.dataset_switch_combo
+        current_yaml = self._normalize_yaml_path(selected_yaml or self.yaml_edit.text().strip())
+        items, selected_idx = build_dataset_combo_items(rows, current_yaml)
+
         combo.blockSignals(True)
         combo.clear()
-        for row in rows:
-            name = str(row.get("name") or "")
-            yaml_path = str(row.get("yaml_path") or "")
+        for name, yaml_path in items:
             combo.addItem(name, yaml_path)
 
-        combo.setEnabled(bool(rows))
+        combo.setEnabled(bool(items))
         if self.dataset_rename_btn is not None:
-            self.dataset_rename_btn.setEnabled(bool(rows) and callable(self._on_rename_dataset))
+            self.dataset_rename_btn.setEnabled(bool(items) and callable(self._on_rename_dataset))
         if self.dataset_delete_btn is not None:
-            self.dataset_delete_btn.setEnabled(bool(rows) and callable(self._on_delete_dataset))
-        current_yaml = self._normalize_yaml_path(selected_yaml or self.yaml_edit.text().strip())
-        if rows:
-            idx = combo.findData(current_yaml)
-            if idx < 0:
-                idx = 0
-            combo.setCurrentIndex(idx)
+            self.dataset_delete_btn.setEnabled(bool(items) and callable(self._on_delete_dataset))
+        if items:
+            combo.setCurrentIndex(selected_idx)
             selected_path = combo.currentData()
             if selected_path:
                 self.yaml_edit.setText(self._normalize_yaml_path(selected_path))
