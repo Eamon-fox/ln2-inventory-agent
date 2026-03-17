@@ -325,92 +325,70 @@ class RunPlanExecuteTests(ManagedPathTestCase):
         self.assertEqual(0, result["stats"]["total"])
 
     def test_run_plan_add_success(self):
-        with tempfile.TemporaryDirectory() as td:
-            yaml_path = Path(td) / "inventory.yaml"
-            write_yaml(
-                make_data([]),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
+        yaml_path = self.ensure_dataset_yaml("add_success", make_data([]))
 
-            bridge = MagicMock()
-            bridge.add_entry.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
+        bridge = MagicMock()
 
-            items = [make_add_item(box=1, position=1)]
-            result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
+        items = [make_add_item(box=1, position=1)]
+        result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
 
-            self.assertTrue(result["ok"])
-            self.assertEqual(1, result["stats"]["ok"])
-            self.assertEqual(0, result["stats"]["blocked"])
-            self.assertTrue(bridge.add_entry.called)
+        self.assertTrue(result["ok"])
+        self.assertEqual(1, result["stats"]["ok"])
+        self.assertEqual(0, result["stats"]["blocked"])
+        # Batch add bypasses bridge.add_entry; verify YAML was updated
+        from lib.yaml_ops import load_yaml
+        data = load_yaml(str(yaml_path))
+        self.assertEqual(1, len(data["inventory"]))
 
     def test_run_plan_add_uses_single_plan_backup_for_undo_anchor(self):
-        with tempfile.TemporaryDirectory() as td:
-            yaml_path = Path(td) / "inventory.yaml"
-            write_yaml(
-                make_data([]),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
+        yaml_path = self.ensure_dataset_yaml("add_backup", make_data([]))
 
-            bridge = MagicMock()
-            bridge.add_entry.side_effect = [
-                {"ok": True, "backup_path": "/tmp/backup-first.bak"},
-                {"ok": True, "backup_path": "/tmp/backup-second.bak"},
-            ]
+        bridge = MagicMock()
 
-            items = [
-                make_add_item(box=1, position=1),
-                make_add_item(box=1, position=2),
-            ]
-            result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
+        items = [
+            make_add_item(box=1, position=1),
+            make_add_item(box=1, position=2),
+        ]
+        result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
 
-            self.assertTrue(result["ok"])
-            self.assertEqual(2, result["stats"]["ok"])
-            self.assertTrue(str(result.get("backup_path") or "").strip())
-            self.assertEqual(2, bridge.add_entry.call_count)
-            kwargs = bridge.add_entry.call_args.kwargs
-            self.assertEqual(result.get("backup_path"), kwargs.get("request_backup_path"))
-            self.assertFalse(kwargs.get("auto_backup", True))
+        self.assertTrue(result["ok"])
+        self.assertEqual(2, result["stats"]["ok"])
+        self.assertTrue(str(result.get("backup_path") or "").strip())
+        # Verify both records were written via batch
+        from lib.yaml_ops import load_yaml
+        data = load_yaml(str(yaml_path))
+        self.assertEqual(2, len(data["inventory"]))
 
     def test_run_plan_add_converts_positions_for_alphanumeric_layout(self):
-        with tempfile.TemporaryDirectory() as td:
-            yaml_path = Path(td) / "inventory.yaml"
-            write_yaml(
-                make_data_alphanumeric([]),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
+        yaml_path = self.ensure_dataset_yaml("add_alpha", make_data_alphanumeric([]))
 
-            bridge = MagicMock()
-            bridge.add_entry.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
+        bridge = MagicMock()
 
-            items = [make_add_item(box=1, position=5)]
-            result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
+        items = [make_add_item(box=1, position=5)]
+        result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
 
-            self.assertTrue(result["ok"])
-            bridge.add_entry.assert_called_once()
-            kwargs = bridge.add_entry.call_args.kwargs
-            self.assertEqual(["A5"], kwargs.get("positions"))
+        self.assertTrue(result["ok"])
+        # Verify the record was written with correct internal position
+        from lib.yaml_ops import load_yaml
+        data = load_yaml(str(yaml_path))
+        self.assertEqual(1, len(data["inventory"]))
+        self.assertEqual(5, data["inventory"][0]["position"])
 
     def test_run_plan_add_blocked(self):
-        with tempfile.TemporaryDirectory() as td:
-            yaml_path = Path(td) / "inventory.yaml"
-            write_yaml(
-                make_data([]),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
+        # Seed with an existing record at position 1
+        yaml_path = self.ensure_dataset_yaml(
+            "add_blocked",
+            make_data([make_record(1, box=1, position=1)]),
+        )
 
-            bridge = MagicMock()
-            bridge.add_entry.return_value = {"ok": False, "error_code": "position_conflict", "message": "Conflict"}
+        bridge = MagicMock()
 
-            items = [make_add_item(box=1, position=1)]
-            result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
+        items = [make_add_item(box=1, position=1)]  # conflicts with existing
+        result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
 
-            self.assertFalse(result["ok"])
-            self.assertTrue(result["blocked"])
-            self.assertEqual("position_conflict", result["items"][0]["error_code"])
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["blocked"])
+        self.assertEqual("position_conflict", result["items"][0]["error_code"])
 
     def test_run_plan_move_batch_success(self):
         with tempfile.TemporaryDirectory() as td:
@@ -1010,27 +988,21 @@ class MultiAddPreflightTests(ManagedPathTestCase):
             self.assertEqual(blocked_count, 1)
 
     def test_execute_blocks_same_position_without_calling_bridge(self):
-        """In execute mode, cross-item conflict should block before bridge call."""
-        with tempfile.TemporaryDirectory() as td:
-            yaml_path = Path(td) / "inventory.yaml"
-            write_yaml(
-                make_data([]),
-                path=str(yaml_path),
-                audit_meta={"action": "seed", "source": "tests"},
-            )
+        """In execute mode, cross-item conflict should block the conflicting item."""
+        yaml_path = self.ensure_dataset_yaml("conflict_exec", make_data([]))
 
-            bridge = MagicMock()
-            bridge.add_entry.return_value = {"ok": True, "backup_path": "/tmp/bak"}
+        bridge = MagicMock()
 
-            items = [
-                make_add_item(box=1, position=3),
-                make_add_item(box=1, position=3),  # duplicate
-            ]
+        items = [
+            make_add_item(box=1, position=3),
+            make_add_item(box=1, position=3),  # duplicate
+        ]
 
-            result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
-            self.assertTrue(result["blocked"])
-            # bridge.add_entry should only be called once (for the first item)
-            self.assertEqual(bridge.add_entry.call_count, 1)
+        result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
+        self.assertTrue(result["blocked"])
+        # The conflicting item should be blocked
+        blocked_count = sum(1 for r in result["items"] if r.get("blocked"))
+        self.assertGreaterEqual(blocked_count, 1)
 
     def test_same_position_different_box_no_conflict(self):
         """Same position number in different boxes should not conflict."""

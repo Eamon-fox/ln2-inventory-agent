@@ -678,60 +678,21 @@ def run_plan(
             include_snapshot_before_rollback=True,
         )
 
-    # Phase 1: add operations (each add is independent)
+    # Phase 1: add operations
     adds = _items_with_action(remaining, "add")
-    add_layout = _load_box_layout(yaml_path)
-
-    # Cross-item conflict detection: flag adds that target positions already
-    # claimed by an earlier add in the same batch. Pure in-memory check:
-    # no file I/O, no side-effects.
-    _add_claimed: set[tuple[int, int]] = set()  # (box, position)
-    _add_blocked_ids: set[int] = set()
-    for item in adds:
-        payload = item.get("payload") or {}
-        box = int(payload.get("box") or item.get("box") or 0)
-        positions = payload.get("positions") or []
-        for pos in positions:
-            key = (box, int(pos))
-            if key in _add_claimed:
-                _add_blocked_ids.add(id(item))
-                break
-            _add_claimed.add(key)
-
-    for item in adds:
-        if id(item) in _add_blocked_ids:
-            reports.append(_make_error_item(item, "position_conflict", "Position conflict (duplicate target in the same batch)"))
-            continue
-
-        payload = dict(item.get("payload") or {})
-        try:
-            tool_payload = _build_add_tool_payload(payload, add_layout)
-        except ValueError as exc:
-            reports.append(_make_error_item(item, "validation_failed", str(exc)))
-            continue
-        response = _run_mode_call(
-            mode,
-            run_preflight=lambda: _preflight_add_entry(bridge, yaml_path, tool_payload),
-            run_execute=lambda: bridge.add_entry(
-                yaml_path=yaml_path,
-                execution_mode="execute",
-                auto_backup=False,
-                request_backup_path=request_backup_path,
-                **tool_payload,
-            ),
-        )
-        if mode == "execute":
-            response = _attach_request_backup(response, request_backup_path)
-
-        last_backup = _append_and_consume_item_report(
-            reports,
-            remaining,
-            item=item,
-            response=response,
-            fallback_error_code="add_failed",
-            fallback_message="Add failed",
-            last_backup=last_backup,
-        )
+    last_backup = _apply_batch_phase_reports(
+        reports,
+        remaining,
+        phase_items=adds,
+        run_batch=lambda: _execute_batch_add(
+            yaml_path=yaml_path,
+            items=adds,
+            bridge=bridge,
+            mode=mode,
+            request_backup_path=request_backup_path,
+        ),
+        last_backup=last_backup,
+    )
 
     # Phase 1.5: edit operations (each edit is independent)
     edits = _items_with_action(remaining, "edit")
@@ -1151,4 +1112,178 @@ def _execute_takeout(
         fallback_error_code="takeout_batch_failed",
         fallback_message="Batch operation failed",
     )
+
+
+def _execute_batch_add(
+    yaml_path: str,
+    items: List[Dict[str, object]],
+    bridge: object,
+    mode: str,
+    request_backup_path: Optional[str] = None,
+) -> Tuple[bool, List[Dict[str, object]]]:
+    """Execute add operations as a single batch.
+
+    In preflight mode, each add is validated individually for precise error
+    reporting. In execute mode, all adds are submitted via
+    ``tool_batch_add_entries`` for a single load/validate/write cycle.
+    """
+    if not items:
+        return True, []
+
+    layout = _load_box_layout(yaml_path)
+
+    # Pre-validate payloads and detect cross-item position conflicts
+    add_claimed: set[tuple[int, int]] = set()
+    pre_blocked: Dict[int, str] = {}  # id(item) -> error message
+    tool_payloads: List[Dict[str, object]] = []
+
+    for item in items:
+        payload = item.get("payload") or {}
+        box = int(payload.get("box") or item.get("box") or 0)
+        positions = payload.get("positions") or []
+
+        # Check cross-item conflicts
+        conflict = False
+        for pos in positions:
+            key = (box, int(pos))
+            if key in add_claimed:
+                pre_blocked[id(item)] = "Position conflict (duplicate target in the same batch)"
+                conflict = True
+                break
+            add_claimed.add(key)
+        if conflict:
+            tool_payloads.append({})
+            continue
+
+        try:
+            tool_payload = _build_add_tool_payload(dict(payload), layout)
+        except ValueError as exc:
+            pre_blocked[id(item)] = str(exc)
+            tool_payloads.append({})
+            continue
+        tool_payloads.append(tool_payload)
+
+    # If all items are pre-blocked, return immediately
+    if len(pre_blocked) == len(items):
+        reports = []
+        for item in items:
+            msg = pre_blocked.get(id(item), "Validation failed")
+            reports.append(_make_error_item(item, "validation_failed", msg))
+        return False, reports
+
+    if mode == "preflight":
+        return _preflight_batch_add(
+            items=items,
+            tool_payloads=tool_payloads,
+            pre_blocked=pre_blocked,
+            bridge=bridge,
+            yaml_path=yaml_path,
+        )
+
+    # Execute mode: build entries for batch API
+    batch_entries = []
+    valid_items = []
+    for item, tool_payload in zip(items, tool_payloads):
+        if id(item) in pre_blocked:
+            continue
+        batch_entries.append({
+            "box": tool_payload.get("box"),
+            "positions": tool_payload.get("positions"),
+            "frozen_at": tool_payload.get("frozen_at"),
+            "fields": tool_payload.get("fields"),
+        })
+        valid_items.append(item)
+
+    try:
+        from lib.tool_api import tool_batch_add_entries
+    except ImportError:
+        return False, [
+            _make_error_item(item, "import_error", "Failed to import batch add API")
+            for item in items
+        ]
+
+    actor_context = getattr(bridge, "_ctx", lambda: None)() or {}
+    response = tool_batch_add_entries(
+        yaml_path=yaml_path,
+        entries=batch_entries,
+        execution_mode="execute",
+        actor_context=actor_context,
+        source="plan_executor.execute",
+        auto_backup=False,
+        request_backup_path=request_backup_path,
+    )
+    if request_backup_path and isinstance(response, dict) and response.get("ok"):
+        response = _attach_request_backup(response, request_backup_path)
+
+    # Build per-item reports
+    reports: List[Dict[str, object]] = []
+    if isinstance(response, dict) and response.get("ok"):
+        # All valid items succeeded
+        for item in items:
+            if id(item) in pre_blocked:
+                reports.append(_make_error_item(
+                    item,
+                    "validation_failed",
+                    pre_blocked[id(item)],
+                ))
+            else:
+                reports.append(_make_ok_item(item, response))
+        all_ok = not pre_blocked
+        return all_ok, reports
+
+    # Batch failed: fan out errors
+    _, batch_reports = _fanout_batch_response(
+        valid_items,
+        response,
+        fallback_error_code="add_batch_failed",
+        fallback_message="Batch add failed",
+    )
+
+    # Merge pre-blocked items with batch results
+    batch_iter = iter(batch_reports)
+    for item in items:
+        if id(item) in pre_blocked:
+            reports.append(_make_error_item(
+                item,
+                "validation_failed",
+                pre_blocked[id(item)],
+            ))
+        else:
+            reports.append(next(batch_iter))
+
+    return False, reports
+
+
+def _preflight_batch_add(
+    items: List[Dict[str, object]],
+    tool_payloads: List[Dict[str, object]],
+    pre_blocked: Dict[int, str],
+    bridge: object,
+    yaml_path: str,
+) -> Tuple[bool, List[Dict[str, object]]]:
+    """Validate each add individually in preflight mode."""
+    reports: List[Dict[str, object]] = []
+    all_ok = True
+
+    for item, tool_payload in zip(items, tool_payloads):
+        if id(item) in pre_blocked:
+            reports.append(_make_error_item(
+                item,
+                "validation_failed" if "conflict" not in pre_blocked[id(item)].lower() else "position_conflict",
+                pre_blocked[id(item)],
+            ))
+            all_ok = False
+            continue
+
+        response = _preflight_add_entry(bridge, yaml_path, tool_payload)
+        if not _append_item_report(
+            reports,
+            item=item,
+            response=response,
+            fallback_error_code="add_failed",
+            fallback_message="Add failed",
+        ):
+            all_ok = False
+
+    return all_ok, reports
 

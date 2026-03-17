@@ -370,6 +370,35 @@ tool_takeout = _write_v2.tool_takeout
 tool_move = _write_v2.tool_move
 _tool_takeout_impl = _write_v2._tool_takeout_impl
 
+def tool_batch_add_entries(
+    yaml_path,
+    entries,
+    execution_mode=None,
+    actor_context=None,
+    source="tool_api",
+    auto_backup=True,
+    request_backup_path=None,
+):
+    """Add multiple entries in a single load/validate/write cycle.
+
+    Each entry dict must contain: box, positions, frozen_at, fields.
+    Returns a batch result with per-entry status in ``entry_results``.
+    Atomicity: all entries must validate before any are written.
+    """
+    from .tool_api_impl.write_batch_add import tool_batch_add_entries as _impl
+
+    response = _impl(
+        yaml_path=yaml_path,
+        entries=entries,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+        source=source,
+        auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
+    )
+    return _format_tool_response_positions(response, yaml_path=yaml_path)
+
+
 def tool_rollback(
     yaml_path,
     backup_path=None,
