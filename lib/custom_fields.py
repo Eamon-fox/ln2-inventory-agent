@@ -101,15 +101,37 @@ def _build_default_cell_line_field(meta):
     }
 
 
-def parse_custom_fields(meta):
-    """Parse ``meta.custom_fields`` and return a validated list.
+def _get_box_fields_raw(meta, box):
+    """Return the raw field definition list for a specific box, or None.
+
+    Looks up ``meta.box_fields[str(box)]``.  Returns ``None`` when no
+    per-box override exists (caller should fall back to global fields).
+    """
+    if not isinstance(meta, dict) or box is None:
+        return None
+    box_fields = meta.get("box_fields")
+    if not isinstance(box_fields, dict):
+        return None
+    raw = box_fields.get(str(box))
+    if isinstance(raw, list):
+        return raw
+    return None
+
+
+def parse_custom_fields(meta, *, field_list=None):
+    """Parse ``meta.custom_fields`` (or an explicit *field_list*) and return a validated list.
 
     Each item is normalised to
     ``{"key", "label", "type", "default", "required"}``
     with optional ``"options"`` (list of str) and ``"multiline"`` (bool).
     Invalid or conflicting entries are silently dropped with a stderr warning.
+
+    Args:
+        meta: The ``meta`` dict from the YAML document.
+        field_list: When provided, parse this list instead of ``meta.custom_fields``.
+            Used for per-box field overrides.
     """
-    raw = (meta or {}).get("custom_fields")
+    raw = field_list if field_list is not None else (meta or {}).get("custom_fields")
     if not raw:
         return []
 
@@ -177,15 +199,23 @@ def parse_custom_fields(meta):
     return result
 
 
-def get_effective_fields(meta):
+def get_effective_fields(meta, box=None):
     """Return the full list of user-configurable field definitions.
+
+    When *box* is given and ``meta.box_fields[str(box)]`` exists, those
+    per-box definitions take precedence over the global ``meta.custom_fields``.
+    When no per-box override is found, falls back to global fields.
 
     Always includes fixed ``note``.
     Includes ``cell_line`` only when explicitly declared or legacy metadata
     indicates compatibility mode.
     """
     meta = meta or {}
-    fields = parse_custom_fields(meta)
+    box_raw = _get_box_fields_raw(meta, box)
+    if box_raw is not None:
+        fields = parse_custom_fields(meta, field_list=box_raw)
+    else:
+        fields = parse_custom_fields(meta)
     keys = {f["key"] for f in fields}
 
     # Auto-inject cell_line only for legacy compatibility windows.
@@ -202,23 +232,23 @@ def get_effective_fields(meta):
     return fields
 
 
-def get_field_options(meta, field_key):
+def get_field_options(meta, field_key, box=None):
     """Return the options list for any field, or ``[]`` if none defined."""
-    for field in get_effective_fields(meta):
+    for field in get_effective_fields(meta, box=box):
         if field["key"] == field_key:
             return field.get("options") or []
     return []
 
 
-def is_field_required(meta, field_key):
+def is_field_required(meta, field_key, box=None):
     """Check if a given field is marked as required."""
-    for field in get_effective_fields(meta):
+    for field in get_effective_fields(meta, box=box):
         if field["key"] == field_key:
             return field.get("required", False)
     return False
 
 
-def get_display_key(meta):
+def get_display_key(meta, box=None):
     """Return the field key used for grid cell labels.
 
     Uses ``meta.display_key`` if set, otherwise the first effective field's key,
@@ -227,7 +257,7 @@ def get_display_key(meta):
     dk = (meta or {}).get("display_key")
     if isinstance(dk, str) and dk.strip():
         return dk
-    fields = get_effective_fields(meta)
+    fields = get_effective_fields(meta, box=box)
     for field in fields:
         key = str((field or {}).get("key") or "").strip()
         if key and key != "note":
@@ -237,7 +267,7 @@ def get_display_key(meta):
     return "note"
 
 
-def get_color_key(meta):
+def get_color_key(meta, box=None):
     """Return the field key used for grid cell coloring and filter grouping.
 
     Uses ``meta.color_key`` if set, otherwise ``"cell_line"``.
@@ -245,7 +275,7 @@ def get_color_key(meta):
     ck = (meta or {}).get("color_key")
     if isinstance(ck, str) and ck.strip():
         return ck
-    fields = get_effective_fields(meta)
+    fields = get_effective_fields(meta, box=box)
     keys = [str((field or {}).get("key") or "").strip() for field in fields]
     if "cell_line" in keys:
         return "cell_line"
@@ -255,12 +285,12 @@ def get_color_key(meta):
     return "note"
 
 
-def get_cell_line_options(meta):
+def get_cell_line_options(meta, box=None):
     """Return the list of predefined cell_line values from meta.
 
     Backward-compatible wrapper around :func:`get_field_options`.
     """
-    opts = get_field_options(meta, "cell_line")
+    opts = get_field_options(meta, "cell_line", box=box)
     if isinstance(opts, list):
         if opts:
             return opts
@@ -274,16 +304,16 @@ def get_cell_line_options(meta):
     return []
 
 
-def get_color_key_options(meta):
+def get_color_key_options(meta, box=None):
     """Return the list of predefined values for the color_key field.
 
     Looks up ``options`` on the effective field definition first, then
     falls back to ``{color_key}_options`` in meta for legacy support.
     Returns an empty list if no options are defined (will use hash-based fallback).
     """
-    color_key = get_color_key(meta)
+    color_key = get_color_key(meta, box=box)
     # Try effective field options first
-    opts = get_field_options(meta, color_key)
+    opts = get_field_options(meta, color_key, box=box)
     if opts:
         return opts
     # Legacy fallback: {color_key}_options in meta
@@ -294,18 +324,18 @@ def get_color_key_options(meta):
     return []
 
 
-def get_required_field_keys(meta):
+def get_required_field_keys(meta, box=None):
     """Return the set of user-field keys marked as required."""
-    fields = get_effective_fields(meta)
+    fields = get_effective_fields(meta, box=box)
     return {f["key"] for f in fields if f.get("required")}
 
 
-def is_cell_line_required(meta):
+def is_cell_line_required(meta, box=None):
     """Check if cell_line is marked as required.
 
     Backward-compatible wrapper around :func:`is_field_required`.
     """
-    for field in get_effective_fields(meta):
+    for field in get_effective_fields(meta, box=box):
         if field.get("key") == "cell_line":
             return bool(field.get("required", False))
     if isinstance(meta, dict) and "cell_line_required" in meta:

@@ -14,12 +14,12 @@ from .write_common import api
 _EDITABLE_FIELDS = {"frozen_at"}
 
 
-def _get_editable_fields(yaml_path):
+def _get_editable_fields(yaml_path, box=None):
     """Return editable field set: frozen_at + all effective fields from meta."""
     try:
         data = load_yaml(yaml_path)
         meta = data.get("meta", {})
-        fields = get_effective_fields(meta)
+        fields = get_effective_fields(meta, box=box)
         return _EDITABLE_FIELDS | {field["key"] for field in fields}
     except Exception:
         pass
@@ -93,6 +93,23 @@ def tool_edit_entry(
     data = normalized.get("data")
 
     meta = data.get("meta", {})
+
+    # Find record first so we know its box for per-box field resolution
+    _idx, record = find_record_by_id(data.get("inventory", []), record_id)
+    if record is None:
+        return api._failure_result(
+            yaml_path=yaml_path,
+            action=action,
+            source=source,
+            tool_name=tool_name,
+            error_code="record_not_found",
+            message=f"Record ID={record_id} not found",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+        )
+
+    record_box = record.get("box")
     alias_result = normalize_input_fields(fields, meta)
     if not alias_result.get("ok"):
         return api._failure_result(
@@ -113,8 +130,8 @@ def tool_edit_entry(
     alias_warnings = list(alias_result.get("warnings") or [])
     normalized_fields = dict(alias_result.get("fields") or {})
 
-    # Validate all option-bearing fields generically
-    effective = get_effective_fields(meta)
+    # Validate all option-bearing fields generically (box-aware)
+    effective = get_effective_fields(meta, box=record_box)
     allowed = _EDITABLE_FIELDS | {field["key"] for field in effective}
     bad_keys = set(normalized_fields.keys()) - allowed
     if bad_keys:
@@ -173,20 +190,6 @@ def tool_edit_entry(
             normalized_fields[fkey] = field_text
         else:
             normalized_fields[fkey] = raw_val
-
-    _idx, record = find_record_by_id(data.get("inventory", []), record_id)
-    if record is None:
-        return api._failure_result(
-            yaml_path=yaml_path,
-            action=action,
-            source=source,
-            tool_name=tool_name,
-            error_code="record_not_found",
-            message=f"Record ID={record_id} not found",
-            actor_context=actor_context,
-            tool_input=tool_input,
-            before_data=data,
-        )
 
     before = {key: record.get(key) for key in normalized_fields}
     candidate_data = deepcopy(data)
