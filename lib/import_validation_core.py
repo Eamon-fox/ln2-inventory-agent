@@ -749,6 +749,12 @@ def _check_duplicate_ids(records: List[Dict[str, Any]]) -> List[str]:
 
 
 def _check_position_conflicts(records: List[Dict[str, Any]]) -> List[str]:
+    """Check position conflicts within import/migration data.
+
+    All records are treated as batch entries.  Conflict messages explicitly
+    state that the conflict is *within the import data* so that users and
+    agents do not confuse them with existing-inventory conflicts.
+    """
     usage = defaultdict(list)
     for idx, rec in enumerate(records):
         if not isinstance(rec, dict):
@@ -764,9 +770,12 @@ def _check_position_conflicts(records: List[Dict[str, Any]]) -> List[str]:
     for (box, pos), entries in usage.items():
         if len(entries) <= 1:
             continue
-        rec_ids = ", ".join(f"#{idx + 1} (id={rec.get('id')})" for idx, rec in entries)
+        rec_ids = ", ".join(
+            f"#{idx + 1} (id={rec.get('id')})" for idx, rec in entries
+        )
         conflicts.append(
-            f"Position conflict: Box {box} Position {pos} is occupied by multiple records: {rec_ids}"
+            f"Import data internal conflict: Box {box} Position {pos} "
+            f"is occupied by multiple records within the import data: {rec_ids}"
         )
     return conflicts
 

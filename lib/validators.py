@@ -398,9 +398,18 @@ def check_duplicate_ids(records):
     return errors
 
 
-def check_position_conflicts(records):
-    """Check active double-occupancy conflicts by (box, position)."""
-    usage = defaultdict(list)
+def check_position_conflicts(records, *, existing_count: int = 0):
+    """Check active double-occupancy conflicts by (box, position).
+
+    Args:
+        records: Full list of inventory records to check.
+        existing_count: Number of leading records that belong to the existing
+            inventory.  Records at index >= existing_count are treated as
+            "batch / new" entries.  When > 0, conflict messages distinguish
+            between existing-inventory conflicts, batch-internal conflicts,
+            and cross-source conflicts.
+    """
+    usage: dict = defaultdict(list)
     for idx, rec in enumerate(records):
         if not isinstance(rec, dict):
             continue
@@ -411,15 +420,64 @@ def check_position_conflicts(records):
         if _is_plain_int(box) and _is_plain_int(position):
             usage[(box, position)].append((idx, rec))
 
-    conflicts = []
+    conflicts: list[str] = []
     for (box, pos), entries in usage.items():
         if len(entries) <= 1:
             continue
-        rec_ids = ", ".join(f"#{idx + 1} (id={rec.get('id')})" for idx, rec in entries)
-        conflicts.append(
-            f"Position conflict: Box {box} Position {pos} is occupied by multiple records: {rec_ids}"
-        )
+        if existing_count > 0:
+            conflicts.append(
+                _format_conflict_with_source(box, pos, entries, existing_count)
+            )
+        else:
+            rec_ids = ", ".join(
+                f"#{idx + 1} (id={rec.get('id')})" for idx, rec in entries
+            )
+            conflicts.append(
+                f"Position conflict: Box {box} Position {pos} "
+                f"is occupied by multiple records: {rec_ids}"
+            )
     return conflicts
+
+
+def _format_conflict_with_source(
+    box: int, pos: int, entries: list, existing_count: int
+) -> str:
+    """Format a position-conflict message distinguishing record sources.
+
+    Args:
+        box: Box number.
+        pos: Position number.
+        entries: List of ``(idx, rec)`` tuples occupying the same slot.
+        existing_count: Index boundary; records with ``idx < existing_count``
+            are "existing inventory", others are "batch / new".
+    """
+    existing = [(i, r) for i, r in entries if i < existing_count]
+    batch = [(i, r) for i, r in entries if i >= existing_count]
+
+    def _label(idx: int, rec: dict, source: str) -> str:
+        return f"{source} #{idx + 1} (id={rec.get('id')})"
+
+    if existing and batch:
+        # Cross-source conflict
+        ex_labels = ", ".join(_label(i, r, "existing") for i, r in existing)
+        ba_labels = ", ".join(_label(i, r, "batch") for i, r in batch)
+        return (
+            f"Position conflict (cross-source): Box {box} Position {pos} — "
+            f"{ex_labels} vs {ba_labels}"
+        )
+    if len(batch) >= 2:
+        # Batch-internal conflict
+        ba_labels = ", ".join(_label(i, r, "batch") for i, r in batch)
+        return (
+            f"Position conflict (batch-internal): Box {box} Position {pos} — "
+            f"batch records occupy the same slot: {ba_labels}"
+        )
+    # Existing-only conflict (both records from existing inventory)
+    ex_labels = ", ".join(_label(i, r, "existing") for i, r in existing)
+    return (
+        f"Position conflict: Box {box} Position {pos} "
+        f"is occupied by multiple existing records: {ex_labels}"
+    )
 
 
 def validate_inventory(data):
