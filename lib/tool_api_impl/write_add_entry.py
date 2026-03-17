@@ -16,11 +16,11 @@ from .audit_details import add_entry_details, failure_details
 from .write_common import api
 
 
-def _get_addable_field_keys(meta):
+def _get_addable_field_keys(meta, box=None):
     """Return (allowed_keys, effective_field_keys) for add_entry fields payload."""
     effective_field_keys = {
         str(field.get("key"))
-        for field in get_effective_fields(meta)
+        for field in get_effective_fields(meta, box=box)
         if isinstance(field, dict) and field.get("key")
     }
     return effective_field_keys, effective_field_keys
@@ -137,7 +137,7 @@ def _validate_add_entry_request_data(
     fields = dict(alias_result.get("fields") or {})
     alias_warnings = list(alias_result.get("warnings") or [])
 
-    allowed_field_keys, effective_field_keys = _get_addable_field_keys(meta)
+    allowed_field_keys, effective_field_keys = _get_addable_field_keys(meta, box=box)
     bad_keys = sorted(set(fields.keys()) - allowed_field_keys)
     if bad_keys:
         return None, api._failure_result(
@@ -154,7 +154,7 @@ def _validate_add_entry_request_data(
         )
 
     # Check required fields (including option-bearing ones like cell_line)
-    required_keys = get_required_field_keys(meta)
+    required_keys = get_required_field_keys(meta, box=box)
     missing = [k for k in sorted(required_keys) if not str(fields.get(k) or "").strip()]
 
     if missing:
@@ -172,7 +172,7 @@ def _validate_add_entry_request_data(
         )
 
     # Validate option-bearing fields
-    effective = get_effective_fields(meta)
+    effective = get_effective_fields(meta, box=box)
     for field_def in effective:
         fkey = field_def["key"]
         foptions = field_def.get("options")

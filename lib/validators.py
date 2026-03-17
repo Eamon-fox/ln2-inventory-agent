@@ -252,7 +252,7 @@ def validate_record(rec, idx=None, layout=None, meta=None):
     structural_required = ["id", "box", "frozen_at"]
 
     # Separate effective fields into option-bearing (relaxed) vs others (strict)
-    effective = get_effective_fields(meta) if isinstance(meta, dict) else []
+    effective = get_effective_fields(meta, box=rec.get("box")) if isinstance(meta, dict) else []
     option_field_keys = {f["key"] for f in effective if f.get("options")}
     strict_required_keys = {
         f["key"] for f in effective
