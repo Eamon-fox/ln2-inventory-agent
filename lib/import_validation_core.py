@@ -2,7 +2,16 @@
 
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
+from .validation_primitives import (
+    is_plain_int as _is_plain_int,
+    validate_date_format as _validate_date,
+    parse_date as _parse_date,
+    record_label as _record_label,
+    has_takeout_history as _has_takeout_history_core,
+    validate_record_fields,
+)
 
 
 ALLOWED_ROOT_KEYS = frozenset({"meta", "inventory"})
@@ -61,32 +70,16 @@ DEFAULT_CELL_LINE_OPTIONS = [
     "mESC",
 ]
 
-def _is_plain_int(value: Any) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool)
 
-
-def _validate_date(date_str: Any) -> bool:
-    try:
-        datetime.strptime(str(date_str), "%Y-%m-%d")
-        return True
-    except Exception:
-        return False
-
-
-def _parse_date(date_str: Any):
-    if not date_str:
-        return None
-    try:
-        return datetime.strptime(str(date_str), "%Y-%m-%d")
-    except Exception:
-        return None
-
-
-def _normalize_action(action: Any):
+def _normalize_action(action: Any) -> Optional[str]:
     if action is None:
         return None
     raw = str(action).strip()
     return ACTION_ALIAS.get(raw.lower()) or ACTION_ALIAS.get(raw)
+
+
+def _has_takeout_history(rec: Dict[str, Any]) -> bool:
+    return _has_takeout_history_core(rec, _normalize_action)
 
 
 def _position_range(layout: Dict[str, Any]) -> Tuple[int, int]:
@@ -554,22 +547,6 @@ def _is_cell_line_required(meta: Dict[str, Any]) -> bool:
     return bool((meta or {}).get("cell_line_required", True))
 
 
-def _record_label(rec: Dict[str, Any], idx: int) -> str:
-    return f"Record #{idx + 1} (id={rec.get('id', 'N/A')})"
-
-
-def _has_takeout_history(rec: Dict[str, Any]) -> bool:
-    thaw_events = rec.get("thaw_events") or []
-    if not isinstance(thaw_events, list):
-        return False
-    for ev in thaw_events:
-        if not isinstance(ev, dict):
-            continue
-        if _normalize_action(ev.get("action")) == "takeout":
-            return True
-    return False
-
-
 def _validate_record(
     rec: Dict[str, Any],
     idx: int,
@@ -578,104 +555,11 @@ def _validate_record(
     required_custom_field_keys: List[str],
     normalized_custom_fields: List[Dict[str, Any]] | None = None,
 ) -> Tuple[List[str], List[str]]:
-    errors = []
-    warnings = []
-    rec_id = _record_label(rec, idx)
-    pos_lo, pos_hi = _position_range(layout)
+    pos_range = _position_range(layout)
 
     required_fields = ["id", "box", "frozen_at"] + list(required_custom_field_keys)
-    for field in required_fields:
-        if field not in rec or rec[field] is None:
-            errors.append(f"{rec_id}: missing required field '{field}'")
 
-    rec_id_value = rec.get("id")
-    if not isinstance(rec_id_value, int) or isinstance(rec_id_value, bool):
-        errors.append(f"{rec_id}: 'id' must be a positive integer")
-    elif rec_id_value <= 0:
-        errors.append(f"{rec_id}: 'id' must be a positive integer")
-
-    box = rec.get("box")
-    if not isinstance(box, int) or isinstance(box, bool):
-        errors.append(f"{rec_id}: 'box' must be an integer")
-    else:
-        box_num = box
-        box_numbers = _box_numbers(layout)
-        if box_numbers and box_num not in set(box_numbers):
-            allowed = ",".join(str(v) for v in box_numbers)
-            errors.append(f"{rec_id}: 'box' out of range ({allowed})")
-        elif box_num <= 0:
-            errors.append(f"{rec_id}: 'box' must be a positive integer")
-
-    position = rec.get("position")
-    if position is not None:
-        if not _is_plain_int(position):
-            errors.append(f"{rec_id}: 'position' must be an integer")
-        elif not (pos_lo <= position <= pos_hi):
-            errors.append(f"{rec_id}: 'position' {position} out of range ({pos_lo}-{pos_hi})")
-    elif not _has_takeout_history(rec):
-        errors.append(f"{rec_id}: 'position' is null but no takeout history found")
-
-    frozen_at = rec.get("frozen_at")
-    if not _validate_date(frozen_at):
-        errors.append(f"{rec_id}: 'frozen_at' must be YYYY-MM-DD")
-    else:
-        frozen_date = _parse_date(frozen_at)
-        if frozen_date and frozen_date > datetime.now():
-            errors.append(f"{rec_id}: frozen date {frozen_at} is in the future")
-
-    thaw_events = rec.get("thaw_events")
-    if thaw_events is not None:
-        if not isinstance(thaw_events, list):
-            errors.append(f"{rec_id}: 'thaw_events' must be a list")
-        else:
-            for event_idx, ev in enumerate(thaw_events, 1):
-                if not isinstance(ev, dict):
-                    errors.append(f"{rec_id}: thaw_events[{event_idx}] must be an object")
-                    continue
-
-                ev_action = _normalize_action(ev.get("action"))
-                if not ev_action:
-                    errors.append(f"{rec_id}: thaw_events[{event_idx}] has invalid action")
-
-                ev_date = ev.get("date")
-                if not _validate_date(ev_date):
-                    errors.append(f"{rec_id}: thaw_events[{event_idx}] has invalid date")
-                else:
-                    parsed_ev_date = _parse_date(ev_date)
-                    if parsed_ev_date and parsed_ev_date > datetime.now():
-                        errors.append(
-                            f"{rec_id}: thaw_events[{event_idx}] date {ev_date} is in the future"
-                        )
-
-                ev_positions = ev.get("positions")
-                if isinstance(ev_positions, int):
-                    ev_positions = [ev_positions]
-                if not isinstance(ev_positions, list) or not ev_positions:
-                    errors.append(
-                        f"{rec_id}: thaw_events[{event_idx}] positions must be a non-empty list"
-                    )
-                    continue
-
-                seen_ev_pos = set()
-                for ev_pos in ev_positions:
-                    if not _is_plain_int(ev_pos):
-                        errors.append(
-                            f"{rec_id}: thaw_events[{event_idx}] position {ev_pos} must be an integer"
-                        )
-                        continue
-                    if not (pos_lo <= ev_pos <= pos_hi):
-                        errors.append(
-                            f"{rec_id}: thaw_events[{event_idx}] position {ev_pos} out of range ({pos_lo}-{pos_hi})"
-                        )
-                        continue
-                    if ev_pos in seen_ev_pos:
-                        errors.append(
-                            f"{rec_id}: thaw_events[{event_idx}] duplicate position {ev_pos}"
-                        )
-                    seen_ev_pos.add(ev_pos)
-
-    # Relaxed validation for all option-bearing fields.
-    # Build the list: explicit custom fields with options + legacy cell_line.
+    # Build option fields list: explicit custom fields with options + legacy cell_line.
     option_fields: List[Dict[str, Any]] = []
     declared_custom_keys: set = set()
     for cf in (normalized_custom_fields or []):
@@ -694,39 +578,36 @@ def _validate_record(
             "required": _is_cell_line_required(meta),
         })
 
-    for field_def in option_fields:
-        fkey = field_def["key"]
-        foptions = field_def.get("options") or []
-        frequired = field_def.get("required", False)
+    # Build box validation closures for this layout context.
+    _layout = layout
 
-        has_key = fkey in rec
-        if not has_key:
-            warnings.append(f"{rec_id}: missing '{fkey}' (legacy-compatible warning)")
-            continue
+    def _validate_box(box_value: Any) -> bool:
+        if not _is_plain_int(box_value):
+            return False
+        box_nums = _box_numbers(_layout)
+        if box_nums and box_value not in set(box_nums):
+            return False
+        if box_value <= 0:
+            return False
+        return True
 
-        raw_val = rec.get(fkey)
-        if raw_val is None:
-            val = ""
-        elif isinstance(raw_val, str):
-            val = raw_val.strip()
-        else:
-            val = str(raw_val).strip()
-            warnings.append(f"{rec_id}: '{fkey}' is not a string (legacy-compatible warning)")
+    def _format_box_constraint() -> str:
+        box_nums = _box_numbers(_layout)
+        if not box_nums:
+            return "positive integer"
+        return ",".join(str(v) for v in box_nums)
 
-        if frequired and not val:
-            warnings.append(
-                f"{rec_id}: '{fkey}' is empty while required=true (legacy-compatible warning)"
-            )
-        elif val and foptions and val not in foptions:
-            opts_str = ", ".join(foptions[:5])
-            if len(foptions) > 5:
-                opts_str += f" ... total {len(foptions)}"
-            warnings.append(
-                f"{rec_id}: '{fkey}' not in configured options ({opts_str}) "
-                "(legacy-compatible warning)"
-            )
-
-    return errors, warnings
+    return validate_record_fields(
+        rec,
+        idx,
+        pos_range=pos_range,
+        validate_box_fn=_validate_box,
+        format_box_constraint_fn=_format_box_constraint,
+        normalize_action_fn=_normalize_action,
+        required_fields=required_fields,
+        option_fields=option_fields,
+        check_event_future_dates=True,
+    )
 
 
 def _check_duplicate_ids(records: List[Dict[str, Any]]) -> List[str]:
