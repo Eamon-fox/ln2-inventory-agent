@@ -752,6 +752,35 @@ class OperationEventFeedTests(ManagedPathTestCase):
         self.assertTrue(panel._migration_mode_enabled)
         self.assertFalse(panel._migration_mode_banner.isHidden())
 
+    def test_ai_panel_repeated_migration_mode_ui_effect_is_idempotent(self):
+        panel = self._new_ai_panel()
+        mode_changes = []
+        status_messages = []
+        panel.migration_mode_changed.connect(lambda enabled: mode_changes.append(bool(enabled)))
+        panel.status_message.connect(lambda msg, timeout: status_messages.append((msg, timeout)))
+        event = {
+            "event": "tool_end",
+            "type": "tool_end",
+            "data": {"name": "use_skill"},
+            "observation": {
+                "ok": True,
+                "ui_effects": [
+                    {
+                        "type": "migration_mode",
+                        "enabled": True,
+                        "reason": "use_skill:migration",
+                    }
+                ],
+            },
+        }
+
+        panel.on_progress(event)
+        panel.on_progress(event)
+
+        self.assertTrue(panel._migration_mode_enabled)
+        self.assertEqual([True], mode_changes)
+        self.assertEqual([(tr("ai.migrationModeEnteredStatus"), 4000)], status_messages)
+
     def test_ai_panel_migration_mode_updates_banner_and_status(self):
         panel = self._new_ai_panel()
         mode_changes = []

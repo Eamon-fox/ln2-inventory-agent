@@ -630,6 +630,8 @@ class MainWindow(QMainWindow):
 
     def _apply_migration_mode_enabled(self, enabled):
         locked = bool(enabled)
+        if bool(getattr(self, "_migration_mode_enabled", False)) == locked:
+            return
         self._migration_mode_enabled = locked
         badge = getattr(self, "migration_mode_badge", None)
         if badge is not None:

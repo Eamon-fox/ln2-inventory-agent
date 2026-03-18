@@ -499,7 +499,6 @@ class OperationsPanel(QWidget):
     def set_migration_mode_enabled(self, enabled):
         locked = bool(enabled)
         if self._migration_mode_enabled == locked:
-            self._apply_migration_mode_ui_state()
             return
         self._migration_mode_enabled = locked
         self._apply_migration_mode_ui_state()

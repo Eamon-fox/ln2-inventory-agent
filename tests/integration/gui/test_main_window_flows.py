@@ -1064,6 +1064,29 @@ def test_main_window_migration_mode_change_forwards_to_operations_panel():
     show_notice.assert_called_once_with()
 
 
+def test_main_window_repeated_migration_enable_is_noop():
+    from app_gui.main import MainWindow
+
+    window = MainWindow.__new__(MainWindow)
+    window._migration_mode_enabled = False
+    operations_panel = SimpleNamespace(set_migration_mode_enabled=MagicMock())
+    migration_mode_badge = SimpleNamespace(setVisible=MagicMock())
+    migration_status_indicator = SimpleNamespace(setVisible=MagicMock())
+    show_notice = MagicMock()
+    window.operations_panel = operations_panel
+    window.migration_mode_badge = migration_mode_badge
+    window._migration_status_indicator = migration_status_indicator
+    window._show_migration_mode_entry_notice = show_notice
+
+    MainWindow._apply_migration_mode_enabled(window, True)
+    MainWindow._apply_migration_mode_enabled(window, True)
+
+    operations_panel.set_migration_mode_enabled.assert_called_once_with(True)
+    migration_mode_badge.setVisible.assert_called_once_with(True)
+    migration_status_indicator.setVisible.assert_called_once_with(True)
+    show_notice.assert_called_once_with()
+
+
 def test_main_window_migration_mode_change_ignores_missing_operations_panel():
     from app_gui.main import MainWindow
 
@@ -1072,6 +1095,27 @@ def test_main_window_migration_mode_change_ignores_missing_operations_panel():
     window._show_migration_mode_entry_notice = MagicMock()
 
     MainWindow._apply_migration_mode_enabled(window, True)
+
+
+def test_main_window_import_handoff_only_prefills_ai_prompt():
+    from app_gui.main import MainWindow
+
+    window = MainWindow.__new__(MainWindow)
+    window.ai_panel = SimpleNamespace(prepare_import_migration=MagicMock())
+    window._request_migration_mode_change = MagicMock()
+    window._apply_migration_mode_enabled = MagicMock()
+
+    MainWindow._handoff_import_journey_to_ai(
+        window,
+        SimpleNamespace(ai_prompt="run staged migration"),
+    )
+
+    window.ai_panel.prepare_import_migration.assert_called_once_with(
+        "run staged migration",
+        focus=True,
+    )
+    window._request_migration_mode_change.assert_not_called()
+    window._apply_migration_mode_enabled.assert_not_called()
 
 
 def test_main_window_migration_notice_skips_when_suppressed():

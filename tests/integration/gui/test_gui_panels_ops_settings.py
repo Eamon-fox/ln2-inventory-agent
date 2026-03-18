@@ -33,6 +33,15 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         self.assertTrue(panel._migration_mode_banner.isHidden())
         self.assertTrue(panel._migration_lock_overlay.isHidden())
 
+    def test_operations_panel_repeated_migration_mode_value_is_noop(self):
+        panel = self._new_operations_panel()
+
+        with patch.object(panel, "_apply_migration_mode_ui_state") as apply_state:
+            panel.set_migration_mode_enabled(True)
+            panel.set_migration_mode_enabled(True)
+
+        apply_state.assert_called_once_with()
+
     def test_operations_panel_migration_lock_blocks_staging_writes(self):
         panel = self._new_operations_panel()
         notices = []
