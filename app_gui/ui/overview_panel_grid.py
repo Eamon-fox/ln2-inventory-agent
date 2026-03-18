@@ -40,7 +40,7 @@ def _update_cell_label_visibility(self, button):
     if is_empty:
         target_text = label_text
     else:
-        target_text = label_text if _should_show_occupied_label(button, label_text) else ""
+        target_text = label_text if _should_show_occupied_label(button, label_text) else str(button.property("position_label") or "")
 
     if button.text() != target_text:
         button.setText(target_text)
@@ -403,6 +403,7 @@ def _paint_cell(self, button, box_num, position, record):
         color = cell_color(ck_val or None)
         _set_button_font_size(button, fs_occ)
         button.setProperty("display_label_full", display_label)
+        button.setProperty("position_label", display_pos)
         button.setProperty("is_empty", False)
         _update_cell_label_visibility(self, button)
 
