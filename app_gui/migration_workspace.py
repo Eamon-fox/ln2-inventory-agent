@@ -140,8 +140,12 @@ class MigrationWorkspaceService:
     def _assert_workspace_layout(self) -> None:
         if not os.path.isdir(self._root):
             raise MigrationWorkspaceError(f"migration workspace not found: {self._root}")
+        if os.path.exists(self._output_dir) and not os.path.isdir(self._output_dir):
+            raise MigrationWorkspaceError(
+                f"migration output path is invalid: {self._output_dir}"
+            )
         if not os.path.isdir(self._output_dir):
-            raise MigrationWorkspaceError(f"migration output directory not found: {self._output_dir}")
+            os.makedirs(self._output_dir, exist_ok=True)
         if os.path.exists(self._inputs) and not os.path.isdir(self._inputs):
             raise MigrationWorkspaceError(f"migration inputs path is invalid: {self._inputs}")
         if not os.path.isdir(self._inputs):

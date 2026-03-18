@@ -56,7 +56,7 @@ def test_workspace_init_bootstraps_from_internal_layout_when_available():
         requested_root = install_root / "migrate"
         svc = MigrationWorkspaceService(str(requested_root))
 
-        assert Path(svc.workspace_root) == requested_root.resolve()
+        assert os.path.samefile(svc.workspace_root, requested_root)
         assert (install_root / "migrate" / "inputs").is_dir()
         assert (install_root / "migrate" / "output").is_dir()
         assert (
@@ -66,6 +66,22 @@ def test_workspace_init_bootstraps_from_internal_layout_when_available():
             / "assets"
             / "acceptance_checklist_en.md"
         ).is_file()
+
+
+def test_workspace_init_recreates_missing_runtime_dirs():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "migrate"
+        root.mkdir(parents=True, exist_ok=True)
+        template = root.parent / "agent_skills" / "migration" / "assets" / "acceptance_checklist_en.md"
+        template.parent.mkdir(parents=True, exist_ok=True)
+        template.write_text("# Session Checklist\n", encoding="utf-8")
+
+        svc = MigrationWorkspaceService(str(root))
+
+        assert os.path.samefile(svc.workspace_root, root)
+        assert (root / "inputs").is_dir()
+        assert (root / "normalized").is_dir()
+        assert (root / "output").is_dir()
 
 
 def test_stage_input_files_resets_inputs_and_copies_sources():
