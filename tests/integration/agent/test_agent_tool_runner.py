@@ -1631,6 +1631,36 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         self.assertIn("edit_entry", hint)
         self.assertIn("16", hint)
 
+    def test_plan_preflight_hint_guides_execute_prerequisite_flow(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        payload = {
+            "error_code": "plan_preflight_failed",
+            "message": (
+                "All operations rejected by validation: "
+                "move 212 @ Box 5:1 -> Box 3:46: target box 3 position 46 is occupied by record #173; "
+                "takeout 153 @ Box 3:20: Record ID 153 source mismatch: requested Box 3:20, current Box 3:27"
+            ),
+            "blocked_items": [
+                {
+                    "action": "move",
+                    "record_id": 212,
+                    "message": "target box 3 position 46 is occupied by record #173",
+                },
+                {
+                    "action": "takeout",
+                    "record_id": 153,
+                    "message": "Record ID 153 source mismatch: requested Box 3:20, current Box 3:27",
+                },
+            ],
+        }
+
+        hint = runner._hint_for_error("move", payload)
+        self.assertIn("staged_plan", hint)
+        self.assertIn("only staged, not executed", hint)
+        self.assertIn("plan tab", hint.lower())
+        self.assertIn("do not reassign a different slot", hint.lower())
+        self.assertNotIn("edit_entry", hint)
+
     def test_tool_schemas_expose_required_fields(self):
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         schemas = runner.tool_schemas()

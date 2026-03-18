@@ -17,6 +17,34 @@ def _write_scope_hint(self):
     )
 
 
+def _plan_preflight_text(payload):
+    parts = []
+    for value in (
+        payload.get("message"),
+        payload.get("blocked_items"),
+        payload.get("errors"),
+    ):
+        text = str(value or "").strip()
+        if text:
+            parts.append(text)
+    return "\n".join(parts).lower()
+
+
+def _looks_like_execute_prerequisite_issue(payload):
+    haystack = _plan_preflight_text(payload)
+    if not haystack:
+        return False
+    markers = (
+        "source mismatch",
+        "current box",
+        "requested box",
+        " is occupied",
+        "occupied by record",
+        "occupied by multiple",
+    )
+    return any(marker in haystack for marker in markers)
+
+
 def _hint_for_error(self, tool_name, payload):
     error_code = str(payload.get("error_code") or "").strip()
     input_schema = self._tool_input_schema(tool_name)
@@ -242,6 +270,11 @@ def _hint_for_error(self, tool_name, payload):
         )
 
     if error_code == "plan_preflight_failed":
+        if _looks_like_execute_prerequisite_issue(payload):
+            return self._msg(
+                "hint.planPreflightExecutePrerequisite",
+                "Preflight may be failing because these write operations are only staged, not executed. Review current staged items with `staged_plan`. If a later write depends on an earlier `takeout` or `move` freeing the slot or changing the source position, stop staging more writes and ask the user to execute the prerequisite staged operations in the GUI Plan tab first. Continue in a new round from the updated inventory state, and do not reassign a different slot unless the user explicitly confirms the physical tube moved.",
+            )
         record_ids = self._extract_record_ids_from_payload(
             payload.get("message"),
             payload.get("blocked_items"),

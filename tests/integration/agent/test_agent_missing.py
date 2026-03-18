@@ -609,6 +609,18 @@ class ToolRunnerHintTests(ManagedPathTestCase):
         self.assertIn("invalid", hint.lower())
         self.assertIn("retry", hint.lower())
 
+    def test_hint_for_error_plan_preflight_failed_dependency_issue(self):
+        """Dependency-like preflight failures should tell the agent to execute prerequisites first."""
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        payload = {
+            "error_code": "plan_preflight_failed",
+            "message": "move 212: target box 3 position 46 is occupied by record #173",
+        }
+        hint = runner._hint_for_error("move", payload)
+        self.assertIn("staged_plan", hint)
+        self.assertIn("staged, not executed", hint)
+        self.assertIn("plan tab", hint.lower())
+
     def test_hint_for_error_default_fallback(self):
         """Test default hint fallback."""
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
