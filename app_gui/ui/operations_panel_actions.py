@@ -190,14 +190,16 @@ def on_export_inventory_csv(self, checked=False, *, parent=None, yaml_path_overr
 
     _ = checked
     yaml_path = str(yaml_path_override or "").strip() or self.yaml_path_getter()
-    default_name = f"inventory_full_{date.today().isoformat()}.csv"
+    from lib.inventory_paths import managed_dataset_name_from_yaml_path
+    dataset_name = managed_dataset_name_from_yaml_path(yaml_path) if yaml_path else ""
+    base_name = dataset_name or "inventory"
+    default_name = f"{base_name}_full_{date.today().isoformat()}.csv"
     suggested_path = default_name
     if yaml_path:
         yaml_abs = os.path.abspath(os.fspath(yaml_path))
-        base_name = os.path.splitext(os.path.basename(yaml_abs))[0] or "inventory"
         suggested_path = os.path.join(
             os.path.dirname(yaml_abs),
-            f"{base_name}_full_{date.today().isoformat()}.csv",
+            default_name,
         )
 
     path, _ = _ops_panel.QFileDialog.getSaveFileName(
