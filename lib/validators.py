@@ -389,6 +389,12 @@ def validate_inventory(data):
         return ["'inventory' must be a list"], []
 
     meta = data.get("meta", {})
+    from .custom_fields import unsupported_box_fields_issue
+
+    unsupported_issue = unsupported_box_fields_issue(meta)
+    if unsupported_issue:
+        return [str(unsupported_issue.get("message") or "Unsupported dataset model.")], []
+
     layout = meta.get("box_layout", {})
 
     for idx, rec in enumerate(inventory):

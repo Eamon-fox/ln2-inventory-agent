@@ -188,7 +188,7 @@ def _make_editable_field(
                 refresh_callback()
 
     def on_confirm():
-        if bool(getattr(self, "_guard_migration_write_action", lambda: False)()):
+        if bool(getattr(self, "_guard_write_action_by_migration_mode", lambda: False)()):
             return
         from app_gui.ui import operations_panel_context as _ops_context
         from app_gui.ui import operations_panel_execution as _ops_exec

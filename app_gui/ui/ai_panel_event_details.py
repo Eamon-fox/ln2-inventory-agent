@@ -37,7 +37,10 @@ def _format_event_details(self, details_json):
 
     self._append_event_type_details(lines, event_type, event, tr)
 
-    if "_hint" in event:
+    gui_hint = event.get("gui_hint")
+    if gui_hint:
+        lines.append(f"\n{tr('eventDetails.hint')}: {gui_hint}")
+    elif "_hint" in event:
         lines.append(f"\n{tr('eventDetails.hint')}: {event['_hint']}")
 
     if len(lines) <= 2:
@@ -169,7 +172,7 @@ def _append_plan_execution_rollback(self, lines, rollback, tr_fn):
 
 def _build_event_fallback_lines(event, tr_fn):
     lines = []
-    skip_keys = ("type", "timestamp", "_hint", "response_pool", "_compact_meta", "report", "preview")
+    skip_keys = ("type", "timestamp", "_hint", "gui_hint", "response_pool", "_compact_meta", "report", "preview")
     for key in sorted(event.keys()):
         if key in skip_keys:
             continue

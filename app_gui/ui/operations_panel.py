@@ -135,7 +135,7 @@ class OperationsPanel(QWidget):
         self.yaml_path_getter = yaml_path_getter
         self._plan_store = plan_store if plan_store is not None else PlanStore()
         self._overview_panel_ref = overview_panel  # Store reference for grid state extraction
-        self._migration_mode = False
+        self._migration_mode_enabled = False
 
         self.records_cache = {}
         self.current_operation_mode = "takeout"
@@ -453,25 +453,25 @@ class OperationsPanel(QWidget):
         else:
             self.undo_btn.setText(tr("operations.undoLast"))
 
-        if self._is_migration_write_locked():
+        if self._is_write_locked_by_migration_mode():
             self.undo_btn.setEnabled(False)
 
         self.result_actions.setVisible(has_last_executed or has_undo)
 
-    def _is_migration_write_locked(self):
-        return bool(getattr(self, "_migration_mode", False))
+    def _is_write_locked_by_migration_mode(self):
+        return bool(getattr(self, "_migration_mode_enabled", False))
 
-    def _warn_migration_write_locked(self):
+    def _warn_write_locked_by_migration_mode(self):
         self.status_message.emit(tr("operations.migrationWriteLocked"), 3000, "warning")
 
-    def _guard_migration_write_action(self):
-        if not self._is_migration_write_locked():
+    def _guard_write_action_by_migration_mode(self):
+        if not self._is_write_locked_by_migration_mode():
             return False
-        self._warn_migration_write_locked()
+        self._warn_write_locked_by_migration_mode()
         return True
 
     def _apply_migration_mode_ui_state(self):
-        locked = self._is_migration_write_locked()
+        locked = self._is_write_locked_by_migration_mode()
         banner = getattr(self, "_migration_mode_banner", None)
         if banner is not None:
             banner.setVisible(locked)
@@ -496,12 +496,12 @@ class OperationsPanel(QWidget):
         _ops_plan_toolbar._refresh_plan_toolbar_state(self)
         self._sync_result_actions()
 
-    def set_migration_mode(self, enabled):
+    def set_migration_mode_enabled(self, enabled):
         locked = bool(enabled)
-        if self._migration_mode == locked:
+        if self._migration_mode_enabled == locked:
             self._apply_migration_mode_ui_state()
             return
-        self._migration_mode = locked
+        self._migration_mode_enabled = locked
         self._apply_migration_mode_ui_state()
 
     def set_mode(self, mode):
@@ -590,7 +590,8 @@ class OperationsPanel(QWidget):
 
     def apply_meta_update(self, meta=None):
         """Apply latest YAML meta to forms immediately (no restart needed)."""
-        from lib.custom_fields import get_effective_fields
+        from app_gui.error_localizer import localize_error
+        from lib.custom_fields import get_effective_fields, unsupported_box_fields_issue
 
         if not isinstance(meta, dict):
             from lib.yaml_ops import load_yaml
@@ -601,6 +602,30 @@ class OperationsPanel(QWidget):
                 meta = data.get("meta", {})
             except Exception:
                 meta = {}
+
+        unsupported_issue = unsupported_box_fields_issue(meta)
+        if unsupported_issue:
+            self._current_meta = dict(meta) if isinstance(meta, dict) else {}
+            self._current_layout = dict((meta or {}).get("box_layout") or {})
+            self._current_custom_fields = []
+            _ops_forms._rebuild_custom_add_fields(self, [])
+            _ops_context._rebuild_ctx_user_fields(self, "takeout", [])
+            _ops_context._rebuild_ctx_user_fields(self, "move", [])
+            self._sync_cell_line_context_visibility([])
+            self._plan_preflight_report = None
+            self._plan_validation_by_key = {}
+            _ops_plan_table._refresh_plan_table(self)
+            _ops_plan_store._update_execute_button_state(self)
+            self.status_message.emit(
+                localize_error(
+                    unsupported_issue.get("error_code"),
+                    unsupported_issue.get("message"),
+                    details=unsupported_issue.get("details"),
+                ),
+                5000,
+                "error",
+            )
+            return
 
         self._current_meta = meta
         self._current_layout = dict((meta or {}).get("box_layout") or {})

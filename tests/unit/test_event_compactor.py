@@ -83,7 +83,7 @@ class EventCompactorTests(unittest.TestCase):
         nested_report = data.get("report")
         nested = nested_report if isinstance(nested_report, dict) else {}
         self.assertIn("response_pool", nested)
-        self.assertIn("_hint", compact)
+        self.assertIn("gui_hint", compact)
 
     def test_plan_stage_blocked_notice_is_compacted_for_context(self):
         long_msg = (

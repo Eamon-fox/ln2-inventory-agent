@@ -5,34 +5,28 @@
   "source_count": 1,
   "xlsx_detected": 1,
   "generated_assets": [
-    "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\sheets\\01_thermo.csv",
-    "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\sheets\\02_Sheet2.csv",
-    "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\sheets\\03_Sheet3.csv",
-    "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\sheets\\04_sheet_4.csv",
-    "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\schema_summary.json",
-    "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\conversion_report.json"
+    "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\source\\sheets\\01_Sheet1.csv",
+    "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\source\\schema_summary.json",
+    "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\source\\conversion_report.json"
   ],
   "sources": [
     {
-      "source_path": "D:\\github_repo\\ln2-inventory-agent\\migrate\\inputs\\-2. 80℃ Cell位置.xlsx",
-      "source_name": "-2. 80℃ Cell位置.xlsx",
+      "source_path": "D:\\github_repo\\ln2-inventory-agent\\migrate\\inputs\\樊一鸣的质粒索引表.xlsx",
+      "source_name": "樊一鸣的质粒索引表.xlsx",
       "status": "ok",
       "message": "Workbook converted to normalized CSV assets.",
-      "sheet_count": 4,
-      "schema_summary_path": "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\schema_summary.json",
+      "sheet_count": 1,
+      "schema_summary_path": "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\source\\schema_summary.json",
       "generated_files": [
-        "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\sheets\\01_thermo.csv",
-        "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\sheets\\02_Sheet2.csv",
-        "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\sheets\\03_Sheet3.csv",
-        "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\sheets\\04_sheet_4.csv",
-        "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\schema_summary.json",
-        "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\conversion_report.json"
+        "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\source\\sheets\\01_Sheet1.csv",
+        "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\source\\schema_summary.json",
+        "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\source\\conversion_report.json"
       ],
       "warnings": [],
       "errors": [],
-      "generated_at": "2026-02-24T00:40:36Z",
-      "report_path": "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\-2._80_Cell\\conversion_report.json"
+      "generated_at": "2026-03-18T12:15:01Z",
+      "report_path": "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\source\\conversion_report.json"
     }
   ],
-  "generated_at": "2026-02-24T00:40:36Z"
+  "generated_at": "2026-03-18T12:15:01Z"
 }

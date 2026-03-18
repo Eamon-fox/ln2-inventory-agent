@@ -1,0 +1,186 @@
+{
+  "source_path": "D:\\github_repo\\ln2-inventory-agent\\migrate\\inputs\\樊一鸣的质粒索引表.xlsx",
+  "source_name": "樊一鸣的质粒索引表.xlsx",
+  "status": "ok",
+  "sheet_count": 1,
+  "sheets": [
+    {
+      "sheet_name": "Sheet1",
+      "sheet_index": 1,
+      "row_count": 229,
+      "non_empty_rows": 229,
+      "max_columns": 7,
+      "header_candidate": {
+        "row_index": 1,
+        "values": [
+          "Identifier",
+          "DateOfAcquire",
+          "Name",
+          "Storage",
+          "Position",
+          "Source",
+          "Note"
+        ]
+      },
+      "columns": [
+        {
+          "index": 1,
+          "non_empty": 228,
+          "detected_type": "string",
+          "type_counts": {
+            "string": 228,
+            "empty": 1
+          },
+          "sample_values": [
+            "Identifier",
+            "p220929-1",
+            "p221002-1",
+            "p221022-1",
+            "p221022-2",
+            "p221101-1",
+            "p221102-1",
+            "p221102-2",
+            "p230401-1",
+            "p230403-1",
+            "p230403-2",
+            "p230403-3"
+          ]
+        },
+        {
+          "index": 2,
+          "non_empty": 228,
+          "detected_type": "integer",
+          "type_counts": {
+            "string": 3,
+            "integer": 225,
+            "empty": 1
+          },
+          "sample_values": [
+            "DateOfAcquire",
+            "20220929",
+            "20221002",
+            "20221022",
+            "20221101",
+            "20221102",
+            "20230401",
+            "20230403",
+            "20230406",
+            "20230409",
+            "20230411",
+            "20230412"
+          ]
+        },
+        {
+          "index": 3,
+          "non_empty": 229,
+          "detected_type": "string",
+          "type_counts": {
+            "string": 229
+          },
+          "sample_values": [
+            "Name",
+            "Des-EF1a-Flag-biotin-X-BSD",
+            "HA-ANKRD11-dox",
+            "V5-NPM1",
+            "V5-SURF6",
+            "PX320-WDR18-sg2",
+            "pSPAX2",
+            "pMD2G",
+            "pCDNA3.1(-)-empty",
+            "PX330-empty",
+            "PX330-VPR-dCas9-GFP",
+            "PX330-KRAB-dCas9-GFP"
+          ]
+        },
+        {
+          "index": 4,
+          "non_empty": 224,
+          "detected_type": "string",
+          "type_counts": {
+            "string": 224,
+            "empty": 5
+          },
+          "sample_values": [
+            "Storage",
+            "1号盒子",
+            "2号盒子",
+            "张咏妍",
+            "杨乐",
+            "3号盒子"
+          ]
+        },
+        {
+          "index": 5,
+          "non_empty": 226,
+          "detected_type": "integer",
+          "type_counts": {
+            "string": 26,
+            "integer": 200,
+            "empty": 3
+          },
+          "sample_values": [
+            "Position",
+            "79",
+            "81",
+            "77",
+            "78",
+            "80",
+            "32,34",
+            "33,35",
+            "1,2",
+            "3,4",
+            "5,6,45,46",
+            "7,8,47"
+          ]
+        },
+        {
+          "index": 6,
+          "non_empty": 228,
+          "detected_type": "string",
+          "type_counts": {
+            "string": 228
+          },
+          "sample_values": [
+            "Source",
+            "张涛",
+            "张涛从他同学实验室借得",
+            "程丽丽",
+            "别路垚。PX330-U6-Chimeric-BB-CBh-hSpCas9，实验室从某公司购买",
+            "别路垚。于艺丹在三轮轮转期间构建",
+            "杨乐。于艺丹在三轮轮转期间构建",
+            "樊一鸣",
+            "樊一鸣构建，杨乐设计sgRNA引物，用于验证Cas7/11功能的阳性对照",
+            "樊一鸣构建，往该载体构建sgRNA需要先将sgRNA构建到PX330-empty中，再用SacII和XbaI双酶切的方法将sgRNA片段转移到该质粒中。",
+            "严小涵",
+            "樊一鸣构建"
+          ]
+        },
+        {
+          "index": 7,
+          "non_empty": 27,
+          "detected_type": "string",
+          "type_counts": {
+            "string": 27,
+            "empty": 1
+          },
+          "sample_values": [
+            "Note",
+            "没有图谱",
+            "质粒中的FAM98B的CDS与NCBI参考序列NM_173611.4不完全一致，经与实验室K562和NCCIT的RNA-seq比对，NCBI中少注释了一段内含子。",
+            "K562的Cas9筛选细胞系的质粒。",
+            "质粒未测通，图谱是拼接的、错误的。",
+            "L1 antisense 5UTR",
+            "构建dTAG细胞系时的同源臂质粒",
+            "AAACAACAGTCTTTCCGAAGAGACCAAAGATCACCC\nTATCGGGTGATCTTTGGTCTCTTCGGAAAGACTGTT",
+            "AAACCCCTCTAGAACTTTGCCAAACACCACATGCTT\nTATCAAGCATGTGGTGTTTGGCAAAGTTCTAGAGGG",
+            "AAACCTTCAACAATTGCAAGCGCAAACTCGAAGCTG\nTATCCAGCTTCGAGTTTGCGCTTGCAATTGTTGAAG",
+            "AAACCCGCAAAAGTAGTAAGGACAGCGACTTCTGAA\nTATCTTCAGAAGTCGCTGTCCTTACTACTTTTGCGG",
+            "aaacccgtcttcgatgaagcgattcagaagactt\ntatcaagtcttctgaatcgcttcatcgaagacgg"
+          ]
+        }
+      ],
+      "csv_path": "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\source\\sheets\\01_Sheet1.csv"
+    }
+  ],
+  "generated_at": "2026-03-18T12:15:01Z"
+}

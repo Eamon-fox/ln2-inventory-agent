@@ -95,8 +95,8 @@ def test_run_success_stages_inputs_and_hands_off_to_ai():
     assert result.normalized_assets
     assert result.normalized_root == workspace.normalized_dir
     assert "fs_read" in result.ai_prompt
-    assert "migration_assets/templates/prompt_en.md" in result.ai_prompt
-    assert "migration_assets/schema/validation_rules.md" in result.ai_prompt
+    assert "use_skill" in result.ai_prompt
+    assert "`migration`" in result.ai_prompt
     assert "XLSX pre-conversion" in result.ai_prompt
     assert "conversion_report.json" in result.ai_prompt
     assert "normalized" in result.ai_prompt
@@ -105,9 +105,7 @@ def test_run_success_stages_inputs_and_hands_off_to_ai():
     assert "APPROVE_MAPPING" in result.ai_prompt
     assert "REVISE_MAPPING" in result.ai_prompt
     assert "validate_migration_output" in result.ai_prompt
-    assert "do not run migration_assets/validate.py" in result.ai_prompt
     assert "validation_report.json" in result.ai_prompt
-    assert "migration_assets/validate.py --input" not in result.ai_prompt
     assert "import_migration_output" in result.ai_prompt
     assert "target_dataset_name" in result.ai_prompt
     assert "CONFIRM_IMPORT" in result.ai_prompt

@@ -19,7 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agent.tool_runner import AgentToolRunner
-from agent.llm_client import DeepSeekLLMClient
+from agent.llm_client import DeepSeekLLMClient, MiniMaxLLMClient, ZhipuLLMClient
 from lib.tool_api_write_validation import resolve_request_backup_path
 from lib.yaml_ops import create_yaml_backup, write_yaml
 from tests.managed_paths import ManagedPathTestCase
@@ -625,6 +625,16 @@ class DeepSeekLLMClientMockTests(unittest.TestCase):
         """Test DeepSeekLLMClient requires API key."""
         with patch.dict("os.environ", {}, clear=True), self.assertRaises(RuntimeError):
             DeepSeekLLMClient()
+
+    def test_zhipu_client_requires_api_key(self):
+        """Test ZhipuLLMClient requires API key."""
+        with patch.dict("os.environ", {}, clear=True), self.assertRaises(RuntimeError):
+            ZhipuLLMClient()
+
+    def test_minimax_client_requires_api_key(self):
+        """Test MiniMaxLLMClient requires API key."""
+        with patch.dict("os.environ", {}, clear=True), self.assertRaises(RuntimeError):
+            MiniMaxLLMClient()
 
 
 # --- react_agent.py Tests (Unit Tests) ---

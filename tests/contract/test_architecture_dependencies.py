@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 OPERATIONS_PANEL_PUBLIC_API = (
     "apply_meta_update",
-    "set_migration_mode",
+    "set_migration_mode_enabled",
     "update_records_cache",
     "set_prefill",
     "set_prefill_background",

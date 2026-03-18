@@ -70,7 +70,7 @@ def execute_plan(self):
     from app_gui.ui import operations_panel_forms as _ops_forms
     from app_gui.ui import operations_panel_plan_toolbar as _ops_plan_toolbar
 
-    if bool(getattr(self, "_guard_migration_write_action", lambda: False)()):
+    if bool(getattr(self, "_guard_write_action_by_migration_mode", lambda: False)()):
         return
     if not self._plan_store.count():
         msg = tr("operations.planNoItemsToExecute")

@@ -5,9 +5,11 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from pathlib import Path
+
+from lib.builtin_skills import build_skill_catalog_prompt
 
 from .tool_status_formatter import format_tool_status
+from .tool_runtime_paths import build_tool_hook_context
 
 
 def _is_stop_requested(stop_event):
@@ -414,22 +416,25 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
     memory = self._normalize_history(conversation_history)
 
     yaml_path = str(getattr(self._tools, "_yaml_path", "") or "").strip()
-    expose_inventory_context = bool(getattr(self._tools, "_expose_inventory_context", True))
-    context_yaml = yaml_path if expose_inventory_context else "(hidden in migration mode)"
-    fileops_repo_root = ""
-    fileops_migrate_root = ""
-    if yaml_path:
-        try:
-            inventory_path = Path(yaml_path).resolve(strict=False)
-            fileops_repo_root = str(inventory_path.parents[2])
-            fileops_migrate_root = str((Path(fileops_repo_root) / "migrate").resolve(strict=False))
-        except Exception:
-            fileops_repo_root = ""
-            fileops_migrate_root = ""
+    fileops_context = build_tool_hook_context(yaml_path, trace_id=trace_id)
+    fileops_repo_root = str(fileops_context.get("repo_root") or "").strip()
+    fileops_migrate_root = str(fileops_context.get("migrate_root") or "").strip()
     system_sections = [
         self.SYSTEM_PROMPT,
-        f"Current inventory (yaml_path): {context_yaml or '(unknown)'}",
+        f"Current inventory (yaml_path): {yaml_path or '(unknown)'}",
     ]
+    if fileops_repo_root:
+        system_sections.append(
+            "Directory context:\n"
+            f"- repo_root: {fileops_repo_root}\n"
+            "- read scope: entire repo (repo-relative paths resolve from repo_root)\n"
+            f"- write scope: migrate/ only ({fileops_migrate_root})\n"
+            "- shell default cwd: migrate/\n"
+            "- all tool paths must be repo-relative (no absolute paths)"
+        )
+    skills_prompt = build_skill_catalog_prompt()
+    if skills_prompt:
+        system_sections.append(skills_prompt)
     if self._custom_prompt:
         system_sections.append(
             "Additional user instructions:\n"
@@ -647,15 +652,16 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
             if has_question and len(normalized_tool_calls) > 1:
                 for call in normalized_tool_calls:
                     if call["name"] == "question":
+                        question_observation = {
+                            "ok": False,
+                            "error_code": "question_not_alone",
+                            "message": "question tool must be called alone, not with other tools.",
+                            "_hint": "Call question separately, then use other tools after getting the answer.",
+                        }
                         messages.append(
                             self._tool_message(
                                 call["id"],
-                                {
-                                    "ok": False,
-                                    "error_code": "question_not_alone",
-                                    "message": "question tool must be called alone, not with other tools.",
-                                    "_hint": "Call question separately, then use other tools after getting the answer.",
-                                },
+                                question_observation,
                             )
                         )
                     else:

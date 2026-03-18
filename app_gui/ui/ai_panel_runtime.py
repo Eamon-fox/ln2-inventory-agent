@@ -74,10 +74,6 @@ def on_run_ai_agent(self):
 def start_worker(self, prompt):
     self.ai_stop_requested = False
     model = self.ai_model.text().strip() or None
-    agent_mode = str(getattr(self, "_agent_mode", "default") or "default").strip().lower()
-    if agent_mode != "migration":
-        agent_mode = "default"
-    plan_store = None if agent_mode == "migration" else self._plan_store
     history = [dict(item) for item in self.ai_history if isinstance(item, dict)]
 
     if self.ai_operation_events:
@@ -95,9 +91,8 @@ def start_worker(self, prompt):
         history=history,
         thinking_enabled=self.ai_thinking_enabled.isChecked(),
         custom_prompt=self.ai_custom_prompt,
-        plan_store=plan_store,
+        plan_store=self._plan_store,
         provider=self.ai_provider.text().strip() or None,
-        agent_mode=agent_mode,
     )
     self.ai_run_thread = QThread(self)
     self.ai_run_worker.moveToThread(self.ai_run_thread)
@@ -421,8 +416,7 @@ def _handle_progress_tool_end(self, event):
         )
         self._append_chat_with_collapsible("System", summary_text, details_json)
 
-    if name == "import_migration_output" and bool(raw_obs.get("ok")):
-        _handle_import_migration_completed(self, raw_obs)
+    _apply_tool_ui_effects(self, raw_obs)
 
 
 def _handle_progress_tool_start(self, event):
@@ -537,29 +531,58 @@ def _handle_progress_max_steps(_event):
     return
 
 
-def _handle_import_migration_completed(panel, raw_obs):
-    target_path = str(raw_obs.get("target_path") or "").strip()
-    if not target_path:
-        panel._append_tool_message("Import succeeded but target_path is missing in tool output.")
+def _apply_tool_ui_effects(panel, raw_obs):
+    effects = raw_obs.get("ui_effects") if isinstance(raw_obs, dict) else None
+    if not isinstance(effects, list):
         return
+    for effect in effects:
+        if _apply_tool_ui_effect(panel, effect, raw_obs=raw_obs) is False:
+            break
+
+
+def _apply_tool_ui_effect(panel, effect, *, raw_obs=None):
+    if not isinstance(effect, dict):
+        return True
+
+    effect_type = str(effect.get("type") or "").strip().lower()
+    if effect_type == "migration_mode":
+        handler = getattr(panel, "set_migration_mode_enabled", None)
+        if callable(handler):
+            handler(bool(effect.get("enabled")))
+        return True
+
+    if effect_type == "open_dataset":
+        target_path = str(
+            effect.get("target_path")
+            or ((raw_obs or {}).get("target_path") if isinstance(raw_obs, dict) else "")
+            or ""
+        ).strip()
+        return _handle_open_dataset_effect(
+            panel,
+            target_path=target_path,
+        )
+    return True
+
+
+def _handle_open_dataset_effect(panel, *, target_path):
+    if not target_path:
+        panel._append_tool_message("UI effect `open_dataset` is missing target_path.")
+        return False
 
     switch_handler = getattr(panel, "_import_dataset_handler", None)
     if not callable(switch_handler):
         panel._append_tool_message(f"Imported dataset ready: `{target_path}`")
-        return
+        return False
 
     try:
         opened_path = switch_handler(target_path)
     except Exception as exc:
         panel._append_tool_message(f"Import succeeded but opening dataset failed: {exc}")
-        return
-
-    exit_mode = getattr(panel, "exit_migration_mode", None)
-    if callable(exit_mode):
-        exit_mode()
+        return False
 
     opened_text = str(opened_path or target_path).strip() or target_path
     panel._append_tool_message(f"Imported dataset opened: `{opened_text}`")
+    return True
 
 
 def on_finished(self, response):

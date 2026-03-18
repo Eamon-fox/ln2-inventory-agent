@@ -1,7 +1,7 @@
 """
 Module: test_migration_assets_templates
 Layer: integration/migration
-Covers: migration_assets/templates/*.md
+Covers: agent_skills/migration/*, agent_skills/shared/*
 
 迁移提示词与运行手册模板，验证提示词模板要求显式映射批准、
 运行手册定义审批步骤以及验收检查清单的会话跟踪功能。
@@ -11,9 +11,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[3]
-PROMPT_TEMPLATE = ROOT / "migration_assets" / "templates" / "prompt_en.md"
-RUNBOOK_TEMPLATE = ROOT / "migration_assets" / "templates" / "runbook_en.md"
-CHECKLIST_TEMPLATE = ROOT / "migration_assets" / "templates" / "acceptance_checklist_en.md"
+PROMPT_TEMPLATE = ROOT / "agent_skills" / "migration" / "references" / "prompt_en.md"
+RUNBOOK_TEMPLATE = ROOT / "agent_skills" / "migration" / "references" / "runbook_en.md"
+CHECKLIST_TEMPLATE = ROOT / "agent_skills" / "migration" / "assets" / "acceptance_checklist_en.md"
 
 
 def _read(path: Path) -> str:

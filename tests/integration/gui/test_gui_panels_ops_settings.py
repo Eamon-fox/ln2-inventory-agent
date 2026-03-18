@@ -13,7 +13,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         panel.plan_clear_btn.setEnabled(True)
         panel.undo_btn.setEnabled(True)
 
-        panel.set_migration_mode(True)
+        panel.set_migration_mode_enabled(True)
 
         self.assertFalse(panel.op_mode_combo.isEnabled())
         self.assertFalse(panel.op_stack.isEnabled())
@@ -26,10 +26,10 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
 
         self.assertTrue(panel._migration_mode_banner.isHidden())
         self.assertTrue(panel._migration_lock_overlay.isHidden())
-        panel.set_migration_mode(True)
+        panel.set_migration_mode_enabled(True)
         self.assertFalse(panel._migration_mode_banner.isHidden())
         self.assertFalse(panel._migration_lock_overlay.isHidden())
-        panel.set_migration_mode(False)
+        panel.set_migration_mode_enabled(False)
         self.assertTrue(panel._migration_mode_banner.isHidden())
         self.assertTrue(panel._migration_lock_overlay.isHidden())
 
@@ -37,7 +37,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         panel = self._new_operations_panel()
         notices = []
         panel.status_message.connect(lambda msg, timeout, level: notices.append((msg, timeout, level)))
-        panel.set_migration_mode(True)
+        panel.set_migration_mode_enabled(True)
 
         panel.add_plan_items(
             [
@@ -85,6 +85,29 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         self.assertFalse(panel._t_ctx_cell_line_container.isHidden())
         self.assertFalse(panel._m_ctx_cell_line_label.isHidden())
         self.assertFalse(panel._m_ctx_cell_line_container.isHidden())
+
+    def test_operations_panel_apply_meta_update_blocks_legacy_box_fields(self):
+        panel = self._new_operations_panel()
+        notices = []
+        panel.status_message.connect(lambda msg, timeout, level: notices.append((str(msg), timeout, level)))
+
+        panel.apply_meta_update(
+            {
+                "box_layout": {"rows": 9, "cols": 9},
+                "custom_fields": [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                ],
+                "box_fields": {
+                    "1": [
+                        {"key": "virus_titer", "label": "Virus Titer", "type": "str"},
+                    ]
+                },
+            }
+        )
+
+        self.assertEqual([], panel._current_custom_fields)
+        self.assertTrue(notices)
+        self.assertIn("meta.box_fields", notices[-1][0])
 
         panel.apply_meta_update(
             {
@@ -434,6 +457,54 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             dialog._open_import_journey()
 
         reject_mock.assert_called_once()
+
+    def test_settings_dialog_custom_fields_editor_blocks_legacy_box_fields(self):
+        import shutil
+        import tempfile
+        import yaml
+        from pathlib import Path
+        from app_gui.main import SettingsDialog
+
+        tmpdir = tempfile.mkdtemp(prefix="ln2_settings_box_fields_")
+        yaml_path = Path(tmpdir) / "inventory.yaml"
+        payload = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9,
+                    "cols": 9,
+                    "box_count": 1,
+                    "box_numbers": [1],
+                },
+                "custom_fields": [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                ],
+                "box_fields": {
+                    "1": [
+                        {"key": "virus_titer", "label": "Virus Titer", "type": "str"},
+                    ]
+                },
+            },
+            "inventory": [],
+        }
+        yaml_path.write_text(
+            yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+        dialog_cls = MagicMock()
+        dialog = SettingsDialog(
+            config={"yaml_path": str(yaml_path)},
+            custom_fields_dialog_cls=dialog_cls,
+        )
+
+        try:
+            with patch.object(QMessageBox, "warning") as warning_mock:
+                dialog._open_custom_fields_editor()
+
+            warning_mock.assert_called_once()
+            self.assertIn("meta.box_fields", warning_mock.call_args.args[2])
+            dialog_cls.assert_not_called()
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def test_settings_dialog_custom_fields_allows_option_removal_even_when_records_use_old_value(self):
         from app_gui.main import SettingsDialog

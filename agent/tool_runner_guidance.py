@@ -1,6 +1,20 @@
-"""Error hint helpers for AgentToolRunner responses."""
+"""Guidance helpers for AgentToolRunner responses."""
 
-_MIGRATION_SESSION_CHECKLIST = "migrate/output/migration_checklist.md"
+MIGRATION_SESSION_CHECKLIST = "migrate/output/migration_checklist.md"
+
+
+def _path_scope_hint(self):
+    return self._msg(
+        "hint.pathOutsideScope",
+        "Path is outside repository scope. Use repository-relative paths only.",
+    )
+
+
+def _write_scope_hint(self):
+    return self._msg(
+        "hint.writeNotAllowed",
+        "Write operations are allowed only under migrate/.",
+    )
 
 
 def _hint_for_error(self, tool_name, payload):
@@ -8,19 +22,12 @@ def _hint_for_error(self, tool_name, payload):
     input_schema = self._tool_input_schema(tool_name)
     required_fields, optional_fields = self._tool_input_field_sets(tool_name)
 
-    if tool_name == "validate_migration_output":
-        if error_code in {"validation_failed"}:
-            return self._msg(
-                "hint.migrationValidateFailed",
-                "Validation failed. Review blocking items in `{checklist_path}`, fix migration output, then run validate_migration_output again.",
-                checklist_path=_MIGRATION_SESSION_CHECKLIST,
-            )
-        if error_code in {"file_not_found", "load_failed"}:
-            return self._msg(
-                "hint.migrationValidateMissingOutput",
-                "Migration output is missing or unreadable. Confirm precheck/mapping progress in `{checklist_path}`, regenerate migrate/output/ln2_inventory.yaml, then validate again.",
-                checklist_path=_MIGRATION_SESSION_CHECKLIST,
-            )
+    if tool_name == "validate_migration_output" and error_code in {
+        "validation_failed",
+        "file_not_found",
+        "load_failed",
+    }:
+        return ""
 
     if tool_name == "add_entry" and error_code in {
         "invalid_tool_input",
@@ -142,22 +149,13 @@ def _hint_for_error(self, tool_name, payload):
         )
 
     if error_code in {"path_outside_scope", "path.escape_detected", "path.scope_read_denied"}:
-        return self._msg(
-            "hint.pathOutsideScope",
-            "Path is outside repository scope. Use repository-relative paths only.",
-        )
+        return _path_scope_hint(self)
 
     if error_code in {"write_not_allowed", "path.scope_write_denied", "path.scope_workdir_denied"}:
-        return self._msg(
-            "hint.writeNotAllowed",
-            "Write operations are allowed only under migrate/.",
-        )
+        return _write_scope_hint(self)
 
     if error_code == "path.absolute_not_allowed":
-        return self._msg(
-            "hint.pathOutsideScope",
-            "Path is outside repository scope. Use repository-relative paths only.",
-        )
+        return _path_scope_hint(self)
 
     if error_code == "path.backup_scope_denied":
         return self._msg(
@@ -274,6 +272,18 @@ def _hint_for_error(self, tool_name, payload):
     )
 
 
+def merge_hint_text(*values):
+    seen = set()
+    ordered = []
+    for raw in values:
+        text = str(raw or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        ordered.append(text)
+    return "\n".join(ordered)
+
+
 def _with_hint(self, tool_name, response):
     if not isinstance(response, dict):
         response = {
@@ -286,7 +296,15 @@ def _with_hint(self, tool_name, response):
             ),
         }
 
-    if response.get("ok") is False and "_hint" not in response:
-        response = dict(response)
-        response["_hint"] = self._hint_for_error(tool_name, response)
+    response = dict(response)
+    existing_hint = response.get("_hint")
+    generated_hint = ""
+    if response.get("ok") is False:
+        generated_hint = self._hint_for_error(tool_name, response)
+
+    merged_hint = merge_hint_text(existing_hint, generated_hint)
+    if merged_hint:
+        response["_hint"] = merged_hint
+    else:
+        response.pop("_hint", None)
     return response

@@ -5,11 +5,6 @@ import os
 from agent.llm_client import DEFAULT_PROVIDER, DeepSeekLLMClient, ZhipuLLMClient, MiniMaxLLMClient, PROVIDER_DEFAULTS
 from agent.react_agent import ReactAgent
 from agent.tool_runner import AgentToolRunner
-from agent.tool_access_profiles import (
-    normalize_agent_mode,
-    resolve_allowed_tools,
-    should_expose_inventory_context,
-)
 from app_gui.gui_config import DEFAULT_MAX_STEPS, MAX_AGENT_STEPS
 from app_gui.i18n import tr
 from lib.inventory_paths import assert_allowed_inventory_yaml_path
@@ -393,7 +388,6 @@ class GuiToolBridge:
         _expose_llm=None,
         provider=None,
         stop_event=None,
-        agent_mode="default",
     ):
         try:
             yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
@@ -428,9 +422,6 @@ class GuiToolBridge:
         provider = (provider or "").strip().lower() or DEFAULT_PROVIDER
         if provider not in PROVIDER_DEFAULTS:
             provider = DEFAULT_PROVIDER
-        normalized_agent_mode = normalize_agent_mode(agent_mode)
-        allowed_tools = resolve_allowed_tools(normalized_agent_mode)
-        expose_inventory_context = should_expose_inventory_context(normalized_agent_mode)
         provider_cfg = PROVIDER_DEFAULTS[provider]
         use_thinking = bool(thinking_enabled)
         chosen_model = (model or "").strip() or os.environ.get(f"{provider.upper()}_MODEL") or provider_cfg["model"]
@@ -449,8 +440,6 @@ class GuiToolBridge:
                 yaml_path=yaml_path,
                 session_id=self._session_id,
                 plan_store=plan_store,
-                allowed_tools=allowed_tools,
-                expose_inventory_context=expose_inventory_context,
             )
             if callable(_expose_runner):
                 _expose_runner(runner)
@@ -505,6 +494,5 @@ class GuiToolBridge:
             "result": result,
             "mode": provider,
             "model": chosen_model,
-            "agent_mode": normalized_agent_mode,
         }
 

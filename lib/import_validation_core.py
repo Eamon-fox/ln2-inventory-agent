@@ -12,6 +12,7 @@ from .validation_primitives import (
     has_takeout_history as _has_takeout_history_core,
     validate_record_fields,
 )
+from .custom_fields import unsupported_box_fields_issue
 
 
 ALLOWED_ROOT_KEYS = frozenset({"meta", "inventory"})
@@ -315,6 +316,11 @@ def validate_root_and_layout(data: Any) -> List[str]:
 def validate_custom_fields_contract(meta: Dict[str, Any]) -> Tuple[List[str], List[Dict[str, Any]]]:
     errors: List[str] = []
     normalized: List[Dict[str, Any]] = []
+    unsupported_issue = unsupported_box_fields_issue(meta)
+    if unsupported_issue:
+        errors.append(str(unsupported_issue.get("message") or "Unsupported dataset model."))
+        return errors, normalized
+
     raw = (meta or {}).get("custom_fields")
     if raw is None:
         return errors, normalized

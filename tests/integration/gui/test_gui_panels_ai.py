@@ -697,26 +697,60 @@ class OperationEventFeedTests(ManagedPathTestCase):
             yaml_path_getter=lambda: self.fake_yaml_path,
             import_dataset_handler=lambda path: switched.append(path) or path,
         )
-        panel.prepare_import_migration("run staged migration", focus=False)
-        self.assertEqual("migration", panel._agent_mode)
+        panel.set_migration_mode_enabled(True)
+        self.assertTrue(panel._migration_mode_enabled)
 
         panel.on_progress(
             {
                 "event": "tool_end",
                 "type": "tool_end",
-                "data": {"name": "import_migration_output"},
+                "data": {"name": "generic_effect_tool"},
                 "observation": {
                     "ok": True,
-                    "target_path": "D:/inventories/ln2_inventory/inventory.yaml",
+                    "ui_effects": [
+                        {
+                            "type": "open_dataset",
+                            "target_path": "D:/inventories/ln2_inventory/inventory.yaml",
+                        },
+                        {
+                            "type": "migration_mode",
+                            "enabled": False,
+                        },
+                    ],
                 },
             }
         )
 
         self.assertEqual(["D:/inventories/ln2_inventory/inventory.yaml"], switched)
-        self.assertEqual("default", panel._agent_mode)
+        self.assertFalse(panel._migration_mode_enabled)
         self.assertTrue(panel._migration_mode_banner.isHidden())
         chat_text = panel.ai_chat.toPlainText().lower()
         self.assertIn("imported dataset opened", chat_text)
+
+    def test_ai_panel_tool_end_applies_migration_mode_ui_effect(self):
+        panel = self._new_ai_panel()
+        self.assertFalse(panel._migration_mode_enabled)
+
+        panel.on_progress(
+            {
+                "event": "tool_end",
+                "type": "tool_end",
+                "data": {"name": "use_skill"},
+                "observation": {
+                    "ok": True,
+                    "ui_effects": [
+                        {
+                            "type": "migration_mode",
+                            "enabled": True,
+                            "reason": "use_skill:migration",
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertTrue(panel._migration_mode_enabled)
+        self.assertFalse(panel._migration_mode_banner.isHidden())
 
     def test_ai_panel_migration_mode_updates_banner_and_status(self):
         panel = self._new_ai_panel()
@@ -725,17 +759,17 @@ class OperationEventFeedTests(ManagedPathTestCase):
         panel.migration_mode_changed.connect(lambda enabled: mode_changes.append(bool(enabled)))
         panel.status_message.connect(lambda msg, timeout: status_messages.append((msg, timeout)))
 
-        panel.prepare_import_migration("run staged migration", focus=False)
+        panel.set_migration_mode_enabled(True)
 
-        self.assertEqual("migration", panel._agent_mode)
+        self.assertTrue(panel._migration_mode_enabled)
         self.assertFalse(panel._migration_mode_banner.isHidden())
         self.assertEqual([True], mode_changes)
         self.assertIn((tr("ai.migrationModeEnteredStatus"), 4000), status_messages)
         self.assertTrue(bool(panel.ai_run_btn.property("migrationAttention")))
 
-        panel.exit_migration_mode()
+        panel.set_migration_mode_enabled(False)
 
-        self.assertEqual("default", panel._agent_mode)
+        self.assertFalse(panel._migration_mode_enabled)
         self.assertTrue(panel._migration_mode_banner.isHidden())
         self.assertEqual([True, False], mode_changes)
         self.assertEqual((tr("ai.migrationModeExitedStatus"), 4000), status_messages[-1])
@@ -755,24 +789,33 @@ class OperationEventFeedTests(ManagedPathTestCase):
             yaml_path_getter=lambda: self.fake_yaml_path,
             import_dataset_handler=lambda _path: (_ for _ in ()).throw(RuntimeError("switch failed")),
         )
-        panel.prepare_import_migration("run staged migration", focus=False)
-        self.assertEqual("migration", panel._agent_mode)
+        panel.set_migration_mode_enabled(True)
+        self.assertTrue(panel._migration_mode_enabled)
 
         panel.on_progress(
             {
                 "event": "tool_end",
                 "type": "tool_end",
-                "data": {"name": "import_migration_output"},
+                "data": {"name": "generic_effect_tool"},
                 "observation": {
                     "ok": True,
-                    "target_path": "D:/inventories/ln2_inventory/inventory.yaml",
+                    "ui_effects": [
+                        {
+                            "type": "open_dataset",
+                            "target_path": "D:/inventories/ln2_inventory/inventory.yaml",
+                        },
+                        {
+                            "type": "migration_mode",
+                            "enabled": False,
+                        },
+                    ],
                 },
             }
         )
 
         chat_text = panel.ai_chat.toPlainText().lower()
         self.assertIn("opening dataset failed", chat_text)
-        self.assertEqual("migration", panel._agent_mode)
+        self.assertTrue(panel._migration_mode_enabled)
 
     def test_ai_panel_prepare_import_migration_prefills_prompt(self):
         panel = self._new_ai_panel()
@@ -780,7 +823,7 @@ class OperationEventFeedTests(ManagedPathTestCase):
         panel.prepare_import_migration("run staged migration", focus=False)
 
         self.assertEqual("run staged migration", panel.ai_prompt.toPlainText())
-        self.assertEqual("migration", panel._agent_mode)
+        self.assertFalse(panel._migration_mode_enabled)
 
     def test_ai_panel_prepare_import_migration_clears_plan_store(self):
         from lib.plan_store import PlanStore
@@ -805,7 +848,7 @@ class OperationEventFeedTests(ManagedPathTestCase):
 
         panel.prepare_import_migration("run staged migration", focus=False)
 
-        self.assertEqual("migration", panel._agent_mode)
+        self.assertFalse(panel._migration_mode_enabled)
         self.assertEqual(0, plan_store.count())
 
     def test_ai_panel_limits_operation_events(self):

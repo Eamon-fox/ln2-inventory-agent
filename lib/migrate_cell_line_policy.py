@@ -10,7 +10,11 @@ from contextlib import suppress
 from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
-from .custom_fields import DEFAULT_UNKNOWN_CELL_LINE, get_effective_fields
+from .custom_fields import (
+    DEFAULT_UNKNOWN_CELL_LINE,
+    get_effective_fields,
+    unsupported_box_fields_issue,
+)
 from .field_schema import migrate_record_aliases
 from .yaml_ops import load_yaml, write_yaml
 
@@ -77,6 +81,15 @@ def normalize_field_options_policy_data(data: Dict[str, Any]) -> Dict[str, Any]:
         candidate["meta"] = raw_meta
         meta_changed = True
     meta = raw_meta
+
+    unsupported_issue = unsupported_box_fields_issue(meta)
+    if unsupported_issue:
+        return {
+            "ok": False,
+            "error_code": unsupported_issue.get("error_code", "unsupported_box_fields"),
+            "message": unsupported_issue.get("message", "Unsupported dataset model."),
+            "details": unsupported_issue.get("details"),
+        }
 
     # Get effective fields (includes fixed note + conditional legacy cell_line).
     effective = get_effective_fields(meta)

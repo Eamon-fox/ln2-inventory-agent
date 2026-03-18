@@ -58,6 +58,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceDir}\_internal\migrate\*"; DestDir: "{app}\migrate"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\_internal\agent_skills\*"; DestDir: "{app}\agent_skills"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceDir}\_internal\migration_assets\*"; DestDir: "{app}\migration_assets"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\..\installer\windows\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 

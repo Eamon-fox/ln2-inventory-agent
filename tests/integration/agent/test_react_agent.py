@@ -6,6 +6,7 @@ Covers: agent/react_agent.py
 ReAct 循环、工具调用、重试与结束
 """
 
+import json
 import sys
 import tempfile
 import threading
@@ -20,7 +21,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agent.react_agent import ReactAgent
-from agent.tool_access_profiles import MIGRATION_AGENT_MODE, resolve_allowed_tools
 from agent.tool_runner import AgentToolRunner
 from lib.yaml_ops import write_yaml
 
@@ -76,6 +76,20 @@ class _CapturePromptLLM:
         self.last_messages = messages
         self.last_tools = tools
         return {"role": "assistant", "content": "ok", "tool_calls": []}
+
+
+class _CaptureSequenceLLM:
+    def __init__(self, outputs):
+        self._outputs = list(outputs)
+        self.messages_per_call = []
+
+    def chat(self, messages, tools=None, temperature=0.0):
+        _ = tools
+        _ = temperature
+        self.messages_per_call.append(list(messages or []))
+        if not self._outputs:
+            return {"role": "assistant", "content": "done", "tool_calls": []}
+        return self._outputs.pop(0)
 
 
 class _ToolsSensitiveLLM:
@@ -628,6 +642,53 @@ class ReactAgentTests(ManagedPathTestCase):
         self.assertEqual(1, len(tool_msgs))
         self.assertEqual("ignored", tool_msgs[0].get("content"))
 
+    def test_react_agent_preserves_hook_hint_in_tool_message_for_next_step(self):
+        llm = _CaptureSequenceLLM(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_skill",
+                            "name": "use_skill",
+                            "arguments": {"skill_name": "migration"},
+                        }
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": "done",
+                    "tool_calls": [],
+                },
+            ]
+        )
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=3)
+
+        result = agent.run("load migration skill")
+
+        self.assertTrue(result["ok"])
+        self.assertGreaterEqual(len(llm.messages_per_call), 2)
+        second_messages = list(llm.messages_per_call[1] or [])
+        extra_system_messages = [
+            msg for msg in second_messages[1:]
+            if isinstance(msg, dict) and msg.get("role") == "system"
+        ]
+        self.assertEqual([], extra_system_messages)
+
+        tool_messages = [
+            msg for msg in second_messages
+            if isinstance(msg, dict)
+            and msg.get("role") == "tool"
+            and msg.get("tool_call_id") == "call_skill"
+        ]
+        self.assertEqual(1, len(tool_messages))
+
+        tool_payload = json.loads(str(tool_messages[0].get("content") or "{}"))
+        self.assertIn("migration_checklist.md", str(tool_payload.get("_hint") or ""))
+        self.assertIn("ln2_inventory.yaml", str(tool_payload.get("_hint") or ""))
+
     def test_react_agent_retries_when_final_text_empty(self):
         llm = _SequenceLLM(
             [
@@ -846,16 +907,74 @@ class ReactAgentTests(ManagedPathTestCase):
         self.assertEqual("system", system_msg["role"])
         content = str(system_msg.get("content") or "")
         self.assertIn(f"Current inventory (yaml_path): {yaml_path}", content)
+        self.assertIn("Built-in skills are available via the `use_skill` tool.", content)
+        self.assertIn("`migration`:", content)
+        self.assertIn("`yaml-repair`:", content)
+        self.assertNotIn("agent_skills/migration/SKILL.md", content)
         self.assertNotIn("Current time:", content)
 
-    def test_system_prompt_hides_inventory_path_in_migration_mode(self):
+    def test_system_prompt_includes_directory_context(self):
         llm = _CapturePromptLLM()
-        yaml_path = self.ensure_dataset_yaml("migration_context_hidden")
-        runner = AgentToolRunner(
-            yaml_path=yaml_path,
-            allowed_tools=resolve_allowed_tools(MIGRATION_AGENT_MODE),
-            expose_inventory_context=False,
-        )
+        yaml_path = self.ensure_dataset_yaml("directory_context")
+        runner = AgentToolRunner(yaml_path=yaml_path)
+        agent = ReactAgent(llm_client=llm, tool_runner=runner)
+
+        agent.run("check directory context")
+
+        system_msg = llm.last_messages[0]
+        self.assertEqual("system", system_msg["role"])
+        content = str(system_msg.get("content") or "")
+        fileops_repo_root = str(Path(yaml_path).resolve(strict=False).parents[2])
+        fileops_migrate_root = str((Path(fileops_repo_root) / "migrate").resolve(strict=False))
+        self.assertIn("Directory context:", content)
+        self.assertIn(f"- repo_root: {fileops_repo_root}", content)
+        self.assertIn("- read scope: entire repo (repo-relative paths resolve from repo_root)", content)
+        self.assertIn(f"- write scope: migrate/ only ({fileops_migrate_root})", content)
+        self.assertIn("- shell default cwd: migrate/", content)
+        self.assertIn("- all tool paths must be repo-relative (no absolute paths)", content)
+
+    def test_system_prompt_includes_directory_context_in_migration_context(self):
+        llm = _CapturePromptLLM()
+        yaml_path = self.ensure_dataset_yaml("migration_directory_context")
+        runner = AgentToolRunner(yaml_path=yaml_path)
+        agent = ReactAgent(llm_client=llm, tool_runner=runner)
+
+        agent.run("check migration directory context")
+
+        system_msg = llm.last_messages[0]
+        self.assertEqual("system", system_msg["role"])
+        content = str(system_msg.get("content") or "")
+        self.assertIn(f"Current inventory (yaml_path): {yaml_path}", content)
+        self.assertIn("Directory context:", content)
+        self.assertIn("- repo_root:", content)
+        self.assertIn("- read scope: entire repo (repo-relative paths resolve from repo_root)", content)
+        self.assertIn("- write scope: migrate/ only (", content)
+        self.assertIn("- shell default cwd: migrate/", content)
+        self.assertIn("- all tool paths must be repo-relative (no absolute paths)", content)
+
+    def test_run_start_emits_fileops_roots_from_managed_inventory_path(self):
+        llm = _CapturePromptLLM()
+        yaml_path = self.ensure_dataset_yaml("run_start_directory_context")
+        runner = AgentToolRunner(yaml_path=yaml_path)
+        agent = ReactAgent(llm_client=llm, tool_runner=runner)
+        events = []
+
+        agent.run("check run_start roots", on_event=lambda e: events.append(dict(e)))
+
+        run_start = next((event for event in events if event.get("event") == "run_start"), None)
+        if not isinstance(run_start, dict):
+            self.fail("run_start event should be emitted")
+        fileops_roots = run_start.get("fileops_roots") or {}
+        expected_repo_root = str(Path(yaml_path).resolve(strict=False).parents[2])
+        expected_migrate_root = str((Path(expected_repo_root) / "migrate").resolve(strict=False))
+        self.assertEqual(expected_repo_root, fileops_roots.get("read_root"))
+        self.assertEqual(expected_migrate_root, fileops_roots.get("write_root"))
+        self.assertEqual("migrate/", fileops_roots.get("write_scope"))
+
+    def test_system_prompt_includes_inventory_path(self):
+        llm = _CapturePromptLLM()
+        yaml_path = self.ensure_dataset_yaml("migration_context_visible")
+        runner = AgentToolRunner(yaml_path=yaml_path)
         agent = ReactAgent(llm_client=llm, tool_runner=runner)
 
         agent.run("check migration prompt context")
@@ -863,15 +982,15 @@ class ReactAgentTests(ManagedPathTestCase):
         system_msg = llm.last_messages[0]
         self.assertEqual("system", system_msg["role"])
         content = str(system_msg.get("content") or "")
-        self.assertIn("Current inventory (yaml_path): (hidden in migration mode)", content)
-        self.assertNotIn(yaml_path, content)
+        self.assertIn(f"Current inventory (yaml_path): {yaml_path}", content)
         tools = llm.last_tools if isinstance(llm.last_tools, list) else []
         tool_names = {item.get("function", {}).get("name") for item in tools if isinstance(item, dict)}
+        self.assertIn("use_skill", tool_names)
         self.assertIn("fs_read", tool_names)
         self.assertIn("bash", tool_names)
         self.assertIn("powershell", tool_names)
         self.assertIn("import_migration_output", tool_names)
-        self.assertNotIn("search_records", tool_names)
+        self.assertIn("search_records", tool_names)
 
     def test_numeric_option_reply_is_expanded_from_recent_assistant_options(self):
         llm = _CapturePromptLLM()
@@ -917,4 +1036,3 @@ class ReactAgentTests(ManagedPathTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

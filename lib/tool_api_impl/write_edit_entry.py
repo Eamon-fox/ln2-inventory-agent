@@ -19,7 +19,7 @@ def _get_editable_fields(yaml_path, box=None):
     try:
         data = load_yaml(yaml_path)
         meta = data.get("meta", {})
-        fields = get_effective_fields(meta, box=box)
+        fields = get_effective_fields(meta)
         return _EDITABLE_FIELDS | {field["key"] for field in fields}
     except Exception:
         pass
@@ -94,7 +94,7 @@ def tool_edit_entry(
 
     meta = data.get("meta", {})
 
-    # Find record first so we know its box for per-box field resolution
+    # Find the record first so edits can fail cleanly when the ID is missing.
     _idx, record = find_record_by_id(data.get("inventory", []), record_id)
     if record is None:
         return api._failure_result(
@@ -109,7 +109,6 @@ def tool_edit_entry(
             before_data=data,
         )
 
-    record_box = record.get("box")
     alias_result = normalize_input_fields(fields, meta)
     if not alias_result.get("ok"):
         return api._failure_result(
@@ -130,8 +129,8 @@ def tool_edit_entry(
     alias_warnings = list(alias_result.get("warnings") or [])
     normalized_fields = dict(alias_result.get("fields") or {})
 
-    # Validate all option-bearing fields generically (box-aware)
-    effective = get_effective_fields(meta, box=record_box)
+    # Validate editable fields against the single global schema.
+    effective = get_effective_fields(meta)
     allowed = _EDITABLE_FIELDS | {field["key"] for field in effective}
     bad_keys = set(normalized_fields.keys()) - allowed
     if bad_keys:

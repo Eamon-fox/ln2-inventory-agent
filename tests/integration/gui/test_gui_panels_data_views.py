@@ -757,6 +757,61 @@ class OverviewTableViewTests(ManagedPathTestCase):
         finally:
             self._cleanup(tmpdir)
 
+    def test_refresh_blocks_legacy_box_fields_dataset(self):
+        import shutil
+        import tempfile
+        import yaml
+        from pathlib import Path
+        from app_gui.tool_bridge import GuiToolBridge
+
+        tmpdir = tempfile.mkdtemp(prefix="ln2_ov_box_fields_")
+        yaml_path = Path(tmpdir) / "inventory.yaml"
+        payload = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9,
+                    "cols": 9,
+                    "box_count": 1,
+                    "box_numbers": [1],
+                },
+                "custom_fields": [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                ],
+                "box_fields": {
+                    "1": [
+                        {"key": "virus_titer", "label": "Virus Titer", "type": "str"},
+                    ]
+                },
+            },
+            "inventory": [
+                {
+                    "id": 1,
+                    "box": 1,
+                    "position": 1,
+                    "frozen_at": "2025-01-01",
+                    "cell_line": "K562",
+                    "virus_titer": "MOI50",
+                }
+            ],
+        }
+        yaml_path.write_text(
+            yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+        try:
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: str(yaml_path))
+            panel.refresh()
+
+            self.assertTrue(panel.ov_status.text())
+            self.assertTrue(
+                ("meta.box_fields" in panel.ov_status.text())
+                or ("overview.loadFailed" in panel.ov_status.text())
+            )
+            self.assertEqual([], panel._current_records)
+            self.assertEqual(0, panel.ov_table.rowCount())
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
     def test_refresh_skips_repainting_when_cell_signatures_unchanged(self):
         records = [
             {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},

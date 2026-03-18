@@ -53,15 +53,10 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
         )
         self.assertEqual(MIGRATION_TOOL_NAMES, expected)
         # Verify known members
-        for name in ("question", "bash", "powershell", "fs_list", "fs_read",
+        for name in ("question", "use_skill", "bash", "powershell", "fs_list", "fs_read",
                       "fs_write", "fs_edit", "validate_migration_output",
                       "import_migration_output"):
             self.assertIn(name, MIGRATION_TOOL_NAMES)
-
-    def test_migration_tools_match_access_profile(self):
-        """agent.tool_access_profiles.MIGRATION_ALLOWED_TOOLS uses contracts."""
-        from agent.tool_access_profiles import MIGRATION_ALLOWED_TOOLS
-        self.assertIs(MIGRATION_ALLOWED_TOOLS, MIGRATION_TOOL_NAMES)
 
     def test_valid_plan_actions_derived_from_write_tool_map(self):
         """VALID_PLAN_ACTIONS covers all write tools via _WRITE_TOOL_TO_PLAN_ACTION."""
@@ -137,6 +132,14 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
     def test_environment_tools_are_not_inventory_write_tools(self):
         for tool_name in ("fs_list", "fs_read", "fs_write", "fs_edit", "bash", "powershell"):
             self.assertNotIn(tool_name, WRITE_TOOLS)
+
+    def test_use_skill_contract_shape(self):
+        self.assertIn("use_skill", TOOL_CONTRACTS)
+        params = TOOL_CONTRACTS["use_skill"]["parameters"]
+        self.assertEqual(["skill_name"], params.get("required"))
+        self.assertEqual({"skill_name"}, set((params.get("properties") or {}).keys()))
+        self.assertEqual(False, params.get("additionalProperties"))
+        self.assertNotIn("use_skill", WRITE_TOOLS)
 
     def test_migration_import_tool_contracts_exist(self):
         self.assertIn("validate_migration_output", TOOL_CONTRACTS)

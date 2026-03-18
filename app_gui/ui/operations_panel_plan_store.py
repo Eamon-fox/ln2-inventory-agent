@@ -179,7 +179,7 @@ def add_plan_items(self, items):
     from app_gui.ui import operations_panel_plan_toolbar as _ops_plan_toolbar
     from app_gui.ui import operations_panel_execution as _ops_exec
 
-    if bool(getattr(self, "_guard_migration_write_action", lambda: False)()):
+    if bool(getattr(self, "_guard_write_action_by_migration_mode", lambda: False)()):
         return
     incoming = list(items or [])
     if not incoming:
@@ -315,7 +315,7 @@ def _run_plan_preflight(self, trigger="manual"):
 
 def _update_execute_button_state(self):
     """Enable/disable Execute button based on preflight results."""
-    if bool(getattr(self, "_is_migration_write_locked", lambda: False)()):
+    if bool(getattr(self, "_is_write_locked_by_migration_mode", lambda: False)()):
         self.plan_exec_btn.setEnabled(False)
         self.plan_exec_btn.setText(_tr("operations.executeAll"))
         return

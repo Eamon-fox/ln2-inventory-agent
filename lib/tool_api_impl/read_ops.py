@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from functools import cmp_to_key
 
 from ..csv_export import export_inventory_to_csv
-from ..custom_fields import get_color_key
+from ..custom_fields import get_color_key, unsupported_box_fields_issue
 from ..position_fmt import (
     display_to_box,
     get_box_numbers,
@@ -35,6 +35,28 @@ api = _ApiProxy()
 INVENTORY_PREVIEW_LIMIT = 100
 
 
+def _load_supported_data(yaml_path):
+    try:
+        data = load_yaml(yaml_path)
+    except Exception as exc:
+        return None, {
+            "ok": False,
+            "error_code": "load_failed",
+            "message": f"Failed to load YAML file: {exc}",
+        }
+
+    issue = unsupported_box_fields_issue((data or {}).get("meta"))
+    if issue:
+        return None, {
+            "ok": False,
+            "error_code": issue.get("error_code", "unsupported_box_fields"),
+            "message": issue.get("message", "Unsupported dataset model."),
+            "details": issue.get("details"),
+        }
+
+    return data, None
+
+
 def tool_export_inventory_csv(yaml_path, output_path):
     """Export full inventory records to a CSV file."""
     if not output_path:
@@ -44,14 +66,9 @@ def tool_export_inventory_csv(yaml_path, output_path):
             "message": "CSV output path is required",
         }
 
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "load_failed",
-            "message": f"Failed to load YAML file: {exc}",
-        }
+    data, failure = _load_supported_data(yaml_path)
+    if failure:
+        return failure
 
     try:
         result = export_inventory_to_csv(data, output_path=output_path)
@@ -70,14 +87,9 @@ def tool_export_inventory_csv(yaml_path, output_path):
 
 def tool_list_empty_positions(yaml_path, box=None):
     """List empty positions by box."""
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "load_failed",
-            "message": f"Failed to load YAML file: {exc}",
-        }
+    data, failure = _load_supported_data(yaml_path)
+    if failure:
+        return failure
 
     records = data.get("inventory", [])
     layout = api._get_layout(data)
@@ -133,14 +145,9 @@ def tool_search_records(
     sort_order="desc",
 ):
     """Search records by text and/or structured filters."""
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "load_failed",
-            "message": f"Failed to load YAML file: {exc}",
-        }
+    data, failure = _load_supported_data(yaml_path)
+    if failure:
+        return failure
 
     records = data.get("inventory", [])
     layout = api._get_layout(data)
@@ -458,14 +465,9 @@ def tool_search_records(
 
 def tool_recent_frozen(yaml_path, days=None, count=None):
     """Query recently frozen records sorted by date desc."""
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "load_failed",
-            "message": f"Failed to load YAML file: {exc}",
-        }
+    data, failure = _load_supported_data(yaml_path)
+    if failure:
+        return failure
 
     records = data.get("inventory", [])
     valid = []
@@ -553,14 +555,9 @@ def tool_query_takeout_events(
 
     range_start, range_end = date_range if date_range else (None, None)
 
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "load_failed",
-            "message": f"Failed to load YAML file: {exc}",
-        }
+    data, failure = _load_supported_data(yaml_path)
+    if failure:
+        return failure
 
     records = data.get("inventory", [])
     matched = []
@@ -636,14 +633,9 @@ def tool_query_takeout_events(
 
 def tool_collect_timeline(yaml_path, days=30, all_history=False):
     """Collect timeline events and summary stats."""
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "load_failed",
-            "message": f"Failed to load YAML file: {exc}",
-        }
+    data, failure = _load_supported_data(yaml_path)
+    if failure:
+        return failure
 
     records = data.get("inventory", [])
     timeline = api._collect_timeline_events(records, days=None if all_history else days)
@@ -755,6 +747,10 @@ def tool_list_audit_timeline(
     if status_norm.lower() == "all":
         status_norm = ""
 
+    data, failure = _load_supported_data(yaml_path)
+    if failure:
+        return failure
+
     yaml_abs = os.path.abspath(str(yaml_path or ""))
     try:
         audit_rows = list(read_audit_events(yaml_abs))
@@ -821,14 +817,9 @@ def tool_recommend_positions(yaml_path, count, box_preference=None, strategy="co
             "message": "count must be greater than 0",
         }
 
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "load_failed",
-            "message": f"Failed to load YAML file: {exc}",
-        }
+    data, failure = _load_supported_data(yaml_path)
+    if failure:
+        return failure
 
     layout = api._get_layout(data)
     total_slots = get_total_slots(layout)
@@ -895,14 +886,9 @@ def tool_generate_stats(
     - Global mode (box omitted): returns full-inventory stats.
     - Box mode (box provided): returns only that box's stats/records.
     """
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "load_failed",
-            "message": f"Failed to load YAML file: {exc}",
-        }
+    data, failure = _load_supported_data(yaml_path)
+    if failure:
+        return failure
 
     all_records = data.get("inventory", [])
     def _parse_bool_flag(value, *, field_name):
@@ -1105,14 +1091,9 @@ def tool_generate_stats(
 
 def tool_get_raw_entries(yaml_path, ids):
     """Return raw YAML entries for selected IDs."""
-    try:
-        data = load_yaml(yaml_path)
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "load_failed",
-            "message": f"Failed to load YAML file: {exc}",
-        }
+    data, failure = _load_supported_data(yaml_path)
+    if failure:
+        return failure
 
     inventory = data.get("inventory", [])
     id_set = set(ids)

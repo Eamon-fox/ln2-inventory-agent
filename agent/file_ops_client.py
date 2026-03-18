@@ -2,26 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-def _derive_repo_root_from_yaml(yaml_path):
-    inventory_path = Path(str(yaml_path or "")).resolve(strict=False)
-    if inventory_path.name.lower() != "inventory.yaml":
-        raise ValueError("yaml_path must end with inventory.yaml")
-    try:
-        return inventory_path.parents[2]
-    except IndexError as exc:
-        raise ValueError("yaml_path does not follow managed inventories layout.") from exc
-
-
-def _derive_migrate_root(repo_root):
-    return (Path(repo_root) / "migrate").resolve(strict=False)
-
+from .tool_runtime_paths import derive_migrate_root, derive_repo_root_from_yaml
 
 def run_file_tool(tool_name, args, *, yaml_path):
     """Execute a file tool via in-process file-operation service."""
-    repo_root = _derive_repo_root_from_yaml(yaml_path)
-    migrate_root = _derive_migrate_root(repo_root)
+    repo_root = derive_repo_root_from_yaml(yaml_path)
+    migrate_root = derive_migrate_root(repo_root)
     payload = {
         "tool": str(tool_name or "").strip(),
         "args": dict(args or {}),

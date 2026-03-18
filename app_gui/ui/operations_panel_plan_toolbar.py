@@ -22,7 +22,7 @@ def _refresh_plan_toolbar_state(self):
         return
 
     has_items = bool(self._plan_store.count())
-    locked = bool(getattr(self, "_is_migration_write_locked", lambda: False)())
+    locked = bool(getattr(self, "_is_write_locked_by_migration_mode", lambda: False)())
     self.plan_print_btn.setEnabled(has_items)
     self.plan_clear_btn.setEnabled(has_items and (not locked))
 
@@ -42,7 +42,7 @@ def _refresh_after_plan_items_changed(self):
 def remove_selected_plan_items(self):
     from app_gui.ui import operations_panel_plan_store as _ops_plan_store
 
-    if bool(getattr(self, "_guard_migration_write_action", lambda: False)()):
+    if bool(getattr(self, "_guard_write_action_by_migration_mode", lambda: False)()):
         return
     rows = _get_selected_plan_rows(self)
     if not rows:

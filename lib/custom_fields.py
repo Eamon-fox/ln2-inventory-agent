@@ -53,6 +53,43 @@ DEFAULT_NOTE_FIELD = {
     "multiline": True,
 }
 
+UNSUPPORTED_BOX_FIELDS_ERROR_CODE = "unsupported_box_fields"
+
+
+def unsupported_box_fields_issue(meta):
+    """Return a structured issue when legacy ``meta.box_fields`` is present."""
+    if not isinstance(meta, dict):
+        return None
+    if "box_fields" not in meta:
+        return None
+
+    raw_box_fields = meta.get("box_fields")
+    details = {
+        "unsupported_meta_key": "box_fields",
+        "box_fields_type": type(raw_box_fields).__name__,
+    }
+    if isinstance(raw_box_fields, dict):
+        box_ids = [str(key).strip() for key in raw_box_fields.keys() if str(key).strip()]
+        if box_ids:
+            details["boxes"] = box_ids[:10]
+            details["box_count"] = len(box_ids)
+
+    return {
+        "error_code": UNSUPPORTED_BOX_FIELDS_ERROR_CODE,
+        "message": (
+            "Unsupported dataset model: meta.box_fields is no longer supported. "
+            "Use a single global meta.custom_fields schema."
+        ),
+        "details": details,
+    }
+
+
+def ensure_supported_field_model(meta):
+    """Raise ``ValueError`` when metadata uses an unsupported field model."""
+    issue = unsupported_box_fields_issue(meta)
+    if issue:
+        raise ValueError(issue["message"])
+
 
 def _has_legacy_cell_line_policy(meta):
     """Return True when legacy cell_line behavior should remain enabled."""
@@ -101,23 +138,6 @@ def _build_default_cell_line_field(meta):
     }
 
 
-def _get_box_fields_raw(meta, box):
-    """Return the raw field definition list for a specific box, or None.
-
-    Looks up ``meta.box_fields[str(box)]``.  Returns ``None`` when no
-    per-box override exists (caller should fall back to global fields).
-    """
-    if not isinstance(meta, dict) or box is None:
-        return None
-    box_fields = meta.get("box_fields")
-    if not isinstance(box_fields, dict):
-        return None
-    raw = box_fields.get(str(box))
-    if isinstance(raw, list):
-        return raw
-    return None
-
-
 def parse_custom_fields(meta, *, field_list=None):
     """Parse ``meta.custom_fields`` (or an explicit *field_list*) and return a validated list.
 
@@ -129,7 +149,7 @@ def parse_custom_fields(meta, *, field_list=None):
     Args:
         meta: The ``meta`` dict from the YAML document.
         field_list: When provided, parse this list instead of ``meta.custom_fields``.
-            Used for per-box field overrides.
+            Used for explicit alternate field lists during parsing.
     """
     raw = field_list if field_list is not None else (meta or {}).get("custom_fields")
     if not raw:
@@ -202,20 +222,15 @@ def parse_custom_fields(meta, *, field_list=None):
 def get_effective_fields(meta, box=None):
     """Return the full list of user-configurable field definitions.
 
-    When *box* is given and ``meta.box_fields[str(box)]`` exists, those
-    per-box definitions take precedence over the global ``meta.custom_fields``.
-    When no per-box override is found, falls back to global fields.
+    ``box`` is accepted for backward-compatible call signatures but ignored.
+    The only supported schema source is the global ``meta.custom_fields`` list.
 
     Always includes fixed ``note``.
     Includes ``cell_line`` only when explicitly declared or legacy metadata
     indicates compatibility mode.
     """
     meta = meta or {}
-    box_raw = _get_box_fields_raw(meta, box)
-    if box_raw is not None:
-        fields = parse_custom_fields(meta, field_list=box_raw)
-    else:
-        fields = parse_custom_fields(meta)
+    fields = parse_custom_fields(meta)
     keys = {f["key"] for f in fields}
 
     # Auto-inject cell_line only for legacy compatibility windows.

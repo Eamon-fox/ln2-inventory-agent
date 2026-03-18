@@ -2,6 +2,7 @@
 
 import os
 
+from ..custom_fields import unsupported_box_fields_issue
 from ..path_policy import PathPolicyError, resolve_dataset_backup_read_path
 from ..yaml_ops import (
     list_alternative_backups,
@@ -83,6 +84,20 @@ def tool_rollback(
         current_data = load_yaml(yaml_path)
     except Exception:
         current_data = None
+    unsupported_issue = unsupported_box_fields_issue((current_data or {}).get("meta"))
+    if unsupported_issue:
+        return api._failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code=unsupported_issue.get("error_code", "unsupported_box_fields"),
+            message=unsupported_issue.get("message", "Unsupported dataset model."),
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=current_data,
+            details=unsupported_issue.get("details"),
+        )
 
     normalized = validation.get("normalized") if isinstance(validation, dict) else {}
     normalized_backup_path = str((normalized or {}).get("backup_path") or backup_path or "").strip()

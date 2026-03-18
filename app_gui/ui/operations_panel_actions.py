@@ -155,7 +155,7 @@ def clear_plan(self):
     from app_gui.ui import operations_panel_plan_store as _ops_plan_store
     from app_gui.ui import operations_panel_plan_toolbar as _ops_plan_toolbar
 
-    if bool(getattr(self, "_guard_migration_write_action", lambda: False)()):
+    if bool(getattr(self, "_guard_write_action_by_migration_mode", lambda: False)()):
         return
     cleared_items = self._plan_store.clear()
     _ops_plan_store._reset_plan_feedback_and_validation(self)
@@ -322,7 +322,7 @@ def on_undo_last(self):
     from app_gui.ui import operations_panel_plan_toolbar as _ops_plan_toolbar
     from app_gui.ui import operations_panel_results as _ops_results
 
-    if bool(getattr(self, "_guard_migration_write_action", lambda: False)()):
+    if bool(getattr(self, "_guard_write_action_by_migration_mode", lambda: False)()):
         return
     if not self._last_operation_backup:
         _ops_exec._publish_system_notice(

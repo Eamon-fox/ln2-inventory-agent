@@ -1,0 +1,15 @@
+{
+  "source_path": "D:\\github_repo\\ln2-inventory-agent\\migrate\\inputs\\樊一鸣的质粒索引表.xlsx",
+  "source_name": "樊一鸣的质粒索引表.xlsx",
+  "status": "ok",
+  "message": "Workbook converted to normalized CSV assets.",
+  "sheet_count": 1,
+  "schema_summary_path": "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\source\\schema_summary.json",
+  "generated_files": [
+    "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\source\\sheets\\01_Sheet1.csv",
+    "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\source\\schema_summary.json"
+  ],
+  "warnings": [],
+  "errors": [],
+  "generated_at": "2026-03-18T12:15:01Z"
+}

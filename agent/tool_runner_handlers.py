@@ -10,6 +10,7 @@ from lib.import_acceptance import import_validated_yaml, validate_candidate_yaml
 from lib.inventory_paths import (
     create_managed_dataset_yaml_path,
 )
+from lib.builtin_skills import BuiltinSkillError, load_builtin_skill
 from lib.path_policy import PathPolicyError, resolve_dataset_backup_read_path
 from lib.tool_api import (
     tool_add_entry,
@@ -35,6 +36,38 @@ from .file_ops_client import run_file_tool
 
 _IMPORT_CONFIRMATION_TOKEN = "CONFIRM_IMPORT"
 _TARGET_DATASET_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _run_use_skill(self, payload, _trace_id=None):
+    tool_name = "use_skill"
+
+    def _call_use_skill():
+        skill_name = str(payload.get("skill_name") or "").strip()
+        try:
+            loaded = load_builtin_skill(skill_name)
+        except BuiltinSkillError as exc:
+            response = {
+                "ok": False,
+                "error_code": exc.code,
+                "message": exc.message,
+            }
+            available = list((exc.details or {}).get("available_skills") or [])
+            if available:
+                response["available_skills"] = available
+            return response
+
+        return {
+            "ok": True,
+            "skill_name": str(loaded.get("name") or skill_name),
+            "description": str(loaded.get("description") or ""),
+            "instructions_markdown": str(loaded.get("instructions_markdown") or ""),
+            "references": list(loaded.get("references") or []),
+            "shared_references": list(loaded.get("shared_references") or []),
+            "scripts": list(loaded.get("scripts") or []),
+            "assets": list(loaded.get("assets") or []),
+        }
+
+    return self._safe_call(tool_name, _call_use_skill, include_expected_schema=True)
 
 
 def _resolve_write_execution_kwargs(self, payload):
@@ -564,12 +597,6 @@ def _run_validate_migration_output(self, payload, _trace_id=None):
         result["validation_report_written"] = bool(report_written)
         if report_error:
             result["validation_report_error"] = report_error
-        if isinstance(result, dict) and result.get("ok"):
-            result = dict(result)
-            result["next_step_hint"] = self._msg(
-                "hint.migrationValidateNextStep",
-                "Validation passed. Update `migrate/output/migration_checklist.md` (mark all blocking checks) before import confirmation.",
-            )
         return result
 
     return self._safe_call(

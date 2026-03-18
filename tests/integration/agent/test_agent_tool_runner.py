@@ -21,7 +21,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agent.tool_runner import AgentToolRunner
-from agent.tool_access_profiles import MIGRATION_AGENT_MODE, resolve_allowed_tools
 from lib.tool_api_write_validation import resolve_request_backup_path
 from lib.yaml_ops import create_yaml_backup, get_audit_log_path, load_yaml, read_audit_events, write_yaml
 from tests.managed_paths import ManagedPathTestCase
@@ -131,6 +130,7 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         self.assertIn("move", names)
         self.assertIn("bash", names)
         self.assertIn("powershell", names)
+        self.assertIn("use_skill", names)
         self.assertIn("fs_list", names)
         self.assertIn("fs_read", names)
         self.assertIn("fs_write", names)
@@ -152,66 +152,69 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         self.assertNotIn("remove_staged", names)
         self.assertNotIn("clear_staged", names)
 
-    def test_list_tools_supports_migration_profile_filtering(self):
-        runner = AgentToolRunner(
-            yaml_path=self.fake_yaml_path,
-            allowed_tools=resolve_allowed_tools(MIGRATION_AGENT_MODE),
-        )
+    def test_list_tools_returns_full_contract_surface(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         names = set(runner.list_tools())
-        self.assertEqual(
-            {
-                "question",
-                "fs_list",
-                "fs_read",
-                "fs_write",
-                "fs_edit",
-                "bash",
-                "powershell",
-                "validate_migration_output",
-                "import_migration_output",
-            },
-            names,
-        )
-        self.assertNotIn("search_records", names)
-        self.assertNotIn("add_entry", names)
-        self.assertNotIn("staged_plan", names)
+        self.assertIn("search_records", names)
+        self.assertIn("add_entry", names)
+        self.assertIn("staged_plan", names)
 
-    def test_restricted_runner_rejects_inventory_tool_as_unknown(self):
-        runner = AgentToolRunner(
-            yaml_path=self.fake_yaml_path,
-            allowed_tools=resolve_allowed_tools(MIGRATION_AGENT_MODE),
-        )
-        response = runner.run("search_records", {"query": "K562"})
-        self.assertFalse(response["ok"])
-        self.assertEqual("unknown_tool", response.get("error_code"))
-        available = set(response.get("available_tools") or [])
-        self.assertIn("fs_read", available)
-        self.assertNotIn("search_records", available)
-
-    def test_tool_schemas_follow_allowed_tools_filter(self):
-        runner = AgentToolRunner(
-            yaml_path=self.fake_yaml_path,
-            allowed_tools=resolve_allowed_tools(MIGRATION_AGENT_MODE),
-        )
+    def test_tool_schemas_cover_full_contract_surface(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         names = {
             item.get("function", {}).get("name")
             for item in runner.tool_schemas()
             if isinstance(item, dict)
         }
-        self.assertEqual(
-            {
-                "question",
-                "fs_list",
-                "fs_read",
-                "fs_write",
-                "fs_edit",
-                "bash",
-                "powershell",
-                "validate_migration_output",
-                "import_migration_output",
-            },
-            names,
+        self.assertIn("question", names)
+        self.assertIn("use_skill", names)
+        self.assertIn("search_records", names)
+        self.assertIn("add_entry", names)
+        self.assertIn("staged_plan", names)
+
+    def test_use_skill_returns_migration_skill_body_and_resources(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+
+        response = runner.run("use_skill", {"skill_name": "migration"})
+
+        self.assertTrue(response["ok"])
+        self.assertEqual("migration", response.get("skill_name"))
+        self.assertIn("Convert staged legacy source files", str(response.get("description") or ""))
+        self.assertIn("Core Workflow", str(response.get("instructions_markdown") or ""))
+        refs = list(response.get("references") or [])
+        shared_refs = list(response.get("shared_references") or [])
+        assets = list(response.get("assets") or [])
+        self.assertIn("agent_skills/migration/references/runbook_en.md", refs)
+        self.assertIn("agent_skills/shared/references/schema_context.md", shared_refs)
+        self.assertIn("agent_skills/migration/assets/acceptance_checklist_en.md", assets)
+
+    def test_use_skill_migration_returns_hook_hint_and_ui_effects(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+
+        response = runner.run("use_skill", {"skill_name": "migration"})
+
+        self.assertTrue(response["ok"])
+        self.assertIn("migration_checklist.md", str(response.get("_hint") or ""))
+        self.assertIn("ln2_inventory.yaml", str(response.get("_hint") or ""))
+        ui_effects = list(response.get("ui_effects") or [])
+        self.assertTrue(
+            any(
+                effect.get("type") == "migration_mode" and bool(effect.get("enabled"))
+                for effect in ui_effects
+                if isinstance(effect, dict)
+            ),
+            ui_effects,
         )
+
+    def test_use_skill_returns_available_skills_for_unknown_name(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+
+        response = runner.run("use_skill", {"skill_name": "missing-skill"})
+
+        self.assertFalse(response["ok"])
+        self.assertEqual("unknown_skill", response.get("error_code"))
+        self.assertIn("migration", list(response.get("available_skills") or []))
+        self.assertIn("yaml-repair", list(response.get("available_skills") or []))
 
     def _migration_output_path(self):
         repo_root = self._repo_root()
@@ -279,7 +282,7 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         self.assertTrue(response["ok"])
         report = response.get("report") or {}
         self.assertEqual(0, report.get("error_count"))
-        self.assertIn("migration_checklist.md", str(response.get("next_step_hint") or ""))
+        self.assertIn("migration_checklist.md", str(response.get("_hint") or ""))
         self.assertEqual(str(report_path), str(response.get("validation_report_path") or ""))
         self.assertTrue(response.get("validation_report_written"))
         self.assertTrue(report_path.is_file())
@@ -477,6 +480,26 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         target_path = Path(str(response.get("target_path") or ""))
         self.assertTrue(target_path.is_file())
         self.assertIn(str(self.inventories_root), str(target_path))
+        self.assertIn(str(target_path), str(response.get("_hint") or ""))
+        ui_effects = list(response.get("ui_effects") or [])
+        self.assertTrue(
+            any(
+                effect.get("type") == "open_dataset"
+                and str(effect.get("target_path") or "").strip() == str(target_path)
+                for effect in ui_effects
+                if isinstance(effect, dict)
+            ),
+            ui_effects,
+        )
+        self.assertTrue(
+            any(
+                effect.get("type") == "migration_mode"
+                and effect.get("enabled") is False
+                for effect in ui_effects
+                if isinstance(effect, dict)
+            ),
+            ui_effects,
+        )
 
     def test_manage_boxes_ignores_dry_run_input(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_box_dry_") as temp_dir:
@@ -622,6 +645,22 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         self.assertTrue(response["ok"])
         self.assertEqual(0, response.get("exit_code"))
         self.assertIn(marker, str(response.get("raw_output") or ""))
+        self.assertIn("Shell engine: bash.", str(response.get("_hint") or ""))
+        self.assertIn("Current working directory: migrate", str(response.get("_hint") or ""))
+
+    def test_bash_normalizes_relative_workdir_under_migrate(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        response = runner.run(
+            "bash",
+            {
+                "command": "pwd",
+                "description": "print cwd",
+                "workdir": "output",
+            },
+        )
+
+        self.assertTrue(response["ok"])
+        self.assertIn("Current working directory: migrate/output", str(response.get("_hint") or ""))
 
     def test_bash_schema_exposes_expected_fields(self):
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
@@ -732,19 +771,23 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         read_resp = runner.run("fs_read", {"path": "README_scope_test.txt"})
         self.assertTrue(read_resp["ok"])
         self.assertEqual("hello repo", read_resp.get("content"))
+        self.assertIn("Last read path: README_scope_test.txt", str(read_resp.get("_hint") or ""))
 
-        denied_write = runner.run("fs_write", {"path": "README_scope_test_2.txt", "content": "nope"})
+        denied_write = runner.run("fs_write", {"path": "../README_scope_test_2.txt", "content": "nope"})
         self.assertFalse(denied_write["ok"])
-        self.assertEqual("path.scope_write_denied", denied_write.get("error_code"))
+        self.assertEqual("path.escape_detected", denied_write.get("error_code"))
+        self.assertIn("Writable workspace root: migrate", str(denied_write.get("_hint") or ""))
 
         write_resp = runner.run("fs_write", {"path": "migrate/data/input.txt", "content": "hello migrate"})
         self.assertTrue(write_resp["ok"])
         self.assertTrue((migrate_root / "data" / "input.txt").exists())
+        self.assertIn("Last write target: migrate/data/input.txt", str(write_resp.get("_hint") or ""))
 
         list_resp = runner.run("fs_list", {"path": "migrate/data"})
         self.assertTrue(list_resp["ok"])
         names = {entry.get("name") for entry in list(list_resp.get("entries") or [])}
         self.assertIn("input.txt", names)
+        self.assertIn("Last listed path: migrate/data", str(list_resp.get("_hint") or ""))
 
     def test_environment_tools_reject_paths_outside_scope(self):
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
@@ -767,6 +810,19 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         self.assertFalse(second["ok"])
         self.assertEqual("file_exists_and_overwrite_false", second.get("error_code"))
         self.assertTrue(third["ok"])
+
+    def test_fs_write_normalizes_relative_path_under_migrate(self):
+        target = self._repo_root() / "migrate" / "output" / "demo.txt"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.unlink(missing_ok=True)
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+
+        response = runner.run("fs_write", {"path": "output/demo.txt", "content": "hello"})
+
+        self.assertTrue(response["ok"])
+        self.assertTrue(target.is_file())
+        self.assertEqual("hello", target.read_text(encoding="utf-8"))
+        self.assertIn("Last write target: migrate/output/demo.txt", str(response.get("_hint") or ""))
 
     def test_fs_copy_is_unknown_tool(self):
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
@@ -791,6 +847,25 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         self.assertEqual(1, response.get("match_count"))
         self.assertEqual(False, response.get("replace_all"))
         self.assertEqual("alpha NEW omega", target.read_text(encoding="utf-8"))
+
+    def test_fs_edit_normalizes_bare_filename_under_migrate(self):
+        target = self._repo_root() / "migrate" / "notes.txt"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("alpha OLD omega", encoding="utf-8")
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+
+        response = runner.run(
+            "fs_edit",
+            {
+                "filePath": "notes.txt",
+                "oldString": "OLD",
+                "newString": "NEW",
+            },
+        )
+
+        self.assertTrue(response["ok"])
+        self.assertEqual("alpha NEW omega", target.read_text(encoding="utf-8"))
+        self.assertIn("Last edited file: migrate/notes.txt", str(response.get("_hint") or ""))
 
     def test_fs_edit_ambiguous_match_when_replace_all_false(self):
         target = self._repo_root() / "migrate" / "notes.txt"
@@ -2156,4 +2231,3 @@ class EditEntryToolRunnerTests(ManagedPathTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -24,6 +24,7 @@ def _collect_datas():
     candidates = [
         ("app_gui/i18n/translations", "app_gui/i18n/translations"),
         ("app_gui/assets", "app_gui/assets"),
+        ("agent_skills", "agent_skills"),
         ("migration_assets", "migration_assets"),
         ("migrate/README.md", "migrate"),
         ("migrate/inputs", "migrate/inputs"),
@@ -93,4 +94,3 @@ app = BUNDLE(
         "NSHighResolutionCapable": True,
     },
 )
-

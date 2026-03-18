@@ -46,7 +46,7 @@ Follow every phase in order. Do not skip validation.
 ## Phase 5 - Validate draft output
 
 1. Run `validate_migration_output` (tool call only; do not run `migration_assets/validate.py`).
-2. Run all checks in `migration_assets/templates/acceptance_checklist_en.md`.
+2. Run all checks in `agent_skills/migration/assets/acceptance_checklist_en.md`.
 3. Review `migrate/output/validation_report.json` (errors/warnings) and fix blockers.
 4. If validation failed, do not deliver final output.
 5. If a blocker cannot be resolved from source data, stop and request clarification.

@@ -264,7 +264,7 @@ class MainWindow(QMainWindow):
         self._app_event_bus.subscribe(DatasetSwitched, self._on_dataset_switched_event)
         self._app_event_bus.subscribe(
             MigrationModeChanged,
-            lambda event: self._on_migration_mode_changed(bool(getattr(event, "enabled", False))),
+            lambda event: self._apply_migration_mode_enabled(bool(getattr(event, "enabled", False))),
         )
         self._app_event_bus.subscribe(
             OperationExecuted,
@@ -474,7 +474,7 @@ class MainWindow(QMainWindow):
             )
         )
         self.ai_panel.migration_mode_changed.connect(
-            lambda enabled: self._dispatch_migration_mode_change(
+            lambda enabled: self._request_migration_mode_change(
                 enabled,
                 reason="ai_panel",
             )
@@ -618,17 +618,17 @@ class MainWindow(QMainWindow):
             source=str(source or "ui"),
         )
 
-    def _dispatch_migration_mode_change(self, enabled, *, reason):
+    def _request_migration_mode_change(self, enabled, *, reason):
         use_case = getattr(self, "_migration_mode_use_case", None)
         if use_case is None:
-            self._on_migration_mode_changed(enabled)
+            self._apply_migration_mode_enabled(enabled)
             return
         use_case.set_mode(
             enabled=bool(enabled),
             reason=str(reason or "ai_panel"),
         )
 
-    def _on_migration_mode_changed(self, enabled):
+    def _apply_migration_mode_enabled(self, enabled):
         locked = bool(enabled)
         self._migration_mode_enabled = locked
         badge = getattr(self, "migration_mode_badge", None)
@@ -643,8 +643,8 @@ class MainWindow(QMainWindow):
                 with suppress(Exception):
                     show_notice_fn()
         operations_panel = getattr(self, "operations_panel", None)
-        if operations_panel is not None and hasattr(operations_panel, "set_migration_mode"):
-            operations_panel.set_migration_mode(locked)
+        if operations_panel is not None and hasattr(operations_panel, "set_migration_mode_enabled"):
+            operations_panel.set_migration_mode_enabled(locked)
 
     def _show_migration_mode_entry_notice(self):
         cfg = self.gui_config if isinstance(getattr(self, "gui_config", None), dict) else {}

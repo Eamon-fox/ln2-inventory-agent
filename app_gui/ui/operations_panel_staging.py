@@ -11,7 +11,7 @@ from lib.tool_api import parse_batch_entries
 from lib.validators import parse_positions
 
 def on_add_entry(self):
-    if bool(getattr(self, "_guard_migration_write_action", lambda: False)()):
+    if bool(getattr(self, "_guard_write_action_by_migration_mode", lambda: False)()):
         return
     self._ensure_today_defaults()
     positions_text = self.a_positions.text().strip()
@@ -46,7 +46,7 @@ def _record_takeout_with_action(self, action_text):
     self.on_record_takeout()
 
 def on_record_takeout(self):
-    if bool(getattr(self, "_guard_migration_write_action", lambda: False)()):
+    if bool(getattr(self, "_guard_write_action_by_migration_mode", lambda: False)()):
         return
     self._ensure_today_defaults()
     action_text = self.t_action.currentData() or self.t_action.currentText()
@@ -71,7 +71,7 @@ def on_record_takeout(self):
     self.add_plan_items([item])
 
 def on_record_move(self):
-    if bool(getattr(self, "_guard_migration_write_action", lambda: False)()):
+    if bool(getattr(self, "_guard_write_action_by_migration_mode", lambda: False)()):
         return
     self._ensure_today_defaults()
 
@@ -188,7 +188,7 @@ def _collect_move_batch_from_table(self):
     return entries if entries else None
 
 def on_batch_move(self):
-    if bool(getattr(self, "_guard_migration_write_action", lambda: False)()):
+    if bool(getattr(self, "_guard_write_action_by_migration_mode", lambda: False)()):
         return
     self._ensure_today_defaults()
 
@@ -341,7 +341,7 @@ def _build_takeout_batch_plan_items(self, entries, *, date_str, action_text):
     return items
 
 def on_batch_takeout(self):
-    if bool(getattr(self, "_guard_migration_write_action", lambda: False)()):
+    if bool(getattr(self, "_guard_write_action_by_migration_mode", lambda: False)()):
         return
     self._ensure_today_defaults()
 

@@ -3,7 +3,6 @@
 ## 1.3.4 - 2026-03-18
 
 ### Added
-- Per-box custom field schemas: each box can now define its own field set independently.
 - Batch add API (`tool_batch_add_entries`) for single-cycle bulk execution.
 - Activity indicator with pulsing dot, elapsed timer, and tool name display during agent processing.
 - Markdown rendering in agent question dialogs.
@@ -15,6 +14,7 @@
 
 ### Changed
 - "Clear" button in AI panel renamed to "New Chat", now resets both UI display and agent context with confirmation dialog.
+- Global custom-field schema remains the only supported model; datasets using legacy `meta.box_fields` are now rejected.
 - Tool registry now derives `WRITE_TOOLS`, `MIGRATION_TOOL_NAMES`, and `VALID_PLAN_ACTIONS` from `TOOL_CONTRACTS` metadata flags.
 - Dataset path normalization and combo builder extracted to shared helpers in `lib/inventory_paths.py`.
 - Batch plan execution optimized from 10+ seconds to ~1 second for 100+ operations.

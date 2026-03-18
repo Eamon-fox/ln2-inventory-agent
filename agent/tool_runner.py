@@ -18,7 +18,9 @@ from app_gui.i18n import tr
 from . import tool_runner_handlers as _runner_handlers
 from . import tool_runner_staging as _runner_staging
 from . import tool_runner_validation as _runner_validation
-from . import tool_runner_hints as _runner_hints
+from . import tool_runner_guidance as _runner_guidance
+from . import tool_hooks as _tool_hooks
+from . import tool_runtime_paths as _tool_runtime_paths
 
 _TOOL_CONTRACTS = TOOL_CONTRACTS
 _WRITE_TOOLS = WRITE_TOOLS
@@ -51,33 +53,15 @@ class AgentToolRunner:
         yaml_path,
         session_id=None,
         plan_store=None,
-        allowed_tools=None,
-        expose_inventory_context=True,
     ):
         self._yaml_path = assert_allowed_inventory_yaml_path(yaml_path, must_exist=True)
         self._session_id = session_id
         self._plan_store = plan_store
-        self._allowed_tools = self._normalize_allowed_tools(allowed_tools)
-        self._expose_inventory_context = bool(expose_inventory_context)
+        self._hook_manager = _tool_hooks.build_default_tool_hook_manager()
         # Question tool synchronization
         self._answer_event = threading.Event()
         self._pending_answer = None
         self._answer_cancelled = False
-
-    @staticmethod
-    def _normalize_allowed_tools(allowed_tools):
-        if allowed_tools is None:
-            return None
-        names = set()
-        for raw_name in allowed_tools:
-            name = str(raw_name or "").strip()
-            if name and name in TOOL_CONTRACTS:
-                names.add(name)
-        return names
-
-    def _is_tool_allowed(self, tool_name):
-        allowed = self._allowed_tools
-        return allowed is None or tool_name in allowed
 
     def _set_answer(self, answers):
         """Called from GUI main thread to provide user answers."""
@@ -229,7 +213,7 @@ class AgentToolRunner:
     _normalize_search_mode = staticmethod(_runner_validation._normalize_search_mode)
 
     def list_tools(self):
-        return [name for name in TOOL_CONTRACTS.keys() if self._is_tool_allowed(name)]
+        return list(TOOL_CONTRACTS.keys())
 
     tool_schemas = _runner_validation.tool_schemas
     _tool_input_schema = _runner_validation._tool_input_schema
@@ -239,8 +223,14 @@ class AgentToolRunner:
     _validate_schema_value = _runner_validation._validate_schema_value
     _validate_tool_input = _runner_validation._validate_tool_input
 
-    _hint_for_error = _runner_hints._hint_for_error
-    _with_hint = _runner_hints._with_hint
+    _hint_for_error = _runner_guidance._hint_for_error
+    _with_hint = _runner_guidance._with_hint
+
+    def _tool_hook_context(self, trace_id=None):
+        return _tool_runtime_paths.build_tool_hook_context(
+            self._yaml_path,
+            trace_id=trace_id,
+        )
 
     def _run_question_tool(self, payload):
         """Validate question payload and return a waiting_for_user marker.
@@ -470,6 +460,7 @@ class AgentToolRunner:
         )
 
     _run_manage_boxes = _runner_handlers._run_manage_boxes
+    _run_use_skill = _runner_handlers._run_use_skill
     _run_list_empty_positions = _runner_handlers._run_list_empty_positions
     _run_search_records = _runner_handlers._run_search_records
     _run_recent_frozen = _runner_handlers._run_recent_frozen
@@ -494,16 +485,31 @@ class AgentToolRunner:
     _run_staged_plan = _runner_handlers._run_staged_plan
 
     def _run_dispatch(self, tool_name, payload, trace_id=None):
-        if tool_name not in TOOL_CONTRACTS or not self._is_tool_allowed(tool_name):
+        if tool_name not in TOOL_CONTRACTS:
             return self._unknown_tool_response(tool_name)
+
+        hook_context = self._tool_hook_context(trace_id)
+        before_hook = self._hook_manager.run_before(tool_name, payload, hook_context)
+        if before_hook.get("blocked"):
+            blocked_response = {
+                "ok": False,
+                "error_code": "tool_hook_blocked",
+                "message": str(before_hook.get("message") or "Tool call blocked by hook."),
+            }
+            response = _tool_hooks.merge_hook_result(blocked_response, before_hook)
+            return self._with_hint(tool_name, response)
+
+        payload = _tool_hooks.apply_payload_patch(payload, before_hook)
 
         # Question tool keeps its own detailed validation/error codes.
         if tool_name == "question":
-            return self._run_question_tool(payload)
+            response = self._run_question_tool(payload)
+            after_hook = self._hook_manager.run_after(tool_name, payload, response, hook_context)
+            return _tool_hooks.merge_hook_result(response, after_hook)
 
         input_error = self._validate_tool_input(tool_name, payload)
         if input_error:
-            return self._with_hint(
+            response = self._with_hint(
                 tool_name,
                 {
                     "ok": False,
@@ -511,15 +517,20 @@ class AgentToolRunner:
                     "message": input_error,
                 },
             )
+            after_hook = self._hook_manager.run_after(tool_name, payload, response, hook_context)
+            return _tool_hooks.merge_hook_result(response, after_hook)
 
         # Intercept write operations when plan_store is set.
         if tool_name in WRITE_TOOLS and self._plan_store is not None:
-            return self._stage_to_plan(tool_name, payload, trace_id)
+            response = self._stage_to_plan(tool_name, payload, trace_id)
+            after_hook = self._hook_manager.run_after(tool_name, payload, response, hook_context)
+            return _tool_hooks.merge_hook_result(response, after_hook)
 
         # Dispatch table for all tools except "question" (handled above).
         # When adding a new tool to TOOL_CONTRACTS, add its handler here too.
         _DISPATCH_HANDLERS = {
             "manage_boxes": self._run_manage_boxes,
+            "use_skill": self._run_use_skill,
             "list_empty_positions": self._run_list_empty_positions,
             "search_records": self._run_search_records,
             "recent_frozen": self._run_recent_frozen,
@@ -550,7 +561,9 @@ class AgentToolRunner:
         )
         handler = _DISPATCH_HANDLERS.get(tool_name)
         if callable(handler):
-            return handler(payload, trace_id)
+            response = handler(payload, trace_id)
+            after_hook = self._hook_manager.run_after(tool_name, payload, response, hook_context)
+            return _tool_hooks.merge_hook_result(response, after_hook)
         return self._unknown_tool_response(tool_name)
 
 

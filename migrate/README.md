@@ -10,9 +10,10 @@ Use it for per-run data:
 Do not store static migration guidance here.
 
 Static guidance moved to:
-- `migration_assets/templates/*`
-- `migration_assets/schema/*`
-- `migration_assets/examples/*`
+- `agent_skills/migration/SKILL.md`
+- `agent_skills/migration/references/*`
+- `agent_skills/migration/assets/*`
+- `agent_skills/shared/references/*`
 - `validate_migration_output` tool (writes `migrate/output/validation_report.json`)
 
 Required output contract stays unchanged:

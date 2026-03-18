@@ -44,8 +44,8 @@ The generated file **must** be `migrate/output/ln2_inventory.yaml`.
 ## Recommended workflow
 
 1. Read source files staged in `migrate/inputs/`.
-2. Follow `migration_assets/templates/runbook_en.md` in order.
-3. Run checks from `migration_assets/templates/acceptance_checklist_en.md`.
+2. Follow `agent_skills/migration/references/runbook_en.md` in order.
+3. Run checks from `agent_skills/migration/assets/acceptance_checklist_en.md`.
 4. Produce final YAML at `migrate/output/ln2_inventory.yaml` only after blocking checks pass.
 
 ## Example outputs

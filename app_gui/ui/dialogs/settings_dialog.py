@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from agent.llm_client import DEFAULT_PROVIDER, PROVIDER_DEFAULTS
+from app_gui.error_localizer import localize_error
 from app_gui.gui_config import DEFAULT_MAX_STEPS, MAX_AGENT_STEPS
 from app_gui.i18n import t, tr
 from app_gui.ui.icons import Icons, get_icon
@@ -801,7 +802,21 @@ class SettingsDialog(QDialog):
         meta = data.get("meta", {})
         if not isinstance(meta, dict):
             meta = {}
-        from lib.custom_fields import get_effective_fields
+        from lib.custom_fields import get_effective_fields, unsupported_box_fields_issue
+
+        unsupported_issue = unsupported_box_fields_issue(meta)
+        if unsupported_issue:
+            QMessageBox.warning(
+                self,
+                tr("main.customFieldsTitle"),
+                localize_error(
+                    unsupported_issue.get("error_code"),
+                    unsupported_issue.get("message"),
+                    details=unsupported_issue.get("details"),
+                ),
+            )
+            return
+
         existing = get_effective_fields(meta)
         current_dk = meta.get("display_key")
         current_ck = meta.get("color_key")

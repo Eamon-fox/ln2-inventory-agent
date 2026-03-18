@@ -27,8 +27,9 @@ class MigrationWorkspaceService:
         self._session_checklist = os.path.join(self._output_dir, "migration_checklist.md")
         self._checklist_template = os.path.join(
             self._install_root,
-            "migration_assets",
-            "templates",
+            "agent_skills",
+            "migration",
+            "assets",
             "acceptance_checklist_en.md",
         )
         self._normalized = os.path.join(self._root, "normalized")
@@ -124,7 +125,7 @@ class MigrationWorkspaceService:
                 raise MigrationWorkspaceError(f"failed to clear output entry: {target} ({exc})") from exc
 
     def reset_session_checklist(self) -> None:
-        """Reset migrate/output checklist from immutable migration_assets template."""
+        """Reset migrate/output checklist from immutable migration skill assets."""
         if not os.path.isfile(self._checklist_template):
             raise MigrationWorkspaceError(
                 f"migration checklist template not found: {self._checklist_template}"
@@ -151,16 +152,16 @@ class MigrationWorkspaceService:
             os.makedirs(self._normalized, exist_ok=True)
 
     def _bootstrap_workspace_from_internal_layout(self) -> None:
-        """Backfill install-root migrate/ + migration_assets/ from bundled layouts."""
-        target_assets = os.path.join(self._install_root, "migration_assets")
+        """Backfill install-root migrate/ + agent_skills/ from bundled layouts."""
+        target_skills = os.path.join(self._install_root, "agent_skills")
         needs_workspace = not os.path.isdir(self._root)
-        needs_assets = not os.path.isdir(target_assets)
-        if not needs_workspace and not needs_assets:
+        needs_skills = not os.path.isfile(self._checklist_template)
+        if not needs_workspace and not needs_skills:
             return
 
         for source_root in self._candidate_bundle_roots():
             source_migrate = os.path.join(source_root, "migrate")
-            source_assets = os.path.join(source_root, "migration_assets")
+            source_skills = os.path.join(source_root, "agent_skills")
 
             if needs_workspace and os.path.isdir(source_migrate):
                 try:
@@ -171,16 +172,16 @@ class MigrationWorkspaceService:
                     ) from exc
                 needs_workspace = False
 
-            if needs_assets and os.path.isdir(source_assets):
+            if needs_skills and os.path.isdir(source_skills):
                 try:
-                    shutil.copytree(source_assets, target_assets, dirs_exist_ok=True)
+                    shutil.copytree(source_skills, target_skills, dirs_exist_ok=True)
                 except Exception as exc:
                     raise MigrationWorkspaceError(
-                        f"failed to bootstrap migration assets: {target_assets} ({exc})"
+                        f"failed to bootstrap built-in skills: {target_skills} ({exc})"
                     ) from exc
-                needs_assets = False
+                needs_skills = False
 
-            if not needs_workspace and not needs_assets:
+            if not needs_workspace and not needs_skills:
                 break
 
     def _candidate_bundle_roots(self) -> List[str]:

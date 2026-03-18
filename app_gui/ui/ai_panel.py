@@ -102,7 +102,7 @@ class AIPanel(QWidget):
         self._plan_store = plan_store
         self._manage_boxes_request_handler = manage_boxes_request_handler
         self._import_dataset_handler = import_dataset_handler
-        self._agent_mode = "default"
+        self._migration_mode_enabled = False
         
         self.ai_history = []
         self._prompt_history = []      # past user prompts (oldest first)
@@ -446,10 +446,13 @@ class AIPanel(QWidget):
         return True
 
     def prepare_import_migration(self, prompt_text, *, focus=True):
-        self.enter_migration_mode()
         text = str(prompt_text or "").strip()
         if not text:
             return
+        clear_fn = getattr(self._plan_store, "clear", None)
+        if callable(clear_fn):
+            with suppress(Exception):
+                clear_fn()
         self.ai_prompt.setPlainText(text)
         if focus:
             self.ai_prompt.setFocus(Qt.OtherFocusReason)
@@ -528,24 +531,21 @@ class AIPanel(QWidget):
             self._run_btn_attention_clear_timer = clear_timer
         clear_timer.start(max(interval_ms, int(duration_ms or 0)))
 
-    def enter_migration_mode(self):
-        if self._agent_mode == "migration":
+    def set_migration_mode_enabled(self, enabled):
+        target = bool(enabled)
+        if self._migration_mode_enabled == target:
             return
-        self._agent_mode = "migration"
-        self._set_migration_mode_banner(True)
-        self._flash_run_button_attention(duration_ms=1200, flashes=2)
-        clear_fn = getattr(self._plan_store, "clear", None)
-        if callable(clear_fn):
-            with suppress(Exception):
-                clear_fn()
-        self.migration_mode_changed.emit(True)
-        self.status_message.emit(tr("ai.migrationModeEnteredStatus"), 4000)
-
-    def exit_migration_mode(self):
-        if self._agent_mode != "migration":
+        self._migration_mode_enabled = target
+        self._set_migration_mode_banner(target)
+        if target:
+            self._flash_run_button_attention(duration_ms=1200, flashes=2)
+            clear_fn = getattr(self._plan_store, "clear", None)
+            if callable(clear_fn):
+                with suppress(Exception):
+                    clear_fn()
+            self.migration_mode_changed.emit(True)
+            self.status_message.emit(tr("ai.migrationModeEnteredStatus"), 4000)
             return
-        self._agent_mode = "default"
-        self._set_migration_mode_banner(False)
         self.migration_mode_changed.emit(False)
         self.status_message.emit(tr("ai.migrationModeExitedStatus"), 4000)
 
@@ -1302,5 +1302,3 @@ class AIPanel(QWidget):
 
     def _load_audit(self, trace_id, run_result):
         pass
-
-

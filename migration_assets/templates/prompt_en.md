@@ -15,7 +15,7 @@ Scope boundary:
 Hard requirements:
 - Keep one inventory item per physical tube (tube-level model).
 - Do not invent records, fields, dates, or positions.
-- Use `null` only when allowed by `migration_assets/schema/validation_rules.md`.
+- Use `null` only when allowed by `agent_skills/shared/references/validation_contract.md`.
 - Keep active tubes unique on `(box, position)`.
 - When `cell_line` is configured as required, ensure every inventory record has non-empty `cell_line`; use `"Unknown"` only when the source truly cannot provide it.
 - For any field with `options` defined (including `cell_line`), ensure non-empty values are in the declared options list.
@@ -27,8 +27,8 @@ Hard requirements:
 - If user requests mapping changes, update the proposal and re-confirm before conversion.
 
 Execution discipline:
-1. Follow `migration_assets/templates/runbook_en.md` step by step.
-2. Complete all blocking checks in `migration_assets/templates/acceptance_checklist_en.md`.
+1. Follow `agent_skills/migration/references/runbook_en.md` step by step.
+2. Complete all blocking checks in `agent_skills/migration/assets/acceptance_checklist_en.md`.
 3. Keep `migrate/output/migration_checklist.md` updated as live progress (check items as you complete them).
 4. After precheck, ask user to confirm the field mapping/schema plan before locking `migrate/output/expected_schema.json`.
 5. Deliver final YAML only after all blocking checks pass.

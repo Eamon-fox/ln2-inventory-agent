@@ -1020,7 +1020,7 @@ def test_main_window_ai_migration_mode_signal_routes_through_use_case():
     window = MainWindow.__new__(MainWindow)
     window._migration_mode_use_case = SimpleNamespace(set_mode=MagicMock())
 
-    MainWindow._dispatch_migration_mode_change(window, True, reason="ai_panel")
+    MainWindow._request_migration_mode_change(window, True, reason="ai_panel")
 
     window._migration_mode_use_case.set_mode.assert_called_once_with(
         enabled=True,
@@ -1032,18 +1032,18 @@ def test_main_window_migration_mode_dispatch_falls_back_to_existing_handler():
     from app_gui.main import MainWindow
 
     window = MainWindow.__new__(MainWindow)
-    window._on_migration_mode_changed = MagicMock()
+    window._apply_migration_mode_enabled = MagicMock()
 
-    MainWindow._dispatch_migration_mode_change(window, False, reason="ai_panel")
+    MainWindow._request_migration_mode_change(window, False, reason="ai_panel")
 
-    window._on_migration_mode_changed.assert_called_once_with(False)
+    window._apply_migration_mode_enabled.assert_called_once_with(False)
 
 
 def test_main_window_migration_mode_change_forwards_to_operations_panel():
     from app_gui.main import MainWindow
 
     window = MainWindow.__new__(MainWindow)
-    operations_panel = SimpleNamespace(set_migration_mode=MagicMock())
+    operations_panel = SimpleNamespace(set_migration_mode_enabled=MagicMock())
     migration_mode_badge = SimpleNamespace(setVisible=MagicMock())
     migration_status_indicator = SimpleNamespace(setVisible=MagicMock())
     show_notice = MagicMock()
@@ -1052,11 +1052,11 @@ def test_main_window_migration_mode_change_forwards_to_operations_panel():
     window._migration_status_indicator = migration_status_indicator
     window._show_migration_mode_entry_notice = show_notice
 
-    MainWindow._on_migration_mode_changed(window, True)
-    MainWindow._on_migration_mode_changed(window, False)
+    MainWindow._apply_migration_mode_enabled(window, True)
+    MainWindow._apply_migration_mode_enabled(window, False)
 
-    assert operations_panel.set_migration_mode.call_args_list[0].args == (True,)
-    assert operations_panel.set_migration_mode.call_args_list[1].args == (False,)
+    assert operations_panel.set_migration_mode_enabled.call_args_list[0].args == (True,)
+    assert operations_panel.set_migration_mode_enabled.call_args_list[1].args == (False,)
     assert migration_mode_badge.setVisible.call_args_list[0].args == (True,)
     assert migration_mode_badge.setVisible.call_args_list[1].args == (False,)
     assert migration_status_indicator.setVisible.call_args_list[0].args == (True,)
@@ -1071,7 +1071,7 @@ def test_main_window_migration_mode_change_ignores_missing_operations_panel():
     window.operations_panel = SimpleNamespace()
     window._show_migration_mode_entry_notice = MagicMock()
 
-    MainWindow._on_migration_mode_changed(window, True)
+    MainWindow._apply_migration_mode_enabled(window, True)
 
 
 def test_main_window_migration_notice_skips_when_suppressed():

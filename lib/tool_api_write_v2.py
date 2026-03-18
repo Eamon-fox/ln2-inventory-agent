@@ -1,6 +1,7 @@
 """V2 write-entry handlers for unified takeout/move tools."""
 
 from .position_fmt import pos_to_display
+from .custom_fields import unsupported_box_fields_issue
 from .validators import validate_box
 from .yaml_ops import load_yaml
 
@@ -29,6 +30,21 @@ def _load_layout_context(
             actor_context=actor_context,
             tool_input=tool_input,
             details={"load_error": str(exc)},
+        )
+
+    unsupported_issue = unsupported_box_fields_issue((data or {}).get("meta"))
+    if unsupported_issue:
+        return None, None, None, api._failure_result(
+            yaml_path=yaml_path,
+            action=audit_action,
+            source=source,
+            tool_name=tool_name,
+            error_code=unsupported_issue.get("error_code", "unsupported_box_fields"),
+            message=unsupported_issue.get("message", "Unsupported dataset model."),
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+            details=unsupported_issue.get("details"),
         )
 
     layout = api._get_layout(data)

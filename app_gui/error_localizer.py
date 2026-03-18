@@ -72,6 +72,10 @@ _ERROR_DEFAULTS_EN = {
     "renumber_mode_required": "renumber_mode is required when removing a middle box.",
     "rollback_backup_invalid": "Selected backup is invalid for current dataset.",
     "rollback_failed": "Rollback failed.",
+    "unsupported_box_fields": (
+        "Unsupported dataset model: meta.box_fields is no longer supported. "
+        "Use a single global meta.custom_fields schema."
+    ),
     "invalid_dataset_name": "Dataset name is invalid.",
     "dataset_name_unchanged": "Dataset name is unchanged.",
     "dataset_name_conflict": "Target dataset already exists.",

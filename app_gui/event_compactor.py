@@ -240,6 +240,6 @@ def compact_operation_event_for_context(event: Mapping[str, Any]) -> Dict[str, A
     }
     hint = _EVENT_HINTS.get(event_type)
     if hint:
-        payload["_hint"] = hint
+        payload["gui_hint"] = hint
 
     return payload

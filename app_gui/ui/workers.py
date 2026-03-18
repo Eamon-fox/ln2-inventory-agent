@@ -19,7 +19,6 @@ class AgentRunWorker(QObject):
         custom_prompt="",
         plan_store=None,
         provider=None,
-        agent_mode="default",
     ):
         super().__init__()
         self._bridge = bridge
@@ -32,7 +31,6 @@ class AgentRunWorker(QObject):
         self._custom_prompt = str(custom_prompt or "")
         self._plan_store = plan_store
         self._provider = provider
-        self._agent_mode = str(agent_mode or "default")
         self._tool_runner = None
         self._llm_client = None
         self._stop_event = threading.Event()
@@ -83,7 +81,6 @@ class AgentRunWorker(QObject):
                 _expose_llm=self._receive_llm,
                 provider=self._provider,
                 stop_event=self._stop_event,
-                agent_mode=self._agent_mode,
             )
             if not isinstance(payload, dict):
                 payload = {"ok": False, "message": "Unexpected response"}

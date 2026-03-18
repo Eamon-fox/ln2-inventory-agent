@@ -19,7 +19,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app_gui.tool_bridge import GuiToolBridge
-from agent.tool_access_profiles import MIGRATION_ALLOWED_TOOLS
 from lib.inventory_paths import create_managed_dataset_yaml_path
 
 
@@ -87,7 +86,7 @@ inventory:
                 full_records_for_gui=True,
             )
 
-    def test_run_agent_query_migration_mode_uses_restricted_tool_profile(self):
+    def test_run_agent_query_builds_runner_without_access_profile(self):
         with tempfile.TemporaryDirectory(prefix="ln2_bridge_") as install_dir, patch(
             "lib.inventory_paths.get_install_dir",
             return_value=install_dir,
@@ -108,16 +107,13 @@ inventory:
                 response = bridge.run_agent_query(
                     yaml_path=str(path),
                     query="run migration flow",
-                    agent_mode="migration",
                 )
 
             self.assertTrue(response.get("ok"))
             kwargs = runner_cls.call_args.kwargs
             self.assertEqual(str(path), kwargs.get("yaml_path"))
-            self.assertFalse(kwargs.get("expose_inventory_context"))
-            allowed_tools = set(kwargs.get("allowed_tools") or [])
-            self.assertEqual(set(MIGRATION_ALLOWED_TOOLS), allowed_tools)
-            self.assertNotIn("search_records", allowed_tools)
+            self.assertNotIn("allowed_tools", kwargs)
+            self.assertNotIn("expose_inventory_context", kwargs)
 
 
 if __name__ == "__main__":

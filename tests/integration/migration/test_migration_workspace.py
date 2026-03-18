@@ -19,7 +19,7 @@ from app_gui.migration_workspace import MigrationWorkspaceError, MigrationWorksp
 def _create_workspace(root: Path):
     (root / "inputs").mkdir(parents=True, exist_ok=True)
     (root / "output").mkdir(parents=True, exist_ok=True)
-    template = root.parent / "migration_assets" / "templates" / "acceptance_checklist_en.md"
+    template = root.parent / "agent_skills" / "migration" / "assets" / "acceptance_checklist_en.md"
     template.parent.mkdir(parents=True, exist_ok=True)
     template.write_text(
         "# Session Checklist\n\n- [ ] Item A\n",
@@ -45,8 +45,9 @@ def test_workspace_init_bootstraps_from_internal_layout_when_available():
         internal_template = (
             install_root
             / "_internal"
-            / "migration_assets"
-            / "templates"
+            / "agent_skills"
+            / "migration"
+            / "assets"
             / "acceptance_checklist_en.md"
         )
         internal_template.parent.mkdir(parents=True, exist_ok=True)
@@ -60,8 +61,9 @@ def test_workspace_init_bootstraps_from_internal_layout_when_available():
         assert (install_root / "migrate" / "output").is_dir()
         assert (
             install_root
-            / "migration_assets"
-            / "templates"
+            / "agent_skills"
+            / "migration"
+            / "assets"
             / "acceptance_checklist_en.md"
         ).is_file()
 
@@ -184,7 +186,7 @@ def test_stage_input_files_fails_when_checklist_template_missing():
     with tempfile.TemporaryDirectory() as td:
         root = Path(td) / "migrate"
         _create_workspace(root)
-        template = root.parent / "migration_assets" / "templates" / "acceptance_checklist_en.md"
+        template = root.parent / "agent_skills" / "migration" / "assets" / "acceptance_checklist_en.md"
         template.unlink()
 
         src = Path(td) / "input.csv"

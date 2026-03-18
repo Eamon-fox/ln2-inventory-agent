@@ -451,6 +451,19 @@ TOOL_CONTRACTS = {
             "additionalProperties": False,
         },
     },
+    "use_skill": {
+        "description": "Load one built-in skill by exact skill name and return its instructions plus bundled resource lists.",
+        "notes": "Use this when a request matches an advertised built-in skill. Call it explicitly instead of silently reading skill files.",
+        "_migration": True,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "skill_name": {"type": "string"},
+            },
+            "required": ["skill_name"],
+            "additionalProperties": False,
+        },
+    },
     "question": {
         "description": "Ask one clarifying question with explicit options.",
         "notes": "question tool is not a write tool and must run alone.",
