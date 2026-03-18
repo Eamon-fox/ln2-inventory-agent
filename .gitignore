@@ -19,6 +19,8 @@ build/
 .env.*.local
 .claude/settings.local.json
 .claude/worktrees/
+.venv/
+.venv311/
 
 # Project Data
 ln2_inventory.yaml
@@ -49,6 +51,7 @@ Thumbs.db
 .tmp_opencode/
 .ruff_cache/
 debug_output/
+build-py311/
 
 # Fixed migrate workspace (runtime user data)
 migrate/manifest.json
