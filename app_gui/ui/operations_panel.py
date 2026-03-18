@@ -474,7 +474,7 @@ class OperationsPanel(QWidget):
         locked = self._is_write_locked_by_migration_mode()
         banner = getattr(self, "_migration_mode_banner", None)
         if banner is not None:
-            banner.setVisible(locked)
+            banner.setVisible(False)
         overlay = getattr(self, "_migration_lock_overlay", None)
         if overlay is not None:
             overlay.setVisible(locked)

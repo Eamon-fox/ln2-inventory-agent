@@ -1046,11 +1046,9 @@ def test_main_window_migration_mode_change_forwards_to_operations_panel():
     operations_panel = SimpleNamespace(set_migration_mode_enabled=MagicMock())
     migration_mode_badge = SimpleNamespace(setVisible=MagicMock())
     migration_status_indicator = SimpleNamespace(setVisible=MagicMock())
-    show_notice = MagicMock()
     window.operations_panel = operations_panel
     window.migration_mode_badge = migration_mode_badge
     window._migration_status_indicator = migration_status_indicator
-    window._show_migration_mode_entry_notice = show_notice
 
     MainWindow._apply_migration_mode_enabled(window, True)
     MainWindow._apply_migration_mode_enabled(window, False)
@@ -1061,7 +1059,6 @@ def test_main_window_migration_mode_change_forwards_to_operations_panel():
     assert migration_mode_badge.setVisible.call_args_list[1].args == (False,)
     assert migration_status_indicator.setVisible.call_args_list[0].args == (True,)
     assert migration_status_indicator.setVisible.call_args_list[1].args == (False,)
-    show_notice.assert_called_once_with()
 
 
 def test_main_window_repeated_migration_enable_is_noop():
@@ -1072,11 +1069,9 @@ def test_main_window_repeated_migration_enable_is_noop():
     operations_panel = SimpleNamespace(set_migration_mode_enabled=MagicMock())
     migration_mode_badge = SimpleNamespace(setVisible=MagicMock())
     migration_status_indicator = SimpleNamespace(setVisible=MagicMock())
-    show_notice = MagicMock()
     window.operations_panel = operations_panel
     window.migration_mode_badge = migration_mode_badge
     window._migration_status_indicator = migration_status_indicator
-    window._show_migration_mode_entry_notice = show_notice
 
     MainWindow._apply_migration_mode_enabled(window, True)
     MainWindow._apply_migration_mode_enabled(window, True)
@@ -1084,7 +1079,6 @@ def test_main_window_repeated_migration_enable_is_noop():
     operations_panel.set_migration_mode_enabled.assert_called_once_with(True)
     migration_mode_badge.setVisible.assert_called_once_with(True)
     migration_status_indicator.setVisible.assert_called_once_with(True)
-    show_notice.assert_called_once_with()
 
 
 def test_main_window_migration_mode_change_ignores_missing_operations_panel():
@@ -1092,8 +1086,6 @@ def test_main_window_migration_mode_change_ignores_missing_operations_panel():
 
     window = MainWindow.__new__(MainWindow)
     window.operations_panel = SimpleNamespace()
-    window._show_migration_mode_entry_notice = MagicMock()
-
     MainWindow._apply_migration_mode_enabled(window, True)
 
 

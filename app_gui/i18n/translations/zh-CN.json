@@ -160,12 +160,12 @@
     "importSelectSourcesTitle": "选择待导入源文件",
     "importStageFailed": "准备输入文件失败：{message}",
     "importOutputMissing": "未找到迁移输出文件：{path}\\n请先完成迁移，再重试导入。",
-    "importJourneyStaged": "输入文件已准备完成。请到 AI 面板点击“发送”开始迁移。",
+    "importJourneyStaged": "迁移内容已填入 AI 面板。确认后点击“发送”即可开始。",
     "importAiPromptFallback": "请对已暂存输入执行迁移，校验迁移结果，使用 CONFIRM_IMPORT 向用户确认后再执行导入。",
     "migrationModeBadge": "迁移模式",
     "migrationModeStatus": "迁移进行中：操作已锁定",
     "migrationModeDialogTitle": "迁移模式",
-    "migrationModeDialogText": "已进入迁移模式。为防止 AI 迁移过程中误改当前打开的数据集，Operations 面板已锁定。请在 AI 面板查看迁移进度，并按后续提示继续操作。",
+    "migrationModeDialogText": "已进入迁移模式。为避免误修改当前数据集，Operations 面板已锁定。",
     "doNotShowAgain": "不再提示"
   },
   "overview": {
@@ -483,8 +483,8 @@
     "editFieldFailed": "编辑失败：{error}",
     "editNoChange": "未检测到变更。",
     "migrationWriteLocked": "迁移模式进行中，手动写操作已锁定。",
-    "migrationModeBanner": "迁移模式进行中：在导入成功并完成数据集切换前，手动操作已锁定。请在 AI 面板查看迁移进度。",
-    "migrationOverlayHint": "迁移模式进行中，为避免误修改当前打开的数据集，手动操作已临时锁定。请在 AI 面板查看迁移进度。"
+    "migrationModeBanner": "迁移进行中：手动操作已锁定。",
+    "migrationOverlayHint": "迁移进行中，此面板已锁定，避免误修改当前数据集。"
   },
   "ai": {
     "title": "AI 助手",
@@ -552,8 +552,8 @@
       "rollbackUnavailable": "回滚：不可用 | {reason}",
       "backupPath": "备份：{path}"
     },
-    "migrationModeBanner": "迁移模式进行中：AI 正在准备或导入其他数据集，当前数据集的手动操作已锁定。请查看当前迁移进度，并按后续提示继续操作。",
-    "migrationModeEnteredStatus": "已进入迁移模式，手动写操作已锁定。请查看当前迁移进度。",
+    "migrationModeBanner": "迁移进行中：当前数据集的手动操作已锁定。",
+    "migrationModeEnteredStatus": "已进入迁移模式，手动写操作已锁定。",
     "migrationModeExitedStatus": "已退出迁移模式，手动写操作已恢复。",
     "activityThinking": "思考中...",
     "activityRunningTool": "正在执行 {tool}..."

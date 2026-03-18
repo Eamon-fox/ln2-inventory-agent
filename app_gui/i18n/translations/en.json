@@ -139,7 +139,7 @@
     "importStartupMessage": "This dataset is empty. Choose one path to continue:\n1) Create a new inventory\n2) Import legacy data and migrate it with AI",
     "importExistingDataTitle": "Import Legacy Data",
     "importExistingDataHint": "Supports legacy YAML/Excel imports. After import, use the AI panel to migrate and validate.",
-    "importJourneyStaged": "Input files staged. Go to the AI panel and click \"Send\" to start migration.",
+    "importJourneyStaged": "The migration prompt is ready in the AI panel. Review it, then click \"Send\" to start.",
     "importAiPromptFallback": "Run migration for staged inputs, validate migration output, ask user confirmation with CONFIRM_IMPORT, then import.",
     "importJourneyOpened": "Imported and opened dataset.",
     "importCandidateRequired": "Please choose a candidate YAML file first.",
@@ -165,7 +165,7 @@
     "migrationModeBadge": "Migration Mode",
     "migrationModeStatus": "Migration in progress: Operations locked",
     "migrationModeDialogTitle": "Migration Mode",
-    "migrationModeDialogText": "Migration mode is now active. The Operations panel is locked to prevent accidental edits to the currently opened dataset while AI migration runs. Check progress in the AI panel and follow the next prompt there.",
+    "migrationModeDialogText": "Migration mode is active. The Operations panel is locked to prevent accidental edits to the current dataset.",
     "doNotShowAgain": "Do not show again"
   },
   "overview": {
@@ -490,8 +490,8 @@
     "editFieldFailed": "Edit failed: {error}",
     "editNoChange": "No change detected.",
     "migrationWriteLocked": "Migration mode is active. Manual write operations are locked.",
-    "migrationModeBanner": "Migration mode is active. Manual Operations are locked until import succeeds and dataset switch is complete. Check progress in the AI panel.",
-    "migrationOverlayHint": "Migration mode is active. Manual operations are temporarily locked to avoid modifying the currently opened dataset. Check progress in the AI panel."
+    "migrationModeBanner": "Migration in progress. Manual operations are locked.",
+    "migrationOverlayHint": "Migration in progress. This panel is locked to prevent accidental edits to the current dataset."
   },
   "ai": {
     "title": "AI Copilot",
@@ -559,8 +559,8 @@
       "rollbackUnavailable": "Rollback: unavailable | {reason}",
       "backupPath": "Backup: {path}"
     },
-    "migrationModeBanner": "Migration mode is active: AI is preparing or importing another dataset. Manual Operations on the current dataset are locked. Check current progress and follow the next prompt when needed.",
-    "migrationModeEnteredStatus": "Migration mode enabled. Manual write operations are locked. Check current progress in the AI panel.",
+    "migrationModeBanner": "Migration in progress. Manual actions on the current dataset are locked.",
+    "migrationModeEnteredStatus": "Migration mode enabled. Manual write operations are locked.",
     "migrationModeExitedStatus": "Migration mode ended. Manual write operations are unlocked.",
     "activityThinking": "Thinking...",
     "activityRunningTool": "Running {tool}..."

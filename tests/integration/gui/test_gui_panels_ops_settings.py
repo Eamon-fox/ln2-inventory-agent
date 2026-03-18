@@ -27,7 +27,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         self.assertTrue(panel._migration_mode_banner.isHidden())
         self.assertTrue(panel._migration_lock_overlay.isHidden())
         panel.set_migration_mode_enabled(True)
-        self.assertFalse(panel._migration_mode_banner.isHidden())
+        self.assertTrue(panel._migration_mode_banner.isHidden())
         self.assertFalse(panel._migration_lock_overlay.isHidden())
         panel.set_migration_mode_enabled(False)
         self.assertTrue(panel._migration_mode_banner.isHidden())

@@ -639,11 +639,6 @@ class MainWindow(QMainWindow):
         status_indicator = getattr(self, "_migration_status_indicator", None)
         if status_indicator is not None:
             status_indicator.setVisible(locked)
-        if locked:
-            show_notice_fn = getattr(self, "_show_migration_mode_entry_notice", None)
-            if callable(show_notice_fn):
-                with suppress(Exception):
-                    show_notice_fn()
         operations_panel = getattr(self, "operations_panel", None)
         if operations_panel is not None and hasattr(operations_panel, "set_migration_mode_enabled"):
             operations_panel.set_migration_mode_enabled(locked)
