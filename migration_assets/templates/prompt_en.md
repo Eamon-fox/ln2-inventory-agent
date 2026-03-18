@@ -6,6 +6,12 @@ Authoritative context:
 - Treat files currently present in `migrate/inputs/` as the source of truth.
 - Final output path is exactly `migrate/output/ln2_inventory.yaml`.
 
+Scope boundary:
+- Your working directories are ONLY `migrate/inputs/`, `migrate/normalized/`, and `migrate/output/`.
+- Do NOT read from `inventories/` or any existing managed dataset during normal migration flow.
+- Reading existing inventory is allowed ONLY when the user explicitly asks to "compare with existing dataset" or similar.
+- Migration creates a NEW managed dataset. It never modifies, merges into, or deduplicates against an existing one.
+
 Hard requirements:
 - Keep one inventory item per physical tube (tube-level model).
 - Do not invent records, fields, dates, or positions.

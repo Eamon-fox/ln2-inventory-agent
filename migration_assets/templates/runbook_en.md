@@ -7,6 +7,7 @@ Follow every phase in order. Do not skip validation.
 1. List and inspect all source files currently present in `migrate/inputs/`.
 2. Confirm required output path: `migrate/output/ln2_inventory.yaml`.
 3. Track execution progress in `migrate/output/migration_checklist.md` throughout this run.
+4. Scope reminder: work ONLY within `migrate/inputs/`, `migrate/normalized/`, and `migrate/output/`. Do not read from `inventories/` unless the user explicitly requests a comparison with an existing dataset.
 
 ## Phase 2 - Inspect source structure
 
