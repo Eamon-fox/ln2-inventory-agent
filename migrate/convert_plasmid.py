@@ -7,7 +7,11 @@ import csv
 import re
 import yaml
 from datetime import datetime
-from pathlib import Path
+
+try:
+    from migrate.path_context import DEFAULT_SOURCE_SHEET, OUTPUT_YAML, repo_path
+except ImportError:
+    from path_context import DEFAULT_SOURCE_SHEET, OUTPUT_YAML, repo_path
 
 def parse_storage(storage_str):
     """解析Storage列，返回box编号"""
@@ -126,10 +130,9 @@ def convert_csv_to_inventory(csv_path, existing_inventory_path=None):
     return records
 
 def main():
-    base_dir = Path(__file__).parent.parent
-    csv_path = base_dir / 'migrate/normalized/source/sheets/01_Sheet1.csv'
-    existing_inventory_path = base_dir / 'inventories/plasmid_test/inventory.yaml'
-    output_path = base_dir / 'migrate/output/ln2_inventory.yaml'
+    csv_path = DEFAULT_SOURCE_SHEET
+    existing_inventory_path = repo_path('inventories', 'plasmid_test', 'inventory.yaml')
+    output_path = OUTPUT_YAML
     
     print(f"读取CSV文件: {csv_path}")
     records = convert_csv_to_inventory(csv_path, existing_inventory_path)

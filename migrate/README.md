@@ -21,6 +21,10 @@ Required output contract stays unchanged:
 - Top-level keys: `meta`, `inventory`
 - Data model: tube-level (`inventory[]` item = one physical tube)
 
+Path convention:
+- File tools and shell commands should both use repo-relative paths.
+- When you mean the migration workspace, spell paths explicitly as `migrate/...`.
+
 
 ---
 
