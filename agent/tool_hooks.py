@@ -256,15 +256,6 @@ def _before_fs_edit(_tool_name, payload, context):
     return _patch_payload_path_under_migrate(payload, context, field_name="filePath")
 
 
-def _before_shell(_tool_name, payload, context):
-    return _patch_payload_path_under_migrate(
-        payload,
-        context,
-        field_name="workdir",
-        default_rel="migrate",
-    )
-
-
 def _after_use_skill(_tool_name, payload, result, context):
     if not isinstance(result, dict) or not result.get("ok"):
         return {}
@@ -399,7 +390,9 @@ def _after_shell(tool_name, _payload, result, context):
         or result.get("effective_cwd")
         or ""
     ).strip()
-    display_path = _repo_relative_display(resolved_path, repo_root=repo_root) or "migrate"
+    display_path = _repo_relative_display(resolved_path, repo_root=repo_root) or "."
+    if display_path == ".":
+        display_path = "repo root"
     migrate_root = str(context.get("migrate_root") or "").strip()
     write_root = _repo_relative_display(migrate_root, repo_root=repo_root) or "migrate"
     return {
@@ -443,8 +436,8 @@ DEFAULT_TOOL_HOOK_SPECS = {
     "fs_read": ToolHookSpec(after=_after_fs_read),
     "fs_write": ToolHookSpec(before=_before_fs_write, after=_after_fs_write),
     "fs_edit": ToolHookSpec(before=_before_fs_edit, after=_after_fs_edit),
-    "bash": ToolHookSpec(before=_before_shell, after=_after_shell),
-    "powershell": ToolHookSpec(before=_before_shell, after=_after_shell),
+    "bash": ToolHookSpec(after=_after_shell),
+    "powershell": ToolHookSpec(after=_after_shell),
     "import_migration_output": ToolHookSpec(after=_after_import_migration_output),
 }
 

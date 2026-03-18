@@ -211,7 +211,7 @@ TOOL_CONTRACTS = {
                 },
                 "workdir": {
                     "type": "string",
-                    "description": "Optional repository-relative working directory under migrate/ (defaults to migrate/).",
+                    "description": "Optional repository-relative working directory under repo root (defaults to repo root).",
                 },
             },
             "required": ["command", "description"],
@@ -238,7 +238,7 @@ TOOL_CONTRACTS = {
                 },
                 "workdir": {
                     "type": "string",
-                    "description": "Optional repository-relative working directory under migrate/ (defaults to migrate/).",
+                    "description": "Optional repository-relative working directory under repo root (defaults to repo root).",
                 },
             },
             "required": ["command", "description"],

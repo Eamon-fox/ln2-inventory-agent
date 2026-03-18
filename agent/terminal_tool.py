@@ -14,9 +14,7 @@ SUPPORTED_SHELL_ENGINES = {SHELL_ENGINE_BASH, SHELL_ENGINE_POWERSHELL}
 
 def default_terminal_cwd():
     repo_root = Path(__file__).resolve().parents[1]
-    migrate_root = repo_root / "migrate"
-    target = migrate_root if migrate_root.is_dir() else repo_root
-    return str(target)
+    return str(repo_root)
 
 
 def _default_terminal_cwd():
@@ -34,11 +32,17 @@ def _resolve_effective_cwd(cwd=None):
     return str((Path(_default_terminal_cwd()) / candidate).resolve(strict=False))
 
 
-def _child_process_env():
+def _child_process_env(extra_env=None):
     child_env = dict(os.environ)
     # Force UTF-8 for child Python processes to avoid GBK/UTF-8 decode mismatch on Windows.
     child_env["PYTHONUTF8"] = "1"
     child_env["PYTHONIOENCODING"] = "utf-8"
+    if isinstance(extra_env, dict):
+        for key, value in extra_env.items():
+            name = str(key or "").strip()
+            if not name:
+                continue
+            child_env[name] = str(value or "")
     return child_env
 
 
@@ -81,6 +85,7 @@ def run_terminal_command(
     timeout_seconds=DEFAULT_TERMINAL_TIMEOUT_SECONDS,
     cwd=None,
     engine=SHELL_ENGINE_BASH,
+    extra_env=None,
 ):
     """Execute one terminal command and return raw combined terminal output."""
     command_text = str(command or "")
@@ -120,7 +125,7 @@ def run_terminal_command(
             text=True,
             encoding="utf-8",
             errors="replace",
-            env=_child_process_env(),
+            env=_child_process_env(extra_env=extra_env),
         )
     except Exception as exc:
         return {

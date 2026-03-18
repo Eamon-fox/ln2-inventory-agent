@@ -646,16 +646,16 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         self.assertEqual(0, response.get("exit_code"))
         self.assertIn(marker, str(response.get("raw_output") or ""))
         self.assertIn("Shell engine: bash.", str(response.get("_hint") or ""))
-        self.assertIn("Current working directory: migrate", str(response.get("_hint") or ""))
+        self.assertIn("Current working directory: repo root", str(response.get("_hint") or ""))
 
-    def test_bash_normalizes_relative_workdir_under_migrate(self):
+    def test_bash_accepts_explicit_repo_relative_workdir(self):
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         response = runner.run(
             "bash",
             {
                 "command": "pwd",
                 "description": "print cwd",
-                "workdir": "output",
+                "workdir": "migrate/output",
             },
         )
 

@@ -13,6 +13,7 @@ from .file_ops_policy import (
     resolve_write_path,
 )
 from .terminal_tool import DEFAULT_TERMINAL_TIMEOUT_SECONDS, run_terminal_command
+from .tool_runtime_paths import build_migration_path_env
 
 
 def _as_bool(value, default=False):
@@ -256,6 +257,7 @@ def _handle_shell(args, *, repo_root, migrate_root, engine):
         timeout_seconds=(timeout_ms / 1000.0),
         cwd=str(workdir),
         engine=engine,
+        extra_env=build_migration_path_env(repo_root, migrate_root),
     )
     if not isinstance(response, dict):
         return _error_payload("terminal_exec_failed", "Terminal execution returned invalid payload.", repo_root=repo_root)

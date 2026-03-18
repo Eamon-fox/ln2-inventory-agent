@@ -101,6 +101,7 @@ def test_run_success_stages_inputs_and_hands_off_to_ai():
     assert "conversion_report.json" in result.ai_prompt
     assert "normalized" in result.ai_prompt
     assert "migration_checklist.md" in result.ai_prompt
+    assert "repo-relative paths" in result.ai_prompt
     assert "expected_schema.json" in result.ai_prompt
     assert "APPROVE_MAPPING" in result.ai_prompt
     assert "REVISE_MAPPING" in result.ai_prompt

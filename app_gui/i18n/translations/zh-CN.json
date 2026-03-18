@@ -626,7 +626,7 @@
       "path.escape_detected": "路径越界（超出允许范围）。",
       "path.scope_read_denied": "读取路径不在允许范围内。",
       "path.scope_write_denied": "仅允许在 migrate/ 目录下写入。",
-      "path.scope_workdir_denied": "workdir 必须位于 migrate/ 目录下。",
+      "path.scope_workdir_denied": "workdir 必须位于仓库目录范围内。",
       "path.backup_scope_denied": "备份路径必须位于当前数据集 backups/ 目录下。",
       "path.not_found": "路径不存在。",
       "path.not_file": "该路径不是文件。",

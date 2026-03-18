@@ -45,3 +45,11 @@ def test_templates_define_live_session_checklist_tracking():
     assert "migrate/output/migration_checklist.md" in prompt_text
     assert "migrate/output/migration_checklist.md" in runbook_text
     assert "migrate/output/migration_checklist.md" in checklist_text
+
+
+def test_templates_require_repo_relative_paths_for_shell_and_file_tools():
+    prompt_text = _read(PROMPT_TEMPLATE)
+    runbook_text = _read(RUNBOOK_TEMPLATE)
+
+    assert "repo-relative paths" in prompt_text
+    assert "repo-relative paths" in runbook_text

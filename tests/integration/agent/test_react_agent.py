@@ -930,7 +930,8 @@ class ReactAgentTests(ManagedPathTestCase):
         self.assertIn(f"- repo_root: {fileops_repo_root}", content)
         self.assertIn("- read scope: entire repo (repo-relative paths resolve from repo_root)", content)
         self.assertIn(f"- write scope: migrate/ only ({fileops_migrate_root})", content)
-        self.assertIn("- shell default cwd: migrate/", content)
+        self.assertIn("- shell default cwd: repo root", content)
+        self.assertIn("- shell workdir uses repo-relative paths too", content)
         self.assertIn("- all tool paths must be repo-relative (no absolute paths)", content)
 
     def test_system_prompt_includes_directory_context_in_migration_context(self):
@@ -949,7 +950,8 @@ class ReactAgentTests(ManagedPathTestCase):
         self.assertIn("- repo_root:", content)
         self.assertIn("- read scope: entire repo (repo-relative paths resolve from repo_root)", content)
         self.assertIn("- write scope: migrate/ only (", content)
-        self.assertIn("- shell default cwd: migrate/", content)
+        self.assertIn("- shell default cwd: repo root", content)
+        self.assertIn("- shell workdir uses repo-relative paths too", content)
         self.assertIn("- all tool paths must be repo-relative (no absolute paths)", content)
 
     def test_run_start_emits_fileops_roots_from_managed_inventory_path(self):

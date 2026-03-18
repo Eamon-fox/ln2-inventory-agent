@@ -57,13 +57,13 @@ def test_resolve_repo_write_path_requires_migrate_scope(tmp_path):
     assert denied.value.code == "path.scope_write_denied"
 
 
-def test_resolve_repo_workdir_path_defaults_to_migrate(tmp_path):
+def test_resolve_repo_workdir_path_defaults_to_repo_root(tmp_path):
     repo = tmp_path / "repo"
     migrate = repo / "migrate"
     migrate.mkdir(parents=True)
     repo_root, migrate_root = normalize_repo_roots(repo, migrate)
     resolved = resolve_repo_workdir_path(repo_root, migrate_root, None)
-    assert resolved == migrate_root
+    assert resolved == repo_root
 
 
 class PathPolicyDatasetTests(ManagedPathTestCase):

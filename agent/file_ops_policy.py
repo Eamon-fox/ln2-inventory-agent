@@ -59,9 +59,9 @@ def resolve_write_path(repo_root, migrate_root, path_value, *, default_rel="."):
 
 
 def resolve_shell_workdir(repo_root, migrate_root, workdir_value):
-    """Resolve shell working directory; it must stay inside migrate root."""
+    """Resolve shell working directory; it must stay inside repo root."""
 
     try:
-        return resolve_repo_workdir_path(repo_root, migrate_root, workdir_value, default_rel="migrate")
+        return resolve_repo_workdir_path(repo_root, migrate_root, workdir_value, default_rel=".")
     except Exception as exc:  # pragma: no cover - tiny adapter
         raise _convert_policy_error(exc)

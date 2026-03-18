@@ -124,18 +124,18 @@ def resolve_repo_write_path(repo_root: Any, migrate_root: Any, raw_path: Any, *,
     return resolved
 
 
-def resolve_repo_workdir_path(repo_root: Any, migrate_root: Any, raw_path: Any, *, default_rel: str = "migrate") -> Path:
-    """Resolve shell workdir and restrict it to migrate root."""
+def resolve_repo_workdir_path(repo_root: Any, migrate_root: Any, raw_path: Any, *, default_rel: str = ".") -> Path:
+    """Resolve shell workdir and restrict it to repo root."""
 
     repo, migrate = normalize_repo_roots(repo_root, migrate_root)
     if raw_path in (None, ""):
-        return migrate
+        return repo
     resolved = resolve_under_root(repo, raw_path, default_rel=default_rel, allow_absolute=False)
     _assert_under_root(
         resolved,
-        migrate,
+        repo,
         code="path.scope_workdir_denied",
-        message="workdir must stay under migrate/.",
+        message="workdir must stay within repository scope.",
     )
     return resolved
 

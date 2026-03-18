@@ -20,7 +20,7 @@ class ToolHookManagerTests(unittest.TestCase):
             "trace_id": "trace-demo",
         }
 
-    def test_bash_before_hook_patches_default_workdir(self):
+    def test_bash_before_hook_leaves_default_workdir_unset(self):
         hook_result = self.manager.run_before(
             "bash",
             {"command": "pwd", "description": "print cwd"},
@@ -32,9 +32,9 @@ class ToolHookManagerTests(unittest.TestCase):
             hook_result,
         )
 
-        self.assertEqual("migrate", patched.get("workdir"))
+        self.assertIsNone(patched.get("workdir"))
 
-    def test_bash_before_hook_normalizes_relative_workdir_under_migrate(self):
+    def test_bash_before_hook_preserves_explicit_repo_relative_workdir(self):
         hook_result = self.manager.run_before(
             "bash",
             {"command": "pwd", "description": "print cwd", "workdir": "output"},
@@ -46,7 +46,7 @@ class ToolHookManagerTests(unittest.TestCase):
             hook_result,
         )
 
-        self.assertEqual("migrate/output", patched.get("workdir"))
+        self.assertEqual("output", patched.get("workdir"))
 
     def test_default_hook_specs_are_explicit_per_tool(self):
         self.assertEqual(

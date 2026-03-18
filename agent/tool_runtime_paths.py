@@ -19,6 +19,28 @@ def derive_migrate_root(repo_root):
     return (Path(repo_root) / "migrate").resolve(strict=False)
 
 
+def build_migration_path_env(repo_root, migrate_root=None):
+    repo = Path(str(repo_root or "")).resolve(strict=False)
+    migrate = (
+        Path(str(migrate_root or "")).resolve(strict=False)
+        if str(migrate_root or "").strip()
+        else derive_migrate_root(repo)
+    )
+    inputs = migrate / "inputs"
+    normalized = migrate / "normalized"
+    output = migrate / "output"
+    return {
+        "LN2_REPO_ROOT": str(repo),
+        "LN2_MIGRATE_ROOT": str(migrate),
+        "LN2_MIGRATE_INPUTS": str(inputs),
+        "LN2_MIGRATE_NORMALIZED": str(normalized),
+        "LN2_MIGRATE_OUTPUT": str(output),
+        "LN2_MIGRATE_OUTPUT_YAML": str(output / "ln2_inventory.yaml"),
+        "LN2_MIGRATE_CHECKLIST": str(output / "migration_checklist.md"),
+        "LN2_MIGRATE_VALIDATION_REPORT": str(output / "validation_report.json"),
+    }
+
+
 def build_tool_hook_context(yaml_path, *, trace_id=None):
     yaml_text = str(yaml_path or "").strip()
     repo_root = ""

@@ -25,5 +25,6 @@ Execution discipline:
 1. Follow `agent_skills/migration/references/runbook_en.md` step by step.
 2. Complete all blocking checks in `agent_skills/migration/assets/acceptance_checklist_en.md`.
 3. Keep `migrate/output/migration_checklist.md` updated as live progress.
-4. After precheck, ask user to confirm the field mapping/schema plan before locking `migrate/output/expected_schema.json`.
-5. Deliver final YAML only after blocking checks pass.
+4. Use repo-relative paths consistently across file tools and shell commands; when you mean the migration workspace, spell paths as `migrate/...`.
+5. After precheck, ask user to confirm the field mapping/schema plan before locking `migrate/output/expected_schema.json`.
+6. Deliver final YAML only after blocking checks pass.

@@ -633,7 +633,7 @@
       "path.escape_detected": "Path escapes allowed scope.",
       "path.scope_read_denied": "Read path is outside allowed scope.",
       "path.scope_write_denied": "Write operations are allowed only under migrate/.",
-      "path.scope_workdir_denied": "workdir must stay under migrate/.",
+      "path.scope_workdir_denied": "workdir must stay within repository scope.",
       "path.backup_scope_denied": "Backup path must stay under dataset backups/.",
       "path.not_found": "Path not found.",
       "path.not_file": "Path is not a file.",

@@ -179,10 +179,10 @@ def _hint_for_error(self, tool_name, payload):
     if error_code in {"path_outside_scope", "path.escape_detected", "path.scope_read_denied"}:
         return _path_scope_hint(self)
 
-    if error_code in {"write_not_allowed", "path.scope_write_denied", "path.scope_workdir_denied"}:
+    if error_code in {"write_not_allowed", "path.scope_write_denied"}:
         return _write_scope_hint(self)
 
-    if error_code == "path.absolute_not_allowed":
+    if error_code in {"path.absolute_not_allowed", "path.scope_workdir_denied"}:
         return _path_scope_hint(self)
 
     if error_code == "path.backup_scope_denied":

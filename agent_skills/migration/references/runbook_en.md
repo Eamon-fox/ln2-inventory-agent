@@ -7,6 +7,7 @@ Follow every phase in order. Do not skip validation.
 1. List and inspect all source files currently present in `migrate/inputs/`.
 2. Confirm required output path: `migrate/output/ln2_inventory.yaml`.
 3. Track execution progress in `migrate/output/migration_checklist.md` throughout this run.
+4. Use repo-relative paths consistently across file tools and shell commands; when you mean the migration workspace, spell paths as `migrate/...`.
 
 ## Phase 2 - Inspect source structure
 

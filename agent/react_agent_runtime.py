@@ -429,7 +429,8 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
             f"- repo_root: {fileops_repo_root}\n"
             "- read scope: entire repo (repo-relative paths resolve from repo_root)\n"
             f"- write scope: migrate/ only ({fileops_migrate_root})\n"
-            "- shell default cwd: migrate/\n"
+            "- shell default cwd: repo root\n"
+            "- shell workdir uses repo-relative paths too\n"
             "- all tool paths must be repo-relative (no absolute paths)"
         )
     skills_prompt = build_skill_catalog_prompt()

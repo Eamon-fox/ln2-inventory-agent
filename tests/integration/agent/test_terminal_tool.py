@@ -26,8 +26,14 @@ class TerminalToolTests(unittest.TestCase):
         self.skipTest("bash is not available in current test runtime")
 
     def _expected_terminal_cwd(self):
-        sandbox = ROOT / "migrate"
-        return str(sandbox if sandbox.is_dir() else ROOT)
+        return str(ROOT)
+
+    def _assert_pwd_output_targets_repo_root(self, raw_output):
+        lines = [line.strip() for line in str(raw_output or "").splitlines() if line.strip()]
+        self.assertTrue(lines, "pwd output should include at least one non-empty line")
+        normalized = lines[-1].replace("\\", "/").rstrip("/").lower()
+        expected_suffix = "/".join(ROOT.parts[-2:]).replace("\\", "/").rstrip("/").lower()
+        self.assertTrue(normalized.endswith(expected_suffix), normalized)
 
     def test_run_terminal_command_nonzero_exit(self):
         self._skip_if_bash_missing()
@@ -56,9 +62,7 @@ class TerminalToolTests(unittest.TestCase):
         self.assertTrue(response["ok"])
         self.assertEqual(0, response.get("exit_code"))
         self.assertEqual(self._expected_terminal_cwd(), response.get("effective_cwd"))
-        observed = str(response.get("raw_output") or "").strip()
-        normalized = observed.replace("\\", "/").rstrip("/")
-        self.assertTrue(normalized.lower().endswith("/migrate"))
+        self._assert_pwd_output_targets_repo_root(response.get("raw_output"))
 
     def test_cd_command_does_not_persist_between_calls(self):
         self._skip_if_bash_missing()
@@ -72,9 +76,7 @@ class TerminalToolTests(unittest.TestCase):
         )
 
         self.assertTrue(second["ok"])
-        observed = str(second.get("raw_output") or "").strip()
-        normalized = observed.replace("\\", "/").rstrip("/")
-        self.assertTrue(normalized.lower().endswith("/migrate"))
+        self._assert_pwd_output_targets_repo_root(second.get("raw_output"))
         self.assertEqual(self._expected_terminal_cwd(), second.get("effective_cwd"))
 
     def test_invalid_engine_rejected(self):
