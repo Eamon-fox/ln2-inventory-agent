@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.5 - 2026-03-19
+
+### Changed
+- Bumped application version metadata from 1.3.4 to 1.3.5.
+- Rebuilt the Windows installer and synchronized release manifest fields for the current repository snapshot.
+
 ## 1.3.4 - 2026-03-18
 
 ### Added

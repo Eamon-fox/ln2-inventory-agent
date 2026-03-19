@@ -1,6 +1,6 @@
 """Single source of truth for application version and update-check constants."""
 
-APP_VERSION: str = "1.3.4"
+APP_VERSION: str = "1.3.5"
 APP_RELEASE_URL: str = "https://github.com/Eamon-fox/snowfox/releases"
 UPDATE_CHECK_URL: str = "https://snowfox-release.oss-cn-beijing.aliyuncs.com/latest.json"
 

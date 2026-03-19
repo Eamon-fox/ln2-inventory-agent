@@ -6,7 +6,7 @@
 
 #define MyAppVersion GetEnv("LN2_AGENT_VERSION")
 #if MyAppVersion == ""
-  #define MyAppVersion "1.3.4"
+  #define MyAppVersion "1.3.5"
 #endif
 
 #define MyAppExeName "SnowFox-" + MyAppVersion + ".exe"
