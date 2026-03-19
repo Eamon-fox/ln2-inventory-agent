@@ -15,13 +15,33 @@ from lib.tool_registry import iter_agent_dispatch_descriptors
 from lib import tool_api_parsers as _tool_parsers
 from lib.inventory_paths import assert_allowed_inventory_yaml_path
 from lib.yaml_ops import load_yaml
-from app_gui.i18n import tr
 from . import tool_runner_handlers as _runner_handlers
 from . import tool_runner_staging as _runner_staging
 from . import tool_runner_validation as _runner_validation
 from . import tool_runner_guidance as _runner_guidance
 from . import tool_hooks as _tool_hooks
 from . import tool_runtime_paths as _tool_runtime_paths
+
+
+def _default_tr(key, default=None, **kwargs):
+    """Passthrough translator — returns the default/key as-is."""
+    text = default if default is not None else key
+    if kwargs:
+        try:
+            return str(text).format(**kwargs)
+        except Exception:
+            return str(text)
+    return str(text)
+
+
+_tr_func = _default_tr
+
+
+def set_agent_tr(fn):
+    """Inject a real i18n translator (e.g. ``app_gui.i18n.tr``) at GUI startup."""
+    global _tr_func
+    if callable(fn):
+        _tr_func = fn
 
 _TOOL_CONTRACTS = TOOL_CONTRACTS
 _WRITE_TOOLS = WRITE_TOOLS
@@ -34,7 +54,7 @@ class AgentToolRunner:
     def _msg(msg_key, default, **kwargs):
         full_key = f"agentToolRunner.{msg_key}"
         try:
-            text = tr(full_key, default=default, **kwargs)
+            text = _tr_func(full_key, default=default, **kwargs)
             if kwargs:
                 try:
                     return str(text).format(**kwargs)
@@ -54,10 +74,12 @@ class AgentToolRunner:
         yaml_path,
         session_id=None,
         plan_store=None,
+        preflight_fn=None,
     ):
         self._yaml_path = assert_allowed_inventory_yaml_path(yaml_path, must_exist=True)
         self._session_id = session_id
         self._plan_store = plan_store
+        self._preflight_fn = preflight_fn
         self._hook_manager = _tool_hooks.build_default_tool_hook_manager()
         # Question tool synchronization
         self._answer_event = threading.Event()
@@ -190,7 +212,7 @@ class AgentToolRunner:
         if value in (None, ""):
             return None
         try:
-            return int(_tool_parsers._coerce_position_value(value, layout=layout, field_name=field_name))
+            return int(_tool_parsers.coerce_position_value(value, layout=layout, field_name=field_name))
         except Exception as exc:
             raise ValueError(
                 AgentToolRunner._msg(
@@ -206,11 +228,11 @@ class AgentToolRunner:
             return None
         if not isinstance(value, (list, tuple, set)):
             raise ValueError("positions must be an array")
-        return _tool_parsers._normalize_positions_input(value, layout=layout)
+        return _tool_parsers.normalize_positions_input(value, layout=layout)
 
     def _parse_slot_payload(self, slot_payload, *, layout, field_name):
         try:
-            box, position = _tool_parsers._parse_slot_payload(
+            box, position = _tool_parsers.parse_slot_payload(
                 slot_payload,
                 layout=layout,
                 field_name=field_name,
@@ -368,7 +390,7 @@ class AgentToolRunner:
                     if position is not None:
                         try:
                             position = int(
-                                _tool_parsers._coerce_position_value(
+                                _tool_parsers.coerce_position_value(
                                     position,
                                     layout=self._load_layout(),
                                     field_name="position",

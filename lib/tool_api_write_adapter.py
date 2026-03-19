@@ -23,7 +23,7 @@ _TOOL_ATTRS: Dict[str, str] = {
     "takeout": "tool_takeout",
     "move": "tool_move",
     "rollback": "tool_rollback",
-    "adjust_box_count": "tool_adjust_box_count",
+    "manage_boxes": "tool_manage_boxes",
     "set_box_tag": "tool_set_box_tag",
     "batch_add_entries": "tool_batch_add_entries",
 }
@@ -378,7 +378,7 @@ def rollback(
     )
 
 
-def adjust_box_count(
+def manage_boxes(
     *,
     yaml_path: str,
     operation: str,
@@ -412,7 +412,7 @@ def adjust_box_count(
         payload["auto_backup"] = auto_backup
     payload.update(tool_kwargs)
     return _invoke_with_backup(
-        "adjust_box_count",
+        "manage_boxes",
         yaml_path=yaml_path,
         actor_context=actor_context,
         source=source,

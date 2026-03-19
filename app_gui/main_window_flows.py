@@ -671,7 +671,7 @@ class ManageBoxesFlow:
                 execution_mode="execute",
             )
         else:
-            response = window.bridge.adjust_box_count(
+            response = window.bridge.manage_boxes(
                 yaml_path=yaml_path,
                 execution_mode="execute",
                 **payload,

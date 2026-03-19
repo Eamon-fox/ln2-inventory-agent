@@ -25,7 +25,7 @@ _POSITION_SCALAR_KEYS = {
 _POSITION_LIST_KEYS = {"positions", "empty_positions"}
 
 
-def _coerce_position_value(raw_value, layout=None, field_name="position"):
+def coerce_position_value(raw_value, layout=None, field_name="position"):
     """Convert a display/internal position value to internal integer position."""
     if raw_value in (None, ""):
         raise ValueError(f"{field_name} cannot be empty")
@@ -35,21 +35,21 @@ def _coerce_position_value(raw_value, layout=None, field_name="position"):
         raise ValueError(f"{field_name} is invalid: {raw_value}") from exc
 
 
-def _normalize_positions_input(positions, layout=None):
+def normalize_positions_input(positions, layout=None):
     """Normalize add-entry positions input into a list of internal integers."""
     if isinstance(positions, str):
         return parse_positions(positions, layout=layout)
 
     if isinstance(positions, (list, tuple, set)):
-        return [_coerce_position_value(value, layout=layout, field_name="position") for value in positions]
+        return [coerce_position_value(value, layout=layout, field_name="position") for value in positions]
 
     if positions in (None, ""):
         return []
 
-    return [_coerce_position_value(positions, layout=layout, field_name="position")]
+    return [coerce_position_value(positions, layout=layout, field_name="position")]
 
 
-def _format_position_value_for_output(value, layout=None):
+def format_position_value_for_output(value, layout=None):
     """Render one internal position value as display text for API output."""
     if value is None:
         return None
@@ -59,38 +59,38 @@ def _format_position_value_for_output(value, layout=None):
         return value
 
 
-def _format_position_list_for_output(values, layout=None):
+def format_position_list_for_output(values, layout=None):
     """Render a list of internal positions as display texts."""
     if not isinstance(values, (list, tuple)):
         return values
-    return [_format_position_value_for_output(value, layout=layout) for value in values]
+    return [format_position_value_for_output(value, layout=layout) for value in values]
 
 
-def _format_positions_in_payload(payload, layout=None):
+def format_positions_in_payload(payload, layout=None):
     """Recursively format all known position fields in API response payloads."""
     if isinstance(payload, dict):
         formatted = {}
         for key, value in payload.items():
             if key in _POSITION_SCALAR_KEYS:
-                formatted[key] = _format_position_value_for_output(value, layout=layout)
+                formatted[key] = format_position_value_for_output(value, layout=layout)
                 continue
             if key in _POSITION_LIST_KEYS:
-                formatted[key] = _format_position_list_for_output(value, layout=layout)
+                formatted[key] = format_position_list_for_output(value, layout=layout)
                 continue
             if key == "occupancy" and isinstance(value, dict):
                 occ = {}
                 for box_key, positions in value.items():
-                    occ[box_key] = _format_position_list_for_output(positions, layout=layout)
+                    occ[box_key] = format_position_list_for_output(positions, layout=layout)
                 formatted[key] = occ
                 continue
-            formatted[key] = _format_positions_in_payload(value, layout=layout)
+            formatted[key] = format_positions_in_payload(value, layout=layout)
         return formatted
 
     if isinstance(payload, list):
-        return [_format_positions_in_payload(item, layout=layout) for item in payload]
+        return [format_positions_in_payload(item, layout=layout) for item in payload]
 
     if isinstance(payload, tuple):
-        return tuple(_format_positions_in_payload(item, layout=layout) for item in payload)
+        return tuple(format_positions_in_payload(item, layout=layout) for item in payload)
 
     return payload
 
@@ -128,8 +128,8 @@ def parse_batch_entries(entries_str, layout=None):
                 from_pos_text, to_pos_text = pos_text.split("->", 1)
                 tup = (
                     record_id,
-                    _coerce_position_value(from_pos_text, layout=layout, field_name="from_position"),
-                    _coerce_position_value(to_pos_text, layout=layout, field_name="to_position"),
+                    coerce_position_value(from_pos_text, layout=layout, field_name="from_position"),
+                    coerce_position_value(to_pos_text, layout=layout, field_name="to_position"),
                 )
                 if to_box is not None:
                     tup = tup + (to_box,)
@@ -138,14 +138,14 @@ def parse_batch_entries(entries_str, layout=None):
                 from_pos_text, to_pos_text = pos_text.split(">", 1)
                 tup = (
                     record_id,
-                    _coerce_position_value(from_pos_text, layout=layout, field_name="from_position"),
-                    _coerce_position_value(to_pos_text, layout=layout, field_name="to_position"),
+                    coerce_position_value(from_pos_text, layout=layout, field_name="from_position"),
+                    coerce_position_value(to_pos_text, layout=layout, field_name="to_position"),
                 )
                 if to_box is not None:
                     tup = tup + (to_box,)
                 result.append(tup)
             else:
-                result.append((record_id, _coerce_position_value(pos_text, layout=layout, field_name="position")))
+                result.append((record_id, coerce_position_value(pos_text, layout=layout, field_name="position")))
     except Exception as exc:
         raise ValueError(
             "Invalid input format: "
@@ -154,7 +154,7 @@ def parse_batch_entries(entries_str, layout=None):
     return result
 
 
-def _coerce_batch_entry(entry, layout=None):
+def coerce_batch_entry(entry, layout=None):
     """Normalize one batch entry to a tuple of ints.
 
     Accepts tuple/list forms ``(record_id, position)`` or ``(record_id, from_pos, to_pos)``
@@ -177,18 +177,18 @@ def _coerce_batch_entry(entry, layout=None):
                 return (int(record_id),)
             raise ValueError("Each item must include position/from_position")
         if to_pos is None:
-            return (int(record_id), _coerce_position_value(from_pos, layout=layout, field_name="position"))
+            return (int(record_id), coerce_position_value(from_pos, layout=layout, field_name="position"))
         if to_box is not None:
             return (
                 int(record_id),
-                _coerce_position_value(from_pos, layout=layout, field_name="from_position"),
-                _coerce_position_value(to_pos, layout=layout, field_name="to_position"),
+                coerce_position_value(from_pos, layout=layout, field_name="from_position"),
+                coerce_position_value(to_pos, layout=layout, field_name="to_position"),
                 int(to_box),
             )
         return (
             int(record_id),
-            _coerce_position_value(from_pos, layout=layout, field_name="from_position"),
-            _coerce_position_value(to_pos, layout=layout, field_name="to_position"),
+            coerce_position_value(from_pos, layout=layout, field_name="from_position"),
+            coerce_position_value(to_pos, layout=layout, field_name="to_position"),
         )
 
     if isinstance(entry, (list, tuple)):
@@ -197,19 +197,19 @@ def _coerce_batch_entry(entry, layout=None):
         if len(entry) == 2:
             return (
                 int(entry[0]),
-                _coerce_position_value(entry[1], layout=layout, field_name="position"),
+                coerce_position_value(entry[1], layout=layout, field_name="position"),
             )
         if len(entry) == 3:
             return (
                 int(entry[0]),
-                _coerce_position_value(entry[1], layout=layout, field_name="from_position"),
-                _coerce_position_value(entry[2], layout=layout, field_name="to_position"),
+                coerce_position_value(entry[1], layout=layout, field_name="from_position"),
+                coerce_position_value(entry[2], layout=layout, field_name="to_position"),
             )
         if len(entry) == 4:
             return (
                 int(entry[0]),
-                _coerce_position_value(entry[1], layout=layout, field_name="from_position"),
-                _coerce_position_value(entry[2], layout=layout, field_name="to_position"),
+                coerce_position_value(entry[1], layout=layout, field_name="from_position"),
+                coerce_position_value(entry[2], layout=layout, field_name="to_position"),
                 int(entry[3]),
             )
         raise ValueError(
@@ -219,7 +219,7 @@ def _coerce_batch_entry(entry, layout=None):
     raise ValueError("Each item must be tuple/list/dict")
 
 
-def _parse_slot_payload(slot_payload, *, layout, field_name):
+def parse_slot_payload(slot_payload, *, layout, field_name):
     """Normalize one V2 slot payload into internal ``(box, position)``."""
     if not isinstance(slot_payload, dict):
         raise ValueError(f"{field_name} must be an object with box/position")
@@ -231,7 +231,7 @@ def _parse_slot_payload(slot_payload, *, layout, field_name):
         box = int(display_to_box(slot_payload.get("box"), layout))
     except Exception as exc:
         raise ValueError(f"{field_name}.box is invalid: {slot_payload.get('box')}") from exc
-    pos = _coerce_position_value(
+    pos = coerce_position_value(
         slot_payload.get("position"),
         layout=layout,
         field_name=f"{field_name}.position",
@@ -239,7 +239,7 @@ def _parse_slot_payload(slot_payload, *, layout, field_name):
     return box, pos
 
 
-def _find_record_by_id_local(records, record_id):
+def find_record_by_id_local(records, record_id):
     """Return record dict by ``id`` from loaded inventory list."""
     target = int(record_id)
     for rec in records or []:
@@ -252,7 +252,7 @@ def _find_record_by_id_local(records, record_id):
     return None
 
 
-def _validate_source_slot_match(record, *, record_id, from_box, from_pos):
+def validate_source_slot_match(record, *, record_id, from_box, from_pos):
     """Return issue payload if source slot does not match active record slot."""
     if record is None:
         return {
@@ -299,7 +299,7 @@ def _validate_source_slot_match(record, *, record_id, from_box, from_pos):
     return None
 
 
-def _record_search_blob(record, case_sensitive=False):
+def record_search_blob(record, case_sensitive=False):
     """Build a normalized text blob from one inventory record for matching."""
     parts = []
     for value in (record or {}).values():
@@ -316,7 +316,7 @@ def _record_search_blob(record, case_sensitive=False):
     return blob if case_sensitive else blob.lower()
 
 
-def _parse_search_location_shortcut(query_text, layout):
+def parse_search_location_shortcut(query_text, layout):
     """Parse compact location query like ``2:15`` into (box, position)."""
     text = str(query_text or "").strip()
     if not text:
@@ -339,3 +339,19 @@ def _parse_search_location_shortcut(query_text, layout):
     if not validate_position(pos_num, layout):
         return None
     return box_num, pos_num
+
+
+# ---------------------------------------------------------------------------
+# Backward compatibility — will be removed in a future version.
+# ---------------------------------------------------------------------------
+_coerce_position_value = coerce_position_value
+_normalize_positions_input = normalize_positions_input
+_format_position_value_for_output = format_position_value_for_output
+_format_position_list_for_output = format_position_list_for_output
+_format_positions_in_payload = format_positions_in_payload
+_coerce_batch_entry = coerce_batch_entry
+_parse_slot_payload = parse_slot_payload
+_find_record_by_id_local = find_record_by_id_local
+_validate_source_slot_match = validate_source_slot_match
+_record_search_blob = record_search_blob
+_parse_search_location_shortcut = parse_search_location_shortcut

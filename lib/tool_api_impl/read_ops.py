@@ -197,7 +197,7 @@ def tool_search_records(
     normalized_position = None
     if position not in (None, ""):
         try:
-            normalized_position = int(api._coerce_position_value(position, layout=layout, field_name="position"))
+            normalized_position = int(api.coerce_position_value(position, layout=layout, field_name="position"))
         except Exception:
             return {
                 "ok": False,
@@ -247,7 +247,7 @@ def tool_search_records(
         normalized_query = ""
     query_shortcut = None
     if normalized_query and normalized_box is None and normalized_position is None:
-        parsed = api._parse_search_location_shortcut(normalized_query, layout)
+        parsed = api.parse_search_location_shortcut(normalized_query, layout)
         if parsed is not None:
             normalized_box, normalized_position = parsed
             query_shortcut = normalized_query
@@ -303,7 +303,7 @@ def tool_search_records(
     matches = []
     if q:
         for rec in scoped_records:
-            blob = api._record_search_blob(rec, case_sensitive=case_sensitive)
+            blob = api.record_search_blob(rec, case_sensitive=case_sensitive)
             if mode in {"fuzzy", "exact"}:
                 if q in blob:
                     matches.append(rec)

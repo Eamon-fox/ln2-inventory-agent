@@ -1046,7 +1046,7 @@ class OperationsPanel(QWidget):
             raise ValueError(f"Invalid {field_name}: {value}")
         try:
             return int(
-                _tool_parsers._coerce_position_value(
+                _tool_parsers.coerce_position_value(
                     value,
                     layout=self._current_layout,
                     field_name=field_name,

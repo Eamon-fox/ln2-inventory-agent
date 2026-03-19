@@ -5,7 +5,7 @@ import os
 
 from agent.llm_client import DEFAULT_PROVIDER, DeepSeekLLMClient, ZhipuLLMClient, MiniMaxLLMClient, PROVIDER_DEFAULTS
 from agent.react_agent import ReactAgent
-from agent.tool_runner import AgentToolRunner
+from agent.tool_runner import AgentToolRunner, set_agent_tr
 from app_gui.gui_config import DEFAULT_MAX_STEPS, MAX_AGENT_STEPS
 from app_gui.i18n import tr
 from lib.inventory_paths import assert_allowed_inventory_yaml_path
@@ -20,6 +20,10 @@ from lib.tool_api import (
     tool_list_audit_timeline,
     tool_list_empty_positions,
 )
+
+# Inject GUI i18n into agent runtime so it can produce localized messages
+# without a hard import-time dependency on app_gui.
+set_agent_tr(tr)
 
 
 def _api_key_setup_hint(provider=None):
@@ -183,13 +187,13 @@ class GuiToolBridge:
             return self._path_validation_failed(exc)
         return tool_collect_timeline(yaml_path=yaml_path, days=days, all_history=all_history)
 
-    def adjust_box_count(self, yaml_path, **payload):
+    def manage_boxes(self, yaml_path, **payload):
         try:
             yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
         except Exception as exc:
             return self._path_validation_failed(exc)
         try:
-            return _write_adapter.adjust_box_count(
+            return _write_adapter.manage_boxes(
                 yaml_path=yaml_path,
                 actor_context=self._ctx(),
                 source="app_gui",
@@ -292,10 +296,13 @@ class GuiToolBridge:
                 llm = DeepSeekLLMClient(model=chosen_model, api_key=api_key, thinking_enabled=use_thinking)
             if callable(_expose_llm):
                 _expose_llm(llm)
+            from app_gui.plan_executor import preflight_plan
+
             runner = AgentToolRunner(
                 yaml_path=yaml_path,
                 session_id=self._session_id,
                 plan_store=plan_store,
+                preflight_fn=preflight_plan,
             )
             if callable(_expose_runner):
                 _expose_runner(runner)

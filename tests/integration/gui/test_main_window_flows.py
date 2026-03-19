@@ -376,7 +376,7 @@ def test_manage_boxes_flow_add_request_executes_and_emits_notice():
         bridge_calls = []
 
         class _Bridge:
-            def adjust_box_count(self, **kwargs):
+            def manage_boxes(self, **kwargs):
                 bridge_calls.append(kwargs)
                 return {"ok": True, "result": {"count": 2}, "message": "ok"}
 
@@ -416,7 +416,7 @@ def test_manage_boxes_flow_async_add_uses_non_modal_confirm_and_callback():
         bridge_calls = []
 
         class _Bridge:
-            def adjust_box_count(self, **kwargs):
+            def manage_boxes(self, **kwargs):
                 bridge_calls.append(kwargs)
                 return {"ok": True, "result": {"count": 2}, "message": "ok"}
 
@@ -477,7 +477,7 @@ def test_manage_boxes_flow_async_remove_cancel_returns_user_cancelled():
         adjust_mock = MagicMock(return_value={"ok": True})
         window = QDialog()
         window.current_yaml_path = yaml_path
-        window.bridge = SimpleNamespace(adjust_box_count=adjust_mock)
+        window.bridge = SimpleNamespace(manage_boxes=adjust_mock)
         window.overview_panel = SimpleNamespace(refresh=MagicMock())
         window.on_operation_completed = MagicMock()
         window.operations_panel = SimpleNamespace(emit_external_operation_event=MagicMock())
@@ -547,7 +547,7 @@ def test_manage_boxes_flow_add_requires_explicit_count():
         adjust_mock = MagicMock(return_value={"ok": True})
         window = SimpleNamespace(
             current_yaml_path=yaml_path,
-            bridge=SimpleNamespace(adjust_box_count=adjust_mock),
+            bridge=SimpleNamespace(manage_boxes=adjust_mock),
             overview_panel=SimpleNamespace(refresh=MagicMock()),
             on_operation_completed=MagicMock(),
             operations_panel=SimpleNamespace(emit_external_operation_event=MagicMock()),
@@ -588,7 +588,7 @@ def test_manage_boxes_flow_remove_invalid_box_fails_before_confirm():
         adjust_mock = MagicMock(return_value={"ok": True})
         window = SimpleNamespace(
             current_yaml_path=yaml_path,
-            bridge=SimpleNamespace(adjust_box_count=adjust_mock),
+            bridge=SimpleNamespace(manage_boxes=adjust_mock),
             overview_panel=SimpleNamespace(refresh=MagicMock()),
             on_operation_completed=MagicMock(),
             operations_panel=SimpleNamespace(emit_external_operation_event=MagicMock()),
@@ -632,7 +632,7 @@ def test_manage_boxes_flow_set_tag_executes_and_emits_notice():
         adjust_mock = MagicMock(return_value={"ok": True})
         window = SimpleNamespace(
             current_yaml_path=yaml_path,
-            bridge=SimpleNamespace(adjust_box_count=adjust_mock, set_box_tag=set_tag_mock),
+            bridge=SimpleNamespace(manage_boxes=adjust_mock, set_box_tag=set_tag_mock),
             overview_panel=SimpleNamespace(refresh=MagicMock()),
             on_operation_completed=MagicMock(),
             operations_panel=SimpleNamespace(emit_external_operation_event=MagicMock()),

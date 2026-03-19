@@ -199,7 +199,7 @@ def _run_manage_boxes(self, payload, trace_id=None):
                 "renumber_mode": None,
             }
             if dry_run:
-                return _write_adapter.adjust_box_count(
+                return _write_adapter.manage_boxes(
                     yaml_path=self._yaml_path,
                     operation="add",
                     count=count,
@@ -230,7 +230,7 @@ def _run_manage_boxes(self, payload, trace_id=None):
                 }
                 if renumber_mode not in (None, ""):
                     call_kwargs["renumber_mode"] = renumber_mode
-                return _write_adapter.adjust_box_count(
+                return _write_adapter.manage_boxes(
                     yaml_path=self._yaml_path,
                     **call_kwargs,
                 )

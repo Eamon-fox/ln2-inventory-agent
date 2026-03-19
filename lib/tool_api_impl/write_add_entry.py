@@ -49,7 +49,7 @@ def _validate_add_entry_request_data(
     _pos_lo, _pos_hi = get_position_range(layout)
 
     try:
-        normalized_positions = api._normalize_positions_input(positions, layout=layout)
+        normalized_positions = api.normalize_positions_input(positions, layout=layout)
     except ValueError as exc:
         return None, api._failure_result(
             yaml_path=yaml_path,

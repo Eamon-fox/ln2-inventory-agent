@@ -64,14 +64,14 @@ def build_actor_context(
     }
 
 
-_coerce_position_value = _parsers._coerce_position_value
-_normalize_positions_input = _parsers._normalize_positions_input
+coerce_position_value = _parsers.coerce_position_value
+normalize_positions_input = _parsers.normalize_positions_input
 parse_batch_entries = _parsers.parse_batch_entries
-_coerce_batch_entry = _parsers._coerce_batch_entry
-_parse_slot_payload = _parsers._parse_slot_payload
-_format_positions_in_payload = _parsers._format_positions_in_payload
-_find_record_by_id_local = _parsers._find_record_by_id_local
-_validate_source_slot_match = _parsers._validate_source_slot_match
+coerce_batch_entry = _parsers.coerce_batch_entry
+parse_slot_payload = _parsers.parse_slot_payload
+format_positions_in_payload = _parsers.format_positions_in_payload
+find_record_by_id_local = _parsers.find_record_by_id_local
+validate_source_slot_match = _parsers.validate_source_slot_match
 
 
 def _format_tool_response_positions(response, *, yaml_path=None, layout=None):
@@ -85,7 +85,7 @@ def _format_tool_response_positions(response, *, yaml_path=None, layout=None):
             resolved_layout = _get_layout(load_yaml(yaml_path))
         except Exception:
             resolved_layout = {}
-    return _format_positions_in_payload(response, layout=resolved_layout)
+    return format_positions_in_payload(response, layout=resolved_layout)
 
 
 def _build_move_event(
@@ -230,7 +230,7 @@ def _failure_result(
         before_data=before_data,
     )
     layout = _get_layout(before_data) if isinstance(before_data, dict) else {}
-    return _format_positions_in_payload(payload, layout=layout)
+    return format_positions_in_payload(payload, layout=layout)
 
 
 _ALLOWED_EXECUTION_MODES = _write_validation._ALLOWED_EXECUTION_MODES
@@ -240,7 +240,7 @@ _validate_execution_gate = _write_validation._validate_execution_gate
 _validate_add_entry_request = _write_validation._validate_add_entry_request
 _validate_edit_entry_request = _write_validation._validate_edit_entry_request
 _validate_takeout_request = _write_validation._validate_takeout_request
-_validate_adjust_box_count_request = _write_validation._validate_adjust_box_count_request
+_validate_manage_boxes_request = _write_validation._validate_manage_boxes_request
 _WRITE_REQUEST_VALIDATORS = _write_validation._WRITE_REQUEST_VALIDATORS
 
 
@@ -448,7 +448,7 @@ def tool_rollback(
     return _format_tool_response_positions(response, yaml_path=yaml_path)
 
 
-def tool_adjust_box_count(
+def tool_manage_boxes(
     yaml_path,
     operation,
     count=1,
@@ -461,7 +461,7 @@ def tool_adjust_box_count(
     auto_backup=True,
     request_backup_path=None,
 ):
-    response = _tool_adjust_box_count_impl(
+    response = _tool_manage_boxes_impl(
         yaml_path=yaml_path,
         operation=operation,
         count=count,
@@ -477,7 +477,7 @@ def tool_adjust_box_count(
     return _format_tool_response_positions(response, yaml_path=yaml_path)
 
 
-def _tool_adjust_box_count_impl(
+def _tool_manage_boxes_impl(
     yaml_path,
     operation,
     count=1,
@@ -492,7 +492,7 @@ def _tool_adjust_box_count_impl(
 ):
     from .tool_api_impl import write_ops as _write_ops
 
-    response = _write_ops._tool_adjust_box_count_impl(
+    response = _write_ops._tool_manage_boxes_impl(
         yaml_path=yaml_path,
         operation=operation,
         count=count,
@@ -555,10 +555,10 @@ def tool_list_empty_positions(yaml_path, box=None):
     return _format_tool_response_positions(response, yaml_path=yaml_path)
 
 
-_record_search_blob = _parsers._record_search_blob
+record_search_blob = _parsers.record_search_blob
 
 
-_parse_search_location_shortcut = _parsers._parse_search_location_shortcut
+parse_search_location_shortcut = _parsers.parse_search_location_shortcut
 
 def tool_search_records(
     yaml_path,

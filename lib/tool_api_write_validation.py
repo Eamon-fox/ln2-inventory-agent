@@ -170,7 +170,7 @@ def _validate_takeout_request(payload):
     return None, {"action_en": action_en}
 
 
-def _validate_adjust_box_count_request(payload):
+def _validate_manage_boxes_request(payload):
     operation = payload.get("operation")
     op_text = str(operation or "").strip().lower()
     op_alias = {
@@ -240,7 +240,7 @@ _WRITE_REQUEST_VALIDATORS = {
     "tool_takeout": _validate_takeout_request,
     "tool_move": _validate_takeout_request,
     "tool_rollback": _validate_rollback_request,
-    "tool_adjust_box_count": _validate_adjust_box_count_request,
+    "tool_manage_boxes": _validate_manage_boxes_request,
     "tool_set_box_tag": _validate_set_box_tag_request,
 }
 

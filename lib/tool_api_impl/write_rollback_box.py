@@ -1,6 +1,6 @@
 """Facade module for rollback and box-count write operations."""
 
-from . import write_adjust_box_count as _box_ops
+from . import write_manage_boxes as _box_ops
 from . import write_rollback as _rollback_ops
 
 
@@ -28,7 +28,7 @@ def tool_rollback(
     )
 
 
-def _tool_adjust_box_count_impl(
+def _tool_manage_boxes_impl(
     yaml_path,
     operation,
     count=1,
@@ -41,7 +41,7 @@ def _tool_adjust_box_count_impl(
     auto_backup=True,
     request_backup_path=None,
 ):
-    return _box_ops._tool_adjust_box_count_impl(
+    return _box_ops._tool_manage_boxes_impl(
         yaml_path=yaml_path,
         operation=operation,
         count=count,

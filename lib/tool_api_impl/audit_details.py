@@ -236,13 +236,13 @@ def set_box_tag_details(*, box, tag_before, tag_after):
     }
 
 
-def adjust_box_count_details(*, sub_op, preview):
-    """Build details for a successful adjust_box_count audit event.
+def manage_boxes_details(*, sub_op, preview):
+    """Build details for a successful manage_boxes audit event.
 
     Extracts only the essential fields from the full *preview* dict.
     """
     details = {
-        "op": "adjust_box_count",
+        "op": "manage_boxes",
         "sub_op": sub_op,
         "box_count_before": preview.get("box_count_before"),
         "box_count_after": preview.get("box_count_after"),

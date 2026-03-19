@@ -168,7 +168,7 @@ def _normalize_takeout_entries(
             )
 
         try:
-            from_box, from_pos = api._parse_slot_payload(
+            from_box, from_pos = api.parse_slot_payload(
                 entry.get("from"),
                 layout=layout,
                 field_name=f"entries[{idx}].from",
@@ -206,7 +206,7 @@ def _normalize_takeout_entries(
                 field_path=f"entries[{idx}].from.box",
             )
 
-        issue = api._validate_source_slot_match(
+        issue = api.validate_source_slot_match(
             record_map.get(rid),
             record_id=rid,
             from_box=from_box,
@@ -281,12 +281,12 @@ def _normalize_move_entries(
             )
 
         try:
-            from_box, from_pos = api._parse_slot_payload(
+            from_box, from_pos = api.parse_slot_payload(
                 entry.get("from"),
                 layout=layout,
                 field_name=f"entries[{idx}].from",
             )
-            to_box, to_pos = api._parse_slot_payload(
+            to_box, to_pos = api.parse_slot_payload(
                 entry.get("to"),
                 layout=layout,
                 field_name=f"entries[{idx}].to",
@@ -340,7 +340,7 @@ def _normalize_move_entries(
                 field_path=f"entries[{idx}].to.box",
             )
 
-        issue = api._validate_source_slot_match(
+        issue = api.validate_source_slot_match(
             record_map.get(rid),
             record_id=rid,
             from_box=from_box,

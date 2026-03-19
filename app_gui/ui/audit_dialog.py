@@ -202,7 +202,7 @@ def _format_audit_details(details, muted_color, field_order=None):
         after = details.get("tag_after") or "''"
         return [f"{tr('operations.auditDetailBox')} {h(box)}: '{h(before)}' -> '{h(after)}'"]
 
-    if op == "adjust_box_count":
+    if op in ("manage_boxes", "adjust_box_count"):
         sub = details.get("sub_op")
         cb = details.get("box_count_before")
         ca = details.get("box_count_after")
@@ -303,7 +303,7 @@ def _summarize_details(details, field_order=None):
         after = details.get("tag_after") or "''"
         return f"Box{box} -> '{after}'"
 
-    if op == "adjust_box_count":
+    if op in ("manage_boxes", "adjust_box_count"):
         sub = details.get("sub_op", "?")
         cb = details.get("box_count_before")
         ca = details.get("box_count_after")
@@ -340,7 +340,8 @@ _ACTION_TR_KEYS = {
     "edit_custom_fields": "operations.auditActionEditCustomFields",
     "edit_entry": "operations.auditActionEditEntry",
     "set_box_tag": "operations.auditActionSetBoxTag",
-    "adjust_box_count": "operations.auditActionAdjustBoxCount",
+    "manage_boxes": "operations.auditActionAdjustBoxCount",
+    "adjust_box_count": "operations.auditActionAdjustBoxCount",  # legacy
 }
 
 

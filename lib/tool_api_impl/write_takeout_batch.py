@@ -71,7 +71,7 @@ def _normalize_takeout_entries(
     normalize_errors = []
     for idx, entry in enumerate(entries, 1):
         try:
-            normalized_entries.append(api._coerce_batch_entry(entry, layout=layout))
+            normalized_entries.append(api.coerce_batch_entry(entry, layout=layout))
         except Exception as exc:
             normalize_errors.append(f"Row {idx}: {exc}")
 

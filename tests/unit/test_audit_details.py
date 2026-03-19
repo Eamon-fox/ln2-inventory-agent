@@ -3,7 +3,7 @@
 from lib.tool_api_impl.audit_details import (
     _extract_custom_fields,
     add_entry_details,
-    adjust_box_count_details,
+    manage_boxes_details,
     edit_entry_details,
     failure_details,
     move_details,
@@ -270,12 +270,12 @@ class TestSetBoxTagDetails:
         assert d["tag_after"] == ""
 
 
-# ── adjust_box_count_details ──────────────────────────────────────
+# ── manage_boxes_details ──────────────────────────────────────
 
 
 class TestAdjustBoxCountDetails:
     def test_add(self):
-        d = adjust_box_count_details(
+        d = manage_boxes_details(
             sub_op="add",
             preview={
                 "box_count_before": 3,
@@ -283,7 +283,7 @@ class TestAdjustBoxCountDetails:
                 "added_boxes": [4, 5],
             },
         )
-        assert d["op"] == "adjust_box_count"
+        assert d["op"] == "manage_boxes"
         assert d["sub_op"] == "add"
         assert d["added_boxes"] == [4, 5]
         assert d["box_count_before"] == 3
@@ -291,7 +291,7 @@ class TestAdjustBoxCountDetails:
         assert "removed_box" not in d
 
     def test_delete_keep_gaps(self):
-        d = adjust_box_count_details(
+        d = manage_boxes_details(
             sub_op="delete",
             preview={
                 "box_count_before": 5,
@@ -306,7 +306,7 @@ class TestAdjustBoxCountDetails:
         assert "added_boxes" not in d
 
     def test_delete_renumber(self):
-        d = adjust_box_count_details(
+        d = manage_boxes_details(
             sub_op="delete",
             preview={
                 "box_count_before": 5,

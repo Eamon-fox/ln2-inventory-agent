@@ -1,11 +1,11 @@
-"""Adjust-box-count write-operation implementations for Tool API."""
+"""Manage-boxes write-operation implementations for Tool API."""
 
 from copy import deepcopy
 
 from ..migrate_cell_line_policy import normalize_field_options_policy_data
 from ..position_fmt import get_box_numbers
 from ..yaml_ops import load_yaml, write_yaml
-from .audit_details import adjust_box_count_details, failure_details
+from .audit_details import manage_boxes_details, failure_details
 from .write_common import api
 
 _BOX_TAG_MAX_LENGTH = 80
@@ -61,7 +61,7 @@ def _remap_box_tags_for_renumber(box_tags, box_mapping):
     return remapped
 
 
-def _prepare_adjust_box_count_context(
+def _prepare_manage_boxes_context(
     *,
     data,
     yaml_path,
@@ -130,7 +130,7 @@ def _prepare_adjust_box_count_context(
     }, None
 
 
-def _plan_adjust_box_count(
+def _plan_manage_boxes(
     *,
     op,
     count,
@@ -170,7 +170,7 @@ def _plan_adjust_box_count(
                 actor_context=actor_context,
                 tool_input=tool_input,
                 before_data=data,
-                details=failure_details(op="adjust_box_count", count=count),
+                details=failure_details(op="manage_boxes", count=count),
             )
 
         start = max(current_boxes) + 1 if current_boxes else 1
@@ -203,7 +203,7 @@ def _plan_adjust_box_count(
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=data,
-            details=failure_details(op="adjust_box_count", box=box),
+            details=failure_details(op="manage_boxes", box=box),
         )
 
     if target_box not in current_boxes:
@@ -217,7 +217,7 @@ def _plan_adjust_box_count(
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=data,
-            details=failure_details(op="adjust_box_count", box=target_box),
+            details=failure_details(op="manage_boxes", box=target_box),
         )
 
     blocking_records = []
@@ -255,7 +255,7 @@ def _plan_adjust_box_count(
             tool_input=tool_input,
             before_data=data,
             details=failure_details(
-                op="adjust_box_count",
+                op="manage_boxes",
                 box=target_box,
                 blocking_record_ids=blocking_ids,
                 active_blocking_record_ids=active_ids,
@@ -284,7 +284,7 @@ def _plan_adjust_box_count(
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=data,
-            details=failure_details(op="adjust_box_count", box=target_box, current_boxes=current_boxes),
+            details=failure_details(op="manage_boxes", box=target_box, current_boxes=current_boxes),
             extra={"choices": ["keep_gaps", "renumber_contiguous"]},
         )
 
@@ -301,7 +301,7 @@ def _plan_adjust_box_count(
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=data,
-            details=failure_details(op="adjust_box_count", renumber_mode=renumber_mode),
+            details=failure_details(op="manage_boxes", renumber_mode=renumber_mode),
         )
 
     remaining_boxes = [box_num for box_num in current_boxes if box_num != target_box]
@@ -316,7 +316,7 @@ def _plan_adjust_box_count(
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=data,
-            details=failure_details(op="adjust_box_count", box=target_box),
+            details=failure_details(op="manage_boxes", box=target_box),
         )
 
     box_mapping = {}
@@ -350,7 +350,7 @@ def _plan_adjust_box_count(
     return {"new_boxes": new_boxes, "preview": preview, "box_tags_after": box_tags_after}, None
 
 
-def _persist_adjust_box_count(
+def _persist_manage_boxes(
     *,
     candidate_data,
     yaml_path,
@@ -364,7 +364,7 @@ def _persist_adjust_box_count(
     request_backup_path,
     before_data,
 ):
-    _audit_details = adjust_box_count_details(
+    _audit_details = manage_boxes_details(
         sub_op=preview.get("operation"),
         preview=preview,
     )
@@ -400,7 +400,7 @@ def _persist_adjust_box_count(
     return backup_path, None
 
 
-def _tool_adjust_box_count_impl(
+def _tool_manage_boxes_impl(
     yaml_path,
     operation,
     count=1,
@@ -414,8 +414,8 @@ def _tool_adjust_box_count_impl(
     request_backup_path=None,
 ):
     """Safely add/remove boxes without changing rows/cols/indexing."""
-    audit_action = "adjust_box_count"
-    tool_name = "tool_adjust_box_count"
+    audit_action = "manage_boxes"
+    tool_name = "tool_manage_boxes"
     tool_input = {
         "operation": operation,
         "count": count,
@@ -472,7 +472,7 @@ def _tool_adjust_box_count_impl(
         )
     data = normalized.get("data")
 
-    context, failure = _prepare_adjust_box_count_context(
+    context, failure = _prepare_manage_boxes_context(
         data=data,
         yaml_path=yaml_path,
         audit_action=audit_action,
@@ -484,7 +484,7 @@ def _tool_adjust_box_count_impl(
     if failure:
         return failure
 
-    plan, failure = _plan_adjust_box_count(
+    plan, failure = _plan_manage_boxes(
         op=op,
         count=count,
         box=box,
@@ -526,7 +526,7 @@ def _tool_adjust_box_count_impl(
             tool_input=tool_input,
             before_data=context["data"],
             errors=validation_error.get("errors"),
-            details=adjust_box_count_details(sub_op=preview.get("operation"), preview=preview),
+            details=manage_boxes_details(sub_op=preview.get("operation"), preview=preview),
         )
 
     if dry_run:
@@ -536,7 +536,7 @@ def _tool_adjust_box_count_impl(
             "preview": preview,
         }
 
-    backup_path, failure = _persist_adjust_box_count(
+    backup_path, failure = _persist_manage_boxes(
         candidate_data=candidate_data,
         yaml_path=yaml_path,
         audit_action=audit_action,

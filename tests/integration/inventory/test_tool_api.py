@@ -23,7 +23,7 @@ if str(ROOT) not in sys.path:
 from lib.tool_api import (
     build_actor_context,
     tool_add_entry,
-    tool_adjust_box_count,
+    tool_manage_boxes,
     tool_collect_timeline,
     tool_edit_entry,
     tool_export_inventory_csv,
@@ -2207,7 +2207,7 @@ class TestAdjustBoxCount(ManagedPathTestCase):
 
     def test_add_boxes_updates_box_numbers_and_count(self):
         p, _ = self._seed([], {"rows": 9, "cols": 9, "box_count": 5})
-        result = tool_adjust_box_count(
+        result = tool_manage_boxes(
             p,
             operation="add",
             count=2,
@@ -2224,7 +2224,7 @@ class TestAdjustBoxCount(ManagedPathTestCase):
 
     def test_remove_middle_box_requires_mode(self):
         p, _ = self._seed([], {"rows": 9, "cols": 9, "box_count": 5})
-        result = tool_adjust_box_count(
+        result = tool_manage_boxes(
             p,
             operation="remove",
             box=3,
@@ -2235,7 +2235,7 @@ class TestAdjustBoxCount(ManagedPathTestCase):
 
     def test_remove_middle_box_keep_gaps(self):
         p, _ = self._seed([], {"rows": 9, "cols": 9, "box_count": 5})
-        result = tool_adjust_box_count(
+        result = tool_manage_boxes(
             p,
             operation="remove",
             box=3,
@@ -2263,7 +2263,7 @@ class TestAdjustBoxCount(ManagedPathTestCase):
                 "box_tags": {"1": "LN2-A", "2": "Virus"},
             },
         )
-        result = tool_adjust_box_count(
+        result = tool_manage_boxes(
             p,
             operation="add",
             count=2,
@@ -2285,7 +2285,7 @@ class TestAdjustBoxCount(ManagedPathTestCase):
                 "box_tags": {"2": "A", "3": "B", "4": "C"},
             },
         )
-        result = tool_adjust_box_count(
+        result = tool_manage_boxes(
             p,
             operation="remove",
             box=3,
@@ -2308,7 +2308,7 @@ class TestAdjustBoxCount(ManagedPathTestCase):
                 "box_tags": {"2": "A", "4": "C", "5": "D"},
             },
         )
-        result = tool_adjust_box_count(
+        result = tool_manage_boxes(
             p,
             operation="remove",
             box=3,
@@ -2371,7 +2371,7 @@ class TestAdjustBoxCount(ManagedPathTestCase):
     def test_remove_non_empty_box_blocked(self):
         records = [make_record(1, box=2, position=1)]
         p, _ = self._seed(records, {"rows": 9, "cols": 9, "box_count": 5})
-        result = tool_adjust_box_count(
+        result = tool_manage_boxes(
             p,
             operation="remove",
             box=2,
@@ -2396,7 +2396,7 @@ class TestAdjustBoxCount(ManagedPathTestCase):
             }
         ]
         p, _ = self._seed(records, {"rows": 9, "cols": 9, "box_count": 5})
-        result = tool_adjust_box_count(
+        result = tool_manage_boxes(
             p,
             operation="remove",
             box=2,
