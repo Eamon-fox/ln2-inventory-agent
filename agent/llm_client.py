@@ -562,10 +562,7 @@ class ZhipuLLMClient(OpenAICompatibleClient):
     DEFAULT_THINKING_ENABLED = False
     REQUEST_HEADERS = {
         "Accept": "application/json",
-        "User-Agent": "Cline-VSCode-Extension",
-        "HTTP-Referer": "https://cline.bot",
-        "X-Title": "Cline",
-        "X-Cline-Version": "3.42.0",
+        "User-Agent": "SnowFox/1.2.3",
     }
 
     def _build_request_payload(self, messages, tools=None, temperature=0.0):
@@ -618,10 +615,7 @@ class MiniMaxLLMClient(OpenAICompatibleClient):
     DEFAULT_THINKING_ENABLED = True
     REQUEST_HEADERS = {
         "Accept": "application/json",
-        "User-Agent": "Cline-VSCode-Extension",
-        "HTTP-Referer": "https://cline.bot",
-        "X-Title": "Cline",
-        "X-Cline-Version": "3.42.0",
+        "User-Agent": "SnowFox/1.2.3",
     }
 
     def _build_request_payload(self, messages, tools=None, temperature=0.0):

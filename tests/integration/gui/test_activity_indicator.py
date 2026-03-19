@@ -89,3 +89,40 @@ class ActivityIndicatorIntegrationTests(GuiPanelsBaseCase):
         indicator.set_tool_name("search_records")
         indicator.set_tool_name("")
         self.assertEqual(indicator._tool_name, "")
+
+    def test_busy_state_does_not_change_chat_height(self):
+        panel = self._new_ai_panel()
+        panel.resize(360, 620)
+        panel.show()
+        self._app.processEvents()
+
+        chat_height_before = panel.ai_chat.viewport().height()
+
+        panel.set_busy(True)
+        self._app.processEvents()
+
+        chat_height_after = panel.ai_chat.viewport().height()
+        self.assertEqual(chat_height_before, chat_height_after)
+
+    def test_busy_state_keeps_latest_message_visible(self):
+        panel = self._new_ai_panel()
+        panel.resize(360, 620)
+        panel.show()
+        self._app.processEvents()
+
+        for idx in range(18):
+            message = "\n".join(f"message {idx}-{line}" for line in range(5))
+            panel._append_chat("You", message)
+
+        scroll_bar = panel.ai_chat.verticalScrollBar()
+        scroll_bar.setValue(scroll_bar.maximum())
+        self._app.processEvents()
+
+        self.assertGreater(scroll_bar.maximum(), 0)
+        self.assertTrue(panel._is_near_bottom())
+
+        panel.set_busy(True)
+        self._app.processEvents()
+
+        self.assertEqual(scroll_bar.value(), scroll_bar.maximum())
+        self.assertTrue(panel._is_near_bottom())

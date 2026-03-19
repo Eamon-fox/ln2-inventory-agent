@@ -175,10 +175,6 @@ class AIPanel(QWidget):
         self.ai_chat.viewport().setCursor(Qt.ArrowCursor)
         layout.addWidget(self.ai_chat, 1)
 
-        # Activity indicator (shown during agent runs)
-        self._activity_indicator = ActivityIndicator(parent=self)
-        layout.addWidget(self._activity_indicator)
-
         self.ai_new_msg_btn = QPushButton(self.ai_chat.viewport())
         self.ai_new_msg_btn.setObjectName("aiNewMessagesButton")
         self.ai_new_msg_btn.setProperty("variant", "ghost")
@@ -211,10 +207,17 @@ class AIPanel(QWidget):
         action_bar.setContentsMargins(8, 0, 8, 0)
         action_bar.setSpacing(4)
 
+        status_row = QWidget()
+        status_row.setObjectName("aiStatusRow")
+        status_row_layout = QHBoxLayout(status_row)
+        status_row_layout.setContentsMargins(0, 0, 0, 0)
+        status_row_layout.setSpacing(4)
+
         self.ai_model_id_label = QLabel("")
         self.ai_model_id_label.setObjectName("aiModelIdLabel")
         self.ai_model_id_label.setProperty("role", "mutedInline")
-        action_bar.addWidget(self.ai_model_id_label)
+        self.ai_model_id_label.setMinimumWidth(0)
+        status_row_layout.addWidget(self.ai_model_id_label)
 
         self.ai_model_switch_btn = QPushButton()
         self.ai_model_switch_btn.setIcon(get_icon(Icons.CHEVRON_DOWN))
@@ -224,9 +227,12 @@ class AIPanel(QWidget):
         self.ai_model_switch_btn.setProperty("variant", "ghost")
         self.ai_model_switch_btn.setToolTip(tr("settings.aiModel"))
         self.ai_model_switch_btn.clicked.connect(self._open_model_switch_menu)
-        action_bar.addWidget(self.ai_model_switch_btn)
+        status_row_layout.addWidget(self.ai_model_switch_btn)
 
-        action_bar.addStretch()
+        self._activity_indicator = ActivityIndicator(parent=status_row, compact=True)
+        status_row_layout.addWidget(self._activity_indicator, 1)
+
+        action_bar.addWidget(status_row, 1)
 
         ai_new_chat_btn = QPushButton(tr("ai.newChat"))
         ai_new_chat_btn.setIcon(get_icon(Icons.X))

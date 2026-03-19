@@ -8,8 +8,8 @@ import time
 from typing import Optional
 
 from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, Property
-from PySide6.QtGui import QPainter, QColor, QPen
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel
+from PySide6.QtGui import QPainter, QColor, QPen, QFontMetrics
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QSizePolicy
 
 from app_gui.i18n import tr
 
@@ -104,28 +104,39 @@ class ActivityIndicator(QWidget):
 
     _TICK_INTERVAL_MS = 1000  # update elapsed label every second
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: Optional[QWidget] = None, *, compact: bool = False) -> None:
         super().__init__(parent)
         self._start_time: float = 0.0
         self._tool_name: str = ""
         self._running: bool = False
+        self._compact: bool = bool(compact)
+        self._base_status_text: str = tr("ai.activityThinking")
+        self._full_status_text: str = self._base_status_text
+        self.setObjectName("activityIndicator")
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 2, 4, 2)
-        layout.setSpacing(6)
+        if self._compact:
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(4)
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        else:
+            layout.setContentsMargins(4, 2, 4, 2)
+            layout.setSpacing(6)
+            self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
         self._dot = PulsingDot(parent=self)
         layout.addWidget(self._dot)
 
         self._status_label = QLabel("")
         self._status_label.setObjectName("activityStatusLabel")
-        layout.addWidget(self._status_label)
-
-        layout.addStretch()
+        self._status_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._status_label.setMinimumWidth(0)
+        layout.addWidget(self._status_label, 1)
 
         self._elapsed_label = QLabel("")
         self._elapsed_label.setObjectName("activityElapsedLabel")
         self._elapsed_label.setStyleSheet("color: #888; font-size: 11px;")
+        self._elapsed_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
         layout.addWidget(self._elapsed_label)
 
         self._tick_timer = QTimer(self)
@@ -141,12 +152,13 @@ class ActivityIndicator(QWidget):
         self._start_time = time.monotonic()
         self._tool_name = ""
         self._running = True
-        text = status_text or tr("ai.activityThinking")
-        self._status_label.setText(text)
+        self._base_status_text = str(status_text or tr("ai.activityThinking"))
+        self._set_status_text(self._base_status_text)
         self._elapsed_label.setText(_format_elapsed(0))
         self._dot.start()
         self._tick_timer.start()
         self.setVisible(True)
+        self._refresh_status_label()
 
     def stop(self) -> None:
         """Hide the indicator and stop all animations."""
@@ -160,10 +172,9 @@ class ActivityIndicator(QWidget):
         """Update the status label to show the running tool name."""
         self._tool_name = str(name or "").strip()
         if self._tool_name:
-            text = tr("ai.activityRunningTool").format(tool=self._tool_name)
+            self._set_status_text(tr("ai.activityRunningTool").format(tool=self._tool_name))
         else:
-            text = tr("ai.activityThinking")
-        self._status_label.setText(text)
+            self._set_status_text(self._base_status_text)
 
     def elapsed_seconds(self) -> float:
         """Return seconds since start() was called."""
@@ -175,7 +186,31 @@ class ActivityIndicator(QWidget):
         """Return True when the indicator is currently running."""
         return self._running
 
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._refresh_status_label()
+
     # --- private ---
+
+    def _set_status_text(self, text: str) -> None:
+        self._full_status_text = str(text or "")
+        self._refresh_status_label()
+
+    def _refresh_status_label(self) -> None:
+        text = str(self._full_status_text or "")
+        if not text:
+            self._status_label.clear()
+            self._status_label.setToolTip("")
+            return
+
+        available = int(self._status_label.width())
+        if available <= 0:
+            display_text = text
+        else:
+            metrics = QFontMetrics(self._status_label.font())
+            display_text = metrics.elidedText(text, Qt.ElideRight, available)
+        self._status_label.setText(display_text)
+        self._status_label.setToolTip(text if display_text != text else "")
 
     def _update_elapsed(self) -> None:
         elapsed = self.elapsed_seconds()
