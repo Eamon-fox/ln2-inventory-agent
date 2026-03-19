@@ -122,7 +122,16 @@ class ToolRunnerPlanStagingTests(ManagedPathTestCase):
     def setUp(self):
         super().setUp()
         from lib.plan_store import PlanStore
+        from app_gui.plan_executor import preflight_plan
         self.plan_store = PlanStore()
+        self._preflight_fn = preflight_plan
+
+    def _make_runner(self, yaml_path):
+        return AgentToolRunner(
+            yaml_path=yaml_path,
+            plan_store=self.plan_store,
+            preflight_fn=self._preflight_fn,
+        )
 
     def _seed_yaml(self, records):
         """Create a temporary inventory YAML file."""
@@ -155,7 +164,7 @@ class ToolRunnerPlanStagingTests(ManagedPathTestCase):
     def test_stage_to_plan_add_entry(self):
         """Test staging add_entry operation."""
         yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=1)])
-        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
+        runner = self._make_runner(yaml_path)
         result = runner._stage_to_plan(
             "add_entry",
             {
@@ -174,7 +183,7 @@ class ToolRunnerPlanStagingTests(ManagedPathTestCase):
     def test_stage_to_plan_takeout(self):
         """Test staging takeout operation."""
         yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=5)])
-        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
+        runner = self._make_runner(yaml_path)
         result = runner._stage_to_plan(
             "takeout",
             {
@@ -197,7 +206,7 @@ class ToolRunnerPlanStagingTests(ManagedPathTestCase):
     def test_stage_to_plan_takeout_accepts_alphanumeric_position(self):
         """Position parsing should accept display values like A5 in alphanumeric layout."""
         yaml_path = self._seed_yaml_alphanumeric([make_record(rec_id=1, box=1, position=5)])
-        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
+        runner = self._make_runner(yaml_path)
         result = runner._stage_to_plan(
             "takeout",
             {
@@ -219,7 +228,7 @@ class ToolRunnerPlanStagingTests(ManagedPathTestCase):
     def test_stage_to_plan_takeout_rejects_numeric_text_in_alphanumeric_layout(self):
         """In alphanumeric mode, numeric text should be rejected (use A1-style input)."""
         yaml_path = self._seed_yaml_alphanumeric([make_record(rec_id=1, box=1, position=5)])
-        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
+        runner = self._make_runner(yaml_path)
         result = runner._stage_to_plan(
             "takeout",
             {
@@ -239,7 +248,7 @@ class ToolRunnerPlanStagingTests(ManagedPathTestCase):
 
     def test_stage_to_plan_takeout_rejects_legacy_action_alias(self):
         """Legacy alias 瑙ｅ喕 should be rejected by strict schema."""
-        runner = AgentToolRunner(yaml_path=self.fake_yaml_path, plan_store=self.plan_store)
+        runner = self._make_runner(self.fake_yaml_path)
         result = runner._stage_to_plan(
             "takeout",
             {
@@ -261,7 +270,7 @@ class ToolRunnerPlanStagingTests(ManagedPathTestCase):
     def test_stage_to_plan_move(self):
         """Test staging move operation."""
         yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=5)])
-        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
+        runner = self._make_runner(yaml_path)
         result = runner._stage_to_plan(
             "move",
             {
@@ -290,7 +299,7 @@ class ToolRunnerPlanStagingTests(ManagedPathTestCase):
                 make_record(rec_id=2, box=1, position=10),
             ]
         )
-        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
+        runner = self._make_runner(yaml_path)
         result = runner._stage_to_plan(
             "takeout",
             {
@@ -308,7 +317,7 @@ class ToolRunnerPlanStagingTests(ManagedPathTestCase):
     def test_stage_to_plan_move_multiple_entries(self):
         """Test staging move operation with multiple entries."""
         yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=5)])
-        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
+        runner = self._make_runner(yaml_path)
         result = runner._stage_to_plan(
             "move",
             {
@@ -331,7 +340,7 @@ class ToolRunnerPlanStagingTests(ManagedPathTestCase):
 
     def test_stage_to_plan_validation_failure(self):
         """Strict input schema should reject invalid box before staging."""
-        runner = AgentToolRunner(yaml_path=self.fake_yaml_path, plan_store=self.plan_store)
+        runner = self._make_runner(self.fake_yaml_path)
         result = runner._stage_to_plan(
             "add_entry",
             {
@@ -348,7 +357,7 @@ class ToolRunnerPlanStagingTests(ManagedPathTestCase):
     def test_stage_to_plan_preflight_blocked_returns_tool_error(self):
         """Invalid staged write should be rejected before entering plan."""
         yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=5)])
-        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
+        runner = self._make_runner(yaml_path)
         result = runner._stage_to_plan(
             "takeout",
             {
@@ -377,7 +386,7 @@ class ToolRunnerPlanStagingTests(ManagedPathTestCase):
             make_record(rec_id=2, box=1, position=10),
         ]
         yaml_path = self._seed_yaml(records)
-        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
+        runner = self._make_runner(yaml_path)
         result = runner._stage_to_plan(
             "takeout",
             {
@@ -400,7 +409,7 @@ class ToolRunnerPlanStagingTests(ManagedPathTestCase):
     def test_stage_to_plan_schema_mixed_batch_rejects_all(self):
         """Schema errors in batch should reject all items atomically."""
         yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=5)])
-        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
+        runner = self._make_runner(yaml_path)
         result = runner._stage_to_plan(
             "takeout",
             {
@@ -419,7 +428,7 @@ class ToolRunnerPlanStagingTests(ManagedPathTestCase):
     def test_stage_to_plan_validates_existing_plus_incoming_as_one_batch(self):
         """Second staged add must be rejected if it conflicts with existing staged items."""
         yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=1)])
-        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
+        runner = self._make_runner(yaml_path)
 
         first = runner._stage_to_plan(
             "add_entry",
@@ -458,7 +467,7 @@ class ToolRunnerPlanStagingTests(ManagedPathTestCase):
         )
         self.assertTrue(os.path.exists(str(backup_path)))
 
-        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
+        runner = self._make_runner(yaml_path)
         result = runner._stage_to_plan("rollback", {"backup_path": str(backup_path)})
 
         self.assertTrue(result["ok"])
@@ -495,7 +504,7 @@ class ToolRunnerPlanStagingTests(ManagedPathTestCase):
             encoding="utf-8",
         )
 
-        runner = AgentToolRunner(yaml_path=str(yaml_path), plan_store=self.plan_store)
+        runner = self._make_runner(str(yaml_path))
         result = runner._stage_to_plan(
             "add_entry",
             {
