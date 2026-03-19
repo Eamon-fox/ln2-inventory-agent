@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 
 
-from app_gui.gui_config import AGENT_HISTORY_MAX_TURNS, DEFAULT_MAX_STEPS
+from .agent_defaults import AGENT_HISTORY_MAX_TURNS, DEFAULT_MAX_STEPS
 from .context_compressor import compress_history
 from . import react_agent_runtime as _runtime
 

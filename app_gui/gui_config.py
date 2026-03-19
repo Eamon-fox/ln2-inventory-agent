@@ -10,16 +10,15 @@ import sys
 
 import yaml
 
+from agent.agent_defaults import AGENT_HISTORY_MAX_TURNS, DEFAULT_MAX_STEPS
 from agent.llm_client import DEFAULT_PROVIDER, PROVIDER_DEFAULTS
 from lib.inventory_paths import get_install_dir
 
 DEFAULT_CONFIG_DIR = os.path.join(get_install_dir(), "config")
 DEFAULT_CONFIG_FILE = os.path.join(DEFAULT_CONFIG_DIR, "config.yaml")
 
-DEFAULT_MAX_STEPS = 120
 MAX_AGENT_STEPS = 120
 AI_HISTORY_LIMIT = 80
-AGENT_HISTORY_MAX_TURNS = 48
 AI_OPERATION_CONTEXT_LIMIT = 20
 AI_OPERATION_EVENT_POOL_LIMIT = 20
 
