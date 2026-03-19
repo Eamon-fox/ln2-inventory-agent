@@ -1,49 +1,21 @@
-# Repository Guidelines
+# Agent 文档兼容入口
 
-## Project Structure & Module Organization
+本文件保留用于兼容旧链接，但不再作为 coding agent 的权威入口。
 
-- `lib/`: Core library (config, validators, YAML I/O). All mutations enter via `lib/tool_api.py`.
-- `app_gui/`: PySide6 desktop GUI. `app_gui/tool_bridge.py` adapts GUI actions to Tool API calls. i18n: `app_gui/i18n/translations/{en,zh-CN}.json`.
-- `agent/`: ReAct agent runtime (DeepSeek client + tool runner) calling the same Tool API.
-- `tests/`: `pytest` suite for lib/GUI/agent.
-- `ln2_inventory.spec` and `installer/windows/`: Windows packaging (PyInstaller + Inno Setup).
+## 权威入口
 
-## Build, Test, and Development Commands
+请改读仓库根目录下的 `AGENTS.md`。
 
-```bash
-# Conda environment setup
-source /analysis4/software/miniconda3/etc/profile.d/conda.sh
-conda activate /analysis4/fanym/conda/envs/bio-py
+## 架构必读文档
 
-python -m pip install -r requirements.txt
-pytest -q
+1. `../AGENTS.md`
+2. `00-约束模型.md`
+3. `01-系统架构总览.md`
+4. `02-模块地图.md`
+5. `03-共享瓶颈点.md`
 
-# GUI (optional)
-pip install PySide6
-python app_gui/main.py
+## 说明
 
-# AI Copilot (optional)
-export DEEPSEEK_API_KEY=...
-python app_gui/main.py
-```
-
-Config:
-- `LN2_CONFIG_FILE=/path/to/config.json` overrides `yaml_path` and schema ranges (see `references/ln2_config.sample.json`).
-- GUI settings live in `~/.ln2agent/config.yaml`.
-
-## Coding Style & Naming Conventions
-
-- Python 3.10+, 4-space indentation. Keep changes type-hint friendly.
-- Data model: **tube-level**. One `inventory[]` record represents one physical tube; identical tubes are separate records with independent moves/consumption.
-- GUI strings must use i18n keys; update both `en.json` and `zh-CN.json` together.
-
-## Testing Guidelines
-
-- Prefer temp directories; never mutate a real `ln2_inventory.yaml` in-place.
-- For write operations, assert invariants + audit/backups (e.g., `ln2_inventory_audit.jsonl`, `ln2_inventory_backups/`).
-- Naming: `tests/test_*.py`, `test_*` functions/methods.
-
-## Commit & Pull Request Guidelines
-
-- History often uses Conventional Commit prefixes like `feat:`, `fix:`, `refactor:`, `test:` (sometimes with scopes like `fix(i18n):`); keep subjects short and imperative.
-- PRs should include: behavior change, repro steps, how you tested (`pytest -q`), and screenshots for GUI changes.
+- `CLAUDE.md` 继续承担环境、运行、测试命令说明。
+- `tests/RUNBOOK.md` 继续承担测试执行说明。
+- 本文件本身不再维护独立规则，避免出现多套 agent 约束。

@@ -78,6 +78,7 @@
 ## contract/ — 一致性检查，上线前门控
 
 - test_tool_contracts_single_source.py - Canonical tool contract source enforcement. <!-- 工具契约单一来源执行检查 -->
+- test_doc_contract_integrity.py - Markdown architecture contract parsing and integrity checks. <!-- Markdown 架构契约解析与完整性检查 -->
 - test_i18n_hygiene.py - Translation key hygiene and coverage. <!-- 翻译键卫生与中英文覆盖完整性 -->
 - test_path_policy.py - Path escape and security policy enforcement. <!-- 路径逃逸与安全策略执行 -->
 - test_installer_windows_script.py - Windows installer script config preservation. <!-- Windows 安装脚本配置保留检查 -->

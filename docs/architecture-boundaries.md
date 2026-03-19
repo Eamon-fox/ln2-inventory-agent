@@ -1,83 +1,83 @@
-# Architecture Boundaries
+# 架构边界兼容说明
 
-This document defines practical dependency rules for the desktop app.
+本文件保留原路径，用于兼容既有引用。
 
-## Layering
+新的权威架构文档拆分为：
+
+1. `00-约束模型.md`
+2. `01-系统架构总览.md`
+3. `02-模块地图.md`
+4. `03-共享瓶颈点.md`
+
+## 仍然有效的核心边界
+
+### 分层方向
+
+当前桌面端仍遵循自上而下的依赖方向：
 
 1. `app_gui/ui/*`
-2. `app_gui/main.py` and `app_gui/main_window_flows.py`
+2. `app_gui/main.py` 与 `app_gui/main_window_flows.py`
 3. `app_gui/application/*`
 4. `lib/domain/*`
-5. `lib/*` infrastructure modules
+5. `lib/*`
 
-Direction is top-down only.
+### 继续生效的禁止项
 
-## Rules
+- `lib/domain/*` 不得依赖 `PySide6`
+- `lib/domain/*` 不得依赖 GUI widget 或 GUI 状态对象
+- `app_gui/ui/*` 不得直接导入 `lib.tool_api_write*`
+- `app_gui/ui/*` 不得直接导入 `lib.tool_api_write_validation`
+- 写入工作流应由应用协调层统一编排，而不是散落在 UI 组件里
 
-- `lib/domain/*` must stay framework-free:
-  - no `PySide6` imports
-  - no GUI widget/state dependencies
-- `app_gui/ui/*` should not call write-validation infra directly:
-  - do not import `lib.tool_api_write*`
-  - do not import `lib.tool_api_write_validation`
-- write-side workflows should be coordinated by application use cases.
+### 当前 GUI 应用层稳定入口
 
-## Current use-case entrypoints
-
-- `DatasetUseCase.switch_dataset` (`app_gui/application/use_cases.py`)
-  - validates and normalizes target path
-  - persists active dataset in config
-  - emits `DatasetSwitched` event through `EventBus`
-  - `MainWindow` consumes `DatasetSwitched` to refresh UI hooks and emit status notice
+- `DatasetUseCase.switch_dataset`
 - `MigrationModeUseCase.set_mode`
-  - publishes `MigrationModeChanged`
-  - UI applies lock/badge/banner via event handler
 - `PlanExecutionUseCase.report_operation_completed`
-  - publishes `OperationExecuted`
-  - main window refresh flow consumes the event
 - `PlanRunUseCase.execute`
-  - executes staged plan items via a single application entrypoint
-  - normalizes tool-run rows for UI/result rendering
 
-## OperationsPanel boundary (Phase 4)
+### 当前 OperationsPanel 稳定公共方法
 
-Contract tests define two explicit boundary lists for `OperationsPanel`:
+以下方法继续视为跨模块稳定入口，新增、删除或重命名都属于架构级变更：
 
-- `OPERATIONS_PANEL_PUBLIC_API`
-  - stable entrypoints used by `main.py`, main flows, and cross-panel wiring
-  - additions/removals are architecture-level changes, not local refactors
-- `OPERATIONS_PANEL_ALIAS_ALLOWLIST`
-  - class-level `_ops_*` bridge aliases kept for compatibility and tests
-  - new aliases are forbidden unless explicitly reviewed and allowlisted
+- `apply_meta_update`
+- `set_migration_mode_enabled`
+- `update_records_cache`
+- `set_prefill`
+- `set_prefill_background`
+- `set_add_prefill`
+- `set_add_prefill_background`
+- `add_plan_items`
+- `execute_plan`
+- `clear_plan`
+- `reset_for_dataset_switch`
+- `on_export_inventory_csv`
+- `emit_external_operation_event`
+- `print_plan`
+- `print_last_executed`
+- `on_undo_last`
+- `remove_selected_plan_items`
+- `on_plan_table_context_menu`
 
-The contract suite enforces both:
+### 当前已移除的私有别名约束
 
-- every `OPERATIONS_PANEL_PUBLIC_API` symbol must be an explicit `OperationsPanel` method
-- every class-level `_ops_*` bridge alias must be in `OPERATIONS_PANEL_ALIAS_ALLOWLIST`
+以下私有桥接别名保持移除状态，不得在测试或跨模块调用中重新引入：
 
-## OperationsPanel cleanup (Phase 5)
+- `_lookup_record`
+- `_refresh_takeout_record_context`
+- `_refresh_move_record_context`
+- `_rebuild_custom_add_fields`
+- `_handle_response`
+- `_get_selected_plan_rows`
+- `_enable_undo`
+- `_build_print_grid_state`
 
-Private bridge aliases that were removed from `OperationsPanel` must stay removed.
-Contract tests now guard this by scanning integration tests for direct calls such as:
+## 使用方式
 
-- `panel._lookup_record(...)`
-- `panel._refresh_takeout_record_context(...)`
-- `panel._refresh_move_record_context(...)`
-- `panel._rebuild_custom_add_fields(...)`
-- `panel._handle_response(...)`
-- `panel._get_selected_plan_rows(...)`
-- `panel._enable_undo(...)`
-- `panel._build_print_grid_state(...)`
+如果你是 agent：
 
-If these names are needed internally, call helper-module functions directly instead of re-adding class-level aliases.
-
-Alias bridge budget is capped by contract test:
-
-- `_ops_*` class-level bridge aliases on `OperationsPanel` must stay at `0`
-
-## Event model
-
-Domain events are defined under `lib/domain/events.py`.
-Application event dispatch uses `app_gui/application/event_bus.py`.
-
-Event handlers must be idempotent and non-blocking where possible.
+1. 先看 `../AGENTS.md`
+2. 再看 `00-约束模型.md`
+3. 再看 `01-系统架构总览.md`
+4. 再看 `02-模块地图.md`
+5. 最后把本文件当作历史兼容与补充边界说明
