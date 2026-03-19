@@ -20,6 +20,7 @@ else:
         sys.path.insert(0, ROOT)
 
 from app_gui.tool_bridge import GuiToolBridge
+from app_gui.agent_session import AgentSessionService
 from app_gui.application import (
     DatasetUseCase,
     EventBus,
@@ -219,7 +220,8 @@ class MainWindow(QMainWindow):
         self.resize(1300, 900)
 
         self.bridge = GuiToolBridge()
-        self.bridge.set_api_keys(self.gui_config.get("api_keys", {}))
+        self.agent_session = AgentSessionService()
+        self.agent_session.set_api_keys(self.gui_config.get("api_keys", {}))
 
         # One-time migration from legacy QSettings if unified config file does not exist yet.
         # Guarded by a dedicated marker to avoid re-importing stale paths after users
@@ -404,6 +406,7 @@ class MainWindow(QMainWindow):
             plan_store=self.plan_store,
             manage_boxes_request_handler=self.handle_manage_boxes_request,
             import_dataset_handler=self._handle_ai_imported_dataset,
+            agent_session=self.agent_session,
         )
 
         # Apply layout constraints from theme.py

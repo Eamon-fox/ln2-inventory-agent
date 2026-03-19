@@ -397,10 +397,9 @@ class RenderOperationSheetWithGridTests(unittest.TestCase):
     def test_print_css_lightens_grid_box_surfaces(self):
         html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
         self.assertIn("background: #f6f8fb;", html)
-        self.assertIn("border-color: #9fb2c8;", html)
-        self.assertIn("background-color: transparent !important;", html)
+        self.assertIn("#9fb2c8", html)
         self.assertIn("color: #334155;", html)
-        self.assertIn("color: #617183;", html)
+        self.assertIn("color: #7a8796;", html)
 
     def test_print_css_uses_light_marker_backdrops(self):
         html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())

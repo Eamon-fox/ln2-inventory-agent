@@ -95,9 +95,11 @@ class AIPanel(QWidget):
         plan_store=None,
         manage_boxes_request_handler=None,
         import_dataset_handler=None,
+        agent_session=None,
     ):
         super().__init__()
         self.bridge = bridge
+        self.agent_session = agent_session
         self.yaml_path_getter = yaml_path_getter
         self._plan_store = plan_store
         self._manage_boxes_request_handler = manage_boxes_request_handler

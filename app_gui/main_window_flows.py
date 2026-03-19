@@ -397,7 +397,7 @@ class SettingsFlow:
             "thinking_enabled": values.get("ai_thinking_enabled", True),
             "custom_prompt": values.get("ai_custom_prompt", ""),
         }
-        window.bridge.set_api_keys(window.gui_config["api_keys"])
+        window.agent_session.set_api_keys(window.gui_config["api_keys"])
         window.ai_panel.ai_provider.setText(window.gui_config["ai"]["provider"])
         window.ai_panel.ai_model.setText(window.gui_config["ai"]["model"])
         window.ai_panel.ai_steps.setValue(window.gui_config["ai"]["max_steps"])

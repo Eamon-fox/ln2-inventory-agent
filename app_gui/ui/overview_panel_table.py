@@ -23,23 +23,25 @@ class _SortableOverviewItem(QTableWidgetItem):
         self._sort_key = sort_key
 
     def __lt__(self, other):
-        if not isinstance(other, _SortableOverviewItem):
-            return super().__lt__(other)
+        try:
+            self_key = getattr(self, "_sort_key", None)
+            other_key = getattr(other, "_sort_key", None) if isinstance(other, _SortableOverviewItem) else None
 
-        self_key = self._sort_key
-        other_key = other._sort_key
-        if self_key is not None and other_key is not None:
-            try:
-                if self_key != other_key:
-                    return self_key < other_key
-            except TypeError:
-                pass
-        elif self_key is not None:
-            return True
-        elif other_key is not None:
+            if self_key is not None and other_key is not None:
+                try:
+                    if self_key != other_key:
+                        return self_key < other_key
+                except Exception:
+                    pass
+            elif self_key is not None:
+                return True
+            elif other_key is not None:
+                return False
+
+            return _item_display_sort_value(self) < _item_display_sort_value(other)
+        except Exception:
+            # Never let Python exceptions propagate back into Qt's native sorter.
             return False
-
-        return super().__lt__(other)
 
 
 _OVERVIEW_TABLE_COLUMN_LABEL_KEYS = {
@@ -74,6 +76,23 @@ def _safe_number(value):
     return None
 
 
+def _text_sort_key(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return text.casefold()
+
+
+def _item_display_sort_value(item):
+    try:
+        text = str(item.text() or "").strip()
+    except Exception:
+        text = ""
+    if not text:
+        return (1, "")
+    return (0, text.casefold())
+
+
 def _location_sort_key(row_data, value):
     record = row_data.get("record")
     if isinstance(record, dict):
@@ -102,7 +121,7 @@ def _column_sort_key(column, value, row_data, *, column_type):
         return _safe_number(value)
     if column_type == "date":
         return parse_date(value)
-    return None
+    return _text_sort_key(value)
 
 
 def display_table_column_label(column_name):
@@ -285,9 +304,9 @@ def _on_table_sort_changed(self, logical_index, order):
 
     self._table_sort_by = str(columns[logical_index] or "location")
     self._table_sort_order = "desc" if order == Qt.DescendingOrder else "asc"
-    if getattr(self, "_overview_view_mode", "grid") != "table":
-        return
-    self._apply_filters()
+    # Header clicks already trigger Qt's in-place table sort. Rebuilding rows
+    # synchronously from this signal can invalidate items while the native sort
+    # stack is still active and crash the process.
 
 
 def _render_table_rows(self, rows):

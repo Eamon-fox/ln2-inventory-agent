@@ -86,7 +86,7 @@ def start_worker(self, prompt):
         history.append({"role": "user", "content": f"[Operation Results]\n{context_msg}"})
 
     self.ai_run_worker = AgentRunWorker(
-        bridge=self.bridge,
+        bridge=self.agent_session or self.bridge,
         yaml_path=self.yaml_path_getter(),
         query=prompt,
         model=model,

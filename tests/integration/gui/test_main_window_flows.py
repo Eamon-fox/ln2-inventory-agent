@@ -204,7 +204,8 @@ def _build_settings_window(path_text):
         "api_keys": {},
         "ai": {},
     }
-    window.bridge = SimpleNamespace(set_api_keys=MagicMock())
+    window.bridge = SimpleNamespace()
+    window.agent_session = SimpleNamespace(set_api_keys=MagicMock())
     window.ai_panel = SimpleNamespace(
         ai_provider=_FakeTextField(),
         ai_model=_FakeTextField(),
@@ -246,7 +247,7 @@ def test_settings_flow_apply_and_finalize_updates_runtime_state():
     assert window.ai_panel.ai_steps.current == 9
     assert window.ai_panel.ai_thinking_enabled.value is False
     assert window.ai_panel.ai_custom_prompt == "use concise style"
-    window.bridge.set_api_keys.assert_called_once_with({"deepseek": "sk-test"})
+    window.agent_session.set_api_keys.assert_called_once_with({"deepseek": "sk-test"})
     window._update_dataset_label.assert_called_once()
     window.overview_panel.refresh.assert_called_once()
     window.operations_panel.apply_meta_update.assert_called_once_with()

@@ -500,6 +500,14 @@ class OverviewTableViewTests(ManagedPathTestCase):
             for row in range(panel.ov_table.rowCount())
         ]
 
+    def _click_table_header(self, panel, column_name):
+        column_index = self._table_column_index(panel, column_name)
+        header = panel.ov_table.horizontalHeader()
+        section_left = header.sectionViewportPosition(column_index)
+        click_point = QPointF(section_left + 20, max(6, header.height() / 2)).toPoint()
+        QTest.mouseClick(header.viewport(), Qt.LeftButton, Qt.NoModifier, click_point)
+        QTest.qWait(20)
+
     def test_table_view_uses_export_columns(self):
         records = [
             {
@@ -839,6 +847,76 @@ class OverviewTableViewTests(ManagedPathTestCase):
         finally:
             self._cleanup(tmpdir)
 
+    def test_view_toggle_button_click_switches_to_table_without_crashing(self):
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "clone-A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+            {"id": 2, "cell_line": "HeLa", "short_name": "clone-B", "box": 2, "position": 2, "frozen_at": "2025-01-02"},
+            {"id": 3, "cell_line": "NCCIT", "short_name": "clone-C", "box": 1, "position": 3, "frozen_at": "2025-01-03"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
+        panel = None
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            bridge = GuiToolBridge()
+            panel = OverviewPanel(bridge=bridge, yaml_path_getter=lambda: yaml_path)
+            panel.resize(900, 600)
+            panel.show()
+            QTest.qWait(20)
+            panel.refresh()
+
+            self.assertEqual("grid", panel._overview_view_mode)
+            self.assertEqual(0, panel.ov_view_stack.currentIndex())
+
+            with patch.object(bridge, "filter_records", wraps=bridge.filter_records) as mock_filter:
+                QTest.mouseClick(panel.ov_view_table_btn, Qt.LeftButton)
+                QTest.qWait(20)
+                self.assertEqual(1, mock_filter.call_count)
+
+            self.assertEqual("table", panel._overview_view_mode)
+            self.assertEqual(1, panel.ov_view_stack.currentIndex())
+            self.assertTrue(panel.ov_view_table_btn.isChecked())
+            self.assertFalse(panel.ov_view_grid_btn.isChecked())
+            self.assertEqual(len(records), panel.ov_table.rowCount())
+        finally:
+            if panel is not None:
+                panel.hide()
+            self._cleanup(tmpdir)
+
+    def test_view_toggle_button_repeated_switches_remain_stable(self):
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "clone-A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+            {"id": 2, "cell_line": "HeLa", "short_name": "clone-B", "box": 2, "position": 2, "frozen_at": "2025-01-02"},
+            {"id": 3, "cell_line": "NCCIT", "short_name": "clone-C", "box": 1, "position": 3, "frozen_at": "2025-01-03"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
+        panel = None
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.resize(900, 600)
+            panel.show()
+            QTest.qWait(20)
+            panel.refresh()
+
+            for _ in range(15):
+                QTest.mouseClick(panel.ov_view_table_btn, Qt.LeftButton)
+                QTest.qWait(10)
+                self.assertEqual("table", panel._overview_view_mode)
+                self.assertEqual(len(records), panel.ov_table.rowCount())
+
+                QTest.mouseClick(panel.ov_view_grid_btn, Qt.LeftButton)
+                QTest.qWait(10)
+                self.assertEqual("grid", panel._overview_view_mode)
+                self.assertEqual(0, panel.ov_view_stack.currentIndex())
+
+            self.assertEqual(len(records), panel.ov_table.rowCount())
+        finally:
+            if panel is not None:
+                panel.hide()
+            self._cleanup(tmpdir)
+
     def test_table_location_sort_uses_natural_box_position_order(self):
         records = [
             {"id": 201, "cell_line": "K562", "short_name": "p10", "box": 1, "position": 10, "frozen_at": "2025-01-01"},
@@ -888,6 +966,83 @@ class OverviewTableViewTests(ManagedPathTestCase):
             panel.ov_table.sortItems(id_col, Qt.AscendingOrder)
             self.assertEqual(["1", "2", "10"], self._table_column_texts(panel, "id"))
         finally:
+            self._cleanup(tmpdir)
+
+    def test_table_header_click_sorts_in_place_without_requery(self):
+        records = [
+            {"id": 1, "cell_line": "beta", "short_name": "row-1", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+            {"id": 2, "cell_line": "Alpha", "short_name": "row-2", "box": 1, "position": 2, "frozen_at": "2025-01-01"},
+            {"id": 3, "cell_line": "aardvark", "short_name": "row-3", "box": 1, "position": 3, "frozen_at": "2025-01-01"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
+        panel = None
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            bridge = GuiToolBridge()
+            panel = OverviewPanel(bridge=bridge, yaml_path_getter=lambda: yaml_path)
+            panel.resize(900, 600)
+            panel.show()
+            QTest.qWait(20)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            with patch.object(bridge, "filter_records", wraps=bridge.filter_records) as mock_filter:
+                self._click_table_header(panel, "cell_line")
+                self.assertEqual(0, mock_filter.call_count)
+
+            self.assertEqual("cell_line", panel._table_sort_by)
+            self.assertEqual("asc", panel._table_sort_order)
+            self.assertEqual(
+                ["aardvark", "Alpha", "beta"],
+                self._table_column_texts(panel, "cell_line"),
+            )
+        finally:
+            if panel is not None:
+                panel.hide()
+            self._cleanup(tmpdir)
+
+    def test_table_header_click_toggles_current_location_sort_without_requery(self):
+        records = [
+            {"id": 201, "cell_line": "K562", "short_name": "p10", "box": 1, "position": 10, "frozen_at": "2025-01-01"},
+            {"id": 202, "cell_line": "K562", "short_name": "p2", "box": 1, "position": 2, "frozen_at": "2025-01-01"},
+            {"id": 203, "cell_line": "K562", "short_name": "p1", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
+        panel = None
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            bridge = GuiToolBridge()
+            panel = OverviewPanel(bridge=bridge, yaml_path_getter=lambda: yaml_path)
+            panel.resize(900, 600)
+            panel.show()
+            QTest.qWait(20)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            with patch.object(bridge, "filter_records", wraps=bridge.filter_records) as mock_filter:
+                self._click_table_header(panel, "location")
+                self.assertEqual(0, mock_filter.call_count)
+                self.assertEqual("location", panel._table_sort_by)
+                self.assertEqual("desc", panel._table_sort_order)
+                self.assertEqual(
+                    ["1:10", "1:2", "1:1"],
+                    self._table_column_texts(panel, "location"),
+                )
+
+                self._click_table_header(panel, "location")
+                self.assertEqual(0, mock_filter.call_count)
+
+            self.assertEqual("location", panel._table_sort_by)
+            self.assertEqual("asc", panel._table_sort_order)
+            self.assertEqual(
+                ["1:1", "1:2", "1:10"],
+                self._table_column_texts(panel, "location"),
+            )
+        finally:
+            if panel is not None:
+                panel.hide()
             self._cleanup(tmpdir)
 
     def test_table_numeric_custom_field_sort_uses_numeric_order(self):
@@ -940,6 +1095,68 @@ class OverviewTableViewTests(ManagedPathTestCase):
                 self._table_column_texts(panel, "passage_number"),
             )
         finally:
+            self._cleanup(tmpdir)
+
+    def test_table_header_click_numeric_custom_field_sorts_without_requery(self):
+        records = [
+            {
+                "id": 1,
+                "cell_line": "K562",
+                "short_name": "ten",
+                "box": 1,
+                "position": 1,
+                "frozen_at": "2025-01-01",
+                "passage_number": 10,
+            },
+            {
+                "id": 2,
+                "cell_line": "K562",
+                "short_name": "two",
+                "box": 1,
+                "position": 2,
+                "frozen_at": "2025-01-01",
+                "passage_number": 2,
+            },
+            {
+                "id": 3,
+                "cell_line": "K562",
+                "short_name": "one",
+                "box": 1,
+                "position": 3,
+                "frozen_at": "2025-01-01",
+                "passage_number": 1,
+            },
+        ]
+        meta_extra = {
+            "color_key": "cell_line",
+            "custom_fields": [{"key": "passage_number", "label": "Passage #", "type": "int"}],
+        }
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra=meta_extra)
+        panel = None
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            bridge = GuiToolBridge()
+            panel = OverviewPanel(bridge=bridge, yaml_path_getter=lambda: yaml_path)
+            panel.resize(900, 600)
+            panel.show()
+            QTest.qWait(20)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            with patch.object(bridge, "filter_records", wraps=bridge.filter_records) as mock_filter:
+                self._click_table_header(panel, "passage_number")
+                self.assertEqual(0, mock_filter.call_count)
+
+            self.assertEqual("passage_number", panel._table_sort_by)
+            self.assertEqual("asc", panel._table_sort_order)
+            self.assertEqual(
+                ["1", "2", "10"],
+                self._table_column_texts(panel, "passage_number"),
+            )
+        finally:
+            if panel is not None:
+                panel.hide()
             self._cleanup(tmpdir)
 
     def test_detect_column_type_uses_current_meta_without_yaml_load(self):

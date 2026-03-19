@@ -272,24 +272,26 @@ inventory:
                 self.assertIn("required positional argument", str(exc_info.exception))
 
     def test_run_agent_query_builds_runner_without_access_profile(self):
+        from app_gui.agent_session import AgentSessionService
+
         with tempfile.TemporaryDirectory(prefix="ln2_bridge_") as install_dir, patch(
             "lib.inventory_paths.get_install_dir",
             return_value=install_dir,
         ):
             path = self._write_inventory("bridge-agent-mode")
-            bridge = GuiToolBridge()
-            bridge.set_api_keys({"deepseek": "sk-test"})
+            service = AgentSessionService()
+            service.set_api_keys({"deepseek": "sk-test"})
 
-            with patch("app_gui.tool_bridge.DeepSeekLLMClient") as llm_cls, patch(
-                "app_gui.tool_bridge.AgentToolRunner"
-            ) as runner_cls, patch("app_gui.tool_bridge.ReactAgent") as agent_cls:
+            with patch("app_gui.agent_session.DeepSeekLLMClient") as llm_cls, patch(
+                "app_gui.agent_session.AgentToolRunner"
+            ) as runner_cls, patch("app_gui.agent_session.ReactAgent") as agent_cls:
                 llm_cls.return_value = object()
                 runner_cls.return_value = object()
                 fake_agent = MagicMock()
                 fake_agent.run.return_value = {"ok": True, "final": "done"}
                 agent_cls.return_value = fake_agent
 
-                response = bridge.run_agent_query(
+                response = service.run_agent_query(
                     yaml_path=str(path),
                     query="run migration flow",
                 )

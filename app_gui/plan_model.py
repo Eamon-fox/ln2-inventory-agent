@@ -76,10 +76,11 @@ def extract_grid_state_for_print(overview_panel):
             if record:
                 label_val = str(record.get(display_key) or "")
                 color_val = str(record.get(color_key) or "")
+                raw_color = cell_color(color_val if color_val else None)
                 cell.update({
                     "id": record.get("id"),
-                    "label": label_val[:8] if label_val else str(position),
-                    "color": cell_color(color_val if color_val else None),
+                    "label": label_val if label_val else str(position),
+                    "color": raw_color,
                 })
 
             cells_data.append(cell)
@@ -269,8 +270,8 @@ def render_grid_html(grid_state):
             if cell["is_occupied"]:
                 classes.append("cell-occupied")
                 content = cell["label"]
-                color = cell.get("color", _sheet_color("sheet-grid-border", "#36506d"))
-                attrs.append(f'style="background-color: {color};"')
+                accent = cell.get("color", _sheet_color("sheet-grid-border", "#8fa4ba"))
+                attrs.append(f'style="border-left: 2px solid {accent};"')
             else:
                 classes.append("cell-empty")
                 content = cell["display_pos"]
@@ -621,10 +622,10 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
         }}
 
         .box {{
-            border: 0.4mm solid #36506d;
+            border: 0.4mm solid #9fb2c8;
             border-radius: 2mm;
             padding: 2.5mm;
-            background: #0f1a2a;
+            background: #f6f8fb;
             break-inside: avoid;
             page-break-inside: avoid;
             justify-self: start;
@@ -644,14 +645,14 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
             font-weight: 700;
             letter-spacing: 0.04em;
             text-transform: uppercase;
-            color: #9fc2e8;
+            color: #334155;
         }}
 
         .box-header-tag {{
             flex: 1;
             min-width: 0;
             font-size: 6px;
-            color: #dbeafe;
+            color: #64748b;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -664,9 +665,9 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
             min-width: 0;
             padding: 0.4mm 1.4mm;
             border-radius: 999px;
-            border: 0.25mm solid #36506d;
-            background: rgba(15, 26, 42, 0.85);
-            color: #e6f1ff;
+            border: 0.25mm solid #b8c7d8;
+            background: rgba(255, 255, 255, 0.92);
+            color: #334155;
             font-size: 8px;
             font-weight: 800;
             line-height: 1;
@@ -682,7 +683,9 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
 
         .cell {{
             aspect-ratio: auto;
-            display: flex;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
             align-items: center;
             justify-content: center;
             width: var(--cell-size, 7.2mm);
@@ -690,23 +693,29 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
             min-width: var(--cell-size, 7.2mm);
             min-height: var(--cell-size, 7.2mm);
             font-size: var(--cell-font-size, 8px);
-            line-height: 1;
+            line-height: 1.15;
             font-weight: 500;
-            border: 0.3mm solid #36506d;
+            border: 0.3mm solid #8fa4ba;
             border-radius: 0.5mm;
-            padding: 0;
+            padding: 0 1px;
             position: relative;
             overflow: hidden;
+            text-overflow: ellipsis;
+            word-break: break-all;
+            text-align: center;
         }}
 
         .cell-occupied {{
-            color: white;
+            color: #334155;
         }}
 
         .cell-empty {{
-            background-color: #1a2a40;
-            color: #86a0bb;
+            background-color: transparent;
+            color: #7a8796;
+            border-color: #dce3ed;
             font-size: var(--cell-empty-font-size, 6px);
+            white-space: nowrap;
+            -webkit-line-clamp: unset;
         }}
 
         .cell[data-operation="add"]::after {{
@@ -717,7 +726,7 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
             font-size: var(--cell-marker-font-size, 6px);
             font-weight: bold;
             color: #22c55e;
-            background: rgba(0, 0, 0, 0.7);
+            background: rgba(255, 255, 255, 0.82);
             padding: 0 1px;
             border-radius: 2px;
         }}
@@ -735,7 +744,7 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
             font-size: var(--cell-marker-font-size, 6px);
             font-weight: bold;
             color: #ef4444;
-            background: rgba(0, 0, 0, 0.7);
+            background: rgba(255, 255, 255, 0.82);
             padding: 0 1px;
             border-radius: 2px;
         }}
@@ -753,7 +762,7 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
             font-size: var(--cell-marker-font-size, 6px);
             font-weight: bold;
             color: #06b6d4;
-            background: rgba(0, 0, 0, 0.7);
+            background: rgba(255, 255, 255, 0.82);
             padding: 0 1px;
             border-radius: 2px;
         }}
@@ -771,7 +780,7 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
             font-size: var(--cell-marker-font-size, 6px);
             font-weight: bold;
             color: #63b3ff;
-            background: rgba(0, 0, 0, 0.7);
+            background: rgba(255, 255, 255, 0.82);
             padding: 0 1px;
             border-radius: 2px;
         }}
@@ -789,7 +798,7 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
             font-size: var(--cell-marker-font-size, 6px);
             font-weight: bold;
             color: #63b3ff;
-            background: rgba(0, 0, 0, 0.7);
+            background: rgba(255, 255, 255, 0.82);
             padding: 0 1px;
             border-radius: 2px;
         }}
@@ -954,48 +963,6 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
             .box-grid {{
                 --cell-gap: var(--cell-gap-print-mm, 0.6mm);
                 --cell-size: var(--cell-size-print-mm, 7.2mm);
-            }}
-
-            /* Ink-saving print overrides: only lighten grid box/cell surfaces. */
-            .box {{
-                background: #f6f8fb;
-                border-color: #9fb2c8;
-            }}
-
-            .box-header-main {{
-                color: #334155;
-            }}
-
-            .box-header-tag {{
-                color: #64748b;
-            }}
-
-            .box-header-num {{
-                border-color: #b8c7d8;
-                background: rgba(255, 255, 255, 0.92);
-                color: #334155;
-            }}
-
-            .cell {{
-                border-color: #8fa4ba;
-            }}
-
-            .cell-occupied {{
-                background-color: transparent !important;
-                color: #334155;
-            }}
-
-            .cell-empty {{
-                background-color: transparent !important;
-                color: #617183;
-            }}
-
-            .cell[data-operation="add"]::after,
-            .cell[data-operation="takeout"]::after,
-            .cell[data-operation="edit"]::after,
-            .cell[data-operation="move-source"]::after,
-            .cell[data-operation="move-target"]::after {{
-                background: rgba(255, 255, 255, 0.82);
             }}
         }}
 
