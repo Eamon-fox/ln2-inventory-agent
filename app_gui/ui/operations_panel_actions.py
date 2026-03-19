@@ -8,7 +8,6 @@ from PySide6.QtCore import QTimer
 
 from app_gui.error_localizer import localize_error_payload
 from app_gui.i18n import tr
-from app_gui.ui.utils import open_html_in_browser
 
 
 def _print_items_with_grid(self, items_to_print, *, empty_message, opened_message, grid_state=None, table_rows=None):
@@ -138,16 +137,15 @@ def _build_print_table_rows(self, items_to_print):
 
 
 def _print_operation_sheet_with_grid(self, items, grid_state, *, table_rows=None, opened_message=None):
-    """Print operation sheet with grid visualization."""
+    """Open operation sheet in the system browser for printing."""
     if opened_message is None:
         opened_message = tr("operations.operationSheetOpened")
 
-    # Keep tests and monkeypatch points stable on operations_panel module symbols.
-    from app_gui.ui import operations_panel as _ops_panel
     from app_gui.plan_model import render_operation_sheet_with_grid
+    from app_gui.ui.utils import open_html_in_browser
 
     html = render_operation_sheet_with_grid(items, grid_state, table_rows=table_rows)
-    open_html_in_browser(html, open_url_fn=_ops_panel.QDesktopServices.openUrl)
+    open_html_in_browser(html)
     self.status_message.emit(opened_message, 2000, "info")
 
 
