@@ -38,6 +38,7 @@ from lib.inventory_paths import (
     normalize_inventory_yaml_path as _normalize_inventory_yaml_path,
 )
 from lib.import_acceptance import validate_candidate_yaml
+from lib.position_fmt import box_to_display, pos_to_display
 from lib.validate_service import VALIDATION_MODE_META_ONLY, validate_yaml_data, validate_yaml_file
 from lib.custom_fields_update_service import (
     build_custom_fields_update_audit_details,
@@ -812,6 +813,82 @@ class SettingsDialog(QDialog):
                 self, tr("settings.checkUpdate"),
                 tr("settings.alreadyLatest"))
 
+    @staticmethod
+    def _format_removed_field_preview_value(value, *, max_length=80):
+        text = str(value)
+        text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\\n")
+        if len(text) > max_length:
+            return f"{text[: max_length - 3]}..."
+        return text
+
+    @staticmethod
+    def _format_removed_field_preview_box(box, layout):
+        if box in (None, ""):
+            return "?"
+        try:
+            return box_to_display(box, layout)
+        except Exception:
+            return str(box)
+
+    @staticmethod
+    def _format_removed_field_preview_position(position, layout):
+        if position in (None, ""):
+            return "?"
+        try:
+            return pos_to_display(int(position), layout)
+        except Exception:
+            return str(position)
+
+    def _format_removed_field_preview_entry(self, entry, *, layout):
+        record_id = entry.record_id
+        if record_id in (None, ""):
+            record_id = "?"
+        return t(
+            "main.cfRemoveDataPreviewItem",
+            id=record_id,
+            box=self._format_removed_field_preview_box(entry.box, layout),
+            position=self._format_removed_field_preview_position(entry.position, layout),
+            value=self._format_removed_field_preview_value(entry.value),
+        )
+
+    def _format_removed_field_preview_summary(self, previews, *, layout):
+        blocks = []
+        for preview in previews:
+            lines = [
+                t(
+                    "main.cfRemoveDataPreviewField",
+                    field=preview.field_key,
+                    count=preview.affected_count,
+                )
+            ]
+            lines.extend(
+                self._format_removed_field_preview_entry(entry, layout=layout)
+                for entry in preview.samples
+            )
+            if preview.hidden_count:
+                lines.append(
+                    t("main.cfRemoveDataPreviewMore", count=preview.hidden_count)
+                )
+            blocks.append("\n".join(lines))
+        return "\n\n".join(blocks)
+
+    def _format_removed_field_preview_details(self, previews, *, layout):
+        blocks = []
+        for preview in previews:
+            lines = [
+                t(
+                    "main.cfRemoveDataPreviewField",
+                    field=preview.field_key,
+                    count=preview.affected_count,
+                )
+            ]
+            lines.extend(
+                self._format_removed_field_preview_entry(entry, layout=layout)
+                for entry in preview.entries
+            )
+            blocks.append("\n".join(lines))
+        return "\n\n".join(blocks)
+
     def _open_custom_fields_editor(self):
         yaml_path = self.yaml_edit.text().strip()
         if not yaml_path or not os.path.isfile(yaml_path):
@@ -902,11 +979,26 @@ class SettingsDialog(QDialog):
 
         removed_data_cleaned = False
         removed_records_count = 0
-        if draft.removed_keys_with_data and draft.pending_inventory:
-            names = ", ".join(sorted(draft.removed_keys))
+        if draft.removed_field_previews:
+            box_layout = meta.get("box_layout") if isinstance(meta.get("box_layout"), dict) else None
+            names = ", ".join(preview.field_key for preview in draft.removed_field_previews)
             msg = QMessageBox(self)
+            msg.setIcon(QMessageBox.Warning)
             msg.setWindowTitle(tr("main.customFieldsTitle"))
             msg.setText(t("main.cfRemoveDataPrompt", fields=names))
+            msg.setInformativeText(
+                self._format_removed_field_preview_summary(
+                    draft.removed_field_previews,
+                    layout=box_layout,
+                )
+            )
+            if any(preview.hidden_count for preview in draft.removed_field_previews):
+                msg.setDetailedText(
+                    self._format_removed_field_preview_details(
+                        draft.removed_field_previews,
+                        layout=box_layout,
+                    )
+                )
             btn_clean = msg.addButton(tr("main.cfRemoveDataClean"), QMessageBox.DestructiveRole)
             msg.addButton(QMessageBox.Cancel)
             msg.setDefaultButton(msg.button(QMessageBox.Cancel))

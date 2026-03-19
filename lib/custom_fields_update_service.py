@@ -14,6 +14,8 @@ from .legacy_field_policy import (
     normalize_legacy_field_key,
 )
 
+REMOVED_FIELD_PREVIEW_SAMPLE_LIMIT = 5
+
 
 def _has_nonempty_value(value: Any) -> bool:
     if value is None:
@@ -135,6 +137,63 @@ def _resolve_selector_key(
     return ""
 
 
+@dataclass(frozen=True)
+class RemovedFieldRecordPreview:
+    record_id: Any
+    box: Any
+    position: Any
+    value: Any
+
+
+@dataclass
+class RemovedFieldPreview:
+    field_key: str
+    affected_count: int
+    samples: List[RemovedFieldRecordPreview]
+    entries: List[RemovedFieldRecordPreview]
+    hidden_count: int
+
+
+def _collect_removed_field_previews(
+    inventory: List[Any],
+    removed_keys: Set[str],
+    *,
+    sample_limit: int = REMOVED_FIELD_PREVIEW_SAMPLE_LIMIT,
+) -> List[RemovedFieldPreview]:
+    if sample_limit < 1:
+        sample_limit = 1
+
+    previews: List[RemovedFieldPreview] = []
+    for key in sorted(removed_keys):
+        entries: List[RemovedFieldRecordPreview] = []
+        for rec in inventory:
+            if not isinstance(rec, dict):
+                continue
+            value = rec.get(key)
+            if not _has_nonempty_value(value):
+                continue
+            entries.append(
+                RemovedFieldRecordPreview(
+                    record_id=rec.get("id"),
+                    box=rec.get("box"),
+                    position=rec.get("position"),
+                    value=value,
+                )
+            )
+        if not entries:
+            continue
+        previews.append(
+            RemovedFieldPreview(
+                field_key=key,
+                affected_count=len(entries),
+                samples=list(entries[:sample_limit]),
+                entries=entries,
+                hidden_count=max(0, len(entries) - sample_limit),
+            )
+        )
+    return previews
+
+
 @dataclass
 class CustomFieldsUpdateDraft:
     pending_meta: Dict[str, Any]
@@ -147,6 +206,7 @@ class CustomFieldsUpdateDraft:
     added_keys: Set[str]
     removed_keys: Set[str]
     removed_keys_with_data: Set[str]
+    removed_field_previews: List[RemovedFieldPreview]
     selector_before: Dict[str, str]
     selector_after: Dict[str, str]
     stats: Dict[str, Any]
@@ -187,14 +247,11 @@ def prepare_custom_fields_update(
     removed_keys = {
         key for key in (old_keys - new_keys - renamed_old_keys) if key not in protected_keys
     }
-    removed_keys_with_data = {
-        key
-        for key in removed_keys
-        if any(
-            isinstance(rec, dict) and rec.get(key) is not None
-            for rec in pending_inventory
-        )
-    }
+    removed_field_previews = _collect_removed_field_previews(
+        pending_inventory,
+        removed_keys,
+    )
+    removed_keys_with_data = {preview.field_key for preview in removed_field_previews}
     added_keys = new_keys - old_keys
 
     resolved_display_key = _resolve_selector_key(
@@ -236,6 +293,7 @@ def prepare_custom_fields_update(
         added_keys=added_keys,
         removed_keys=removed_keys,
         removed_keys_with_data=removed_keys_with_data,
+        removed_field_previews=removed_field_previews,
         selector_before={
             "display_key": str(current_display_key or "").strip(),
             "color_key": str(current_color_key or "").strip(),
