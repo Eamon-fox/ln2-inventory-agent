@@ -271,6 +271,20 @@ class ZhipuClientParseTests(unittest.TestCase):
         body = _decode_request_body(client._build_request(messages=[{"role": "user", "content": "hi"}]))
         self.assertEqual({"type": "enabled"}, body.get("thinking"))
 
+    def test_build_request_uses_project_headers_without_cline_markers(self):
+        with patch.dict(os.environ, {"ZHIPUAI_API_KEY": "test-key"}, clear=False):
+            client = ZhipuLLMClient(model="glm-5")
+
+        headers = {
+            str(name or "").casefold(): str(value or "")
+            for name, value in client._build_request(messages=[{"role": "user", "content": "hi"}]).header_items()
+        }
+        self.assertEqual("application/json", headers.get("accept"))
+        self.assertEqual("SnowFox/1.2.3", headers.get("user-agent"))
+        self.assertNotIn("http-referer", headers)
+        self.assertNotIn("x-title", headers)
+        self.assertNotIn("x-cline-version", headers)
+
     def test_stream_chat_yields_answer_thought_and_tool_call(self):
         with patch.dict(os.environ, {"ZHIPUAI_API_KEY": "test-key"}, clear=False):
             client = ZhipuLLMClient(model="glm-5")
@@ -315,6 +329,20 @@ class ZhipuClientParseTests(unittest.TestCase):
 
 
 class MiniMaxClientParseTests(unittest.TestCase):
+    def test_build_request_uses_project_headers_without_cline_markers(self):
+        with patch.dict(os.environ, {"MINIMAX_API_KEY": "test-key"}, clear=False):
+            client = MiniMaxLLMClient(model="MiniMax-M2.5-highspeed")
+
+        headers = {
+            str(name or "").casefold(): str(value or "")
+            for name, value in client._build_request(messages=[{"role": "user", "content": "hi"}]).header_items()
+        }
+        self.assertEqual("application/json", headers.get("accept"))
+        self.assertEqual("SnowFox/1.2.3", headers.get("user-agent"))
+        self.assertNotIn("http-referer", headers)
+        self.assertNotIn("x-title", headers)
+        self.assertNotIn("x-cline-version", headers)
+
     def test_build_request_uses_default_temperature_and_reasoning_split(self):
         with patch.dict(os.environ, {"MINIMAX_API_KEY": "test-key"}, clear=False):
             client = MiniMaxLLMClient(model="MiniMax-M2.5-highspeed")
