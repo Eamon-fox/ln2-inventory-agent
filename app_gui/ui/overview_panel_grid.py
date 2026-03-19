@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QGridLayout, QGroupBox, QLabel, QSizePolicy, QVBox
 
 from app_gui.i18n import t, tr
 from app_gui.ui.overview_panel_cell_button import CellButton
-from app_gui.ui.theme import cell_empty_style, cell_occupied_style, resolve_theme_token
+from app_gui.ui.theme import SPACE_1, SPACE_2, cell_empty_style, cell_occupied_style, resolve_theme_token
 from app_gui.ui.utils import cell_color
 from lib.position_fmt import box_to_display, pos_to_display
 
@@ -320,13 +320,13 @@ def _build_cell_render_signature(self, box_num, position, record):
 def _marker_border_color(marker_type):
     marker = str(marker_type or "").strip().lower()
     if marker == "add":
-        return "#22c55e"
+        return resolve_theme_token("marker-add", fallback="#22c55e")
     if marker == "takeout":
-        return "#ef4444"
+        return resolve_theme_token("marker-takeout", fallback="#ef4444")
     if marker == "edit":
-        return "#06b6d4"
+        return resolve_theme_token("marker-edit", fallback="#06b6d4")
     if marker in {"move-source", "move-target"}:
-        return "#63b3ff"
+        return resolve_theme_token("marker-move", fallback="#63b3ff")
     return ""
 
 
@@ -553,8 +553,8 @@ def _rebuild_boxes(self, rows, cols, box_numbers):
             )
         )
         group_layout = QVBoxLayout(group)
-        group_layout.setContentsMargins(6, 6, 6, 6)
-        group_layout.setSpacing(4)
+        group_layout.setContentsMargins(SPACE_2, SPACE_2, SPACE_2, SPACE_2)
+        group_layout.setSpacing(SPACE_1)
 
         live_label = QLabel(t("overview.occupiedCount", occupied=0, total=total_slots, empty=total_slots))
         group_layout.addWidget(live_label)
