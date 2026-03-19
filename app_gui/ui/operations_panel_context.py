@@ -20,36 +20,107 @@ def _record_matches_slot(record, box, position):
         and _coerce_int_or_none(record.get("position")) == _coerce_int_or_none(position)
     )
 
+
+def _take_form_row(form, widget):
+    if form is None or widget is None:
+        return None
+    try:
+        return form.takeRow(widget)
+    except Exception:
+        return None
+
+
+def _delete_form_row_items(row):
+    if row is None:
+        return
+    for item_name in ("labelItem", "fieldItem"):
+        item = getattr(row, item_name, None)
+        if item is None:
+            continue
+        widget = item.widget()
+        if widget is not None:
+            widget.setParent(None)
+            widget.deleteLater()
+
+
 def _rebuild_ctx_user_fields(self, prefix, custom_fields):
     """Rebuild user field context rows in takeout/move form."""
     if prefix == "takeout":
         form = getattr(self, "_takeout_ctx_form", None)
         widgets = getattr(self, "_takeout_ctx_widgets", {})
+        frozen_label = getattr(self, "_t_ctx_frozen_label", None)
+        frozen_container = getattr(self, "_t_ctx_frozen_container", None)
+        note_label = getattr(self, "_t_ctx_note_label", None)
+        note_container = getattr(self, "_t_ctx_note_container", None)
+        cell_line_label = getattr(self, "_t_ctx_cell_line_label", None)
+        cell_line_container = getattr(self, "_t_ctx_cell_line_container", None)
+        history_label = getattr(self, "_t_ctx_history_label", None)
+        history_container = getattr(self, "_t_ctx_history_container", None)
         rid_fn = lambda: self.t_id.value()
         refresh_fn = lambda: _refresh_takeout_record_context(self)
     else:
         form = getattr(self, "_move_ctx_form", None)
         widgets = getattr(self, "_move_ctx_widgets", {})
+        frozen_label = getattr(self, "_m_ctx_frozen_label", None)
+        frozen_container = getattr(self, "_m_ctx_frozen_container", None)
+        note_label = getattr(self, "_m_ctx_note_label", None)
+        note_container = getattr(self, "_m_ctx_note_container", None)
+        cell_line_label = getattr(self, "_m_ctx_cell_line_label", None)
+        cell_line_container = getattr(self, "_m_ctx_cell_line_container", None)
+        history_label = getattr(self, "_m_ctx_history_label", None)
+        history_container = getattr(self, "_m_ctx_history_container", None)
         rid_fn = lambda: self.m_id.value()
         refresh_fn = lambda: _refresh_move_record_context(self)
     if form is None:
         return
-    # Remove old user field rows
-    for key, (container, label) in widgets.items():
-        form.removeRow(container)
+
+    fixed_rows = [
+        (frozen_label, frozen_container),
+        (note_label, note_container),
+        (cell_line_label, cell_line_container),
+        (history_label, history_container),
+    ]
+
+    for _label, container in fixed_rows:
+        _take_form_row(form, container)
+
+    for _key, (container, _label_widget) in widgets.items():
+        _delete_form_row_items(_take_form_row(form, container))
     widgets.clear()
-    # Insert new user field rows
+
+    if frozen_label is not None and frozen_container is not None:
+        form.addRow(frozen_label, frozen_container)
+
+    added_fixed_keys = set()
     for fdef in (custom_fields or []):
         key = fdef["key"]
-        if key in {"note", "cell_line"}:
-            # ``note`` and ``cell_line`` keep dedicated context rows.
+        if key == "note":
+            if "note" not in added_fixed_keys and note_label is not None and note_container is not None:
+                form.addRow(note_label, note_container)
+                added_fixed_keys.add("note")
+            continue
+        if key == "cell_line":
+            if (
+                "cell_line" not in added_fixed_keys
+                and cell_line_label is not None
+                and cell_line_container is not None
+            ):
+                form.addRow(cell_line_label, cell_line_container)
+                added_fixed_keys.add("cell_line")
             continue
         flabel = fdef.get("label", key)
         from app_gui.ui import operations_panel_forms as _ops_forms
 
         container, lbl_widget = _ops_forms._make_editable_field(self, key, rid_fn, refresh_fn)
-        form.insertRow(form.rowCount(), flabel, container)
+        form.addRow(flabel, container)
         widgets[key] = (container, lbl_widget)
+
+    if "note" not in added_fixed_keys and note_label is not None and note_container is not None:
+        form.addRow(note_label, note_container)
+
+    if history_label is not None and history_container is not None:
+        form.addRow(history_label, history_container)
+
     if prefix == "takeout":
         self._takeout_ctx_widgets = widgets
     else:

@@ -454,8 +454,11 @@ def _build_takeout_tab(self):
         choices_provider=self._cell_line_choice_config,
     )
 
-    # Dynamic user field context widgets (populated by _rebuild_takeout_ctx_fields)
-    self._takeout_ctx_form = form
+    # Dynamic user/context field block (schema-ordered and rebuilt on meta changes).
+    self._takeout_ctx_form_host = QWidget()
+    self._takeout_ctx_form = QFormLayout(self._takeout_ctx_form_host)
+    self._takeout_ctx_form.setContentsMargins(0, 0, 0, 0)
+    self._takeout_ctx_form.setSpacing(form.spacing())
     self._takeout_ctx_widgets = {}  # key -> (container_widget, label_widget)
 
     # Read-only context fields (not editable via inline edit) - kept for compatibility
@@ -464,15 +467,16 @@ def _build_takeout_tab(self):
     self.t_ctx_events = _make_readonly_history_label(self)
     self.t_ctx_source = _make_readonly_field(self)
 
-    # User fields placeholder -?will be rebuilt dynamically
-    self._takeout_ctx_insert_row = form.rowCount()
-
-    form.addRow(tr("overview.ctxFrozen"), t_frozen_w)
-    form.addRow(tr("operations.note"), t_note_w)
+    self._t_ctx_frozen_label = QLabel(tr("overview.ctxFrozen"))
+    self._t_ctx_frozen_container = t_frozen_w
+    self._t_ctx_note_label = QLabel(tr("operations.note"))
+    self._t_ctx_note_container = t_note_w
     self._t_ctx_cell_line_label = QLabel(tr("operations.cellLine"))
     self._t_ctx_cell_line_container = t_cell_line_w
-    form.addRow(self._t_ctx_cell_line_label, t_cell_line_w)
-    form.addRow(tr("overview.ctxHistory"), self.t_ctx_events)
+    self._t_ctx_history_label = QLabel(tr("overview.ctxHistory"))
+    self._t_ctx_history_container = self.t_ctx_events
+
+    form.addRow(self._takeout_ctx_form_host)
 
     # Editable: target position (hidden, kept for compat - single value now)
     self.t_position = QComboBox()
@@ -598,8 +602,11 @@ def _build_move_tab(self):
         choices_provider=self._cell_line_choice_config,
     )
 
-    # Dynamic user field context widgets (populated by _rebuild_move_ctx_fields)
-    self._move_ctx_form = form
+    # Dynamic user/context field block (schema-ordered and rebuilt on meta changes).
+    self._move_ctx_form_host = QWidget()
+    self._move_ctx_form = QFormLayout(self._move_ctx_form_host)
+    self._move_ctx_form.setContentsMargins(0, 0, 0, 0)
+    self._move_ctx_form.setSpacing(form.spacing())
     self._move_ctx_widgets = {}  # key -> (container_widget, label_widget)
 
     # Read-only context fields (not editable via inline edit) - kept for compat
@@ -607,15 +614,16 @@ def _build_move_tab(self):
     self.m_ctx_position = _make_readonly_field(self)
     self.m_ctx_events = _make_readonly_history_label(self)
 
-    # User fields placeholder -?will be rebuilt dynamically
-    self._move_ctx_insert_row = form.rowCount()
-
-    form.addRow(tr("overview.ctxFrozen"), m_frozen_w)
-    form.addRow(tr("operations.note"), m_note_w)
+    self._m_ctx_frozen_label = QLabel(tr("overview.ctxFrozen"))
+    self._m_ctx_frozen_container = m_frozen_w
+    self._m_ctx_note_label = QLabel(tr("operations.note"))
+    self._m_ctx_note_container = m_note_w
     self._m_ctx_cell_line_label = QLabel(tr("operations.cellLine"))
     self._m_ctx_cell_line_container = m_cell_line_w
-    form.addRow(self._m_ctx_cell_line_label, m_cell_line_w)
-    form.addRow(tr("overview.ctxHistory"), self.m_ctx_events)
+    self._m_ctx_history_label = QLabel(tr("overview.ctxHistory"))
+    self._m_ctx_history_container = self.m_ctx_events
+
+    form.addRow(self._move_ctx_form_host)
 
     # Editable fields
     self.m_date = QDateEdit()

@@ -95,6 +95,40 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         self.assertFalse(panel._m_ctx_cell_line_label.isHidden())
         self.assertFalse(panel._m_ctx_cell_line_container.isHidden())
 
+
+    def test_operations_panel_context_fields_follow_schema_order_before_history(self):
+        panel = self._new_operations_panel()
+
+        panel.apply_meta_update(
+            {
+                "custom_fields": [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                    {"key": "sample_type", "label": "Sample Type", "type": "str"},
+                    {"key": "note", "label": "Note", "type": "str"},
+                ]
+            }
+        )
+
+        takeout_sample_container, _takeout_sample_widget = panel._takeout_ctx_widgets["sample_type"]
+        move_sample_container, _move_sample_widget = panel._move_ctx_widgets["sample_type"]
+
+        t_cell_line_row, _ = panel._takeout_ctx_form.getWidgetPosition(panel._t_ctx_cell_line_container)
+        t_sample_row, _ = panel._takeout_ctx_form.getWidgetPosition(takeout_sample_container)
+        t_note_row, _ = panel._takeout_ctx_form.getWidgetPosition(panel._t_ctx_note_container)
+        t_history_row, _ = panel._takeout_ctx_form.getWidgetPosition(panel._t_ctx_history_container)
+
+        m_cell_line_row, _ = panel._move_ctx_form.getWidgetPosition(panel._m_ctx_cell_line_container)
+        m_sample_row, _ = panel._move_ctx_form.getWidgetPosition(move_sample_container)
+        m_note_row, _ = panel._move_ctx_form.getWidgetPosition(panel._m_ctx_note_container)
+        m_history_row, _ = panel._move_ctx_form.getWidgetPosition(panel._m_ctx_history_container)
+
+        self.assertLess(t_cell_line_row, t_sample_row)
+        self.assertLess(t_sample_row, t_note_row)
+        self.assertLess(t_note_row, t_history_row)
+
+        self.assertLess(m_cell_line_row, m_sample_row)
+        self.assertLess(m_sample_row, m_note_row)
+        self.assertLess(m_note_row, m_history_row)
     def test_operations_panel_apply_meta_update_blocks_legacy_box_fields(self):
         panel = self._new_operations_panel()
         notices = []
