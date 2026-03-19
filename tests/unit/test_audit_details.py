@@ -33,7 +33,7 @@ class TestAddEntryDetails:
         assert d["box"] == 2
         assert d["positions"] == [5, 6]
         assert d["frozen_at"] == "2025-01-15"
-        # cell_line, note, and custom_fields are merged into "fields"
+        # Effective user fields are merged into "fields".
         assert d["fields"]["cell_line"] == "HeLa"
         assert d["fields"]["note"] == "passage 3"
         assert d["fields"]["source"] == "lab-A"

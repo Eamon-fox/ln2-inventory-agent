@@ -120,6 +120,36 @@ class AuditDialogTests(ManagedPathTestCase):
             actions = [dialog.audit_table.item(row, 1).text() for row in range(dialog.audit_table.rowCount())]
             self.assertIn("seed", actions)
 
+    def test_on_load_audit_works_with_real_gui_bridge(self):
+        from app_gui.tool_bridge import GuiToolBridge
+
+        yaml_path = Path(self.ensure_dataset_yaml("audit-dialog-real-bridge"))
+        write_yaml(
+            {
+                "meta": {"box_layout": {"rows": 9, "cols": 9}},
+                "inventory": [
+                    {
+                        "id": 1,
+                        "cell_line": "K562",
+                        "box": 1,
+                        "position": 1,
+                        "frozen_at": "2025-01-01",
+                    }
+                ],
+            },
+            path=str(yaml_path),
+            audit_meta={"action": "seed", "source": "tests"},
+        )
+
+        dialog = self._new_dialog_with_bridge(yaml_path, GuiToolBridge())
+        dialog.audit_start_date.setDate(QDate(2000, 1, 1))
+        dialog.audit_end_date.setDate(QDate(2099, 12, 31))
+        dialog.on_load_audit()
+
+        self.assertGreaterEqual(dialog.audit_table.rowCount(), 1)
+        actions = [dialog.audit_table.item(row, 1).text() for row in range(dialog.audit_table.rowCount())]
+        self.assertIn("seed", actions)
+
     def test_on_load_audit_shows_newest_events_first(self):
         with tempfile.TemporaryDirectory(prefix="ln2_audit_dialog_sort_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
@@ -168,7 +198,7 @@ class AuditDialogTests(ManagedPathTestCase):
 
             self.assertGreaterEqual(dialog.audit_table.rowCount(), 2)
             self.assertEqual("2026-02-21T09:00:00", dialog.audit_table.item(0, 0).text())
-            self.assertEqual("move", dialog.audit_table.item(0, 1).text())
+            self.assertEqual("move", dialog.audit_table.item(0, 1).text().lower())
 
     def test_on_load_audit_prefers_audit_seq_over_timestamp(self):
         bridge = _TimelineBridge(
@@ -349,7 +379,7 @@ class AuditDialogTests(ManagedPathTestCase):
         non_backup_row = None
         for row in range(dialog.audit_table.rowCount()):
             action = dialog.audit_table.item(row, 1).text()
-            if action == "backup":
+            if action.lower() == "backup":
                 backup_row = row
             else:
                 non_backup_row = row

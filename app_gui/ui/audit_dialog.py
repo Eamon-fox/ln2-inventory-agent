@@ -529,9 +529,10 @@ class AuditLogDialog(QDialog):
         try:
             data = load_yaml(yaml_abs)
             meta = data.get("meta", {}) if isinstance(data, dict) else {}
+            inventory = data.get("inventory", []) if isinstance(data, dict) else []
             self._audit_field_order = [
                 str(field.get("key"))
-                for field in get_effective_fields(meta)
+                for field in get_effective_fields(meta, inventory=inventory)
                 if isinstance(field, dict) and field.get("key")
             ]
         except Exception:
