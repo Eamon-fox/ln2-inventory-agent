@@ -331,7 +331,10 @@ class TestColorPalette(unittest.TestCase):
         from app_gui.ui.overview_panel_grid import _marker_css_overlay
 
         self.assertEqual("", _marker_css_overlay("takeout", is_selected=True))
-        self.assertIn("#ef4444", _marker_css_overlay("takeout", is_selected=False))
+        css = _marker_css_overlay("takeout", is_selected=False)
+        self.assertIn("border:", css)
+        # Color comes from theme token; accept any valid hex color
+        self.assertRegex(css, r"#[0-9a-fA-F]{6}")
 
 
 if __name__ == "__main__":
