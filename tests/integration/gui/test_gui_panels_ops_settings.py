@@ -401,6 +401,43 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         self.assertTrue(api_edit.isReadOnly())
         self.assertEqual(QLineEdit.Password, api_edit.echoMode())
 
+    def test_custom_fields_dialog_structural_fields_use_canonical_names(self):
+        from app_gui.ui.dialogs.custom_fields_dialog import CustomFieldsDialog
+
+        previous_language = get_language()
+        self.addCleanup(lambda: set_language(previous_language))
+
+        expected_by_language = {
+            "en": [
+                ("id", "ID"),
+                ("box", "Box"),
+                ("position", "Position"),
+                ("stored_at", "Deposited Date"),
+                ("storage_events", "Storage Events"),
+            ],
+            "zh-CN": [
+                ("id", "ID"),
+                ("box", "盒子"),
+                ("position", "位置"),
+                ("stored_at", "存入日期"),
+                ("storage_events", "存储事件"),
+            ],
+        }
+
+        for language, expected_pairs in expected_by_language.items():
+            self.assertTrue(set_language(language))
+            dialog = CustomFieldsDialog()
+            self.addCleanup(dialog.deleteLater)
+
+            structural_pairs = [
+                (key, label)
+                for key, label, _field_type, _required in dialog._structural_display
+            ]
+
+            self.assertEqual(expected_pairs, structural_pairs)
+            self.assertNotIn("frozen_at", {key for key, _label in structural_pairs})
+            self.assertNotIn("thaw_events", {key for key, _label in structural_pairs})
+
     def test_settings_dialog_api_key_unlock_and_relock(self):
         from app_gui.main import SettingsDialog, PROVIDER_DEFAULTS
 

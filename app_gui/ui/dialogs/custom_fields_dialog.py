@@ -18,10 +18,31 @@ from PySide6.QtWidgets import (
 )
 
 from app_gui.i18n import t, tr
+from lib.schema_aliases import CANONICAL_STORAGE_EVENTS_KEY, CANONICAL_STORED_AT_KEY
 
 _FIELD_TYPES = ["str", "int", "float", "date"]
 _SYSTEM_NOTE_KEY = "note"
 _OPTIONS_EMPTY_TEXT = "..."
+
+
+def _build_structural_display():
+    return [
+        ("id", tr("main.cfStructuralIdLabel", default="ID"), "int", True),
+        ("box", tr("main.cfStructuralBoxLabel", default="Box"), "int", True),
+        ("position", tr("main.cfStructuralPositionLabel", default="Position"), "int", True),
+        (
+            CANONICAL_STORED_AT_KEY,
+            tr("main.cfStructuralStoredAtLabel", default="Deposited Date"),
+            "date",
+            True,
+        ),
+        (
+            CANONICAL_STORAGE_EVENTS_KEY,
+            tr("main.cfStructuralStorageEventsLabel", default="Storage Events"),
+            "str",
+            True,
+        ),
+    ]
 
 
 class CustomFieldsDialog(QDialog):
@@ -83,14 +104,8 @@ class CustomFieldsDialog(QDialog):
         header_l.addWidget(action_lbl)
         fields_layout.addWidget(header)
 
-        structural_display = [
-            ("id", "ID", "int", True),
-            ("box", "Box", "int", True),
-            ("position", "Position", "int", True),
-            ("frozen_at", "Frozen At", "date", True),
-            ("thaw_events", "Takeout Events", "str", True),
-        ]
-        for s_key, s_label, s_type, s_required in structural_display:
+        self._structural_display = _build_structural_display()
+        for s_key, s_label, s_type, s_required in self._structural_display:
             row_w = QWidget()
             row_l = QHBoxLayout(row_w)
             row_l.setContentsMargins(0, 0, 0, 0)
