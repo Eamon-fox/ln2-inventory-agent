@@ -14,7 +14,7 @@ Follow this skill when handling staged migration inputs.
 3. Propose the field mapping and schema plan before conversion.
 4. Ask for explicit approval before locking `migrate/output/expected_schema.json`.
 5. Write final output to `migrate/output/ln2_inventory.yaml`.
-6. Run `validate_migration_output` before any import.
+6. Run `validate` with `path` set to `migrate/output/ln2_inventory.yaml` before any import.
 7. Import only after collecting `target_dataset_name` and explicit `CONFIRM_IMPORT`.
 
 ## Read Next As Needed
@@ -30,5 +30,5 @@ Follow this skill when handling staged migration inputs.
 ## Non-Negotiables
 
 - Do not invent records, dates, positions, or metadata.
-- Do not bypass `validate_migration_output`.
+- Do not bypass `validate(path="migrate/output/ln2_inventory.yaml")`.
 - Do not import before explicit human confirmation.

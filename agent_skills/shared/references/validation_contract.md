@@ -14,6 +14,6 @@ Use validation rules as the final authority over generated or repaired YAML.
 
 ## Workflow Rules
 
-- Migration outputs must pass `validate_migration_output` before import.
-- Repair work should use validation-aware reasoning before any final write.
+- Migration flows should run `validate` on `migrate/output/ln2_inventory.yaml` before import. For that workflow, both errors and warnings are blockers even though generic `validate` only fails on errors.
+- Repair work should start with `validate(path=...)` before any final write.
 - Validation results outrank free-form prompt assumptions.

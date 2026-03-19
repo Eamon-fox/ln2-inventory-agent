@@ -7,7 +7,7 @@ At migration start, this template is copied to `migrate/output/migration_checkli
 
 - [ ] Agent did NOT read from `inventories/` or any existing managed dataset (unless user explicitly requested comparison).
 - [ ] Output file path is exactly `migrate/output/ln2_inventory.yaml`.
-- [ ] Run `validate_migration_output` and confirm response `ok=true` (do not run `migration_assets/validate.py`).
+- [ ] Run `validate` with path `migrate/output/ln2_inventory.yaml` and confirm `error_count=0` plus `warning_count=0` (do not run `migration_assets/validate.py`).
 - [ ] `migrate/output/expected_schema.json` exists and was finalized before record conversion.
 - [ ] User explicitly approved the field mapping/schema plan after precheck and before conversion.
 - [ ] Top-level keys are exactly `meta` and `inventory`.

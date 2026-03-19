@@ -9,10 +9,11 @@ Follow this skill when the issue is in the current managed inventory rather than
 
 ## Core Workflow
 
-1. Inspect the active inventory YAML and the evidence around the failure.
-2. Decide whether the problem is field/schema, record structure, or data-history integrity.
-3. Prefer schema-aware, validation-first repair steps.
-4. Keep repair actions explicit and user-visible.
+1. First run `validate` with `path` set to the active repo-relative inventory YAML.
+2. Inspect the active inventory YAML and the evidence around the failure.
+3. Decide whether the problem is field/schema, record structure, or data-history integrity.
+4. Prefer schema-aware, validation-first repair steps.
+5. Keep repair actions explicit and user-visible.
 
 ## Read Next As Needed
 

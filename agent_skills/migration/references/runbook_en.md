@@ -38,15 +38,15 @@ Follow every phase in order. Do not skip validation.
 
 ## Phase 5 - Validate draft output
 
-1. Run `validate_migration_output` as a tool call.
+1. Run `validate` with `path` set to `migrate/output/ln2_inventory.yaml`.
 2. Run all checks in `agent_skills/migration/assets/acceptance_checklist_en.md`.
-3. Review `migrate/output/validation_report.json` and fix blockers.
-4. If validation fails, do not deliver final output.
+3. Review the returned validation report and fix blockers. For migration readiness, both errors and warnings block import.
+4. If validation reports blockers, do not deliver final output.
 5. If a blocker cannot be resolved from source data, stop and request clarification.
 
 ## Phase 6 - Finalize delivery
 
 1. Write final YAML to `migrate/output/ln2_inventory.yaml`.
 2. Keep the locked `migrate/output/expected_schema.json`.
-3. Keep the latest `migrate/output/validation_report.json`.
+3. Record the latest validation status in `migrate/output/migration_checklist.md`.
 4. Optionally write `migrate/output/conversion_report.md` with assumptions and unresolved blockers.

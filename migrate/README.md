@@ -14,7 +14,7 @@ Static guidance moved to:
 - `agent_skills/migration/references/*`
 - `agent_skills/migration/assets/*`
 - `agent_skills/shared/references/*`
-- `validate_migration_output` tool (writes `migrate/output/validation_report.json`)
+- `validate` tool on repo-relative YAML paths such as `migrate/output/ln2_inventory.yaml`
 
 Required output contract stays unchanged:
 - Output YAML path: `migrate/output/ln2_inventory.yaml`

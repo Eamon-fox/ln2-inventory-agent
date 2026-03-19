@@ -6,7 +6,7 @@ Keep high-impact actions explicit and user-visible.
 
 - Ask for `target_dataset_name` before import.
 - Ask for explicit `CONFIRM_IMPORT` before calling `import_migration_output`.
-- Keep `migrate/output/validation_report.json` fresh before import.
+- Run `validate` on `migrate/output/ln2_inventory.yaml` and resolve reported blockers before import.
 
 ## Current Inventory Repair
 

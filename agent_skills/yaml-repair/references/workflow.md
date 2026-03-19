@@ -4,10 +4,11 @@ Use this workflow when the active managed inventory has YAML, schema, or structu
 
 ## Sequence
 
-1. Inspect the current inventory and reproduce the issue with explicit tools.
-2. Read shared schema references before changing field structure assumptions.
-3. Keep repair actions visible and explain why each change is needed.
-4. Prefer validation-first repair steps over speculative edits.
+1. Start by running `validate` on the current repo-relative inventory YAML.
+2. Inspect the current inventory and reproduce the issue with explicit tools.
+3. Read shared schema references before changing field structure assumptions.
+4. Keep repair actions visible and explain why each change is needed.
+5. Prefer validation-first repair steps over speculative edits.
 
 ## Scope
 
