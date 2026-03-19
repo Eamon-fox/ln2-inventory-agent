@@ -435,6 +435,186 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
         self.assertAlmostEqual(before_value, scroll_bar.value(), delta=40)
         self.assertTrue(panel.ai_new_msg_btn.isVisible())
 
+    def test_ai_panel_question_dialog_is_non_modal_and_keeps_latest_jump_available(self):
+        from PySide6.QtWidgets import QDialog
+
+        class _FakeWorker:
+            def __init__(self):
+                self.answers = []
+                self.cancelled = 0
+
+            def set_answer(self, answer):
+                self.answers.append(answer)
+
+            def cancel_answer(self):
+                self.cancelled += 1
+
+        panel = self._new_ai_panel()
+        panel.resize(560, 320)
+        panel.show()
+        self._app.processEvents()
+
+        for i in range(100):
+            panel._append_chat("Agent", f"history line {i}")
+        self._app.processEvents()
+
+        scroll_bar = panel.ai_chat.verticalScrollBar()
+        scroll_bar.setValue(max(scroll_bar.minimum(), scroll_bar.maximum() - 220))
+        self._app.processEvents()
+
+        worker = _FakeWorker()
+        panel.ai_run_worker = worker
+        panel.on_progress({"event": "run_start", "trace_id": "trace-question"})
+        panel._handle_question_event(
+            {
+                "type": "question",
+                "question": "**Need your choice**",
+                "options": ["Option A", "Option B"],
+                "trace_id": "trace-question",
+            }
+        )
+        self._app.processEvents()
+
+        dialogs = [dialog for dialog in panel.findChildren(QDialog) if dialog.isVisible()]
+        self.assertEqual(1, len(dialogs))
+        self.assertEqual(Qt.NonModal, dialogs[0].windowModality())
+        self.assertFalse(panel.ai_prompt.isEnabled())
+        self.assertTrue(panel.ai_new_msg_btn.isVisible())
+
+        panel.ai_new_msg_btn.click()
+        self._app.processEvents()
+
+        self.assertEqual(scroll_bar.value(), scroll_bar.maximum())
+
+        dialogs[0].reject()
+        self._app.processEvents()
+
+        self.assertEqual(1, worker.cancelled)
+        self.assertTrue(panel.ai_prompt.isEnabled())
+
+    def test_ai_panel_question_dialog_submit_sets_answer_and_unlocks_prompt(self):
+        from PySide6.QtWidgets import QComboBox, QDialog
+
+        class _FakeWorker:
+            def __init__(self):
+                self.answers = []
+                self.cancelled = 0
+
+            def set_answer(self, answer):
+                self.answers.append(answer)
+
+            def cancel_answer(self):
+                self.cancelled += 1
+
+        panel = self._new_ai_panel()
+        worker = _FakeWorker()
+        panel.ai_run_worker = worker
+        panel.on_progress({"event": "run_start", "trace_id": "trace-submit"})
+
+        panel._handle_question_event(
+            {
+                "type": "question",
+                "question": "Pick one",
+                "options": ["Option A", "Option B"],
+                "trace_id": "trace-submit",
+            }
+        )
+        self._app.processEvents()
+
+        dialog = next(dialog for dialog in panel.findChildren(QDialog) if dialog.isVisible())
+        combo = dialog.findChild(QComboBox)
+
+        combo.setCurrentText("Option B")
+        panel._finalize_pending_ai_wait(panel._pending_ai_dialog_state, answer=str(combo.currentText()))
+        dialog.accept()
+        self._app.processEvents()
+
+        self.assertEqual(["Option B"], worker.answers)
+        self.assertEqual(0, worker.cancelled)
+        self.assertTrue(panel.ai_prompt.isEnabled())
+
+    def test_ai_panel_max_steps_dialog_is_non_modal_and_blocks_follow_up_prompt(self):
+        class _FakeWorker:
+            def __init__(self):
+                self.answers = []
+                self.cancelled = 0
+
+            def set_answer(self, answer):
+                self.answers.append(answer)
+
+            def cancel_answer(self):
+                self.cancelled += 1
+
+        panel = self._new_ai_panel()
+        worker = _FakeWorker()
+        panel.ai_run_worker = worker
+        panel.on_progress({"event": "run_start", "trace_id": "trace-max-steps"})
+
+        panel._handle_max_steps_ask(
+            {
+                "type": "max_steps_ask",
+                "steps": 3,
+                "trace_id": "trace-max-steps",
+            }
+        )
+        self._app.processEvents()
+
+        dialogs = [dialog for dialog in panel.findChildren(QMessageBox) if dialog.isVisible()]
+        self.assertEqual(1, len(dialogs))
+        self.assertEqual(Qt.NonModal, dialogs[0].windowModality())
+        self.assertFalse(panel.ai_prompt.isEnabled())
+
+        dialogs[0].button(QMessageBox.Yes).click()
+        self._app.processEvents()
+
+        self.assertEqual([["continue"]], worker.answers)
+        self.assertEqual(0, worker.cancelled)
+        self.assertTrue(panel.ai_prompt.isEnabled())
+
+    def test_ai_panel_stop_closes_pending_question_dialog(self):
+        from PySide6.QtWidgets import QDialog
+
+        class _FakeWorker:
+            def __init__(self):
+                self.answers = []
+                self.cancelled = 0
+                self.stop_requests = 0
+
+            def set_answer(self, answer):
+                self.answers.append(answer)
+
+            def cancel_answer(self):
+                self.cancelled += 1
+
+            def request_stop(self):
+                self.stop_requests += 1
+                self.cancel_answer()
+
+        panel = self._new_ai_panel()
+        worker = _FakeWorker()
+        panel.ai_run_worker = worker
+        panel.ai_run_inflight = True
+        panel.on_progress({"event": "run_start", "trace_id": "trace-stop-dialog"})
+
+        panel._handle_question_event(
+            {
+                "type": "question",
+                "question": "Need input",
+                "options": ["A", "B"],
+                "trace_id": "trace-stop-dialog",
+            }
+        )
+        self._app.processEvents()
+        self.assertTrue(any(dialog.isVisible() for dialog in panel.findChildren(QDialog)))
+
+        panel.on_stop_ai_agent()
+        self._app.processEvents()
+
+        self.assertFalse(any(dialog.isVisible() for dialog in panel.findChildren(QDialog)))
+        self.assertGreaterEqual(worker.stop_requests, 1)
+        self.assertGreaterEqual(worker.cancelled, 1)
+        self.assertTrue(panel.ai_prompt.isEnabled())
+
     def test_ai_panel_separates_multiple_runs_without_merging_messages(self):
         panel = self._new_ai_panel()
 

@@ -19,6 +19,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from lib.inventory_paths import create_managed_dataset_yaml_path
 
 try:
+    from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
     from app_gui.main_window_flows import DatasetFlow, ManageBoxesFlow, SettingsFlow, WindowStateFlow
@@ -27,6 +28,7 @@ try:
 
     PYSIDE_AVAILABLE = True
 except Exception:
+    Qt = None
     QApplication = None
     QDialog = None
     QMessageBox = None
@@ -322,8 +324,12 @@ def test_dataset_flow_writes_new_dataset_yaml():
         assert payload["inventory"] == []
         assert payload["meta"]["box_layout"] == {"box_1": {"rows": 9, "cols": 9}}
         assert payload["meta"]["display_key"] == "short_name"
-        assert payload["meta"]["cell_line_required"] is True
-        assert payload["meta"]["cell_line_options"] == ["K562", "HeLa"]
+        assert "cell_line_required" not in payload["meta"]
+        assert "cell_line_options" not in payload["meta"]
+        assert payload["meta"]["custom_fields"] == [
+            {"key": "short_name", "label": "Short Name", "type": "str", "required": False},
+            {"key": "cell_line", "label": "Cell Line", "type": "str", "required": True},
+        ]
 
 
 def test_dataset_flow_omits_legacy_cell_line_meta_when_field_removed():
@@ -411,6 +417,111 @@ def test_manage_boxes_flow_add_request_executes_and_emits_notice():
         window.on_operation_completed.assert_called_once_with(True)
         window.show_status.assert_called_once()
         window.operations_panel.emit_external_operation_event.assert_called_once()
+
+
+def test_manage_boxes_flow_async_add_uses_non_modal_confirm_and_callback():
+    app = _ensure_qapp()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yaml_path = os.path.join(tmpdir, "inventory.yaml")
+        Path(yaml_path).write_text("meta: {}\ninventory: []\n", encoding="utf-8")
+
+        bridge_calls = []
+
+        class _Bridge:
+            def adjust_box_count(self, **kwargs):
+                bridge_calls.append(kwargs)
+                return {"ok": True, "result": {"count": 2}, "message": "ok"}
+
+        window = QDialog()
+        window.current_yaml_path = yaml_path
+        window.bridge = _Bridge()
+        window.overview_panel = SimpleNamespace(refresh=MagicMock())
+        window.on_operation_completed = MagicMock()
+        window.operations_panel = SimpleNamespace(emit_external_operation_event=MagicMock())
+        window.show_status = MagicMock()
+        window._floating_dialog_refs = []
+        flow = ManageBoxesFlow(window)
+        results = []
+
+        session = flow.handle_request_async(
+            {"operation": "add", "count": 2},
+            on_result=results.append,
+            from_ai=True,
+            yaml_path_override=yaml_path,
+        )
+
+        assert session is not None
+        app.processEvents()
+
+        dialogs = [dialog for dialog in window.findChildren(QMessageBox) if dialog.isVisible()]
+        assert len(dialogs) == 1
+        assert dialogs[0].windowModality() == Qt.NonModal
+
+        dialogs[0].button(QMessageBox.Yes).click()
+        app.processEvents()
+
+        assert results and results[0]["ok"] is True
+        assert bridge_calls
+        assert bridge_calls[0]["operation"] == "add"
+        assert bridge_calls[0]["count"] == 2
+        window.overview_panel.refresh.assert_called_once()
+        window.on_operation_completed.assert_called_once_with(True)
+        window.show_status.assert_called_once()
+        window.operations_panel.emit_external_operation_event.assert_called_once()
+
+
+def test_manage_boxes_flow_async_remove_cancel_returns_user_cancelled():
+    app = _ensure_qapp()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yaml_path = os.path.join(tmpdir, "inventory.yaml")
+        Path(yaml_path).write_text(
+            (
+                "meta:\n"
+                "  box_layout:\n"
+                "    rows: 9\n"
+                "    cols: 9\n"
+                "    box_count: 3\n"
+                "inventory: []\n"
+            ),
+            encoding="utf-8",
+        )
+
+        adjust_mock = MagicMock(return_value={"ok": True})
+        window = QDialog()
+        window.current_yaml_path = yaml_path
+        window.bridge = SimpleNamespace(adjust_box_count=adjust_mock)
+        window.overview_panel = SimpleNamespace(refresh=MagicMock())
+        window.on_operation_completed = MagicMock()
+        window.operations_panel = SimpleNamespace(emit_external_operation_event=MagicMock())
+        window.show_status = MagicMock()
+        window._floating_dialog_refs = []
+        flow = ManageBoxesFlow(window)
+        results = []
+
+        session = flow.handle_request_async(
+            {"operation": "remove", "box": 2},
+            on_result=results.append,
+            from_ai=True,
+            yaml_path_override=yaml_path,
+        )
+
+        assert session is not None
+        app.processEvents()
+
+        dialogs = [dialog for dialog in window.findChildren(QMessageBox) if dialog.isVisible()]
+        assert len(dialogs) == 1
+        assert dialogs[0].windowModality() == Qt.NonModal
+
+        dialogs[0].button(QMessageBox.Cancel).click()
+        app.processEvents()
+
+        assert results and results[0]["ok"] is False
+        assert results[0]["error_code"] == "user_cancelled"
+        adjust_mock.assert_not_called()
+        window.overview_panel.refresh.assert_not_called()
+        window.on_operation_completed.assert_not_called()
+        window.operations_panel.emit_external_operation_event.assert_not_called()
+        window.show_status.assert_not_called()
 
 
 def test_manage_boxes_prompt_add_uses_ui_max_limit():

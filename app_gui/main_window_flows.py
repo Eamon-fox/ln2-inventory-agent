@@ -7,7 +7,7 @@ import sys
 from typing import Callable, Optional
 
 import yaml
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QInputDialog
 
 from agent.llm_client import DEFAULT_PROVIDER, PROVIDER_DEFAULTS
@@ -490,12 +490,8 @@ class DatasetFlow:
             return None
         custom_fields = cf_dlg.get_custom_fields()
         display_key = cf_dlg.get_display_key()
-        cell_line_required = cf_dlg.get_cell_line_required()
-        cell_line_options = cf_dlg.get_cell_line_options()
-        has_cell_line = any(
-            isinstance(field, dict) and str(field.get("key", "")).strip() == "cell_line"
-            for field in (custom_fields or [])
-        )
+        color_key_getter = getattr(cf_dlg, "get_color_key", None)
+        color_key = color_key_getter() if callable(color_key_getter) else ""
 
         meta = {
             "version": "1.0",
@@ -504,11 +500,8 @@ class DatasetFlow:
         }
         if display_key:
             meta["display_key"] = display_key
-        if has_cell_line:
-            if cell_line_required:
-                meta["cell_line_required"] = True
-            if cell_line_options:
-                meta["cell_line_options"] = cell_line_options
+        if color_key:
+            meta["color_key"] = color_key
 
         new_payload = {
             "meta": meta,
@@ -517,6 +510,28 @@ class DatasetFlow:
         with open(target_path, "w", encoding="utf-8") as handle:
             yaml.safe_dump(new_payload, handle, allow_unicode=True, sort_keys=False)
         return target_path
+
+
+class _AsyncManageBoxesSession:
+    def __init__(self):
+        self._current_dialog = None
+        self._closed = False
+
+    def attach_dialog(self, dialog):
+        if self._closed:
+            with suppress(Exception):
+                dialog.close()
+            return False
+        self._current_dialog = dialog
+        return True
+
+    def close(self):
+        self._closed = True
+        dialog = self._current_dialog
+        self._current_dialog = None
+        if dialog is not None:
+            with suppress(Exception):
+                dialog.close()
 
 
 class ManageBoxesFlow:
@@ -538,6 +553,154 @@ class ManageBoxesFlow:
             str(title or tr("common.info")),
             str(message or ""),
         )
+
+    def _show_nonblocking_dialog(self, dialog):
+        window = self._window
+        helper = getattr(window, "_show_nonblocking_dialog", None)
+        if callable(helper):
+            helper(dialog)
+            return
+
+        dialog.setAttribute(Qt.WA_DeleteOnClose, True)
+        dialog.setWindowModality(Qt.NonModal)
+        dialog.setModal(False)
+        refs = getattr(window, "_floating_dialog_refs", None)
+        if not isinstance(refs, list):
+            refs = []
+            setattr(window, "_floating_dialog_refs", refs)
+        refs.append(dialog)
+
+        def _release_ref(_result=0):
+            with suppress(ValueError):
+                refs.remove(dialog)
+
+        dialog.finished.connect(_release_ref)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _prepare_request(self, request, yaml_path_override=None):
+        window = self._window
+        if not isinstance(request, dict):
+            return self._error_response("invalid_tool_input", "Invalid manage boxes request")
+
+        yaml_path = str(yaml_path_override or window.current_yaml_path)
+        if not yaml_path or not os.path.isfile(yaml_path):
+            return self._error_response("load_failed", t("main.fileNotFound", path=yaml_path))
+
+        op = str(request.get("operation") or "").strip().lower()
+        if op not in {"add", "remove", "set_tag"}:
+            return self._error_response("invalid_operation", "operation must be add/remove/set_tag")
+
+        prepared = {
+            "yaml_path": yaml_path,
+            "op": op,
+            "payload": {"operation": op},
+        }
+        mode = self._normalize_mode_alias(request.get("renumber_mode"))
+
+        if op == "add":
+            if "count" not in request:
+                return self._invalid_count_response()
+            try:
+                prepared["payload"]["count"] = int(request.get("count"))
+            except Exception:
+                return self._invalid_count_response()
+            if prepared["payload"]["count"] <= 0:
+                return self._invalid_count_response()
+            return prepared
+
+        if op == "set_tag":
+            try:
+                target_box = int(request.get("box"))
+            except Exception:
+                return self._error_response("invalid_box", "box must be an integer")
+
+            raw_tag = request.get("tag", "")
+            if raw_tag is None:
+                raw_tag = ""
+            prepared["payload"]["box"] = target_box
+            prepared["payload"]["tag"] = str(raw_tag)
+
+            try:
+                data = load_yaml(yaml_path)
+                layout = (data or {}).get("meta", {}).get("box_layout", {})
+                box_numbers = get_box_numbers(layout)
+            except Exception as exc:
+                return self._error_response("load_failed", str(exc))
+            if target_box not in box_numbers:
+                return self._error_response(
+                    "invalid_box",
+                    "box does not exist in current layout",
+                )
+            return prepared
+
+        try:
+            target_box = int(request.get("box"))
+        except Exception:
+            return self._error_response("invalid_box", "box must be an integer")
+
+        prepared["payload"]["box"] = target_box
+        try:
+            data = load_yaml(yaml_path)
+            layout = (data or {}).get("meta", {}).get("box_layout", {})
+            box_numbers = get_box_numbers(layout)
+        except Exception as exc:
+            return self._error_response("load_failed", str(exc))
+        if target_box not in box_numbers:
+            return self._error_response(
+                "invalid_box",
+                "box does not exist in current layout",
+            )
+
+        prepared["box_numbers"] = box_numbers
+        prepared["suggested_mode"] = mode
+        return prepared
+
+    def _execute_prepared_request(self, prepared, *, from_ai):
+        window = self._window
+        yaml_path = prepared["yaml_path"]
+        op = prepared["op"]
+        payload = dict(prepared.get("payload") or {})
+
+        if op == "set_tag":
+            response = window.bridge.set_box_tag(
+                yaml_path=yaml_path,
+                box=payload["box"],
+                tag=payload.get("tag", ""),
+                execution_mode="execute",
+            )
+        else:
+            response = window.bridge.adjust_box_count(
+                yaml_path=yaml_path,
+                execution_mode="execute",
+                **payload,
+            )
+
+        if response.get("ok"):
+            window.overview_panel.refresh()
+            window.on_operation_completed(True)
+        notice_level = "success" if response.get("ok") else "error"
+        notice_text = str(
+            response.get("message")
+            or (tr("main.boxAdjustSuccess") if response.get("ok") else tr("main.boxAdjustFailed"))
+        )
+        notice = build_system_notice(
+            code="box.layout.adjusted",
+            text=notice_text,
+            level=notice_level,
+            source="ai" if from_ai else "settings",
+            timeout_ms=3000,
+            data={
+                "operation": op,
+                "ok": bool(response.get("ok")),
+                "preview": response.get("preview") or response.get("result") or {},
+                "error_code": response.get("error_code"),
+            },
+        )
+        window.show_status(notice_text, 3000, notice_level)
+        window.operations_panel.emit_external_operation_event(notice)
+        return response
 
     def manage_boxes(self, yaml_path_override=None):
         request = self.prompt_request(yaml_path_override=yaml_path_override)
@@ -678,80 +841,26 @@ class ManageBoxesFlow:
         return None
 
     def handle_request(self, request, from_ai=True, yaml_path_override=None):
-        window = self._window
-        if not isinstance(request, dict):
-            return self._error_response("invalid_tool_input", "Invalid manage boxes request")
+        prepared = self._prepare_request(request, yaml_path_override=yaml_path_override)
+        if isinstance(prepared, dict) and prepared.get("ok") is False:
+            return prepared
 
-        yaml_path = str(yaml_path_override or window.current_yaml_path)
-        if not yaml_path or not os.path.isfile(yaml_path):
-            return self._error_response("load_failed", t("main.fileNotFound", path=yaml_path))
-
-        op = str(request.get("operation") or "").strip().lower()
-        if op not in {"add", "remove", "set_tag"}:
-            return self._error_response("invalid_operation", "operation must be add/remove/set_tag")
-
-        payload = {"operation": op}
-        mode = self._normalize_mode_alias(request.get("renumber_mode"))
-
+        op = prepared["op"]
+        payload = prepared["payload"]
         if op == "add":
-            if "count" not in request:
-                return self._invalid_count_response()
-            try:
-                payload["count"] = int(request.get("count"))
-            except Exception:
-                return self._invalid_count_response()
-            if payload["count"] <= 0:
-                return self._invalid_count_response()
-
             if not self._confirm_action(
-                window,
+                self._window,
                 tr("main.manageBoxes"),
                 t("main.boxConfirmAdd", count=payload["count"]),
             ):
                 return self._user_cancelled_response()
-        elif op == "set_tag":
-            try:
-                target_box = int(request.get("box"))
-            except Exception:
-                return self._error_response("invalid_box", "box must be an integer")
-
-            raw_tag = request.get("tag", "")
-            if raw_tag is None:
-                raw_tag = ""
-            payload["box"] = target_box
-            payload["tag"] = str(raw_tag)
-
-            try:
-                data = load_yaml(yaml_path)
-                layout = (data or {}).get("meta", {}).get("box_layout", {})
-                box_numbers = get_box_numbers(layout)
-            except Exception as exc:
-                return self._error_response("load_failed", str(exc))
-            if target_box not in box_numbers:
-                return self._error_response(
-                    "invalid_box",
-                    "box does not exist in current layout",
-                )
-        else:
-            try:
-                target_box = int(request.get("box"))
-            except Exception:
-                return self._error_response("invalid_box", "box must be an integer")
-            payload["box"] = target_box
-
-            try:
-                data = load_yaml(yaml_path)
-                layout = (data or {}).get("meta", {}).get("box_layout", {})
-                box_numbers = get_box_numbers(layout)
-            except Exception as exc:
-                return self._error_response("load_failed", str(exc))
-            if target_box not in box_numbers:
-                return self._error_response(
-                    "invalid_box",
-                    "box does not exist in current layout",
-                )
-
-            chosen_mode = self.ask_remove_mode(box_numbers, target_box, suggested_mode=mode)
+        elif op == "remove":
+            target_box = payload["box"]
+            chosen_mode = self.ask_remove_mode(
+                prepared.get("box_numbers") or [],
+                target_box,
+                suggested_mode=prepared.get("suggested_mode"),
+            )
             if chosen_mode is None:
                 return self._user_cancelled_response()
             payload["renumber_mode"] = chosen_mode
@@ -762,50 +871,141 @@ class ManageBoxesFlow:
                 else tr("main.boxDeleteRenumber")
             )
             if not self._confirm_action(
-                window,
+                self._window,
                 tr("main.manageBoxes"),
                 t("main.boxConfirmRemove", box=target_box, mode=mode_label),
             ):
                 return self._user_cancelled_response()
+        return self._execute_prepared_request(prepared, from_ai=from_ai)
 
-        if op == "set_tag":
-            response = window.bridge.set_box_tag(
-                yaml_path=yaml_path,
-                box=payload["box"],
-                tag=payload.get("tag", ""),
-                execution_mode="execute",
+    def handle_request_async(self, request, on_result, from_ai=True, yaml_path_override=None):
+        prepared = self._prepare_request(request, yaml_path_override=yaml_path_override)
+        if isinstance(prepared, dict) and prepared.get("ok") is False:
+            return prepared
+        if not callable(on_result):
+            return self._execute_prepared_request(prepared, from_ai=from_ai)
+
+        if prepared["op"] == "set_tag":
+            return self._execute_prepared_request(prepared, from_ai=from_ai)
+
+        session = _AsyncManageBoxesSession()
+        result_state = {"done": False}
+
+        def _finish(result):
+            if result_state["done"]:
+                return
+            result_state["done"] = True
+            session.close()
+            on_result(result)
+
+        def _show_with_session(dialog):
+            if not session.attach_dialog(dialog):
+                return False
+            self._show_nonblocking_dialog(dialog)
+            return True
+
+        def _show_add_confirm():
+            box = QMessageBox(self._window)
+            box.setWindowTitle(tr("main.manageBoxes"))
+            box.setText(t("main.boxConfirmAdd", count=prepared["payload"]["count"]))
+            box.setIcon(QMessageBox.Question)
+            yes_btn = box.addButton(QMessageBox.Yes)
+            box.addButton(QMessageBox.Cancel)
+            box.setDefaultButton(yes_btn)
+
+            def _on_finished(_result):
+                if result_state["done"]:
+                    return
+                if box.clickedButton() == yes_btn:
+                    _finish(self._execute_prepared_request(prepared, from_ai=from_ai))
+                else:
+                    _finish(self._user_cancelled_response())
+
+            box.finished.connect(_on_finished)
+            _show_with_session(box)
+
+        def _show_remove_confirm(chosen_mode):
+            if result_state["done"]:
+                return
+            prepared["payload"]["renumber_mode"] = chosen_mode
+            mode_label = (
+                tr("main.boxDeleteKeepGaps")
+                if chosen_mode == "keep_gaps"
+                else tr("main.boxDeleteRenumber")
             )
+            box = QMessageBox(self._window)
+            box.setWindowTitle(tr("main.manageBoxes"))
+            box.setText(
+                t(
+                    "main.boxConfirmRemove",
+                    box=prepared["payload"]["box"],
+                    mode=mode_label,
+                )
+            )
+            box.setIcon(QMessageBox.Warning)
+            yes_btn = box.addButton(QMessageBox.Yes)
+            box.addButton(QMessageBox.Cancel)
+            box.setDefaultButton(yes_btn)
+
+            def _on_finished(_result):
+                if result_state["done"]:
+                    return
+                if box.clickedButton() == yes_btn:
+                    _finish(self._execute_prepared_request(prepared, from_ai=from_ai))
+                else:
+                    _finish(self._user_cancelled_response())
+
+            box.finished.connect(_on_finished)
+            _show_with_session(box)
+
+        def _show_remove_mode():
+            if result_state["done"]:
+                return
+            target_box = prepared["payload"]["box"]
+            box_numbers = prepared.get("box_numbers") or []
+            suggested_mode = prepared.get("suggested_mode")
+            if not any(int(box_num) > int(target_box) for box_num in box_numbers):
+                chosen_mode = suggested_mode if suggested_mode in {"keep_gaps", "renumber_contiguous"} else "keep_gaps"
+                _show_remove_confirm(chosen_mode)
+                return
+
+            message = t("main.boxRemoveMiddlePrompt", box=target_box)
+            if suggested_mode in {"keep_gaps", "renumber_contiguous"}:
+                mode_label = (
+                    tr("main.boxDeleteKeepGaps")
+                    if suggested_mode == "keep_gaps"
+                    else tr("main.boxDeleteRenumber")
+                )
+                message += "\n" + t("main.boxAiSuggestedMode", mode=mode_label)
+
+            box = QMessageBox(self._window)
+            box.setWindowTitle(tr("main.manageBoxes"))
+            box.setIcon(QMessageBox.Warning)
+            box.setText(message)
+            keep_btn = box.addButton(tr("main.boxDeleteKeepGaps"), QMessageBox.AcceptRole)
+            renumber_btn = box.addButton(tr("main.boxDeleteRenumber"), QMessageBox.ActionRole)
+            box.addButton(QMessageBox.Cancel)
+            box.setDefaultButton(keep_btn)
+
+            def _on_finished(_result):
+                if result_state["done"]:
+                    return
+                clicked = box.clickedButton()
+                if clicked == keep_btn:
+                    _show_remove_confirm("keep_gaps")
+                elif clicked == renumber_btn:
+                    _show_remove_confirm("renumber_contiguous")
+                else:
+                    _finish(self._user_cancelled_response())
+
+            box.finished.connect(_on_finished)
+            _show_with_session(box)
+
+        if prepared["op"] == "add":
+            _show_add_confirm()
         else:
-            response = window.bridge.adjust_box_count(
-                yaml_path=yaml_path,
-                execution_mode="execute",
-                **payload,
-            )
-
-        if response.get("ok"):
-            window.overview_panel.refresh()
-            window.on_operation_completed(True)
-        notice_level = "success" if response.get("ok") else "error"
-        notice_text = str(
-            response.get("message")
-            or (tr("main.boxAdjustSuccess") if response.get("ok") else tr("main.boxAdjustFailed"))
-        )
-        notice = build_system_notice(
-            code="box.layout.adjusted",
-            text=notice_text,
-            level=notice_level,
-            source="ai" if from_ai else "settings",
-            timeout_ms=3000,
-            data={
-                "operation": op,
-                "ok": bool(response.get("ok")),
-                "preview": response.get("preview") or response.get("result") or {},
-                "error_code": response.get("error_code"),
-            },
-        )
-        window.show_status(notice_text, 3000, notice_level)
-        window.operations_panel.emit_external_operation_event(notice)
-        return response
+            _show_remove_mode()
+        return session
 
     @staticmethod
     def _normalize_mode_alias(mode_value):

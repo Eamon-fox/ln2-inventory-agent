@@ -780,7 +780,14 @@ class MainWindow(QMainWindow):
     def on_manage_boxes(self, yaml_path_override=None):
         self._boxes_flow.manage_boxes(yaml_path_override=yaml_path_override)
 
-    def handle_manage_boxes_request(self, request, from_ai=True, yaml_path_override=None):
+    def handle_manage_boxes_request(self, request, from_ai=True, yaml_path_override=None, on_result=None):
+        if callable(on_result):
+            return self._boxes_flow.handle_request_async(
+                request,
+                on_result=on_result,
+                from_ai=from_ai,
+                yaml_path_override=yaml_path_override,
+            )
         return self._boxes_flow.handle_request(
             request,
             from_ai=from_ai,

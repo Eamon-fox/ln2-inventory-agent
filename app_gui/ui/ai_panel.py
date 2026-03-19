@@ -134,6 +134,8 @@ class AIPanel(QWidget):
         self.ai_chat_write_in_progress = False
         self._run_btn_attention_timer = None
         self._run_btn_attention_toggles_remaining = 0
+        self._floating_dialog_refs = []
+        self._pending_ai_dialog_state = None
 
         self.setup_ui()
         self.refresh_placeholder()
@@ -1069,6 +1071,13 @@ class AIPanel(QWidget):
     _on_run_stop_toggle = _ai_runtime._on_run_stop_toggle
     on_run_ai_agent = _ai_runtime.on_run_ai_agent
     start_worker = _ai_runtime.start_worker
+    _show_nonblocking_ai_dialog = _ai_runtime._show_nonblocking_ai_dialog
+    _set_waiting_for_user_reply = _ai_runtime._set_waiting_for_user_reply
+    _begin_pending_ai_wait = _ai_runtime._begin_pending_ai_wait
+    _pending_ai_wait_matches = _ai_runtime._pending_ai_wait_matches
+    _finalize_pending_ai_wait = _ai_runtime._finalize_pending_ai_wait
+    _dismiss_pending_ai_wait = _ai_runtime._dismiss_pending_ai_wait
+    _handle_pending_ai_dialog_closed = _ai_runtime._handle_pending_ai_dialog_closed
     _handle_question_event = _ai_runtime._handle_question_event
     _handle_manage_boxes_confirm = _ai_runtime._handle_manage_boxes_confirm
     _handle_max_steps_ask = _ai_runtime._handle_max_steps_ask

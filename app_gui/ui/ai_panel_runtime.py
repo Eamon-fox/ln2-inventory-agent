@@ -1,8 +1,9 @@
 """Runtime and worker lifecycle helpers for AIPanel."""
 
 import json
+from contextlib import suppress
 
-from PySide6.QtCore import QThread
+from PySide6.QtCore import QThread, Qt
 
 from app_gui.error_localizer import localize_error_payload
 from app_gui.event_compactor import compact_operation_event_for_context
@@ -11,6 +12,8 @@ from app_gui.i18n import tr
 from app_gui.ui.icons import Icons, get_icon
 from app_gui.ui.utils import compact_json
 from app_gui.ui.workers import AgentRunWorker
+
+_MISSING = object()
 
 
 def _on_run_stop_toggle(self):
@@ -110,6 +113,114 @@ def start_worker(self, prompt):
     self.ai_run_thread.start()
 
 
+def _show_nonblocking_ai_dialog(self, dialog):
+    dialog.setAttribute(Qt.WA_DeleteOnClose, True)
+    dialog.setWindowModality(Qt.NonModal)
+    dialog.setModal(False)
+    self._floating_dialog_refs.append(dialog)
+
+    def _release_ref(_result=0):
+        with suppress(ValueError):
+            self._floating_dialog_refs.remove(dialog)
+
+    dialog.finished.connect(_release_ref)
+    dialog.show()
+    dialog.raise_()
+    dialog.activateWindow()
+
+
+def _set_waiting_for_user_reply(self, waiting):
+    prompt = getattr(self, "ai_prompt", None)
+    if prompt is None:
+        return
+    prompt.setEnabled(not bool(waiting))
+
+
+def _pending_ai_wait_matches(self, state):
+    if not isinstance(state, dict):
+        return False
+    if self._pending_ai_dialog_state is not state:
+        return False
+    worker = state.get("worker")
+    if worker is not None and worker is not self.ai_run_worker:
+        return False
+    trace_id = str(state.get("trace_id") or "").strip()
+    active_trace_id = str(getattr(self, "ai_active_trace_id", "") or "").strip()
+    if trace_id and active_trace_id and trace_id != active_trace_id:
+        return False
+    return True
+
+
+def _begin_pending_ai_wait(self, *, worker=None, trace_id=None, closer=None):
+    self._dismiss_pending_ai_wait(cancel_worker=True)
+    state = {
+        "worker": worker,
+        "trace_id": str(trace_id or "").strip(),
+        "closer": closer,
+        "done": False,
+    }
+    self._pending_ai_dialog_state = state
+    self._set_waiting_for_user_reply(True)
+    return state
+
+
+def _finalize_pending_ai_wait(self, state, *, answer=_MISSING, cancel=False):
+    if not isinstance(state, dict) or state.get("done"):
+        return False
+
+    is_current = self._pending_ai_dialog_state is state
+    matches_current = self._pending_ai_wait_matches(state)
+    state["done"] = True
+
+    if is_current:
+        self._pending_ai_dialog_state = None
+        self._set_waiting_for_user_reply(False)
+
+    worker = state.get("worker")
+    if worker is not None and matches_current:
+        try:
+            if cancel:
+                if hasattr(worker, "cancel_answer"):
+                    worker.cancel_answer()
+            elif answer is not _MISSING and hasattr(worker, "set_answer"):
+                worker.set_answer(answer)
+        except Exception:
+            return False
+    return matches_current
+
+
+def _dismiss_pending_ai_wait(self, cancel_worker=False):
+    state = self._pending_ai_dialog_state
+    if not isinstance(state, dict):
+        return
+
+    self._pending_ai_dialog_state = None
+    self._set_waiting_for_user_reply(False)
+    if state.get("done"):
+        return
+
+    state["done"] = True
+    worker = state.get("worker")
+    if cancel_worker and worker is not None:
+        trace_id = str(state.get("trace_id") or "").strip()
+        active_trace_id = str(getattr(self, "ai_active_trace_id", "") or "").strip()
+        if worker is self.ai_run_worker and (not trace_id or not active_trace_id or trace_id == active_trace_id):
+            with suppress(Exception):
+                if hasattr(worker, "cancel_answer"):
+                    worker.cancel_answer()
+
+    closer = state.get("closer")
+    if callable(closer):
+        with suppress(Exception):
+            closer()
+
+
+def _handle_pending_ai_dialog_closed(self, state):
+    if not isinstance(state, dict) or state.get("done"):
+        return
+    self._finalize_pending_ai_wait(state, cancel=True)
+
+
 def _handle_question_event(self, event_data):
     """Handle question event from agent: show dialog and unblock worker."""
     sender = self.sender() if hasattr(self, "sender") else None
@@ -142,15 +253,12 @@ def _handle_question_event(self, event_data):
     if self.ai_streaming_active:
         self._end_stream_chat()
     self._append_tool_message(tr("ai.questionAsking"))
-
-    answer = self._show_question_dialog(question_text, options)
-
-    if answer is not None:
-        if self.ai_run_worker:
-            self.ai_run_worker.set_answer(answer)
-    else:
-        if self.ai_run_worker:
-            self.ai_run_worker.cancel_answer()
+    self._show_question_dialog(
+        question_text,
+        options,
+        worker=self.ai_run_worker,
+        trace_id=event_data.get("trace_id"),
+    )
 
 
 def _handle_manage_boxes_confirm(self, event_data):
@@ -167,8 +275,24 @@ def _handle_manage_boxes_confirm(self, event_data):
             self.ai_run_worker.cancel_answer()
         return
 
+    worker = self.ai_run_worker
+    trace_id = event_data.get("trace_id")
+    state_ref = {"state": None}
+
+    def _submit_result(result):
+        state = state_ref.get("state")
+        if state is not None:
+            self._finalize_pending_ai_wait(state, answer=result)
+            return
+        if worker is self.ai_run_worker and hasattr(worker, "set_answer"):
+            worker.set_answer(result)
+
     try:
-        result = self._manage_boxes_request_handler(request)
+        result = self._manage_boxes_request_handler(
+            request,
+            from_ai=True,
+            on_result=_submit_result,
+        )
     except Exception as exc:
         result = {
             "ok": False,
@@ -176,13 +300,20 @@ def _handle_manage_boxes_confirm(self, event_data):
             "message": str(exc),
         }
 
-    if not isinstance(result, dict):
-        if self.ai_run_worker:
-            self.ai_run_worker.cancel_answer()
+    if isinstance(result, dict):
+        if worker is self.ai_run_worker and hasattr(worker, "set_answer"):
+            worker.set_answer(result)
         return
 
-    if self.ai_run_worker:
-        self.ai_run_worker.set_answer(result)
+    if result is None:
+        return
+
+    closer = getattr(result, "close", None)
+    state_ref["state"] = self._begin_pending_ai_wait(
+        worker=worker,
+        trace_id=trace_id,
+        closer=closer if callable(closer) else None,
+    )
 
 
 def _handle_max_steps_ask(self, event_data):
@@ -194,23 +325,37 @@ def _handle_max_steps_ask(self, event_data):
     if self.ai_streaming_active:
         self._end_stream_chat()
 
-    reply = QMessageBox.question(
-        self,
-        tr("ai.maxStepsTitle"),
-        tr("ai.maxStepsMessage").format(steps=steps),
-        QMessageBox.Yes | QMessageBox.No,
-        QMessageBox.Yes,
+    box = QMessageBox(self)
+    box.setWindowTitle(tr("ai.maxStepsTitle"))
+    box.setText(tr("ai.maxStepsMessage").format(steps=steps))
+    box.setIcon(QMessageBox.Question)
+    continue_btn = box.addButton(QMessageBox.Yes)
+    stop_btn = box.addButton(QMessageBox.No)
+    box.setDefaultButton(continue_btn)
+
+    def _close_box():
+        if box.isVisible():
+            box.close()
+
+    state = self._begin_pending_ai_wait(
+        worker=self.ai_run_worker,
+        trace_id=event_data.get("trace_id"),
+        closer=_close_box,
     )
+    box.finished.connect(lambda _result, _state=state: self._handle_pending_ai_dialog_closed(_state))
 
-    if reply == QMessageBox.Yes and self.ai_run_worker:
-        self.ai_run_worker.set_answer(["continue"])
-    elif self.ai_run_worker:
-        self.ai_run_worker.cancel_answer()
+    def _handle_clicked(clicked):
+        if clicked == continue_btn:
+            self._finalize_pending_ai_wait(state, answer=["continue"])
+        elif clicked == stop_btn:
+            self._finalize_pending_ai_wait(state, cancel=True)
+
+    box.buttonClicked.connect(_handle_clicked)
+    self._show_nonblocking_ai_dialog(box)
 
 
-def _show_question_dialog(self, question_text, options):
-    """Modal dialog for one clarifying question with single-choice + free text."""
-    from PySide6.QtCore import Qt
+def _show_question_dialog(self, question_text, options, *, worker=None, trace_id=None):
+    """Non-modal dialog for one clarifying question with single-choice + free text."""
     from PySide6.QtWidgets import (
         QComboBox,
         QDialog,
@@ -248,10 +393,22 @@ def _show_question_dialog(self, question_text, options):
     layout.addWidget(error_label)
 
     buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-    buttons.rejected.connect(dialog.reject)
     layout.addWidget(buttons)
 
     other_option = options[-1] if options else ""
+    state = None
+
+    def _close_dialog():
+        if dialog.isVisible():
+            dialog.close()
+
+    if worker is not None:
+        state = self._begin_pending_ai_wait(
+            worker=worker,
+            trace_id=trace_id,
+            closer=_close_dialog,
+        )
+        dialog.finished.connect(lambda _result, _state=state: self._handle_pending_ai_dialog_closed(_state))
 
     def _toggle_other_input():
         selected = str(combo.currentText() or "").strip()
@@ -273,21 +430,22 @@ def _show_question_dialog(self, question_text, options):
                 error_label.setVisible(True)
                 input_edit.setFocus()
                 return
+        answer = selected
+        if other_option and selected == other_option:
+            answer = {
+                "selected": selected,
+                "text": str(input_edit.text() or "").strip(),
+            }
+        if state is not None:
+            self._finalize_pending_ai_wait(state, answer=answer)
         dialog.accept()
 
     combo.currentIndexChanged.connect(_toggle_other_input)
     buttons.accepted.connect(_accept)
+    buttons.rejected.connect(dialog.reject)
     _toggle_other_input()
-
-    if dialog.exec() == QDialog.Accepted:
-        selected = str(combo.currentText() or "").strip()
-        if other_option and selected == other_option:
-            return {
-                "selected": selected,
-                "text": str(input_edit.text() or "").strip(),
-            }
-        return selected
-    return None
+    self._show_nonblocking_ai_dialog(dialog)
+    return dialog
 
 
 def on_stop_ai_agent(self):
@@ -300,6 +458,7 @@ def on_stop_ai_agent(self):
             self.ai_run_worker.request_stop()
         except Exception:
             pass
+    self._dismiss_pending_ai_wait(cancel_worker=False)
 
     if self.ai_streaming_active:
         self._end_stream_chat()
@@ -590,6 +749,7 @@ def on_finished(self, response):
     if sender is not None and sender is not self.ai_run_worker:
         return
 
+    self._dismiss_pending_ai_wait(cancel_worker=False)
     stream_end_snapshot_applied = bool(getattr(self, "_history_snapshot_from_stream_end", False))
 
     if self.ai_stop_requested:
@@ -686,6 +846,7 @@ def on_thread_finished(self):
     if sender is not None and sender is not self.ai_run_thread:
         return
 
+    self._dismiss_pending_ai_wait(cancel_worker=False)
     self.ai_stop_requested = False
     self.ai_run_thread = None
     self.ai_run_worker = None
