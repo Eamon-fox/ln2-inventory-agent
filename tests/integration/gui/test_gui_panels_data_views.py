@@ -553,6 +553,65 @@ class OverviewTableViewTests(ManagedPathTestCase):
         finally:
             self._cleanup(tmpdir)
 
+    def test_table_view_refresh_updates_custom_field_header_label_without_column_key_change(self):
+        records = [
+            {
+                "id": 1,
+                "cell_line": "K562",
+                "sample_tag": "tag-A",
+                "box": 1,
+                "position": 1,
+                "frozen_at": "2025-01-01",
+            },
+        ]
+        yaml_path, tmpdir = self._seed_yaml(
+            records,
+            meta_extra={
+                "custom_fields": [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                    {"key": "sample_tag", "label": "Old Label", "type": "str"},
+                ],
+                "display_key": "sample_tag",
+                "color_key": "cell_line",
+            },
+        )
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+            from lib.yaml_ops import write_yaml
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            sample_tag_col = self._table_column_index(panel, "sample_tag")
+            self.assertEqual("Old Label", panel.ov_table.horizontalHeaderItem(sample_tag_col).text())
+
+            write_yaml(
+                {
+                    "meta": {
+                        "box_layout": {"rows": 9, "cols": 9},
+                        "custom_fields": [
+                            {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                            {"key": "sample_tag", "label": "New Label", "type": "str"},
+                        ],
+                        "display_key": "sample_tag",
+                        "color_key": "cell_line",
+                    },
+                    "inventory": records,
+                },
+                path=yaml_path,
+                audit_meta={"action": "tests", "source": "tests"},
+            )
+            panel._stats_response_cache = {}
+            panel.refresh()
+
+            sample_tag_col = self._table_column_index(panel, "sample_tag")
+            header_item = panel.ov_table.horizontalHeaderItem(sample_tag_col)
+            self.assertEqual("New Label", header_item.text())
+            self.assertEqual("sample_tag", header_item.data(Qt.UserRole))
+        finally:
+            self._cleanup(tmpdir)
+
     def test_table_view_displays_updated_structural_labels_in_english(self):
         previous_language = get_language()
         self.addCleanup(lambda: set_language(previous_language))
@@ -672,6 +731,76 @@ class OverviewTableViewTests(ManagedPathTestCase):
             self.assertIsNone(captured.get("unique_values"))
             self.assertEqual({"type": "text", "text": "takeout"}, panel._column_filters.get("thaw_events"))
             self.assertNotIn("Storage Events", panel._column_filters)
+            apply_mock.assert_called_once()
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_table_column_filter_dialog_uses_custom_display_label_but_keeps_raw_key(self):
+        records = [
+            {
+                "id": 1,
+                "cell_line": "K562",
+                "sample_tag": "Alpha",
+                "box": 1,
+                "position": 1,
+                "frozen_at": "2025-01-01",
+            },
+            {
+                "id": 2,
+                "cell_line": "HeLa",
+                "sample_tag": "Beta",
+                "box": 1,
+                "position": 2,
+                "frozen_at": "2025-01-01",
+            },
+        ]
+        yaml_path, tmpdir = self._seed_yaml(
+            records,
+            meta_extra={
+                "custom_fields": [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                    {"key": "sample_tag", "label": "Sample Tag", "type": "str"},
+                ],
+                "display_key": "sample_tag",
+                "color_key": "cell_line",
+            },
+        )
+        try:
+            from PySide6.QtWidgets import QDialog
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            sample_tag_col = self._table_column_index(panel, "sample_tag")
+            captured = {}
+
+            class _FakeDialog:
+                def __init__(self, _parent, column_name, filter_type, unique_values, current_filter):
+                    captured["column_name"] = column_name
+                    captured["filter_type"] = filter_type
+                    captured["unique_values"] = list(unique_values or [])
+                    captured["current_filter"] = current_filter
+                    self.filter_config = {"type": "list", "values": ["Alpha"]}
+
+                def exec(self):
+                    return QDialog.Accepted
+
+                def get_filter_config(self):
+                    return dict(self.filter_config)
+
+            with patch("app_gui.ui.overview_panel._ColumnFilterDialog", _FakeDialog), patch.object(
+                panel,
+                "_apply_filters",
+            ) as apply_mock:
+                panel._on_column_filter_clicked(sample_tag_col, "sample_tag")
+
+            self.assertEqual("Sample Tag", captured.get("column_name"))
+            self.assertEqual("list", captured.get("filter_type"))
+            self.assertIn(("Alpha", 1), captured.get("unique_values"))
+            self.assertEqual({"type": "list", "values": ["Alpha"]}, panel._column_filters.get("sample_tag"))
+            self.assertNotIn("Sample Tag", panel._column_filters)
             apply_mock.assert_called_once()
         finally:
             self._cleanup(tmpdir)
