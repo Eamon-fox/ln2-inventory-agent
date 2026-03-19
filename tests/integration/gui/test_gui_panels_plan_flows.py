@@ -948,14 +948,12 @@ class PrintPlanRegressionTests(_NoStagePreflightMixin, ManagedPathTestCase):
 
         captured = {}
 
-        def _capture_html(html_text, suffix=".html", open_url_fn=None):
+        def _capture_html(html_text, **kwargs):
             captured["html"] = str(html_text or "")
-            captured["suffix"] = suffix
-            captured["open_url_fn"] = open_url_fn
-            return "/tmp/fake_last_executed_snapshot.html"
+            return "/tmp/fake.html"
 
         with patch(
-            "app_gui.ui.operations_panel_actions.open_html_in_browser",
+            "app_gui.ui.utils.open_html_in_browser",
             side_effect=_capture_html,
         ):
             panel.print_last_executed()
@@ -985,14 +983,12 @@ class PrintPlanRegressionTests(_NoStagePreflightMixin, ManagedPathTestCase):
 
         captured = {}
 
-        def _capture_html(html_text, suffix=".html", open_url_fn=None):
+        def _capture_html(html_text, **kwargs):
             captured["html"] = str(html_text or "")
-            captured["suffix"] = suffix
-            captured["open_url_fn"] = open_url_fn
-            return "/tmp/fake_last_executed_status.html"
+            return "/tmp/fake.html"
 
         with patch(
-            "app_gui.ui.operations_panel_actions.open_html_in_browser",
+            "app_gui.ui.utils.open_html_in_browser",
             side_effect=_capture_html,
         ):
             panel.print_last_executed()
@@ -1091,11 +1087,9 @@ class PrintPlanRegressionTests(_NoStagePreflightMixin, ManagedPathTestCase):
 
         captured = {}
 
-        def _capture_html(html_text, suffix=".html", open_url_fn=None):
+        def _capture_html(html_text, **kwargs):
             captured["html"] = str(html_text or "")
-            captured["suffix"] = suffix
-            captured["open_url_fn"] = open_url_fn
-            return "/tmp/fake_print.html"
+            return True
 
         called_i18n_keys = []
 
@@ -1108,7 +1102,7 @@ class PrintPlanRegressionTests(_NoStagePreflightMixin, ManagedPathTestCase):
         from unittest.mock import patch
 
         with patch("app_gui.i18n.tr", side_effect=_fake_i18n_tr), patch(
-            "app_gui.ui.operations_panel_actions.open_html_in_browser",
+            "app_gui.ui.utils.open_html_in_browser",
             side_effect=_capture_html,
         ):
             panel.print_plan()
