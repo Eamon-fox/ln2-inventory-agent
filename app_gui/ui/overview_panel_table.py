@@ -10,6 +10,89 @@ from app_gui.i18n import t
 from app_gui.ui.theme import pick_contrasting_text_color
 from app_gui.ui.utils import cell_color
 from lib.csv_export import build_export_rows
+from lib.validators import parse_date
+
+
+class _SortableOverviewItem(QTableWidgetItem):
+    """QTableWidgetItem with explicit typed sort keys for Overview tables."""
+
+    def __init__(self, text, *, sort_key=None):
+        super().__init__(text)
+        self._sort_key = sort_key
+
+    def __lt__(self, other):
+        if not isinstance(other, _SortableOverviewItem):
+            return super().__lt__(other)
+
+        self_key = self._sort_key
+        other_key = other._sort_key
+        if self_key is not None and other_key is not None:
+            try:
+                if self_key != other_key:
+                    return self_key < other_key
+            except TypeError:
+                pass
+        elif self_key is not None:
+            return True
+        elif other_key is not None:
+            return False
+
+        return super().__lt__(other)
+
+
+def _safe_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_number(value):
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return value
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    with suppress(TypeError, ValueError):
+        return int(text)
+    with suppress(TypeError, ValueError):
+        return float(text)
+    return None
+
+
+def _location_sort_key(row_data, value):
+    record = row_data.get("record")
+    if isinstance(record, dict):
+        box = _safe_int(record.get("box"))
+        position = _safe_int(record.get("position"))
+        if box is not None and position is not None:
+            return (box, position)
+
+    parts = str(value or "").split(":")
+    if len(parts) != 2:
+        return None
+
+    box = _safe_int(parts[0])
+    position = _safe_int(parts[1])
+    if box is None or position is None:
+        return None
+    return (box, position)
+
+
+def _column_sort_key(column, value, row_data, *, column_type):
+    if column == "location":
+        return _location_sort_key(row_data, value)
+    if column == "id":
+        return _safe_number(value)
+    if column_type == "number":
+        return _safe_number(value)
+    if column_type == "date":
+        return parse_date(value)
+    return None
 
 
 def _set_table_columns(self, headers):
@@ -102,6 +185,14 @@ def _render_table_rows(self, rows):
     try:
         self.ov_table.setRowCount(len(rows_list))
         self._table_row_records = [None] * len(rows_list)
+        column_type_map = {}
+        for column in self._table_columns:
+            if column == "location":
+                column_type_map[column] = "location"
+            elif column == "id":
+                column_type_map[column] = "number"
+            else:
+                column_type_map[column] = self._detect_column_type(column)
 
         for row_index, row_data in enumerate(rows_list):
             values = row_data.get("values") or {}
@@ -113,7 +204,15 @@ def _render_table_rows(self, rows):
 
             for col_index, column in enumerate(self._table_columns):
                 value = values.get(column, "")
-                item = QTableWidgetItem(str(value))
+                item = _SortableOverviewItem(
+                    str(value),
+                    sort_key=_column_sort_key(
+                        column,
+                        value,
+                        row_data,
+                        column_type=column_type_map.get(column),
+                    ),
+                )
                 item.setData(_ov_panel.TABLE_ROW_TINT_ROLE, row_tint)
                 item.setForeground(row_text_brush)
 

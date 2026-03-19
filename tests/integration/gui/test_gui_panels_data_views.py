@@ -469,6 +469,17 @@ class OverviewTableViewTests(ManagedPathTestCase):
         else:
             panel._on_view_mode_changed("grid")
 
+    def _table_column_texts(self, panel, column_name):
+        headers = [
+            panel.ov_table.horizontalHeaderItem(i).text()
+            for i in range(panel.ov_table.columnCount())
+        ]
+        column_index = headers.index(column_name)
+        return [
+            panel.ov_table.item(row, column_index).text()
+            for row in range(panel.ov_table.rowCount())
+        ]
+
     def test_table_view_uses_export_columns(self):
         records = [
             {
@@ -548,6 +559,121 @@ class OverviewTableViewTests(ManagedPathTestCase):
             panel.ov_filter_cell.setCurrentIndex(cell_idx)
             self.assertEqual(1, panel.ov_table.rowCount())
             self.assertEqual("1", panel.ov_table.item(0, 0).text())
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_table_location_sort_uses_natural_box_position_order(self):
+        records = [
+            {"id": 201, "cell_line": "K562", "short_name": "p10", "box": 1, "position": 10, "frozen_at": "2025-01-01"},
+            {"id": 202, "cell_line": "K562", "short_name": "p2", "box": 1, "position": 2, "frozen_at": "2025-01-01"},
+            {"id": 203, "cell_line": "K562", "short_name": "p1", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            headers = [
+                panel.ov_table.horizontalHeaderItem(i).text()
+                for i in range(panel.ov_table.columnCount())
+            ]
+            location_col = headers.index("location")
+
+            panel.ov_table.sortItems(location_col, Qt.DescendingOrder)
+            self.assertEqual(
+                ["1:10", "1:2", "1:1"],
+                self._table_column_texts(panel, "location"),
+            )
+
+            panel.ov_table.sortItems(location_col, Qt.AscendingOrder)
+            self.assertEqual(
+                ["1:1", "1:2", "1:10"],
+                self._table_column_texts(panel, "location"),
+            )
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_table_id_sort_uses_numeric_order(self):
+        records = [
+            {"id": 10, "cell_line": "K562", "short_name": "ten", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+            {"id": 2, "cell_line": "K562", "short_name": "two", "box": 1, "position": 2, "frozen_at": "2025-01-01"},
+            {"id": 1, "cell_line": "K562", "short_name": "one", "box": 1, "position": 3, "frozen_at": "2025-01-01"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            headers = [
+                panel.ov_table.horizontalHeaderItem(i).text()
+                for i in range(panel.ov_table.columnCount())
+            ]
+            id_col = headers.index("id")
+
+            panel.ov_table.sortItems(id_col, Qt.AscendingOrder)
+            self.assertEqual(["1", "2", "10"], self._table_column_texts(panel, "id"))
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_table_numeric_custom_field_sort_uses_numeric_order(self):
+        records = [
+            {
+                "id": 1,
+                "cell_line": "K562",
+                "short_name": "ten",
+                "box": 1,
+                "position": 1,
+                "frozen_at": "2025-01-01",
+                "passage_number": 10,
+            },
+            {
+                "id": 2,
+                "cell_line": "K562",
+                "short_name": "two",
+                "box": 1,
+                "position": 2,
+                "frozen_at": "2025-01-01",
+                "passage_number": 2,
+            },
+            {
+                "id": 3,
+                "cell_line": "K562",
+                "short_name": "one",
+                "box": 1,
+                "position": 3,
+                "frozen_at": "2025-01-01",
+                "passage_number": 1,
+            },
+        ]
+        meta_extra = {
+            "color_key": "cell_line",
+            "custom_fields": [{"key": "passage_number", "label": "Passage #", "type": "int"}],
+        }
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra=meta_extra)
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            headers = [
+                panel.ov_table.horizontalHeaderItem(i).text()
+                for i in range(panel.ov_table.columnCount())
+            ]
+            passage_col = headers.index("passage_number")
+
+            panel.ov_table.sortItems(passage_col, Qt.AscendingOrder)
+            self.assertEqual(
+                ["1", "2", "10"],
+                self._table_column_texts(panel, "passage_number"),
+            )
         finally:
             self._cleanup(tmpdir)
 
