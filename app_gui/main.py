@@ -53,6 +53,7 @@ from lib.yaml_ops import append_audit_event, load_yaml
 from app_gui.ui.theme import (
     apply_dark_theme, apply_light_theme,
     resolve_theme_token,
+    SPACE_1, SPACE_2, SPACE_4,
     LAYOUT_OVERVIEW_MIN_WIDTH,
     LAYOUT_OPS_MIN_WIDTH, LAYOUT_OPS_MAX_WIDTH, LAYOUT_OPS_DEFAULT_WIDTH,
     LAYOUT_AI_MIN_WIDTH, LAYOUT_AI_MAX_WIDTH, LAYOUT_AI_DEFAULT_WIDTH,
@@ -319,8 +320,8 @@ class MainWindow(QMainWindow):
     def setup_ui(self):
         container = QWidget()
         root = QVBoxLayout(container)
-        root.setContentsMargins(8, 8, 8, 4)
-        root.setSpacing(4)
+        root.setContentsMargins(SPACE_2, SPACE_2, SPACE_2, SPACE_1)
+        root.setSpacing(SPACE_1)
 
         # Top Bar
         top = QHBoxLayout()
@@ -433,7 +434,7 @@ class MainWindow(QMainWindow):
         # Status bar for statistics (Excel-like bottom bar)
         self.stats_bar = QLabel()
         self.stats_bar.setObjectName("mainStatsBar")
-        self.stats_bar.setMinimumHeight(16)  # Compact height
+        self.stats_bar.setMinimumHeight(SPACE_4)  # Compact height
         root.addWidget(self.stats_bar)
 
         self.setCentralWidget(container)
