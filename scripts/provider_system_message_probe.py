@@ -44,7 +44,7 @@ CLIENT_FACTORIES = {
     ),
     "minimax": lambda api_key, model: MiniMaxLLMClient(
         api_key=api_key,
-        model=model or "MiniMax-M2.5-highspeed",
+        model=model or "MiniMax-M2.7",
         thinking_enabled=False,
     ),
 }
@@ -101,7 +101,7 @@ def _resolve_model(provider: str, config: dict, override: str) -> str:
     defaults = {
         "deepseek": "deepseek-chat",
         "zhipu": "glm-5",
-        "minimax": "MiniMax-M2.5-highspeed",
+        "minimax": "MiniMax-M2.7",
     }
     return defaults[provider]
 
