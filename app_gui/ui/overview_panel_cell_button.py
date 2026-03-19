@@ -4,6 +4,8 @@ from PySide6.QtCore import QEasingCurve, QMimeData, QPropertyAnimation, QRect, Q
 from PySide6.QtGui import QColor, QDrag, QFontMetrics, QPainter, QPalette, QPen, QTextLayout, QTextOption
 from PySide6.QtWidgets import QLabel, QPushButton, QStyle, QStyleOptionButton
 
+from app_gui.ui.theme import resolve_theme_token
+
 MIME_TYPE_MOVE = "application/x-ln2-move"
 _ELLIPSIS_TEXT = "..."
 _CELL_TEXT_MODE_DEFAULT = "default"
@@ -114,7 +116,7 @@ class CellButton(QPushButton):
         self._selection_visible = False
         self._selection_active = False
         self._selection_edges = ()
-        self._selection_color = QColor("#63b3ff")
+        self._selection_color = QColor(resolve_theme_token("cell-selected-border", fallback="#63b3ff"))
         self._operation_marker = ""
         self._operation_move_id = None
         self._text_display_mode = _CELL_TEXT_MODE_DEFAULT
@@ -195,7 +197,7 @@ class CellButton(QPushButton):
     def _set_selection_visual_state(self, *, selected=False, ring_color="", active=False, edge_mask=None, update=True):
         color = ring_color if isinstance(ring_color, QColor) else QColor(str(ring_color or "").strip())
         if not color.isValid():
-            color = QColor("#63b3ff")
+            color = QColor(resolve_theme_token("cell-selected-border", fallback="#63b3ff"))
 
         self._selection_visible = bool(selected)
         self._selection_active = bool(selected and active)
@@ -230,7 +232,7 @@ class CellButton(QPushButton):
 
         color = QColor(self._selection_color)
         if not color.isValid():
-            color = QColor("#63b3ff")
+            color = QColor(resolve_theme_token("cell-selected-border", fallback="#63b3ff"))
 
         overlay_rect = self._selection_overlay_rect()
         if not overlay_rect.isValid():
@@ -388,17 +390,17 @@ class CellButton(QPushButton):
     def _badge_text_and_color(marker_type, move_id=None):
         marker = str(marker_type or "").strip().lower()
         if marker == "add":
-            return "ADD", "#22c55e"
+            return "ADD", resolve_theme_token("marker-add", fallback="#22c55e")
         if marker == "takeout":
-            return "OUT", "#ef4444"
+            return "OUT", resolve_theme_token("marker-takeout", fallback="#ef4444")
         if marker == "edit":
-            return "EDT", "#06b6d4"
+            return "EDT", resolve_theme_token("marker-edit", fallback="#06b6d4")
         if marker == "move-source":
             suffix = f"{int(move_id)}" if move_id not in (None, "") else "?"
-            return f"M{suffix}F", "#63b3ff"
+            return f"M{suffix}F", resolve_theme_token("marker-move", fallback="#63b3ff")
         if marker == "move-target":
             suffix = f"{int(move_id)}" if move_id not in (None, "") else "?"
-            return f"M{suffix}T", "#63b3ff"
+            return f"M{suffix}T", resolve_theme_token("marker-move", fallback="#63b3ff")
         return "", ""
 
     def _reposition_operation_badge(self):
@@ -429,13 +431,14 @@ class CellButton(QPushButton):
         self.setProperty("operation_marker", marker)
         self.setProperty("operation_badge_text", badge_text)
         self._operation_badge.setText(badge_text)
+        badge_bg = resolve_theme_token("badge-bg", fallback="rgba(0, 0, 0, 180)")
         self._operation_badge.setStyleSheet(
             f"""
             QLabel#OverviewCellOperationBadge {{
                 font-size: 7px;
                 font-weight: 700;
                 color: {badge_color};
-                background-color: rgba(0, 0, 0, 180);
+                background-color: {badge_bg};
                 border-radius: 2px;
                 padding: 0px 2px;
             }}

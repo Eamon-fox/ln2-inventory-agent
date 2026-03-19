@@ -337,7 +337,7 @@ class GuiPanelsOverviewTests(GuiPanelsBaseCase):
         button = panel.overview_cells[(1, 1)]
         self.assertEqual("takeout", str(button.property("operation_marker")))
         self.assertEqual("OUT", str(button.property("operation_badge_text")))
-        self.assertIn("#ef4444", button.styleSheet())
+        self.assertIn("#dc2626", button.styleSheet())
 
     def test_overview_plan_markers_clear_when_plan_empty(self):
         panel = self._new_overview_panel()
@@ -437,7 +437,7 @@ class GuiPanelsOverviewTests(GuiPanelsBaseCase):
         button = panel.overview_cells[(1, 1)]
         self.assertEqual("edit", str(button.property("operation_marker")))
         self.assertEqual("EDT", str(button.property("operation_badge_text")))
-        self.assertIn("#06b6d4", button.styleSheet())
+        self.assertIn("#0891b2", button.styleSheet())
 
     def test_overview_hover_scales_cell_without_shifting_neighbors(self):
         panel = self._new_overview_panel()
