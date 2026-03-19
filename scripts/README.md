@@ -23,9 +23,10 @@ python3 scripts/sync_website_version.py
 从 `CHANGELOG.md` 自动提取历史版本并更新网站。
 
 **功能：**
-- 解析 `CHANGELOG.md` 提取版本号
+- 解析 `CHANGELOG.md` 提取版本号与发布日期
 - 生成历史版本下载链接
 - 更新 `download.html` 的历史版本列表
+- 为历史版本项补充悬停摘要提示，方便快速查看版本变化
 
 **使用：**
 ```bash
@@ -39,12 +40,13 @@ python3 scripts/update_history_versions.py
 完整的发布流程脚本（交互式）。
 
 **功能：**
-1. 更新 `app_gui/main.py` 中的 `APP_VERSION`
-2. 更新 `latest.json`
-3. 提醒更新 `CHANGELOG.md`
-4. 提示构建安装包
-5. 同步版本到网站
-6. 创建 Git 提交和标签
+1. 更新 `app_gui/version.py` 中的 `APP_VERSION`
+2. 更新 `installer/windows/LN2InventoryAgent.iss` 的默认版本
+3. 更新 `latest.json`
+4. 提醒更新 `CHANGELOG.md`
+5. 提示构建安装包
+6. 同步版本到网站
+7. 创建 Git 提交和标签
 
 **使用：**
 ```bash
@@ -69,20 +71,23 @@ cd ~/snowfox
 
 1. **更新版本号**
    ```bash
-   # 编辑 app_gui/main.py
-   APP_VERSION = "1.3.4"
+   # 编辑 app_gui/version.py
+   APP_VERSION = "1.3.5"
+
+   # 编辑 installer/windows/LN2InventoryAgent.iss
+   #define MyAppVersion "1.3.5"
    
    # 编辑 latest.json
    {
-     "version": "1.3.4",
-     "download_url": "https://snowfox-release.oss-cn-beijing.aliyuncs.com/SnowFox-Setup-1.3.4.exe",
+     "version": "1.3.5",
+     "download_url": "https://snowfox-release.oss-cn-beijing.aliyuncs.com/SnowFox-Setup-1.3.5.exe",
      "release_notes": "..."
    }
    ```
 
 2. **更新 CHANGELOG.md**
    ```markdown
-   ## 1.3.4 - 2026-03-06
+   ## 1.3.5 - 2026-03-20
    
    ### Added
    - 新功能...
@@ -102,7 +107,7 @@ cd ~/snowfox
 
 4. **上传到 OSS**
    ```bash
-   ossutil cp dist/installer/SnowFox-Setup-1.3.4.exe oss://snowfox-release/
+   ossutil cp dist/installer/SnowFox-Setup-1.3.5.exe oss://snowfox-release/
    ```
 
 5. **同步到网站**
@@ -115,8 +120,8 @@ cd ~/snowfox
 6. **提交和推送**
    ```bash
    git add -A
-   git commit -m "chore: release v1.3.4"
-   git tag v1.3.4
+   git commit -m "chore: release v1.3.5"
+   git tag v1.3.5
    git push && git push --tags
    ```
 
@@ -126,7 +131,8 @@ cd ~/snowfox
 
 ```
 ~/snowfox/
-├── app_gui/main.py        # APP_VERSION 定义
+├── app_gui/version.py     # APP_VERSION 权威来源
+├── installer/windows/LN2InventoryAgent.iss  # Windows 安装器默认版本
 ├── latest.json            # 版本配置（单一数据源）
 ├── CHANGELOG.md           # 版本历史
 └── scripts/
@@ -169,4 +175,5 @@ cd ~/snowfox
 - 发布前确保所有测试通过
 - 保持 `CHANGELOG.md` 格式一致
 - 版本号遵循语义化版本规范（SemVer）
+- 发布前可运行 `python3 scripts/validate_version.py` 检查版本一致性
 - 发布后检查网站是否正常更新

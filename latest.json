@@ -1,5 +1,5 @@
 {
   "version": "1.3.5",
   "download_url": "https://snowfox-release.oss-cn-beijing.aliyuncs.com/SnowFox-Setup-1.3.5.exe",
-  "release_notes": "Rebuilt the Windows installer and synchronized release metadata for version 1.3.5."
+  "release_notes": "SnowFox 1.3.5 更新内容：\n- 支持 Overview 视图空位多选，方便批量规划新增位置。\n- 支持在设置页调整自定义字段顺序，表单与上下文展示顺序保持一致。\n- 操作单打印改为系统打印预览，对浅色打印更友好。\n- 提前拦截 add 覆盖 add 冲突，计划校验更一致。\n- 历史版本 list 现在会显示发布日期，并提供版本摘要提示。"
 }

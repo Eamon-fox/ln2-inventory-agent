@@ -14,8 +14,8 @@ if ! git diff-index --quiet HEAD --; then
     exit 1
 fi
 
-# 读取当前版本
-CURRENT_VERSION=$(python3 -c "import json; print(json.load(open('latest.json'))['version'])")
+# 读取当前版本（以 app_gui/version.py 为权威来源）
+CURRENT_VERSION=$(python3 -c "import pathlib, re; content = pathlib.Path('app_gui/version.py').read_text(encoding='utf-8'); match = re.search(r'APP_VERSION[^=]*=\\s*[\\\"\\']([^\\\"\\']+)[\\\"\\']', content); print(match.group(1) if match else '')")
 echo "📦 当前版本: $CURRENT_VERSION"
 echo ""
 
@@ -29,11 +29,12 @@ fi
 
 echo ""
 echo "📝 将执行以下步骤:"
-echo "  1. 更新 app_gui/main.py 中的 APP_VERSION"
-echo "  2. 更新 latest.json"
-echo "  3. 提醒你更新 CHANGELOG.md"
-echo "  4. 构建安装包"
-echo "  5. 同步版本到网站"
+echo "  1. 更新 app_gui/version.py 中的 APP_VERSION"
+echo "  2. 更新 installer/windows/LN2InventoryAgent.iss 的默认版本"
+echo "  3. 更新 latest.json"
+echo "  4. 提醒你更新 CHANGELOG.md"
+echo "  5. 构建安装包"
+echo "  6. 同步版本到网站"
 echo ""
 
 read -p "确认发布 v$NEW_VERSION? [y/N] " -n 1 -r
@@ -43,13 +44,43 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     exit 1
 fi
 
-# 1. 更新 main.py 中的版本号
+# 1. 更新 version.py 中的版本号
 echo ""
-echo "1️⃣  更新 main.py..."
-sed -i "s/^APP_VERSION = \".*\"/APP_VERSION = \"$NEW_VERSION\"/" app_gui/main.py
+echo "1️⃣  更新 version.py..."
+python3 - <<PY
+from pathlib import Path
+import re
 
-# 2. 更新 latest.json
-echo "2️⃣  更新 latest.json..."
+path = Path("app_gui/version.py")
+content = path.read_text(encoding="utf-8")
+updated = re.sub(
+    r'(APP_VERSION[^=]*=\s*["\\\'])[^"\\\']+(["\\\'])',
+    rf"\\g<1>{NEW_VERSION}\\2",
+    content,
+    count=1,
+)
+path.write_text(updated, encoding="utf-8")
+PY
+
+# 2. 更新安装器默认版本
+echo "2️⃣  更新 LN2InventoryAgent.iss..."
+python3 - <<PY
+from pathlib import Path
+import re
+
+path = Path("installer/windows/LN2InventoryAgent.iss")
+content = path.read_text(encoding="utf-8")
+updated = re.sub(
+    r'(#define MyAppVersion ")\d+\.\d+\.\d+(")',
+    rf"\\g<1>{NEW_VERSION}\\2",
+    content,
+    count=1,
+)
+path.write_text(updated, encoding="utf-8")
+PY
+
+# 3. 更新 latest.json
+echo "3️⃣  更新 latest.json..."
 python3 -c "
 import json
 with open('latest.json', 'r+') as f:
@@ -61,9 +92,9 @@ with open('latest.json', 'r+') as f:
     f.truncate()
 "
 
-# 3. 提醒更新 CHANGELOG
+# 4. 提醒更新 CHANGELOG
 echo ""
-echo "3️⃣  请手动更新 CHANGELOG.md"
+echo "4️⃣  请手动更新 CHANGELOG.md"
 echo "   格式:"
 echo ""
 echo "## $NEW_VERSION - $(date +%Y-%m-%d)"
@@ -84,9 +115,9 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     exit 1
 fi
 
-# 4. 构建安装包
+# 5. 构建安装包
 echo ""
-echo "4️⃣  构建安装包..."
+echo "5️⃣  构建安装包..."
 echo "   提示: Windows 用户请在 Windows 上运行:"
 echo "   cd ~/snowfox && installer/windows/build_installer.bat"
 echo ""
@@ -96,15 +127,15 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     echo "⚠️  跳过构建步骤"
 fi
 
-# 5. 同步到网站
+# 6. 同步到网站
 echo ""
-echo "5️⃣  同步版本到网站..."
+echo "6️⃣  同步版本到网站..."
 python3 scripts/sync_website_version.py
 python3 scripts/update_history_versions.py
 
-# 6. Git 提交
+# 7. Git 提交
 echo ""
-echo "6️⃣  创建 Git 提交..."
+echo "7️⃣  创建 Git 提交..."
 git add -A
 git commit -m "chore: release v$NEW_VERSION"
 git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION"

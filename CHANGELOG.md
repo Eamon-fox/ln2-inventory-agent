@@ -1,10 +1,23 @@
 # Changelog
 
-## 1.3.5 - 2026-03-19
+## 1.3.5 - 2026-03-20
+
+### Added
+- Overview 视图支持空位多选，便于一次规划多个新增位置。
+- 设置页支持调整自定义字段顺序，操作表单与上下文展示会按 schema 顺序保持一致。
+- 网站历史版本 list 现在会显示版本发布日期，并在悬停时展示该版本摘要。
 
 ### Changed
-- Bumped application version metadata from 1.3.4 to 1.3.5.
-- Rebuilt the Windows installer and synchronized release manifest fields for the current repository snapshot.
+- 操作单打印流程改为系统打印预览对话框，不再依赖先打开浏览器中转。
+- 打印版操作单网格样式重做，占位标签显示更完整，边框、标记和浅色打印效果更清晰。
+- Overview 网格、表格状态色和行内图标进一步统一到同一套主题视觉语言。
+- AI 会话运行时从 GUI bridge 中拆出独立 session service，设置变更后的 API Key 同步路径更明确。
+- 发布脚本与文档统一改为以 `app_gui/version.py` 作为版本权威源，并明确同步安装器默认版本。
+
+### Fixed
+- 计划合并前会更早识别 “add 覆盖 add” 冲突，减少批量执行时的晚发现错误。
+- 计划校验入口下沉到共享核心后，GUI 与 Agent 对同类计划的规则来源保持一致。
+- 设置保存后，当前 AI 会话会立即刷新 API Key 配置，避免继续沿用旧会话参数。
 
 ## 1.3.4 - 2026-03-18
 
