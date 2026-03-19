@@ -154,7 +154,8 @@ class ToolRunnerPlanStagingTests(ManagedPathTestCase):
 
     def test_stage_to_plan_add_entry(self):
         """Test staging add_entry operation."""
-        runner = AgentToolRunner(yaml_path=self.fake_yaml_path, plan_store=self.plan_store)
+        yaml_path = self._seed_yaml([make_record(rec_id=1, box=1, position=1)])
+        runner = AgentToolRunner(yaml_path=yaml_path, plan_store=self.plan_store)
         result = runner._stage_to_plan(
             "add_entry",
             {

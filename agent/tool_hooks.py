@@ -269,9 +269,8 @@ def _after_use_skill(_tool_name, payload, result, context):
         return {
             "_hint": (
                 "Migration workspace root: migrate/. Keep live progress in "
-                "migrate/output/migration_checklist.md. Write candidate output to "
-                "migrate/output/ln2_inventory.yaml and refresh "
-                "migrate/output/validation_report.json via validate_migration_output."
+                f"`{MIGRATION_SESSION_CHECKLIST}`. Write candidate output to "
+                "migrate/output/ln2_inventory.yaml, then run `validate` with that repo-relative path before import."
             ),
             "ui_effects": [
                 {
@@ -295,34 +294,41 @@ def _after_use_skill(_tool_name, payload, result, context):
     return {}
 
 
-def _after_validate_migration_output(_tool_name, _payload, result, _context):
+def _after_validate(_tool_name, _payload, result, context):
     if not isinstance(result, dict):
         return {}
 
+    repo_root = str(result.get("effective_root") or context.get("repo_root") or "").strip()
+    resolved_path = str(result.get("resolved_path") or "").strip()
+    display_path = _repo_relative_display(resolved_path, repo_root=repo_root) or "(unknown path)"
+    report = dict(result.get("report") or {})
+    error_count = int(report.get("error_count") or 0)
+    warning_count = int(report.get("warning_count") or 0)
+
     if result.get("ok"):
-        return {
-            "_hint": (
-                "Validation passed. Update "
-                f"`{MIGRATION_SESSION_CHECKLIST}` "
-                "(mark all blocking checks) before import confirmation."
-            )
-        }
+        if warning_count > 0:
+            return {
+                "_hint": (
+                    f"Validation passed for `{display_path}` with {warning_count} warning(s). "
+                    "Review warnings before any blocking workflow step."
+                )
+            }
+        return {"_hint": f"Validation passed for `{display_path}`."}
 
     error_code = str(result.get("error_code") or "").strip()
     if error_code == "validation_failed":
         return {
             "_hint": (
-                "Validation failed. Review blocking items in "
-                f"`{MIGRATION_SESSION_CHECKLIST}`, "
-                "fix migration output, then run validate_migration_output again."
+                f"Validation failed for `{display_path}` "
+                f"({error_count} error(s), {warning_count} warning(s)). "
+                "Fix listed issues and run `validate` again."
             )
         }
-    if error_code in {"file_not_found", "load_failed"}:
+    if error_code in {"file_not_found", "load_failed", "path_is_directory", "invalid_path"}:
         return {
             "_hint": (
-                "Migration output is missing or unreadable. Confirm precheck/mapping progress in "
-                f"`{MIGRATION_SESSION_CHECKLIST}`, "
-                "regenerate migrate/output/ln2_inventory.yaml, then validate again."
+                f"Validation target: `{display_path}`. "
+                "Confirm the repo-relative YAML path and retry."
             )
         }
     return {}
@@ -431,7 +437,7 @@ def _after_import_migration_output(_tool_name, _payload, result, _context):
 # their handlers plus shared error guidance and do not need hook indirection.
 DEFAULT_TOOL_HOOK_SPECS = {
     "use_skill": ToolHookSpec(after=_after_use_skill),
-    "validate_migration_output": ToolHookSpec(after=_after_validate_migration_output),
+    "validate": ToolHookSpec(after=_after_validate),
     "fs_list": ToolHookSpec(before=_before_fs_list, after=_after_fs_list),
     "fs_read": ToolHookSpec(after=_after_fs_read),
     "fs_write": ToolHookSpec(before=_before_fs_write, after=_after_fs_write),

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, Iterator, Optional
 
+from lib.schema_aliases import coalesce_stored_at_value
 from lib.takeout_parser import normalize_action
 
 # ---------------------------------------------------------------------------
@@ -27,7 +28,7 @@ class PlanItemPayload(TypedDict, total=False):
     """Inner payload dict carried by every PlanItem.
 
     Which keys are present depends on the action:
-    - add:      box, positions, frozen_at, fields
+    - add:      box, positions, stored_at/frozen_at, fields
     - edit:     record_id, fields
     - takeout:  record_id, position, date_str, action
     - move:     record_id, position, date_str, action, to_position, to_box
@@ -41,6 +42,7 @@ class PlanItemPayload(TypedDict, total=False):
     # Add
     box: int
     positions: list[int]
+    stored_at: Optional[str]
     frozen_at: Optional[str]
     fields: Dict[str, Any]
     # Move
@@ -107,17 +109,23 @@ def build_add_plan_item(
     *,
     box: int,
     positions: Iterable[Any],
-    frozen_at: Optional[str],
+    frozen_at: Optional[str] = None,
+    stored_at: Optional[str] = None,
     fields: Optional[Dict[str, Any]] = None,
     source: str = "human",
 ) -> PlanItem:
     """Build a normalized add PlanItem payload."""
     fields = dict(fields or {})
     normalized_positions = [int(p) for p in list(positions or [])]
+    effective_stored_at = coalesce_stored_at_value(
+        stored_at=stored_at,
+        frozen_at=frozen_at,
+    )
     payload = {
         "box": int(box),
         "positions": normalized_positions,
-        "frozen_at": frozen_at,
+        "stored_at": effective_stored_at,
+        "frozen_at": effective_stored_at,
         "fields": fields,
     }
     return {

@@ -46,5 +46,4 @@ def test_handle_shell_defaults_to_repo_root_and_injects_migration_env(monkeypatc
         "LN2_MIGRATE_OUTPUT": str((migrate_root / "output").resolve()),
         "LN2_MIGRATE_OUTPUT_YAML": str((migrate_root / "output" / "ln2_inventory.yaml").resolve()),
         "LN2_MIGRATE_CHECKLIST": str((migrate_root / "output" / "migration_checklist.md").resolve()),
-        "LN2_MIGRATE_VALIDATION_REPORT": str((migrate_root / "output" / "validation_report.json").resolve()),
     }

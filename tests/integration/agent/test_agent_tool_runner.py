@@ -136,7 +136,7 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         self.assertIn("fs_write", names)
         self.assertIn("fs_edit", names)
         self.assertNotIn("edit", names)
-        self.assertIn("validate_migration_output", names)
+        self.assertIn("validate", names)
         self.assertIn("import_migration_output", names)
         self.assertNotIn("python_run", names)
         self.assertIn("manage_boxes", names)
@@ -222,35 +222,28 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         output_dir.mkdir(parents=True, exist_ok=True)
         return output_dir / "ln2_inventory.yaml"
 
-    def _migration_validation_report_path(self):
-        repo_root = self._repo_root()
-        output_dir = repo_root / "migrate" / "output"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        return output_dir / "validation_report.json"
+    def _repo_relative_path(self, path_value):
+        return Path(path_value).resolve().relative_to(self._repo_root()).as_posix()
 
-    def test_validate_migration_output_returns_file_not_found_when_missing(self):
+    def test_validate_returns_file_not_found_when_missing(self):
         candidate = self._migration_output_path()
-        report_path = self._migration_validation_report_path()
         candidate.unlink(missing_ok=True)
-        report_path.unlink(missing_ok=True)
+        json_sidecars_before = sorted(path.name for path in candidate.parent.glob("*.json"))
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
 
-        response = runner.run("validate_migration_output", {})
+        response = runner.run("validate", {"path": "migrate/output/ln2_inventory.yaml"})
 
         self.assertFalse(response["ok"])
         self.assertEqual("file_not_found", response.get("error_code"))
-        self.assertIn("Candidate YAML not found", str(response.get("message") or ""))
-        self.assertIn("migration_checklist.md", str(response.get("_hint") or ""))
-        self.assertEqual(str(report_path), str(response.get("validation_report_path") or ""))
-        self.assertTrue(response.get("validation_report_written"))
-        self.assertTrue(report_path.is_file())
-        persisted = json.loads(report_path.read_text(encoding="utf-8"))
-        self.assertFalse(persisted.get("ok"))
-        self.assertEqual("validate_migration_output", persisted.get("validation_tool"))
+        self.assertIn("YAML file not found", str(response.get("message") or ""))
+        self.assertIn("migrate/output/ln2_inventory.yaml", str(response.get("_hint") or ""))
+        self.assertEqual(
+            json_sidecars_before,
+            sorted(path.name for path in candidate.parent.glob("*.json")),
+        )
 
-    def test_validate_migration_output_returns_ok_when_output_yaml_is_valid(self):
+    def test_validate_returns_ok_when_output_yaml_is_valid(self):
         candidate = self._migration_output_path()
-        report_path = self._migration_validation_report_path()
         candidate.write_text(
             (
                 "meta:\n"
@@ -274,64 +267,23 @@ class AgentToolRunnerTests(ManagedPathTestCase):
             ),
             encoding="utf-8",
         )
-        report_path.unlink(missing_ok=True)
+        json_sidecars_before = sorted(path.name for path in candidate.parent.glob("*.json"))
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
 
-        response = runner.run("validate_migration_output", {})
+        response = runner.run("validate", {"path": "migrate/output/ln2_inventory.yaml"})
 
         self.assertTrue(response["ok"])
         report = response.get("report") or {}
         self.assertEqual(0, report.get("error_count"))
-        self.assertIn("migration_checklist.md", str(response.get("_hint") or ""))
-        self.assertEqual(str(report_path), str(response.get("validation_report_path") or ""))
-        self.assertTrue(response.get("validation_report_written"))
-        self.assertTrue(report_path.is_file())
-        persisted = json.loads(report_path.read_text(encoding="utf-8"))
-        self.assertTrue(persisted.get("ok"))
-        self.assertEqual(0, ((persisted.get("report") or {}).get("error_count") or 0))
-
-    def test_validate_migration_output_validation_failed_hint_mentions_checklist(self):
-        candidate = self._migration_output_path()
-        report_path = self._migration_validation_report_path()
-        candidate.write_text(
-            (
-                "meta:\n"
-                "  box_layout:\n"
-                "    rows: 9\n"
-                "    cols: 9\n"
-                "    box_count: 5\n"
-                "    box_numbers: [1, 2, 3, 4, 5]\n"
-                "  color_key: legacy_alias\n"
-                "  custom_fields:\n"
-                "    - key: cell_line\n"
-                "      label: Cell Line\n"
-                "      type: str\n"
-                "inventory:\n"
-                "  - id: 1\n"
-                "    box: 1\n"
-                "    position: 1\n"
-                "    frozen_at: \"2024-01-01\"\n"
-                "    note: null\n"
-                "    thaw_events: null\n"
-            ),
-            encoding="utf-8",
+        self.assertEqual(0, report.get("warning_count"))
+        self.assertEqual("document", report.get("mode"))
+        self.assertIn("migrate/output/ln2_inventory.yaml", str(response.get("_hint") or ""))
+        self.assertEqual(
+            json_sidecars_before,
+            sorted(path.name for path in candidate.parent.glob("*.json")),
         )
-        report_path.unlink(missing_ok=True)
-        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
 
-        response = runner.run("validate_migration_output", {})
-
-        self.assertFalse(response["ok"])
-        self.assertEqual("validation_failed", response.get("error_code"))
-        self.assertIn("migration_checklist.md", str(response.get("_hint") or ""))
-        self.assertEqual(str(report_path), str(response.get("validation_report_path") or ""))
-        self.assertTrue(response.get("validation_report_written"))
-        self.assertTrue(report_path.is_file())
-        persisted = json.loads(report_path.read_text(encoding="utf-8"))
-        self.assertFalse(persisted.get("ok"))
-        self.assertEqual("validation_failed", str(persisted.get("error_code") or ""))
-
-    def test_validate_migration_output_accepts_valid_box_tags(self):
+    def test_validate_returns_warning_report_without_failing_document_validation(self):
         candidate = self._migration_output_path()
         candidate.write_text(
             (
@@ -341,19 +293,13 @@ class AgentToolRunnerTests(ManagedPathTestCase):
                 "    cols: 9\n"
                 "    box_count: 5\n"
                 "    box_numbers: [1, 2, 3, 4, 5]\n"
-                "    box_tags:\n"
-                "      1: Rack A\n"
-                "      3: Shelf B\n"
-                "  custom_fields:\n"
-                "    - key: cell_line\n"
-                "      label: Cell Line\n"
-                "      type: str\n"
+                "  cell_line_options: [K562, HeLa]\n"
                 "inventory:\n"
                 "  - id: 1\n"
                 "    box: 1\n"
                 "    position: 1\n"
                 "    frozen_at: \"2024-01-01\"\n"
-                "    cell_line: K562\n"
+                "    cell_line: H1299\n"
                 "    note: null\n"
                 "    thaw_events: null\n"
             ),
@@ -361,13 +307,41 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         )
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
 
-        response = runner.run("validate_migration_output", {})
+        response = runner.run("validate", {"path": "migrate/output/ln2_inventory.yaml"})
 
         self.assertTrue(response["ok"])
         report = response.get("report") or {}
         self.assertEqual(0, report.get("error_count"))
+        self.assertGreater(report.get("warning_count") or 0, 0)
+        warnings = list(report.get("warnings") or [])
+        self.assertTrue(any("not in configured options" in msg for msg in warnings), report)
+        self.assertIn("warning", str(response.get("_hint") or "").lower())
 
-    def test_validate_migration_output_rejects_undeclared_box_tag(self):
+    def test_validate_uses_current_inventory_semantics_for_managed_inventory_path(self):
+        managed_path = Path(self.fake_yaml_path)
+        managed_path.write_text(
+            (
+                "meta:\n"
+                "  box_layout:\n"
+                "    rows: 9\n"
+                "    cols: 9\n"
+                "    box_count: 5\n"
+                "    box_numbers: [1, 2, 3, 4, 5]\n"
+                "inventory: []\n"
+                "color_key: legacy_alias\n"
+            ),
+            encoding="utf-8",
+        )
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+
+        response = runner.run("validate", {"path": self._repo_relative_path(self.fake_yaml_path)})
+
+        self.assertTrue(response["ok"], response)
+        report = response.get("report") or {}
+        self.assertEqual("current_inventory", report.get("mode"))
+        self.assertEqual(0, report.get("error_count"))
+
+    def test_validate_rejects_undeclared_box_tag(self):
         candidate = self._migration_output_path()
         candidate.write_text(
             (
@@ -396,7 +370,7 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         )
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
 
-        response = runner.run("validate_migration_output", {})
+        response = runner.run("validate", {"path": "migrate/output/ln2_inventory.yaml"})
 
         self.assertFalse(response["ok"])
         self.assertEqual("validation_failed", response.get("error_code"))
@@ -573,9 +547,7 @@ class AgentToolRunnerTests(ManagedPathTestCase):
                     "box": 1,
                     "positions": ["A5"],
                     "frozen_at": "2026-02-10",
-                    "fields": {
-                        "cell_line": "K562",
-                    },
+                    "fields": {},
                 },
             )
 
@@ -1188,7 +1160,7 @@ class AgentToolRunnerTests(ManagedPathTestCase):
             self.assertEqual(2, response["result"]["total_count"])
             self.assertEqual([2, 1], [item.get("id") for item in response["result"]["records"]])
             self.assertEqual("all", response["result"]["applied_filters"]["status"])
-            self.assertEqual("frozen_at", response["result"]["applied_filters"]["sort_by"])
+            self.assertEqual("stored_at", response["result"]["applied_filters"]["sort_by"])
             self.assertEqual("desc", response["result"]["applied_filters"]["sort_order"])
             self.assertEqual("last", response["result"]["applied_filters"]["sort_nulls"])
 
@@ -1677,17 +1649,19 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         add_entry_desc = str(add_entry_schema.get("function", {}).get("description") or "").lower()
         self.assertIn("shared", add_entry_desc)
         self.assertIn("fields", add_entry_desc)
+        self.assertIn("box", add_entry_params.get("required", []))
         self.assertIn("positions", add_entry_params.get("required", []))
-        self.assertIn("fields", add_entry_params.get("required", []))
+        self.assertIn("stored_at", add_entry_params.get("required", []))
+        self.assertNotIn("fields", add_entry_params.get("required", []))
         add_entry_positions = (add_entry_params.get("properties") or {}).get("positions", {})
         self.assertEqual("array", add_entry_positions.get("type"))
         self.assertEqual("integer", (add_entry_positions.get("items") or {}).get("type"))
         add_entry_fields = (add_entry_params.get("properties") or {}).get("fields", {})
         self.assertEqual("object", add_entry_fields.get("type"))
         self.assertEqual(False, add_entry_fields.get("additionalProperties"))
-        self.assertIn("cell_line", (add_entry_fields.get("properties") or {}))
         self.assertIn("note", (add_entry_fields.get("properties") or {}))
-        self.assertIn("cell_line", add_entry_fields.get("required", []))
+        self.assertNotIn("cell_line", (add_entry_fields.get("properties") or {}))
+        self.assertEqual([], add_entry_fields.get("required", []))
         self.assertNotIn("dry_run", (add_entry_params.get("properties") or {}))
 
         self.assertIn("fs_edit", names)
@@ -1739,7 +1713,7 @@ class AgentToolRunnerTests(ManagedPathTestCase):
             .get("properties", {})
             .get("sort_by", {})
         )
-        self.assertEqual(["box", "position", "frozen_at", "id"], sort_by_schema.get("enum"))
+        self.assertEqual(["box", "position", "stored_at", "id"], sort_by_schema.get("enum"))
         sort_order_schema = (
             search_schema.get("function", {})
             .get("parameters", {})
@@ -1944,7 +1918,8 @@ class AgentToolRunnerTests(ManagedPathTestCase):
                 .get("fields", {})
             )
             edit_field_props = edit_fields.get("properties", {})
-            self.assertIn("frozen_at", edit_field_props)
+            self.assertIn("stored_at", edit_field_props)
+            self.assertNotIn("frozen_at", edit_field_props)
             self.assertIn("passage_number", edit_field_props)
             self.assertEqual("integer", edit_field_props["passage_number"].get("type"))
             self.assertEqual("object", edit_fields.get("type"))

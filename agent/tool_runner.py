@@ -11,6 +11,7 @@ from lib.tool_api import (
     tool_get_raw_entries,
 )
 from lib.tool_contracts import TOOL_CONTRACTS, WRITE_TOOLS
+from lib.tool_registry import iter_agent_dispatch_descriptors
 from lib import tool_api_parsers as _tool_parsers
 from lib.inventory_paths import assert_allowed_inventory_yaml_path
 from lib.yaml_ops import load_yaml
@@ -175,6 +176,14 @@ class AgentToolRunner:
             return {}
         meta = (data or {}).get("meta", {})
         return meta if isinstance(meta, dict) else {}
+
+    def _load_inventory(self):
+        try:
+            data = load_yaml(self._yaml_path)
+        except Exception:
+            return []
+        inventory = (data or {}).get("inventory", [])
+        return inventory if isinstance(inventory, list) else []
 
     @staticmethod
     def _parse_position(value, layout=None, field_name="position"):
@@ -463,6 +472,7 @@ class AgentToolRunner:
     _run_use_skill = _runner_handlers._run_use_skill
     _run_list_empty_positions = _runner_handlers._run_list_empty_positions
     _run_search_records = _runner_handlers._run_search_records
+    _run_recent_stored = _runner_handlers._run_recent_stored
     _run_recent_frozen = _runner_handlers._run_recent_frozen
     _run_query_takeout_events = _runner_handlers._run_query_takeout_events
     _run_list_audit_timeline = _runner_handlers._run_list_audit_timeline
@@ -475,7 +485,7 @@ class AgentToolRunner:
     _run_fs_read = _runner_handlers._run_fs_read
     _run_fs_write = _runner_handlers._run_fs_write
     _run_fs_edit = _runner_handlers._run_fs_edit
-    _run_validate_migration_output = _runner_handlers._run_validate_migration_output
+    _run_validate = _runner_handlers._run_validate
     _run_import_migration_output = _runner_handlers._run_import_migration_output
     _run_edit_entry = _runner_handlers._run_edit_entry
     _run_add_entry = _runner_handlers._run_add_entry
@@ -483,6 +493,18 @@ class AgentToolRunner:
     _run_move = _runner_handlers._run_move
     _run_rollback = _runner_handlers._run_rollback
     _run_staged_plan = _runner_handlers._run_staged_plan
+
+    def _dispatch_handlers(self):
+        handlers = {}
+        missing = []
+        for descriptor in iter_agent_dispatch_descriptors():
+            handler = getattr(self, str(descriptor.agent_handler_attr or ""), None)
+            if callable(handler):
+                handlers[descriptor.name] = handler
+            else:
+                missing.append(descriptor.name)
+        assert not missing, f"Dispatch handlers missing for tools: {set(missing)}"
+        return handlers
 
     def _run_dispatch(self, tool_name, payload, trace_id=None):
         if tool_name not in TOOL_CONTRACTS:
@@ -526,45 +548,9 @@ class AgentToolRunner:
             after_hook = self._hook_manager.run_after(tool_name, payload, response, hook_context)
             return _tool_hooks.merge_hook_result(response, after_hook)
 
-        # Dispatch table for all tools except "question" (handled above).
-        # When adding a new tool to TOOL_CONTRACTS, add its handler here too.
-        _DISPATCH_HANDLERS = {
-            "manage_boxes": self._run_manage_boxes,
-            "use_skill": self._run_use_skill,
-            "list_empty_positions": self._run_list_empty_positions,
-            "search_records": self._run_search_records,
-            "recent_frozen": self._run_recent_frozen,
-            "query_takeout_events": self._run_query_takeout_events,
-            "list_audit_timeline": self._run_list_audit_timeline,
-            "recommend_positions": self._run_recommend_positions,
-            "generate_stats": self._run_generate_stats,
-            "get_raw_entries": self._run_get_raw_entries,
-            "bash": self._run_bash,
-            "powershell": self._run_powershell,
-            "fs_list": self._run_fs_list,
-            "fs_read": self._run_fs_read,
-            "fs_write": self._run_fs_write,
-            "fs_edit": self._run_fs_edit,
-            "validate_migration_output": self._run_validate_migration_output,
-            "import_migration_output": self._run_import_migration_output,
-            "edit_entry": self._run_edit_entry,
-            "add_entry": self._run_add_entry,
-            "takeout": self._run_takeout,
-            "move": self._run_move,
-            "rollback": self._run_rollback,
-            "staged_plan": self._run_staged_plan,
-        }
-        # Fail-fast: every contract tool (except question) must have a handler.
-        _expected = set(TOOL_CONTRACTS) - {"question"}
-        assert _expected <= _DISPATCH_HANDLERS.keys(), (
-            f"Dispatch handlers missing for tools: {_expected - _DISPATCH_HANDLERS.keys()}"
-        )
-        handler = _DISPATCH_HANDLERS.get(tool_name)
+        handler = self._dispatch_handlers().get(tool_name)
         if callable(handler):
             response = handler(payload, trace_id)
             after_hook = self._hook_manager.run_after(tool_name, payload, response, hook_context)
             return _tool_hooks.merge_hook_result(response, after_hook)
         return self._unknown_tool_response(tool_name)
-
-
-

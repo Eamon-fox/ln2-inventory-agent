@@ -161,7 +161,7 @@
     "importStageFailed": "准备输入文件失败：{message}",
     "importOutputMissing": "未找到迁移输出文件：{path}\\n请先完成迁移，再重试导入。",
     "importJourneyStaged": "迁移内容已填入 AI 面板。确认后点击“发送”即可开始。",
-    "importAiPromptFallback": "请对已暂存输入执行迁移，校验迁移结果，使用 CONFIRM_IMPORT 向用户确认后再执行导入。",
+    "importAiPromptFallback": "请对已暂存输入执行迁移，对 migrate/output/ln2_inventory.yaml 调用 validate，并将 warning 也视为阻塞项；使用 CONFIRM_IMPORT 向用户确认后再执行导入。",
     "migrationModeBadge": "迁移模式",
     "migrationModeStatus": "迁移进行中：操作已锁定",
     "migrationModeDialogTitle": "迁移模式",

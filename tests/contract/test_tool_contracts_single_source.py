@@ -17,6 +17,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agent import tool_runner
+from app_gui.tool_bridge import GuiToolBridge
 from lib.tool_contracts import (
     MIGRATION_TOOL_NAMES,
     TOOL_CONTRACTS,
@@ -25,9 +26,21 @@ from lib.tool_contracts import (
     _WRITE_TOOL_TO_PLAN_ACTION,
     get_tool_contracts,
 )
+from lib.tool_registry import (
+    iter_agent_dispatch_descriptors,
+    iter_gui_bridge_descriptors,
+    iter_tool_descriptors,
+    iter_write_tool_descriptors,
+)
 
 
 class ToolContractsSingleSourceTests(unittest.TestCase):
+    def test_registry_drives_tool_contract_surface(self):
+        self.assertEqual(
+            [descriptor.name for descriptor in iter_tool_descriptors()],
+            list(TOOL_CONTRACTS.keys()),
+        )
+
     def test_agent_uses_canonical_tool_contracts(self):
         self.assertIs(tool_runner._TOOL_CONTRACTS, TOOL_CONTRACTS)
 
@@ -54,7 +67,7 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
         self.assertEqual(MIGRATION_TOOL_NAMES, expected)
         # Verify known members
         for name in ("question", "use_skill", "bash", "powershell", "fs_list", "fs_read",
-                      "fs_write", "fs_edit", "validate_migration_output",
+                      "fs_write", "fs_edit", "validate",
                       "import_migration_output"):
             self.assertIn(name, MIGRATION_TOOL_NAMES)
 
@@ -67,6 +80,33 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
         """plan_model_sheet._VALID_ACTIONS should reference contracts."""
         from app_gui.plan_model_sheet import _VALID_ACTIONS
         self.assertIs(_VALID_ACTIONS, VALID_PLAN_ACTIONS)
+
+    def test_registry_agent_dispatch_descriptors_resolve_to_runner_methods(self):
+        runner_cls = tool_runner.AgentToolRunner
+        for descriptor in iter_agent_dispatch_descriptors():
+            handler = getattr(runner_cls, descriptor.agent_handler_attr, None)
+            self.assertTrue(
+                callable(handler),
+                f"{descriptor.name} missing runner handler {descriptor.agent_handler_attr}",
+            )
+
+    def test_registry_write_descriptors_resolve_to_staging_methods(self):
+        runner_cls = tool_runner.AgentToolRunner
+        for descriptor in iter_write_tool_descriptors():
+            handler = getattr(runner_cls, descriptor.stage_handler_attr, None)
+            self.assertTrue(
+                callable(handler),
+                f"{descriptor.name} missing staging handler {descriptor.stage_handler_attr}",
+            )
+
+    def test_registry_gui_bridge_descriptors_expose_methods(self):
+        for descriptor in iter_gui_bridge_descriptors():
+            bridge_spec = descriptor.gui_bridge
+            method = getattr(GuiToolBridge, bridge_spec.method_name, None)
+            self.assertTrue(
+                callable(method),
+                f"{descriptor.name} missing bridge method {bridge_spec.method_name}",
+            )
 
     def test_get_tool_contracts_strips_internal_flags(self):
         """Public API must not expose _write / _migration flags."""
@@ -142,14 +182,15 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
         self.assertNotIn("use_skill", WRITE_TOOLS)
 
     def test_migration_import_tool_contracts_exist(self):
-        self.assertIn("validate_migration_output", TOOL_CONTRACTS)
+        self.assertIn("validate", TOOL_CONTRACTS)
         self.assertIn("import_migration_output", TOOL_CONTRACTS)
-        validate_desc = str(TOOL_CONTRACTS["validate_migration_output"].get("description") or "")
-        self.assertIn("validation_report.json", validate_desc)
+        validate_desc = str(TOOL_CONTRACTS["validate"].get("description") or "")
+        self.assertIn("repository-relative YAML file", validate_desc)
+        self.assertIn("does not write side-effect files", validate_desc)
 
-        validate_params = TOOL_CONTRACTS["validate_migration_output"]["parameters"]
-        self.assertEqual([], validate_params.get("required"))
-        self.assertEqual({}, validate_params.get("properties"))
+        validate_params = TOOL_CONTRACTS["validate"]["parameters"]
+        self.assertEqual(["path"], validate_params.get("required"))
+        self.assertEqual({"path"}, set((validate_params.get("properties") or {}).keys()))
         self.assertEqual(False, validate_params.get("additionalProperties"))
 
         import_params = TOOL_CONTRACTS["import_migration_output"]["parameters"]
@@ -162,7 +203,7 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
             set((import_params.get("properties") or {}).keys()),
         )
         self.assertEqual(False, import_params.get("additionalProperties"))
-        self.assertNotIn("validate_migration_output", WRITE_TOOLS)
+        self.assertNotIn("validate", WRITE_TOOLS)
         self.assertNotIn("import_migration_output", WRITE_TOOLS)
 
     def test_fs_copy_contract_removed(self):

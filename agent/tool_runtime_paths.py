@@ -37,7 +37,6 @@ def build_migration_path_env(repo_root, migrate_root=None):
         "LN2_MIGRATE_OUTPUT": str(output),
         "LN2_MIGRATE_OUTPUT_YAML": str(output / "ln2_inventory.yaml"),
         "LN2_MIGRATE_CHECKLIST": str(output / "migration_checklist.md"),
-        "LN2_MIGRATE_VALIDATION_REPORT": str(output / "validation_report.json"),
     }
 
 

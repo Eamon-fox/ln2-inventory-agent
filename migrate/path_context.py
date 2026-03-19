@@ -10,7 +10,6 @@ OUTPUT_DIR = MIGRATE_ROOT / "output"
 DEFAULT_SOURCE_SHEET = NORMALIZED_SOURCE_DIR / "sheets" / "01_Sheet1.csv"
 OUTPUT_YAML = OUTPUT_DIR / "ln2_inventory.yaml"
 SESSION_CHECKLIST = OUTPUT_DIR / "migration_checklist.md"
-VALIDATION_REPORT = OUTPUT_DIR / "validation_report.json"
 
 
 def repo_path(*parts):

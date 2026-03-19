@@ -52,7 +52,7 @@ class ToolHookManagerTests(unittest.TestCase):
         self.assertEqual(
             {
                 "use_skill",
-                "validate_migration_output",
+                "validate",
                 "fs_list",
                 "fs_read",
                 "fs_write",
@@ -95,27 +95,38 @@ class ToolHookManagerTests(unittest.TestCase):
 
         self.assertIn("Last read path: README.md", str(hook_result.get("_hint") or ""))
 
-    def test_validate_migration_output_after_hook_adds_success_hint(self):
+    def test_validate_after_hook_adds_success_hint(self):
         hook_result = self.manager.run_after(
-            "validate_migration_output",
-            {},
-            {"ok": True, "report": {"error_count": 0}},
+            "validate",
+            {"path": "migrate/output/ln2_inventory.yaml"},
+            {
+                "ok": True,
+                "effective_root": "/tmp/repo",
+                "resolved_path": "/tmp/repo/migrate/output/ln2_inventory.yaml",
+                "report": {"error_count": 0, "warning_count": 0},
+            },
             self.context,
         )
 
-        self.assertIn("Validation passed.", str(hook_result.get("_hint") or ""))
-        self.assertIn("migration_checklist.md", str(hook_result.get("_hint") or ""))
+        self.assertIn("Validation passed for `migrate/output/ln2_inventory.yaml`.", str(hook_result.get("_hint") or ""))
 
-    def test_validate_migration_output_after_hook_adds_failure_hint(self):
+    def test_validate_after_hook_adds_failure_hint(self):
         hook_result = self.manager.run_after(
-            "validate_migration_output",
-            {},
-            {"ok": False, "error_code": "validation_failed"},
+            "validate",
+            {"path": "migrate/output/ln2_inventory.yaml"},
+            {
+                "ok": False,
+                "error_code": "validation_failed",
+                "effective_root": "/tmp/repo",
+                "resolved_path": "/tmp/repo/migrate/output/ln2_inventory.yaml",
+                "report": {"error_count": 2, "warning_count": 1},
+            },
             self.context,
         )
 
-        self.assertIn("Validation failed.", str(hook_result.get("_hint") or ""))
-        self.assertIn("migration_checklist.md", str(hook_result.get("_hint") or ""))
+        hint = str(hook_result.get("_hint") or "")
+        self.assertIn("Validation failed for `migrate/output/ln2_inventory.yaml`", hint)
+        self.assertIn("2 error(s), 1 warning(s)", hint)
 
     def test_fs_write_before_hook_normalizes_relative_path_under_migrate(self):
         hook_result = self.manager.run_before(

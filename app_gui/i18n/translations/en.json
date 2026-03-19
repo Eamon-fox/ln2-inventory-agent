@@ -140,7 +140,7 @@
     "importExistingDataTitle": "Import Legacy Data",
     "importExistingDataHint": "Supports legacy YAML/Excel imports. After import, use the AI panel to migrate and validate.",
     "importJourneyStaged": "The migration prompt is ready in the AI panel. Review it, then click \"Send\" to start.",
-    "importAiPromptFallback": "Run migration for staged inputs, validate migration output, ask user confirmation with CONFIRM_IMPORT, then import.",
+    "importAiPromptFallback": "Run migration for staged inputs, call validate on migrate/output/ln2_inventory.yaml, treat warnings as blockers, ask user confirmation with CONFIRM_IMPORT, then import.",
     "importJourneyOpened": "Imported and opened dataset.",
     "importCandidateRequired": "Please choose a candidate YAML file first.",
     "importOpened": "Imported and opened:\n{path}",

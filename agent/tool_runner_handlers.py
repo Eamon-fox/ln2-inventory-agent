@@ -1,37 +1,32 @@
 """Dispatch handlers for AgentToolRunner."""
 
 from contextlib import suppress
-from datetime import datetime, timezone
-import json
 import os
 import re
 
 from lib.import_acceptance import import_validated_yaml, validate_candidate_yaml
+from lib import tool_api_write_adapter as _write_adapter
 from lib.inventory_paths import (
     create_managed_dataset_yaml_path,
 )
 from lib.builtin_skills import BuiltinSkillError, load_builtin_skill
-from lib.path_policy import PathPolicyError, resolve_dataset_backup_read_path
+from lib.path_policy import PathPolicyError, resolve_dataset_backup_read_path, resolve_repo_read_path
 from lib.tool_api import (
-    tool_add_entry,
-    tool_adjust_box_count,
     tool_collect_timeline,
-    tool_edit_entry,
     tool_generate_stats,
     tool_get_raw_entries,
     tool_list_audit_timeline,
     tool_list_empty_positions,
-    tool_move,
     tool_query_takeout_events,
     tool_recent_frozen,
+    tool_recent_stored,
     tool_recommend_positions,
-    tool_rollback,
     tool_search_records,
-    tool_takeout,
 )
-from lib.position_fmt import pos_to_display
-from lib.tool_api_write_validation import resolve_request_backup_path
+from lib.schema_aliases import coalesce_stored_at_value, present_record_sort_field
+from lib.validate_service import validate_yaml_file
 from .file_ops_client import run_file_tool
+from .tool_runtime_paths import derive_repo_root_from_yaml
 
 
 _IMPORT_CONFIRMATION_TOKEN = "CONFIRM_IMPORT"
@@ -68,27 +63,6 @@ def _run_use_skill(self, payload, _trace_id=None):
         }
 
     return self._safe_call(tool_name, _call_use_skill, include_expected_schema=True)
-
-
-def _resolve_write_execution_kwargs(self, payload):
-    dry_run = self._as_bool(payload.get("dry_run", False), default=False)
-    execution_mode = "preflight" if dry_run else "execute"
-    kwargs = {
-        "dry_run": dry_run,
-        "execution_mode": execution_mode,
-    }
-    if dry_run:
-        return kwargs
-    kwargs["request_backup_path"] = resolve_request_backup_path(
-        yaml_path=self._yaml_path,
-        execution_mode=execution_mode,
-        dry_run=dry_run,
-        request_backup_path=payload.get("request_backup_path"),
-        backup_event_source="agent.react",
-    )
-    kwargs["auto_backup"] = False
-    return kwargs
-
 
 def _coerce_positive_int(value):
     try:
@@ -172,31 +146,6 @@ def _validate_rollback_backup_candidate(yaml_path, backup_path):
         "message": "backup_path is not found in backup audit events. Re-select backup_path from list_audit_timeline action=backup rows.",
     }
 
-
-def _to_tool_position(value, layout, *, field_name="position"):
-    """Convert normalized internal position to tool-facing display value."""
-    if value in (None, "") or isinstance(value, bool):
-        raise ValueError(f"{field_name} is required")
-    try:
-        return pos_to_display(int(value), layout)
-    except Exception as exc:
-        raise ValueError(f"{field_name} is invalid: {value}") from exc
-
-
-def _to_tool_positions(values, layout, *, field_name="positions"):
-    """Convert normalized one-or-many positions for tool calls."""
-    if values in (None, ""):
-        raise ValueError(f"{field_name} is required")
-    if isinstance(values, bool):
-        raise ValueError(f"{field_name} is invalid: {values}")
-    if isinstance(values, (list, tuple, set)):
-        converted = []
-        for idx, value in enumerate(values):
-            converted.append(_to_tool_position(value, layout, field_name=f"{field_name}[{idx}]"))
-        return converted
-    return [_to_tool_position(values, layout, field_name=field_name)]
-
-
 def _extract_staged_item_positions(item):
     """Extract one-or-many source positions from a staged plan item."""
     if not isinstance(item, dict):
@@ -249,14 +198,15 @@ def _run_manage_boxes(self, payload, trace_id=None):
                 "renumber_mode": None,
             }
             if dry_run:
-                return tool_adjust_box_count(
+                return _write_adapter.adjust_box_count(
                     yaml_path=self._yaml_path,
                     operation="add",
                     count=count,
                     dry_run=True,
-                    execution_mode="preflight",
                     actor_context=self._actor_context(trace_id=trace_id),
                     source="agent.react",
+                    backup_event_source="agent.react",
+                    default_execute=True,
                 )
         else:
             box = self._required_int(payload, "box")
@@ -269,17 +219,20 @@ def _run_manage_boxes(self, payload, trace_id=None):
             }
             if dry_run:
                 call_kwargs = {
-                    "yaml_path": self._yaml_path,
                     "operation": "remove",
                     "box": box,
                     "dry_run": True,
-                    "execution_mode": "preflight",
                     "actor_context": self._actor_context(trace_id=trace_id),
                     "source": "agent.react",
+                    "backup_event_source": "agent.react",
+                    "default_execute": True,
                 }
                 if renumber_mode not in (None, ""):
                     call_kwargs["renumber_mode"] = renumber_mode
-                return tool_adjust_box_count(**call_kwargs)
+                return _write_adapter.adjust_box_count(
+                    yaml_path=self._yaml_path,
+                    **call_kwargs,
+                )
 
         return {
             "ok": True,
@@ -312,7 +265,7 @@ def _run_search_records(self, payload, _trace_id=None):
 
     position = None
     if payload.get("position") not in (None, ""):
-        position = _to_tool_position(
+        position = _write_adapter.to_tool_position(
             self._parse_position(
                 payload.get("position"),
                 layout=layout,
@@ -322,7 +275,7 @@ def _run_search_records(self, payload, _trace_id=None):
             field_name="position",
         )
 
-    return self._safe_call(
+    response = self._safe_call(
         tool_name,
         lambda: tool_search_records(
             yaml_path=self._yaml_path,
@@ -338,12 +291,46 @@ def _run_search_records(self, payload, _trace_id=None):
             sort_order=payload.get("sort_order"),
         ),
     )
+    applied_filters = (
+        (response.get("result") or {}).get("applied_filters")
+        if isinstance(response, dict)
+        else None
+    )
+    if isinstance(applied_filters, dict):
+        applied_filters["sort_by"] = present_record_sort_field(
+            applied_filters.get("sort_by"),
+            requested=payload.get("sort_by"),
+            default_legacy=False,
+        )
+    return response
+
+
+def _run_recent_stored(self, payload, _trace_id=None):
+    tool_name = "recent_stored"
+
+    def _call_recent():
+        basis = str(payload.get("basis") or "").strip().lower()
+        value = self._required_int(payload, "value")
+        if basis == "days":
+            return tool_recent_stored(yaml_path=self._yaml_path, days=value, count=None)
+        if basis == "count":
+            return tool_recent_stored(yaml_path=self._yaml_path, days=None, count=value)
+        raise ValueError(
+            self._msg(
+                "validation.mustBeOneOf",
+                "{label} must be one of: {values}",
+                label="basis",
+                values="days, count",
+            )
+        )
+
+    return self._safe_call(tool_name, _call_recent, include_expected_schema=True)
 
 
 def _run_recent_frozen(self, payload, _trace_id=None):
     tool_name = "recent_frozen"
 
-    def _call_recent_frozen():
+    def _call_recent():
         basis = str(payload.get("basis") or "").strip().lower()
         value = self._required_int(payload, "value")
         if basis == "days":
@@ -359,7 +346,7 @@ def _run_recent_frozen(self, payload, _trace_id=None):
             )
         )
 
-    return self._safe_call(tool_name, _call_recent_frozen, include_expected_schema=True)
+    return self._safe_call(tool_name, _call_recent, include_expected_schema=True)
 
 
 def _run_query_takeout_events(self, payload, _trace_id=None):
@@ -550,58 +537,32 @@ def _migration_output_yaml_path():
     return os.path.join(root, "migrate", "output", "ln2_inventory.yaml")
 
 
-def _migration_validation_report_path():
-    from lib import inventory_paths as _inventory_paths
-
-    root = os.path.abspath(_inventory_paths.get_install_dir())
-    return os.path.join(root, "migrate", "output", "validation_report.json")
-
-
-def _persist_migration_validation_report(validation_result, candidate_path):
-    report_path = _migration_validation_report_path()
-    payload = {
-        "ok": bool((validation_result or {}).get("ok")),
-        "validated_at_utc": (
-            datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-        ),
-        "input_path": str(candidate_path or ""),
-        "validation_tool": "validate_migration_output",
-        "error_code": str((validation_result or {}).get("error_code") or ""),
-        "message": str((validation_result or {}).get("message") or ""),
-        "report": dict((validation_result or {}).get("report") or {}),
-    }
-    try:
-        os.makedirs(os.path.dirname(report_path), exist_ok=True)
-        with open(report_path, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
-        return report_path, True, ""
-    except Exception as exc:
-        return report_path, False, str(exc)
-
-
 def _build_import_target_path(dataset_name):
     return create_managed_dataset_yaml_path(dataset_name)
 
 
-def _run_validate_migration_output(self, payload, _trace_id=None):
-    _ = payload
-    tool_name = "validate_migration_output"
+def _run_validate(self, payload, _trace_id=None):
+    tool_name = "validate"
 
-    def _call_validate_migration_output():
-        candidate_path = _migration_output_yaml_path()
-        result = validate_candidate_yaml(candidate_path, fail_on_warnings=True)
-        result = dict(result or {})
-        report_path, report_written, report_error = _persist_migration_validation_report(result, candidate_path)
-        result["validation_report_path"] = report_path
-        result["validation_report_written"] = bool(report_written)
-        if report_error:
-            result["validation_report_error"] = report_error
+    def _call_validate():
+        repo_root = str(derive_repo_root_from_yaml(self._yaml_path))
+        resolved = resolve_repo_read_path(repo_root, payload.get("path"), default_rel=".")
+        if os.path.isdir(resolved):
+            return {
+                "ok": False,
+                "error_code": "path_is_directory",
+                "message": f"Path is a directory: {resolved}",
+                "effective_root": repo_root,
+                "resolved_path": str(resolved),
+            }
+        result = dict(validate_yaml_file(str(resolved)) or {})
+        result["effective_root"] = repo_root
+        result["resolved_path"] = str(resolved)
         return result
 
     return self._safe_call(
         tool_name,
-        _call_validate_migration_output,
+        _call_validate,
         include_expected_schema=True,
     )
 
@@ -676,14 +637,16 @@ def _run_edit_entry(self, payload, trace_id=None):
                     "fields must be a non-empty object",
                 )
             )
-        write_kwargs = _resolve_write_execution_kwargs(self, payload)
-        return tool_edit_entry(
+        return _write_adapter.edit_entry(
             yaml_path=self._yaml_path,
             record_id=rid,
             fields=fields,
+            dry_run=self._as_bool(payload.get("dry_run", False), default=False),
+            request_backup_path=payload.get("request_backup_path"),
             actor_context=self._actor_context(trace_id=trace_id),
             source="agent.react",
-            **write_kwargs,
+            backup_event_source="agent.react",
+            default_execute=True,
         )
 
     return self._safe_call(tool_name, _call_edit_entry, include_expected_schema=True)
@@ -695,21 +658,26 @@ def _run_add_entry(self, payload, trace_id=None):
     def _call_add_entry():
         layout = self._load_layout()
         box_val = self._required_int(payload, "box")
-        frozen_at = payload.get("frozen_at")
+        stored_at = coalesce_stored_at_value(
+            stored_at=payload.get("stored_at"),
+            frozen_at=payload.get("frozen_at"),
+        )
         positions = self._normalize_positions(payload.get("positions"), layout=layout)
-        tool_positions = _to_tool_positions(positions, layout, field_name="positions")
+        tool_positions = _write_adapter.to_tool_positions(positions, layout, field_name="positions")
         fields = dict(payload.get("fields") or {})
 
-        write_kwargs = _resolve_write_execution_kwargs(self, payload)
-        return tool_add_entry(
+        return _write_adapter.add_entry(
             yaml_path=self._yaml_path,
             box=box_val,
             positions=tool_positions,
-            frozen_at=frozen_at,
+            stored_at=stored_at,
             fields=fields,
+            dry_run=self._as_bool(payload.get("dry_run", False), default=False),
+            request_backup_path=payload.get("request_backup_path"),
             actor_context=self._actor_context(trace_id=trace_id),
             source="agent.react",
-            **write_kwargs,
+            backup_event_source="agent.react",
+            default_execute=True,
         )
 
     return self._safe_call(tool_name, _call_add_entry, include_expected_schema=True)
@@ -731,7 +699,7 @@ def _parse_batch_flat_entries(self, raw_entries, *, layout, include_target):
             "record_id": self._required_int(entry, "record_id"),
             "from": {
                 "box": self._required_int(entry, "from_box"),
-                "position": _to_tool_position(
+                "position": _write_adapter.to_tool_position(
                     self._parse_position(
                         entry.get("from_position"),
                         layout=layout,
@@ -745,7 +713,7 @@ def _parse_batch_flat_entries(self, raw_entries, *, layout, include_target):
         if include_target:
             parsed["to"] = {
                 "box": self._required_int(entry, "to_box"),
-                "position": _to_tool_position(
+                "position": _write_adapter.to_tool_position(
                     self._parse_position(
                         entry.get("to_position"),
                         layout=layout,
@@ -761,7 +729,6 @@ def _parse_batch_flat_entries(self, raw_entries, *, layout, include_target):
 
 def _call_batch_flat_tool(self, payload, trace_id, *, tool_fn, include_target):
     layout = self._load_layout()
-    write_kwargs = _resolve_write_execution_kwargs(self, payload)
     entries = _parse_batch_flat_entries(
         self,
         payload.get("entries") or [],
@@ -772,9 +739,12 @@ def _call_batch_flat_tool(self, payload, trace_id, *, tool_fn, include_target):
         yaml_path=self._yaml_path,
         entries=entries,
         date_str=payload.get("date"),
+        dry_run=self._as_bool(payload.get("dry_run", False), default=False),
+        request_backup_path=payload.get("request_backup_path"),
         actor_context=self._actor_context(trace_id=trace_id),
         source="agent.react",
-        **write_kwargs,
+        backup_event_source="agent.react",
+        default_execute=True,
     )
 
 
@@ -786,7 +756,7 @@ def _run_takeout(self, payload, trace_id=None):
             self,
             payload,
             trace_id,
-            tool_fn=tool_takeout,
+            tool_fn=_write_adapter.takeout,
             include_target=False,
         )
 
@@ -801,7 +771,7 @@ def _run_move(self, payload, trace_id=None):
             self,
             payload,
             trace_id,
-            tool_fn=tool_move,
+            tool_fn=_write_adapter.move,
             include_target=True,
         )
 
@@ -818,13 +788,15 @@ def _run_rollback(self, payload, trace_id=None):
         )
         if issue:
             return issue
-        write_kwargs = _resolve_write_execution_kwargs(self, payload)
-        return tool_rollback(
+        return _write_adapter.rollback(
             yaml_path=self._yaml_path,
             backup_path=payload.get("backup_path"),
+            dry_run=self._as_bool(payload.get("dry_run", False), default=False),
+            request_backup_path=payload.get("request_backup_path"),
             actor_context=self._actor_context(trace_id=trace_id),
             source="agent.react",
-            **write_kwargs,
+            backup_event_source="agent.react",
+            default_execute=True,
         )
 
     return self._safe_call(tool_name, _call_rollback)

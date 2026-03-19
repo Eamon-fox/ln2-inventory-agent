@@ -5,6 +5,7 @@ from typing import List
 from app_gui.plan_gate import validate_stage_request
 from lib.plan_item_factory import PlanItem, build_add_plan_item, build_edit_plan_item, build_record_plan_item, build_rollback_plan_item
 from lib.tool_contracts import WRITE_TOOLS
+from lib.tool_registry import iter_write_tool_descriptors
 from .tool_runner_handlers import _validate_rollback_backup_candidate
 
 
@@ -15,6 +16,8 @@ def _stage_to_plan_impl(self, tool_name, payload, trace_id=None):
     """Intercept write ops and stage as PlanItems for human approval."""
     if tool_name not in self.list_tools():
         return self._unknown_tool_response(tool_name)
+
+    payload = self._sanitize_tool_input_payload(payload)
 
     input_error = self._validate_tool_input(tool_name, payload)
     if input_error:
@@ -86,17 +89,19 @@ def _stage_to_plan_impl(self, tool_name, payload, trace_id=None):
     }
 
 def _build_staged_plan_items(self, tool_name, payload, layout) -> List[PlanItem]:
-    _STAGING_HANDLERS = {
-        "add_entry": self._stage_items_add_entry,
-        "takeout": self._stage_items_takeout,
-        "move": self._stage_items_move,
-        "edit_entry": self._stage_items_edit_entry,
-        "rollback": self._stage_items_rollback,
-    }
-    assert WRITE_TOOLS <= _STAGING_HANDLERS.keys(), (
-        f"Staging handlers missing for write tools: {WRITE_TOOLS - _STAGING_HANDLERS.keys()}"
+    staging_handlers = {}
+    missing = []
+    for descriptor in iter_write_tool_descriptors():
+        handler = getattr(self, str(descriptor.stage_handler_attr or ""), None)
+        if callable(handler):
+            staging_handlers[descriptor.name] = handler
+        else:
+            missing.append(descriptor.name)
+    assert not missing, f"Staging handlers missing for write tools: {set(missing)}"
+    assert WRITE_TOOLS <= staging_handlers.keys(), (
+        f"Staging handlers missing for write tools: {WRITE_TOOLS - staging_handlers.keys()}"
     )
-    handler = _STAGING_HANDLERS.get(tool_name)
+    handler = staging_handlers.get(tool_name)
     if not callable(handler):
         return []
     return handler(payload, layout)
@@ -111,6 +116,7 @@ def _stage_items_add_entry(self, payload, layout):
         build_add_plan_item(
             box=box,
             positions=positions,
+            stored_at=payload.get("stored_at"),
             frozen_at=payload.get("frozen_at"),
             fields=fields,
             source="ai",

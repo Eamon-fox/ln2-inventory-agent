@@ -50,10 +50,12 @@ def _hint_for_error(self, tool_name, payload):
     input_schema = self._tool_input_schema(tool_name)
     required_fields, optional_fields = self._tool_input_field_sets(tool_name)
 
-    if tool_name == "validate_migration_output" and error_code in {
+    if tool_name == "validate" and error_code in {
         "validation_failed",
         "file_not_found",
         "load_failed",
+        "path_is_directory",
+        "invalid_path",
     }:
         return ""
 

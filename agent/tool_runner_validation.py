@@ -2,6 +2,13 @@
 
 from copy import deepcopy
 from pathlib import Path
+
+from lib.legacy_field_policy import (
+    PHASE_SCHEMA,
+    PHASE_STAGING,
+    resolve_legacy_field_policy,
+)
+from lib.schema_aliases import normalize_record_sort_field, normalize_structural_alias_input_map
 from lib.tool_contracts import TOOL_CONTRACTS
 
 
@@ -58,18 +65,22 @@ def _custom_field_value_schema(field_type):
     return {"type": "string"}
 
 
-def _dynamic_fields_schema(meta, *, include_frozen_at):
+def _dynamic_fields_schema(meta, inventory, *, include_stored_at):
     from lib.custom_fields import (
         get_effective_fields,
         get_required_field_keys,
     )
 
     field_properties = {}
-    if include_frozen_at:
-        field_properties["frozen_at"] = {"type": "string", "description": "Date in YYYY-MM-DD format."}
+    if include_stored_at:
+        field_properties["stored_at"] = {"type": "string", "description": "Date in YYYY-MM-DD format."}
 
-    # Build schemas for all effective fields (cell_line, note, custom fields)
-    for field in get_effective_fields(meta):
+    # Build schemas for all effective fields exposed by the active policy.
+    for field in get_effective_fields(
+        meta,
+        inventory=inventory,
+        phase=PHASE_SCHEMA,
+    ):
         if not isinstance(field, dict):
             continue
         key = str(field.get("key") or "").strip()
@@ -81,12 +92,18 @@ def _dynamic_fields_schema(meta, *, include_frozen_at):
             schema["enum"] = [str(o).strip() for o in options if str(o).strip()]
         field_properties[key] = schema
 
-    required_for_add = set(get_required_field_keys(meta))
+    required_for_add = set(
+        get_required_field_keys(
+            meta,
+            inventory=inventory,
+            phase=PHASE_SCHEMA,
+        )
+    )
 
     return field_properties, sorted(required_for_add)
 
 
-def _apply_dynamic_fields_rules(schema, meta, *, tool_name=None):
+def _apply_dynamic_fields_rules(schema, meta, inventory, *, tool_name=None):
     if not isinstance(schema, dict):
         return schema
 
@@ -100,7 +117,11 @@ def _apply_dynamic_fields_rules(schema, meta, *, tool_name=None):
         return narrowed
 
     if tool_name == "add_entry":
-        field_properties, required_for_add = _dynamic_fields_schema(meta, include_frozen_at=False)
+        field_properties, required_for_add = _dynamic_fields_schema(
+            meta,
+            inventory,
+            include_stored_at=False,
+        )
         dynamic_schema = {
             "type": "object",
             "properties": field_properties,
@@ -116,7 +137,11 @@ def _apply_dynamic_fields_rules(schema, meta, *, tool_name=None):
         return narrowed
 
     if tool_name == "edit_entry":
-        field_properties, _required_for_add = _dynamic_fields_schema(meta, include_frozen_at=True)
+        field_properties, _required_for_add = _dynamic_fields_schema(
+            meta,
+            inventory,
+            include_stored_at=True,
+        )
         dynamic_schema = {
             "type": "object",
             "properties": field_properties,
@@ -178,7 +203,68 @@ def _sanitize_tool_input_payload(payload):
     normalized = dict(payload) if isinstance(payload, dict) else {}
     for field in _HIDDEN_LLM_FIELDS:
         normalized.pop(field, None)
+    normalized, _alias_errors = normalize_structural_alias_input_map(
+        normalized,
+        scope="payload",
+    )
+    sort_by_value = normalized.get("sort_by")
+    if isinstance(sort_by_value, str):
+        normalized["sort_by"] = normalize_record_sort_field(sort_by_value)
+    fields = normalized.get("fields")
+    if isinstance(fields, dict):
+        normalized["fields"], _field_alias_errors = normalize_structural_alias_input_map(
+            fields,
+            scope="fields",
+        )
     return normalized
+
+
+def _schema_validation_payload(tool_name, payload, schema, *, meta=None, inventory=None):
+    """Return a payload variant used only for strict schema validation.
+
+    We keep some legacy add-entry fields accepted at staging time even when the
+    LLM-facing schema intentionally hides them for new datasets.
+    """
+    normalized = dict(payload) if isinstance(payload, dict) else {}
+    if tool_name not in {"add_entry", "edit_entry"}:
+        return normalized
+
+    policy = resolve_legacy_field_policy(
+        meta if isinstance(meta, dict) else {},
+        inventory if isinstance(inventory, list) else [],
+        declared_fields=((meta or {}).get("custom_fields") if isinstance(meta, dict) else None),
+        phase=PHASE_STAGING,
+    )
+    field_schema = ((schema or {}).get("properties") or {}).get("fields") or {}
+    field_properties = field_schema.get("properties") if isinstance(field_schema, dict) else {}
+    visible_keys = set((field_properties or {}).keys())
+    hidden_keys = {
+        key
+        for key in (policy.get("staging_input_keys") or set())
+        if key not in visible_keys
+    }
+    if not hidden_keys:
+        return normalized
+
+    fields = normalized.get("fields")
+    if not isinstance(fields, dict):
+        return normalized
+
+    filtered_fields = {
+        key: value
+        for key, value in fields.items()
+        if key not in hidden_keys
+    }
+    if len(filtered_fields) == len(fields):
+        return normalized
+
+    adjusted = dict(normalized)
+    if tool_name == "edit_entry" and not filtered_fields:
+        adjusted["fields"] = {"stored_at": "2000-01-01"}
+        return adjusted
+
+    adjusted["fields"] = filtered_fields
+    return adjusted
 
 
 def _normalize_search_mode(value):
@@ -205,9 +291,10 @@ def _tool_input_schema(self, tool_name):
         return {}
     base_schema = _filter_schema_for_llm(contract.get("parameters") or {})
     meta = self._load_meta() if hasattr(self, "_load_meta") else {}
+    inventory = self._load_inventory() if hasattr(self, "_load_inventory") else []
     layout = self._load_layout() if hasattr(self, "_load_layout") else {}
     position_schema = _apply_layout_position_rules(base_schema, layout, tool_name=tool_name)
-    return _apply_dynamic_fields_rules(position_schema, meta, tool_name=tool_name)
+    return _apply_dynamic_fields_rules(position_schema, meta, inventory, tool_name=tool_name)
 
 
 def _tool_input_field_sets(self, tool_name):
@@ -435,7 +522,19 @@ def _validate_tool_input(self, tool_name, payload):
         return None
 
     schema = _tool_input_schema(self, tool_name)
-    schema_error = self._validate_schema_value(payload, schema, "")
+    meta = self._load_meta() if hasattr(self, "_load_meta") else {}
+    inventory = self._load_inventory() if hasattr(self, "_load_inventory") else []
+    schema_error = self._validate_schema_value(
+        _schema_validation_payload(
+            tool_name,
+            payload,
+            schema,
+            meta=meta,
+            inventory=inventory,
+        ),
+        schema,
+        "",
+    )
     if schema_error:
         return schema_error
 
@@ -471,7 +570,7 @@ def _validate_tool_input(self, tool_name, payload):
                 "workdir must be repository-relative (absolute paths are not allowed).",
             )
 
-    if tool_name == "recent_frozen":
+    if tool_name in {"recent_frozen", "recent_stored"}:
         basis = str(payload.get("basis") or "").strip().lower()
         if basis not in {"days", "count"}:
             return self._msg(

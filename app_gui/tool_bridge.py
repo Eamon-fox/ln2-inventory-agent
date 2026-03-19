@@ -1,5 +1,6 @@
 """GUI-facing bridge to the unified Tool API."""
 
+from copy import deepcopy
 import os
 
 from agent.llm_client import DEFAULT_PROVIDER, DeepSeekLLMClient, ZhipuLLMClient, MiniMaxLLMClient, PROVIDER_DEFAULTS
@@ -8,22 +9,16 @@ from agent.tool_runner import AgentToolRunner
 from app_gui.gui_config import DEFAULT_MAX_STEPS, MAX_AGENT_STEPS
 from app_gui.i18n import tr
 from lib.inventory_paths import assert_allowed_inventory_yaml_path
+from lib import tool_api_write_adapter as _write_adapter
+from lib.tool_registry import GUI_BRIDGE_READ, GUI_BRIDGE_WRITE, iter_gui_bridge_descriptors
 from lib.tool_api import (
     build_actor_context,
-    tool_add_entry,
-    tool_adjust_box_count,
     tool_collect_timeline,
-    tool_edit_entry,
     tool_export_inventory_csv,
     tool_generate_stats,
     tool_list_audit_timeline,
     tool_list_empty_positions,
-    tool_move,
-    tool_rollback,
-    tool_set_box_tag,
-    tool_takeout,
 )
-from lib.tool_api_write_validation import resolve_request_backup_path
 
 
 def _api_key_setup_hint(provider=None):
@@ -68,23 +63,6 @@ class GuiToolBridge:
     def _guard_yaml_path(yaml_path, *, must_exist=True):
         return assert_allowed_inventory_yaml_path(yaml_path, must_exist=must_exist)
 
-    def _resolve_request_backup_path(
-        self,
-        *,
-        yaml_path,
-        execution_mode=None,
-        dry_run=False,
-        request_backup_path=None,
-        backup_event_source="app_gui",
-    ):
-        return resolve_request_backup_path(
-            yaml_path=yaml_path,
-            execution_mode=execution_mode,
-            dry_run=dry_run,
-            request_backup_path=request_backup_path,
-            backup_event_source=backup_event_source,
-        )
-
     @staticmethod
     def _backup_create_failed(exc):
         error_code = str(getattr(exc, "code", "") or "backup_create_failed")
@@ -99,12 +77,93 @@ class GuiToolBridge:
             payload["resolved_path"] = resolved_path
         return payload
 
-    def list_empty_positions(self, yaml_path, box=None):
+    @staticmethod
+    def _bind_registry_bridge_payload(bridge_spec, args, kwargs):
+        method_name = str(bridge_spec.method_name or "tool")
+        payload = {}
+        extra_args = tuple(args or ())
+        positional_payload_args = tuple(bridge_spec.positional_payload_args or ())
+        if len(extra_args) > len(positional_payload_args):
+            raise TypeError(f"{method_name}() received too many positional arguments")
+
+        for field_name, value in zip(positional_payload_args, extra_args):
+            payload[field_name] = value
+
+        for field_name, value in dict(kwargs or {}).items():
+            if field_name in payload:
+                raise TypeError(
+                    f"{method_name}() got multiple values for argument '{field_name}'"
+                )
+            payload[field_name] = value
+
+        for field_name, default_value in dict(bridge_spec.defaults or {}).items():
+            payload.setdefault(field_name, deepcopy(default_value))
+
+        missing = [
+            field_name
+            for field_name in tuple(bridge_spec.required_payload_args or ())
+            if field_name not in payload
+        ]
+        if missing:
+            if len(missing) == 1:
+                raise TypeError(
+                    f"{method_name}() missing 1 required argument: '{missing[0]}'"
+                )
+            joined = ", ".join(repr(name) for name in missing)
+            raise TypeError(
+                f"{method_name}() missing {len(missing)} required arguments: {joined}"
+            )
+
+        return payload
+
+    @staticmethod
+    def _registry_tool_callable(tool_api_attr):
+        tool_fn = globals().get(str(tool_api_attr or ""))
+        if callable(tool_fn):
+            return tool_fn
+        raise AttributeError(f"Unknown tool bridge target: {tool_api_attr}")
+
+    def _call_registry_read_tool(self, *, yaml_path, bridge_spec, payload):
         try:
             yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
         except Exception as exc:
             return self._path_validation_failed(exc)
-        return tool_list_empty_positions(yaml_path=yaml_path, box=box)
+
+        tool_fn = self._registry_tool_callable(bridge_spec.tool_api_attr)
+        call_kwargs = dict(payload or {})
+        call_kwargs.update(deepcopy(dict(bridge_spec.fixed_kwargs or {})))
+        return tool_fn(
+            yaml_path=yaml_path,
+            **call_kwargs,
+        )
+
+    def _call_registry_write_tool(self, *, yaml_path, bridge_spec, payload):
+        try:
+            yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
+        except Exception as exc:
+            return self._path_validation_failed(exc)
+
+        call_kwargs = dict(payload or {})
+        call_kwargs.update(deepcopy(dict(bridge_spec.fixed_kwargs or {})))
+        tool_fn = getattr(_write_adapter, bridge_spec.method_name, None)
+        if callable(tool_fn):
+            try:
+                return tool_fn(
+                    yaml_path=yaml_path,
+                    actor_context=self._ctx(),
+                    source="app_gui",
+                    backup_event_source="app_gui",
+                    **call_kwargs,
+                )
+            except Exception as exc:
+                return self._backup_create_failed(exc)
+        tool_fn = self._registry_tool_callable(bridge_spec.tool_api_attr)
+        return tool_fn(
+            yaml_path=yaml_path,
+            actor_context=self._ctx(),
+            source="app_gui",
+            **call_kwargs,
+        )
 
     def export_inventory_csv(self, yaml_path, output_path):
         try:
@@ -116,18 +175,6 @@ class GuiToolBridge:
             output_path=output_path,
         )
 
-    def generate_stats(self, yaml_path, box=None, include_inactive=False):
-        try:
-            yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
-        except Exception as exc:
-            return self._path_validation_failed(exc)
-        return tool_generate_stats(
-            yaml_path=yaml_path,
-            box=box,
-            include_inactive=include_inactive,
-            full_records_for_gui=True,
-        )
-
     def collect_timeline(self, yaml_path, days=7, all_history=False):
         try:
             yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
@@ -135,205 +182,21 @@ class GuiToolBridge:
             return self._path_validation_failed(exc)
         return tool_collect_timeline(yaml_path=yaml_path, days=days, all_history=all_history)
 
-    def list_audit_timeline(
-        self,
-        yaml_path,
-        limit=50,
-        offset=0,
-        action_filter=None,
-        status_filter=None,
-        start_date=None,
-        end_date=None,
-    ):
-        try:
-            yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
-        except Exception as exc:
-            return self._path_validation_failed(exc)
-        return tool_list_audit_timeline(
-            yaml_path=yaml_path,
-            limit=limit,
-            offset=offset,
-            action_filter=action_filter,
-            status_filter=status_filter,
-            start_date=start_date,
-            end_date=end_date,
-        )
-
-    def add_entry(self, yaml_path, **payload):
-        try:
-            yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
-        except Exception as exc:
-            return self._path_validation_failed(exc)
-        execution_mode = payload.get("execution_mode")
-        dry_run = bool(payload.get("dry_run", False))
-        request_backup_path = payload.pop("request_backup_path", None)
-        try:
-            resolved_backup = self._resolve_request_backup_path(
-                yaml_path=yaml_path,
-                execution_mode=execution_mode,
-                dry_run=dry_run,
-                request_backup_path=request_backup_path,
-            )
-        except Exception as exc:
-            return self._backup_create_failed(exc)
-        if resolved_backup:
-            payload["request_backup_path"] = resolved_backup
-            payload["auto_backup"] = False
-        return tool_add_entry(
-            yaml_path=yaml_path,
-            actor_context=self._ctx(),
-            source="app_gui",
-            **payload,
-        )
-
-    def edit_entry(
-        self,
-        yaml_path,
-        record_id,
-        fields,
-        execution_mode=None,
-        auto_backup=True,
-        request_backup_path=None,
-    ):
-        try:
-            yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
-        except Exception as exc:
-            return self._path_validation_failed(exc)
-        try:
-            resolved_backup = self._resolve_request_backup_path(
-                yaml_path=yaml_path,
-                execution_mode=execution_mode,
-                dry_run=False,
-                request_backup_path=request_backup_path,
-            )
-        except Exception as exc:
-            return self._backup_create_failed(exc)
-        if resolved_backup:
-            request_backup_path = resolved_backup
-            auto_backup = False
-        return tool_edit_entry(
-            yaml_path=yaml_path,
-            record_id=record_id,
-            fields=fields,
-            execution_mode=execution_mode,
-            actor_context=self._ctx(),
-            source="app_gui",
-            auto_backup=auto_backup,
-            request_backup_path=request_backup_path,
-        )
-
-    def takeout(self, yaml_path, **payload):
-        try:
-            yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
-        except Exception as exc:
-            return self._path_validation_failed(exc)
-        execution_mode = payload.get("execution_mode")
-        dry_run = bool(payload.get("dry_run", False))
-        request_backup_path = payload.pop("request_backup_path", None)
-        try:
-            resolved_backup = self._resolve_request_backup_path(
-                yaml_path=yaml_path,
-                execution_mode=execution_mode,
-                dry_run=dry_run,
-                request_backup_path=request_backup_path,
-            )
-        except Exception as exc:
-            return self._backup_create_failed(exc)
-        if resolved_backup:
-            payload["request_backup_path"] = resolved_backup
-            payload["auto_backup"] = False
-        return tool_takeout(
-            yaml_path=yaml_path,
-            actor_context=self._ctx(),
-            source="app_gui",
-            **payload,
-        )
-
-    def move(self, yaml_path, **payload):
-        try:
-            yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
-        except Exception as exc:
-            return self._path_validation_failed(exc)
-        execution_mode = payload.get("execution_mode")
-        dry_run = bool(payload.get("dry_run", False))
-        request_backup_path = payload.pop("request_backup_path", None)
-        try:
-            resolved_backup = self._resolve_request_backup_path(
-                yaml_path=yaml_path,
-                execution_mode=execution_mode,
-                dry_run=dry_run,
-                request_backup_path=request_backup_path,
-            )
-        except Exception as exc:
-            return self._backup_create_failed(exc)
-        if resolved_backup:
-            payload["request_backup_path"] = resolved_backup
-            payload["auto_backup"] = False
-        return tool_move(
-            yaml_path=yaml_path,
-            actor_context=self._ctx(),
-            source="app_gui",
-            **payload,
-        )
-
-    def rollback(
-        self,
-        yaml_path,
-        backup_path=None,
-        source_event=None,
-        execution_mode=None,
-        request_backup_path=None,
-    ):
-        try:
-            yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
-        except Exception as exc:
-            return self._path_validation_failed(exc)
-        try:
-            resolved_backup = self._resolve_request_backup_path(
-                yaml_path=yaml_path,
-                execution_mode=execution_mode,
-                dry_run=False,
-                request_backup_path=request_backup_path,
-            )
-        except Exception as exc:
-            return self._backup_create_failed(exc)
-        return tool_rollback(
-            yaml_path=yaml_path,
-            backup_path=backup_path,
-            source_event=source_event,
-            execution_mode=execution_mode,
-            actor_context=self._ctx(),
-            source="app_gui",
-            auto_backup=False if resolved_backup else True,
-            request_backup_path=resolved_backup,
-        )
-
     def adjust_box_count(self, yaml_path, **payload):
         try:
             yaml_path = self._guard_yaml_path(yaml_path, must_exist=True)
         except Exception as exc:
             return self._path_validation_failed(exc)
-        execution_mode = payload.get("execution_mode")
-        dry_run = bool(payload.get("dry_run", False))
-        request_backup_path = payload.pop("request_backup_path", None)
         try:
-            resolved_backup = self._resolve_request_backup_path(
+            return _write_adapter.adjust_box_count(
                 yaml_path=yaml_path,
-                execution_mode=execution_mode,
-                dry_run=dry_run,
-                request_backup_path=request_backup_path,
+                actor_context=self._ctx(),
+                source="app_gui",
+                backup_event_source="app_gui",
+                **payload,
             )
         except Exception as exc:
             return self._backup_create_failed(exc)
-        if resolved_backup:
-            payload["request_backup_path"] = resolved_backup
-            payload["auto_backup"] = False
-        return tool_adjust_box_count(
-            yaml_path=yaml_path,
-            actor_context=self._ctx(),
-            source="app_gui",
-            **payload,
-        )
 
     def set_box_tag(
         self,
@@ -350,28 +213,20 @@ class GuiToolBridge:
         except Exception as exc:
             return self._path_validation_failed(exc)
         try:
-            resolved_backup = self._resolve_request_backup_path(
+            return _write_adapter.set_box_tag(
                 yaml_path=yaml_path,
+                box=box,
+                tag=tag,
                 execution_mode=execution_mode,
                 dry_run=bool(dry_run),
+                auto_backup=auto_backup,
                 request_backup_path=request_backup_path,
+                actor_context=self._ctx(),
+                source="app_gui",
+                backup_event_source="app_gui",
             )
         except Exception as exc:
             return self._backup_create_failed(exc)
-        if resolved_backup:
-            request_backup_path = resolved_backup
-            auto_backup = False
-        return tool_set_box_tag(
-            yaml_path=yaml_path,
-            box=box,
-            tag=tag,
-            dry_run=bool(dry_run),
-            execution_mode=execution_mode,
-            actor_context=self._ctx(),
-            source="app_gui",
-            auto_backup=auto_backup,
-            request_backup_path=request_backup_path,
-        )
 
     def run_agent_query(
         self,
@@ -495,4 +350,46 @@ class GuiToolBridge:
             "mode": provider,
             "model": chosen_model,
         }
+
+
+def _install_registry_bridge_methods():
+    for descriptor in iter_gui_bridge_descriptors():
+        bridge_spec = descriptor.gui_bridge
+        if bridge_spec is None:
+            continue
+
+        def _bridge_method(self, yaml_path, *args, _bridge_spec=bridge_spec, **kwargs):
+            # Keep yaml_path in the generated Python signature. Payload binding
+            # only handles tool-specific arguments so keyword yaml_path calls from
+            # plan_executor and direct GUI actions share one contract.
+            payload = self._bind_registry_bridge_payload(
+                _bridge_spec,
+                args,
+                kwargs,
+            )
+            if _bridge_spec.strategy == GUI_BRIDGE_READ:
+                return self._call_registry_read_tool(
+                    yaml_path=yaml_path,
+                    bridge_spec=_bridge_spec,
+                    payload=payload,
+                )
+            if _bridge_spec.strategy == GUI_BRIDGE_WRITE:
+                return self._call_registry_write_tool(
+                    yaml_path=yaml_path,
+                    bridge_spec=_bridge_spec,
+                    payload=payload,
+                )
+            raise ValueError(
+                f"Unsupported GUI bridge strategy: {_bridge_spec.strategy}"
+            )
+
+        _bridge_method.__name__ = bridge_spec.method_name
+        _bridge_method.__qualname__ = f"GuiToolBridge.{bridge_spec.method_name}"
+        _bridge_method.__doc__ = (
+            f"Registry-backed GUI bridge method for `{descriptor.name}`."
+        )
+        setattr(GuiToolBridge, bridge_spec.method_name, _bridge_method)
+
+
+_install_registry_bridge_methods()
 
