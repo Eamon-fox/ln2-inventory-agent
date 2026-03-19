@@ -94,3 +94,6 @@ class Icons:
     MINIMIZE = "minimize"
     SCAN = "scan"
     FILTER = "filter"
+    LOCK = "lock"
+    UNLOCK = "unlock"
+    CHECK = "check"

@@ -121,15 +121,19 @@ def _make_editable_field(
     field.setProperty("role", "contextEditable")
     row.addWidget(field, 1)
 
-    lock_btn = QPushButton("\U0001F512")  # lock icon
+    lock_btn = QPushButton()
     lock_btn.setObjectName("inlineLockBtn")
     lock_btn.setFixedSize(16, 16)
+    lock_btn.setIcon(get_icon(Icons.LOCK, size=12))
+    lock_btn.setIconSize(QSize(12, 12))
     lock_btn.setToolTip(tr("operations.edit"))
     row.addWidget(lock_btn)
 
-    confirm_btn = QPushButton("\u2713")  # confirm icon
+    confirm_btn = QPushButton()
     confirm_btn.setObjectName("inlineConfirmBtn")
     confirm_btn.setFixedSize(16, 16)
+    confirm_btn.setIcon(get_icon(Icons.CHECK, size=12))
+    confirm_btn.setIconSize(QSize(12, 12))
     confirm_btn.setVisible(False)
     row.addWidget(confirm_btn)
 
@@ -173,7 +177,7 @@ def _make_editable_field(
             # Unlock
             _apply_choices()
             field.setReadOnly(False)
-            lock_btn.setText("\U0001F513")
+            lock_btn.setIcon(get_icon(Icons.UNLOCK, size=12))
             confirm_btn.setVisible(True)
             field.setFocus()
             with suppress(Exception):
@@ -181,7 +185,7 @@ def _make_editable_field(
         else:
             # Re-lock without saving
             field.setReadOnly(True)
-            lock_btn.setText("\U0001F512")
+            lock_btn.setIcon(get_icon(Icons.LOCK, size=12))
             confirm_btn.setVisible(False)
             # Restore original value
             if refresh_callback:
@@ -211,7 +215,7 @@ def _make_editable_field(
             self.status_message.emit(tr("operations.editNoChange"), 2000, "info")
             # Re-lock
             field.setReadOnly(True)
-            lock_btn.setText("\U0001F512")
+            lock_btn.setIcon(get_icon(Icons.LOCK, size=12))
             confirm_btn.setVisible(False)
             return
         yaml_path = self.yaml_path_getter()
@@ -225,7 +229,7 @@ def _make_editable_field(
         )
         if result.get("ok"):
             field.setReadOnly(True)
-            lock_btn.setText("\U0001F512")
+            lock_btn.setIcon(get_icon(Icons.LOCK, size=12))
             confirm_btn.setVisible(False)
             _ops_exec._publish_system_notice(
                 self,
