@@ -71,10 +71,11 @@ except Exception:
 
 
 def _validate_stage_request_without_preflight(*args, **kwargs):
-    from app_gui.plan_gate import validate_stage_request as _validate_stage_request
+    from lib.plan_gate import validate_stage_request as _validate_stage_request
 
     params = dict(kwargs)
     params["run_preflight"] = False
+    params.pop("preflight_fn", None)
     return _validate_stage_request(*args, **params)
 
 

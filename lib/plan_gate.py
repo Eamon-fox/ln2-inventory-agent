@@ -266,6 +266,51 @@ def validate_stage_request(
     """
     existing = list(existing_items or [])
     incoming = list(incoming_items or [])
+
+    # Detect incoming add items that would silently overwrite an existing
+    # staged add at the same slot.  This must happen *before* merge so the
+    # conflict is surfaced rather than hidden by last-write-wins semantics.
+    existing_add_keys = {
+        PlanStore.item_key(item)
+        for item in existing
+        if str(item.get("action") or "").lower() == "add"
+    }
+    overwrite_errors: List[Dict[str, Any]] = []
+    for item in incoming:
+        if str(item.get("action") or "").lower() != "add":
+            continue
+        key = PlanStore.item_key(item)
+        if key in existing_add_keys:
+            overwrite_errors.append({
+                "kind": "preflight",
+                "item": item,
+                "error_code": "position_conflict",
+                "message": (
+                    f"Position {item.get('position')} in box {item.get('box')} "
+                    "is already claimed by a staged add operation"
+                ),
+            })
+    if overwrite_errors:
+        blocked_items = [_blocked_item_payload(err) for err in overwrite_errors]
+        return {
+            "ok": False,
+            "blocked": True,
+            "errors": overwrite_errors,
+            "blocked_items": blocked_items,
+            "accepted_items": [],
+            "noop_items": [],
+            "preflight_report": None,
+            "stats": {
+                "existing": len(existing),
+                "incoming": len(incoming),
+                "future_total": len(existing),
+                "total": len(existing) + len(incoming),
+                "accepted": 0,
+                "noop": 0,
+                "blocked": len(blocked_items),
+            },
+        }
+
     merged = _merge_stage_items(existing, incoming)
     future_items = list(merged.get("future_items") or [])
     accepted_items = list(merged.get("accepted_items") or [])
