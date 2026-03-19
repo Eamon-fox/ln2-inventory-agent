@@ -2,7 +2,7 @@
 
 from ..position_fmt import get_position_range
 from ..takeout_parser import ACTION_LABEL, normalize_action
-from ..migrate_cell_line_policy import normalize_cell_line_policy_data
+from ..migrate_cell_line_policy import normalize_field_options_policy_data
 from ..yaml_ops import load_yaml
 from . import write_takeout_batch_move as _move_ops
 from . import write_takeout_batch_nonmove as _nonmove_ops
@@ -284,7 +284,7 @@ def _tool_takeout_impl(
             tool_input=tool_input,
             details={"load_error": str(exc)},
         )
-    normalized = normalize_cell_line_policy_data(data)
+    normalized = normalize_field_options_policy_data(data)
     if not normalized.get("ok"):
         return api._failure_result(
             yaml_path=yaml_path,
@@ -292,7 +292,7 @@ def _tool_takeout_impl(
             source=source,
             tool_name=tool_name,
             error_code=normalized.get("error_code", "normalize_failed"),
-            message=normalized.get("message", "Failed to normalize cell_line policy."),
+            message=normalized.get("message", "Failed to normalize field options policy."),
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=data if isinstance(data, dict) else None,

@@ -8,10 +8,10 @@ All returned dicts include an ``"op"`` key so every audit event is
 self-describing.
 """
 
-from ..custom_fields import STRUCTURAL_FIELD_KEYS
+from ..schema_aliases import ALL_STRUCTURAL_FIELD_KEYS
 
 # Keys that are part of the record structure, not user-defined custom fields.
-_RECORD_STRUCTURAL_KEYS = frozenset(set(STRUCTURAL_FIELD_KEYS) | {"thaw_events"})
+_RECORD_STRUCTURAL_KEYS = ALL_STRUCTURAL_FIELD_KEYS
 
 
 def _normalize_field_value(value):

@@ -128,7 +128,7 @@ def _rebuild_table_rows(self, records):
     payload = build_export_rows(records or [], meta=meta)
     self._table_columns = list(payload.get("columns") or [])
 
-    color_key = get_color_key(meta)
+    color_key = get_color_key(meta, inventory=records or [])
     rows = []
     for values in payload.get("rows") or []:
         rid_raw = values.get("id")

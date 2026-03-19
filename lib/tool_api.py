@@ -7,6 +7,12 @@ from datetime import datetime, timedelta
 from .position_fmt import (
     get_box_numbers,
 )
+from .schema_aliases import (
+    coalesce_stored_at_value,
+    expand_structural_aliases_in_sections,
+    get_stored_at,
+    present_record_sort_field,
+)
 from .takeout_parser import extract_events
 from .validators import (
     format_validation_errors,
@@ -274,7 +280,7 @@ def tool_add_entry(
     yaml_path,
     box,
     positions,
-    frozen_at,
+    frozen_at=None,
     fields=None,
     dry_run=False,
     execution_mode=None,
@@ -282,12 +288,21 @@ def tool_add_entry(
     source="tool_api",
     auto_backup=True,
     request_backup_path=None,
+    **kwargs,
 ):
+    effective_stored_at = kwargs.pop("stored_at", None)
+    if kwargs:
+        unexpected = ", ".join(sorted(kwargs.keys()))
+        raise TypeError(f"Unexpected keyword arguments: {unexpected}")
+    effective_stored_at = coalesce_stored_at_value(
+        stored_at=effective_stored_at,
+        frozen_at=frozen_at,
+    )
     response = _tool_add_entry_impl(
         yaml_path=yaml_path,
         box=box,
         positions=positions,
-        frozen_at=frozen_at,
+        frozen_at=effective_stored_at,
         fields=fields,
         dry_run=dry_run,
         execution_mode=execution_mode,
@@ -303,7 +318,7 @@ def _tool_add_entry_impl(
     yaml_path,
     box,
     positions,
-    frozen_at,
+    frozen_at=None,
     fields=None,
     dry_run=False,
     execution_mode=None,
@@ -330,7 +345,7 @@ def _tool_add_entry_impl(
     return _format_tool_response_positions(response, yaml_path=yaml_path)
 
 
-_EDITABLE_FIELDS = {"frozen_at"}
+_EDITABLE_FIELDS = {"stored_at", "frozen_at"}
 
 
 def _get_editable_fields(yaml_path):
@@ -363,7 +378,14 @@ def tool_edit_entry(
         auto_backup=auto_backup,
         request_backup_path=request_backup_path,
     )
-    return _format_tool_response_positions(response, yaml_path=yaml_path)
+    response = _format_tool_response_positions(response, yaml_path=yaml_path)
+    result = response.get("result") if isinstance(response, dict) else None
+    if isinstance(result, dict):
+        expand_structural_aliases_in_sections(result)
+    preview = response.get("preview") if isinstance(response, dict) else None
+    if isinstance(preview, dict):
+        expand_structural_aliases_in_sections(preview)
+    return response
 
 
 tool_takeout = _write_v2.tool_takeout
@@ -381,7 +403,7 @@ def tool_batch_add_entries(
 ):
     """Add multiple entries in a single load/validate/write cycle.
 
-    Each entry dict must contain: box, positions, frozen_at, fields.
+    Each entry dict must contain: box, positions, stored_at/frozen_at, fields.
     Returns a batch result with per-entry status in ``entry_results``.
     Atomicity: all entries must validate before any are written.
     """
@@ -566,13 +588,33 @@ def tool_search_records(
         sort_by=sort_by,
         sort_order=sort_order,
     )
-    return _format_tool_response_positions(response, yaml_path=yaml_path)
+    response = _format_tool_response_positions(response, yaml_path=yaml_path)
+    result = response.get("result") if isinstance(response, dict) else None
+    applied_filters = result.get("applied_filters") if isinstance(result, dict) else None
+    if isinstance(applied_filters, dict):
+        applied_filters["sort_by"] = present_record_sort_field(
+            applied_filters.get("sort_by"),
+            requested=sort_by,
+            default_legacy=True,
+        )
+    return response
 
 
 def tool_recent_frozen(yaml_path, days=None, count=None):
     from .tool_api_impl import read_ops as _read_ops
 
     response = _read_ops.tool_recent_frozen(
+        yaml_path=yaml_path,
+        days=days,
+        count=count,
+    )
+    return _format_tool_response_positions(response, yaml_path=yaml_path)
+
+
+def tool_recent_stored(yaml_path, days=None, count=None):
+    from .tool_api_impl import read_ops as _read_ops
+
+    response = _read_ops.tool_recent_stored(
         yaml_path=yaml_path,
         days=days,
         count=count,
@@ -610,9 +652,9 @@ def _collect_timeline_events(records, days=None):
         cutoff_str = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
 
     for rec in records:
-        frozen_at = rec.get("frozen_at")
-        if frozen_at and (not cutoff_str or frozen_at >= cutoff_str):
-            timeline[frozen_at]["frozen"].append(rec)
+        stored_at = get_stored_at(rec)
+        if stored_at and (not cutoff_str or stored_at >= cutoff_str):
+            timeline[stored_at]["frozen"].append(rec)
 
     for rec in records:
         for ev in extract_events(rec):

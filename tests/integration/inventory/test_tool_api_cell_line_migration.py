@@ -45,6 +45,13 @@ class TestWriteGateCellLineMigration(ManagedPathTestCase):
                     ],
                 },
             )
+            before = load_yaml(str(yaml_path))
+            before_meta = before["meta"]
+            before_cell_line_field = next(
+                field
+                for field in before_meta.get("custom_fields", [])
+                if str(field.get("key") or "") == "cell_line"
+            )
 
             result = validate_write_tool_call(
                 yaml_path=str(yaml_path),
@@ -65,8 +72,16 @@ class TestWriteGateCellLineMigration(ManagedPathTestCase):
             self.assertTrue(result["ok"])
 
             data = load_yaml(str(yaml_path))
+            self.assertEqual(before, data)
             self.assertNotIn("cell_line_required", data["meta"])
-            self.assertEqual(["K562"], data["meta"].get("cell_line_options"))
+            self.assertNotIn("cell_line_options", data["meta"])
+            cell_line_field = next(
+                field
+                for field in data["meta"].get("custom_fields", [])
+                if str(field.get("key") or "") == "cell_line"
+            )
+            self.assertEqual(before_cell_line_field, cell_line_field)
+            self.assertEqual(["K562"], cell_line_field.get("options"))
             self.assertNotIn("cell_line", data["inventory"][0])
 
     def test_execute_mode_rollback_skips_cell_line_migration(self):

@@ -27,6 +27,21 @@ class TestAliasMap:
 
 
 class TestNormalizeInputFields:
+    def test_preserves_alias_when_alias_is_explicitly_declared(self):
+        result = normalize_input_fields(
+            {"parent_cell_line": "K562"},
+            {
+                "custom_fields": [
+                    {"key": "parent_cell_line", "label": "Parent", "type": "str"},
+                ],
+            },
+            today=ALIAS_COMPAT_END_DATE,
+        )
+        assert result["ok"] is True
+        assert result["fields"]["parent_cell_line"] == "K562"
+        assert "cell_line" not in result["fields"]
+        assert result.get("alias_hits") == []
+
     def test_maps_alias_to_canonical_before_cutoff(self):
         result = normalize_input_fields(
             {"parent_cell_line": "K562", "short_name": "clone-a"},

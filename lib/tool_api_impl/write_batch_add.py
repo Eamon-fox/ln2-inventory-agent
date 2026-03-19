@@ -7,7 +7,8 @@ load/validate/write cycle, dramatically reducing I/O for large plans.
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..migrate_cell_line_policy import normalize_cell_line_policy_data
+from ..migrate_cell_line_policy import normalize_field_options_policy_data
+from ..schema_aliases import get_input_stored_at
 from ..yaml_ops import append_audit_event, load_yaml, write_yaml
 from .audit_details import add_entry_details
 from .write_add_entry import (
@@ -29,7 +30,7 @@ def tool_batch_add_entries(
 ) -> Dict[str, Any]:
     """Add multiple entries in a single load/write cycle.
 
-    Each entry dict must contain: box, positions, frozen_at, fields.
+    Each entry dict must contain: box, positions, stored_at/frozen_at, fields.
     Returns a batch result with per-entry status in ``entry_results``.
     Atomicity: all entries must validate before any are written.
     """
@@ -46,7 +47,10 @@ def tool_batch_add_entries(
         source=source,
         tool_name=tool_name,
         tool_input={"entries": entries, "request_backup_path": request_backup_path},
-        payload={"frozen_at": entries[0].get("frozen_at"), "positions": entries[0].get("positions")},
+        payload={
+            "stored_at": get_input_stored_at(entries[0]),
+            "positions": entries[0].get("positions"),
+        },
         dry_run=False,
         execution_mode=execution_mode,
         actor_context=actor_context,
@@ -71,7 +75,7 @@ def tool_batch_add_entries(
             tool_input={"entries": entries},
         )
 
-    normalized = normalize_cell_line_policy_data(data)
+    normalized = normalize_field_options_policy_data(data)
     if not normalized.get("ok"):
         return api._failure_result(
             yaml_path=yaml_path,
@@ -79,7 +83,7 @@ def tool_batch_add_entries(
             source=source,
             tool_name=tool_name,
             error_code=normalized.get("error_code", "normalize_failed"),
-            message=normalized.get("message", "Failed to normalize cell_line policy."),
+            message=normalized.get("message", "Failed to normalize field options policy."),
             actor_context=actor_context,
             tool_input={"entries": entries},
             before_data=data if isinstance(data, dict) else None,
@@ -95,7 +99,7 @@ def tool_batch_add_entries(
     for idx, entry in enumerate(entries):
         box = entry.get("box")
         positions = entry.get("positions")
-        frozen_at = entry.get("frozen_at")
+        stored_at = get_input_stored_at(entry)
         fields = dict(entry.get("fields") or {})
 
         prepared, failure = _validate_add_entry_request_data(
@@ -126,7 +130,7 @@ def tool_batch_add_entries(
             records,
             box=box,
             positions=norm_positions,
-            frozen_at=frozen_at,
+            frozen_at=stored_at,
             fields=prepared["fields"],
             user_field_keys=prepared["user_field_keys"],
         )
@@ -153,13 +157,13 @@ def tool_batch_add_entries(
                 record_ids=[c["id"] for c in built["created"]],
                 box=box,
                 positions=[int(p) for p in norm_positions],
-                frozen_at=frozen_at,
+                frozen_at=stored_at,
                 fields=prepared["fields"],
             ),
             tool_input={
                 "box": box,
                 "positions": [int(p) for p in norm_positions],
-                "frozen_at": frozen_at,
+                "frozen_at": stored_at,
                 "fields": prepared["fields"],
             },
         ))

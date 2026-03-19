@@ -24,18 +24,6 @@ _SYSTEM_NOTE_KEY = "note"
 _OPTIONS_EMPTY_TEXT = "..."
 
 
-def _merge_legacy_cell_line_into_fields(custom_fields, cell_line_options, cell_line_required):
-    """Build effective fields using custom definitions + optional legacy policy."""
-    from lib.custom_fields import get_effective_fields
-
-    meta = {"custom_fields": list(custom_fields or [])}
-    if cell_line_options is not None:
-        meta["cell_line_options"] = list(cell_line_options or [])
-    if cell_line_required is not None:
-        meta["cell_line_required"] = bool(cell_line_required)
-    return get_effective_fields(meta)
-
-
 class CustomFieldsDialog(QDialog):
     """Visual editor for meta.custom_fields."""
 
@@ -45,8 +33,6 @@ class CustomFieldsDialog(QDialog):
         custom_fields=None,
         display_key=None,
         color_key=None,
-        cell_line_options=None,
-        cell_line_required=None,
     ):
         super().__init__(parent)
         self.setWindowTitle(tr("main.customFieldsTitle"))
@@ -149,11 +135,9 @@ class CustomFieldsDialog(QDialog):
 
         self._field_rows = []
 
-        effective = _merge_legacy_cell_line_into_fields(
-            custom_fields,
-            cell_line_options,
-            cell_line_required,
-        )
+        from lib.custom_fields import get_effective_fields
+
+        effective = get_effective_fields({"custom_fields": list(custom_fields or [])})
         for field in effective:
             key = field.get("key", "")
             self._add_row(
@@ -234,20 +218,6 @@ class CustomFieldsDialog(QDialog):
 
     def get_color_key(self):
         return self._color_key_combo.currentData() or ""
-
-    def get_cell_line_options(self):
-        """Backward compat: extract options from the cell_line field row."""
-        for entry in self._field_rows:
-            if entry["key"].text().strip() == "cell_line":
-                return list(entry.get("_options_data") or [])
-        return []
-
-    def get_cell_line_required(self):
-        """Backward compat: extract required from the cell_line field row."""
-        for entry in self._field_rows:
-            if entry["key"].text().strip() == "cell_line":
-                return bool(entry["required"].isChecked())
-        return False
 
     def _add_row(
         self,

@@ -21,7 +21,12 @@ from .config import (
 from .inventory_paths import (
     assert_allowed_inventory_yaml_path,
 )
+from .legacy_field_policy import canonicalize_legacy_document
 from .position_fmt import get_box_numbers, get_total_slots
+from .schema_aliases import (
+    canonicalize_inventory_document,
+    expand_document_structural_aliases,
+)
 from .validators import format_validation_errors, validate_inventory
 
 # ── Preflight I/O cache (populated by plan_executor) ──────────────
@@ -56,6 +61,10 @@ def _ensure_inventory_integrity(data, prefix="Integrity validation failed", vali
         raise ValueError(
             f"invalid validation_scope={validation_scope!r}; expected one of {sorted(_VALIDATION_SCOPES)}"
         )
+
+    data, alias_errors = canonicalize_inventory_document(data)
+    if alias_errors:
+        raise ValueError(format_validation_errors(alias_errors, prefix=prefix))
 
     if scope == "meta_only":
         from .import_validation_core import validate_inventory_document
@@ -122,7 +131,8 @@ def resolve_instance_id(yaml_path, mode="read"):
             meta["inventory_instance_id"] = instance_id
             data["meta"] = meta
             with open(yaml_abs, "w", encoding="utf-8") as f:
-                yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False, width=120)
+                canonical_data, _alias_errors = canonicalize_inventory_document(data)
+                yaml.safe_dump(canonical_data, f, allow_unicode=True, sort_keys=False, width=120)
         
         return instance_id
     
@@ -339,7 +349,9 @@ def load_yaml(path=YAML_PATH):
         return deepcopy(_write_through_cache[cache_key])
     with open(abs_path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
-    return _repair_mojibake_values(data)
+    data = _repair_mojibake_values(data)
+    data = expand_document_structural_aliases(data)
+    return data
 
 
 def _backup_dir(yaml_path, instance_id_override=None):
@@ -754,6 +766,16 @@ def write_yaml(
             constraints while skipping per-record value checks.
     """
     yaml_abs = assert_allowed_inventory_yaml_path(_abs_path(path))
+    canonical_data, alias_errors = canonicalize_inventory_document(data)
+    if alias_errors:
+        raise ValueError(
+            format_validation_errors(alias_errors, prefix="Integrity validation failed")
+        )
+    data = canonical_data
+    legacy_result = canonicalize_legacy_document(data)
+    if not legacy_result.get("ok"):
+        raise ValueError(str(legacy_result.get("message") or "Failed to canonicalize legacy fields"))
+    data = legacy_result.get("data")
 
     # Preflight cache: store in memory instead of writing to disk
     cache_key = os.path.normcase(os.path.normpath(yaml_abs))
@@ -925,6 +947,10 @@ def validate_backup_file(backup_path: str) -> dict:
         }
 
     try:
+        legacy_result = canonicalize_legacy_document(data)
+        if not legacy_result.get("ok"):
+            raise ValueError(str(legacy_result.get("message") or "Failed to canonicalize legacy fields"))
+        data = legacy_result.get("data")
         _ensure_inventory_integrity(
             data,
             prefix=f"Backup integrity check failed ({os.path.basename(abs_path)})",
@@ -999,6 +1025,8 @@ def rollback_yaml(
             error_msg += f" | Available alternatives: {', '.join(alt_names)}"
         raise RuntimeError(error_msg)
 
+    from copy import deepcopy
+
     backup_data = validation["data"]
 
     before_data = load_yaml(yaml_abs)
@@ -1008,7 +1036,12 @@ def rollback_yaml(
         pre_rollback_snapshot = _abs_path(pre_rollback_snapshot)
     shutil.copy2(target_backup, yaml_abs)
 
-    after_data = load_yaml(yaml_abs)
+    after_data = deepcopy(backup_data)
+    cache_key = os.path.normcase(os.path.normpath(yaml_abs))
+    if cache_key in _write_through_cache:
+        _write_through_cache[cache_key] = deepcopy(after_data)
+    if cache_key in _preflight_cache:
+        _preflight_cache[cache_key] = deepcopy(after_data)
 
     warnings = []
     warnings.extend(emit_capacity_warnings(after_data))

@@ -138,6 +138,7 @@ class OperationsPanel(QWidget):
         self._migration_mode_enabled = False
 
         self.records_cache = {}
+        self._current_inventory = []
         self.current_operation_mode = "takeout"
         self.t_prefill_source = None
         self._default_date_anchor = QDate.currentDate()
@@ -157,7 +158,7 @@ class OperationsPanel(QWidget):
         # Initialize dynamic fields with a permissive startup profile so the
         # add-form widgets are immediately available even before dataset meta
         # is loaded from disk.
-        self.apply_meta_update({"custom_fields": [], "cell_line_required": False})
+        self.apply_meta_update({"custom_fields": []}, inventory=[])
         self._apply_migration_mode_ui_state()
 
     @property
@@ -573,8 +574,20 @@ class OperationsPanel(QWidget):
             normalized[rid_int] = normalized_record
 
         self.records_cache = normalized
+        self._current_inventory = list(normalized.values())
         _ops_context._refresh_takeout_record_context(self)
         _ops_context._refresh_move_record_context(self)
+
+    def _resolved_inventory_records(self, inventory=None):
+        if isinstance(inventory, list):
+            return inventory
+        current_inventory = getattr(self, "_current_inventory", None)
+        if isinstance(current_inventory, list):
+            return current_inventory
+        records_cache = getattr(self, "records_cache", None)
+        if isinstance(records_cache, dict):
+            return list(records_cache.values())
+        return []
 
     def _refresh_custom_fields(self):
         """Reload custom field definitions from YAML meta and rebuild dynamic forms."""
@@ -583,11 +596,13 @@ class OperationsPanel(QWidget):
             yaml_path = self.yaml_path_getter()
             data = load_yaml(yaml_path)
             meta = data.get("meta", {})
+            inventory = data.get("inventory", [])
         except Exception:
             meta = {}
-        self.apply_meta_update(meta)
+            inventory = []
+        self.apply_meta_update(meta, inventory=inventory)
 
-    def apply_meta_update(self, meta=None):
+    def apply_meta_update(self, meta=None, inventory=None):
         """Apply latest YAML meta to forms immediately (no restart needed)."""
         from app_gui.error_localizer import localize_error
         from lib.custom_fields import get_effective_fields, unsupported_box_fields_issue
@@ -599,8 +614,13 @@ class OperationsPanel(QWidget):
                 yaml_path = self.yaml_path_getter()
                 data = load_yaml(yaml_path)
                 meta = data.get("meta", {})
+                inventory = data.get("inventory", [])
             except Exception:
                 meta = {}
+                inventory = []
+
+        inventory = self._resolved_inventory_records(inventory)
+        self._current_inventory = list(inventory)
 
         unsupported_issue = unsupported_box_fields_issue(meta)
         if unsupported_issue:
@@ -628,7 +648,7 @@ class OperationsPanel(QWidget):
 
         self._current_meta = meta
         self._current_layout = dict((meta or {}).get("box_layout") or {})
-        custom_fields = get_effective_fields(meta)
+        custom_fields = get_effective_fields(meta, inventory=inventory)
         self._current_custom_fields = custom_fields
         _ops_forms._rebuild_custom_add_fields(self, custom_fields)
         _ops_context._rebuild_ctx_user_fields(self, "takeout", custom_fields)
@@ -666,7 +686,8 @@ class OperationsPanel(QWidget):
         """Populate dropdown options for all option-bearing fields in the add form."""
         from lib.custom_fields import get_effective_fields
 
-        for field_def in get_effective_fields(meta):
+        inventory = self._resolved_inventory_records()
+        for field_def in get_effective_fields(meta, inventory=inventory):
             fkey = field_def["key"]
             foptions = field_def.get("options")
             if not foptions:
@@ -751,10 +772,6 @@ class OperationsPanel(QWidget):
 
         self._refresh_context_field_constraints()
 
-    # Backward-compatible helper kept for tests and legacy callsites.
-    def _refresh_cell_line_options(self, meta):
-        self._refresh_field_options(meta or {})
-
     @staticmethod
     def _build_choice_display_model(options, *, hint_lines=None, parent=None):
         model = QStandardItemModel(parent)
@@ -800,10 +817,11 @@ class OperationsPanel(QWidget):
         from lib.custom_fields import get_field_options, is_field_required
 
         meta = self._current_meta if isinstance(self._current_meta, dict) else {}
-        required = is_field_required(meta, field_key)
+        inventory = self._resolved_inventory_records()
+        required = is_field_required(meta, field_key, inventory=inventory)
         options = []
         seen = set()
-        for raw in get_field_options(meta, field_key):
+        for raw in get_field_options(meta, field_key, inventory=inventory):
             text = str(raw or "").strip()
             if not text:
                 continue
@@ -919,7 +937,8 @@ class OperationsPanel(QWidget):
         from lib.custom_fields import get_effective_fields
 
         meta = self._current_meta if isinstance(self._current_meta, dict) else {}
-        for field_def in get_effective_fields(meta):
+        inventory = self._resolved_inventory_records()
+        for field_def in get_effective_fields(meta, inventory=inventory):
             fkey = field_def["key"]
             foptions = field_def.get("options")
             if not foptions:

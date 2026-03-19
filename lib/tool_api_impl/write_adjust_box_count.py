@@ -2,7 +2,7 @@
 
 from copy import deepcopy
 
-from ..migrate_cell_line_policy import normalize_cell_line_policy_data
+from ..migrate_cell_line_policy import normalize_field_options_policy_data
 from ..position_fmt import get_box_numbers
 from ..yaml_ops import load_yaml, write_yaml
 from .audit_details import adjust_box_count_details, failure_details
@@ -457,7 +457,7 @@ def _tool_adjust_box_count_impl(
             actor_context=actor_context,
             tool_input=tool_input,
         )
-    normalized = normalize_cell_line_policy_data(data)
+    normalized = normalize_field_options_policy_data(data)
     if not normalized.get("ok"):
         return api._failure_result(
             yaml_path=yaml_path,
@@ -465,7 +465,7 @@ def _tool_adjust_box_count_impl(
             source=source,
             tool_name=tool_name,
             error_code=normalized.get("error_code", "normalize_failed"),
-            message=normalized.get("message", "Failed to normalize cell_line policy."),
+            message=normalized.get("message", "Failed to normalize field options policy."),
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=data if isinstance(data, dict) else None,

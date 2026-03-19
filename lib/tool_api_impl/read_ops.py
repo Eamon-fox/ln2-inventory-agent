@@ -13,6 +13,12 @@ from ..position_fmt import (
     get_position_range,
     get_total_slots,
 )
+from ..schema_aliases import (
+    DEFAULT_RECORD_SORT_FIELD,
+    VALID_RECORD_SORT_FIELDS,
+    get_stored_at,
+    normalize_record_sort_field,
+)
 from ..takeout_parser import extract_events, normalize_action
 from ..validators import normalize_date_arg, parse_date, validate_box, validate_position
 from ..yaml_ops import (
@@ -216,16 +222,13 @@ def tool_search_records(
             }
         normalized_status = status_value
 
-    normalized_sort_by = "frozen_at"
-    if sort_by not in (None, ""):
-        sort_by_value = str(sort_by).strip().lower()
-        if sort_by_value not in {"box", "position", "frozen_at", "id"}:
-            return {
-                "ok": False,
-                "error_code": "invalid_tool_input",
-                "message": "sort_by must be one of: box, position, frozen_at, id",
-            }
-        normalized_sort_by = sort_by_value
+    normalized_sort_by = normalize_record_sort_field(sort_by, default=DEFAULT_RECORD_SORT_FIELD)
+    if normalized_sort_by not in VALID_RECORD_SORT_FIELDS:
+        return {
+            "ok": False,
+            "error_code": "invalid_tool_input",
+            "message": "sort_by must be one of: box, position, stored_at, id",
+        }
 
     normalized_sort_order = "desc"
     if sort_order not in (None, ""):
@@ -333,7 +336,7 @@ def tool_search_records(
             return _coerce_int(record.get("box"))
         if normalized_sort_by == "position":
             return _coerce_int(record.get("position"))
-        return parse_date(record.get("frozen_at"))
+        return parse_date(get_stored_at(record))
 
     def _cmp_values(left, right):
         if left < right:
@@ -463,8 +466,8 @@ def tool_search_records(
     }
 
 
-def tool_recent_frozen(yaml_path, days=None, count=None):
-    """Query recently frozen records sorted by date desc."""
+def tool_recent_stored(yaml_path, days=None, count=None):
+    """Query recently stored records sorted by date desc."""
     data, failure = _load_supported_data(yaml_path)
     if failure:
         return failure
@@ -472,10 +475,10 @@ def tool_recent_frozen(yaml_path, days=None, count=None):
     records = data.get("inventory", [])
     valid = []
     for rec in records:
-        frozen_at = rec.get("frozen_at")
-        if not frozen_at:
+        stored_at = get_stored_at(rec)
+        if not stored_at:
             continue
-        dt = parse_date(frozen_at)
+        dt = parse_date(stored_at)
         if not dt:
             continue
         valid.append((dt, rec))
@@ -498,6 +501,11 @@ def tool_recent_frozen(yaml_path, days=None, count=None):
             "limit": count,
         },
     }
+
+
+def tool_recent_frozen(yaml_path, days=None, count=None):
+    """Deprecated alias for tool_recent_stored."""
+    return tool_recent_stored(yaml_path, days=days, count=count)
 
 
 def tool_query_takeout_events(

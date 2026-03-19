@@ -454,6 +454,13 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         self.assertIn("glm-5", options)
         self.assertIn("glm-4.7", options)
 
+    def test_settings_dialog_uses_readable_zhipu_provider_label(self):
+        from app_gui.main import SettingsDialog
+
+        dialog = SettingsDialog(config={"ai": {"provider": "zhipu", "model": "glm-5"}})
+
+        self.assertEqual("智谱 GLM", dialog.ai_provider_combo.currentText())
+
     def test_settings_dialog_import_handoff_closes_dialog_for_ai_panel(self):
         from app_gui.main import SettingsDialog
 
@@ -566,14 +573,6 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             def get_color_key():
                 return "cell_line"
 
-            @staticmethod
-            def get_cell_line_options():
-                return ["HeLa"]
-
-            @staticmethod
-            def get_cell_line_required():
-                return True
-
         dialog = SettingsDialog(
             config={"yaml_path": yaml_path},
             on_data_changed=on_data_changed,
@@ -590,7 +589,14 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
 
         saved = load_yaml(yaml_path) or {}
         saved_meta = saved.get("meta") or {}
-        self.assertEqual(["HeLa"], saved_meta.get("cell_line_options"))
+        self.assertNotIn("cell_line_options", saved_meta)
+        self.assertNotIn("cell_line_required", saved_meta)
+        saved_cell_line_field = next(
+            field
+            for field in (saved_meta.get("custom_fields") or [])
+            if str(field.get("key") or "") == "cell_line"
+        )
+        self.assertNotIn("options", saved_cell_line_field)
 
     def test_settings_dialog_custom_fields_allows_adding_required_field(self):
         """Scenario 2: adding a new required field should not be blocked
@@ -629,11 +635,6 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             def get_display_key(): return ""
             @staticmethod
             def get_color_key(): return ""
-            @staticmethod
-            def get_cell_line_options(): return None
-            @staticmethod
-            def get_cell_line_required(): return False
-
         on_data_changed = MagicMock()
         dialog = SettingsDialog(
             config={"yaml_path": yaml_path},
@@ -689,11 +690,6 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             def get_display_key(): return ""
             @staticmethod
             def get_color_key(): return ""
-            @staticmethod
-            def get_cell_line_options(): return None
-            @staticmethod
-            def get_cell_line_required(): return False
-
         on_data_changed = MagicMock()
         dialog = SettingsDialog(
             config={"yaml_path": yaml_path},
@@ -750,11 +746,6 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             def get_display_key(): return ""
             @staticmethod
             def get_color_key(): return ""
-            @staticmethod
-            def get_cell_line_options(): return None
-            @staticmethod
-            def get_cell_line_required(): return False
-
         on_data_changed = MagicMock()
         dialog = SettingsDialog(
             config={"yaml_path": yaml_path},
@@ -812,11 +803,6 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             def get_display_key(): return "cell_line"
             @staticmethod
             def get_color_key(): return ""
-            @staticmethod
-            def get_cell_line_options(): return None
-            @staticmethod
-            def get_cell_line_required(): return False
-
         on_data_changed = MagicMock()
         dialog = SettingsDialog(
             config={"yaml_path": yaml_path},
@@ -881,11 +867,6 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             def get_display_key(): return "alias"
             @staticmethod
             def get_color_key(): return "alias"
-            @staticmethod
-            def get_cell_line_options(): return None
-            @staticmethod
-            def get_cell_line_required(): return False
-
         on_data_changed = MagicMock()
         dialog = SettingsDialog(
             config={"yaml_path": yaml_path},
@@ -949,11 +930,6 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             def get_display_key(): return ""
             @staticmethod
             def get_color_key(): return ""
-            @staticmethod
-            def get_cell_line_options(): return None
-            @staticmethod
-            def get_cell_line_required(): return False
-
         on_data_changed = MagicMock()
         dialog = SettingsDialog(
             config={"yaml_path": yaml_path},
@@ -1019,11 +995,6 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             def get_display_key(): return ""
             @staticmethod
             def get_color_key(): return ""
-            @staticmethod
-            def get_cell_line_options(): return None
-            @staticmethod
-            def get_cell_line_required(): return False
-
         on_data_changed = MagicMock()
         dialog = SettingsDialog(
             config={"yaml_path": yaml_path},
@@ -1095,11 +1066,6 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             def get_display_key(): return ""
             @staticmethod
             def get_color_key(): return ""
-            @staticmethod
-            def get_cell_line_options(): return []
-            @staticmethod
-            def get_cell_line_required(): return False
-
         on_data_changed = MagicMock()
         dialog = SettingsDialog(
             config={"yaml_path": yaml_path},
@@ -1588,6 +1554,62 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         self.assertEqual(1, kwargs["record_id"])
         self.assertEqual({"note": "new-note"}, kwargs["fields"])
         self.assertEqual("execute", kwargs["execution_mode"])
+        self.assertEqual([True], emitted)
+        self.assertTrue(panel.t_ctx_note.isReadOnly())
+        self.assertTrue(confirm_btn.isHidden())
+
+    def test_operations_panel_inline_edit_confirm_works_with_real_gui_bridge(self):
+        from app_gui.tool_bridge import GuiToolBridge
+        from lib.yaml_ops import load_yaml, write_yaml
+
+        panel = self._new_operations_panel()
+        write_yaml(
+            {
+                "meta": {"box_layout": {"rows": 9, "cols": 9}},
+                "inventory": [
+                    {
+                        "id": 1,
+                        "cell_line": "K562",
+                        "box": 1,
+                        "position": 1,
+                        "frozen_at": "2025-01-01",
+                        "note": "old-note",
+                    }
+                ],
+            },
+            path=self.fake_yaml_path,
+            audit_meta={"action": "seed", "source": "tests"},
+        )
+
+        panel.bridge = GuiToolBridge(session_id="ops-inline-edit")
+        panel.update_records_cache({
+            1: {
+                "id": 1,
+                "cell_line": "K562",
+                "box": 1,
+                "position": 1,
+                "frozen_at": "2025-01-01",
+                "note": "old-note",
+            },
+        })
+        panel.t_id.setValue(1)
+        from app_gui.ui import operations_panel_context as _ops_context
+
+        _ops_context._refresh_takeout_record_context(panel)
+
+        emitted = []
+        panel.operation_completed.connect(lambda ok: emitted.append(bool(ok)))
+
+        container = panel.t_ctx_note.parentWidget()
+        lock_btn = container.findChild(QPushButton, "inlineLockBtn")
+        confirm_btn = container.findChild(QPushButton, "inlineConfirmBtn")
+
+        lock_btn.click()
+        panel.t_ctx_note.setPlainText("new-note")
+        confirm_btn.click()
+
+        current = load_yaml(self.fake_yaml_path)
+        self.assertEqual("new-note", current["inventory"][0]["note"])
         self.assertEqual([True], emitted)
         self.assertTrue(panel.t_ctx_note.isReadOnly())
         self.assertTrue(confirm_btn.isHidden())

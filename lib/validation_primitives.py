@@ -12,6 +12,13 @@ continue to operate without runtime configuration.
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from .schema_aliases import (
+    CANONICAL_STORED_AT_KEY,
+    get_storage_events,
+    get_stored_at,
+    structural_field_label,
+)
+
 
 # ---------------------------------------------------------------------------
 # Scalar type helpers
@@ -72,10 +79,10 @@ def has_takeout_history(rec: Dict[str, Any], normalize_action_fn: Any = None) ->
     if normalize_action_fn is None:
         normalize_action_fn = _builtin_normalize_action
 
-    thaw_events = rec.get("thaw_events") or []
-    if not isinstance(thaw_events, list):
+    storage_events = get_storage_events(rec) or []
+    if not isinstance(storage_events, list):
         return False
-    for ev in thaw_events:
+    for ev in storage_events:
         if not isinstance(ev, dict):
             continue
         if normalize_action_fn(ev.get("action")) == "takeout":
@@ -178,13 +185,13 @@ def validate_record_fields(
             )
 
     # --- frozen_at ---
-    frozen_at = rec.get("frozen_at")
-    if not validate_date_format(frozen_at):
-        errors.append(f"{label}: 'frozen_at' must be YYYY-MM-DD")
+    stored_at = get_stored_at(rec)
+    if not validate_date_format(stored_at):
+        errors.append(f"{label}: '{CANONICAL_STORED_AT_KEY}' must be YYYY-MM-DD")
     else:
-        frozen_date = parse_date(frozen_at)
+        frozen_date = parse_date(stored_at)
         if frozen_date and frozen_date > datetime.now():
-            errors.append(f"{label}: frozen date {frozen_at} is in the future")
+            errors.append(f"{label}: stored date {stored_at} is in the future")
 
     # --- thaw_events ---
     _validate_thaw_events(
@@ -208,30 +215,31 @@ def _validate_thaw_events(
     check_event_future_dates: bool,
 ) -> None:
     """Validate the thaw_events list within a record."""
-    thaw_events = rec.get("thaw_events")
-    if thaw_events is None:
+    event_field_label = structural_field_label("storage_events")
+    storage_events = get_storage_events(rec)
+    if storage_events is None:
         return
-    if not isinstance(thaw_events, list):
-        errors.append(f"{label}: 'thaw_events' must be a list")
+    if not isinstance(storage_events, list):
+        errors.append(f"{label}: '{event_field_label}' must be a list")
         return
 
-    for event_idx, ev in enumerate(thaw_events, 1):
+    for event_idx, ev in enumerate(storage_events, 1):
         if not isinstance(ev, dict):
-            errors.append(f"{label}: thaw_events[{event_idx}] must be an object")
+            errors.append(f"{label}: {event_field_label}[{event_idx}] must be an object")
             continue
 
         ev_action = normalize_action_fn(ev.get("action"))
         if not ev_action:
-            errors.append(f"{label}: thaw_events[{event_idx}] has invalid action")
+            errors.append(f"{label}: {event_field_label}[{event_idx}] has invalid action")
 
         ev_date = ev.get("date")
         if not validate_date_format(ev_date):
-            errors.append(f"{label}: thaw_events[{event_idx}] has invalid date")
+            errors.append(f"{label}: {event_field_label}[{event_idx}] has invalid date")
         elif check_event_future_dates:
             parsed_ev_date = parse_date(ev_date)
             if parsed_ev_date and parsed_ev_date > datetime.now():
                 errors.append(
-                    f"{label}: thaw_events[{event_idx}] date {ev_date} is in the future"
+                    f"{label}: {event_field_label}[{event_idx}] date {ev_date} is in the future"
                 )
 
         ev_positions = ev.get("positions")
@@ -239,7 +247,7 @@ def _validate_thaw_events(
             ev_positions = [ev_positions]
         if not isinstance(ev_positions, list) or not ev_positions:
             errors.append(
-                f"{label}: thaw_events[{event_idx}] positions must be a non-empty list"
+                f"{label}: {event_field_label}[{event_idx}] positions must be a non-empty list"
             )
             continue
 
@@ -247,17 +255,17 @@ def _validate_thaw_events(
         for ev_pos in ev_positions:
             if not isinstance(ev_pos, int):
                 errors.append(
-                    f"{label}: thaw_events[{event_idx}] position {ev_pos} must be an integer"
+                    f"{label}: {event_field_label}[{event_idx}] position {ev_pos} must be an integer"
                 )
                 continue
             if not (pos_lo <= ev_pos <= pos_hi):
                 errors.append(
-                    f"{label}: thaw_events[{event_idx}] position {ev_pos} out of range ({pos_lo}-{pos_hi})"
+                    f"{label}: {event_field_label}[{event_idx}] position {ev_pos} out of range ({pos_lo}-{pos_hi})"
                 )
                 continue
             if ev_pos in seen_ev_pos:
                 errors.append(
-                    f"{label}: thaw_events[{event_idx}] duplicate position {ev_pos}"
+                    f"{label}: {event_field_label}[{event_idx}] duplicate position {ev_pos}"
                 )
             seen_ev_pos.add(ev_pos)
 

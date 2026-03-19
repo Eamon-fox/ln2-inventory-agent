@@ -13,18 +13,26 @@ from .validation_primitives import (
     validate_record_fields,
 )
 from .custom_fields import unsupported_box_fields_issue
+from .legacy_field_policy import (
+    CELL_LINE_FIELD_KEY,
+    PHASE_IMPORT,
+    canonicalize_record_legacy_fields,
+    resolve_legacy_field_policy,
+    normalize_legacy_custom_field_defs,
+)
+from .schema_aliases import (
+    ALL_STRUCTURAL_FIELD_KEYS,
+    CANONICAL_STORAGE_EVENTS_KEY,
+    CANONICAL_STORED_AT_KEY,
+    CANONICAL_STRUCTURAL_FIELD_KEYS,
+    canonicalize_inventory_document,
+)
 
 
 ALLOWED_ROOT_KEYS = frozenset({"meta", "inventory"})
 
 STRUCTURAL_FIELD_KEYS = frozenset(
-    {
-        "id",
-        "box",
-        "position",
-        "frozen_at",
-        "thaw_events",
-    }
+    CANONICAL_STRUCTURAL_FIELD_KEYS
 )
 
 # Fields that are auto-injected as default custom fields when not explicitly
@@ -41,35 +49,6 @@ ACTION_ALIAS = {
     "\u53d6\u51fa": "takeout",
     "\u79fb\u52a8": "move",
 }
-
-DEFAULT_CELL_LINE_OPTIONS = [
-    "Unknown",
-    "K562",
-    "HeLa",
-    "NCCIT",
-    "HEK293T",
-    "HCT116",
-    "U2OS",
-    "A549",
-    "MCF7",
-    "HepG2",
-    "Huh7",
-    "SW480",
-    "SW620",
-    "HT29",
-    "DLD1",
-    "RKO",
-    "PC3",
-    "DU145",
-    "LNCaP",
-    "A375",
-    "SK-MEL-28",
-    "Jurkat",
-    "Raji",
-    "THP-1",
-    "MDA-MB-231",
-    "mESC",
-]
 
 
 def _normalize_action(action: Any) -> Optional[str]:
@@ -328,6 +307,8 @@ def validate_custom_fields_contract(meta: Dict[str, Any]) -> Tuple[List[str], Li
     if not isinstance(raw, list):
         return ["meta.custom_fields must be a list"], normalized
 
+    raw, _alias_changes = normalize_legacy_custom_field_defs(raw)
+
     seen = set()
     for idx, item in enumerate(raw):
         if not isinstance(item, dict):
@@ -341,7 +322,7 @@ def validate_custom_fields_contract(meta: Dict[str, Any]) -> Tuple[List[str], Li
         if not key.isidentifier():
             errors.append(f"meta.custom_fields[{idx}] key='{key}' must be a valid identifier")
             continue
-        if key in STRUCTURAL_FIELD_KEYS:
+        if key in ALL_STRUCTURAL_FIELD_KEYS:
             errors.append(
                 f"meta.custom_fields[{idx}] key='{key}' conflicts with structural field"
             )
@@ -396,16 +377,6 @@ def _required_custom_fields(normalized_custom_fields: List[Dict[str, Any]]) -> L
     return sorted(set(required))
 
 
-def _legacy_cell_line_compat_enabled(meta: Dict[str, Any]) -> bool:
-    meta = meta or {}
-    if not isinstance(meta, dict):
-        return True
-    if "cell_line_options" in meta or "cell_line_required" in meta:
-        return True
-    # Legacy datasets may omit ``meta.custom_fields`` entirely.
-    return "custom_fields" not in meta
-
-
 def _declared_custom_field_keys(normalized_custom_fields: List[Dict[str, Any]]) -> set:
     keys = set()
     for item in normalized_custom_fields:
@@ -417,12 +388,18 @@ def _declared_custom_field_keys(normalized_custom_fields: List[Dict[str, Any]]) 
 
 def _allowed_record_field_keys(
     meta: Dict[str, Any],
+    records: List[Dict[str, Any]],
     normalized_custom_fields: List[Dict[str, Any]],
 ) -> set:
-    declared = _declared_custom_field_keys(normalized_custom_fields)
+    policy = resolve_legacy_field_policy(
+        meta,
+        records,
+        declared_fields=normalized_custom_fields,
+        phase=PHASE_IMPORT,
+    )
+    declared = _declared_custom_field_keys(policy.get("declared_fields") or normalized_custom_fields)
     allowed = set(STRUCTURAL_FIELD_KEYS) | set(_DEFAULT_FIELD_KEYS) | declared
-    if "cell_line" in declared or _legacy_cell_line_compat_enabled(meta):
-        allowed.add("cell_line")
+    allowed.update(set(policy.get("staging_input_keys") or set()))
     return allowed
 
 
@@ -432,7 +409,7 @@ def _check_undeclared_record_fields(
     normalized_custom_fields: List[Dict[str, Any]],
 ) -> List[str]:
     """Reject inventory record keys not declared by structural fields/custom_fields."""
-    allowed = _allowed_record_field_keys(meta, normalized_custom_fields)
+    allowed = _allowed_record_field_keys(meta, records, normalized_custom_fields)
     unknown_global = set()
     unknown_by_record = []
 
@@ -469,15 +446,22 @@ def _check_undeclared_record_fields(
 
 def _selector_key_candidates(
     meta: Dict[str, Any],
+    records: List[Dict[str, Any]],
     normalized_custom_fields: List[Dict[str, Any]],
 ) -> List[str]:
     """Return allowed selector keys for meta.display_key/meta.color_key."""
     ordered = []
     seen: set = set()
-    declared = _declared_custom_field_keys(normalized_custom_fields)
+    policy = resolve_legacy_field_policy(
+        meta,
+        records,
+        declared_fields=normalized_custom_fields,
+        phase=PHASE_IMPORT,
+    )
+    declared = _declared_custom_field_keys(policy.get("declared_fields") or normalized_custom_fields)
     default_keys = set(_DEFAULT_FIELD_KEYS)
-    if "cell_line" in declared or _legacy_cell_line_compat_enabled(meta):
-        default_keys.add("cell_line")
+    if policy.get("staging_cell_line"):
+        default_keys.add(CELL_LINE_FIELD_KEY)
     for dk in sorted(default_keys):
         if dk not in seen:
             seen.add(dk)
@@ -501,11 +485,12 @@ def _format_allowed_selector_keys(keys: List[str], *, limit: int = 8) -> str:
 
 def _validate_meta_selection_keys(
     meta: Dict[str, Any],
+    records: List[Dict[str, Any]],
     normalized_custom_fields: List[Dict[str, Any]],
 ) -> List[str]:
     """Validate ``meta.display_key`` and ``meta.color_key`` against known keys."""
     errors: List[str] = []
-    allowed_keys = _selector_key_candidates(meta, normalized_custom_fields)
+    allowed_keys = _selector_key_candidates(meta, records, normalized_custom_fields)
     allowed_set = set(allowed_keys)
     allowed_text = _format_allowed_selector_keys(allowed_keys)
 
@@ -542,17 +527,6 @@ def _validate_meta_selection_keys(
     return errors
 
 
-def _cell_line_options(meta: Dict[str, Any]) -> List[str]:
-    opts = (meta or {}).get("cell_line_options")
-    if isinstance(opts, list):
-        return [str(o) for o in opts if o]
-    return list(DEFAULT_CELL_LINE_OPTIONS)
-
-
-def _is_cell_line_required(meta: Dict[str, Any]) -> bool:
-    return bool((meta or {}).get("cell_line_required", True))
-
-
 def _validate_record(
     rec: Dict[str, Any],
     idx: int,
@@ -562,27 +536,39 @@ def _validate_record(
     normalized_custom_fields: List[Dict[str, Any]] | None = None,
 ) -> Tuple[List[str], List[str]]:
     pos_range = _position_range(layout)
+    validation_rec = dict(rec) if isinstance(rec, dict) else rec
+    if isinstance(validation_rec, dict):
+        canonicalize_record_legacy_fields(validation_rec)
 
-    required_fields = ["id", "box", "frozen_at"] + list(required_custom_field_keys)
+    required_fields = ["id", "box", CANONICAL_STORED_AT_KEY] + list(required_custom_field_keys)
 
-    # Build option fields list: explicit custom fields with options + legacy cell_line.
+    policy = resolve_legacy_field_policy(
+        meta,
+        [rec],
+        declared_fields=normalized_custom_fields,
+        phase=PHASE_IMPORT,
+    )
+    if (
+        CELL_LINE_FIELD_KEY not in required_fields
+        and policy.get("has_legacy_meta")
+    ):
+        explicit_cell_line = policy.get("explicit_cell_line")
+        if explicit_cell_line is not None:
+            if explicit_cell_line.get("required"):
+                required_fields.append(CELL_LINE_FIELD_KEY)
+        else:
+            for field_def in policy.get("effective_fields") or []:
+                if str((field_def or {}).get("key") or "").strip() != CELL_LINE_FIELD_KEY:
+                    continue
+                if field_def.get("required"):
+                    required_fields.append(CELL_LINE_FIELD_KEY)
+                break
     option_fields: List[Dict[str, Any]] = []
-    declared_custom_keys: set = set()
-    for cf in (normalized_custom_fields or []):
-        key = str(cf.get("key") or "").strip()
-        if key:
-            declared_custom_keys.add(key)
-        cf_opts = cf.get("options")
-        if cf_opts:
-            option_fields.append(cf)
-
-    # If cell_line is not explicitly declared, use legacy meta keys.
-    if "cell_line" not in declared_custom_keys and _legacy_cell_line_compat_enabled(meta):
-        option_fields.append({
-            "key": "cell_line",
-            "options": _cell_line_options(meta),
-            "required": _is_cell_line_required(meta),
-        })
+    for field_def in policy.get("effective_fields") or []:
+        if not isinstance(field_def, dict):
+            continue
+        if field_def.get("options"):
+            option_fields.append(field_def)
 
     # Build box validation closures for this layout context.
     _layout = layout
@@ -604,7 +590,7 @@ def _validate_record(
         return ",".join(str(v) for v in box_nums)
 
     return validate_record_fields(
-        rec,
+        validation_rec,
         idx,
         pos_range=pos_range,
         validate_box_fn=_validate_box,
@@ -686,6 +672,9 @@ def validate_inventory_document(
     errors = []
     warnings = []
 
+    data, alias_errors = canonicalize_inventory_document(data)
+    errors.extend(alias_errors)
+
     root_errors = validate_root_and_layout(data)
     errors.extend(root_errors)
     if root_errors:
@@ -699,7 +688,7 @@ def validate_inventory_document(
     layout = meta.get("box_layout", {})
     contract_errors, normalized_custom_fields = validate_custom_fields_contract(meta)
     errors.extend(contract_errors)
-    errors.extend(_validate_meta_selection_keys(meta, normalized_custom_fields))
+    errors.extend(_validate_meta_selection_keys(meta, inventory, normalized_custom_fields))
     errors.extend(_check_undeclared_record_fields(meta, inventory, normalized_custom_fields))
 
     errors.extend(_check_inventory_boxes_match_layout(inventory, layout))

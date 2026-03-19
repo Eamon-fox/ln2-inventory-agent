@@ -23,11 +23,11 @@ from lib.custom_fields import (
     parse_custom_fields,
     get_effective_fields,
     get_color_key,
-    get_cell_line_options,
-    DEFAULT_CELL_LINE_OPTIONS,
-    DEFAULT_UNKNOWN_CELL_LINE,
-    is_cell_line_required,
+    get_field_options,
+    is_field_required,
 )
+from lib.legacy_field_policy import DEFAULT_CELL_LINE_OPTIONS, DEFAULT_UNKNOWN_CELL_LINE
+from lib.schema_aliases import ALL_STRUCTURAL_FIELD_KEYS
 from lib.tool_api import (
     tool_add_entry,
     tool_edit_entry,
@@ -110,7 +110,7 @@ class TestParseCustomFields(ManagedPathTestCase):
         self.assertEqual("10% DMSO", result[0]["default"])
 
     def test_core_field_key_rejected(self):
-        for core_key in ("id", "box", "position", "frozen_at", "thaw_events"):
+        for core_key in ("id", "box", "position", "stored_at", "storage_events", "frozen_at", "thaw_events"):
             meta = {"custom_fields": [{"key": core_key, "label": "X"}]}
             result = parse_custom_fields(meta)
             self.assertEqual([], result, f"structural key {core_key!r} should be rejected")
@@ -162,8 +162,12 @@ class TestParseCustomFields(ManagedPathTestCase):
                          [f["key"] for f in result])
 
     def test_all_structural_keys_in_blacklist(self):
-        expected = {"id", "box", "position", "frozen_at", "thaw_events"}
+        expected = {"id", "box", "position", "stored_at", "storage_events"}
         self.assertEqual(expected, STRUCTURAL_FIELD_KEYS)
+
+    def test_all_structural_aliases_are_reserved(self):
+        expected = {"id", "box", "position", "stored_at", "storage_events", "frozen_at", "thaw_events"}
+        self.assertEqual(expected, set(ALL_STRUCTURAL_FIELD_KEYS))
 
     def test_note_field_is_canonicalized_to_fixed_system_semantics(self):
         meta = {
@@ -549,9 +553,10 @@ class TestGetEditableFields(ManagedPathTestCase):
             yaml_path = Path(td) / "inventory.yaml"
             write_raw_yaml(str(yaml_path), make_data([make_record()]))
             result = _get_editable_fields(str(yaml_path))
-            # Base set is {"frozen_at"}, but effective fields auto-inject cell_line and note
+            # Legacy records with parent_cell_line backfill cell_line into editable fields.
             self.assertTrue(_EDITABLE_FIELDS.issubset(result))
             self.assertIn("frozen_at", result)
+            self.assertIn("stored_at", result)
             self.assertIn("cell_line", result)
             self.assertIn("note", result)
 
@@ -574,6 +579,7 @@ class TestGetEditableFields(ManagedPathTestCase):
             )
             result = _get_editable_fields(str(yaml_path))
             self.assertIn("frozen_at", result)
+            self.assertIn("stored_at", result)
             self.assertIn("passage_number", result)
             self.assertIn("medium", result)
             self.assertIn("parent_cell_line", result)
@@ -583,7 +589,7 @@ class TestGetEditableFields(ManagedPathTestCase):
 
         result = _get_editable_fields("/nonexistent/path.yaml")
         self.assertEqual(_EDITABLE_FIELDS, result)
-        self.assertEqual({"frozen_at"}, result)
+        self.assertEqual({"stored_at", "frozen_at"}, result)
 
 
 # ===========================================================================
@@ -599,18 +605,18 @@ class TestGetEditableFields(ManagedPathTestCase):
 class TestGetColorKey(ManagedPathTestCase):
     """Unit tests for get_color_key()."""
 
-    def test_default_returns_cell_line(self):
-        self.assertEqual("cell_line", get_color_key(None))
-        self.assertEqual("cell_line", get_color_key({}))
+    def test_default_returns_note(self):
+        self.assertEqual("note", get_color_key(None))
+        self.assertEqual("note", get_color_key({}))
 
     def test_meta_color_key_overrides_default(self):
         self.assertEqual("short_name", get_color_key({"color_key": "short_name"}))
 
     def test_empty_string_falls_back_to_default(self):
-        self.assertEqual("cell_line", get_color_key({"color_key": ""}))
+        self.assertEqual("note", get_color_key({"color_key": ""}))
 
     def test_non_string_falls_back_to_default(self):
-        self.assertEqual("cell_line", get_color_key({"color_key": 123}))
+        self.assertEqual("note", get_color_key({"color_key": 123}))
 
     def test_schema_without_cell_line_falls_back_to_first_non_note_field(self):
         meta = {
@@ -622,49 +628,43 @@ class TestGetColorKey(ManagedPathTestCase):
 
 
 # ===========================================================================
-# Unit tests: get_cell_line_options
+# Unit tests: generic field option/required helpers
 # ===========================================================================
 
-class TestGetCellLineOptions(ManagedPathTestCase):
-    """Unit tests for get_cell_line_options()."""
+class TestFieldOptionsAndRequired(ManagedPathTestCase):
+    """Unit tests for generic field helpers on legacy-backed cell_line policy."""
 
-    def test_default_returns_preset_options(self):
-        result = get_cell_line_options(None)
-        self.assertEqual(DEFAULT_CELL_LINE_OPTIONS, result)
-        self.assertIn(DEFAULT_UNKNOWN_CELL_LINE, result)
+    def test_default_returns_empty_without_declared_policy(self):
+        result = get_field_options(None, "cell_line")
+        self.assertEqual([], result)
 
     def test_meta_overrides_defaults(self):
         meta = {"cell_line_options": ["A549", "MCF7"]}
-        result = get_cell_line_options(meta)
+        result = get_field_options(meta, "cell_line")
         self.assertEqual(["A549", "MCF7"], result)
 
-    def test_empty_list_returns_defaults(self):
-        # Empty list is still a list, so it returns empty
+    def test_empty_list_returns_empty(self):
         meta = {"cell_line_options": []}
-        result = get_cell_line_options(meta)
+        result = get_field_options(meta, "cell_line")
         self.assertEqual([], result)
 
-    def test_non_list_returns_defaults(self):
+    def test_non_list_uses_policy_defaults(self):
         meta = {"cell_line_options": "not a list"}
-        result = get_cell_line_options(meta)
+        result = get_field_options(meta, "cell_line")
         self.assertEqual(DEFAULT_CELL_LINE_OPTIONS, result)
 
     def test_filters_empty_values(self):
         meta = {"cell_line_options": ["K562", "", None, "HeLa"]}
-        result = get_cell_line_options(meta)
+        result = get_field_options(meta, "cell_line")
         self.assertEqual(["K562", "HeLa"], result)
 
-
-class TestCellLineRequiredFlag(ManagedPathTestCase):
-    """Unit tests for is_cell_line_required()."""
-
-    def test_default_is_required(self):
-        self.assertTrue(is_cell_line_required(None))
-        self.assertTrue(is_cell_line_required({}))
+    def test_default_required_state_is_false(self):
+        self.assertFalse(is_field_required(None, "cell_line"))
+        self.assertFalse(is_field_required({}, "cell_line"))
 
     def test_meta_flag_controls_required(self):
-        self.assertTrue(is_cell_line_required({"cell_line_required": True}))
-        self.assertFalse(is_cell_line_required({"cell_line_required": False}))
+        self.assertTrue(is_field_required({"cell_line_required": True}, "cell_line"))
+        self.assertFalse(is_field_required({"cell_line_required": False}, "cell_line"))
 
 
 class TestCellLineBaselineValidation(ManagedPathTestCase):

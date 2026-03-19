@@ -1,6 +1,7 @@
 ﻿"""Utilities for normalized takeout/move events."""
 
 from .config import POSITION_RANGE
+from .schema_aliases import get_storage_events
 
 
 ACTION_ALIAS = {
@@ -35,8 +36,8 @@ def normalize_action(action):
 def extract_events(rec):
     """Extract structured events from one record."""
     events = []
-    thaw_events = rec.get("thaw_events") or []
-    for ev in thaw_events:
+    storage_events = get_storage_events(rec) or []
+    for ev in storage_events:
         action = normalize_action(ev.get("action"))
         if not action:
             continue
@@ -53,8 +54,8 @@ def extract_events(rec):
 def extract_takeout_positions(rec):
     """Extract all positions that have been taken out."""
     taken_out = set()
-    thaw_events = rec.get("thaw_events") or []
-    for ev in thaw_events:
+    storage_events = get_storage_events(rec) or []
+    for ev in storage_events:
         action = normalize_action(ev.get("action"))
         # Move/reorg is bookkeeping and should not mark position as depleted.
         if action == "move":

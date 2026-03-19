@@ -3,6 +3,7 @@
 import os
 
 from .path_policy import PathPolicyError, resolve_dataset_backup_request_path
+from .schema_aliases import get_input_stored_at, normalize_structural_alias_input_map
 from .takeout_parser import normalize_action
 from .validators import validate_date
 from .yaml_ops import append_backup_event, create_yaml_backup
@@ -97,13 +98,13 @@ def _validate_execution_gate(*, dry_run=False, execution_mode=None, source="tool
 
 
 def _validate_add_entry_request(payload):
-    frozen_at = payload.get("frozen_at")
+    stored_at = get_input_stored_at(payload)
     positions = payload.get("positions")
-    if not validate_date(frozen_at):
+    if not validate_date(stored_at):
         return {
             "error_code": "invalid_date",
-            "message": f"Invalid date format: {frozen_at}",
-            "details": {"frozen_at": frozen_at},
+            "message": f"Invalid date format: {stored_at}",
+            "details": {"stored_at": stored_at},
         }, {}
     if not positions:
         return {
@@ -120,11 +121,22 @@ def _validate_edit_entry_request(payload):
             "error_code": "no_fields",
             "message": "At least one field must be provided",
         }, {}
-    if "frozen_at" in fields and not validate_date(fields["frozen_at"]):
+    normalized_fields, alias_errors = normalize_structural_alias_input_map(
+        fields,
+        scope="fields",
+    )
+    if alias_errors:
+        return {
+            "error_code": "invalid_field_alias_conflict",
+            "message": alias_errors[0],
+            "details": {"errors": alias_errors},
+        }, {}
+    stored_at_value = get_input_stored_at(normalized_fields)
+    if stored_at_value is not None and not validate_date(stored_at_value):
         return {
             "error_code": "invalid_date",
-            "message": f"Invalid date format: {fields['frozen_at']}",
-            "details": {"frozen_at": fields["frozen_at"]},
+            "message": f"Invalid date format: {stored_at_value}",
+            "details": {"stored_at": stored_at_value},
         }, {}
     return None, {}
 

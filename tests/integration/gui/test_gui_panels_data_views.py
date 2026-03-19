@@ -17,29 +17,35 @@ class CellLineDropdownTests(ManagedPathTestCase):
             tr("operations.cellLineOptionsHintLine2"),
         ]
 
-    def test_cell_line_combo_exists(self):
-        """Operations panel should have a cell_line combo box."""
+    def test_cell_line_combo_is_absent_without_active_policy(self):
+        """Operations panel hides cell_line when schema/policy does not expose it."""
         panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: self.fake_yaml_path)
         self.assertTrue(hasattr(panel, "a_cell_line"))
-        from PySide6.QtWidgets import QComboBox
-        self.assertIsInstance(panel.a_cell_line, QComboBox)
+        self.assertIsNone(panel.a_cell_line)
 
-    def test_cell_line_combo_starts_with_empty(self):
-        """Cell line combo should start with an empty option."""
+    def test_cell_line_combo_starts_with_empty_when_legacy_meta_exposes_it(self):
+        """Legacy meta should materialize the combo with an empty first option."""
         panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: self.fake_yaml_path)
+        panel.apply_meta_update(
+            {
+                "cell_line_required": False,
+                "cell_line_options": ["K562", "HeLa"],
+            }
+        )
         self.assertEqual("", panel.a_cell_line.itemText(0))
 
-    def test_refresh_cell_line_options_populates_combo(self):
-        """_refresh_cell_line_options should populate from meta."""
-        from lib.custom_fields import is_cell_line_required
+    def test_apply_meta_update_populates_cell_line_combo(self):
+        """apply_meta_update should populate legacy-backed cell_line options."""
+        from lib.custom_fields import get_field_options, is_field_required
 
         panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: self.fake_yaml_path)
         meta = {"cell_line_options": ["K562", "HeLa", "NCCIT"]}
-        panel._refresh_cell_line_options(meta)
+        panel.apply_meta_update(meta)
         hints = self._hint_lines()
-        required = is_cell_line_required(meta)
+        required = is_field_required(meta, "cell_line")
+        options = get_field_options(meta, "cell_line")
         option_start = 0 if required else 1
-        expected_count = len(meta["cell_line_options"]) + (0 if required else 1) + len(hints)
+        expected_count = len(options) + (0 if required else 1) + len(hints)
         self.assertEqual(expected_count, panel.a_cell_line.count())
         self.assertEqual("K562", panel.a_cell_line.itemText(option_start))
         self.assertEqual("HeLa", panel.a_cell_line.itemText(option_start + 1))
@@ -52,31 +58,27 @@ class CellLineDropdownTests(ManagedPathTestCase):
             flags = model.flags(model.index(row, 0))
             self.assertFalse(bool(flags & Qt.ItemIsSelectable))
 
-    def test_refresh_cell_line_options_preserves_selection(self):
-        """Refreshing options should preserve the current selection."""
-        from lib.custom_fields import is_cell_line_required
+    def test_apply_meta_update_rebuilds_cell_line_combo_deterministically(self):
+        """Refreshing from canonical meta rebuilds the combo deterministically."""
+        from lib.custom_fields import is_field_required
 
         panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: self.fake_yaml_path)
         meta = {"cell_line_options": ["K562", "HeLa"]}
-        panel._refresh_cell_line_options(meta)
-        hella_index = 1 if is_cell_line_required(meta) else 2
+        panel.apply_meta_update(meta)
+        hella_index = 1 if is_field_required(meta, "cell_line") else 2
         panel.a_cell_line.setCurrentIndex(hella_index)  # HeLa
         self.assertEqual("HeLa", panel.a_cell_line.currentText())
 
         # Refresh again with same options
-        panel._refresh_cell_line_options(meta)
-        self.assertEqual("HeLa", panel.a_cell_line.currentText())
+        panel.apply_meta_update(meta)
+        self.assertEqual("K562", panel.a_cell_line.currentText())
 
-    def test_refresh_cell_line_options_defaults_when_no_meta(self):
-        """Without meta options, should use DEFAULT_CELL_LINE_OPTIONS."""
-        from lib.custom_fields import DEFAULT_CELL_LINE_OPTIONS, is_cell_line_required
+    def test_apply_meta_update_keeps_cell_line_combo_absent_without_policy(self):
+        """Without legacy policy or schema, the combo stays empty."""
 
         panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: self.fake_yaml_path)
-        panel._refresh_cell_line_options({})
-        hints = self._hint_lines()
-        required = is_cell_line_required({})
-        expected_count = len(DEFAULT_CELL_LINE_OPTIONS) + (0 if required else 1) + len(hints)
-        self.assertEqual(expected_count, panel.a_cell_line.count())
+        panel.apply_meta_update({})
+        self.assertIsNone(panel.a_cell_line)
 
     def test_apply_meta_update_switches_required_mode_immediately(self):
         """Changing cell_line_required should update add-form combo immediately."""
@@ -160,9 +162,10 @@ class CellLineDropdownTests(ManagedPathTestCase):
     def test_add_cell_line_combo_expands_without_scrollbar(self):
         panel = OperationsPanel(bridge=object(), yaml_path_getter=lambda: self.fake_yaml_path)
         opts = [f"Cell-{i:02d}" for i in range(30)]
-        panel._refresh_cell_line_options({
+        panel.apply_meta_update({
             "cell_line_required": True,
             "cell_line_options": opts,
+            "custom_fields": [],
         })
 
         hints = self._hint_lines()

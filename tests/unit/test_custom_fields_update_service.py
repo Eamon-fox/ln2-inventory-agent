@@ -49,8 +49,6 @@ class CustomFieldsUpdateServiceTests(unittest.TestCase):
             current_color_key="short_name",
             requested_display_key="",
             requested_color_key="",
-            requested_cell_line_options=None,
-            requested_cell_line_required=False,
         )
 
         self.assertEqual(1, len(draft.rename_conflicts))
@@ -90,8 +88,6 @@ class CustomFieldsUpdateServiceTests(unittest.TestCase):
             current_color_key="old_tag",
             requested_display_key="",
             requested_color_key="",
-            requested_cell_line_options=None,
-            requested_cell_line_required=False,
         )
 
         self.assertEqual("new_tag", draft.pending_meta.get("display_key"))
@@ -140,8 +136,6 @@ class CustomFieldsUpdateServiceTests(unittest.TestCase):
             current_color_key="",
             requested_display_key="",
             requested_color_key="",
-            requested_cell_line_options=None,
-            requested_cell_line_required=False,
         )
         errors, _warnings = validate_custom_fields_update_draft(draft)
         self.assertEqual([], errors)
@@ -149,4 +143,3 @@ class CustomFieldsUpdateServiceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

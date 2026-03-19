@@ -4,6 +4,11 @@ Validation functions for LN2 inventory data
 from collections import defaultdict
 from datetime import datetime
 from .config import BOX_RANGE, POSITION_RANGE, VALID_ACTIONS
+from .schema_aliases import (
+    CANONICAL_STORED_AT_KEY,
+    canonicalize_inventory_document,
+    canonicalize_record_structural_aliases,
+)
 from .takeout_parser import normalize_action
 from .position_fmt import (
     get_box_numbers,
@@ -208,7 +213,7 @@ def has_depletion_history(rec):
     return has_takeout_history(rec, normalize_action)
 
 
-def validate_record(rec, idx=None, layout=None, meta=None):
+def validate_record(rec, idx=None, layout=None, meta=None, inventory=None):
     """Validate one inventory record.
 
     Args:
@@ -222,13 +227,24 @@ def validate_record(rec, idx=None, layout=None, meta=None):
     """
     from .custom_fields import get_effective_fields
 
+    rec, alias_errors = canonicalize_record_structural_aliases(
+        rec,
+        label=_record_label(rec if isinstance(rec, dict) else {}, idx),
+    )
+    if alias_errors:
+        return alias_errors, []
+
     pos_range = get_position_range(layout) if layout else (POSITION_RANGE[0], POSITION_RANGE[1])
 
     # Structural required fields
-    structural_required = ["id", "box", "frozen_at"]
+    structural_required = ["id", "box", CANONICAL_STORED_AT_KEY]
 
     # Separate effective fields into option-bearing (relaxed) vs others (strict)
-    effective = get_effective_fields(meta, box=rec.get("box")) if isinstance(meta, dict) else []
+    effective = (
+        get_effective_fields(meta, box=rec.get("box"), inventory=inventory)
+        if isinstance(meta, dict)
+        else []
+    )
     strict_required_keys = {
         f["key"] for f in effective
         if f.get("required") and not f.get("options")
@@ -384,6 +400,10 @@ def validate_inventory(data):
     if not isinstance(data, dict):
         return ["YAML root must be an object"], []
 
+    data, alias_errors = canonicalize_inventory_document(data)
+    if alias_errors:
+        return alias_errors, []
+
     inventory = data.get("inventory")
     if not isinstance(inventory, list):
         return ["'inventory' must be a list"], []
@@ -401,7 +421,13 @@ def validate_inventory(data):
         if not isinstance(rec, dict):
             errors.append(f"Record #{idx + 1}: must be an object")
             continue
-        rec_errors, rec_warnings = validate_record(rec, idx=idx, layout=layout, meta=meta)
+        rec_errors, rec_warnings = validate_record(
+            rec,
+            idx=idx,
+            layout=layout,
+            meta=meta,
+            inventory=inventory,
+        )
         errors.extend(rec_errors)
         warnings.extend(rec_warnings)
 

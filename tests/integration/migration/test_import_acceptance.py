@@ -60,6 +60,15 @@ class ImportAcceptanceTests(unittest.TestCase):
             result = validate_candidate_yaml(str(candidate))
             self.assertTrue(result.get("ok"), result)
             self.assertEqual(0, (result.get("report") or {}).get("error_count"))
+            self.assertEqual("document", (result.get("report") or {}).get("mode"))
+
+    def test_validate_candidate_yaml_keeps_import_specific_missing_file_message(self):
+        with tempfile.TemporaryDirectory() as td:
+            candidate = Path(td) / "missing.yaml"
+            result = validate_candidate_yaml(str(candidate))
+            self.assertFalse(result.get("ok"))
+            self.assertEqual("file_not_found", result.get("error_code"))
+            self.assertIn("Candidate YAML not found", str(result.get("message") or ""))
 
     def test_validate_candidate_yaml_rejects_extra_root_keys(self):
         with tempfile.TemporaryDirectory() as td:

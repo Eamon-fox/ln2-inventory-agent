@@ -38,7 +38,7 @@ from lib.inventory_paths import (
     normalize_inventory_yaml_path as _normalize_inventory_yaml_path,
 )
 from lib.import_acceptance import validate_candidate_yaml
-from lib.import_validation_core import validate_inventory_document
+from lib.validate_service import VALIDATION_MODE_META_ONLY, validate_yaml_data, validate_yaml_file
 from lib.custom_fields_update_service import (
     build_custom_fields_update_audit_details,
     drop_removed_fields_from_inventory,
@@ -501,32 +501,73 @@ class SettingsDialog(QDialog):
         return "\n".join(lines)
 
     @staticmethod
-    def _validate_inventory_payload_strict(data):
-        """Validate an in-memory inventory payload with strict warning blocking."""
-        errors, warnings = validate_inventory_document(data)
-        if warnings:
-            errors.extend([f"Warning treated as error: {item}" for item in warnings])
-        if errors:
-            return {
-                "ok": False,
-                "message": format_validation_errors(errors, prefix="Import validation failed"),
-                "report": {
-                    "error_count": len(errors),
-                    "warning_count": len(warnings),
-                    "errors": list(errors),
-                    "warnings": list(warnings),
-                },
-            }
+    def _validation_failed_result(errors, *, warnings=None, prefix="Validation failed"):
+        normalized_errors = list(errors or [])
+        normalized_warnings = list(warnings or [])
         return {
-            "ok": True,
-            "message": "Validation passed.",
+            "ok": False,
+            "error_code": "validation_failed",
+            "message": format_validation_errors(normalized_errors, prefix=prefix),
             "report": {
-                "error_count": 0,
-                "warning_count": len(warnings),
-                "errors": [],
-                "warnings": list(warnings),
+                "error_count": len(normalized_errors),
+                "warning_count": len(normalized_warnings),
+                "errors": normalized_errors,
+                "warnings": normalized_warnings,
             },
         }
+
+    @classmethod
+    def _rewrite_validation_failure_prefix(cls, result, *, prefix):
+        normalized = dict(result or {})
+        if normalized.get("ok"):
+            return normalized
+        if str(normalized.get("error_code") or "") != "validation_failed":
+            return normalized
+        report = dict(normalized.get("report") or {})
+        errors = list(report.get("errors") or [])
+        warnings = list(report.get("warnings") or [])
+        return cls._validation_failed_result(
+            errors,
+            warnings=warnings,
+            prefix=prefix,
+        )
+
+    def _show_validation_blocked_result(self, result, *, include_dataset_hint=False):
+        normalized = dict(result or {})
+        report_text = self._render_validation_report(normalized.get("report") or {})
+        message = t(
+            "main.datasetYamlValidationBlocked",
+            message=normalized.get("message") or tr("main.importValidationFailed"),
+        )
+        if report_text:
+            message += "\n\n" + report_text
+        if include_dataset_hint:
+            message += "\n\n" + tr("main.datasetYamlValidationHint")
+        QMessageBox.warning(self, tr("main.importValidatedTitle"), message)
+
+    @classmethod
+    def _validate_inventory_payload_strict(cls, data):
+        """Validate an in-memory inventory payload with strict warning blocking."""
+        result = validate_yaml_data(
+            data,
+            mode="document",
+            fail_on_warnings=True,
+        )
+        return cls._rewrite_validation_failure_prefix(
+            result,
+            prefix="Import validation failed",
+        )
+
+    @classmethod
+    def _validate_inventory_yaml_meta_only(cls, yaml_path):
+        result = validate_yaml_file(
+            yaml_path,
+            mode=VALIDATION_MODE_META_ONLY,
+        )
+        return cls._rewrite_validation_failure_prefix(
+            result,
+            prefix="Validation failed",
+        )
 
     def accept(self):
         """Block saving settings when selected dataset YAML fails validation.
@@ -543,30 +584,14 @@ class SettingsDialog(QDialog):
             if yaml_path_changed:
                 result = validate_candidate_yaml(yaml_path, fail_on_warnings=True)
             else:
-                from lib.yaml_ops import load_yaml as _load_yaml
-                try:
-                    _data = _load_yaml(yaml_path) or {}
-                except Exception:
-                    _data = {}
-                _errors, _warnings = validate_inventory_document(
-                    _data, skip_record_validation=True,
-                )
-                result = {
-                    "ok": not _errors,
-                    "message": format_validation_errors(_errors, prefix="Validation failed") if _errors else "",
-                    "report": {"errors": _errors, "warnings": _warnings},
-                }
+                result = self._validate_inventory_yaml_meta_only(yaml_path)
             if not result.get("ok"):
-                report_text = self._render_validation_report(result.get("report") or {})
-                message = t(
-                    "main.datasetYamlValidationBlocked",
-                    message=result.get("message") or tr("main.importValidationFailed"),
+                self._show_validation_blocked_result(
+                    result,
+                    include_dataset_hint=True,
                 )
-                if report_text:
-                    message += "\n\n" + report_text
-                message += "\n\n" + tr("main.datasetYamlValidationHint")
-                QMessageBox.warning(self, tr("main.importValidatedTitle"), message)
                 return
+
         super().accept()
 
     def _notify_data_changed(self, *, yaml_path=None, meta=None):
@@ -817,11 +842,13 @@ class SettingsDialog(QDialog):
             )
             return
 
-        existing = get_effective_fields(meta)
+        inventory = data.get("inventory")
+        if not isinstance(inventory, list):
+            inventory = []
+
+        existing = get_effective_fields(meta, inventory=inventory)
         current_dk = meta.get("display_key")
         current_ck = meta.get("color_key")
-        current_clo = meta.get("cell_line_options") if "cell_line_options" in meta else None
-        current_cl_required = meta.get("cell_line_required") if "cell_line_required" in meta else None
 
         dialog_cls = self._custom_fields_dialog_cls
         if dialog_cls is None:
@@ -831,8 +858,6 @@ class SettingsDialog(QDialog):
             custom_fields=existing,
             display_key=current_dk,
             color_key=current_ck,
-            cell_line_options=current_clo,
-            cell_line_required=current_cl_required,
         )
         if dlg.exec() != QDialog.Accepted:
             return
@@ -840,11 +865,6 @@ class SettingsDialog(QDialog):
         new_fields = dlg.get_custom_fields()
         new_dk = dlg.get_display_key()
         new_ck = dlg.get_color_key()
-        new_clo = dlg.get_cell_line_options()
-        new_cl_required = dlg.get_cell_line_required()
-        inventory = data.get("inventory")
-        if not isinstance(inventory, list):
-            inventory = []
 
         draft = prepare_custom_fields_update(
             meta=meta,
@@ -855,8 +875,6 @@ class SettingsDialog(QDialog):
             current_color_key=current_ck,
             requested_display_key=new_dk,
             requested_color_key=new_ck,
-            requested_cell_line_options=new_clo,
-            requested_cell_line_required=new_cl_required,
         )
 
         if draft.rename_conflicts:
@@ -914,18 +932,12 @@ class SettingsDialog(QDialog):
 
         meta_errors, _warnings = validate_custom_fields_update_draft(draft)
         if meta_errors:
-            report_text = self._render_validation_report({
-                "errors": meta_errors,
-            })
-            message = t(
-                "main.datasetYamlValidationBlocked",
-                message=format_validation_errors(
-                    meta_errors, prefix="Validation failed",
-                ),
+            self._show_validation_blocked_result(
+                self._validation_failed_result(
+                    meta_errors,
+                    prefix="Validation failed",
+                )
             )
-            if report_text:
-                message += "\n\n" + report_text
-            QMessageBox.warning(self, tr("main.importValidatedTitle"), message)
             return
 
         pending_data = dict(data) if isinstance(data, dict) else {}

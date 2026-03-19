@@ -208,17 +208,25 @@ def _build_plan_changes(self, action_norm, item, payload, custom_fields):
 
     def _collect_sample_tokens(*sources):
         tokens = []
+        declared_keys = [
+            str((fdef or {}).get("key") or "")
+            for fdef in custom_fields
+            if isinstance(fdef, dict)
+        ]
+        declared_keys = [key for key in declared_keys if key and key != "note"]
+        fallback_keys = ["cell_line", "plasmid_name", "short_name", "plasmid_id"]
+        use_fallback_keys = not declared_keys
         for source in sources:
             if not isinstance(source, dict):
                 continue
 
-            for fdef in custom_fields:
-                key = str((fdef or {}).get("key") or "")
-                if not key or key == "note":
-                    continue
+            keys_to_scan = declared_keys or fallback_keys
+            for key in keys_to_scan:
                 text = _plan_value_text(source.get(key)).strip()
                 if text and text not in tokens:
                     tokens.append(text)
+                    if use_fallback_keys:
+                        break
                 if len(tokens) >= 3:
                     break
 

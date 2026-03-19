@@ -23,12 +23,12 @@ def _record_sort_key(record):
     )
 
 
-def build_export_columns(meta=None, *, split_location=False):
+def build_export_columns(meta=None, *, inventory=None, split_location=False):
     """Build stable column order for inventory export and table views.
 
     Columns are dynamically generated from:
     - Structural fields (id, location, frozen_at, thaw_events)
-    - Effective fields (cell_line, note, user-defined custom fields)
+    - Effective fields exposed by the active field policy
 
     Args:
         meta: Inventory metadata.
@@ -42,8 +42,8 @@ def build_export_columns(meta=None, *, split_location=False):
 
     columns = list(structural_columns)
 
-    # Add all effective fields (cell_line, note, custom fields) in order
-    for field_def in get_effective_fields(meta or {}):
+    # Add all effective fields in order.
+    for field_def in get_effective_fields(meta or {}, inventory=inventory):
         key = str(field_def.get("key") or "").strip()
         if not key:
             continue
@@ -103,7 +103,11 @@ def build_export_rows(records, meta=None, *, split_location=False):
     normalized_records = [record for record in (records or []) if isinstance(record, dict)]
     normalized_records.sort(key=_record_sort_key)
 
-    columns = build_export_columns(meta, split_location=split_location)
+    columns = build_export_columns(
+        meta,
+        inventory=normalized_records,
+        split_location=split_location,
+    )
     rows = []
     for record in normalized_records:
         rows.append(

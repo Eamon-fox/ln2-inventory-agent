@@ -5,22 +5,44 @@ from copy import deepcopy
 from ..custom_fields import get_effective_fields
 from ..field_schema import normalize_input_fields
 from ..field_schema import split_record_fields
-from ..migrate_cell_line_policy import normalize_cell_line_policy_data
+from ..legacy_field_policy import PHASE_STAGING, resolve_legacy_field_policy
+from ..migrate_cell_line_policy import normalize_field_options_policy_data
 from ..operations import find_record_by_id
+from ..schema_aliases import (
+    CANONICAL_STORED_AT_KEY,
+    LEGACY_STORED_AT_KEY,
+    canonicalize_inventory_document,
+    expand_structural_aliases_in_sections,
+    normalize_structural_alias_input_map,
+)
 from ..yaml_ops import load_yaml, write_yaml
 from .audit_details import edit_entry_details, failure_details
 from .write_common import api
 
-_EDITABLE_FIELDS = {"frozen_at"}
+_EDITABLE_FIELDS = {CANONICAL_STORED_AT_KEY, LEGACY_STORED_AT_KEY}
 
 
 def _get_editable_fields(yaml_path, box=None):
-    """Return editable field set: frozen_at + all effective fields from meta."""
+    """Return editable field set: stored_at/frozen_at + all effective fields."""
     try:
         data = load_yaml(yaml_path)
         meta = data.get("meta", {})
-        fields = get_effective_fields(meta)
-        return _EDITABLE_FIELDS | {field["key"] for field in fields}
+        inventory = data.get("inventory", [])
+        fields = get_effective_fields(
+            meta,
+            box=box,
+            inventory=inventory,
+            phase=PHASE_STAGING,
+        )
+        editable = _EDITABLE_FIELDS | {field["key"] for field in fields}
+        policy = resolve_legacy_field_policy(
+            meta,
+            inventory,
+            declared_fields=(meta or {}).get("custom_fields"),
+            phase=PHASE_STAGING,
+        )
+        editable.update(set(policy.get("staging_input_keys") or set()))
+        return editable
     except Exception:
         pass
     return _EDITABLE_FIELDS
@@ -77,7 +99,21 @@ def tool_edit_entry(
             actor_context=actor_context,
             tool_input=tool_input,
         )
-    normalized = normalize_cell_line_policy_data(data)
+    data, alias_errors = canonicalize_inventory_document(data)
+    if alias_errors:
+        return api._failure_result(
+            yaml_path=yaml_path,
+            action=action,
+            source=source,
+            tool_name=tool_name,
+            error_code="integrity_validation_failed",
+            message="Edit blocked: structural alias conflict",
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data if isinstance(data, dict) else None,
+            errors=alias_errors,
+        )
+    normalized = normalize_field_options_policy_data(data)
     if not normalized.get("ok"):
         return api._failure_result(
             yaml_path=yaml_path,
@@ -85,7 +121,7 @@ def tool_edit_entry(
             source=source,
             tool_name=tool_name,
             error_code=normalized.get("error_code", "normalize_failed"),
-            message=normalized.get("message", "Failed to normalize cell_line policy."),
+            message=normalized.get("message", "Failed to normalize field options policy."),
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=data if isinstance(data, dict) else None,
@@ -128,9 +164,30 @@ def tool_edit_entry(
         )
     alias_warnings = list(alias_result.get("warnings") or [])
     normalized_fields = dict(alias_result.get("fields") or {})
+    normalized_fields, alias_errors = normalize_structural_alias_input_map(
+        normalized_fields,
+        scope="fields",
+    )
+    if alias_errors:
+        return api._failure_result(
+            yaml_path=yaml_path,
+            action=action,
+            source=source,
+            tool_name=tool_name,
+            error_code="invalid_field_alias_conflict",
+            message=alias_errors[0],
+            actor_context=actor_context,
+            tool_input=tool_input,
+            before_data=data,
+        )
 
     # Validate editable fields against the single global schema.
-    effective = get_effective_fields(meta)
+    inventory = data.get("inventory", [])
+    effective = get_effective_fields(
+        meta,
+        inventory=inventory,
+        phase=PHASE_STAGING,
+    )
     allowed = _EDITABLE_FIELDS | {field["key"] for field in effective}
     bad_keys = set(normalized_fields.keys()) - allowed
     if bad_keys:
@@ -196,6 +253,14 @@ def tool_edit_entry(
     for key, value in normalized_fields.items():
         candidate_record[key] = value
 
+    response_sections = {
+        "before": dict(before),
+        "after": dict(normalized_fields),
+    }
+    expand_structural_aliases_in_sections(response_sections)
+    response_before = response_sections["before"]
+    response_after = response_sections["after"]
+
     validation_error = api._validate_data_or_error(candidate_data)
     if validation_error:
         return api._failure_result(
@@ -217,8 +282,8 @@ def tool_edit_entry(
             "dry_run": True,
             "preview": {
                 "record_id": record_id,
-                "before": before,
-                "after": dict(normalized_fields),
+                "before": response_before,
+                "after": response_after,
             },
         }
         if alias_warnings:
@@ -265,8 +330,8 @@ def tool_edit_entry(
         "ok": True,
         "result": {
             "record_id": record_id,
-            "before": before,
-            "after": dict(normalized_fields),
+            "before": response_before,
+            "after": response_after,
         },
         "backup_path": _backup_path,
     }

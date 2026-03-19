@@ -2,11 +2,17 @@
 
 This module is intentionally I/O free. It computes the in-memory draft for a
 custom-fields update, including rename conflict detection, selector sync, and
-legacy cell_line metadata derivation.
+write-canonical legacy field handling.
 """
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Set, Tuple
+
+from .legacy_field_policy import (
+    canonicalize_record_legacy_fields,
+    normalize_legacy_custom_field_defs,
+    normalize_legacy_field_key,
+)
 
 
 def _has_nonempty_value(value: Any) -> bool:
@@ -23,7 +29,9 @@ def _copy_inventory(inventory: Any) -> List[Any]:
         return copied
     for rec in inventory:
         if isinstance(rec, dict):
-            copied.append(dict(rec))
+            cloned = dict(rec)
+            canonicalize_record_legacy_fields(cloned)
+            copied.append(cloned)
         else:
             copied.append(rec)
     return copied
@@ -36,12 +44,15 @@ def _normalize_new_fields(raw_fields: Any) -> Tuple[List[Dict[str, Any]], Dict[s
     if not isinstance(raw_fields, list):
         return normalized, renames
 
-    for raw in raw_fields:
+    canonical_fields, _alias_changes = normalize_legacy_custom_field_defs(raw_fields)
+    for raw in canonical_fields:
         if not isinstance(raw, dict):
             continue
         item = dict(raw)
-        original_key = str(item.pop("_original_key", "") or "").strip()
-        key = str(item.get("key", "") or "").strip()
+        original_key = normalize_legacy_field_key(item.pop("_original_key", ""))
+        key = normalize_legacy_field_key(item.get("key", ""))
+        if key:
+            item["key"] = key
         if original_key and key and original_key != key:
             renames[original_key] = key
         normalized.append(item)
@@ -115,9 +126,9 @@ def _resolve_selector_key(
 ) -> str:
     selected = ""
     if isinstance(requested_value, str) and requested_value:
-        selected = requested_value
+        selected = normalize_legacy_field_key(requested_value)
     elif isinstance(current_value, str) and current_value:
-        selected = current_value
+        selected = normalize_legacy_field_key(current_value)
     selected = renames.get(selected, selected)
     if selected and selected in allowed_keys:
         return selected
@@ -151,8 +162,6 @@ def prepare_custom_fields_update(
     current_color_key: Any,
     requested_display_key: Any,
     requested_color_key: Any,
-    requested_cell_line_options: Any,
-    requested_cell_line_required: Any,
 ) -> CustomFieldsUpdateDraft:
     meta_dict = dict(meta) if isinstance(meta, dict) else {}
     pending_inventory = _copy_inventory(inventory)
@@ -164,9 +173,9 @@ def prepare_custom_fields_update(
         rename_touched_records = _apply_renames(pending_inventory, renames)
 
     old_keys = {
-        str(item.get("key") or "").strip()
+        normalize_legacy_field_key(item.get("key"))
         for item in (existing_fields or [])
-        if isinstance(item, dict) and str(item.get("key") or "").strip()
+        if isinstance(item, dict) and normalize_legacy_field_key(item.get("key"))
     }
     new_keys = {
         str(item.get("key") or "").strip()
@@ -213,17 +222,8 @@ def prepare_custom_fields_update(
     else:
         pending_meta.pop("color_key", None)
 
-    # Keep legacy cell_line_* metadata only when the schema still exposes
-    # a cell_line field (compatibility behavior).
-    if "cell_line" in new_keys:
-        if requested_cell_line_options:
-            pending_meta["cell_line_options"] = list(requested_cell_line_options)
-        else:
-            pending_meta.pop("cell_line_options", None)
-        pending_meta["cell_line_required"] = bool(requested_cell_line_required)
-    else:
-        pending_meta.pop("cell_line_options", None)
-        pending_meta.pop("cell_line_required", None)
+    pending_meta.pop("cell_line_options", None)
+    pending_meta.pop("cell_line_required", None)
 
     return CustomFieldsUpdateDraft(
         pending_meta=pending_meta,
@@ -311,4 +311,3 @@ def build_custom_fields_update_audit_details(
         "custom_field_count_before": len(draft.old_keys),
         "custom_field_count_after": len(draft.new_keys),
     }
-

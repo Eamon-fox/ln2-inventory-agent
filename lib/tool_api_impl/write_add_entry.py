@@ -7,7 +7,8 @@ from ..custom_fields import (
     get_required_field_keys,
 )
 from ..field_schema import normalize_input_fields
-from ..migrate_cell_line_policy import normalize_cell_line_policy_data
+from ..legacy_field_policy import PHASE_STAGING
+from ..migrate_cell_line_policy import normalize_field_options_policy_data
 from ..operations import check_position_conflicts, get_next_id
 from ..position_fmt import get_position_range
 from ..validators import validate_box, validate_position
@@ -16,11 +17,16 @@ from .audit_details import add_entry_details, failure_details
 from .write_common import api
 
 
-def _get_addable_field_keys(meta, box=None):
+def _get_addable_field_keys(meta, *, box=None, inventory=None):
     """Return (allowed_keys, effective_field_keys) for add_entry fields payload."""
     effective_field_keys = {
         str(field.get("key"))
-        for field in get_effective_fields(meta, box=box)
+        for field in get_effective_fields(
+            meta,
+            box=box,
+            inventory=inventory,
+            phase=PHASE_STAGING,
+        )
         if isinstance(field, dict) and field.get("key")
     }
     return effective_field_keys, effective_field_keys
@@ -137,7 +143,11 @@ def _validate_add_entry_request_data(
     fields = dict(alias_result.get("fields") or {})
     alias_warnings = list(alias_result.get("warnings") or [])
 
-    allowed_field_keys, effective_field_keys = _get_addable_field_keys(meta, box=box)
+    allowed_field_keys, effective_field_keys = _get_addable_field_keys(
+        meta,
+        box=box,
+        inventory=records,
+    )
     bad_keys = sorted(set(fields.keys()) - allowed_field_keys)
     if bad_keys:
         return None, api._failure_result(
@@ -153,8 +163,13 @@ def _validate_add_entry_request_data(
             details=failure_details(op="add_entry", forbidden=bad_keys, allowed=sorted(allowed_field_keys)),
         )
 
-    # Check required fields (including option-bearing ones like cell_line)
-    required_keys = get_required_field_keys(meta, box=box)
+    # Check required fields across all effective fields.
+    required_keys = get_required_field_keys(
+        meta,
+        box=box,
+        inventory=records,
+        phase=PHASE_STAGING,
+    )
     missing = [k for k in sorted(required_keys) if not str(fields.get(k) or "").strip()]
 
     if missing:
@@ -172,7 +187,12 @@ def _validate_add_entry_request_data(
         )
 
     # Validate option-bearing fields
-    effective = get_effective_fields(meta, box=box)
+    effective = get_effective_fields(
+        meta,
+        box=box,
+        inventory=records,
+        phase=PHASE_STAGING,
+    )
     for field_def in effective:
         fkey = field_def["key"]
         foptions = field_def.get("options")
@@ -220,7 +240,7 @@ def _build_add_entry_records(records, *, box, positions, frozen_at, fields, user
             "position": int(pos),
             "frozen_at": frozen_at,
         }
-        # Write all effective fields (cell_line, note, custom fields) uniformly
+        # Write all effective fields uniformly.
         for key in user_field_keys:
             value = fields.get(key)
             if isinstance(value, str):
@@ -376,7 +396,7 @@ def _tool_add_entry_impl(
     """Add a new frozen entry using the shared tool flow.
 
     Args:
-        fields: dict of user-configurable field values (e.g. cell_line, note, and keys in meta.custom_fields)
+        fields: dict of effective field values exposed by the active field policy
     """
     action = "add_entry"
     tool_name = "tool_add_entry"
@@ -384,6 +404,7 @@ def _tool_add_entry_impl(
     tool_input = {
         "box": box,
         "positions": list(positions) if isinstance(positions, list) else positions,
+        "stored_at": frozen_at,
         "frozen_at": frozen_at,
         "fields": fields,
         "dry_run": bool(dry_run),
@@ -397,7 +418,7 @@ def _tool_add_entry_impl(
         source=source,
         tool_name=tool_name,
         tool_input=tool_input,
-        payload={"frozen_at": frozen_at, "positions": positions},
+        payload={"stored_at": frozen_at, "positions": positions},
         dry_run=dry_run,
         execution_mode=execution_mode,
         actor_context=actor_context,
@@ -421,7 +442,7 @@ def _tool_add_entry_impl(
             tool_input=tool_input,
             details=failure_details(op="add_entry", load_error=str(exc)),
         )
-    normalized = normalize_cell_line_policy_data(data)
+    normalized = normalize_field_options_policy_data(data)
     if not normalized.get("ok"):
         return api._failure_result(
             yaml_path=yaml_path,
@@ -429,7 +450,7 @@ def _tool_add_entry_impl(
             source=source,
             tool_name=tool_name,
             error_code=normalized.get("error_code", "normalize_failed"),
-            message=normalized.get("message", "Failed to normalize cell_line policy."),
+            message=normalized.get("message", "Failed to normalize field options policy."),
             actor_context=actor_context,
             tool_input=tool_input,
             before_data=data if isinstance(data, dict) else None,

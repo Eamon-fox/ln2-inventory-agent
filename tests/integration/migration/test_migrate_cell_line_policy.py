@@ -12,11 +12,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from lib.custom_fields import DEFAULT_UNKNOWN_CELL_LINE
+from lib.legacy_field_policy import DEFAULT_UNKNOWN_CELL_LINE
 from lib.migrate_cell_line_policy import migrate_cell_line_policy
 from lib.yaml_ops import load_yaml, write_yaml
 from tests.managed_paths import ManagedPathTestCase
@@ -61,9 +63,16 @@ class TestMigrateCellLinePolicy(ManagedPathTestCase):
 
             data = load_yaml(str(yaml_path))
             meta = data["meta"]
-            self.assertTrue(meta["cell_line_required"])
-            self.assertIn(DEFAULT_UNKNOWN_CELL_LINE, meta["cell_line_options"])
-            self.assertIn("U2OS", meta["cell_line_options"])
+            self.assertNotIn("cell_line_required", meta)
+            self.assertNotIn("cell_line_options", meta)
+            cell_line_field = next(
+                field
+                for field in meta.get("custom_fields", [])
+                if str(field.get("key") or "") == "cell_line"
+            )
+            self.assertTrue(cell_line_field.get("required"))
+            self.assertIn(DEFAULT_UNKNOWN_CELL_LINE, cell_line_field.get("options") or [])
+            self.assertIn("U2OS", cell_line_field.get("options") or [])
 
             by_id = {int(rec["id"]): rec for rec in data["inventory"]}
             self.assertEqual(DEFAULT_UNKNOWN_CELL_LINE, by_id[1]["cell_line"])
@@ -117,28 +126,32 @@ class TestMigrateCellLinePolicy(ManagedPathTestCase):
     def test_migrate_aliases_parent_cell_line_and_reports_conflicts(self):
         with tempfile.TemporaryDirectory(prefix="ln2_migrate_alias_") as td:
             yaml_path = Path(td) / "inventory.yaml"
-            _seed_yaml(
-                yaml_path,
-                {
-                    "meta": {"box_layout": {"rows": 9, "cols": 9}},
-                    "inventory": [
-                        {
-                            "id": 1,
-                            "parent_cell_line": "K562",
-                            "box": 1,
-                            "position": 1,
-                            "frozen_at": "2026-02-10",
-                        },
-                        {
-                            "id": 2,
-                            "parent_cell_line": "NCCIT",
-                            "cell_line": "HeLa",
-                            "box": 1,
-                            "position": 2,
-                            "frozen_at": "2026-02-10",
-                        },
-                    ],
-                },
+            yaml_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "meta": {"box_layout": {"rows": 9, "cols": 9}},
+                        "inventory": [
+                            {
+                                "id": 1,
+                                "parent_cell_line": "K562",
+                                "box": 1,
+                                "position": 1,
+                                "frozen_at": "2026-02-10",
+                            },
+                            {
+                                "id": 2,
+                                "parent_cell_line": "NCCIT",
+                                "cell_line": "HeLa",
+                                "box": 1,
+                                "position": 2,
+                                "frozen_at": "2026-02-10",
+                            },
+                        ],
+                    },
+                    allow_unicode=True,
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
             )
 
             result = migrate_cell_line_policy(
