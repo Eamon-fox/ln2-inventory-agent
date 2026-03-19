@@ -19,6 +19,22 @@ def _item(action="takeout", record_id=1, position=5, **extra):
     return item
 
 
+def _edit_item(record_id=1, box=1, position=5, fields=None, **extra):
+    item = {
+        "action": "edit",
+        "record_id": record_id,
+        "position": position,
+        "box": box,
+        "source": "human",
+        "payload": {
+            "record_id": record_id,
+            "fields": dict(fields or {"note": "edited"}),
+        },
+    }
+    item.update(extra)
+    return item
+
+
 class TestPlanStoreBasic(unittest.TestCase):
 
     def test_empty_store(self):
@@ -58,6 +74,46 @@ class TestPlanStoreBasic(unittest.TestCase):
         store.add([_item(action="add", record_id=None, box=1, position=1)])
         store.add([_item(action="add", record_id=None, box=2, position=1)])
         self.assertEqual(2, store.count())
+
+    def test_edit_dedup_merges_fields(self):
+        store = PlanStore()
+        store.add(
+            [
+                _edit_item(
+                    record_id=435,
+                    fields={"plasmid_name": "p1", "plasmid_id": "id1"},
+                )
+            ]
+        )
+        store.add(
+            [
+                _edit_item(
+                    record_id=435,
+                    fields={"sample": "TetOn-StitchR-Clone4"},
+                )
+            ]
+        )
+
+        self.assertEqual(1, store.count())
+        self.assertEqual(
+            {
+                "plasmid_name": "p1",
+                "plasmid_id": "id1",
+                "sample": "TetOn-StitchR-Clone4",
+            },
+            store.list_items()[0]["payload"]["fields"],
+        )
+
+    def test_edit_dedup_latest_value_wins_for_same_field(self):
+        store = PlanStore()
+        store.add([_edit_item(record_id=435, fields={"sample": "old"})])
+        store.add([_edit_item(record_id=435, fields={"sample": "new", "note": ""})])
+
+        self.assertEqual(1, store.count())
+        self.assertEqual(
+            {"sample": "new", "note": ""},
+            store.list_items()[0]["payload"]["fields"],
+        )
 
     def test_add_no_dedup(self):
         store = PlanStore()

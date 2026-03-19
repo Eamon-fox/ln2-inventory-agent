@@ -244,6 +244,21 @@ def _make_add_item(box, position, cell_line="K562", short_name="add-test"):
     }
 
 
+def _make_edit_item(record_id, position, fields, box=1):
+    """Helper to create a valid edit plan item."""
+    return {
+        "action": "edit",
+        "box": box,
+        "position": position,
+        "record_id": record_id,
+        "source": "ai",
+        "payload": {
+            "record_id": record_id,
+            "fields": dict(fields),
+        },
+    }
+
+
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")

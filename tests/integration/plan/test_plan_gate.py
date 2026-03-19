@@ -73,6 +73,20 @@ def make_move_item():
     }
 
 
+def make_edit_item(record_id=7, box=1, position=5, fields=None):
+    return {
+        "action": "edit",
+        "box": box,
+        "position": position,
+        "record_id": record_id,
+        "source": "human",
+        "payload": {
+            "record_id": record_id,
+            "fields": dict(fields or {"note": "edited"}),
+        },
+    }
+
+
 class PlanGatePayloadSchemaTests(unittest.TestCase):
     def _validate_incoming(self, item):
         return validate_stage_request(
@@ -193,6 +207,58 @@ class PlanGateDedupStageTests(unittest.TestCase):
         self.assertEqual(1, len(result["accepted_items"]))
         self.assertEqual(20, result["accepted_items"][0]["to_position"])
         self.assertEqual([], result["noop_items"])
+
+    def test_same_key_edit_merges_existing_fields(self):
+        existing = [
+            make_edit_item(
+                record_id=435,
+                fields={"plasmid_name": "p1", "plasmid_id": "id1"},
+            )
+        ]
+        incoming = [
+            make_edit_item(
+                record_id=435,
+                fields={"sample": "TetOn-StitchR-Clone4"},
+            )
+        ]
+
+        result = validate_stage_request(
+            existing_items=existing,
+            incoming_items=incoming,
+            yaml_path=None,
+            bridge=None,
+            run_preflight=False,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["blocked"])
+        self.assertEqual(1, len(result["accepted_items"]))
+        self.assertEqual(
+            {
+                "plasmid_name": "p1",
+                "plasmid_id": "id1",
+                "sample": "TetOn-StitchR-Clone4",
+            },
+            result["accepted_items"][0]["payload"]["fields"],
+        )
+        self.assertEqual([], result["noop_items"])
+
+    def test_same_key_edit_with_no_effective_change_is_noop(self):
+        existing = [make_edit_item(record_id=435, fields={"sample": "new", "note": ""})]
+        incoming = [make_edit_item(record_id=435, fields={"sample": "new"})]
+
+        result = validate_stage_request(
+            existing_items=existing,
+            incoming_items=incoming,
+            yaml_path=None,
+            bridge=None,
+            run_preflight=False,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["blocked"])
+        self.assertEqual([], result["accepted_items"])
+        self.assertEqual(1, len(result["noop_items"]))
 
     def test_duplicate_restage_stays_blocked_when_current_plan_is_already_invalid(self):
         from lib.inventory_paths import ensure_inventories_root, get_inventories_root

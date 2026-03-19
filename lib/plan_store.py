@@ -38,6 +38,46 @@ class PlanStore:
             item.get("position"),
         )
 
+    @staticmethod
+    def _payload_dict(item):
+        payload = item.get("payload")
+        return payload if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _payload_fields(item):
+        fields = PlanStore._payload_dict(item).get("fields")
+        return fields if isinstance(fields, dict) else {}
+
+    @classmethod
+    def _same_key_edit_items(cls, existing, incoming):
+        return (
+            cls.item_key(existing) == cls.item_key(incoming)
+            and str(existing.get("action") or "").lower() == "edit"
+            and str(incoming.get("action") or "").lower() == "edit"
+        )
+
+    @classmethod
+    def merge_same_key_item(cls, existing, incoming):
+        """Return the effective item after dedup for a duplicate-key input.
+
+        Most plan items keep last-write-wins replacement semantics. ``edit``
+        items are special: repeated staging for the same record merges
+        ``payload.fields`` so later edits do not discard previously staged
+        fields for that record.
+        """
+        if cls._same_key_edit_items(existing, incoming):
+            merged = deepcopy(incoming)
+            existing_payload = dict(cls._payload_dict(existing))
+            incoming_payload = dict(cls._payload_dict(incoming))
+            merged_payload = dict(existing_payload)
+            merged_payload.update(incoming_payload)
+            merged_fields = dict(cls._payload_fields(existing))
+            merged_fields.update(cls._payload_fields(incoming))
+            merged_payload["fields"] = merged_fields
+            merged["payload"] = merged_payload
+            return merged
+        return incoming
+
     # ---- Read ----
 
     def list_items(self):
@@ -71,7 +111,7 @@ class PlanStore:
                     replaced = False
                     for i, existing in enumerate(self._items):
                         if self.item_key(existing) == key:
-                            self._items[i] = item
+                            self._items[i] = self.merge_same_key_item(existing, item)
                             replaced = True
                             break
                     if not replaced:

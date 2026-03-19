@@ -356,13 +356,17 @@ def _merge_stage_items(
     for item in incoming_items or []:
         key = PlanStore.item_key(item)
         current = future_by_key.get(key)
-        if current == item:
+        if current is not None:
+            candidate = PlanStore.merge_same_key_item(current, item)
+        else:
+            candidate = item
+        if current == candidate:
             noop_items.append(item)
             continue
-        if key not in future_by_key:
+        if current is None:
             future_order.append(key)
-        future_by_key[key] = item
-        final_incoming_by_key[key] = item
+        future_by_key[key] = candidate
+        final_incoming_by_key[key] = candidate
 
     future_items = [future_by_key[key] for key in future_order]
     accepted_items = [

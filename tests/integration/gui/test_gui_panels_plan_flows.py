@@ -287,6 +287,33 @@ class PlanDedupRegressionTests(_NoStagePreflightMixin, ManagedPathTestCase):
         self.assertEqual(2, len(panel.plan_items))
         self.assertEqual([1, 2], sorted(int(item.get("box")) for item in panel.plan_items))
 
+    def test_same_record_edit_restage_merges_fields(self):
+        """Same-key edits should merge payload.fields instead of dropping prior keys."""
+        panel = self._new_panel()
+        item1 = _make_edit_item(
+            record_id=435,
+            position=5,
+            fields={"plasmid_name": "p1", "plasmid_id": "id1"},
+        )
+        item2 = _make_edit_item(
+            record_id=435,
+            position=5,
+            fields={"sample": "TetOn-StitchR-Clone4"},
+        )
+
+        panel.add_plan_items([item1])
+        panel.add_plan_items([item2])
+
+        self.assertEqual(1, len(panel.plan_items))
+        self.assertEqual(
+            {
+                "plasmid_name": "p1",
+                "plasmid_id": "id1",
+                "sample": "TetOn-StitchR-Clone4",
+            },
+            panel.plan_items[0]["payload"]["fields"],
+        )
+
     def test_mass_restage_same_items_no_growth(self):
         """Simulates AI re-staging 10 items - plan should not grow past 10."""
         panel = self._new_panel()
