@@ -72,6 +72,7 @@ def _build_cell_render_signature(self, box_num, position, record):
 
     layout = getattr(self, "_current_layout", {}) or {}
     meta = getattr(self, "_current_meta", {}) or {}
+    current_records = getattr(self, "_current_records", []) or []
     marker_map = getattr(self, "_operation_markers", {}) or {}
     marker = marker_map.get((box_num, position)) if isinstance(marker_map, dict) else None
     marker_type = str((marker or {}).get("type") or "").strip().lower()
@@ -80,8 +81,8 @@ def _build_cell_render_signature(self, box_num, position, record):
     # NOTE: zoom / fonts are intentionally excluded from the signature.
     # Font size is set via QFont.setPixelSize() in _apply_zoom(), not in
     # the stylesheet, so zoom changes should NOT invalidate cell styles.
-    display_key = str(get_display_key(meta) or "")
-    color_key = str(get_color_key(meta) or "")
+    display_key = str(get_display_key(meta, inventory=current_records) or "")
+    color_key = str(get_color_key(meta, inventory=current_records) or "")
     layout_signature = (
         int(layout.get("rows", 9) or 9),
         int(layout.get("cols", 9) or 9),
@@ -392,11 +393,13 @@ def _paint_cell(self, button, box_num, position, record):
     is_selected = self.overview_selected_key == (box_num, position)
     layout = getattr(self, "_current_layout", {})
     meta = getattr(self, "_current_meta", {})
+    current_records = getattr(self, "_current_records", []) or []
     display_pos = pos_to_display(position, layout)
     fs_occ, fs_empty = getattr(self, "_current_font_sizes", (9, 8))
     if record:
-        dk = get_display_key(meta)
-        ck = get_color_key(meta)
+        inventory = current_records or [record]
+        dk = get_display_key(meta, inventory=inventory)
+        ck = get_color_key(meta, inventory=inventory)
         dk_val = str(record.get(dk) or "")
         ck_val = str(record.get(ck) or "")
         display_label = dk_val if dk_val else display_pos
@@ -411,7 +414,7 @@ def _paint_cell(self, button, box_num, position, record):
             f"{tr('overview.tooltipId')}: {record.get('id', '-')}",
             f"{tr('overview.tooltipPos')}: {box_num}:{position}",
         ]
-        field_defs = get_effective_fields(meta)
+        field_defs = get_effective_fields(meta, inventory=inventory)
         field_label_map = {
             str(fdef.get("key") or ""): str(fdef.get("label") or fdef.get("key") or "")
             for fdef in field_defs
@@ -503,3 +506,92 @@ def _clear_selected_cell(self):
         if button is not None:
             rec = self.overview_pos_map.get(key)
             self._paint_cell(button, key[0], key[1], rec)
+
+
+def _is_navigable_cell_button(button):
+    return button is not None and not button.isHidden()
+
+
+def _grid_dimensions(self):
+    shape = getattr(self, "overview_shape", None)
+    if isinstance(shape, tuple) and len(shape) >= 2:
+        try:
+            rows = max(1, int(shape[0]))
+            cols = max(1, int(shape[1]))
+            return rows, cols
+        except (TypeError, ValueError):
+            pass
+
+    layout = getattr(self, "_current_layout", {}) or {}
+    rows = max(1, int(layout.get("rows", 9) or 9))
+    cols = max(1, int(layout.get("cols", 9) or 9))
+    return rows, cols
+
+
+def _first_visible_cell_key(self):
+    for key in sorted(self.overview_cells):
+        if _is_navigable_cell_button(self.overview_cells.get(key)):
+            return key
+    return None
+
+
+def _select_grid_cell(self, box_num, position, *, focus=True, ensure_visible=True):
+    key = (int(box_num), int(position))
+    button = self.overview_cells.get(key)
+    if not _is_navigable_cell_button(button):
+        return False
+
+    self._set_selected_cell(key[0], key[1])
+    self.on_cell_hovered(key[0], key[1], force=True)
+
+    if focus:
+        try:
+            button.setFocus(Qt.OtherFocusReason)
+        except Exception:
+            pass
+
+    if ensure_visible:
+        scroll = getattr(self, "ov_scroll", None)
+        if scroll is not None:
+            x_margin = max(8, int(button.width() * 0.5))
+            y_margin = max(8, int(button.height() * 0.5))
+            try:
+                scroll.ensureWidgetVisible(button, x_margin, y_margin)
+            except Exception:
+                pass
+
+    return True
+
+
+def _resolve_grid_navigation_target(self, direction):
+    step_map = {
+        "left": (0, -1),
+        "right": (0, 1),
+        "up": (-1, 0),
+        "down": (1, 0),
+    }
+    step = step_map.get(str(direction or "").strip().lower())
+    if step is None:
+        return None
+
+    current_key = getattr(self, "overview_selected_key", None)
+    current_button = self.overview_cells.get(current_key) if current_key is not None else None
+    if not _is_navigable_cell_button(current_button):
+        return _first_visible_cell_key(self)
+
+    box_num, position = current_key
+    rows, cols = _grid_dimensions(self)
+    row = (int(position) - 1) // cols
+    col = (int(position) - 1) % cols
+    dr, dc = step
+    row += dr
+    col += dc
+
+    while 0 <= row < rows and 0 <= col < cols:
+        next_key = (box_num, row * cols + col + 1)
+        if _is_navigable_cell_button(self.overview_cells.get(next_key)):
+            return next_key
+        row += dr
+        col += dc
+
+    return current_key

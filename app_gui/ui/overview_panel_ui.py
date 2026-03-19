@@ -245,9 +245,12 @@ def setup_ui(self):
     # Grid Area
     self.ov_scroll = QScrollArea()
     self.ov_scroll.setWidgetResizable(True)
+    self.ov_scroll.setFocusPolicy(Qt.StrongFocus)
     self.ov_scroll.installEventFilter(self)
     self.ov_scroll.viewport().installEventFilter(self)
     self.ov_boxes_widget = QWidget()
+    self.ov_boxes_widget.setFocusPolicy(Qt.StrongFocus)
+    self.ov_boxes_widget.installEventFilter(self)
     self.ov_boxes_layout = QGridLayout(self.ov_boxes_widget)
     self.ov_boxes_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
     self.ov_boxes_layout.setContentsMargins(0, 0, 0, 0)

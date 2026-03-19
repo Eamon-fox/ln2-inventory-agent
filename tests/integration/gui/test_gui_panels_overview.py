@@ -553,3 +553,174 @@ class GuiPanelsOverviewTests(GuiPanelsBaseCase):
         self.assertEqual("box.tag.cleared", events[0].get("code"))
         self.assertEqual("error", events[0].get("level"))
         self.assertEqual("write_failed", (events[0].get("data") or {}).get("error_code"))
+
+    def test_overview_arrow_keys_move_selection_within_box_and_stop_at_edges(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=2, cols=2, box_numbers=[1])
+        panel.show()
+        try:
+            self._app.processEvents()
+            for position in range(1, 5):
+                record = {
+                    "id": position,
+                    "cell_line": f"cell-{position}",
+                    "short_name": f"clone-{position}",
+                    "box": 1,
+                    "position": position,
+                    "frozen_at": "2026-02-10",
+                }
+                panel.overview_pos_map[(1, position)] = record
+                panel._paint_cell(panel.overview_cells[(1, position)], 1, position, record)
+
+            self.assertTrue(panel._select_grid_cell(1, 1))
+
+            QTest.keyClick(panel.overview_cells[(1, 1)], Qt.Key_Right)
+            self._app.processEvents()
+            self.assertEqual((1, 2), panel.overview_selected_key)
+            self.assertEqual((1, 2), panel.overview_hover_key)
+
+            QTest.keyClick(panel.overview_cells[(1, 2)], Qt.Key_Down)
+            self._app.processEvents()
+            self.assertEqual((1, 4), panel.overview_selected_key)
+            self.assertEqual((1, 4), panel.overview_hover_key)
+
+            QTest.keyClick(panel.overview_cells[(1, 4)], Qt.Key_Right)
+            self._app.processEvents()
+            self.assertEqual((1, 4), panel.overview_selected_key)
+
+            QTest.keyClick(panel.overview_cells[(1, 4)], Qt.Key_Down)
+            self._app.processEvents()
+            self.assertEqual((1, 4), panel.overview_selected_key)
+        finally:
+            panel.hide()
+
+    def test_overview_arrow_keys_select_first_visible_cell_when_none_selected(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=3, box_numbers=[1])
+        panel.show()
+        try:
+            self._app.processEvents()
+            panel.overview_cells[(1, 1)].hide()
+
+            QTest.keyClick(panel.ov_scroll.viewport(), Qt.Key_Right)
+            self._app.processEvents()
+
+            self.assertEqual((1, 2), panel.overview_selected_key)
+            self.assertEqual((1, 2), panel.overview_hover_key)
+        finally:
+            panel.hide()
+
+    def test_overview_arrow_keys_skip_hidden_cells(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=3, box_numbers=[1])
+        panel.show()
+        try:
+            self._app.processEvents()
+            panel.overview_cells[(1, 2)].hide()
+            self.assertTrue(panel._select_grid_cell(1, 1))
+
+            QTest.keyClick(panel.overview_cells[(1, 1)], Qt.Key_Right)
+            self._app.processEvents()
+
+            self.assertEqual((1, 3), panel.overview_selected_key)
+            self.assertEqual((1, 3), panel.overview_hover_key)
+        finally:
+            panel.hide()
+
+    def test_overview_arrow_keys_prefill_operation_panel_for_target_cell(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=2, box_numbers=[1])
+        panel.show()
+        try:
+            self._app.processEvents()
+            record = {
+                "id": 11,
+                "cell_line": "K562",
+                "short_name": "clone-11",
+                "box": 1,
+                "position": 1,
+                "frozen_at": "2026-02-10",
+            }
+            panel.overview_pos_map = {(1, 1): record}
+            panel._paint_cell(panel.overview_cells[(1, 1)], 1, 1, record)
+            panel._paint_cell(panel.overview_cells[(1, 2)], 1, 2, record=None)
+
+            emitted_add = []
+            emitted_add_bg = []
+            emitted_takeout = []
+            emitted_takeout_bg = []
+            panel.request_add_prefill.connect(lambda payload: emitted_add.append(payload))
+            panel.request_add_prefill_background.connect(lambda payload: emitted_add_bg.append(payload))
+            panel.request_prefill.connect(lambda payload: emitted_takeout.append(payload))
+            panel.request_prefill_background.connect(lambda payload: emitted_takeout_bg.append(payload))
+
+            self.assertTrue(panel._select_grid_cell(1, 1))
+            QTest.keyClick(panel.overview_cells[(1, 1)], Qt.Key_Right)
+            self._app.processEvents()
+
+            self.assertEqual((1, 2), panel.overview_selected_key)
+            self.assertEqual([], emitted_add)
+            self.assertEqual([{"box": 1, "position": 2}], emitted_add_bg)
+            self.assertEqual([], emitted_takeout)
+            self.assertEqual([], emitted_takeout_bg)
+
+            QTest.keyClick(panel.overview_cells[(1, 2)], Qt.Key_Left)
+            self._app.processEvents()
+
+            self.assertEqual((1, 1), panel.overview_selected_key)
+            self.assertEqual(
+                [{"box": 1, "position": 1, "record_id": 11}],
+                emitted_takeout_bg,
+            )
+
+            QTest.keyClick(panel.overview_cells[(1, 1)], Qt.Key_Left)
+            self._app.processEvents()
+
+            self.assertEqual((1, 1), panel.overview_selected_key)
+            self.assertEqual(
+                [{"box": 1, "position": 1, "record_id": 11}],
+                emitted_takeout_bg,
+            )
+        finally:
+            panel.hide()
+
+    def test_overview_arrow_keys_do_not_override_filter_keyword_input(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=2, box_numbers=[1])
+        panel.show()
+        try:
+            self._app.processEvents()
+            self.assertTrue(panel._select_grid_cell(1, 1))
+            panel.ov_filter_keyword.setFocus()
+            panel.ov_filter_keyword.setText("abc")
+            panel.ov_filter_keyword.setCursorPosition(3)
+            self._app.processEvents()
+
+            QTest.keyClick(panel.ov_filter_keyword, Qt.Key_Left)
+            self._app.processEvents()
+
+            self.assertEqual(2, panel.ov_filter_keyword.cursorPosition())
+            self.assertEqual((1, 1), panel.overview_selected_key)
+        finally:
+            panel.hide()
+
+    def test_overview_arrow_keys_do_not_run_grid_navigation_in_table_view(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=2, box_numbers=[1])
+        panel.show()
+        try:
+            self._app.processEvents()
+            self.assertTrue(panel._select_grid_cell(1, 1))
+            panel.ov_table.setColumnCount(1)
+            panel.ov_table.setRowCount(1)
+            panel.ov_table.setItem(0, 0, self._make_table_item("row-1"))
+            panel._on_view_mode_changed("table")
+            panel.ov_table.setFocus()
+            self._app.processEvents()
+
+            QTest.keyClick(panel.ov_table, Qt.Key_Right)
+            self._app.processEvents()
+
+            self.assertEqual((1, 1), panel.overview_selected_key)
+        finally:
+            panel.hide()

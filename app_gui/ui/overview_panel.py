@@ -101,6 +101,7 @@ class OverviewPanel(QWidget):
     _on_filter_keyword_changed = _ov_runtime._on_filter_keyword_changed
     _schedule_apply_filters = _ov_runtime._schedule_apply_filters
     _on_filter_debounce_timeout = _ov_runtime._on_filter_debounce_timeout
+    _handle_grid_runtime_event = _ov_runtime._handle_grid_runtime_event
 
 
     _set_table_columns = _ov_table._set_table_columns
@@ -120,6 +121,8 @@ class OverviewPanel(QWidget):
     _update_cell_label_visibility = _ov_grid._update_cell_label_visibility
     _set_selected_cell = _ov_grid._set_selected_cell
     _clear_selected_cell = _ov_grid._clear_selected_cell
+    _select_grid_cell = _ov_grid._select_grid_cell
+    _resolve_grid_navigation_target = _ov_grid._resolve_grid_navigation_target
     _set_plan_store_ref = _ov_grid._set_plan_store_ref
     _set_plan_markers_from_items = _ov_grid._set_plan_markers_from_items
 
@@ -163,6 +166,8 @@ class OverviewPanel(QWidget):
     _resolve_preview_values = _ov_interactions._resolve_preview_values
     _emit_hover_stats = _ov_interactions._emit_hover_stats
     _show_detail = _ov_interactions._show_detail
+    _prefill_grid_cell_to_operations_panel = _ov_interactions._prefill_grid_cell_to_operations_panel
+    _navigate_grid_selection = _ov_interactions._navigate_grid_selection
     on_cell_context_menu = _ov_interactions.on_cell_context_menu
     on_box_context_menu = _ov_interactions.on_box_context_menu
     _create_takeout_plan_item = _ov_interactions._create_takeout_plan_item

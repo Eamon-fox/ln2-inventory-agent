@@ -9,16 +9,31 @@ def on_cell_clicked(self, box_num, position):
 
 
 def on_cell_double_clicked(self, box_num, position):
-    record = self.overview_pos_map.get((box_num, position))
-    self._set_selected_cell(box_num, position)
-    self.on_cell_hovered(box_num, position, force=True)
+    self._select_grid_cell(box_num, position)
+    self._prefill_grid_cell_to_operations_panel(box_num, position)
 
-    # Keep double click low-friction: prefill common forms directly.
+
+def _prefill_grid_cell_to_operations_panel(self, box_num, position):
+    record = self.overview_pos_map.get((box_num, position))
     if record:
         rec_id = int(record.get("id"))
         self._emit_takeout_prefill_background(box_num, position, rec_id)
-    else:
-        self._emit_add_prefill_background(box_num, position)
+        return
+    self._emit_add_prefill_background(box_num, position)
+
+
+def _navigate_grid_selection(self, direction):
+    previous_key = getattr(self, "overview_selected_key", None)
+    target_key = self._resolve_grid_navigation_target(direction)
+    if target_key is None:
+        return False
+
+    if not self._select_grid_cell(target_key[0], target_key[1]):
+        return False
+
+    if target_key != previous_key:
+        self._prefill_grid_cell_to_operations_panel(target_key[0], target_key[1])
+    return True
 
 
 def on_cell_hovered(self, box_num, position, force=False):
@@ -26,7 +41,7 @@ def on_cell_hovered(self, box_num, position, force=False):
     if not force and self.overview_hover_key == hover_key:
         return
     button = self.overview_cells.get((box_num, position))
-    if button is not None and not button.isVisible():
+    if button is not None and button.isHidden():
         return
     record = self.overview_pos_map.get((box_num, position))
     self.overview_hover_key = hover_key
@@ -50,7 +65,11 @@ def _resolve_preview_values(self, record):
     from lib.custom_fields import get_display_key, get_color_key
 
     meta = getattr(self, "_current_meta", {})
-    keys = [get_display_key(meta), get_color_key(meta)]
+    current_records = getattr(self, "_current_records", []) or []
+    keys = [
+        get_display_key(meta, inventory=current_records or [record]),
+        get_color_key(meta, inventory=current_records or [record]),
+    ]
     values = []
     for key in keys:
         if not key:
@@ -73,7 +92,8 @@ def _emit_hover_stats(self, box_num, position, record):
     from lib.custom_fields import get_display_key
 
     meta = getattr(self, "_current_meta", {})
-    dk = get_display_key(meta)
+    current_records = getattr(self, "_current_records", []) or []
+    dk = get_display_key(meta, inventory=current_records or [record])
     rec_id = str(record.get("id", "-"))
     dk_val = str(record.get(dk, "-"))
     frozen_at = str(record.get("frozen_at", "-"))
@@ -112,8 +132,7 @@ def on_cell_context_menu(self, box_num, position, global_pos):
     from app_gui.ui import overview_panel as _ov_panel
 
     record = self.overview_pos_map.get((box_num, position))
-    self._set_selected_cell(box_num, position)
-    self.on_cell_hovered(box_num, position, force=True)
+    self._select_grid_cell(box_num, position)
 
     # Use overview_panel.QMenu to keep monkeypatch target stable in tests.
     menu = _ov_panel.QMenu(self)

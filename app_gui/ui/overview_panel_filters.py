@@ -24,7 +24,7 @@ def _refresh_filter_options(self, records, box_numbers):
     self.ov_filter_box.blockSignals(False)
 
     meta = getattr(self, "_current_meta", {})
-    ck = get_color_key(meta)
+    ck = get_color_key(meta, inventory=records)
     values = sorted({str(rec.get(ck)) for rec in records if rec.get(ck)})
     self.ov_filter_cell.blockSignals(True)
     self.ov_filter_cell.clear()
@@ -107,7 +107,7 @@ def _apply_filters_grid(self, keyword, selected_box, selected_cell, include_empt
 
     if self.overview_selected_key:
         selected_button = self.overview_cells.get(self.overview_selected_key)
-        if selected_button and not selected_button.isVisible():
+        if selected_button and selected_button.isHidden():
             self._clear_selected_cell()
             self._reset_detail()
 
