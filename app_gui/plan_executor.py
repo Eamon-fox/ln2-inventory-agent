@@ -10,8 +10,8 @@ from contextlib import suppress
 from datetime import date
 from typing import Callable, Dict, List, Optional, Tuple
 
-from lib.position_fmt import pos_to_display
-from lib.tool_api_write_validation import resolve_request_backup_path
+from lib import tool_api_write_adapter as _write_adapter
+from lib.schema_aliases import coalesce_stored_at_value
 from lib.yaml_ops import load_yaml, write_yaml
 
 
@@ -389,6 +389,31 @@ def _run_mode_call(
     return run_execute()
 
 
+def _execute_bridge_write(
+    write_fn: Callable[..., Dict[str, object]],
+    *,
+    yaml_path: str,
+    request_backup_path: Optional[str] = None,
+    execution_mode: Optional[str] = None,
+    **payload: object,
+) -> Dict[str, object]:
+    effective_execution_mode = str(execution_mode or "execute")
+    call_kwargs = dict(payload)
+    call_kwargs["execution_mode"] = effective_execution_mode
+    if request_backup_path is not None:
+        call_kwargs["request_backup_path"] = request_backup_path
+    # Always pass yaml_path by keyword so registry-generated bridge methods and
+    # test doubles exercise the same call shape.
+    response = write_fn(
+        yaml_path=yaml_path,
+        **call_kwargs,
+    )
+    return _write_adapter.attach_request_backup(
+        response,
+        request_backup_path,
+    )
+
+
 def _run_execute_rollback(bridge: object, rollback_kwargs: Dict[str, object]) -> Dict[str, object]:
     rollback_fn = getattr(bridge, "rollback", None)
     if not callable(rollback_fn):
@@ -398,7 +423,10 @@ def _run_execute_rollback(bridge: object, rollback_kwargs: Dict[str, object]) ->
             "message": "Bridge does not provide rollback().",
         }
     try:
-        return rollback_fn(**rollback_kwargs)
+        return _execute_bridge_write(
+            rollback_fn,
+            **rollback_kwargs,
+        )
     except TypeError:
         # Backward-compatible path for test doubles that do not accept
         # request_backup_path yet.
@@ -451,17 +479,6 @@ def _build_execute_backup_blocked_result(
         "backup_path": None,
         "remaining_items": list(items),
     }
-
-
-def _attach_request_backup(response: Dict[str, object], request_backup_path: Optional[str]) -> Dict[str, object]:
-    if not request_backup_path or not isinstance(response, dict):
-        return response
-    if not response.get("ok"):
-        return response
-    patched = dict(response)
-    patched["backup_path"] = request_backup_path
-    return patched
-
 
 def _allocate_preflight_yaml_path(yaml_path: str) -> Tuple[str, str]:
     """Return managed temp dataset dir + inventory.yaml path for preflight writes."""
@@ -608,7 +625,7 @@ def run_plan(
 
     if mode == "execute":
         try:
-            request_backup_path = resolve_request_backup_path(
+            _, request_backup_path = _write_adapter.prepare_write_tool_kwargs(
                 yaml_path=yaml_path,
                 execution_mode="execute",
                 dry_run=False,
@@ -664,8 +681,6 @@ def run_plan(
             ),
             run_execute=lambda: _run_execute_rollback(bridge, rollback_kwargs),
         )
-        if mode == "execute":
-            response = _attach_request_backup(response, request_backup_path)
 
         last_backup = _append_and_consume_item_report(
             reports,
@@ -707,17 +722,14 @@ def run_plan(
                 record_id=payload.get("record_id"),
                 fields=payload.get("fields", {}),
             ),
-            run_execute=lambda: bridge.edit_entry(
+            run_execute=lambda: _execute_bridge_write(
+                bridge.edit_entry,
                 yaml_path=yaml_path,
                 record_id=payload.get("record_id"),
                 fields=payload.get("fields", {}),
-                execution_mode="execute",
-                auto_backup=False,
                 request_backup_path=request_backup_path,
             ),
         )
-        if mode == "execute":
-            response = _attach_request_backup(response, request_backup_path)
 
         last_backup = _append_and_consume_item_report(
             reports,
@@ -798,30 +810,12 @@ def _run_preflight_tool(
     tool_name: str,
     **payload: object,
 ) -> Dict[str, object]:
-    """Invoke lib.tool_api in preflight using full execute-mode validation.
-
-    Preflight always runs against a temporary YAML copy, so execute-mode writes are
-    safe and let us reuse the same validation path as real execution.
-    """
-    try:
-        from lib import tool_api
-    except ImportError:
-        return {"ok": False, "error_code": "import_error", "message": "Failed to import tool_api"}
-
-    tool_fn = getattr(tool_api, tool_name, None)
-    build_actor_context = getattr(tool_api, "build_actor_context", None)
-    if not callable(tool_fn) or not callable(build_actor_context):
-        return {"ok": False, "error_code": "import_error", "message": f"Failed to resolve {tool_name}"}
-
-    actor_context = getattr(bridge, "_ctx", lambda: None)() or build_actor_context()
-
-    return tool_fn(
+    """Invoke a write tool in execute-shaped preflight mode."""
+    return _write_adapter.call_preflight_tool(
+        tool_name.removeprefix("tool_"),
         yaml_path=yaml_path,
-        dry_run=False,
-        execution_mode="execute",
-        actor_context=actor_context,
+        actor_context=getattr(bridge, "_ctx", lambda: None)() or None,
         source="plan_executor.preflight",
-        auto_backup=False,
         **payload,
     )
 
@@ -836,29 +830,11 @@ def _load_box_layout(yaml_path: str) -> Dict[str, object]:
 
 
 def _to_tool_position(value: object, layout: Dict[str, object], *, field_name: str) -> str:
-    """Convert one internal plan position into tool-facing display value."""
-    if value in (None, "") or isinstance(value, bool):
-        raise ValueError(f"{field_name} is required")
-    try:
-        return pos_to_display(int(value), layout)
-    except Exception as exc:
-        raise ValueError(f"{field_name} is invalid: {value}") from exc
+    return _write_adapter.to_tool_position(value, layout, field_name=field_name)
 
 
 def _to_tool_positions(values: object, layout: Dict[str, object], *, field_name: str) -> List[str]:
-    """Convert one-or-many internal plan positions into tool-facing display values."""
-    if values in (None, ""):
-        raise ValueError(f"{field_name} is required")
-    if isinstance(values, bool):
-        raise ValueError(f"{field_name} is invalid: {values}")
-    if isinstance(values, str):
-        return [_to_tool_position(values, layout, field_name=field_name)]
-    if isinstance(values, (list, tuple)):
-        converted: List[str] = []
-        for idx, value in enumerate(values):
-            converted.append(_to_tool_position(value, layout, field_name=f"{field_name}[{idx}]"))
-        return converted
-    return [_to_tool_position(values, layout, field_name=field_name)]
+    return _write_adapter.to_tool_positions(values, layout, field_name=field_name)
 
 
 def _build_add_tool_payload(payload: Dict[str, object], layout: Dict[str, object]) -> Dict[str, object]:
@@ -878,7 +854,10 @@ def _preflight_add_entry(bridge: object, yaml_path: str, payload: Dict[str, obje
         tool_name="tool_add_entry",
         box=payload.get("box"),
         positions=payload.get("positions"),
-        frozen_at=payload.get("frozen_at"),
+        stored_at=coalesce_stored_at_value(
+            stored_at=payload.get("stored_at"),
+            frozen_at=payload.get("frozen_at"),
+        ),
         fields=payload.get("fields"),
     )
 
@@ -963,14 +942,12 @@ def _run_takeout(
 ) -> Dict[str, object]:
     if mode == "preflight":
         return _preflight_takeout(bridge, yaml_path, batch_payload)
-    response = bridge.takeout(
+    return _execute_bridge_write(
+        bridge.takeout,
         yaml_path=yaml_path,
-        execution_mode="execute",
-        auto_backup=False,
-        request_backup_path=request_backup_path,
         **batch_payload,
+        request_backup_path=request_backup_path,
     )
-    return _attach_request_backup(response, request_backup_path)
 
 
 def _run_move(
@@ -982,14 +959,12 @@ def _run_move(
 ) -> Dict[str, object]:
     if mode == "preflight":
         return _preflight_move(bridge, yaml_path, batch_payload)
-    response = bridge.move(
+    return _execute_bridge_write(
+        bridge.move,
         yaml_path=yaml_path,
-        execution_mode="execute",
-        auto_backup=False,
-        request_backup_path=request_backup_path,
         **batch_payload,
+        request_backup_path=request_backup_path,
     )
-    return _attach_request_backup(response, request_backup_path)
 
 
 def _execute_move(
@@ -1189,31 +1164,24 @@ def _execute_batch_add(
         batch_entries.append({
             "box": tool_payload.get("box"),
             "positions": tool_payload.get("positions"),
-            "frozen_at": tool_payload.get("frozen_at"),
+            "stored_at": coalesce_stored_at_value(
+                stored_at=tool_payload.get("stored_at"),
+                frozen_at=tool_payload.get("frozen_at"),
+            ),
             "fields": tool_payload.get("fields"),
         })
         valid_items.append(item)
 
-    try:
-        from lib.tool_api import tool_batch_add_entries
-    except ImportError:
-        return False, [
-            _make_error_item(item, "import_error", "Failed to import batch add API")
-            for item in items
-        ]
-
     actor_context = getattr(bridge, "_ctx", lambda: None)() or {}
-    response = tool_batch_add_entries(
+    response = _write_adapter.batch_add_entries(
         yaml_path=yaml_path,
         entries=batch_entries,
         execution_mode="execute",
         actor_context=actor_context,
         source="plan_executor.execute",
-        auto_backup=False,
         request_backup_path=request_backup_path,
+        backup_event_source="plan_executor.execute",
     )
-    if request_backup_path and isinstance(response, dict) and response.get("ok"):
-        response = _attach_request_backup(response, request_backup_path)
 
     # Build per-item reports
     reports: List[Dict[str, object]] = []

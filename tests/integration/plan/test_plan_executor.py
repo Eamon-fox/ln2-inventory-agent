@@ -19,7 +19,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app_gui.plan_executor import preflight_plan, run_plan
-from lib.yaml_ops import write_yaml
+from app_gui.tool_bridge import GuiToolBridge
+from lib.yaml_ops import load_yaml, write_yaml
 from tests.managed_paths import ManagedPathTestCase
 
 
@@ -446,6 +447,38 @@ class RunPlanExecuteTests(ManagedPathTestCase):
             self.assertEqual("A2", kwargs["entries"][1]["from"]["position"])
             self.assertEqual("A4", kwargs["entries"][1]["to"]["position"])
 
+    def test_run_plan_move_batch_passes_execute_bridge_kwargs(self):
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([
+                    make_record(1, box=1, position=1),
+                    make_record(2, box=1, position=2),
+                ]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            bridge.move.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
+
+            result = run_plan(
+                str(yaml_path),
+                [
+                    make_move_item(record_id=1, position=1, to_position=3),
+                    make_move_item(record_id=2, position=2, to_position=4),
+                ],
+                bridge=bridge,
+                mode="execute",
+            )
+
+            self.assertTrue(result["ok"])
+            kwargs = bridge.move.call_args.kwargs
+            self.assertEqual("execute", kwargs.get("execution_mode"))
+            self.assertTrue(str(kwargs.get("request_backup_path") or "").strip())
+            self.assertNotIn("auto_backup", kwargs)
+            self.assertNotIn("dry_run", kwargs)
+
     def test_run_plan_move_batch_fails_marks_all_blocked(self):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
@@ -532,6 +565,39 @@ class RunPlanExecuteTests(ManagedPathTestCase):
 
             self.assertTrue(result["ok"])
             self.assertEqual(2, result["stats"]["ok"])
+
+    def test_run_plan_takeout_batch_passes_execute_bridge_kwargs(self):
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([
+                    make_record(1, box=1, position=1),
+                    make_record(2, box=1, position=2),
+                ]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bridge = MagicMock()
+            bridge.takeout.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
+
+            result = run_plan(
+                str(yaml_path),
+                [
+                    make_takeout_item(record_id=1, position=1),
+                    make_takeout_item(record_id=2, position=2),
+                ],
+                bridge=bridge,
+                mode="execute",
+            )
+
+            self.assertTrue(result["ok"])
+            kwargs = bridge.takeout.call_args.kwargs
+            self.assertEqual(str(yaml_path), kwargs.get("yaml_path"))
+            self.assertEqual("execute", kwargs.get("execution_mode"))
+            self.assertTrue(str(kwargs.get("request_backup_path") or "").strip())
+            self.assertNotIn("auto_backup", kwargs)
+            self.assertNotIn("dry_run", kwargs)
 
     def test_run_plan_takeout_batch_converts_positions_for_alphanumeric_layout(self):
         with tempfile.TemporaryDirectory() as td:
@@ -781,8 +847,13 @@ class EditPlanTests(ManagedPathTestCase):
             self.assertTrue(result["ok"])
             self.assertEqual(1, result["stats"]["ok"])
             bridge.edit_entry.assert_called_once()
-            call_kwargs = bridge.edit_entry.call_args
-            self.assertEqual(1, call_kwargs.kwargs.get("record_id") or call_kwargs[1].get("record_id"))
+            kwargs = bridge.edit_entry.call_args.kwargs
+            self.assertEqual(str(yaml_path), kwargs.get("yaml_path"))
+            self.assertEqual(1, kwargs.get("record_id"))
+            self.assertEqual("execute", kwargs.get("execution_mode"))
+            self.assertTrue(str(kwargs.get("request_backup_path") or "").strip())
+            self.assertNotIn("auto_backup", kwargs)
+            self.assertNotIn("dry_run", kwargs)
 
     def test_execute_edit_failure_marks_blocked(self):
         with tempfile.TemporaryDirectory() as td:
@@ -890,6 +961,107 @@ class EditPreflightExecuteConsistencyTests(ManagedPathTestCase):
 
             self.assertEqual(preflight_result["ok"], execute_result["ok"])
             self.assertEqual(preflight_result["blocked"], execute_result["blocked"])
+
+
+class RunPlanExecuteRealGuiBridgeTests(ManagedPathTestCase):
+    def _seed_managed_yaml(self, dataset_name, records):
+        yaml_path = Path(self.ensure_dataset_yaml(dataset_name))
+        write_yaml(
+            make_data(records),
+            path=str(yaml_path),
+            audit_meta={"action": "seed", "source": "tests"},
+        )
+        return yaml_path
+
+    def test_execute_edit_succeeds_with_real_gui_bridge(self):
+        yaml_path = self._seed_managed_yaml(
+            "real-gui-bridge-edit",
+            [make_record(1, box=1, position=5, note="old note")],
+        )
+        bridge = GuiToolBridge(session_id="real-edit")
+
+        result = run_plan(
+            str(yaml_path),
+            [make_edit_item(record_id=1, box=1, position=5, fields={"note": "new note"})],
+            bridge=bridge,
+            mode="execute",
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(1, result["stats"]["ok"])
+        current = load_yaml(str(yaml_path))
+        self.assertEqual("new note", current["inventory"][0]["note"])
+
+    def test_execute_move_succeeds_with_real_gui_bridge(self):
+        yaml_path = self._seed_managed_yaml(
+            "real-gui-bridge-move",
+            [make_record(1, box=1, position=5)],
+        )
+        bridge = GuiToolBridge(session_id="real-move")
+
+        result = run_plan(
+            str(yaml_path),
+            [make_move_item(record_id=1, box=1, position=5, to_position=6)],
+            bridge=bridge,
+            mode="execute",
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(1, result["stats"]["ok"])
+        current = load_yaml(str(yaml_path))
+        self.assertEqual(6, current["inventory"][0]["position"])
+
+    def test_execute_takeout_succeeds_with_real_gui_bridge(self):
+        yaml_path = self._seed_managed_yaml(
+            "real-gui-bridge-takeout",
+            [make_record(1, box=1, position=5)],
+        )
+        bridge = GuiToolBridge(session_id="real-takeout")
+
+        result = run_plan(
+            str(yaml_path),
+            [make_takeout_item(record_id=1, box=1, position=5)],
+            bridge=bridge,
+            mode="execute",
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(1, result["stats"]["ok"])
+        current = load_yaml(str(yaml_path))
+        self.assertIsNone(current["inventory"][0]["position"])
+
+    def test_execute_rollback_succeeds_with_real_gui_bridge(self):
+        from lib import tool_api_write_adapter as _write_adapter
+
+        yaml_path = self._seed_managed_yaml(
+            "real-gui-bridge-rollback",
+            [make_record(1, box=1, position=5, note="before edit")],
+        )
+        edit_result = _write_adapter.edit_entry(
+            yaml_path=str(yaml_path),
+            record_id=1,
+            fields={"note": "after edit"},
+            execution_mode="execute",
+            source="tests",
+            backup_event_source="tests",
+        )
+        self.assertTrue(edit_result["ok"])
+        backup_path = str(edit_result.get("backup_path") or "").strip()
+        self.assertTrue(backup_path)
+
+        bridge = GuiToolBridge(session_id="real-rollback")
+        result = run_plan(
+            str(yaml_path),
+            [make_rollback_item(backup_path)],
+            bridge=bridge,
+            mode="execute",
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(1, result["stats"]["ok"])
+        response = (result["items"][0] or {}).get("response") or {}
+        restored_from = ((response.get("result") or {}).get("restored_from") or "").strip()
+        self.assertEqual(backup_path, restored_from)
 
 
 class MultiAddPreflightTests(ManagedPathTestCase):

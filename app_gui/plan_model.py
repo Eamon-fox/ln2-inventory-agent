@@ -420,7 +420,7 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
             changes = "-"
 
         action_display = (action_norm.upper() if action_norm else _text(item.get("action"))).strip() or "-"
-        date_display = _safe_cell(payload.get("date_str") or payload.get("frozen_at"))
+        date_display = _safe_cell(payload.get("date_str") or payload.get("stored_at") or payload.get("frozen_at"))
         return {
             "action_norm": action_norm,
             "action": action_display,

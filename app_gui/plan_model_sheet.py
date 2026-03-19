@@ -150,7 +150,15 @@ def _extract_sample_info(item):
     fallback_label = str(item.get("label") or "").strip()
     return {
         "label": " / ".join(user_vals[:2]) if user_vals else fallback_label,
-        "frozen_at": fields.get("frozen_at") or item.get("frozen_at") or payload.get("frozen_at") or "",
+        "frozen_at": (
+            fields.get("stored_at")
+            or fields.get("frozen_at")
+            or item.get("stored_at")
+            or item.get("frozen_at")
+            or payload.get("stored_at")
+            or payload.get("frozen_at")
+            or ""
+        ),
     }
 
 

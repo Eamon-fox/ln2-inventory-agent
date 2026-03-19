@@ -151,7 +151,8 @@ def simulate_plan_pos_map(
                 "id": rid,
                 "box": box,
                 "position": pos,
-                "frozen_at": payload.get("frozen_at"),
+                "stored_at": payload.get("stored_at") or payload.get("frozen_at"),
+                "frozen_at": payload.get("stored_at") or payload.get("frozen_at"),
             }
             fields = payload.get("fields") or {}
             rec.update(fields)

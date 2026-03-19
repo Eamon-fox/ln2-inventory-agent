@@ -60,9 +60,11 @@ def _validate_item_payload_schema(item: PlanItem) -> Optional[str]:
         if item.get("position") not in positions:
             return "item.position must be included in payload.positions"
 
-        frozen_at = payload.get("frozen_at")
-        if not isinstance(frozen_at, str) or not frozen_at.strip():
-            return "payload.frozen_at is required"
+        stored_at = payload.get("stored_at")
+        if not isinstance(stored_at, str) or not stored_at.strip():
+            stored_at = payload.get("frozen_at")
+        if not isinstance(stored_at, str) or not stored_at.strip():
+            return "payload.stored_at is required"
 
         fields = payload.get("fields")
         if not isinstance(fields, dict):
