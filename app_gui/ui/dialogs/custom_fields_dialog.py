@@ -398,7 +398,10 @@ class CustomFieldsDialog(QDialog):
         Each dict has key/label/type/default/required/options plus an optional
         ``_original_key`` when the key was renamed from an existing field.
         """
-        from lib.custom_fields import STRUCTURAL_FIELD_KEYS
+        from lib.custom_fields import (
+            STRUCTURAL_FIELD_KEYS,
+            protected_custom_field_rename_target_reason,
+        )
 
         result = []
         seen = set()
@@ -406,9 +409,6 @@ class CustomFieldsDialog(QDialog):
             key = entry["key"].text().strip()
             if not key or not key.isidentifier():
                 continue
-            if key in STRUCTURAL_FIELD_KEYS or key in seen:
-                continue
-            seen.add(key)
 
             label = entry["label"].text().strip() or key
             ftype = entry["type"].currentData() or "str"
@@ -416,6 +416,24 @@ class CustomFieldsDialog(QDialog):
             default = default_text if default_text else None
             req = entry["required"].isChecked()
             opts = entry.get("_options_data") or []
+            orig = str(entry.get("original_key") or "").strip()
+
+            blocked_rename_reason = ""
+            if orig and orig != key:
+                blocked_rename_reason = protected_custom_field_rename_target_reason(key)
+            if blocked_rename_reason:
+                result.append(
+                    {
+                        "key": key,
+                        "label": label,
+                        "type": ftype,
+                        "_original_key": orig,
+                    }
+                )
+                continue
+            if key in STRUCTURAL_FIELD_KEYS or key in seen:
+                continue
+            seen.add(key)
 
             item = {
                 "key": key,
@@ -436,7 +454,6 @@ class CustomFieldsDialog(QDialog):
             if opts:
                 item["options"] = list(opts)
 
-            orig = entry.get("original_key")
             if orig and orig != key:
                 item["_original_key"] = orig
             result.append(item)

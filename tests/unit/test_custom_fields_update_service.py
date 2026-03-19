@@ -57,6 +57,98 @@ class CustomFieldsUpdateServiceTests(unittest.TestCase):
         self.assertEqual("clone-a", rec.get("short_name"))
         self.assertEqual("existing-alias", rec.get("alias"))
 
+    def test_prepare_blocks_rename_to_fixed_system_field_without_marking_delete(self):
+        meta = {
+            "box_layout": {"rows": 9, "cols": 9, "box_count": 2, "box_numbers": [1, 2]},
+            "custom_fields": [
+                {"key": "short_name", "label": "Short Name", "type": "str"},
+            ],
+        }
+        inventory = [
+            {
+                "id": 1,
+                "box": 1,
+                "position": 1,
+                "frozen_at": "2025-01-01",
+                "short_name": "clone-a",
+            }
+        ]
+        draft = prepare_custom_fields_update(
+            meta=meta,
+            inventory=inventory,
+            existing_fields=get_effective_fields(meta, inventory=inventory),
+            new_fields=[
+                {"key": "note", "label": "Note", "type": "str", "multiline": True},
+                {"key": "note", "label": "Short Name", "type": "str", "_original_key": "short_name"},
+            ],
+            current_display_key="short_name",
+            current_color_key="short_name",
+            requested_display_key="note",
+            requested_color_key="note",
+        )
+
+        self.assertEqual(
+            [
+                {
+                    "from_key": "short_name",
+                    "to_key": "note",
+                    "reason": "fixed_system_field",
+                }
+            ],
+            draft.blocked_renames,
+        )
+        self.assertEqual({}, draft.renames)
+        self.assertEqual([], draft.rename_conflicts)
+        self.assertEqual(set(), draft.removed_keys)
+        self.assertEqual(set(), draft.removed_keys_with_data)
+        self.assertEqual([], draft.removed_field_previews)
+        self.assertEqual("clone-a", draft.pending_inventory[0].get("short_name"))
+        self.assertNotIn("note", draft.pending_inventory[0])
+
+    def test_prepare_blocks_rename_to_structural_field_without_marking_delete(self):
+        meta = {
+            "box_layout": {"rows": 9, "cols": 9, "box_count": 2, "box_numbers": [1, 2]},
+            "custom_fields": [
+                {"key": "short_name", "label": "Short Name", "type": "str"},
+            ],
+        }
+        inventory = [
+            {
+                "id": 1,
+                "box": 1,
+                "position": 1,
+                "frozen_at": "2025-01-01",
+                "short_name": "clone-a",
+            }
+        ]
+        draft = prepare_custom_fields_update(
+            meta=meta,
+            inventory=inventory,
+            existing_fields=get_effective_fields(meta, inventory=inventory),
+            new_fields=[
+                {"key": "box", "label": "Short Name", "type": "str", "_original_key": "short_name"},
+            ],
+            current_display_key="short_name",
+            current_color_key="short_name",
+            requested_display_key="box",
+            requested_color_key="box",
+        )
+
+        self.assertEqual(
+            [
+                {
+                    "from_key": "short_name",
+                    "to_key": "box",
+                    "reason": "structural_field",
+                }
+            ],
+            draft.blocked_renames,
+        )
+        self.assertEqual(set(), draft.removed_keys)
+        self.assertEqual([], draft.removed_field_previews)
+        self.assertEqual("clone-a", draft.pending_inventory[0].get("short_name"))
+        self.assertEqual(1, draft.pending_inventory[0].get("box"))
+
     def test_prepare_selector_follows_rename_and_cleans_cell_line_legacy_meta(self):
         meta = {
             "custom_fields": [
@@ -140,6 +232,75 @@ class CustomFieldsUpdateServiceTests(unittest.TestCase):
         )
         errors, _warnings = validate_custom_fields_update_draft(draft)
         self.assertEqual([], errors)
+
+    def test_validate_draft_rejects_blocked_fixed_system_rename(self):
+        meta = {
+            "box_layout": {"rows": 9, "cols": 9, "box_count": 2, "box_numbers": [1, 2]},
+            "custom_fields": [
+                {"key": "short_name", "label": "Short Name", "type": "str"},
+            ],
+        }
+        inventory = [
+            {
+                "id": 1,
+                "box": 1,
+                "position": 1,
+                "frozen_at": "2025-01-01",
+                "short_name": "clone-a",
+            }
+        ]
+        draft = prepare_custom_fields_update(
+            meta=meta,
+            inventory=inventory,
+            existing_fields=get_effective_fields(meta, inventory=inventory),
+            new_fields=[
+                {"key": "note", "label": "Note", "type": "str", "multiline": True},
+                {"key": "note", "label": "Short Name", "type": "str", "_original_key": "short_name"},
+            ],
+            current_display_key="short_name",
+            current_color_key="short_name",
+            requested_display_key="note",
+            requested_color_key="note",
+        )
+
+        errors, _warnings = validate_custom_fields_update_draft(draft)
+        self.assertTrue(
+            any("short_name" in error and "note" in error and "fixed system field" in error for error in errors)
+        )
+
+    def test_prepare_allows_rename_to_cell_line(self):
+        meta = {
+            "box_layout": {"rows": 9, "cols": 9, "box_count": 2, "box_numbers": [1, 2]},
+            "custom_fields": [
+                {"key": "short_name", "label": "Short Name", "type": "str"},
+            ],
+        }
+        inventory = [
+            {
+                "id": 1,
+                "box": 1,
+                "position": 1,
+                "frozen_at": "2025-01-01",
+                "short_name": "clone-a",
+            }
+        ]
+        draft = prepare_custom_fields_update(
+            meta=meta,
+            inventory=inventory,
+            existing_fields=get_effective_fields(meta, inventory=inventory),
+            new_fields=[
+                {"key": "cell_line", "label": "Cell Line", "type": "str", "_original_key": "short_name"},
+            ],
+            current_display_key="short_name",
+            current_color_key="short_name",
+            requested_display_key="cell_line",
+            requested_color_key="cell_line",
+        )
+
+        self.assertEqual([], draft.blocked_renames)
+        self.assertEqual({"short_name": "cell_line"}, draft.renames)
+        self.assertEqual("clone-a", draft.pending_inventory[0].get("cell_line"))
+        self.assertNotIn("short_name", draft.pending_inventory[0])
 
     def test_prepare_collects_removed_field_previews_and_ignores_blank_values(self):
         meta = {

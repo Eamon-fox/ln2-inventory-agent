@@ -438,6 +438,29 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             self.assertNotIn("frozen_at", {key for key, _label in structural_pairs})
             self.assertNotIn("thaw_events", {key for key, _label in structural_pairs})
 
+    def test_custom_fields_dialog_preserves_blocked_fixed_field_rename_attempt(self):
+        from app_gui.ui.dialogs.custom_fields_dialog import CustomFieldsDialog
+
+        dialog = CustomFieldsDialog(
+            custom_fields=[
+                {"key": "short_name", "label": "Short Name", "type": "str"},
+            ],
+        )
+        self.addCleanup(dialog.deleteLater)
+
+        rename_entry = next(
+            entry for entry in dialog._field_rows
+            if entry["key"].text().strip() == "short_name"
+        )
+        rename_entry["key"].setText("note")
+
+        fields = dialog.get_custom_fields()
+        blocked_entries = [
+            item for item in fields
+            if item.get("key") == "note" and item.get("_original_key") == "short_name"
+        ]
+        self.assertEqual(1, len(blocked_entries))
+
     def test_settings_dialog_api_key_unlock_and_relock(self):
         from app_gui.main import SettingsDialog, PROVIDER_DEFAULTS
 
@@ -1060,6 +1083,77 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         details = dict(edit_events[-1].get("details") or {})
         self.assertEqual("edit_custom_fields", details.get("op"))
         self.assertIn({"from": "short_name", "to": "alias"}, details.get("renames") or [])
+
+    def test_settings_dialog_custom_fields_blocks_rename_to_fixed_system_field_before_delete_flow(self):
+        from app_gui.main import SettingsDialog
+        from lib.yaml_ops import load_yaml
+
+        payload = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9, "cols": 9,
+                    "box_count": 2, "box_numbers": [1, 2],
+                },
+                "custom_fields": [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                    {"key": "short_name", "label": "Short Name", "type": "str"},
+                ],
+                "display_key": "short_name",
+                "color_key": "short_name",
+            },
+            "inventory": [
+                {
+                    "id": 1,
+                    "box": 1,
+                    "position": 1,
+                    "frozen_at": "2025-01-01",
+                    "cell_line": "K562",
+                    "short_name": "clone-A",
+                },
+            ],
+        }
+        yaml_path = self.ensure_dataset_yaml("cf-rename-to-note-blocked", payload=payload)
+
+        class _FakeDialog:
+            def __init__(self, *a, **kw): pass
+            @staticmethod
+            def exec(): return 1
+            @staticmethod
+            def get_custom_fields():
+                return [
+                    {"key": "note", "label": "Note", "type": "str", "multiline": True},
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                    {"key": "note", "label": "Short Name", "type": "str", "_original_key": "short_name"},
+                ]
+            @staticmethod
+            def get_display_key(): return "note"
+            @staticmethod
+            def get_color_key(): return "note"
+        on_data_changed = MagicMock()
+        dialog = SettingsDialog(
+            config={"yaml_path": yaml_path},
+            on_data_changed=on_data_changed,
+            custom_fields_dialog_cls=_FakeDialog,
+        )
+
+        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock, patch.object(
+            dialog,
+            "_format_removed_field_preview_summary",
+            side_effect=AssertionError("remove-data preview should not run"),
+        ):
+            dialog._open_custom_fields_editor()
+
+        warn_mock.assert_called_once()
+        self.assertIn("Field rename blocked", str(warn_mock.call_args[0][2]))
+        on_data_changed.assert_not_called()
+
+        saved = load_yaml(yaml_path) or {}
+        saved_meta = saved.get("meta") or {}
+        self.assertEqual("short_name", saved_meta.get("display_key"))
+        self.assertEqual("short_name", saved_meta.get("color_key"))
+        record = (saved.get("inventory") or [{}])[0]
+        self.assertEqual("clone-A", record.get("short_name"))
+        self.assertNotIn("note", record)
 
     def test_settings_dialog_custom_fields_rename_cell_line_to_type_has_no_ghost_field(self):
         from app_gui.main import SettingsDialog

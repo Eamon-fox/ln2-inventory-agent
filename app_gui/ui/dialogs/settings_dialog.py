@@ -954,6 +954,34 @@ class SettingsDialog(QDialog):
             requested_color_key=new_ck,
         )
 
+        if draft.blocked_renames:
+            sample_lines = []
+            for item in draft.blocked_renames[:20]:
+                reason = str(item.get("reason") or "").strip()
+                if reason == "fixed_system_field":
+                    kind = "fixed system field"
+                else:
+                    kind = "structural field"
+                sample_lines.append(
+                    f"{item.get('from_key', '?')} -> {item.get('to_key', '?')}: "
+                    f"target is a {kind}"
+                )
+            hidden_count = len(draft.blocked_renames) - len(sample_lines)
+            detail_text = "\n".join(sample_lines)
+            if hidden_count > 0:
+                detail_text += f"\n... and {hidden_count} more blocked rename(s)"
+            QMessageBox.warning(
+                self,
+                tr("main.customFieldsTitle"),
+                (
+                    "Field rename blocked. Fixed/system field names cannot be used as "
+                    "rename targets.\n\n"
+                    f"{detail_text}\n\n"
+                    "Please choose a different custom field key."
+                ),
+            )
+            return
+
         if draft.rename_conflicts:
             sample_lines = []
             for item in draft.rename_conflicts[:20]:

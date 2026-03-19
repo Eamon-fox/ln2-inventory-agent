@@ -16,6 +16,10 @@ from .schema_aliases import (
 
 # Truly structural keys that cannot be user-configured fields.
 STRUCTURAL_FIELD_KEYS = CANONICAL_STRUCTURAL_FIELD_KEYS
+FIXED_SYSTEM_FIELD_KEYS = frozenset({"note"})
+PROTECTED_CUSTOM_FIELD_RENAME_TARGET_KEYS = frozenset(
+    set(FIXED_SYSTEM_FIELD_KEYS) | set(ALL_STRUCTURAL_FIELD_KEYS)
+)
 
 _VALID_TYPES = {"str", "int", "float", "date"}
 
@@ -154,6 +158,16 @@ def parse_custom_fields(meta, *, field_list=None):
         result.append(entry)
 
     return result
+
+
+def protected_custom_field_rename_target_reason(field_key):
+    """Return why a key cannot be used as a custom-field rename target."""
+    key = normalize_legacy_field_key(field_key)
+    if key not in PROTECTED_CUSTOM_FIELD_RENAME_TARGET_KEYS:
+        return ""
+    if key in FIXED_SYSTEM_FIELD_KEYS:
+        return "fixed_system_field"
+    return "structural_field"
 
 
 def get_effective_fields(meta, box=None, inventory=None, phase=PHASE_RUNTIME):

@@ -8,6 +8,7 @@ write-canonical legacy field handling.
 from dataclasses import dataclass
 from typing import Any, Dict, List, Set, Tuple
 
+from .custom_fields import protected_custom_field_rename_target_reason
 from .legacy_field_policy import (
     canonicalize_record_legacy_fields,
     normalize_legacy_custom_field_defs,
@@ -39,12 +40,15 @@ def _copy_inventory(inventory: Any) -> List[Any]:
     return copied
 
 
-def _normalize_new_fields(raw_fields: Any) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
+def _normalize_new_fields(
+    raw_fields: Any,
+) -> Tuple[List[Dict[str, Any]], Dict[str, str], List[Dict[str, Any]]]:
     normalized: List[Dict[str, Any]] = []
     renames: Dict[str, str] = {}
+    blocked_renames: List[Dict[str, Any]] = []
 
     if not isinstance(raw_fields, list):
-        return normalized, renames
+        return normalized, renames, blocked_renames
 
     canonical_fields, _alias_changes = normalize_legacy_custom_field_defs(raw_fields)
     for raw in canonical_fields:
@@ -56,9 +60,19 @@ def _normalize_new_fields(raw_fields: Any) -> Tuple[List[Dict[str, Any]], Dict[s
         if key:
             item["key"] = key
         if original_key and key and original_key != key:
+            blocked_reason = protected_custom_field_rename_target_reason(key)
+            if blocked_reason:
+                blocked_renames.append(
+                    {
+                        "from_key": original_key,
+                        "to_key": key,
+                        "reason": blocked_reason,
+                    }
+                )
+                continue
             renames[original_key] = key
         normalized.append(item)
-    return normalized, renames
+    return normalized, renames, blocked_renames
 
 
 def _collect_rename_conflicts(
@@ -199,6 +213,7 @@ class CustomFieldsUpdateDraft:
     pending_meta: Dict[str, Any]
     pending_inventory: List[Any]
     new_fields: List[Dict[str, Any]]
+    blocked_renames: List[Dict[str, Any]]
     renames: Dict[str, str]
     rename_conflicts: List[Dict[str, Any]]
     old_keys: Set[str]
@@ -225,7 +240,7 @@ def prepare_custom_fields_update(
 ) -> CustomFieldsUpdateDraft:
     meta_dict = dict(meta) if isinstance(meta, dict) else {}
     pending_inventory = _copy_inventory(inventory)
-    normalized_fields, renames = _normalize_new_fields(new_fields)
+    normalized_fields, renames, blocked_renames = _normalize_new_fields(new_fields)
 
     conflicts = _collect_rename_conflicts(pending_inventory, renames)
     rename_touched_records = 0
@@ -243,9 +258,16 @@ def prepare_custom_fields_update(
         if isinstance(item, dict) and str(item.get("key") or "").strip()
     }
     renamed_old_keys = set(renames.keys())
+    blocked_old_keys = {
+        str(item.get("from_key") or "").strip()
+        for item in blocked_renames
+        if str(item.get("from_key") or "").strip()
+    }
     protected_keys = {"note"}
     removed_keys = {
-        key for key in (old_keys - new_keys - renamed_old_keys) if key not in protected_keys
+        key
+        for key in (old_keys - new_keys - renamed_old_keys - blocked_old_keys)
+        if key not in protected_keys
     }
     removed_field_previews = _collect_removed_field_previews(
         pending_inventory,
@@ -286,6 +308,7 @@ def prepare_custom_fields_update(
         pending_meta=pending_meta,
         pending_inventory=pending_inventory,
         new_fields=normalized_fields,
+        blocked_renames=blocked_renames,
         renames=renames,
         rename_conflicts=conflicts,
         old_keys=old_keys,
@@ -331,14 +354,29 @@ def validate_custom_fields_update_draft(draft: CustomFieldsUpdateDraft):
     """Run meta-only validation for one prepared draft."""
     from .import_validation_core import validate_inventory_document
 
+    errors: List[str] = []
+    for item in draft.blocked_renames:
+        from_key = str(item.get("from_key") or "").strip() or "?"
+        to_key = str(item.get("to_key") or "").strip() or "?"
+        reason = str(item.get("reason") or "").strip()
+        if reason == "fixed_system_field":
+            kind = "fixed system field"
+        else:
+            kind = "structural field"
+        errors.append(
+            f"Custom field rename '{from_key}' -> '{to_key}' is not allowed because "
+            f"'{to_key}' is a {kind}."
+        )
+
     pending_data = {
         "meta": draft.pending_meta,
         "inventory": draft.pending_inventory,
     }
-    return validate_inventory_document(
+    validation_errors, warnings = validate_inventory_document(
         pending_data,
         skip_record_validation=True,
     )
+    return errors + validation_errors, warnings
 
 
 def build_custom_fields_update_audit_details(
