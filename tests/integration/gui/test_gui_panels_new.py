@@ -428,8 +428,9 @@ class PlanTableColumnsTests(unittest.TestCase):
         self.assertEqual(1, panel.plan_table.rowCount())
         first_cell = panel.plan_table.item(0, 0)
         self.assertIsNotNone(first_cell)
-        self.assertEqual("#000000", first_cell.background().color().name())
-        self.assertEqual("#ffffff", first_cell.foreground().color().name())
+        # Tint is now applied via delegate using PLAN_ROW_TINT_ROLE data.
+        from app_gui.ui.operations_panel_plan_table import PLAN_ROW_TINT_ROLE
+        self.assertEqual("#000000", first_cell.data(PLAN_ROW_TINT_ROLE))
 
     def test_plan_table_add_row_tints_from_payload_fields_color_key(self):
         from unittest.mock import patch
@@ -463,8 +464,9 @@ class PlanTableColumnsTests(unittest.TestCase):
         self.assertEqual(1, panel.plan_table.rowCount())
         first_cell = panel.plan_table.item(0, 0)
         self.assertIsNotNone(first_cell)
-        self.assertEqual("#000000", first_cell.background().color().name())
-        self.assertEqual("#ffffff", first_cell.foreground().color().name())
+        # Tint is now applied via delegate using PLAN_ROW_TINT_ROLE data.
+        from app_gui.ui.operations_panel_plan_table import PLAN_ROW_TINT_ROLE
+        self.assertEqual("#000000", first_cell.data(PLAN_ROW_TINT_ROLE))
 
 
 if __name__ == "__main__":

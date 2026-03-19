@@ -350,7 +350,7 @@ def _get_theme_vars(mode):
             --table-header-bg: #f3f7fd;
             --table-header-text: #41576f;
             --table-border-soft: #dde5ef;
-            --table-hover-bg: rgba(43,127,229,0.08);
+            --table-hover-bg: rgba(43,127,229,0.10);
             --table-selection-bg: #e0f2fe;
             --cell-border-default: #e0e0e0;
             --cell-selected-border: var(--accent);
@@ -359,7 +359,7 @@ def _get_theme_vars(mode):
             --cell-empty-text: #6b7f95;
             --cell-empty-selected-text: #34506d;
             --cell-empty-fresh-bg: #ffffff;
-            --cell-empty-fresh-border: #e7ebf1;
+            --cell-empty-fresh-border: #dce3ed;
             --cell-empty-fresh-text: #7a8796;
             --cell-empty-fresh-selected-bg: #f4f8ff;
             --cell-empty-fresh-selected-text: #3f5d7d;
@@ -598,8 +598,8 @@ def _get_common_qss():
     qss = """
         :root {
             /* Border radius */
-            --radius-xs: 1px;
-            --radius-sm: 1px;
+            --radius-xs: 3px;
+            --radius-sm: 4px;
             --radius-md: 6px;
             --radius-lg: 8px;
 
@@ -631,17 +631,17 @@ def _get_common_qss():
         }
         QToolTip { color: var(--tooltip-color); background-color: var(--tooltip-bg); border: 1px solid var(--tooltip-border); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); font-size: {FONT_SIZE_SM}px; }
         QGroupBox {{ background-color: var(--groupbox-bg); border: var(--border-thin) solid var(--groupbox-border); border-radius: var(--radius-lg); margin-top: var(--space-3); font-weight: {FONT_WEIGHT_MEDIUM}; color: var(--text-weak); padding-top: var(--space-2); }}
-        QGroupBox::title {{ subcontrol-origin: margin; subcontrol-position: top left; padding: 0 var(--space-2); left: var(--space-2); color: var(--text-weak); font-size: {FONT_SIZE_MD}px; }}
+        QGroupBox::title {{ subcontrol-origin: margin; subcontrol-position: top left; padding: 0 var(--space-2); padding-left: var(--space-2); left: var(--space-2); color: var(--text-weak); font-size: {FONT_SIZE_MD}px; border-left: 2px solid var(--accent); }}
         QTableWidget {{ gridline-color: var(--table-border-soft); background-color: var(--table-bg); alternate-background-color: var(--table-alt-bg); selection-background-color: var(--table-selection-bg); border: var(--border-thin) solid var(--table-border-soft); border-radius: var(--radius-md); }}
-        QTableWidget::item {{ padding: var(--space-1) var(--space-2); border: none; }}
+        QTableWidget::item {{ padding: 6px var(--space-2); border: none; }}
         QTableWidget::item:hover {{ background-color: var(--table-hover-bg); }}
         QTableWidget::item:selected {{ background-color: var(--table-selection-bg); color: var(--text-strong); }}
-        QHeaderView::section {{ background-color: var(--table-header-bg); color: var(--table-header-text); padding: 6px var(--space-2); border: none; border-bottom: var(--border-thin) solid var(--table-border-soft); border-right: var(--border-thin) solid var(--table-border-soft); font-weight: 500; font-size: {FONT_SIZE_SM}px; }}
+        QHeaderView::section {{ background-color: var(--table-header-bg); color: var(--table-header-text); padding: 7px var(--space-2); border: none; border-bottom: var(--border-thin) solid var(--table-border-soft); border-right: var(--border-thin) solid var(--table-border-soft); font-weight: 500; font-size: {FONT_SIZE_SM}px; }}
         QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit {{ min-height: var(--input-height); max-height: var(--input-height); }}
         QLineEdit, QComboBox {{ padding: 0 var(--space-2); }}
         QSpinBox, QDoubleSpinBox, QDateEdit {{ padding: 0; margin: 0; }}
         QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit, QTextEdit, QTextBrowser, QPlainTextEdit {{ background-color: var(--input-bg); border: var(--border-thin) solid var(--input-border); border-radius: var(--radius-sm); color: var(--input-text); selection-background-color: var(--accent-muted); selection-color: var(--text-strong); }}
-        QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QDateEdit:focus, QTextEdit:focus, QTextBrowser:focus, QPlainTextEdit:focus {{ border-color: var(--input-border-focus); background-color: var(--input-focus-bg); }}
+        QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QDateEdit:focus, QTextEdit:focus, QTextBrowser:focus, QPlainTextEdit:focus {{ border: var(--border-medium) solid var(--input-border-focus); background-color: var(--input-focus-bg); }}
         QLineEdit[readOnly="true"], QTextEdit[readOnly="true"], QTextBrowser[readOnly="true"], QPlainTextEdit[readOnly="true"] {{ background-color: var(--display-bg); border-color: transparent; color: var(--display-text); }}
         QPushButton {{ background-color: var(--button-background); border: var(--border-thin) solid var(--button-border); border-radius: var(--radius-xs); color: var(--text-strong); padding: 1px var(--space-2); font-weight: {FONT_WEIGHT_MEDIUM}; font-size: {FONT_SIZE_MD}px; }}
         QPushButton:hover {{ background-color: var(--button-hover); border-color: var(--button-border); }}
@@ -912,16 +912,44 @@ def cell_occupied_style(color="#22c55e", is_selected=False, font_size=None):
     return _cell_occupied_style_cached(color, is_selected, mode)
 
 
+def _tint_color(hex_color, mode):
+    """Blend a color with the theme background to produce a soft tint.
+
+    Returns (tint_hex, text_hex) suitable for cell backgrounds.
+    """
+    from PySide6.QtGui import QColor as _QC
+
+    base = _QC(hex_color)
+    if not base.isValid():
+        base = _QC("#8A949B")
+
+    if mode == "dark":
+        # Blend with dark background at ~25% opacity
+        bg = _QC("#1e293b")
+        alpha = 0.25
+    else:
+        # Blend with white background at ~18% opacity
+        bg = _QC("#ffffff")
+        alpha = 0.18
+
+    r = int(bg.red() * (1 - alpha) + base.red() * alpha)
+    g = int(bg.green() * (1 - alpha) + base.green() * alpha)
+    b = int(bg.blue() * (1 - alpha) + base.blue() * alpha)
+    tint = _QC(r, g, b)
+    text = pick_contrasting_text_color(tint.name())
+    return tint.name(), text
+
+
 @lru_cache(maxsize=128)
 def _cell_occupied_style_cached(color, is_selected, mode):
-    text_color = pick_contrasting_text_color(color)
+    tint_bg, text_color = _tint_color(color, mode)
     if is_selected:
         return _resolve_inline_qss(f"""
             QPushButton {{
-                background-color: {color};
+                background-color: {tint_bg};
                 color: {text_color};
                 border: 1px solid var(--cell-occupied-hairline);
-                border-radius: 2px;
+                border-radius: 3px;
                 font-weight: 500;
                 padding: 1px;
 
@@ -932,10 +960,10 @@ def _cell_occupied_style_cached(color, is_selected, mode):
         """, mode=mode)
     return _resolve_inline_qss(f"""
         QPushButton {{
-            background-color: {color};
+            background-color: {tint_bg};
             color: {text_color};
             border: 1px solid var(--cell-occupied-hairline);
-            border-radius: 2px;
+            border-radius: 3px;
             font-weight: 500;
             padding: 1px;
 
@@ -963,7 +991,7 @@ def _cell_empty_style_cached(is_selected, mode):
                 background-color: var(--cell-empty-fresh-selected-bg);
                 color: var(--cell-empty-fresh-selected-text);
                 border: 1px solid transparent;
-                border-radius: 2px;
+                border-radius: 3px;
                 padding: 1px;
 
             }
@@ -978,7 +1006,7 @@ def _cell_empty_style_cached(is_selected, mode):
             background-color: var(--cell-empty-fresh-bg);
             color: var(--cell-empty-fresh-text);
             border: 1px solid var(--cell-empty-fresh-border);
-            border-radius: 2px;
+            border-radius: 3px;
             padding: 1px;
 
         }

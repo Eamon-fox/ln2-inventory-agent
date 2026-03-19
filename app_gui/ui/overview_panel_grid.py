@@ -657,6 +657,7 @@ def _paint_cell(self, button, box_num, position, record):
         button.setToolTip("\n".join(tt))
         base_style = cell_occupied_style(color, is_selected)
         button.setStyleSheet(base_style)
+        button.setProperty("cell_color", color)
         parts = [
             str(record.get("id", "")),
             str(box_num),

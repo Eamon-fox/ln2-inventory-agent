@@ -57,7 +57,10 @@ class _OverviewTableTintDelegate(QStyledItemDelegate):
 
         # Overlay tint first, then redraw text so background stays visible
         # without reducing text contrast.
-        tint.setAlpha(128)
+        # Use lighter alpha in light mode to avoid overpowering the row.
+        win_color = option.palette.color(QPalette.Window)
+        is_light = win_color.lightnessF() > 0.5
+        tint.setAlpha(90 if is_light else 128)
         painter.save()
         painter.fillRect(opt.rect, tint)
         painter.restore()

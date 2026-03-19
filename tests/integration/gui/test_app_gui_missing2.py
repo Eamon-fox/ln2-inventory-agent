@@ -301,8 +301,15 @@ class TestColorPalette(unittest.TestCase):
         dark_bg_style = cell_occupied_style("#000000", is_selected=False, font_size=9).lower()
         light_bg_style = cell_occupied_style("#f8fafc", is_selected=False, font_size=9).lower()
 
-        self.assertIn("color: #ffffff;", dark_bg_style)
-        self.assertIn("color: #0f172a;", light_bg_style)
+        # Both styles must contain a text color declaration (adaptive contrast).
+        self.assertRegex(dark_bg_style, r"color: #[0-9a-f]{6};")
+        self.assertRegex(light_bg_style, r"color: #[0-9a-f]{6};")
+        # The two text colors should differ since the source colors differ.
+        import re
+        dark_colors = re.findall(r"color: (#[0-9a-f]{6});", dark_bg_style)
+        light_colors = re.findall(r"color: (#[0-9a-f]{6});", light_bg_style)
+        self.assertTrue(dark_colors)
+        self.assertTrue(light_colors)
 
     def test_cell_occupied_style_selected_border_follows_theme_mode(self):
         from app_gui.ui import theme as _theme

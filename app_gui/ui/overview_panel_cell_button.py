@@ -104,7 +104,7 @@ class CellButton(QPushButton):
         self._drag_start_pos = None
         self._last_mouse_modifiers = Qt.NoModifier
         # Keep hover feedback snappy; long animations feel laggy in dense grids.
-        self._hover_duration_ms = 80
+        self._hover_duration_ms = 120
         self._hover_scale = 1.08
         self._base_rect = QRect()
         self._is_hovered = False
@@ -374,6 +374,7 @@ class CellButton(QPushButton):
         if self._text_display_mode != _CELL_TEXT_MODE_WRAPPED:
             super().paintEvent(event)
             painter = QPainter(self)
+            self._paint_occupied_accent(painter)
             self._paint_selection_overlay(painter)
             return
 
@@ -384,7 +385,26 @@ class CellButton(QPushButton):
         option.text = ""
         self.style().drawControl(QStyle.CE_PushButton, option, painter, self)
         self._paint_wrapped_text(painter, option, display_text)
+        self._paint_occupied_accent(painter)
         self._paint_selection_overlay(painter)
+
+    def _paint_occupied_accent(self, painter):
+        """Draw a subtle left-edge color accent bar on occupied cells."""
+        if bool(self.property("is_empty")):
+            return
+        color_prop = self.property("cell_color")
+        if not color_prop:
+            return
+        color = QColor(str(color_prop))
+        if not color.isValid():
+            return
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        accent = QColor(color)
+        accent.setAlpha(180)
+        bar_width = max(2, min(3, self.width() // 20))
+        painter.fillRect(0, 1, bar_width, self.height() - 2, accent)
+        painter.restore()
 
     @staticmethod
     def _badge_text_and_color(marker_type, move_id=None):

@@ -24,6 +24,11 @@ def _record_matches_slot(record, box, position):
 def _take_form_row(form, widget):
     if form is None or widget is None:
         return None
+    # Check the widget is actually in this form to avoid
+    # "QFormLayout::takeRow: Invalid widget" warnings from Qt.
+    idx = form.indexOf(widget)
+    if idx < 0:
+        return None
     try:
         return form.takeRow(widget)
     except Exception:

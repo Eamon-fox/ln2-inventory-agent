@@ -5,7 +5,7 @@ import os
 from datetime import datetime
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QBrush, QColor, QPalette
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QHeaderView,
@@ -47,8 +47,10 @@ class _PlanTableTintDelegate(QStyledItemDelegate):
         style = opt.widget.style() if opt.widget is not None else QApplication.style()
         style.drawControl(QStyle.CE_ItemViewItem, opt, painter, opt.widget)
 
-        # Overlay tint and redraw text to keep row color visible under QSS.
-        tint.setAlpha(176)
+        # Overlay tint — use same alpha as overview table for visual consistency.
+        win_color = option.palette.color(QPalette.Window)
+        is_light = win_color.lightnessF() > 0.5
+        tint.setAlpha(90 if is_light else 128)
         painter.save()
         painter.fillRect(opt.rect, tint)
         painter.restore()
@@ -435,15 +437,10 @@ def _refresh_plan_table(self):
         should_tint_row = bool(record is not None) or bool(color_value)
         if should_tint_row:
             row_color = cell_color(color_value if color_value else None)
-            qcolor = QColor(row_color)
-            text_color = QColor(pick_contrasting_text_color(qcolor))
-            text_brush = QBrush(text_color)
             for col in range(self.plan_table.columnCount()):
                 cell_item = self.plan_table.item(row, col)
                 if cell_item:
                     cell_item.setData(PLAN_ROW_TINT_ROLE, row_color)
-                    cell_item.setBackground(qcolor)
-                    cell_item.setForeground(text_brush)
 
     for col in range(self.plan_table.columnCount()):
         self.plan_table.resizeColumnToContents(col)
