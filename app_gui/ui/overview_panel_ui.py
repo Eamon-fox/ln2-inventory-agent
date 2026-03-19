@@ -284,6 +284,7 @@ def setup_ui(self):
     self.ov_table_header = _ov_widgets._FilterableHeaderView(Qt.Horizontal, self.ov_table)
     self.ov_table.setHorizontalHeader(self.ov_table_header)
     self.ov_table_header.filterClicked.connect(self._on_column_filter_clicked)
+    self.ov_table_header.sortIndicatorChanged.connect(self._on_table_sort_changed)
 
     self.ov_view_stack = QStackedWidget()
     self.ov_view_stack.addWidget(self.ov_scroll)  # grid

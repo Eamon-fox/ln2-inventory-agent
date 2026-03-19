@@ -689,6 +689,83 @@ class ReactAgentTests(ManagedPathTestCase):
         self.assertIn("migration_checklist.md", str(tool_payload.get("_hint") or ""))
         self.assertIn("ln2_inventory.yaml", str(tool_payload.get("_hint") or ""))
 
+    def test_react_agent_preserves_search_truncation_hint_in_tool_message_for_next_step(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_react_search_truncated_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        {
+                            "id": 3,
+                            "cell_line": "K562",
+                            "short_name": "newest",
+                            "box": 1,
+                            "position": 3,
+                            "frozen_at": "2026-02-12",
+                        },
+                        {
+                            "id": 2,
+                            "cell_line": "K562",
+                            "short_name": "middle",
+                            "box": 1,
+                            "position": 2,
+                            "frozen_at": "2026-02-11",
+                        },
+                        {
+                            "id": 1,
+                            "cell_line": "K562",
+                            "short_name": "oldest",
+                            "box": 1,
+                            "position": 1,
+                            "frozen_at": "2026-02-10",
+                        },
+                    ]
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            llm = _CaptureSequenceLLM(
+                [
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call_search",
+                                "name": "search_records",
+                                "arguments": {"query": "K562", "max_results": 1},
+                            }
+                        ],
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "done",
+                        "tool_calls": [],
+                    },
+                ]
+            )
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=3)
+
+            result = agent.run("find K562 entries")
+
+            self.assertTrue(result["ok"])
+            self.assertGreaterEqual(len(llm.messages_per_call), 2)
+            second_messages = list(llm.messages_per_call[1] or [])
+            tool_messages = [
+                msg
+                for msg in second_messages
+                if isinstance(msg, dict)
+                and msg.get("role") == "tool"
+                and msg.get("tool_call_id") == "call_search"
+            ]
+            self.assertEqual(1, len(tool_messages))
+
+            tool_payload = json.loads(str(tool_messages[0].get("content") or "{}"))
+            self.assertIn("showing 1 of 3 matches", str(tool_payload.get("_hint") or ""))
+            self.assertIn("max_results", str(tool_payload.get("_hint") or ""))
+
     def test_react_agent_retries_when_final_text_empty(self):
         llm = _SequenceLLM(
             [
@@ -894,6 +971,33 @@ class ReactAgentTests(ManagedPathTestCase):
         self.assertNotIn("`record_move`: {record_id", system_msg["content"])
         self.assertNotIn("`batch_takeout`: {entries", system_msg["content"])
         self.assertNotIn("`batch_move`: {entries", system_msg["content"])
+
+    def test_system_prompt_includes_search_truncation_guidance(self):
+        llm = _CapturePromptLLM()
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        agent = ReactAgent(llm_client=llm, tool_runner=runner)
+
+        agent.run("check prompt")
+
+        system_msg = llm.last_messages[0]
+        self.assertEqual("system", system_msg["role"])
+        self.assertIn("display_count < total_count", system_msg["content"])
+        self.assertIn("max_results", system_msg["content"])
+
+    def test_system_prompt_includes_search_vs_filter_tool_guidance(self):
+        llm = _CapturePromptLLM()
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        agent = ReactAgent(llm_client=llm, tool_runner=runner)
+
+        agent.run("check prompt")
+
+        system_msg = llm.last_messages[0]
+        self.assertEqual("system", system_msg["role"])
+        content = str(system_msg.get("content") or "")
+        self.assertIn("use `search_records` for direct lookup", content)
+        self.assertIn("use `filter_records` when the user is thinking in Overview-table terms", content)
+        self.assertIn('"find record 235" => `search_records`', content)
+        self.assertIn('"show genomic DNA in box 3 sorted by frozen_at" => `filter_records`', content)
 
     def test_system_prompt_includes_current_inventory_yaml_path(self):
         llm = _CapturePromptLLM()

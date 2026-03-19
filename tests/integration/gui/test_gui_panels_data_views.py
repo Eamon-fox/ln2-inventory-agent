@@ -472,12 +472,29 @@ class OverviewTableViewTests(ManagedPathTestCase):
         else:
             panel._on_view_mode_changed("grid")
 
-    def _table_column_texts(self, panel, column_name):
-        headers = [
+    def _table_header_texts(self, panel):
+        return [
             panel.ov_table.horizontalHeaderItem(i).text()
             for i in range(panel.ov_table.columnCount())
         ]
-        column_index = headers.index(column_name)
+
+    def _table_headers(self, panel):
+        return self._table_header_texts(panel)
+
+    def _table_column_index(self, panel, column_name):
+        for idx in range(panel.ov_table.columnCount()):
+            header_item = panel.ov_table.horizontalHeaderItem(idx)
+            if header_item is None:
+                continue
+            raw_column = header_item.data(Qt.UserRole)
+            if raw_column in (None, ""):
+                raw_column = header_item.text()
+            if str(raw_column) == str(column_name):
+                return idx
+        raise ValueError(f"column not found: {column_name}")
+
+    def _table_column_texts(self, panel, column_name):
+        column_index = self._table_column_index(panel, column_name)
         return [
             panel.ov_table.item(row, column_index).text()
             for row in range(panel.ov_table.rowCount())
@@ -519,15 +536,143 @@ class OverviewTableViewTests(ManagedPathTestCase):
             panel.refresh()
             self._switch_to_table(panel)
 
-            headers = [
-                panel.ov_table.horizontalHeaderItem(i).text()
-                for i in range(panel.ov_table.columnCount())
-            ]
+            headers = self._table_header_texts(panel)
             self.assertIn("id", headers)
-            self.assertIn("cell_line", headers)
+            self.assertIn("Cell Line", headers)
             self.assertIn("location", headers)  # Changed from "position" to "location"
-            self.assertIn("passage_number", headers)
+            self.assertIn("Passage #", headers)
+            self.assertEqual(
+                "cell_line",
+                panel.ov_table.horizontalHeaderItem(self._table_column_index(panel, "cell_line")).data(Qt.UserRole),
+            )
+            self.assertEqual(
+                "passage_number",
+                panel.ov_table.horizontalHeaderItem(self._table_column_index(panel, "passage_number")).data(Qt.UserRole),
+            )
             self.assertEqual(2, panel.ov_table.rowCount())
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_table_view_displays_updated_structural_labels_in_english(self):
+        previous_language = get_language()
+        self.addCleanup(lambda: set_language(previous_language))
+        self.assertTrue(set_language("en"))
+
+        records = [
+            {
+                "id": 1,
+                "cell_line": "K562",
+                "short_name": "A",
+                "box": 1,
+                "position": 1,
+                "frozen_at": "2025-01-01",
+                "thaw_events": [{"date": "2025-01-03", "action": "takeout", "positions": [1]}],
+            },
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records)
+        try:
+            from PySide6.QtWidgets import QDialog
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            headers = self._table_header_texts(panel)
+            self.assertIn("Deposited Date", headers)
+            self.assertIn("Storage Events", headers)
+            self.assertNotIn("frozen_at", headers)
+            self.assertNotIn("thaw_events", headers)
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_table_view_displays_updated_structural_labels_in_chinese(self):
+        previous_language = get_language()
+        self.addCleanup(lambda: set_language(previous_language))
+        self.assertTrue(set_language("zh-CN"))
+
+        records = [
+            {
+                "id": 1,
+                "cell_line": "K562",
+                "short_name": "A",
+                "box": 1,
+                "position": 1,
+                "frozen_at": "2025-01-01",
+                "thaw_events": [{"date": "2025-01-03", "action": "takeout", "positions": [1]}],
+            },
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records)
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            headers = self._table_header_texts(panel)
+            self.assertIn("存入日期", headers)
+            self.assertIn("存储事件", headers)
+            self.assertNotIn("frozen_at", headers)
+            self.assertNotIn("thaw_events", headers)
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_table_column_filter_dialog_uses_display_label_but_keeps_logical_key(self):
+        previous_language = get_language()
+        self.addCleanup(lambda: set_language(previous_language))
+        self.assertTrue(set_language("en"))
+
+        records = [
+            {
+                "id": 1,
+                "cell_line": "K562",
+                "short_name": "A",
+                "box": 1,
+                "position": 1,
+                "frozen_at": "2025-01-01",
+                "thaw_events": [{"date": "2025-01-03", "action": "takeout", "positions": [1]}],
+            },
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records)
+        try:
+            from PySide6.QtWidgets import QDialog
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            headers = self._table_header_texts(panel)
+            storage_events_col = headers.index("Storage Events")
+            captured = {}
+
+            class _FakeDialog:
+                def __init__(self, _parent, column_name, filter_type, unique_values, current_filter):
+                    captured["column_name"] = column_name
+                    captured["filter_type"] = filter_type
+                    captured["unique_values"] = unique_values
+                    captured["current_filter"] = current_filter
+                    self.filter_config = {"type": "text", "text": "takeout"}
+
+                def exec(self):
+                    return QDialog.Accepted
+
+                def get_filter_config(self):
+                    return dict(self.filter_config)
+
+            with patch("app_gui.ui.overview_panel._ColumnFilterDialog", _FakeDialog), patch.object(
+                panel,
+                "_apply_filters",
+            ) as apply_mock:
+                panel._on_column_filter_clicked(storage_events_col, headers[storage_events_col])
+
+            self.assertEqual("Storage Events", captured.get("column_name"))
+            self.assertEqual("text", captured.get("filter_type"))
+            self.assertIsNone(captured.get("unique_values"))
+            self.assertEqual({"type": "text", "text": "takeout"}, panel._column_filters.get("thaw_events"))
+            self.assertNotIn("Storage Events", panel._column_filters)
+            apply_mock.assert_called_once()
         finally:
             self._cleanup(tmpdir)
 
@@ -579,11 +724,7 @@ class OverviewTableViewTests(ManagedPathTestCase):
             panel.refresh()
             self._switch_to_table(panel)
 
-            headers = [
-                panel.ov_table.horizontalHeaderItem(i).text()
-                for i in range(panel.ov_table.columnCount())
-            ]
-            location_col = headers.index("location")
+            location_col = self._table_column_index(panel, "location")
 
             panel.ov_table.sortItems(location_col, Qt.DescendingOrder)
             self.assertEqual(
@@ -613,11 +754,7 @@ class OverviewTableViewTests(ManagedPathTestCase):
             panel.refresh()
             self._switch_to_table(panel)
 
-            headers = [
-                panel.ov_table.horizontalHeaderItem(i).text()
-                for i in range(panel.ov_table.columnCount())
-            ]
-            id_col = headers.index("id")
+            id_col = self._table_column_index(panel, "id")
 
             panel.ov_table.sortItems(id_col, Qt.AscendingOrder)
             self.assertEqual(["1", "2", "10"], self._table_column_texts(panel, "id"))
@@ -666,11 +803,7 @@ class OverviewTableViewTests(ManagedPathTestCase):
             panel.refresh()
             self._switch_to_table(panel)
 
-            headers = [
-                panel.ov_table.horizontalHeaderItem(i).text()
-                for i in range(panel.ov_table.columnCount())
-            ]
-            passage_col = headers.index("passage_number")
+            passage_col = self._table_column_index(panel, "passage_number")
 
             panel.ov_table.sortItems(passage_col, Qt.AscendingOrder)
             self.assertEqual(
@@ -971,8 +1104,7 @@ class OverviewTableViewTests(ManagedPathTestCase):
             panel.refresh()
             self._switch_to_table(panel)
 
-            headers = [panel.ov_table.horizontalHeaderItem(i).text() for i in range(panel.ov_table.columnCount())]
-            id_col = headers.index("id")
+            id_col = self._table_column_index(panel, "id")
 
             row_bg_by_id = {}
             tint_role = int(TABLE_ROW_TINT_ROLE)
@@ -1066,6 +1198,32 @@ class OverviewTableViewTests(ManagedPathTestCase):
 
             panel.ov_filter_secondary_toggle.setChecked(False)
             self.assertEqual(1, panel.ov_table.rowCount())
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_table_mode_delegates_queries_to_filter_records_bridge(self):
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+            {"id": 2, "cell_line": "HeLa", "short_name": "B", "box": 2, "position": 2, "frozen_at": "2025-01-02"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            bridge = GuiToolBridge()
+            panel = OverviewPanel(bridge=bridge, yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+
+            with patch.object(bridge, "filter_records", wraps=bridge.filter_records) as mock_filter:
+                self._switch_to_table(panel)
+
+            mock_filter.assert_called()
+            kwargs = mock_filter.call_args.kwargs
+            self.assertEqual(str(yaml_path), kwargs.get("yaml_path"))
+            self.assertEqual("location", kwargs.get("sort_by"))
+            self.assertEqual("asc", kwargs.get("sort_order"))
+            self.assertEqual(False, kwargs.get("include_inactive"))
+            self.assertEqual({}, kwargs.get("column_filters"))
         finally:
             self._cleanup(tmpdir)
 

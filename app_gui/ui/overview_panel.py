@@ -57,7 +57,9 @@ class OverviewPanel(QWidget):
         self.overview_box_live_labels = {}
         self.overview_box_groups = {}
         self.overview_selected_key = None
+        self.overview_empty_multi_selected_keys = set()
         self.overview_hover_key = None
+        self._overview_selection_anchor_key = None
         self.overview_records_by_id = {}
         self._current_records = []
         self._current_font_sizes = (9, 8)
@@ -67,8 +69,13 @@ class OverviewPanel(QWidget):
         self._stats_include_inactive_loaded = False
         self._table_rows = []
         self._table_columns = []
+        self._table_header_labels = {}
+        self._table_column_types = {}
         self._table_row_records = []
         self._table_version = 0
+        self._table_sort_by = "location"
+        self._table_sort_order = "asc"
+        self._ignore_table_sort_change = False
         self._column_unique_cache = {}
         self._hover_warmed = False
         self._show_summary_cards = True  # Can be set to False to hide cards
@@ -104,8 +111,13 @@ class OverviewPanel(QWidget):
     _handle_grid_runtime_event = _ov_runtime._handle_grid_runtime_event
 
 
+    _resolve_table_header_labels = _ov_table._resolve_table_header_labels
     _set_table_columns = _ov_table._set_table_columns
     _rebuild_table_rows = _ov_table._rebuild_table_rows
+    _table_query_payload = _ov_table._table_query_payload
+    _query_table_rows = _ov_table._query_table_rows
+    _sync_table_sort_indicator = _ov_table._sync_table_sort_indicator
+    _on_table_sort_changed = _ov_table._on_table_sort_changed
     _render_table_rows = _ov_table._render_table_rows
     on_table_row_double_clicked = _ov_table.on_table_row_double_clicked
     _emit_takeout_prefill_background = _ov_table._emit_takeout_prefill_background
@@ -119,6 +131,12 @@ class OverviewPanel(QWidget):
     _build_cell_render_signature = _ov_grid._build_cell_render_signature
     _paint_cell = _ov_grid._paint_cell
     _update_cell_label_visibility = _ov_grid._update_cell_label_visibility
+    _cell_is_empty_slot = _ov_grid._cell_is_empty_slot
+    _is_cell_selected = _ov_grid._is_cell_selected
+    _selected_empty_keys_for_box = _ov_grid._selected_empty_keys_for_box
+    _set_empty_multi_selection = _ov_grid._set_empty_multi_selection
+    _clear_empty_multi_selection = _ov_grid._clear_empty_multi_selection
+    _prune_empty_multi_selection = _ov_grid._prune_empty_multi_selection
     _set_selected_cell = _ov_grid._set_selected_cell
     _clear_selected_cell = _ov_grid._clear_selected_cell
     _select_grid_cell = _ov_grid._select_grid_cell

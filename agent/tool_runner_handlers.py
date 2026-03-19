@@ -13,6 +13,7 @@ from lib.builtin_skills import BuiltinSkillError, load_builtin_skill
 from lib.path_policy import PathPolicyError, resolve_dataset_backup_read_path, resolve_repo_read_path
 from lib.tool_api import (
     tool_collect_timeline,
+    tool_filter_records,
     tool_generate_stats,
     tool_get_raw_entries,
     tool_list_audit_timeline,
@@ -301,8 +302,27 @@ def _run_search_records(self, payload, _trace_id=None):
             applied_filters.get("sort_by"),
             requested=payload.get("sort_by"),
             default_legacy=False,
-        )
+    )
     return response
+
+
+def _run_filter_records(self, payload, _trace_id=None):
+    tool_name = "filter_records"
+    return self._safe_call(
+        tool_name,
+        lambda: tool_filter_records(
+            yaml_path=self._yaml_path,
+            keyword=payload.get("keyword"),
+            box=self._optional_int(payload, "box"),
+            color_value=payload.get("color_value"),
+            include_inactive=self._as_bool(payload.get("include_inactive", False), default=False),
+            column_filters=payload.get("column_filters"),
+            sort_by=payload.get("sort_by") or "location",
+            sort_order=payload.get("sort_order") or "asc",
+            limit=self._optional_int(payload, "limit"),
+            offset=self._optional_int(payload, "offset", default=0),
+        ),
+    )
 
 
 def _run_recent_stored(self, payload, _trace_id=None):

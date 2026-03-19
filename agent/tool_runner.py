@@ -472,6 +472,7 @@ class AgentToolRunner:
     _run_use_skill = _runner_handlers._run_use_skill
     _run_list_empty_positions = _runner_handlers._run_list_empty_positions
     _run_search_records = _runner_handlers._run_search_records
+    _run_filter_records = _runner_handlers._run_filter_records
     _run_recent_stored = _runner_handlers._run_recent_stored
     _run_recent_frozen = _runner_handlers._run_recent_frozen
     _run_query_takeout_events = _runner_handlers._run_query_takeout_events

@@ -129,6 +129,43 @@ inventory:
                 box=2,
             )
 
+    def test_registry_generated_filter_records_calls_tool_api(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_bridge_") as install_dir, patch(
+            "lib.inventory_paths.get_install_dir",
+            return_value=install_dir,
+        ):
+            path = self._write_inventory("bridge-filter-table")
+            bridge = GuiToolBridge()
+
+            with patch("app_gui.tool_bridge.tool_filter_records") as mock_filter:
+                mock_filter.return_value = {"ok": True, "result": {"rows": [], "columns": []}}
+                response = bridge.filter_records(
+                    str(path),
+                    keyword="genomic DNA",
+                    box=1,
+                    color_value="K562",
+                    include_inactive=True,
+                    column_filters={"cell_line": {"type": "text", "text": "K562"}},
+                    sort_by="location",
+                    sort_order="asc",
+                    limit=50,
+                    offset=10,
+                )
+
+            self.assertTrue(response.get("ok"))
+            mock_filter.assert_called_once_with(
+                yaml_path=str(path),
+                keyword="genomic DNA",
+                box=1,
+                color_value="K562",
+                include_inactive=True,
+                column_filters={"cell_line": {"type": "text", "text": "K562"}},
+                sort_by="location",
+                sort_order="asc",
+                limit=50,
+                offset=10,
+            )
+
     def test_registry_generated_edit_entry_preserves_write_bridge_behavior(self):
         with tempfile.TemporaryDirectory(prefix="ln2_bridge_") as install_dir, patch(
             "lib.inventory_paths.get_install_dir",

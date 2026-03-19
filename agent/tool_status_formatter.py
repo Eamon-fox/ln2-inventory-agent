@@ -82,6 +82,13 @@ def _format_search_records(_tool_name, args):
     return "Search inventory"
 
 
+def _format_filter_records(_tool_name, args):
+    keyword = _clean_text(args.get("keyword"))
+    if keyword:
+        return f"Filter table: {keyword}"
+    return "Filter inventory table"
+
+
 def _format_generate_stats(_tool_name, _args):
     return "Generate inventory stats"
 
@@ -116,6 +123,7 @@ TOOL_STATUS_FORMATTERS = {
     "fs_write": _format_fs_write,
     "fs_edit": _format_fs_edit,
     "search_records": _format_search_records,
+    "filter_records": _format_filter_records,
     "generate_stats": _format_generate_stats,
     "add_entry": _format_add_entry,
     "takeout": _format_takeout,

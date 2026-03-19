@@ -16,11 +16,15 @@ def _reset_after_load_failure(self):
     self.overview_records_by_id = {}
     self.overview_pos_map = {}
     self.overview_selected_key = None
+    self.overview_empty_multi_selected_keys = set()
     self._current_meta = {}
     self._current_layout = {}
     self._current_records = []
+    self._overview_selection_anchor_key = None
     self._table_rows = []
     self._table_columns = []
+    self._table_header_labels = {}
+    self._table_column_types = {}
     self._table_row_records = []
     self._stats_include_inactive_loaded = False
     self._stats_response_cache = {}
@@ -203,6 +207,7 @@ def refresh(self):
         self._rebuild_boxes(rows, cols, box_numbers)
 
     self.overview_pos_map = _build_position_map(records, layout=layout)
+    self._prune_empty_multi_selection()
 
     total_records = int(payload.get("record_count", len(records)) or 0)
     total_occupied = overall.get("total_occupied", 0)
@@ -240,7 +245,6 @@ def refresh(self):
             continue
         self._paint_cell(button, box_num, position, rec)
 
-    self._rebuild_table_rows(records)
     self._refresh_filter_options(records, box_numbers)
     self._apply_filters()
 

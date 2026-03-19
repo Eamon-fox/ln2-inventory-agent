@@ -551,6 +551,15 @@ class ToolRunnerHintTests(ManagedPathTestCase):
         payload = {"error_code": "record_not_found"}
         hint = runner._hint_for_error("takeout", payload)
         self.assertIn("search_records", hint)
+        self.assertIn("filter_records", hint)
+
+    def test_hint_for_error_position_not_found_suggests_filter_records_for_table_narrowing(self):
+        """Position lookup failures should point table-style narrowing toward filter_records."""
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        payload = {"error_code": "position_not_found"}
+        hint = runner._hint_for_error("move", payload)
+        self.assertIn("target record", hint)
+        self.assertIn("filter_records", hint)
 
     def test_hint_for_error_position_conflict(self):
         """Test hint for position_conflict."""
@@ -601,6 +610,7 @@ class ToolRunnerHintTests(ManagedPathTestCase):
         hint = runner._hint_for_error("add_entry", payload)
         self.assertIn("valid", hint.lower())
         self.assertIn("A1", hint)
+        self.assertIn("filter_records", hint)
 
     def test_hint_for_error_plan_preflight_failed(self):
         """Test hint for plan_preflight_failed."""

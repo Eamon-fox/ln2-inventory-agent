@@ -20,6 +20,7 @@ from ..schema_aliases import (
     normalize_record_sort_field,
 )
 from ..takeout_parser import extract_events, normalize_action
+from ..overview_table_query import query_overview_table
 from ..validators import normalize_date_arg, parse_date, validate_box, validate_position
 from ..yaml_ops import (
     coerce_audit_seq,
@@ -459,6 +460,92 @@ def tool_search_records(
     }
     if slot_lookup is not None:
         result["slot_lookup"] = slot_lookup
+
+    return {
+        "ok": True,
+        "result": result,
+    }
+
+
+def tool_filter_records(
+    yaml_path,
+    keyword=None,
+    box=None,
+    color_value=None,
+    include_inactive=False,
+    column_filters=None,
+    sort_by=None,
+    sort_order="asc",
+    limit=None,
+    offset=0,
+):
+    """Filter inventory records using Overview table semantics."""
+    data, failure = _load_supported_data(yaml_path)
+    if failure:
+        return failure
+
+    records = data.get("inventory", [])
+    meta = (data or {}).get("meta", {})
+    layout = api._get_layout(data)
+
+    normalized_box = None
+    if box not in (None, ""):
+        try:
+            normalized_box = int(display_to_box(box, layout))
+        except Exception:
+            return {
+                "ok": False,
+                "error_code": "invalid_box",
+                "message": f"box must be a valid value: {box}",
+            }
+        if not validate_box(normalized_box, layout):
+            return {
+                "ok": False,
+                "error_code": "invalid_box",
+                "message": "Validation failed",
+            }
+
+    include_inactive_flag = include_inactive
+    if not isinstance(include_inactive_flag, bool):
+        normalized_flag = str(include_inactive_flag or "").strip().lower()
+        if normalized_flag in {"1", "true", "yes", "y", "on"}:
+            include_inactive_flag = True
+        elif normalized_flag in {"", "0", "false", "no", "n", "off"}:
+            include_inactive_flag = False
+        else:
+            return {
+                "ok": False,
+                "error_code": "invalid_tool_input",
+                "message": "include_inactive must be a boolean",
+            }
+
+    try:
+        result = query_overview_table(
+            records,
+            meta=meta,
+            keyword=keyword,
+            box=normalized_box,
+            color_value=color_value,
+            include_inactive=include_inactive_flag,
+            column_filters=column_filters,
+            sort_by=sort_by or "location",
+            sort_order=sort_order or "asc",
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as exc:
+        return {
+            "ok": False,
+            "error_code": "invalid_tool_input",
+            "message": str(exc),
+        }
+
+    if not result.get("rows"):
+        result["suggestions"] = [
+            "Try fewer filters or clear one column filter",
+            "Check keyword spelling and current box/color filters",
+            "Set include_inactive=true if the record may have been taken out",
+        ]
 
     return {
         "ok": True,

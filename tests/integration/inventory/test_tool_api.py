@@ -33,6 +33,7 @@ from lib.tool_api import (
     tool_takeout,
 )
 from lib.tool_api import (
+    tool_filter_records,
     tool_get_raw_entries,
     tool_list_audit_timeline,
     tool_query_takeout_events,
@@ -1581,6 +1582,135 @@ class ToolApiTests(ManagedPathTestCase):
             self.assertFalse(bad_order["ok"])
             self.assertEqual("invalid_tool_input", bad_order.get("error_code"))
             self.assertIn("sort_order", str(bad_order.get("message") or ""))
+
+    def test_tool_filter_records_applies_table_filters_sorting_and_pagination(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_filter_records_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            data = {
+                "meta": {
+                    "box_layout": {"rows": 9, "cols": 9},
+                    "color_key": "sample_type",
+                    "custom_fields": [
+                        {"key": "sample_type", "label": "Sample Type", "type": "str"},
+                        {"key": "passage_number", "label": "Passage #", "type": "int"},
+                    ],
+                },
+                "inventory": [
+                    {
+                        "id": 1,
+                        "sample_type": "genomic_dna",
+                        "passage_number": 10,
+                        "box": 1,
+                        "position": 1,
+                        "frozen_at": "2026-02-11",
+                    },
+                    {
+                        "id": 2,
+                        "sample_type": "genomic_dna",
+                        "passage_number": 6,
+                        "box": 1,
+                        "position": 2,
+                        "frozen_at": "2026-02-10",
+                    },
+                    {
+                        "id": 3,
+                        "sample_type": "gene_fragment",
+                        "passage_number": 8,
+                        "box": 2,
+                        "position": 1,
+                        "frozen_at": "2026-02-11",
+                    },
+                    {
+                        "id": 4,
+                        "sample_type": "genomic_dna",
+                        "passage_number": 12,
+                        "box": 1,
+                        "position": None,
+                        "frozen_at": "2026-02-09",
+                        "thaw_events": [{"date": "2026-02-12", "action": "takeout", "positions": [3]}],
+                    },
+                ],
+            }
+            write_yaml(
+                data,
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            response = tool_filter_records(
+                yaml_path=str(yaml_path),
+                keyword="dna",
+                color_value="genomic_dna",
+                column_filters={
+                    "sample_type": {"type": "list", "values": ["genomic_dna"]},
+                    "passage_number": {"type": "number", "min": 5, "max": 10},
+                    "frozen_at": {"type": "date", "from": "2026-02-10", "to": "2026-02-11"},
+                },
+                sort_by="passage_number",
+                sort_order="desc",
+                limit=1,
+                offset=1,
+            )
+
+            self.assertTrue(response["ok"])
+            result = response["result"]
+            self.assertEqual(
+                ["id", "location", "frozen_at", "note", "sample_type", "passage_number", "thaw_events"],
+                result["columns"],
+            )
+            self.assertEqual("sample_type", result["color_key"])
+            self.assertEqual(2, result["total_count"])
+            self.assertEqual(1, result["display_count"])
+            self.assertEqual([1], result["matched_boxes"])
+            self.assertEqual("number", result["column_types"]["passage_number"])
+            self.assertEqual("date", result["column_types"]["frozen_at"])
+            self.assertEqual([2], [row.get("record_id") for row in result["rows"]])
+            self.assertEqual("passage_number", result["applied_filters"]["sort_by"])
+            self.assertEqual("desc", result["applied_filters"]["sort_order"])
+            self.assertEqual("last", result["applied_filters"]["sort_nulls"])
+            self.assertEqual(1, result["limit"])
+            self.assertEqual(1, result["offset"])
+            self.assertFalse(result["has_more"])
+
+    def test_tool_filter_records_rejects_invalid_sort_and_filter_columns(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_filter_records_invalid_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            data = {
+                "meta": {
+                    "box_layout": {"rows": 9, "cols": 9},
+                    "custom_fields": [{"key": "sample_type", "label": "Sample Type", "type": "str"}],
+                },
+                "inventory": [
+                    {
+                        "id": 1,
+                        "sample_type": "genomic_dna",
+                        "box": 1,
+                        "position": 1,
+                        "frozen_at": "2026-02-11",
+                    }
+                ],
+            }
+            write_yaml(
+                data,
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            bad_sort = tool_filter_records(
+                yaml_path=str(yaml_path),
+                sort_by="created_at",
+            )
+            self.assertFalse(bad_sort["ok"])
+            self.assertEqual("invalid_tool_input", bad_sort.get("error_code"))
+            self.assertIn("sort_by", str(bad_sort.get("message") or ""))
+
+            bad_filter = tool_filter_records(
+                yaml_path=str(yaml_path),
+                column_filters={"missing_column": {"type": "text", "text": "dna"}},
+            )
+            self.assertFalse(bad_filter["ok"])
+            self.assertEqual("invalid_tool_input", bad_filter.get("error_code"))
+            self.assertIn("missing_column", str(bad_filter.get("message") or ""))
 
     def test_tool_query_takeout_events_single_date_and_action(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_thaw_query_") as temp_dir:

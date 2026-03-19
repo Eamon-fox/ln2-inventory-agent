@@ -334,6 +334,62 @@ def _after_validate(_tool_name, _payload, result, context):
     return {}
 
 
+def _after_paginated_read_tool(tool_name, _payload, result, _context):
+    if not isinstance(result, dict) or not result.get("ok"):
+        return {}
+
+    result_payload = result.get("result")
+    if not isinstance(result_payload, dict):
+        return {}
+
+    try:
+        total_count = int(result_payload.get("total_count"))
+        display_count = int(result_payload.get("display_count"))
+    except (TypeError, ValueError):
+        return {}
+
+    if total_count <= 0 or display_count < 0 or display_count >= total_count:
+        return {}
+
+    tool_label = str(tool_name or "tool")
+    return {
+        "_hint": (
+            f"{tool_label} results are truncated: showing {display_count} of {total_count} matches. "
+            "Do not conclude a record is absent from this page alone. "
+            "Rerun with a larger page size, or refine with more specific "
+            "keywords / box / position / record_id from the user's clue."
+        )
+    }
+
+
+def _after_search_records(_tool_name, _payload, result, _context):
+    hooked = _after_paginated_read_tool("search_records", _payload, result, _context)
+    if not hooked:
+        return {}
+    hint = str(hooked.get("_hint") or "").strip()
+    if not hint:
+        return hooked
+    hooked["_hint"] = hint.replace(
+        "Rerun with a larger page size",
+        "Rerun `search_records` with a larger `max_results`",
+    )
+    return hooked
+
+
+def _after_filter_records(_tool_name, _payload, result, _context):
+    hooked = _after_paginated_read_tool("filter_records", _payload, result, _context)
+    if not hooked:
+        return {}
+    hint = str(hooked.get("_hint") or "").strip()
+    if not hint:
+        return hooked
+    hooked["_hint"] = hint.replace(
+        "Rerun with a larger page size",
+        "Rerun `filter_records` with a larger `limit`",
+    )
+    return hooked
+
+
 def _fs_hint_paths(result, context):
     if not isinstance(result, dict):
         return None
@@ -438,6 +494,8 @@ def _after_import_migration_output(_tool_name, _payload, result, _context):
 DEFAULT_TOOL_HOOK_SPECS = {
     "use_skill": ToolHookSpec(after=_after_use_skill),
     "validate": ToolHookSpec(after=_after_validate),
+    "search_records": ToolHookSpec(after=_after_search_records),
+    "filter_records": ToolHookSpec(after=_after_filter_records),
     "fs_list": ToolHookSpec(before=_before_fs_list, after=_after_fs_list),
     "fs_read": ToolHookSpec(after=_after_fs_read),
     "fs_write": ToolHookSpec(before=_before_fs_write, after=_after_fs_write),

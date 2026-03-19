@@ -6,10 +6,12 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import QHeaderView, QTableWidgetItem
 
-from app_gui.i18n import t
+from app_gui.i18n import t, tr
 from app_gui.ui.theme import pick_contrasting_text_color
 from app_gui.ui.utils import cell_color
 from lib.csv_export import build_export_rows
+from lib.overview_table_query import query_overview_table
+from lib.position_fmt import pos_to_display
 from lib.validators import parse_date
 
 
@@ -38,6 +40,14 @@ class _SortableOverviewItem(QTableWidgetItem):
             return False
 
         return super().__lt__(other)
+
+
+_OVERVIEW_TABLE_COLUMN_LABEL_KEYS = {
+    "frozen_at": "operations.colFrozenAt",
+    "stored_at": "operations.colFrozenAt",
+    "thaw_events": "operations.colStorageEvents",
+    "storage_events": "operations.colStorageEvents",
+}
 
 
 def _safe_int(value):
@@ -95,10 +105,44 @@ def _column_sort_key(column, value, row_data, *, column_type):
     return None
 
 
-def _set_table_columns(self, headers):
+def display_table_column_label(column_name):
+    key = _OVERVIEW_TABLE_COLUMN_LABEL_KEYS.get(str(column_name or "").strip())
+    if not key:
+        return str(column_name or "")
+    return tr(key, default=str(column_name or ""))
+
+
+def _resolve_table_header_labels(self, columns):
+    from lib.custom_fields import get_effective_fields
+
+    meta = getattr(self, "_current_meta", {}) or {}
+    inventory = getattr(self, "_current_records", []) or []
+    field_labels = {}
+    for field_def in get_effective_fields(meta, inventory=inventory):
+        if not isinstance(field_def, dict):
+            continue
+        key = str(field_def.get("key") or "").strip()
+        if not key:
+            continue
+        field_labels[key] = str(field_def.get("label") or key)
+
+    return {
+        str(column or ""): field_labels.get(str(column or ""), display_table_column_label(column))
+        for column in list(columns or [])
+    }
+
+
+def _set_table_columns(self, headers, *, header_labels=None):
+    raw_columns = [str(header or "") for header in list(headers or [])]
+    resolved_labels = dict(header_labels or _resolve_table_header_labels(self, raw_columns))
+
     self.ov_table.setRowCount(0)
-    self.ov_table.setColumnCount(len(headers))
-    self.ov_table.setHorizontalHeaderLabels(headers)
+    self.ov_table.setColumnCount(len(raw_columns))
+    self._table_header_labels = dict(resolved_labels)
+    for idx, col_name in enumerate(raw_columns):
+        header_item = QTableWidgetItem(str(resolved_labels.get(col_name, col_name)))
+        header_item.setData(Qt.UserRole, col_name)
+        self.ov_table.setHorizontalHeaderItem(idx, header_item)
     header = self.ov_table.horizontalHeader()
     header.setSectionResizeMode(QHeaderView.Interactive)
     header.setSectionsMovable(False)
@@ -109,12 +153,14 @@ def _set_table_columns(self, headers):
         "id": 60,
         "location": 80,
         "frozen_at": 100,
+        "stored_at": 100,
         "thaw_events": 200,
+        "storage_events": 200,
         "cell_line": 100,
         "note": 180,
         "short_name": 150,
     }
-    for idx, col_name in enumerate(headers):
+    for idx, col_name in enumerate(raw_columns):
         if col_name in default_widths:
             self.ov_table.setColumnWidth(idx, default_widths[col_name])
         else:
@@ -127,6 +173,7 @@ def _rebuild_table_rows(self, records):
 
     payload = build_export_rows(records or [], meta=meta)
     self._table_columns = list(payload.get("columns") or [])
+    header_labels = _resolve_table_header_labels(self, self._table_columns)
 
     color_key = get_color_key(meta, inventory=records or [])
     rows = []
@@ -162,7 +209,7 @@ def _rebuild_table_rows(self, records):
         )
 
     self._table_rows = rows
-    self._set_table_columns(self._table_columns)
+    self._set_table_columns(self._table_columns, header_labels=header_labels)
     self._table_row_records = []
     self._table_version = int(getattr(self, "_table_version", 0) or 0) + 1
     unique_cache = getattr(self, "_column_unique_cache", None)
@@ -170,6 +217,77 @@ def _rebuild_table_rows(self, records):
         unique_cache.clear()
     else:
         self._column_unique_cache = {}
+
+
+def _table_query_payload(self, *, keyword, selected_box, selected_cell):
+    return {
+        "keyword": keyword,
+        "box": selected_box,
+        "color_value": selected_cell,
+        "include_inactive": bool(getattr(self, "_table_include_inactive", False)),
+        "column_filters": dict(getattr(self, "_column_filters", {}) or {}),
+        "sort_by": str(getattr(self, "_table_sort_by", "location") or "location"),
+        "sort_order": str(getattr(self, "_table_sort_order", "asc") or "asc"),
+        "limit": None,
+        "offset": 0,
+    }
+
+
+def _query_table_rows(self, *, keyword, selected_box, selected_cell):
+    payload = _table_query_payload(
+        self,
+        keyword=keyword,
+        selected_box=selected_box,
+        selected_cell=selected_cell,
+    )
+    yaml_path = self.yaml_path_getter()
+
+    if hasattr(self.bridge, "filter_records"):
+        return self.bridge.filter_records(yaml_path=yaml_path, **payload)
+
+    result = query_overview_table(
+        getattr(self, "_current_records", []) or [],
+        meta=getattr(self, "_current_meta", {}) or {},
+        **payload,
+    )
+    return {"ok": True, "result": result}
+
+
+def _sync_table_sort_indicator(self):
+    header = getattr(self, "ov_table_header", None)
+    columns = list(getattr(self, "_table_columns", []) or [])
+    if header is None or not columns:
+        return
+
+    sort_by = str(getattr(self, "_table_sort_by", "location") or "location")
+    if sort_by not in columns:
+        sort_by = "location" if "location" in columns else columns[0]
+        self._table_sort_by = sort_by
+
+    sort_order = str(getattr(self, "_table_sort_order", "asc") or "asc").lower()
+    qt_order = Qt.DescendingOrder if sort_order == "desc" else Qt.AscendingOrder
+    section_index = columns.index(sort_by)
+
+    self._ignore_table_sort_change = True
+    try:
+        header.setSortIndicatorShown(True)
+        header.setSortIndicator(section_index, qt_order)
+    finally:
+        self._ignore_table_sort_change = False
+
+
+def _on_table_sort_changed(self, logical_index, order):
+    if bool(getattr(self, "_ignore_table_sort_change", False)):
+        return
+    columns = list(getattr(self, "_table_columns", []) or [])
+    if logical_index < 0 or logical_index >= len(columns):
+        return
+
+    self._table_sort_by = str(columns[logical_index] or "location")
+    self._table_sort_order = "desc" if order == Qt.DescendingOrder else "asc"
+    if getattr(self, "_overview_view_mode", "grid") != "table":
+        return
+    self._apply_filters()
 
 
 def _render_table_rows(self, rows):
@@ -185,14 +303,15 @@ def _render_table_rows(self, rows):
     try:
         self.ov_table.setRowCount(len(rows_list))
         self._table_row_records = [None] * len(rows_list)
-        column_type_map = {}
+        column_type_map = dict(getattr(self, "_table_column_types", {}) or {})
         for column in self._table_columns:
-            if column == "location":
-                column_type_map[column] = "location"
-            elif column == "id":
-                column_type_map[column] = "number"
-            else:
-                column_type_map[column] = self._detect_column_type(column)
+            if column not in column_type_map:
+                if column == "location":
+                    column_type_map[column] = "location"
+                elif column == "id":
+                    column_type_map[column] = "number"
+                else:
+                    column_type_map[column] = self._detect_column_type(column)
 
         for row_index, row_data in enumerate(rows_list):
             values = row_data.get("values") or {}
@@ -200,6 +319,11 @@ def _render_table_rows(self, rows):
             row_tint = cell_color(color_value or None)
             row_text_brush = QBrush(QColor(pick_contrasting_text_color(row_tint)))
             record = row_data.get("record")
+            if not isinstance(record, dict):
+                record_id = row_data.get("record_id")
+                if record_id not in (None, ""):
+                    with suppress(TypeError, ValueError):
+                        record = self.overview_records_by_id.get(int(record_id))
             self._table_row_records[row_index] = record
 
             for col_index, column in enumerate(self._table_columns):
@@ -261,6 +385,7 @@ def on_table_row_double_clicked(self, row, _col):
     except (TypeError, ValueError):
         return
 
+    self._clear_empty_multi_selection(clear_anchor=True, clear_active=False)
     self._set_selected_cell(box_num, position)
     self._emit_takeout_prefill_background(box_num, position, record_id)
 
@@ -275,25 +400,56 @@ def _emit_takeout_prefill_background(self, box_num, position, record_id):
     self.status_message.emit(t("overview.prefillTakeoutAuto", id=payload["record_id"]), 2000)
 
 
-def _emit_add_prefill_background(self, box_num, position):
+def _format_add_prefill_positions_text(self, positions):
+    layout = getattr(self, "_current_layout", {}) or {}
+    return ",".join(pos_to_display(int(position), layout) for position in list(positions or []))
+
+
+def _emit_add_prefill_background(self, box_num, position, *, positions=None):
     payload = {
         "box": int(box_num),
         "position": int(position),
     }
+    normalized_positions = []
+    for raw_position in list(positions or []):
+        with suppress(TypeError, ValueError):
+            normalized_positions.append(int(raw_position))
+    normalized_positions = sorted(set(normalized_positions))
+    if len(normalized_positions) > 1:
+        payload["positions"] = normalized_positions
+
     self.request_add_prefill_background.emit(payload)
+    position_text = (
+        _format_add_prefill_positions_text(self, normalized_positions)
+        if normalized_positions
+        else payload["position"]
+    )
     self.status_message.emit(
-        t("overview.prefillAddAuto", box=payload["box"], position=payload["position"]),
+        t("overview.prefillAddAuto", box=payload["box"], position=position_text),
         2000,
     )
 
 
-def _emit_add_prefill(self, box_num, position):
+def _emit_add_prefill(self, box_num, position, *, positions=None):
     payload = {
         "box": int(box_num),
         "position": int(position),
     }
+    normalized_positions = []
+    for raw_position in list(positions or []):
+        with suppress(TypeError, ValueError):
+            normalized_positions.append(int(raw_position))
+    normalized_positions = sorted(set(normalized_positions))
+    if len(normalized_positions) > 1:
+        payload["positions"] = normalized_positions
+
     self.request_add_prefill.emit(payload)
+    position_text = (
+        _format_add_prefill_positions_text(self, normalized_positions)
+        if normalized_positions
+        else payload["position"]
+    )
     self.status_message.emit(
-        t("overview.prefillAdd", box=payload["box"], position=payload["position"]),
+        t("overview.prefillAdd", box=payload["box"], position=position_text),
         2000,
     )

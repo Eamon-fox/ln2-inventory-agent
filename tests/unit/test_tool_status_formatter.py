@@ -41,6 +41,10 @@ class ToolStatusFormatterTests(unittest.TestCase):
         status = format_tool_status("search_records", {"query": "K562"})
         self.assertEqual("Search inventory: K562", status)
 
+    def test_filter_records_uses_keyword(self):
+        status = format_tool_status("filter_records", {"keyword": "genomic DNA"})
+        self.assertEqual("Filter table: genomic DNA", status)
+
     def test_fs_edit_uses_file_path(self):
         status = format_tool_status("fs_edit", {"filePath": "/tmp/demo.txt"})
         self.assertEqual("Edit text in /tmp/demo.txt", status)

@@ -115,13 +115,13 @@ def _hint_for_error(self, tool_name, payload):
     if error_code == "record_not_found":
         return self._msg(
             "hint.recordNotFound",
-            "Call `search_records` first and use a valid `record_id` from results.",
+            "Call `search_records` first and use a valid `record_id` from results. If the user is narrowing by table columns / box / color / sort, switch to `filter_records` instead.",
         )
 
     if error_code == "position_not_found":
         return self._msg(
             "hint.positionNotFound",
-            "Use a position that belongs to the target record.",
+            "Use a position that belongs to the target record. If the user is narrowing by box / color / sample_type / sort, inspect candidates with `filter_records` first.",
         )
 
     if error_code == "position_conflict":
@@ -226,7 +226,7 @@ def _hint_for_error(self, tool_name, payload):
     if error_code in {"invalid_box", "invalid_position", "invalid_record_id"}:
         return self._msg(
             "hint.invalidBoxOrPositionOrRecordId",
-            "Provide valid box IDs and valid positions in the current layout (e.g. 12 or A1).",
+            "Provide valid box IDs and valid positions in the current layout (e.g. 12 or A1). For table-style narrowing, prefer `filter_records` over guessing slot values.",
         )
 
     if error_code == "invalid_action":

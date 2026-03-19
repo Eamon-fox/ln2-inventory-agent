@@ -243,6 +243,68 @@ _TOOL_DESCRIPTOR_LIST = (
         },
     ),
     _tool(
+        "filter_records",
+        "Filter inventory records using Overview table semantics: keyword, box, color_key value, include_inactive, column filters, and table sorting.",
+        {
+            "type": "object",
+            "properties": {
+                "keyword": {
+                    "type": "string",
+                    "description": "Optional table keyword search applied to the rendered row text.",
+                },
+                "box": {"type": "integer", "minimum": 1},
+                "color_value": {
+                    "type": "string",
+                    "description": "Optional value of the current dataset color_key field.",
+                },
+                "include_inactive": {"type": "boolean"},
+                "column_filters": {
+                    "type": "object",
+                    "description": "Optional per-column filter map. Each value must be one of list/text/number/date filter configs.",
+                },
+                "sort_by": {
+                    "type": "string",
+                    "description": "Optional table column name to sort by. Defaults to location.",
+                },
+                "sort_order": {
+                    "type": "string",
+                    "enum": ["asc", "desc"],
+                    "description": "Sort direction. Defaults to asc.",
+                },
+                "limit": {"type": "integer", "minimum": 1},
+                "offset": {"type": "integer", "minimum": 0},
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+        gui_bridge=_read_bridge(
+            "filter_records",
+            "tool_filter_records",
+            positional_payload_args=(
+                "keyword",
+                "box",
+                "color_value",
+                "include_inactive",
+                "column_filters",
+                "sort_by",
+                "sort_order",
+                "limit",
+                "offset",
+            ),
+            defaults={
+                "keyword": "",
+                "box": None,
+                "color_value": None,
+                "include_inactive": False,
+                "column_filters": None,
+                "sort_by": "location",
+                "sort_order": "asc",
+                "limit": None,
+                "offset": 0,
+            },
+        ),
+    ),
+    _tool(
         "recent_stored",
         "List recently stored records by a basis/value selector.",
         {

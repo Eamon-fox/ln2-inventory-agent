@@ -348,7 +348,8 @@
     "colCell": "细胞系",
     "colShort": "简称",
     "colPositions": "位置",
-    "colFrozenAt": "冻存日期",
+    "colFrozenAt": "存入日期",
+    "colStorageEvents": "存储事件",
     "colPlasmidName": "质粒名称",
     "colPlasmidId": "质粒ID",
     "colEmptyTotal": "空位/总位",
@@ -734,7 +735,7 @@
       "backupPathRequired": "Provide explicit `backup_path` from `list_audit_timeline` before calling rollback.",
       "emptyPositionsOrEntries": "Provide at least one target position or entry before retrying.",
       "invalidAction": "Use a supported action value: takeout / move.",
-      "invalidBoxOrPositionOrRecordId": "Provide valid box IDs and valid positions in the current layout (e.g. 12 or A1).",
+      "invalidBoxOrPositionOrRecordId": "Provide valid box IDs and valid positions in the current layout (e.g. 12 or A1). For table-style narrowing, prefer `filter_records` over guessing slot values.",
       "invalidDate": "Use date format `YYYY-MM-DD` (for example: 2026-02-10).",
       "invalidMode": "For `search_records`, use mode: fuzzy / exact / keywords.",
       "invalidMoveTarget": "For move operations, provide a valid `to_position` different from source position.",
@@ -747,8 +748,8 @@
       "planPreflightFailedNoIds": "One or more write operations are invalid against current inventory state. Review blocked details, then retry only corrected operations.",
       "planPreflightFailedWithIds": "Preflight failed due to baseline integrity issues. Fetch affected records with `get_raw_entries` ids=[{ids_text}], then repair invalid fields via `edit_entry` (for example, normalize `cell_line` to configured options), and retry staging.",
       "positionConflict": "Choose free slots via `list_empty_positions` or `recommend_positions`, then retry.",
-      "positionNotFound": "Use a position that belongs to the target record.",
-      "recordNotFound": "Call `search_records` first and use a valid `record_id` from results.",
+      "positionNotFound": "Use a position that belongs to the target record. If the user is narrowing by box / color / sample_type / sort, inspect candidates with `filter_records` first.",
+      "recordNotFound": "Call `search_records` first and use a valid `record_id` from results. If the user is narrowing by table columns / box / color / sort, switch to `filter_records` instead.",
       "renumberModeRequired": "When removing a middle box, choose renumber_mode: keep_gaps or renumber_contiguous.",
       "retryWithCorrectedInput": "Retry with corrected tool input.",
       "unknownTool": "Use one of available tools: {available_text}.",
@@ -866,6 +867,9 @@
       },
       "search_records": {
         "description": "Search inventory records with optional query and structured filters; use status=all|active|inactive and sort_by/sort_order (default: frozen_at desc, nulls last). 按可选 query 与结构化条件搜索库存记录；使用 status=all|active|inactive 与 sort_by/sort_order（默认 frozen_at desc，空值置后）。"
+      },
+      "filter_records": {
+        "description": "Filter Overview table rows with field filters, in-table search, and sorting; mirrors the GUI table semantics (default: location asc, nulls last). 按概览表格语义筛选记录，支持字段筛选、表内搜索与排序（默认 location asc，空值置后）。"
       },
       "move": {
         "description": "Record move for one or more tubes in one call."

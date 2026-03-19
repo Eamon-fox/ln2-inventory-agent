@@ -4,8 +4,14 @@ from datetime import datetime
 
 from PySide6.QtWidgets import QDialog
 
+from app_gui.error_localizer import localize_error_payload
 from app_gui.i18n import tr, t
 from app_gui.ui.icons import get_icon, Icons
+from lib.overview_table_query import (
+    detect_overview_table_column_type,
+    get_unique_overview_table_values,
+    match_overview_table_column_filter,
+)
 
 
 def _refresh_filter_options(self, records, box_numbers):
@@ -105,6 +111,8 @@ def _apply_filters_grid(self, keyword, selected_box, selected_cell, include_empt
         if live:
             live.setText(t("overview.filteredCount", occupied=stat["occ"], empty=stat["emp"]))
 
+    self._prune_empty_multi_selection()
+
     if self.overview_selected_key:
         selected_button = self.overview_cells.get(self.overview_selected_key)
         if selected_button and selected_button.isHidden():
@@ -122,40 +130,77 @@ def _apply_filters_grid(self, keyword, selected_box, selected_cell, include_empt
 
 
 def _apply_filters_table(self, keyword, selected_box, selected_cell):
-    matched_rows = []
-    matched_boxes = set()
+    response = self._query_table_rows(
+        keyword=keyword,
+        selected_box=selected_box,
+        selected_cell=selected_cell,
+    )
+    if (not isinstance(response, dict) or not response.get("ok")) and str(
+        getattr(self, "_table_sort_by", "") or ""
+    ) != "location":
+        message = str((response or {}).get("message") or "")
+        if "sort_by must be one of:" in message:
+            self._table_sort_by = "location"
+            self._table_sort_order = "asc"
+            response = self._query_table_rows(
+                keyword=keyword,
+                selected_box=selected_box,
+                selected_cell=selected_cell,
+            )
 
-    for row_data in self._table_rows:
-        box_num = row_data.get("box")
-        color_value = str(row_data.get("color_value") or "")
+    if not isinstance(response, dict) or not response.get("ok"):
+        self._table_rows = []
+        self._table_columns = []
+        self._table_header_labels = {}
+        self._table_column_types = {}
+        self._table_version = int(getattr(self, "_table_version", 0) or 0) + 1
+        if hasattr(self, "ov_table"):
+            self.ov_table.setRowCount(0)
+            self.ov_table.setColumnCount(0)
+        self.ov_status.setText(
+            t(
+                "overview.loadFailed",
+                error=localize_error_payload(
+                    response or {},
+                    fallback=(response or {}).get("message", "unknown error"),
+                ),
+            )
+        )
+        return
 
-        match_box = selected_box is None or box_num == selected_box
-        match_cell = selected_cell is None or color_value == selected_cell
+    result = dict(response.get("result") or {})
+    columns = list(result.get("columns") or [])
+    header_labels = self._resolve_table_header_labels(columns)
+    if (
+        columns != list(getattr(self, "_table_columns", []) or [])
+        or header_labels != dict(getattr(self, "_table_header_labels", {}) or {})
+    ):
+        self._table_columns = list(columns)
+        self._set_table_columns(self._table_columns, header_labels=header_labels)
+    else:
+        self._table_columns = list(columns)
+        self._table_header_labels = dict(header_labels)
+    self._table_column_types = dict(result.get("column_types") or {})
+    self._table_rows = list(result.get("rows") or [])
+    self._table_version = int(getattr(self, "_table_version", 0) or 0) + 1
+    self._column_unique_cache = {}
 
-        if keyword:
-            match_keyword = keyword in str(row_data.get("search_text") or "")
-        else:
-            match_keyword = True
+    applied_filters = dict(result.get("applied_filters") or {})
+    self._table_sort_by = str(applied_filters.get("sort_by") or getattr(self, "_table_sort_by", "location"))
+    self._table_sort_order = str(
+        applied_filters.get("sort_order") or getattr(self, "_table_sort_order", "asc")
+    )
 
-        match_column_filters = True
-        for column_name, filter_config in self._column_filters.items():
-            if not self._match_column_filter(row_data, column_name, filter_config):
-                match_column_filters = False
-                break
+    self._render_table_rows(self._table_rows)
+    self._sync_table_sort_indicator()
 
-        if not (match_box and match_cell and match_keyword and match_column_filters):
-            continue
-
-        matched_rows.append(row_data)
-        if box_num is not None:
-            matched_boxes.add(box_num)
-
-    self._render_table_rows(matched_rows)
+    matched_boxes = list(result.get("matched_boxes") or [])
+    total_count = int(result.get("total_count") or len(self._table_rows))
 
     status_parts = [
         t(
             "overview.filterStatusTable",
-            records=len(matched_rows),
+            records=total_count,
             boxes=len(matched_boxes),
             time=datetime.now().strftime("%H:%M:%S"),
         )
@@ -204,17 +249,28 @@ def _on_column_filter_clicked(self, column_index, column_name):
     """Handle filter icon click on a column header."""
     from app_gui.ui import overview_panel as _ov_panel
 
-    filter_type = self._detect_column_type(column_name)
+    columns = list(getattr(self, "_table_columns", []) or [])
+    if column_index < 0 or column_index >= len(columns):
+        return
+
+    logical_column_name = str(columns[column_index] or "")
+    display_column_name = str(
+        dict(getattr(self, "_table_header_labels", {}) or {}).get(logical_column_name)
+        or str(column_name or "")
+        or logical_column_name
+    )
+
+    filter_type = self._detect_column_type(logical_column_name)
 
     unique_values = None
     if filter_type in ("list", "number"):
-        unique_values = self._get_unique_column_values(column_name)
+        unique_values = self._get_unique_column_values(logical_column_name)
 
-    current_filter = self._column_filters.get(column_name)
+    current_filter = self._column_filters.get(logical_column_name)
 
     dialog = _ov_panel._ColumnFilterDialog(
         self,
-        column_name,
+        display_column_name,
         filter_type,
         unique_values,
         current_filter,
@@ -224,53 +280,30 @@ def _on_column_filter_clicked(self, column_index, column_name):
         filter_config = dialog.get_filter_config()
 
         if filter_config:
-            self._column_filters[column_name] = filter_config
+            self._column_filters[logical_column_name] = filter_config
             self.ov_table_header.set_column_filtered(column_index, True)
         else:
-            self._column_filters.pop(column_name, None)
+            self._column_filters.pop(logical_column_name, None)
             self.ov_table_header.set_column_filtered(column_index, False)
 
         self._apply_filters()
     elif dialog.filter_config == {}:
-        self._column_filters.pop(column_name, None)
+        self._column_filters.pop(logical_column_name, None)
         self.ov_table_header.set_column_filtered(column_index, False)
         self._apply_filters()
 
 
 def _detect_column_type(self, column_name):
     """Detect column data type for filtering."""
-    known_types = {
-        "id": "number",
-        "frozen_at": "date",
-        "location": "text",
-        "thaw_events": "text",
-    }
-
-    if column_name in known_types:
-        return known_types[column_name]
-
-    meta = getattr(self, "_current_meta", {})
-    custom_fields = []
-    if isinstance(meta, dict):
-        custom_fields = list(meta.get("custom_fields") or [])
-
-    for field in custom_fields:
-        if not isinstance(field, dict):
-            continue
-        field_key = str(field.get("key") or field.get("name") or "").strip()
-        if field_key != str(column_name or "").strip():
-            continue
-        field_type = str(field.get("type") or "str").strip().lower()
-        if field_type in {"int", "float", "number"}:
-            return "number"
-        if field_type in {"date", "datetime"}:
-            return "date"
-
-    unique_values = self._get_unique_column_values(column_name)
-    if unique_values and len(unique_values) <= 20:
-        return "list"
-
-    return "text"
+    cached_types = dict(getattr(self, "_table_column_types", {}) or {})
+    normalized_column = str(column_name or "").strip()
+    if normalized_column in cached_types:
+        return str(cached_types[normalized_column] or "text")
+    return detect_overview_table_column_type(
+        normalized_column,
+        meta=getattr(self, "_current_meta", {}) or {},
+        rows=getattr(self, "_table_rows", []) or [],
+    )
 
 
 def _get_unique_column_values(self, column_name):
@@ -285,17 +318,9 @@ def _get_unique_column_values(self, column_name):
     if cached is not None:
         return list(cached)
 
-    value_counts = {}
-
-    for row_data in self._table_rows:
-        value = row_data.get("values", {}).get(column_name)
-        if value is not None and value != "":
-            value_str = str(value)
-            value_counts[value_str] = value_counts.get(value_str, 0) + 1
-
-    sorted_values = sorted(
-        value_counts.items(),
-        key=lambda x: (-x[1], x[0]),
+    sorted_values = get_unique_overview_table_values(
+        getattr(self, "_table_rows", []) or [],
+        column_name,
     )
 
     cache[cache_key] = list(sorted_values)
@@ -304,9 +329,7 @@ def _get_unique_column_values(self, column_name):
 
 def _match_column_filter(self, row_data, column_name, filter_config):
     """Check if a row matches a column filter."""
-    value = row_data.get("values", {}).get(column_name)
-
-    if filter_config["type"] == "list":
+    if isinstance(filter_config, dict) and str(filter_config.get("type") or "") == "list":
         values = list(filter_config.get("values") or [])
         values_sig = tuple(str(v) for v in values)
         values_set = filter_config.get("_values_set")
@@ -314,47 +337,4 @@ def _match_column_filter(self, row_data, column_name, filter_config):
             values_set = set(values_sig)
             filter_config["_values_set"] = values_set
             filter_config["_values_sig"] = values_sig
-        return str(value) in values_set
-
-    if filter_config["type"] == "text":
-        search_text = filter_config["text"].lower()
-        return search_text in str(value).lower()
-
-    if filter_config["type"] == "number":
-        try:
-            num_val = float(value) if value not in (None, "") else None
-            if num_val is None:
-                return False
-
-            min_val = filter_config.get("min")
-            max_val = filter_config.get("max")
-
-            if min_val is not None and num_val < min_val:
-                return False
-            return not (max_val is not None and num_val > max_val)
-        except (ValueError, TypeError):
-            return False
-
-    if filter_config["type"] == "date":
-        try:
-            date_str = str(value)
-            date_val = datetime.strptime(date_str, "%Y-%m-%d").date()
-
-            date_from = filter_config.get("from")
-            date_to = filter_config.get("to")
-
-            if date_from:
-                from_date = datetime.strptime(date_from, "%Y-%m-%d").date()
-                if date_val < from_date:
-                    return False
-
-            if date_to:
-                to_date = datetime.strptime(date_to, "%Y-%m-%d").date()
-                if date_val > to_date:
-                    return False
-
-            return True
-        except (ValueError, TypeError):
-            return False
-
-    return True
+    return match_overview_table_column_filter(row_data, column_name, filter_config)

@@ -122,6 +122,7 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         names = set(runner.list_tools())
         self.assertIn("search_records", names)
+        self.assertIn("filter_records", names)
         self.assertIn("recent_frozen", names)
         self.assertIn("query_takeout_events", names)
         self.assertIn("list_audit_timeline", names)
@@ -156,6 +157,7 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         names = set(runner.list_tools())
         self.assertIn("search_records", names)
+        self.assertIn("filter_records", names)
         self.assertIn("add_entry", names)
         self.assertIn("staged_plan", names)
 
@@ -169,6 +171,7 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         self.assertIn("question", names)
         self.assertIn("use_skill", names)
         self.assertIn("search_records", names)
+        self.assertIn("filter_records", names)
         self.assertIn("add_entry", names)
         self.assertIn("staged_plan", names)
 
@@ -1226,6 +1229,182 @@ class AgentToolRunnerTests(ManagedPathTestCase):
             self.assertEqual("asc", response["result"]["applied_filters"]["sort_order"])
             self.assertEqual("last", response["result"]["applied_filters"]["sort_nulls"])
 
+    def test_search_records_truncated_results_add_hint(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_search_truncated_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        {
+                            "id": 3,
+                            "parent_cell_line": "K562",
+                            "short_name": "newest",
+                            "box": 1,
+                            "position": 3,
+                            "frozen_at": "2026-02-12",
+                        },
+                        {
+                            "id": 2,
+                            "parent_cell_line": "K562",
+                            "short_name": "middle",
+                            "box": 1,
+                            "position": 2,
+                            "frozen_at": "2026-02-11",
+                        },
+                        {
+                            "id": 1,
+                            "parent_cell_line": "K562",
+                            "short_name": "oldest",
+                            "box": 1,
+                            "position": 1,
+                            "frozen_at": "2026-02-10",
+                        },
+                    ]
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run(
+                "search_records",
+                {
+                    "query": "K562",
+                    "max_results": 1,
+                },
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(3, response["result"]["total_count"])
+            self.assertEqual(1, response["result"]["display_count"])
+            self.assertEqual([3], [item.get("id") for item in response["result"]["records"]])
+            hint = str(response.get("_hint") or "")
+            self.assertIn("showing 1 of 3 matches", hint)
+            self.assertIn("max_results", hint)
+            self.assertIn("Do not conclude", hint)
+
+    def test_filter_records_supports_table_filters_and_sorting(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_filter_records_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            data = {
+                "meta": {
+                    "box_layout": {"rows": 9, "cols": 9},
+                    "color_key": "sample_type",
+                    "custom_fields": [
+                        {"key": "sample_type", "label": "Sample Type", "type": "str"},
+                        {"key": "passage_number", "label": "Passage #", "type": "int"},
+                    ],
+                },
+                "inventory": [
+                    {
+                        "id": 1,
+                        "sample_type": "genomic_dna",
+                        "passage_number": 10,
+                        "box": 1,
+                        "position": 1,
+                        "frozen_at": "2026-02-11",
+                    },
+                    {
+                        "id": 2,
+                        "sample_type": "genomic_dna",
+                        "passage_number": 6,
+                        "box": 1,
+                        "position": 2,
+                        "frozen_at": "2026-02-10",
+                    },
+                    {
+                        "id": 3,
+                        "sample_type": "gene_fragment",
+                        "passage_number": 8,
+                        "box": 2,
+                        "position": 1,
+                        "frozen_at": "2026-02-11",
+                    },
+                ],
+            }
+            write_yaml(
+                data,
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run(
+                "filter_records",
+                {
+                    "keyword": "dna",
+                    "color_value": "genomic_dna",
+                    "column_filters": {
+                        "sample_type": {"type": "list", "values": ["genomic_dna"]},
+                        "passage_number": {"type": "number", "min": 5, "max": 10},
+                    },
+                    "sort_by": "passage_number",
+                    "sort_order": "desc",
+                },
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertEqual([1, 2], [item.get("record_id") for item in response["result"]["rows"]])
+            self.assertEqual(2, response["result"]["total_count"])
+            self.assertEqual("passage_number", response["result"]["applied_filters"]["sort_by"])
+            self.assertEqual("desc", response["result"]["applied_filters"]["sort_order"])
+            self.assertEqual("sample_type", response["result"]["color_key"])
+
+    def test_filter_records_truncated_results_add_hint(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_filter_truncated_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            data = {
+                "meta": {
+                    "box_layout": {"rows": 9, "cols": 9},
+                    "custom_fields": [{"key": "sample_type", "label": "Sample Type", "type": "str"}],
+                },
+                "inventory": [
+                    {
+                        "id": 3,
+                        "sample_type": "genomic_dna",
+                        "box": 1,
+                        "position": 3,
+                        "frozen_at": "2026-02-12",
+                    },
+                    {
+                        "id": 2,
+                        "sample_type": "genomic_dna",
+                        "box": 1,
+                        "position": 2,
+                        "frozen_at": "2026-02-11",
+                    },
+                    {
+                        "id": 1,
+                        "sample_type": "genomic_dna",
+                        "box": 1,
+                        "position": 1,
+                        "frozen_at": "2026-02-10",
+                    },
+                ],
+            }
+            write_yaml(
+                data,
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run(
+                "filter_records",
+                {
+                    "keyword": "dna",
+                    "limit": 1,
+                },
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(3, response["result"]["total_count"])
+            self.assertEqual(1, response["result"]["display_count"])
+            hint = str(response.get("_hint") or "")
+            self.assertIn("showing 1 of 3 matches", hint)
+            self.assertIn("filter_records", hint)
+            self.assertIn("limit", hint)
+
     def test_search_records_rejects_invalid_sort_by(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_search_sort_invalid_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
@@ -1721,6 +1900,27 @@ class AgentToolRunnerTests(ManagedPathTestCase):
             .get("sort_order", {})
         )
         self.assertEqual(["asc", "desc"], sort_order_schema.get("enum"))
+        filter_schema = next(
+            (
+                item
+                for item in schemas
+                if item.get("function", {}).get("name") == "filter_records"
+            ),
+            None,
+        )
+        if not isinstance(filter_schema, dict):
+            self.fail("filter_records schema should exist")
+        filter_params = filter_schema.get("function", {}).get("parameters", {})
+        self.assertEqual([], filter_params.get("required", []))
+        self.assertIn("keyword", (filter_params.get("properties") or {}))
+        self.assertIn("column_filters", (filter_params.get("properties") or {}))
+        self.assertIn("sort_by", (filter_params.get("properties") or {}))
+        self.assertIn("sort_order", (filter_params.get("properties") or {}))
+        self.assertIn("limit", (filter_params.get("properties") or {}))
+        self.assertEqual(
+            ["asc", "desc"],
+            ((filter_params.get("properties") or {}).get("sort_order") or {}).get("enum"),
+        )
         takeout_schema = next(
             (
                 item
@@ -2175,6 +2375,49 @@ class EditEntryToolRunnerTests(ManagedPathTestCase):
             self.assertEqual(15, item["position"])
             self.assertEqual("ai", item["source"])
             self.assertEqual({"cell_line": "HeLa"}, item["payload"]["fields"])
+
+    def test_edit_entry_restage_merges_fields_in_plan_store(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_edit_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(435, box=2, position=15)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            from lib.plan_store import PlanStore
+
+            store = PlanStore()
+            runner = AgentToolRunner(
+                yaml_path=str(yaml_path),
+                plan_store=store,
+            )
+
+            first = runner.run(
+                "edit_entry",
+                {
+                    "record_id": 435,
+                    "fields": {"stored_at": "2026-02-10"},
+                },
+            )
+            second = runner.run(
+                "edit_entry",
+                {
+                    "record_id": 435,
+                    "fields": {"cell_line": "NCCIT"},
+                },
+            )
+
+            self.assertTrue(first["ok"])
+            self.assertTrue(second["ok"])
+            self.assertEqual(1, store.count())
+            self.assertEqual(
+                {
+                    "stored_at": "2026-02-10",
+                    "cell_line": "NCCIT",
+                },
+                store.list_items()[0]["payload"]["fields"],
+            )
 
     def test_edit_entry_missing_record_id(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_edit_") as temp_dir:

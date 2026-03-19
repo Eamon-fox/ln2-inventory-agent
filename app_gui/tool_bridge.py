@@ -15,6 +15,7 @@ from lib.tool_api import (
     build_actor_context,
     tool_collect_timeline,
     tool_export_inventory_csv,
+    tool_filter_records,
     tool_generate_stats,
     tool_list_audit_timeline,
     tool_list_empty_positions,

@@ -600,6 +600,35 @@ def tool_search_records(
     return response
 
 
+def tool_filter_records(
+    yaml_path,
+    keyword=None,
+    box=None,
+    color_value=None,
+    include_inactive=False,
+    column_filters=None,
+    sort_by="location",
+    sort_order="asc",
+    limit=None,
+    offset=0,
+):
+    from .tool_api_impl import read_ops as _read_ops
+
+    response = _read_ops.tool_filter_records(
+        yaml_path=yaml_path,
+        keyword=keyword,
+        box=box,
+        color_value=color_value,
+        include_inactive=include_inactive,
+        column_filters=column_filters,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        limit=limit,
+        offset=offset,
+    )
+    return _format_tool_response_positions(response, yaml_path=yaml_path)
+
+
 def tool_recent_frozen(yaml_path, days=None, count=None):
     from .tool_api_impl import read_ops as _read_ops
 

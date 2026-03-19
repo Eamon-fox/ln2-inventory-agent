@@ -53,6 +53,8 @@ class ToolHookManagerTests(unittest.TestCase):
             {
                 "use_skill",
                 "validate",
+                "search_records",
+                "filter_records",
                 "fs_list",
                 "fs_read",
                 "fs_write",
@@ -127,6 +129,60 @@ class ToolHookManagerTests(unittest.TestCase):
         hint = str(hook_result.get("_hint") or "")
         self.assertIn("Validation failed for `migrate/output/ln2_inventory.yaml`", hint)
         self.assertIn("2 error(s), 1 warning(s)", hint)
+
+    def test_search_records_after_hook_adds_truncation_hint(self):
+        hook_result = self.manager.run_after(
+            "search_records",
+            {"query": "DNA", "max_results": 10},
+            {
+                "ok": True,
+                "result": {
+                    "total_count": 15,
+                    "display_count": 10,
+                },
+            },
+            self.context,
+        )
+
+        hint = str(hook_result.get("_hint") or "")
+        self.assertIn("showing 10 of 15 matches", hint)
+        self.assertIn("max_results", hint)
+        self.assertIn("Do not conclude", hint)
+
+    def test_search_records_after_hook_skips_full_result_pages(self):
+        hook_result = self.manager.run_after(
+            "search_records",
+            {"query": "DNA"},
+            {
+                "ok": True,
+                "result": {
+                    "total_count": 3,
+                    "display_count": 3,
+                },
+            },
+            self.context,
+        )
+
+        self.assertEqual({}, hook_result)
+
+    def test_filter_records_after_hook_adds_truncation_hint(self):
+        hook_result = self.manager.run_after(
+            "filter_records",
+            {"keyword": "DNA", "limit": 10},
+            {
+                "ok": True,
+                "result": {
+                    "total_count": 15,
+                    "display_count": 10,
+                },
+            },
+            self.context,
+        )
+
+        hint = str(hook_result.get("_hint") or "")
+        self.assertIn("showing 10 of 15 matches", hint)
+        self.assertIn("filter_records", hint)
+        self.assertIn("limit", hint)
 
     def test_fs_write_before_hook_normalizes_relative_path_under_migrate(self):
         hook_result = self.manager.run_before(
