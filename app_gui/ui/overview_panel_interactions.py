@@ -1,25 +1,114 @@
 """Cell interaction helpers for OverviewPanel."""
 
+from PySide6.QtCore import Qt
+
 from app_gui.i18n import tr, t
 from app_gui.system_notice import build_system_notice
 
 
-def on_cell_clicked(self, box_num, position):
-    self.on_cell_double_clicked(box_num, position)
+def _emit_selected_empty_add_prefill(self, *, background=True, fallback_key=None):
+    selected_keys = self._selected_empty_keys_for_box()
+    fallback = tuple(fallback_key) if isinstance(fallback_key, (list, tuple)) else None
+    if not selected_keys and fallback and self._cell_is_empty_slot(fallback[0], fallback[1]):
+        selected_keys = [fallback]
+    if not selected_keys:
+        return False
+
+    box_num = int(selected_keys[0][0])
+    positions = sorted(int(position) for _box, position in selected_keys)
+    emitter = self._emit_add_prefill_background if background else self._emit_add_prefill
+    if len(positions) > 1:
+        emitter(box_num, positions[0], positions=positions)
+    else:
+        emitter(box_num, positions[0])
+    return True
+
+
+def _build_empty_range_selection(self, start_key, end_key):
+    start = tuple(start_key)
+    end = tuple(end_key)
+    if start[0] != end[0]:
+        return []
+
+    lower = min(int(start[1]), int(end[1]))
+    upper = max(int(start[1]), int(end[1]))
+    keys = []
+    for position in range(lower, upper + 1):
+        if self._cell_is_empty_slot(start[0], position, require_visible=True):
+            keys.append((int(start[0]), int(position)))
+    return keys
+
+
+def on_cell_clicked(self, box_num, position, modifiers=None):
+    key = (int(box_num), int(position))
+    record = self.overview_pos_map.get(key)
+    modifiers = Qt.NoModifier if modifiers is None else modifiers
+
+    if record:
+        self._clear_empty_multi_selection(clear_anchor=True, clear_active=False)
+        self._select_grid_cell(key[0], key[1])
+        self._prefill_grid_cell_to_operations_panel(key[0], key[1])
+        return
+
+    if not self._select_grid_cell(key[0], key[1]):
+        return
+
+    if modifiers & Qt.ShiftModifier:
+        anchor_key = getattr(self, "_overview_selection_anchor_key", None)
+        if (
+            not isinstance(anchor_key, tuple)
+            or len(anchor_key) != 2
+            or int(anchor_key[0]) != key[0]
+            or not self._cell_is_empty_slot(anchor_key[0], anchor_key[1])
+        ):
+            self._set_empty_multi_selection([key], anchor_key=key, active_key=key)
+        else:
+            range_keys = _build_empty_range_selection(self, anchor_key, key)
+            self._set_empty_multi_selection(range_keys, anchor_key=anchor_key, active_key=key)
+        _emit_selected_empty_add_prefill(self, background=True, fallback_key=key)
+        return
+
+    if modifiers & Qt.ControlModifier:
+        selected_keys = self._selected_empty_keys_for_box()
+        if selected_keys and int(selected_keys[0][0]) != key[0]:
+            selected_keys = []
+
+        selection_set = set(selected_keys)
+        anchor_key = getattr(self, "_overview_selection_anchor_key", None)
+        if key in selection_set:
+            selection_set.remove(key)
+            if anchor_key == key:
+                anchor_key = None
+            active_key = None
+        else:
+            selection_set.add(key)
+            if not selection_set or anchor_key is None or int(anchor_key[0]) != key[0]:
+                anchor_key = key
+            active_key = key
+
+        self._set_empty_multi_selection(selection_set, anchor_key=anchor_key, active_key=active_key)
+        _emit_selected_empty_add_prefill(self, background=True, fallback_key=key)
+        return
+
+    self._set_empty_multi_selection([key], anchor_key=key, active_key=key)
+    _emit_selected_empty_add_prefill(self, background=True, fallback_key=key)
 
 
 def on_cell_double_clicked(self, box_num, position):
-    self._select_grid_cell(box_num, position)
-    self._prefill_grid_cell_to_operations_panel(box_num, position)
+    on_cell_clicked(self, box_num, position, modifiers=Qt.NoModifier)
 
 
 def _prefill_grid_cell_to_operations_panel(self, box_num, position):
-    record = self.overview_pos_map.get((box_num, position))
+    key = (int(box_num), int(position))
+    record = self.overview_pos_map.get(key)
     if record:
         rec_id = int(record.get("id"))
-        self._emit_takeout_prefill_background(box_num, position, rec_id)
+        self._emit_takeout_prefill_background(key[0], key[1], rec_id)
         return
-    self._emit_add_prefill_background(box_num, position)
+
+    if not self._selected_empty_keys_for_box(key[0]):
+        self._set_empty_multi_selection([key], anchor_key=key, active_key=key)
+    _emit_selected_empty_add_prefill(self, background=True, fallback_key=key)
 
 
 def _navigate_grid_selection(self, direction):
@@ -30,6 +119,11 @@ def _navigate_grid_selection(self, direction):
 
     if not self._select_grid_cell(target_key[0], target_key[1]):
         return False
+
+    if self.overview_pos_map.get(target_key):
+        self._clear_empty_multi_selection(clear_anchor=True, clear_active=False)
+    else:
+        self._set_empty_multi_selection([target_key], anchor_key=target_key, active_key=target_key)
 
     if target_key != previous_key:
         self._prefill_grid_cell_to_operations_panel(target_key[0], target_key[1])
@@ -132,6 +226,11 @@ def on_cell_context_menu(self, box_num, position, global_pos):
     from app_gui.ui import overview_panel as _ov_panel
 
     record = self.overview_pos_map.get((box_num, position))
+    if record:
+        self._clear_empty_multi_selection(clear_anchor=True, clear_active=False)
+    else:
+        key = (int(box_num), int(position))
+        self._set_empty_multi_selection([key], anchor_key=key, active_key=key)
     self._select_grid_cell(box_num, position)
 
     # Use overview_panel.QMenu to keep monkeypatch target stable in tests.

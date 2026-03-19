@@ -1,13 +1,14 @@
 """Cell widget used by OverviewPanel grid mode."""
 
 from PySide6.QtCore import QEasingCurve, QMimeData, QPropertyAnimation, QRect, Qt, Signal
-from PySide6.QtGui import QColor, QDrag, QFontMetrics, QPainter, QPalette, QTextLayout, QTextOption
+from PySide6.QtGui import QColor, QDrag, QFontMetrics, QPainter, QPalette, QPen, QTextLayout, QTextOption
 from PySide6.QtWidgets import QLabel, QPushButton, QStyle, QStyleOptionButton
 
 MIME_TYPE_MOVE = "application/x-ln2-move"
 _ELLIPSIS_TEXT = "..."
 _CELL_TEXT_MODE_DEFAULT = "default"
 _CELL_TEXT_MODE_WRAPPED = "wrapped"
+_SELECTION_EDGE_ORDER = ("top", "right", "bottom", "left")
 
 
 def _normalize_cell_text(text):
@@ -99,6 +100,7 @@ class CellButton(QPushButton):
         self.record_id = None
         self.setAcceptDrops(True)
         self._drag_start_pos = None
+        self._last_mouse_modifiers = Qt.NoModifier
         # Keep hover feedback snappy; long animations feel laggy in dense grids.
         self._hover_duration_ms = 80
         self._hover_scale = 1.08
@@ -109,6 +111,10 @@ class CellButton(QPushButton):
         self._hover_proxy = None
         self._selection_outer_proxy = None
         self._selection_inner_proxy = None
+        self._selection_visible = False
+        self._selection_active = False
+        self._selection_edges = ()
+        self._selection_color = QColor("#63b3ff")
         self._operation_marker = ""
         self._operation_move_id = None
         self._text_display_mode = _CELL_TEXT_MODE_DEFAULT
@@ -120,6 +126,9 @@ class CellButton(QPushButton):
 
     def set_record_id(self, record_id):
         self.record_id = record_id
+
+    def last_click_modifiers(self):
+        return self._last_mouse_modifiers
 
     def _scaled_rect(self):
         if not self._base_rect.isValid() or self._base_rect.width() <= 0 or self._base_rect.height() <= 0:
@@ -163,84 +172,147 @@ class CellButton(QPushButton):
         proxy.setProperty("position_label", self.property("position_label"))
         proxy.set_record_id(self.record_id)
         proxy.set_operation_marker(self._operation_marker, self._operation_move_id)
+        proxy._set_selection_visual_state(
+            selected=self._selection_visible,
+            ring_color=self._selection_color,
+            active=self._selection_active,
+            edge_mask=self._selection_edges,
+            update=False,
+        )
         proxy.setGeometry(self._base_rect)
 
-    def _ensure_selection_proxies(self):
-        if self._selection_outer_proxy is not None and self._selection_inner_proxy is not None:
-            return self._selection_outer_proxy, self._selection_inner_proxy
-        parent = self.parentWidget() or self
-        outer = QLabel(parent)
-        outer.setObjectName("OverviewCellSelectionOuterProxy")
-        outer.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        outer.hide()
-        inner = QLabel(parent)
-        inner.setObjectName("OverviewCellSelectionInnerProxy")
-        inner.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        inner.hide()
-        self._selection_outer_proxy = outer
-        self._selection_inner_proxy = inner
-        return outer, inner
+    @staticmethod
+    def _normalize_selection_edges(edge_mask):
+        if not edge_mask:
+            return ()
+        normalized = []
+        for raw_edge in edge_mask:
+            edge = str(raw_edge or "").strip().lower()
+            if edge in _SELECTION_EDGE_ORDER and edge not in normalized:
+                normalized.append(edge)
+        return tuple(normalized)
 
-    def _selection_rect(self, spread_px):
-        rect = self.geometry()
-        if not rect.isValid():
-            return QRect()
-        spread = max(1, int(spread_px))
-        return rect.adjusted(-spread, -spread, spread, spread)
-
-    def _sync_selection_proxy_geometry(self):
-        outer = self._selection_outer_proxy
-        inner = self._selection_inner_proxy
-        if outer is None or inner is None:
-            return
-        outer_rect = self._selection_rect(4)
-        if outer_rect.isValid():
-            outer.setGeometry(outer_rect)
-        inner_rect = self._selection_rect(2)
-        if inner_rect.isValid():
-            inner.setGeometry(inner_rect)
-
-    def _hide_selection_ring(self):
-        if self._selection_outer_proxy is not None:
-            self._selection_outer_proxy.hide()
-        if self._selection_inner_proxy is not None:
-            self._selection_inner_proxy.hide()
-
-    def set_selection_ring(self, selected=False, ring_color=""):
-        if not bool(selected):
-            self._hide_selection_ring()
-            return
-
-        color = QColor(str(ring_color or "").strip())
+    def _set_selection_visual_state(self, *, selected=False, ring_color="", active=False, edge_mask=None, update=True):
+        color = ring_color if isinstance(ring_color, QColor) else QColor(str(ring_color or "").strip())
         if not color.isValid():
             color = QColor("#63b3ff")
 
-        outer, inner = self._ensure_selection_proxies()
-        outer_rgba = f"rgba({color.red()}, {color.green()}, {color.blue()}, 140)"
-        inner_rgba = f"rgba({color.red()}, {color.green()}, {color.blue()}, 255)"
-        outer.setStyleSheet(
-            f"""
-            QLabel#OverviewCellSelectionOuterProxy {{
-                background-color: transparent;
-                border: 2px solid {outer_rgba};
-                border-radius: 6px;
-            }}
-            """
+        self._selection_visible = bool(selected)
+        self._selection_active = bool(selected and active)
+        self._selection_edges = (
+            self._normalize_selection_edges(edge_mask)
+            if self._selection_visible
+            else ()
         )
-        inner.setStyleSheet(
-            f"""
-            QLabel#OverviewCellSelectionInnerProxy {{
-                background-color: transparent;
-                border: 1px solid {inner_rgba};
-                border-radius: 4px;
-            }}
-            """
+        self._selection_color = QColor(color)
+        self.setProperty("selection_active", self._selection_active)
+        self.setProperty("selection_edges", ",".join(self._selection_edges))
+        if update:
+            self.update()
+
+    def _selection_overlay_rect(self):
+        inset = max(1, min(3, min(self.width(), self.height()) // 10))
+        rect = self.rect().adjusted(inset, inset, -inset, -inset)
+        if rect.width() <= 0 or rect.height() <= 0:
+            return QRect()
+        return rect
+
+    def _selection_active_rect(self):
+        inset = max(3, min(6, min(self.width(), self.height()) // 5))
+        rect = self.rect().adjusted(inset, inset, -inset, -inset)
+        if rect.width() <= 0 or rect.height() <= 0:
+            return QRect()
+        return rect
+
+    def _paint_selection_overlay(self, painter):
+        if not self._selection_visible:
+            return
+
+        color = QColor(self._selection_color)
+        if not color.isValid():
+            color = QColor("#63b3ff")
+
+        overlay_rect = self._selection_overlay_rect()
+        if not overlay_rect.isValid():
+            return
+
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        is_empty = bool(self.property("is_empty"))
+
+        # --- Layer 1: Soft filled tint over the whole cell ---
+        # This creates the "unified region" feel for contiguous selections.
+        if is_empty:
+            fill_color = QColor(color)
+            fill_color.setAlpha(38 if self._selection_active else 25)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(fill_color)
+            painter.drawRect(self.rect())
+
+        # --- Layer 2: Exposed-edge contour lines ---
+        # Drawn at the overlay_rect boundary on exposed edges only,
+        # so adjacent selected cells merge into one visual block.
+        if is_empty and self._selection_edges:
+            edge_color = QColor(color)
+            edge_color.setAlpha(160 if self._selection_active else 120)
+            edge_pen = QPen(edge_color)
+            edge_pen.setWidthF(1.5)
+            edge_pen.setCapStyle(Qt.FlatCap)
+            edge_pen.setJoinStyle(Qt.MiterJoin)
+            painter.setPen(edge_pen)
+            painter.setBrush(Qt.NoBrush)
+
+            left = float(overlay_rect.left())
+            top = float(overlay_rect.top())
+            right = float(overlay_rect.right())
+            bottom = float(overlay_rect.bottom())
+            if "top" in self._selection_edges:
+                painter.drawLine(left, top, right, top)
+            if "right" in self._selection_edges:
+                painter.drawLine(right, top, right, bottom)
+            if "bottom" in self._selection_edges:
+                painter.drawLine(left, bottom, right, bottom)
+            if "left" in self._selection_edges:
+                painter.drawLine(left, top, left, bottom)
+
+        # --- Layer 3: Active cell accent ---
+        # A small bottom-center indicator dot instead of a full inner rect,
+        # so the active cell is distinguishable without being loud.
+        if self._selection_active:
+            dot_color = QColor(color)
+            dot_color.setAlpha(200)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(dot_color)
+            dot_radius = max(1.5, min(3.0, min(self.width(), self.height()) / 14.0))
+            cx = self.rect().center().x()
+            cy = self.rect().bottom() - dot_radius - max(2.0, self.height() * 0.08)
+            painter.drawEllipse(int(cx - dot_radius), int(cy - dot_radius),
+                                int(dot_radius * 2), int(dot_radius * 2))
+
+        painter.restore()
+
+    def set_selection_ring(self, selected=False, ring_color="", *, active=False, edge_mask=None):
+        normalized_edges = self._normalize_selection_edges(edge_mask)
+        if bool(selected) and not normalized_edges:
+            normalized_edges = _SELECTION_EDGE_ORDER
+
+        self._set_selection_visual_state(
+            selected=bool(selected),
+            ring_color=ring_color,
+            active=bool(active),
+            edge_mask=normalized_edges,
         )
-        self._sync_selection_proxy_geometry()
-        outer.show()
-        inner.show()
-        outer.raise_()
-        inner.raise_()
+
+        hover_proxy = self._hover_proxy
+        if hover_proxy is not None:
+            hover_proxy._set_selection_visual_state(
+                selected=bool(selected),
+                ring_color=self._selection_color,
+                active=bool(active),
+                edge_mask=normalized_edges,
+                update=hover_proxy.isVisible(),
+            )
 
     def set_text_display_mode(self, mode):
         normalized = str(mode or "").strip().lower()
@@ -299,6 +371,8 @@ class CellButton(QPushButton):
     def paintEvent(self, event):
         if self._text_display_mode != _CELL_TEXT_MODE_WRAPPED:
             super().paintEvent(event)
+            painter = QPainter(self)
+            self._paint_selection_overlay(painter)
             return
 
         painter = QPainter(self)
@@ -308,6 +382,7 @@ class CellButton(QPushButton):
         option.text = ""
         self.style().drawControl(QStyle.CE_PushButton, option, painter, self)
         self._paint_wrapped_text(painter, option, display_text)
+        self._paint_selection_overlay(painter)
 
     @staticmethod
     def _badge_text_and_color(marker_type, move_id=None):
@@ -445,23 +520,26 @@ class CellButton(QPushButton):
 
     def hideEvent(self, event):
         self.reset_hover_state()
-        self._hide_selection_ring()
         super().hideEvent(event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._reposition_operation_badge()
-        self._sync_selection_proxy_geometry()
 
     def moveEvent(self, event):
         super().moveEvent(event)
         self._reposition_operation_badge()
-        self._sync_selection_proxy_geometry()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self._drag_start_pos = event.pos()
+            self._last_mouse_modifiers = event.modifiers()
         super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._last_mouse_modifiers = event.modifiers()
+        super().mouseReleaseEvent(event)
 
     def mouseMoveEvent(self, event):
         if self._drag_start_pos is None or self.record_id is None:

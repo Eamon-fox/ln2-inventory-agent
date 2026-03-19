@@ -948,15 +948,15 @@ def _cell_empty_style_cached(is_selected, mode):
             QPushButton {
                 background-color: var(--cell-empty-fresh-selected-bg);
                 color: var(--cell-empty-fresh-selected-text);
-                border: 1px solid var(--cell-empty-fresh-border);
+                border: 1px solid transparent;
                 border-radius: 2px;
                 padding: 1px;
 
             }
             QPushButton:hover {
-                border: 1px solid var(--cell-empty-fresh-border);
-                background-color: var(--background-raised);
-                color: var(--text-weak);
+                border: 1px solid transparent;
+                background-color: var(--cell-empty-fresh-selected-bg);
+                color: var(--cell-empty-fresh-selected-text);
             }
         """, mode=mode)
     return _resolve_inline_qss("""

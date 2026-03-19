@@ -169,6 +169,155 @@ class GuiPanelsOverviewTests(GuiPanelsBaseCase):
         # Button uses CSS variables for styling; verify it has a stylesheet applied
         self.assertTrue(len(button.styleSheet()) > 0)
 
+    def test_overview_ctrl_click_empty_slots_prefills_multi_add_background_only(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=3, box_numbers=[1])
+        panel.show()
+        try:
+            self._app.processEvents()
+            for key, button in panel.overview_cells.items():
+                panel._paint_cell(button, key[0], key[1], record=None)
+
+            emitted_bg_add = []
+            panel.request_add_prefill_background.connect(lambda payload: emitted_bg_add.append(payload))
+
+            QTest.mouseClick(panel.overview_cells[(1, 1)], Qt.LeftButton)
+            self._app.processEvents()
+            QTest.mouseClick(panel.overview_cells[(1, 3)], Qt.LeftButton, Qt.ControlModifier)
+            self._app.processEvents()
+
+            self.assertEqual({(1, 1), (1, 3)}, panel.overview_empty_multi_selected_keys)
+            self.assertEqual(
+                {"box": 1, "position": 1, "positions": [1, 3]},
+                emitted_bg_add[-1],
+            )
+            self.assertTrue(panel._is_cell_selected(1, 1))
+            self.assertTrue(panel._is_cell_selected(1, 3))
+        finally:
+            panel.hide()
+
+    def test_overview_ctrl_click_selected_empty_slot_toggles_it_off(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=2, box_numbers=[1])
+        panel.show()
+        try:
+            self._app.processEvents()
+            for key, button in panel.overview_cells.items():
+                panel._paint_cell(button, key[0], key[1], record=None)
+
+            emitted_bg_add = []
+            panel.request_add_prefill_background.connect(lambda payload: emitted_bg_add.append(payload))
+
+            QTest.mouseClick(panel.overview_cells[(1, 1)], Qt.LeftButton)
+            self._app.processEvents()
+            QTest.mouseClick(panel.overview_cells[(1, 2)], Qt.LeftButton, Qt.ControlModifier)
+            self._app.processEvents()
+            QTest.mouseClick(panel.overview_cells[(1, 2)], Qt.LeftButton, Qt.ControlModifier)
+            self._app.processEvents()
+
+            self.assertEqual({(1, 1)}, panel.overview_empty_multi_selected_keys)
+            self.assertEqual({"box": 1, "position": 1}, emitted_bg_add[-1])
+            self.assertTrue(panel._is_cell_selected(1, 1))
+            self.assertFalse(panel._is_cell_selected(1, 2))
+        finally:
+            panel.hide()
+
+    def test_overview_shift_click_selects_empty_range_and_skips_occupied_cells(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=5, box_numbers=[1])
+        panel.show()
+        try:
+            self._app.processEvents()
+            record = {
+                "id": 6,
+                "cell_line": "K562",
+                "short_name": "skip-me",
+                "box": 1,
+                "position": 3,
+                "frozen_at": "2026-02-10",
+            }
+            panel.overview_pos_map = {(1, 3): record}
+            for key, button in panel.overview_cells.items():
+                panel._paint_cell(button, key[0], key[1], panel.overview_pos_map.get(key))
+
+            emitted_bg_add = []
+            panel.request_add_prefill_background.connect(lambda payload: emitted_bg_add.append(payload))
+
+            QTest.mouseClick(panel.overview_cells[(1, 1)], Qt.LeftButton)
+            self._app.processEvents()
+            QTest.mouseClick(panel.overview_cells[(1, 5)], Qt.LeftButton, Qt.ShiftModifier)
+            self._app.processEvents()
+
+            self.assertEqual(
+                {(1, 1), (1, 2), (1, 4), (1, 5)},
+                panel.overview_empty_multi_selected_keys,
+            )
+            self.assertEqual(
+                {"box": 1, "position": 1, "positions": [1, 2, 4, 5]},
+                emitted_bg_add[-1],
+            )
+            self.assertFalse(panel._is_cell_selected(1, 3))
+        finally:
+            panel.hide()
+
+    def test_overview_shift_click_other_box_restarts_empty_selection(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1, 2])
+        panel.show()
+        try:
+            self._app.processEvents()
+            for key, button in panel.overview_cells.items():
+                panel._paint_cell(button, key[0], key[1], record=None)
+
+            emitted_bg_add = []
+            panel.request_add_prefill_background.connect(lambda payload: emitted_bg_add.append(payload))
+
+            QTest.mouseClick(panel.overview_cells[(1, 1)], Qt.LeftButton)
+            self._app.processEvents()
+            QTest.mouseClick(panel.overview_cells[(2, 1)], Qt.LeftButton, Qt.ShiftModifier)
+            self._app.processEvents()
+
+            self.assertEqual({(2, 1)}, panel.overview_empty_multi_selected_keys)
+            self.assertEqual({"box": 2, "position": 1}, emitted_bg_add[-1])
+        finally:
+            panel.hide()
+
+    def test_overview_clicking_occupied_cell_clears_empty_multi_selection(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=4, box_numbers=[1])
+        panel.show()
+        try:
+            self._app.processEvents()
+            record = {
+                "id": 8,
+                "cell_line": "K562",
+                "short_name": "occupied",
+                "box": 1,
+                "position": 4,
+                "frozen_at": "2026-02-10",
+            }
+            panel.overview_pos_map = {(1, 4): record}
+            for key, button in panel.overview_cells.items():
+                panel._paint_cell(button, key[0], key[1], panel.overview_pos_map.get(key))
+
+            emitted_takeout_bg = []
+            panel.request_prefill_background.connect(lambda payload: emitted_takeout_bg.append(payload))
+
+            QTest.mouseClick(panel.overview_cells[(1, 1)], Qt.LeftButton)
+            self._app.processEvents()
+            QTest.mouseClick(panel.overview_cells[(1, 2)], Qt.LeftButton, Qt.ControlModifier)
+            self._app.processEvents()
+            QTest.mouseClick(panel.overview_cells[(1, 4)], Qt.LeftButton)
+            self._app.processEvents()
+
+            self.assertEqual(set(), panel.overview_empty_multi_selected_keys)
+            self.assertEqual(
+                {"box": 1, "position": 4, "record_id": 8},
+                emitted_takeout_bg[-1],
+            )
+        finally:
+            panel.hide()
+
     def test_overview_plan_markers_render_badge_and_border(self):
         panel = self._new_overview_panel()
         panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
@@ -320,6 +469,57 @@ class GuiPanelsOverviewTests(GuiPanelsBaseCase):
         self._app.processEvents()
         self.assertFalse(left_hover_proxy.isVisible())
         self.assertEqual(left_base, left.geometry())
+
+    def test_overview_adjacent_empty_multi_selection_uses_internal_edge_masks(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=2, box_numbers=[1])
+        panel.show()
+        try:
+            self._app.processEvents()
+            for key, button in panel.overview_cells.items():
+                panel._paint_cell(button, key[0], key[1], record=None)
+
+            panel._set_empty_multi_selection([(1, 1), (1, 2)], anchor_key=(1, 1), active_key=(1, 2))
+            self._app.processEvents()
+
+            left = panel.overview_cells[(1, 1)]
+            right = panel.overview_cells[(1, 2)]
+            self.assertEqual("top,bottom,left", left.property("selection_edges"))
+            self.assertEqual("top,right,bottom", right.property("selection_edges"))
+            self.assertFalse(bool(left.property("selection_active")))
+            self.assertTrue(bool(right.property("selection_active")))
+            self.assertIsNone(left._selection_outer_proxy)
+            self.assertIsNone(right._selection_outer_proxy)
+            self.assertLess(left._selection_overlay_rect().width(), left.rect().width())
+            self.assertLess(right._selection_overlay_rect().width(), right.rect().width())
+        finally:
+            panel.hide()
+
+    def test_overview_hover_proxy_copies_internal_selection_overlay_state(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=2, box_numbers=[1])
+        panel.show()
+        try:
+            self._app.processEvents()
+            for key, button in panel.overview_cells.items():
+                panel._paint_cell(button, key[0], key[1], record=None)
+
+            selected = panel.overview_cells[(1, 2)]
+            selected._hover_duration_ms = 0
+            panel._set_empty_multi_selection([(1, 1), (1, 2)], anchor_key=(1, 1), active_key=(1, 2))
+            self._app.processEvents()
+
+            selected.start_hover_visual()
+            self._app.processEvents()
+
+            hover_proxy = selected._hover_proxy
+            self.assertIsNotNone(hover_proxy)
+            self.assertTrue(hover_proxy.isVisible())
+            self.assertEqual(selected.property("selection_edges"), hover_proxy.property("selection_edges"))
+            self.assertEqual(selected.property("selection_active"), hover_proxy.property("selection_active"))
+            self.assertIsNone(hover_proxy._selection_outer_proxy)
+        finally:
+            panel.hide()
 
     def test_overview_zoom_resets_cell_hover_geometry(self):
         panel = self._new_overview_panel()
@@ -776,6 +976,31 @@ class GuiPanelsOverviewTests(GuiPanelsBaseCase):
                 [{"box": 1, "position": 1, "record_id": 11}],
                 emitted_takeout_bg,
             )
+        finally:
+            panel.hide()
+
+    def test_overview_arrow_keys_collapse_empty_multi_selection_to_single_target(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=3, box_numbers=[1])
+        panel.show()
+        try:
+            self._app.processEvents()
+            for key, button in panel.overview_cells.items():
+                panel._paint_cell(button, key[0], key[1], record=None)
+
+            emitted_add_bg = []
+            panel.request_add_prefill_background.connect(lambda payload: emitted_add_bg.append(payload))
+
+            QTest.mouseClick(panel.overview_cells[(1, 1)], Qt.LeftButton)
+            self._app.processEvents()
+            QTest.mouseClick(panel.overview_cells[(1, 2)], Qt.LeftButton, Qt.ControlModifier)
+            self._app.processEvents()
+            QTest.keyClick(panel.overview_cells[(1, 2)], Qt.Key_Right)
+            self._app.processEvents()
+
+            self.assertEqual({(1, 3)}, panel.overview_empty_multi_selected_keys)
+            self.assertEqual((1, 3), panel.overview_selected_key)
+            self.assertEqual({"box": 1, "position": 3}, emitted_add_bg[-1])
         finally:
             panel.hide()
 

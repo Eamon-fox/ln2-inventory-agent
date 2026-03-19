@@ -2254,6 +2254,24 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         # set_prefill_background switches to takeout mode
         self.assertEqual("takeout", panel.current_operation_mode)
 
+    def test_operations_background_prefill_formats_multi_positions_for_numeric_layout(self):
+        panel = self._new_operations_panel()
+
+        panel.set_add_prefill_background({"box": 2, "position": 9, "positions": [9, 10, 11]})
+
+        self.assertEqual(2, panel.a_box.value())
+        self.assertEqual("9,10,11", panel.a_positions.text())
+        self.assertEqual("add", panel.current_operation_mode)
+
+    def test_operations_background_prefill_formats_multi_positions_for_alphanumeric_layout(self):
+        panel = self._new_operations_panel()
+        panel._current_layout = {"rows": 3, "cols": 3, "indexing": "alphanumeric"}
+
+        panel.set_add_prefill_background({"box": 1, "position": 1, "positions": [1, 2, 3]})
+
+        self.assertEqual("A1,A2,A3", panel.a_positions.text())
+        self.assertEqual("add", panel.current_operation_mode)
+
     def test_plan_tab_exists_in_mode_selector(self):
         panel = self._new_operations_panel()
         # "plan" is no longer a separate mode; plan table is always visible below forms

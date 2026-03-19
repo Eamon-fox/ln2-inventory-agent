@@ -1106,7 +1106,23 @@ class OperationsPanel(QWidget):
         payload = dict(source_info or {})
         if "box" in payload:
             self.a_box.setValue(int(payload["box"]))
-        if "position" in payload:
+        positions = payload.get("positions") if isinstance(payload.get("positions"), list) else []
+        normalized_positions = []
+        for raw_position in positions:
+            try:
+                normalized_positions.append(
+                    self._normalize_position_value(
+                        raw_position,
+                        field_name="position",
+                        allow_empty=False,
+                    )
+                )
+            except ValueError:
+                continue
+        normalized_positions = sorted(set(normalized_positions))
+        if normalized_positions:
+            self.a_positions.setText(self._positions_to_display_text(normalized_positions))
+        elif "position" in payload:
             self.a_positions.setText(self._position_to_display(payload["position"]))
         self.set_mode("add")
 
