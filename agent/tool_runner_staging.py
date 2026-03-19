@@ -2,7 +2,7 @@
 
 from typing import List
 
-from app_gui.plan_gate import validate_stage_request
+from lib.plan_gate import validate_stage_request
 from lib.plan_item_factory import PlanItem, build_add_plan_item, build_edit_plan_item, build_record_plan_item, build_rollback_plan_item
 from lib.tool_contracts import WRITE_TOOLS
 from lib.tool_registry import iter_write_tool_descriptors
@@ -54,6 +54,7 @@ def _stage_to_plan_impl(self, tool_name, payload, trace_id=None):
         yaml_path=self._yaml_path,
         bridge=None,
         run_preflight=True,
+        preflight_fn=self._preflight_fn,
     )
     if gate.get("blocked"):
         return self._build_stage_blocked_response(tool_name, gate)

@@ -1,126 +1,18 @@
-"""Shared validation gate for staging plan items."""
+"""Backward-compatible facade — real logic lives in ``lib.plan_gate``.
+
+GUI callers that need preflight should use the wrappers below which inject
+``app_gui.plan_executor.preflight_plan`` automatically.
+"""
 
 from __future__ import annotations
 
-import os
 from typing import Any, Dict, List, Optional
 
-from app_gui.plan_executor import preflight_plan
-from app_gui.plan_model import validate_plan_item
+from lib.plan_gate import (  # noqa: F401 — re-export
+    validate_plan_batch as _validate_plan_batch,
+    validate_stage_request as _validate_stage_request,
+)
 from lib.plan_item_factory import PlanItem
-from lib.plan_store import PlanStore
-
-
-def _blocked_item_payload(error: Dict[str, Any]) -> Dict[str, Any]:
-    item = error.get("item") or {}
-    return {
-        "action": item.get("action"),
-        "record_id": item.get("record_id"),
-        "box": item.get("box"),
-        "position": item.get("position"),
-        "to_position": item.get("to_position"),
-        "to_box": item.get("to_box"),
-        "error_code": error.get("error_code"),
-        "message": error.get("message"),
-    }
-
-
-def _is_positive_int(value: Any) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and value > 0
-
-
-def _validate_item_payload_schema(item: PlanItem) -> Optional[str]:
-    action = str(item.get("action") or "").lower()
-    payload = item.get("payload")
-    if not isinstance(payload, dict):
-        return "payload must be an object"
-
-    if action == "rollback":
-        backup_path = payload.get("backup_path")
-        if not isinstance(backup_path, str) or not backup_path.strip():
-            return "payload.backup_path is required"
-        source_event = payload.get("source_event")
-        if source_event is not None and not isinstance(source_event, dict):
-            return "payload.source_event must be an object"
-        return None
-
-    if action == "add":
-        positions = payload.get("positions")
-        if not isinstance(positions, list) or not positions:
-            return "payload.positions must be a non-empty list"
-        for idx, position in enumerate(positions):
-            if not _is_positive_int(position):
-                return f"payload.positions[{idx}] must be a positive integer"
-
-        payload_box = payload.get("box")
-        if not _is_positive_int(payload_box):
-            return "payload.box must be a positive integer"
-        if int(item.get("box")) != payload_box:
-            return "payload.box must match item.box"
-
-        if item.get("position") not in positions:
-            return "item.position must be included in payload.positions"
-
-        stored_at = payload.get("stored_at")
-        if not isinstance(stored_at, str) or not stored_at.strip():
-            stored_at = payload.get("frozen_at")
-        if not isinstance(stored_at, str) or not stored_at.strip():
-            return "payload.stored_at is required"
-
-        fields = payload.get("fields")
-        if not isinstance(fields, dict):
-            return "payload.fields must be an object"
-        return None
-
-    if action == "edit":
-        payload_record_id = payload.get("record_id")
-        if not _is_positive_int(payload_record_id):
-            return "payload.record_id must be a positive integer"
-        if int(item.get("record_id")) != payload_record_id:
-            return "payload.record_id must match item.record_id"
-
-        fields = payload.get("fields")
-        if not isinstance(fields, dict) or not fields:
-            return "payload.fields must be a non-empty object"
-        return None
-
-    payload_record_id = payload.get("record_id")
-    if not _is_positive_int(payload_record_id):
-        return "payload.record_id must be a positive integer"
-    if int(item.get("record_id")) != payload_record_id:
-        return "payload.record_id must match item.record_id"
-
-    payload_position = payload.get("position")
-    if not _is_positive_int(payload_position):
-        return "payload.position must be a positive integer"
-    if int(item.get("position")) != payload_position:
-        return "payload.position must match item.position"
-
-    date_str = payload.get("date_str")
-    if not isinstance(date_str, str) or not date_str.strip():
-        return "payload.date_str is required"
-
-    if action == "move":
-        payload_to_position = payload.get("to_position")
-        if not _is_positive_int(payload_to_position):
-            return "payload.to_position must be a positive integer"
-        if int(item.get("to_position")) != payload_to_position:
-            return "payload.to_position must match item.to_position"
-
-        source_box = int(item.get("box"))
-        payload_to_box = payload.get("to_box")
-        target_box = source_box
-        if payload_to_box not in (None, ""):
-            if not _is_positive_int(payload_to_box):
-                return "payload.to_box must be a positive integer"
-            target_box = int(payload_to_box)
-            item_to_box = item.get("to_box")
-            if item_to_box not in (None, "") and int(item_to_box) != payload_to_box:
-                return "payload.to_box must match item.to_box"
-        if target_box == source_box and payload_to_position == payload_position:
-            return "payload.to_position must differ from payload.position"
-
-    return None
 
 
 def validate_plan_batch(
@@ -130,113 +22,16 @@ def validate_plan_batch(
     bridge: Any = None,
     run_preflight: bool = True,
 ) -> Dict[str, Any]:
-    """Validate plan items with shared schema and optional preflight checks."""
-    schema_errors: List[Dict[str, Any]] = []
-    valid_items: List[Dict[str, Any]] = []
+    """Wrapper that injects GUI preflight automatically."""
+    from app_gui.plan_executor import preflight_plan
 
-    for item in items or []:
-        err = validate_plan_item(item)
-        if err:
-            schema_errors.append(
-                {
-                    "kind": "schema",
-                    "item": item,
-                    "error_code": "plan_validation_failed",
-                    "message": err,
-                }
-            )
-            continue
-
-        payload_err = _validate_item_payload_schema(item)
-        if payload_err:
-            schema_errors.append(
-                {
-                    "kind": "schema",
-                    "item": item,
-                    "error_code": "plan_validation_failed",
-                    "message": payload_err,
-                }
-            )
-        else:
-            valid_items.append(item)
-
-    # Cross-item constraint: rollback must be executed alone (no mixing).
-    has_rollback = any(str(it.get("action") or "").lower() == "rollback" for it in valid_items)
-    if has_rollback and len(valid_items) != 1:
-        message = "Rollback must be the only item in a plan (clear other operations first)."
-        for item in valid_items:
-            schema_errors.append(
-                {
-                    "kind": "schema",
-                    "item": item,
-                    "error_code": "plan_validation_failed",
-                    "message": message,
-                }
-            )
-        valid_items = []
-
-    preflight_errors: List[Dict[str, Any]] = []
-    preflight_report = None
-    if run_preflight and valid_items and yaml_path and os.path.isfile(yaml_path):
-        try:
-            preflight_report = preflight_plan(yaml_path, valid_items, bridge)
-        except Exception as exc:
-            preflight_errors.append(
-                {
-                    "kind": "preflight",
-                    "item": valid_items[0],
-                    "error_code": "plan_preflight_failed",
-                    "message": f"Preflight exception: {exc}",
-                }
-            )
-            preflight_report = {
-                "ok": False,
-                "blocked": True,
-                "items": [],
-                "stats": {
-                    "total": len(valid_items),
-                    "ok": 0,
-                    "blocked": len(valid_items),
-                },
-                "summary": f"Preflight exception: {exc}",
-            }
-        if isinstance(preflight_report, dict):
-            for report_item in preflight_report.get("items", []):
-                if report_item.get("blocked"):
-                    preflight_errors.append(
-                        {
-                            "kind": "preflight",
-                            "item": report_item.get("item") or {},
-                            "error_code": report_item.get("error_code") or "plan_preflight_failed",
-                            "message": report_item.get("message") or "Preflight validation failed",
-                        }
-                    )
-
-    errors = schema_errors + preflight_errors
-    blocked_items = [_blocked_item_payload(err) for err in errors]
-
-    blocked_by_preflight = {
-        id(err.get("item"))
-        for err in preflight_errors
-        if isinstance(err.get("item"), dict)
-    }
-    accepted_items = [item for item in valid_items if id(item) not in blocked_by_preflight]
-
-    return {
-        "ok": not errors,
-        "blocked": bool(errors),
-        "errors": errors,
-        "blocked_items": blocked_items,
-        "valid_items": valid_items,
-        "accepted_items": accepted_items,
-        "preflight_report": preflight_report,
-        "stats": {
-            "total": len(items or []),
-            "valid": len(valid_items),
-            "accepted": len(accepted_items),
-            "blocked": len(blocked_items),
-        },
-    }
+    return _validate_plan_batch(
+        items=items,
+        yaml_path=yaml_path,
+        bridge=bridge,
+        run_preflight=run_preflight,
+        preflight_fn=preflight_plan,
+    )
 
 
 def validate_stage_request(
@@ -247,136 +42,14 @@ def validate_stage_request(
     bridge: Any = None,
     run_preflight: bool = True,
 ) -> Dict[str, Any]:
-    """Validate a staging request as one atomic batch.
+    """Wrapper that injects GUI preflight automatically."""
+    from app_gui.plan_executor import preflight_plan
 
-    The validation target is the effective future staged plan after applying the
-    same dedup/replace semantics as ``PlanStore.add()``. This keeps staging
-    validation aligned with the actual staged plan that would be stored.
-    """
-    existing = list(existing_items or [])
-    incoming = list(incoming_items or [])
-    merged = _merge_stage_items(existing, incoming)
-    future_items = list(merged.get("future_items") or [])
-    accepted_items = list(merged.get("accepted_items") or [])
-    noop_items = list(merged.get("noop_items") or [])
-
-    gate = validate_plan_batch(
-        items=future_items,
+    return _validate_stage_request(
+        existing_items=existing_items,
+        incoming_items=incoming_items,
         yaml_path=yaml_path,
         bridge=bridge,
         run_preflight=run_preflight,
+        preflight_fn=preflight_plan,
     )
-
-    if gate.get("blocked"):
-        incoming_ids = {id(item) for item in incoming}
-        accepted_keys = {
-            PlanStore.item_key(item)
-            for item in accepted_items
-            if isinstance(item, dict)
-        }
-        noop_keys = {
-            PlanStore.item_key(item)
-            for item in noop_items
-            if isinstance(item, dict)
-        }
-        incoming_errors = [
-            err
-            for err in (gate.get("errors") or [])
-            if isinstance(err.get("item"), dict) and id(err.get("item")) in incoming_ids
-        ]
-        relevant_errors = incoming_errors
-        if not relevant_errors:
-            relevant_errors = [
-                err
-                for err in (gate.get("errors") or [])
-                if isinstance(err.get("item"), dict)
-                and PlanStore.item_key(err.get("item")) in (accepted_keys | noop_keys)
-            ]
-        if not relevant_errors:
-            relevant_errors = list(gate.get("errors") or [])
-        blocked_items = [_blocked_item_payload(err) for err in relevant_errors]
-        return {
-            "ok": False,
-            "blocked": True,
-            "errors": relevant_errors,
-            "blocked_items": blocked_items,
-            "accepted_items": [],
-            "noop_items": noop_items,
-            "preflight_report": gate.get("preflight_report"),
-            "stats": {
-                "existing": len(existing),
-                "incoming": len(incoming),
-                "future_total": len(future_items),
-                "total": len(existing) + len(incoming),
-                "accepted": len(accepted_items),
-                "noop": len(noop_items),
-                "blocked": len(blocked_items),
-            },
-        }
-
-    return {
-        "ok": True,
-        "blocked": False,
-        "errors": [],
-        "blocked_items": [],
-        "accepted_items": accepted_items,
-        "noop_items": noop_items,
-        "preflight_report": gate.get("preflight_report"),
-        "stats": {
-            "existing": len(existing),
-            "incoming": len(incoming),
-            "future_total": len(future_items),
-            "total": len(existing) + len(incoming),
-            "accepted": len(accepted_items),
-            "noop": len(noop_items),
-            "blocked": 0,
-        },
-    }
-
-
-def _merge_stage_items(
-    existing_items: List[PlanItem],
-    incoming_items: List[PlanItem],
-) -> Dict[str, List[PlanItem]]:
-    """Apply ``PlanStore.add()`` dedup semantics without mutating store state."""
-
-    future_order = []
-    future_by_key: Dict[object, PlanItem] = {}
-    existing_by_key: Dict[object, PlanItem] = {}
-    final_incoming_by_key: Dict[object, PlanItem] = {}
-    noop_items: List[PlanItem] = []
-
-    for item in existing_items or []:
-        key = PlanStore.item_key(item)
-        if key not in future_by_key:
-            future_order.append(key)
-        future_by_key[key] = item
-        existing_by_key[key] = item
-
-    for item in incoming_items or []:
-        key = PlanStore.item_key(item)
-        current = future_by_key.get(key)
-        if current is not None:
-            candidate = PlanStore.merge_same_key_item(current, item)
-        else:
-            candidate = item
-        if current == candidate:
-            noop_items.append(item)
-            continue
-        if current is None:
-            future_order.append(key)
-        future_by_key[key] = candidate
-        final_incoming_by_key[key] = candidate
-
-    future_items = [future_by_key[key] for key in future_order]
-    accepted_items = [
-        future_by_key[key]
-        for key in future_order
-        if key in final_incoming_by_key and existing_by_key.get(key) != future_by_key[key]
-    ]
-
-    return {
-        "future_items": future_items,
-        "accepted_items": accepted_items,
-        "noop_items": noop_items,
-    }
