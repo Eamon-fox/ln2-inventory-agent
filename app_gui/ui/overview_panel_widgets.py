@@ -166,7 +166,9 @@ class _FilterableHeaderView(QHeaderView):
 
                 if event.pos().x() >= icon_x_start:
                     # Click on filter icon
-                    column_name = self.model().headerData(logical_index, Qt.Horizontal)
+                    column_name = self.model().headerData(logical_index, Qt.Horizontal, Qt.UserRole)
+                    if column_name in (None, ""):
+                        column_name = self.model().headerData(logical_index, Qt.Horizontal)
                     self.filterClicked.emit(logical_index, str(column_name))
                     return
 
