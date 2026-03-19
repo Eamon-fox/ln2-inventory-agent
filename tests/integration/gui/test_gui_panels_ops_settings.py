@@ -95,7 +95,6 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         self.assertFalse(panel._m_ctx_cell_line_label.isHidden())
         self.assertFalse(panel._m_ctx_cell_line_container.isHidden())
 
-
     def test_operations_panel_context_fields_follow_schema_order_before_history(self):
         panel = self._new_operations_panel()
 
@@ -129,6 +128,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         self.assertLess(m_cell_line_row, m_sample_row)
         self.assertLess(m_sample_row, m_note_row)
         self.assertLess(m_note_row, m_history_row)
+
     def test_operations_panel_apply_meta_update_blocks_legacy_box_fields(self):
         panel = self._new_operations_panel()
         notices = []
@@ -472,6 +472,69 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             self.assertNotIn("frozen_at", {key for key, _label in structural_pairs})
             self.assertNotIn("thaw_events", {key for key, _label in structural_pairs})
 
+    def test_custom_fields_dialog_move_up_updates_order_and_preserves_selectors(self):
+        from app_gui.ui.dialogs.custom_fields_dialog import CustomFieldsDialog
+
+        dialog = CustomFieldsDialog(
+            custom_fields=[
+                {"key": "short_name", "label": "Short Name", "type": "str"},
+                {"key": "project_code", "label": "Project Code", "type": "str"},
+            ],
+            display_key="project_code",
+            color_key="project_code",
+        )
+        self.addCleanup(dialog.deleteLater)
+
+        initial_keys = [entry["key"].text().strip() for entry in dialog._field_rows]
+        self.assertEqual(["note", "short_name", "project_code"], initial_keys)
+        self.assertFalse(dialog._field_rows[0]["_move_up_btn"].isEnabled())
+        self.assertTrue(dialog._field_rows[-1]["_move_up_btn"].isEnabled())
+        self.assertFalse(dialog._field_rows[-1]["_move_down_btn"].isEnabled())
+
+        QTest.mouseClick(dialog._field_rows[-1]["_move_up_btn"], Qt.LeftButton)
+
+        reordered_keys = [entry["key"].text().strip() for entry in dialog._field_rows]
+        self.assertEqual(["note", "project_code", "short_name"], reordered_keys)
+        self.assertEqual("project_code", dialog.get_display_key())
+        self.assertEqual("project_code", dialog.get_color_key())
+
+        display_items = [
+            dialog._display_key_combo.itemData(index)
+            for index in range(dialog._display_key_combo.count())
+        ]
+        color_items = [
+            dialog._color_key_combo.itemData(index)
+            for index in range(dialog._color_key_combo.count())
+        ]
+        self.assertEqual(["note", "project_code", "short_name"], display_items)
+        self.assertEqual(display_items, color_items)
+
+    def test_custom_fields_dialog_note_row_can_move_but_cannot_be_removed(self):
+        from app_gui.ui.dialogs.custom_fields_dialog import CustomFieldsDialog
+
+        dialog = CustomFieldsDialog(
+            custom_fields=[
+                {"key": "sample_type", "label": "Sample Type", "type": "str"},
+            ],
+        )
+        self.addCleanup(dialog.deleteLater)
+
+        note_entry = dialog._field_rows[0]
+        self.assertEqual("note", note_entry["key"].text().strip())
+        self.assertFalse(note_entry["_remove_btn"].isEnabled())
+        self.assertFalse(note_entry["_move_up_btn"].isEnabled())
+        self.assertTrue(note_entry["_move_down_btn"].isEnabled())
+
+        QTest.mouseClick(note_entry["_move_down_btn"], Qt.LeftButton)
+
+        reordered_keys = [entry["key"].text().strip() for entry in dialog._field_rows]
+        self.assertEqual(["sample_type", "note"], reordered_keys)
+        moved_note_entry = dialog._field_rows[-1]
+        self.assertEqual("note", moved_note_entry["key"].text().strip())
+        self.assertTrue(moved_note_entry["_move_up_btn"].isEnabled())
+        self.assertFalse(moved_note_entry["_move_down_btn"].isEnabled())
+        self.assertFalse(moved_note_entry["_remove_btn"].isEnabled())
+
     def test_custom_fields_dialog_preserves_blocked_fixed_field_rename_attempt(self):
         from app_gui.ui.dialogs.custom_fields_dialog import CustomFieldsDialog
 
@@ -615,6 +678,90 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             dialog_cls.assert_not_called()
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_settings_dialog_custom_fields_save_preserves_reordered_field_order(self):
+        from app_gui.main import SettingsDialog
+        from lib.csv_export import build_export_columns
+        from lib.yaml_ops import load_yaml
+
+        payload = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9,
+                    "cols": 9,
+                    "box_count": 2,
+                    "box_numbers": [1, 2],
+                },
+                "custom_fields": [
+                    {"key": "short_name", "label": "Short Name", "type": "str"},
+                    {"key": "project_code", "label": "Project Code", "type": "str"},
+                ],
+                "display_key": "short_name",
+                "color_key": "short_name",
+            },
+            "inventory": [
+                {
+                    "id": 1,
+                    "box": 1,
+                    "position": 1,
+                    "frozen_at": "2025-01-01",
+                    "short_name": "clone-a",
+                    "project_code": "P-001",
+                }
+            ],
+        }
+        yaml_path = self.ensure_dataset_yaml("cf-reordered-save", payload=payload)
+        on_data_changed = MagicMock()
+
+        class _FakeDialog:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            @staticmethod
+            def exec():
+                return 1
+
+            @staticmethod
+            def get_custom_fields():
+                return [
+                    {"key": "project_code", "label": "Project Code", "type": "str"},
+                    {"key": "short_name", "label": "Short Name", "type": "str"},
+                ]
+
+            @staticmethod
+            def get_display_key():
+                return "project_code"
+
+            @staticmethod
+            def get_color_key():
+                return "project_code"
+
+        dialog = SettingsDialog(
+            config={"yaml_path": yaml_path},
+            on_data_changed=on_data_changed,
+            custom_fields_dialog_cls=_FakeDialog,
+        )
+
+        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock:
+            dialog._open_custom_fields_editor()
+
+        warn_mock.assert_not_called()
+        on_data_changed.assert_called_once()
+
+        saved = load_yaml(yaml_path) or {}
+        saved_meta = saved.get("meta") or {}
+        saved_keys = [
+            field.get("key")
+            for field in (saved_meta.get("custom_fields") or [])
+            if isinstance(field, dict)
+        ]
+        self.assertEqual(["project_code", "short_name"], saved_keys)
+        self.assertEqual("project_code", saved_meta.get("display_key"))
+        self.assertEqual("project_code", saved_meta.get("color_key"))
+        self.assertEqual(
+            ["id", "location", "frozen_at", "note", "project_code", "short_name", "thaw_events"],
+            build_export_columns(saved_meta, split_location=False),
+        )
 
     def test_settings_dialog_custom_fields_allows_option_removal_even_when_records_use_old_value(self):
         from app_gui.main import SettingsDialog
@@ -980,6 +1127,77 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         self.assertEqual("clone-A", record.get("short_name"))
         self.assertEqual("alpha", record.get("alias"))
 
+    def test_settings_dialog_custom_fields_blocks_rename_to_fixed_system_field_before_delete_flow(self):
+        from app_gui.main import SettingsDialog
+        from lib.yaml_ops import load_yaml
+
+        payload = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9, "cols": 9,
+                    "box_count": 2, "box_numbers": [1, 2],
+                },
+                "custom_fields": [
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                    {"key": "short_name", "label": "Short Name", "type": "str"},
+                ],
+                "display_key": "short_name",
+                "color_key": "short_name",
+            },
+            "inventory": [
+                {
+                    "id": 1,
+                    "box": 1,
+                    "position": 1,
+                    "frozen_at": "2025-01-01",
+                    "cell_line": "K562",
+                    "short_name": "clone-A",
+                },
+            ],
+        }
+        yaml_path = self.ensure_dataset_yaml("cf-rename-to-note-blocked", payload=payload)
+
+        class _FakeDialog:
+            def __init__(self, *a, **kw): pass
+            @staticmethod
+            def exec(): return 1
+            @staticmethod
+            def get_custom_fields():
+                return [
+                    {"key": "note", "label": "Note", "type": "str", "multiline": True},
+                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
+                    {"key": "note", "label": "Short Name", "type": "str", "_original_key": "short_name"},
+                ]
+            @staticmethod
+            def get_display_key(): return "note"
+            @staticmethod
+            def get_color_key(): return "note"
+        on_data_changed = MagicMock()
+        dialog = SettingsDialog(
+            config={"yaml_path": yaml_path},
+            on_data_changed=on_data_changed,
+            custom_fields_dialog_cls=_FakeDialog,
+        )
+
+        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock, patch.object(
+            dialog,
+            "_format_removed_field_preview_summary",
+            side_effect=AssertionError("remove-data preview should not run"),
+        ):
+            dialog._open_custom_fields_editor()
+
+        warn_mock.assert_called_once()
+        self.assertIn("Field rename blocked", str(warn_mock.call_args[0][2]))
+        on_data_changed.assert_not_called()
+
+        saved = load_yaml(yaml_path) or {}
+        saved_meta = saved.get("meta") or {}
+        self.assertEqual("short_name", saved_meta.get("display_key"))
+        self.assertEqual("short_name", saved_meta.get("color_key"))
+        record = (saved.get("inventory") or [{}])[0]
+        self.assertEqual("clone-A", record.get("short_name"))
+        self.assertNotIn("note", record)
+
     def test_settings_dialog_custom_fields_selector_keys_follow_rename(self):
         from app_gui.main import SettingsDialog
         from lib.yaml_ops import load_yaml
@@ -1117,77 +1335,6 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         details = dict(edit_events[-1].get("details") or {})
         self.assertEqual("edit_custom_fields", details.get("op"))
         self.assertIn({"from": "short_name", "to": "alias"}, details.get("renames") or [])
-
-    def test_settings_dialog_custom_fields_blocks_rename_to_fixed_system_field_before_delete_flow(self):
-        from app_gui.main import SettingsDialog
-        from lib.yaml_ops import load_yaml
-
-        payload = {
-            "meta": {
-                "box_layout": {
-                    "rows": 9, "cols": 9,
-                    "box_count": 2, "box_numbers": [1, 2],
-                },
-                "custom_fields": [
-                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
-                    {"key": "short_name", "label": "Short Name", "type": "str"},
-                ],
-                "display_key": "short_name",
-                "color_key": "short_name",
-            },
-            "inventory": [
-                {
-                    "id": 1,
-                    "box": 1,
-                    "position": 1,
-                    "frozen_at": "2025-01-01",
-                    "cell_line": "K562",
-                    "short_name": "clone-A",
-                },
-            ],
-        }
-        yaml_path = self.ensure_dataset_yaml("cf-rename-to-note-blocked", payload=payload)
-
-        class _FakeDialog:
-            def __init__(self, *a, **kw): pass
-            @staticmethod
-            def exec(): return 1
-            @staticmethod
-            def get_custom_fields():
-                return [
-                    {"key": "note", "label": "Note", "type": "str", "multiline": True},
-                    {"key": "cell_line", "label": "Cell Line", "type": "str"},
-                    {"key": "note", "label": "Short Name", "type": "str", "_original_key": "short_name"},
-                ]
-            @staticmethod
-            def get_display_key(): return "note"
-            @staticmethod
-            def get_color_key(): return "note"
-        on_data_changed = MagicMock()
-        dialog = SettingsDialog(
-            config={"yaml_path": yaml_path},
-            on_data_changed=on_data_changed,
-            custom_fields_dialog_cls=_FakeDialog,
-        )
-
-        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock, patch.object(
-            dialog,
-            "_format_removed_field_preview_summary",
-            side_effect=AssertionError("remove-data preview should not run"),
-        ):
-            dialog._open_custom_fields_editor()
-
-        warn_mock.assert_called_once()
-        self.assertIn("Field rename blocked", str(warn_mock.call_args[0][2]))
-        on_data_changed.assert_not_called()
-
-        saved = load_yaml(yaml_path) or {}
-        saved_meta = saved.get("meta") or {}
-        self.assertEqual("short_name", saved_meta.get("display_key"))
-        self.assertEqual("short_name", saved_meta.get("color_key"))
-        record = (saved.get("inventory") or [{}])[0]
-        self.assertEqual("clone-A", record.get("short_name"))
-        self.assertNotIn("note", record)
 
     def test_settings_dialog_custom_fields_rename_cell_line_to_type_has_no_ghost_field(self):
         from app_gui.main import SettingsDialog

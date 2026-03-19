@@ -1,5 +1,6 @@
 ﻿"""Custom fields dialog extracted from main window module."""
 
+from PySide6.QtCore import QSize
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -18,11 +19,14 @@ from PySide6.QtWidgets import (
 )
 
 from app_gui.i18n import t, tr
+from app_gui.ui.icons import Icons, get_icon
 from lib.schema_aliases import CANONICAL_STORAGE_EVENTS_KEY, CANONICAL_STORED_AT_KEY
 
 _FIELD_TYPES = ["str", "int", "float", "date"]
 _SYSTEM_NOTE_KEY = "note"
 _OPTIONS_EMPTY_TEXT = "..."
+_MOVE_BUTTON_SIZE = 24
+_ROW_ACTION_WIDTH = 120
 
 
 def _build_structural_display():
@@ -100,7 +104,7 @@ class CustomFieldsDialog(QDialog):
         req_lbl.setProperty("role", "cfHeaderLabel")
         header_l.addWidget(req_lbl)
         action_lbl = QLabel()
-        action_lbl.setFixedWidth(100)
+        action_lbl.setFixedWidth(_ROW_ACTION_WIDTH)
         header_l.addWidget(action_lbl)
         fields_layout.addWidget(header)
 
@@ -139,7 +143,7 @@ class CustomFieldsDialog(QDialog):
             row_l.addWidget(r_cb)
 
             spacer = QWidget()
-            spacer.setFixedWidth(100)
+            spacer.setFixedWidth(_ROW_ACTION_WIDTH)
             row_l.addWidget(spacer)
             fields_layout.addWidget(row_w)
 
@@ -234,6 +238,48 @@ class CustomFieldsDialog(QDialog):
     def get_color_key(self):
         return self._color_key_combo.currentData() or ""
 
+    def _refresh_row_order_ui(self):
+        for entry in self._field_rows:
+            widget = entry.get("widget")
+            if widget is None:
+                continue
+            self._rows_layout.removeWidget(widget)
+
+        total = len(self._field_rows)
+        for index, entry in enumerate(self._field_rows):
+            widget = entry.get("widget")
+            if widget is not None:
+                self._rows_layout.insertWidget(index, widget)
+
+            move_up_btn = entry.get("_move_up_btn")
+            if move_up_btn is not None:
+                move_up_btn.setEnabled(index > 0)
+
+            move_down_btn = entry.get("_move_down_btn")
+            if move_down_btn is not None:
+                move_down_btn.setEnabled(index < total - 1)
+
+        self._sync_selector_combos()
+
+    def _move_row(self, entry, offset):
+        if entry not in self._field_rows:
+            return
+
+        try:
+            step = int(offset)
+        except (TypeError, ValueError):
+            return
+        if step == 0:
+            return
+
+        current_index = self._field_rows.index(entry)
+        new_index = current_index + step
+        if new_index < 0 or new_index >= len(self._field_rows):
+            return
+
+        self._field_rows.insert(new_index, self._field_rows.pop(current_index))
+        self._refresh_row_order_ui()
+
     def _add_row(
         self,
         key="",
@@ -284,7 +330,26 @@ class CustomFieldsDialog(QDialog):
         opts_btn.setToolTip(tr("main.cfEditOptions"))
         row_layout.addWidget(opts_btn)
 
+        move_up_btn = QPushButton()
+        move_up_btn.setObjectName("cfMoveUpBtn")
+        move_up_btn.setIcon(get_icon(Icons.CHEVRON_UP, size=14))
+        move_up_btn.setIconSize(QSize(14, 14))
+        move_up_btn.setFixedSize(_MOVE_BUTTON_SIZE, _MOVE_BUTTON_SIZE)
+        move_up_btn.setToolTip(tr("operations.moveUp"))
+        move_up_btn.setProperty("variant", "ghost")
+        row_layout.addWidget(move_up_btn)
+
+        move_down_btn = QPushButton()
+        move_down_btn.setObjectName("cfMoveDownBtn")
+        move_down_btn.setIcon(get_icon(Icons.CHEVRON_DOWN, size=14))
+        move_down_btn.setIconSize(QSize(14, 14))
+        move_down_btn.setFixedSize(_MOVE_BUTTON_SIZE, _MOVE_BUTTON_SIZE)
+        move_down_btn.setToolTip(tr("operations.moveDown"))
+        move_down_btn.setProperty("variant", "ghost")
+        row_layout.addWidget(move_down_btn)
+
         remove_btn = QPushButton(tr("main.cfRemove"))
+        remove_btn.setObjectName("cfRemoveBtn")
         remove_btn.setFixedWidth(60)
         row_layout.addWidget(remove_btn)
 
@@ -298,6 +363,9 @@ class CustomFieldsDialog(QDialog):
             "original_key": original_key,
             "_options_data": opts_list,
             "_options_btn": opts_btn,
+            "_move_up_btn": move_up_btn,
+            "_move_down_btn": move_down_btn,
+            "_remove_btn": remove_btn,
         }
 
         is_note = key_edit.text().strip() == _SYSTEM_NOTE_KEY
@@ -319,9 +387,11 @@ class CustomFieldsDialog(QDialog):
         self._rows_layout.addWidget(row_widget)
 
         opts_btn.clicked.connect(lambda: self._edit_options(entry))
+        move_up_btn.clicked.connect(lambda: self._move_row(entry, -1))
+        move_down_btn.clicked.connect(lambda: self._move_row(entry, 1))
         remove_btn.clicked.connect(lambda: self._remove_row(entry))
         key_edit.textChanged.connect(lambda _text: self._sync_selector_combos())
-        self._sync_selector_combos()
+        self._refresh_row_order_ui()
 
     def _edit_options(self, entry):
         """Open a small dialog to edit options for a field."""
@@ -378,11 +448,10 @@ class CustomFieldsDialog(QDialog):
         self._field_rows.remove(entry)
         entry["widget"].setParent(None)
         entry["widget"].deleteLater()
-        self._sync_selector_combos()
+        self._refresh_row_order_ui()
 
     def _on_add_row_clicked(self):
         self._add_row()
-        self._sync_selector_combos()
 
     def _sync_selector_combos(self):
         if not hasattr(self, "_display_key_combo") or not hasattr(self, "_color_key_combo"):
