@@ -27,8 +27,13 @@ PROVIDER_DEFAULTS = {
         "help_url": "https://open.bigmodel.cn",
     },
     "minimax": {
-        "model": "MiniMax-M2.5-highspeed",
-        "models": ["MiniMax-M2.5-highspeed", "MiniMax-M2.5"],
+        "model": "MiniMax-M2.7",
+        "models": [
+            "MiniMax-M2.7",
+            "MiniMax-M2.7-highspeed",
+            "MiniMax-M2.5-highspeed",
+            "MiniMax-M2.5",
+        ],
         "env_key": "MINIMAX_API_KEY",
         "display_name": "MiniMax",
         "base_url": "https://api.minimaxi.com/v1",
@@ -603,11 +608,11 @@ class ZhipuLLMClient(OpenAICompatibleClient):
 
 
 class MiniMaxLLMClient(OpenAICompatibleClient):
-    """MiniMax (M2.5) client using the OpenAI-compatible API."""
+    """MiniMax client using the OpenAI-compatible API."""
 
     PROVIDER_NAME = "MiniMax"
     MODEL_ENV_VAR = "MINIMAX_MODEL"
-    DEFAULT_MODEL = "MiniMax-M2.5-highspeed"
+    DEFAULT_MODEL = "MiniMax-M2.7"
     BASE_URL_ENV_VAR = "MINIMAX_BASE_URL"
     DEFAULT_BASE_URL = "https://api.minimaxi.com/v1"
     API_KEY_ENV_VARS = ("MINIMAX_API_KEY",)

@@ -49,6 +49,19 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
 
         self.assertIn(("zhipu", "glm-4.7"), option_pairs)
 
+    def test_ai_panel_model_switch_options_include_minimax_m2_7_models(self):
+        panel = self._new_ai_panel()
+
+        options = panel._iter_model_switch_options()
+        option_pairs = {
+            (str(item.get("provider") or ""), str(item.get("model") or ""))
+            for item in options
+            if isinstance(item, dict)
+        }
+
+        self.assertIn(("minimax", "MiniMax-M2.7"), option_pairs)
+        self.assertIn(("minimax", "MiniMax-M2.7-highspeed"), option_pairs)
+
     def test_ai_panel_model_switch_menu_updates_provider_and_model(self):
         panel = self._new_ai_panel()
         panel.ai_provider.setText("deepseek")

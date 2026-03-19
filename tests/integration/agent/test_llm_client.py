@@ -19,7 +19,12 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agent.llm_client import DeepSeekLLMClient, MiniMaxLLMClient, ZhipuLLMClient
+from agent.llm_client import (
+    PROVIDER_DEFAULTS,
+    DeepSeekLLMClient,
+    MiniMaxLLMClient,
+    ZhipuLLMClient,
+)
 
 
 class _FakeUrlopenResponse:
@@ -329,9 +334,23 @@ class ZhipuClientParseTests(unittest.TestCase):
 
 
 class MiniMaxClientParseTests(unittest.TestCase):
+    def test_provider_defaults_include_m2_7_models_and_default(self):
+        minimax_cfg = PROVIDER_DEFAULTS["minimax"]
+
+        self.assertEqual("MiniMax-M2.7", minimax_cfg["model"])
+        self.assertEqual(
+            [
+                "MiniMax-M2.7",
+                "MiniMax-M2.7-highspeed",
+                "MiniMax-M2.5-highspeed",
+                "MiniMax-M2.5",
+            ],
+            minimax_cfg["models"],
+        )
+
     def test_build_request_uses_project_headers_without_cline_markers(self):
         with patch.dict(os.environ, {"MINIMAX_API_KEY": "test-key"}, clear=False):
-            client = MiniMaxLLMClient(model="MiniMax-M2.5-highspeed")
+            client = MiniMaxLLMClient(model="MiniMax-M2.7")
 
         headers = {
             str(name or "").casefold(): str(value or "")
@@ -345,7 +364,7 @@ class MiniMaxClientParseTests(unittest.TestCase):
 
     def test_build_request_uses_default_temperature_and_reasoning_split(self):
         with patch.dict(os.environ, {"MINIMAX_API_KEY": "test-key"}, clear=False):
-            client = MiniMaxLLMClient(model="MiniMax-M2.5-highspeed")
+            client = MiniMaxLLMClient(model="MiniMax-M2.7")
 
         body = _decode_request_body(client._build_request(messages=[{"role": "user", "content": "hi"}], temperature=0.0))
         self.assertEqual(1.0, body.get("temperature"))
@@ -353,7 +372,7 @@ class MiniMaxClientParseTests(unittest.TestCase):
 
     def test_build_request_can_disable_reasoning_split(self):
         with patch.dict(os.environ, {"MINIMAX_API_KEY": "test-key"}, clear=False):
-            client = MiniMaxLLMClient(model="MiniMax-M2.5-highspeed", thinking_enabled=False)
+            client = MiniMaxLLMClient(model="MiniMax-M2.7", thinking_enabled=False)
 
         body = _decode_request_body(client._build_request(messages=[{"role": "user", "content": "hi"}], temperature=0.25))
         self.assertEqual(0.25, body.get("temperature"))
@@ -361,7 +380,7 @@ class MiniMaxClientParseTests(unittest.TestCase):
 
     def test_stream_chat_yields_reasoning_details_and_tool_call(self):
         with patch.dict(os.environ, {"MINIMAX_API_KEY": "test-key"}, clear=False):
-            client = MiniMaxLLMClient(model="MiniMax-M2.5-highspeed")
+            client = MiniMaxLLMClient(model="MiniMax-M2.7")
 
         tool_chunk = {
             "choices": [
