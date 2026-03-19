@@ -301,12 +301,6 @@ def test_dataset_flow_writes_new_dataset_yaml():
         def get_display_key(self):
             return "short_name"
 
-        def get_cell_line_required(self):
-            return True
-
-        def get_cell_line_options(self):
-            return ["K562", "HeLa"]
-
     flow = DatasetFlow(SimpleNamespace())
     with tempfile.TemporaryDirectory() as tmpdir, patch(
         "lib.inventory_paths.get_install_dir",
@@ -345,12 +339,6 @@ def test_dataset_flow_omits_legacy_cell_line_meta_when_field_removed():
 
         def get_display_key(self):
             return "short_name"
-
-        def get_cell_line_required(self):
-            return True
-
-        def get_cell_line_options(self):
-            return ["K562", "HeLa"]
 
     flow = DatasetFlow(SimpleNamespace())
     with tempfile.TemporaryDirectory() as tmpdir, patch(

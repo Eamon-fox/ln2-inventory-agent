@@ -459,7 +459,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
 
         dialog = SettingsDialog(config={"ai": {"provider": "zhipu", "model": "glm-5"}})
 
-        self.assertEqual("智谱 GLM", dialog.ai_provider_combo.currentText())
+        self.assertEqual("Zhipu AI (GLM)", dialog.ai_provider_combo.currentText())
 
     def test_settings_dialog_import_handoff_closes_dialog_for_ai_panel(self):
         from app_gui.main import SettingsDialog

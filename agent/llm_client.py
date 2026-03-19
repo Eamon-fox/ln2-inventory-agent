@@ -22,7 +22,7 @@ PROVIDER_DEFAULTS = {
         "model": "glm-5",
         "models": ["glm-5", "glm-4.7"],
         "env_key": "ZHIPUAI_API_KEY",
-        "display_name": "鏅鸿氨 GLM",
+        "display_name": "Zhipu AI (GLM)",
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
         "help_url": "https://open.bigmodel.cn",
     },
