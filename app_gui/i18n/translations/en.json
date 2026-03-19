@@ -399,6 +399,8 @@
     "planRejectedRollbackExisting": "Plan rejected: Plan already contains Rollback (clear Plan first).",
     "planRejectedRollbackDuplicate": "Plan rejected: A rollback is already staged; clear Plan before adding another rollback target.",
     "planAddedCount": "Added {count} item(s) to plan.",
+    "planAlreadyStagedCount": "{count} item(s) already in plan.",
+    "planAddedAndAlreadyStaged": "Added {added} item(s) to plan; {already} already in plan.",
     "planRollbackReplaced": "Rollback staged and replaced {count} existing plan item(s).",
     "planNoItemsToExecute": "No items in plan to execute.",
     "planExecuteBlocked": "Cannot execute: {count} item(s) blocked.",
@@ -821,7 +823,9 @@
       "allRejectedByValidation": "All operations rejected by validation: {detail}",
       "moreBlockedItems": "; ... and {count} more",
       "planStoreNotAvailable": "Plan store not available.",
-      "stagedForHumanApproval": "Staged {count} operation(s). Please confirm manually in Plan tab: {summary}"
+      "stagedForHumanApproval": "Staged {count} operation(s). Please confirm manually in Plan tab: {summary}",
+      "stagedForHumanApprovalWithAlready": "Staged {count} operation(s). Please confirm manually in Plan tab: {summary}; {already} already staged.",
+      "alreadyStagedInPlan": "These operations are already staged in Plan tab: {summary}"
     },
     "toolContracts": {
       "add_entry": {

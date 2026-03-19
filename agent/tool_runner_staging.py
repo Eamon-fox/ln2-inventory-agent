@@ -59,6 +59,8 @@ def _stage_to_plan_impl(self, tool_name, payload, trace_id=None):
         return self._build_stage_blocked_response(tool_name, gate)
 
     staged = list(gate.get("accepted_items") or [])
+    noop_items = list(gate.get("noop_items") or [])
+    already_staged_count = len(noop_items)
     if not self._plan_store:
         return self._with_hint(
             tool_name,
@@ -70,22 +72,46 @@ def _stage_to_plan_impl(self, tool_name, payload, trace_id=None):
                     "Plan store not available.",
                 ),
                 "staged": False,
-                "result": {"staged_count": 0, "blocked_count": 0},
+                "result": {"staged_count": 0, "blocked_count": 0, "already_staged_count": 0},
             },
         )
 
-    self._plan_store.add(staged)
-    summary = [self._item_desc(item) for item in staged]
-    return {
-        "ok": True,
-        "staged": True,
-        "message": self._msg(
+    if staged:
+        self._plan_store.add(staged)
+
+    summary_items = staged if staged else noop_items
+    summary = [self._item_desc(item) for item in summary_items]
+    summary_text = "; ".join(summary)
+    if staged and already_staged_count:
+        message = self._msg(
+            "stage.stagedForHumanApprovalWithAlready",
+            "Staged {count} operation(s) for human approval in Plan tab: {summary}; {already} already staged.",
+            count=len(staged),
+            summary=summary_text,
+            already=already_staged_count,
+        )
+    elif staged:
+        message = self._msg(
             "stage.stagedForHumanApproval",
             "Staged {count} operation(s) for human approval in Plan tab: {summary}",
             count=len(staged),
-            summary="; ".join(summary),
-        ),
-        "result": {"staged_count": len(staged)},
+            summary=summary_text,
+        )
+    else:
+        message = self._msg(
+            "stage.alreadyStagedInPlan",
+            "These operations are already staged in Plan tab: {summary}",
+            summary=summary_text,
+        )
+
+    return {
+        "ok": True,
+        "staged": bool(staged),
+        "message": message,
+        "result": {
+            "staged_count": len(staged),
+            "already_staged_count": already_staged_count,
+        },
     }
 
 def _build_staged_plan_items(self, tool_name, payload, layout) -> List[PlanItem]:

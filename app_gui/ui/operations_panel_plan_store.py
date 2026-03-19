@@ -15,7 +15,12 @@ def _tr(key, **kwargs):
 
 
 def _plan_item_key(self, item):
-    return (item.get("action"), item.get("record_id"), item.get("position"), item.get("to_position"), item.get("to_box"))
+    return (
+        item.get("action"),
+        item.get("record_id"),
+        item.get("box"),
+        item.get("position"),
+    )
 
 
 def _build_notice_plan_item_desc(self, item):
@@ -165,6 +170,14 @@ def _reset_plan_feedback_and_validation(self):
     _apply_preflight_report(self, None)
 
 
+def _refresh_current_plan_validation(self, trigger="manual"):
+    """Re-sync cached preflight/validation state to the current staged plan."""
+    from app_gui.ui import operations_panel_plan_toolbar as _ops_plan_toolbar
+
+    _run_plan_preflight(self, trigger=trigger)
+    _ops_plan_toolbar._refresh_after_plan_items_changed(self)
+
+
 def _is_rollback_replace_request(items):
     incoming = list(items or [])
     if len(incoming) != 1:
@@ -198,8 +211,6 @@ def add_plan_items(self, items):
         run_preflight=True,
     )
 
-    _apply_preflight_report(self, gate.get("preflight_report"))
-
     blocked_messages = []
     for blocked in gate.get("blocked_items", []):
         err = localize_error_payload(blocked)
@@ -207,6 +218,7 @@ def add_plan_items(self, items):
             blocked_messages.append(str(err))
 
     if blocked_messages:
+        _refresh_current_plan_validation(self, trigger="stage_blocked")
         first = blocked_messages[0]
         if replace_with_rollback and existing_items:
             user_text = _tr(
@@ -238,7 +250,10 @@ def add_plan_items(self, items):
         return
 
     accepted = list(gate.get("accepted_items") or [])
-    if not accepted:
+    noop_items = list(gate.get("noop_items") or [])
+    _apply_preflight_report(self, gate.get("preflight_report"))
+
+    if not accepted and not noop_items:
         return
 
     if replace_with_rollback:
@@ -264,24 +279,57 @@ def add_plan_items(self, items):
         )
         return
 
-    added = self._plan_store.add(accepted)
+    added = self._plan_store.add(accepted) if accepted else 0
+    already_staged = len(noop_items)
 
     if added:
         _ops_plan_toolbar._refresh_after_plan_items_changed(self)
         _ops_forms._set_plan_feedback(self, "")
 
+        if already_staged:
+            notice_text = _tr(
+                "operations.planAddedAndAlreadyStaged",
+                added=added,
+                already=already_staged,
+            )
+        else:
+            notice_text = _tr("operations.planAddedCount", count=added)
+
         _publish_plan_items_notice(
             self,
             code="plan.stage.accepted",
-            text=_tr("operations.planAddedCount", count=added),
+            text=notice_text,
             level="info",
             timeout=2000,
             items=accepted,
             count_key="added_count",
             count_value=added,
             include_total_count=True,
-            extra_data={"items": accepted},
+            extra_data={
+                "items": accepted,
+                "noop_items": noop_items,
+                "already_staged_count": already_staged,
+            },
         )
+        return
+
+    _ops_plan_toolbar._refresh_after_plan_items_changed(self)
+    _ops_forms._set_plan_feedback(self, "")
+    _publish_plan_items_notice(
+        self,
+        code="plan.stage.already_staged",
+        text=_tr("operations.planAlreadyStagedCount", count=already_staged),
+        level="info",
+        timeout=2000,
+        items=noop_items,
+        count_key="already_staged_count",
+        count_value=already_staged,
+        include_total_count=True,
+        extra_data={
+            "items": noop_items,
+            "noop_items": noop_items,
+        },
+    )
 
 
 def _run_plan_preflight(self, trigger="manual"):

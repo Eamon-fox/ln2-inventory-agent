@@ -6,7 +6,10 @@ Covers: lib/plan_gate.py
 计划门控预检与阻塞规则的集成测试
 """
 
+import os
+import shutil
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -151,3 +154,76 @@ class PlanGatePayloadSchemaTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(result["blocked"])
         self.assertIn("payload.backup_path", result["errors"][0]["message"])
+
+
+class PlanGateDedupStageTests(unittest.TestCase):
+    def test_duplicate_exact_item_is_treated_as_noop(self):
+        existing = [make_takeout_item()]
+        incoming = [make_takeout_item()]
+
+        result = validate_stage_request(
+            existing_items=existing,
+            incoming_items=incoming,
+            yaml_path=None,
+            bridge=None,
+            run_preflight=False,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["blocked"])
+        self.assertEqual([], result["accepted_items"])
+        self.assertEqual(1, len(result["noop_items"]))
+        self.assertEqual(0, result["stats"]["accepted"])
+        self.assertEqual(1, result["stats"]["noop"])
+
+    def test_same_key_with_changed_payload_replaces_existing(self):
+        existing = [make_move_item()]
+        incoming = [dict(make_move_item(), to_position=20, payload=dict(make_move_item()["payload"], to_position=20))]
+
+        result = validate_stage_request(
+            existing_items=existing,
+            incoming_items=incoming,
+            yaml_path=None,
+            bridge=None,
+            run_preflight=False,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["blocked"])
+        self.assertEqual(1, len(result["accepted_items"]))
+        self.assertEqual(20, result["accepted_items"][0]["to_position"])
+        self.assertEqual([], result["noop_items"])
+
+    def test_duplicate_restage_stays_blocked_when_current_plan_is_already_invalid(self):
+        from lib.inventory_paths import ensure_inventories_root, get_inventories_root
+        from lib.yaml_ops import write_yaml
+
+        ensure_inventories_root()
+        tmpdir = tempfile.mkdtemp(prefix="ln2_plan_gate_", dir=get_inventories_root())
+        yaml_path = os.path.join(tmpdir, "inventory.yaml")
+        write_yaml(
+            {
+                "meta": {"box_layout": {"rows": 9, "cols": 9}},
+                "inventory": [],
+            },
+            path=yaml_path,
+            audit_meta={"action": "seed", "source": "tests"},
+        )
+        self.addCleanup(shutil.rmtree, tmpdir, True)
+
+        existing = [make_takeout_item()]
+        incoming = [make_takeout_item()]
+
+        result = validate_stage_request(
+            existing_items=existing,
+            incoming_items=incoming,
+            yaml_path=yaml_path,
+            bridge=None,
+            run_preflight=True,
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["blocked"])
+        self.assertEqual([], result["accepted_items"])
+        self.assertEqual(1, len(result["noop_items"]))
+        self.assertTrue(result["blocked_items"])

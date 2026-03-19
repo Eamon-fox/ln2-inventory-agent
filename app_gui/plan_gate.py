@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from app_gui.plan_executor import preflight_plan
 from app_gui.plan_model import validate_plan_item
 from lib.plan_item_factory import PlanItem
+from lib.plan_store import PlanStore
 
 
 def _blocked_item_payload(error: Dict[str, Any]) -> Dict[str, Any]:
@@ -248,15 +249,19 @@ def validate_stage_request(
 ) -> Dict[str, Any]:
     """Validate a staging request as one atomic batch.
 
-    The validation target is always ``existing_items + incoming_items`` so GUI and
-    agent staging share the same full validation outcome.
+    The validation target is the effective future staged plan after applying the
+    same dedup/replace semantics as ``PlanStore.add()``. This keeps staging
+    validation aligned with the actual staged plan that would be stored.
     """
     existing = list(existing_items or [])
     incoming = list(incoming_items or [])
-    combined = existing + incoming
+    merged = _merge_stage_items(existing, incoming)
+    future_items = list(merged.get("future_items") or [])
+    accepted_items = list(merged.get("accepted_items") or [])
+    noop_items = list(merged.get("noop_items") or [])
 
     gate = validate_plan_batch(
-        items=combined,
+        items=future_items,
         yaml_path=yaml_path,
         bridge=bridge,
         run_preflight=run_preflight,
@@ -264,12 +269,31 @@ def validate_stage_request(
 
     if gate.get("blocked"):
         incoming_ids = {id(item) for item in incoming}
+        accepted_keys = {
+            PlanStore.item_key(item)
+            for item in accepted_items
+            if isinstance(item, dict)
+        }
+        noop_keys = {
+            PlanStore.item_key(item)
+            for item in noop_items
+            if isinstance(item, dict)
+        }
         incoming_errors = [
             err
             for err in (gate.get("errors") or [])
             if isinstance(err.get("item"), dict) and id(err.get("item")) in incoming_ids
         ]
-        relevant_errors = incoming_errors or list(gate.get("errors") or [])
+        relevant_errors = incoming_errors
+        if not relevant_errors:
+            relevant_errors = [
+                err
+                for err in (gate.get("errors") or [])
+                if isinstance(err.get("item"), dict)
+                and PlanStore.item_key(err.get("item")) in (accepted_keys | noop_keys)
+            ]
+        if not relevant_errors:
+            relevant_errors = list(gate.get("errors") or [])
         blocked_items = [_blocked_item_payload(err) for err in relevant_errors]
         return {
             "ok": False,
@@ -277,11 +301,15 @@ def validate_stage_request(
             "errors": relevant_errors,
             "blocked_items": blocked_items,
             "accepted_items": [],
+            "noop_items": noop_items,
             "preflight_report": gate.get("preflight_report"),
             "stats": {
                 "existing": len(existing),
                 "incoming": len(incoming),
-                "total": len(combined),
+                "future_total": len(future_items),
+                "total": len(existing) + len(incoming),
+                "accepted": len(accepted_items),
+                "noop": len(noop_items),
                 "blocked": len(blocked_items),
             },
         }
@@ -291,12 +319,60 @@ def validate_stage_request(
         "blocked": False,
         "errors": [],
         "blocked_items": [],
-        "accepted_items": incoming,
+        "accepted_items": accepted_items,
+        "noop_items": noop_items,
         "preflight_report": gate.get("preflight_report"),
         "stats": {
             "existing": len(existing),
             "incoming": len(incoming),
-            "total": len(combined),
+            "future_total": len(future_items),
+            "total": len(existing) + len(incoming),
+            "accepted": len(accepted_items),
+            "noop": len(noop_items),
             "blocked": 0,
         },
+    }
+
+
+def _merge_stage_items(
+    existing_items: List[PlanItem],
+    incoming_items: List[PlanItem],
+) -> Dict[str, List[PlanItem]]:
+    """Apply ``PlanStore.add()`` dedup semantics without mutating store state."""
+
+    future_order = []
+    future_by_key: Dict[object, PlanItem] = {}
+    existing_by_key: Dict[object, PlanItem] = {}
+    final_incoming_by_key: Dict[object, PlanItem] = {}
+    noop_items: List[PlanItem] = []
+
+    for item in existing_items or []:
+        key = PlanStore.item_key(item)
+        if key not in future_by_key:
+            future_order.append(key)
+        future_by_key[key] = item
+        existing_by_key[key] = item
+
+    for item in incoming_items or []:
+        key = PlanStore.item_key(item)
+        current = future_by_key.get(key)
+        if current == item:
+            noop_items.append(item)
+            continue
+        if key not in future_by_key:
+            future_order.append(key)
+        future_by_key[key] = item
+        final_incoming_by_key[key] = item
+
+    future_items = [future_by_key[key] for key in future_order]
+    accepted_items = [
+        future_by_key[key]
+        for key in future_order
+        if key in final_incoming_by_key and existing_by_key.get(key) != future_by_key[key]
+    ]
+
+    return {
+        "future_items": future_items,
+        "accepted_items": accepted_items,
+        "noop_items": noop_items,
     }

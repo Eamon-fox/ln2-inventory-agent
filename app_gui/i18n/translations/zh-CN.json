@@ -398,6 +398,8 @@
     "planRejectedRollbackExisting": "计划被拒绝：计划中已存在回滚项（先清空计划）。",
     "planRejectedRollbackDuplicate": "计划被拒绝：已存在回滚项；请先清空计划，再添加新的回滚目标。",
     "planAddedCount": "已添加 {count} 条到计划。",
+    "planAlreadyStagedCount": "已有 {count} 条在计划列表中。",
+    "planAddedAndAlreadyStaged": "已添加 {added} 条到计划，另有 {already} 条已在计划列表中。",
     "planRollbackReplaced": "已将 Rollback 加入计划，并替换了 {count} 条现有计划项。",
     "planNoItemsToExecute": "计划中没有待执行项。",
     "planExecuteBlocked": "无法执行：{count} 条被阻塞。",
@@ -814,7 +816,9 @@
       "allRejectedByValidation": "所有操作均被验证拒绝：{detail}",
       "moreBlockedItems": "; ...以及 {count} 更多",
       "planStoreNotAvailable": "计划商店不可用。",
-      "stagedForHumanApproval": "已暂存 {count} 条操作，请在“计划”页签手动确认执行：{summary}"
+      "stagedForHumanApproval": "已暂存 {count} 条操作，请在“计划”页签手动确认执行：{summary}",
+      "stagedForHumanApprovalWithAlready": "已暂存 {count} 条操作，请在“计划”页签手动确认执行：{summary}；另有 {already} 条已在计划列表中。",
+      "alreadyStagedInPlan": "这些操作已在“计划”页签中：{summary}"
     },
     "toolContracts": {
       "add_entry": {

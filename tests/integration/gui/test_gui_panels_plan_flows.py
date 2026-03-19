@@ -77,6 +77,95 @@ class ToolRunnerPlanSinkTests(_NoStagePreflightMixin, ManagedPathTestCase):
         self.assertFalse(result.get("staged", False))
         self.assertEqual(0, self.store.count())
 
+
+class ToolRunnerPlanPreflightTests(ManagedPathTestCase):
+    """Stage preflight should share duplicate/noop semantics with the GUI."""
+
+    def setUp(self):
+        super().setUp()
+        from lib.plan_store import PlanStore
+
+        self.store = PlanStore()
+
+    def _seed_yaml(self, records):
+        import os
+        import tempfile
+        from lib.yaml_ops import write_yaml
+
+        tmpdir = tempfile.mkdtemp(prefix="ln2_tool_runner_stage_")
+        yaml_path = os.path.join(tmpdir, "inventory.yaml")
+        write_yaml(
+            {"meta": {"box_layout": {"rows": 9, "cols": 9}}, "inventory": records},
+            path=yaml_path,
+            audit_meta={"action": "seed", "source": "tests"},
+        )
+        return yaml_path, tmpdir
+
+    def _cleanup_yaml(self, tmpdir):
+        import shutil
+
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def _make_runner(self, yaml_path):
+        from agent.tool_runner import AgentToolRunner
+
+        return AgentToolRunner(
+            yaml_path=yaml_path,
+            plan_store=self.store,
+        )
+
+    def test_duplicate_takeout_stage_reports_already_staged(self):
+        yaml_path, tmpdir = self._seed_yaml(
+            [
+                {
+                    "id": 5,
+                    "parent_cell_line": "K562",
+                    "short_name": "clone-a",
+                    "box": 1,
+                    "position": 10,
+                    "frozen_at": "2025-01-01",
+                }
+            ]
+        )
+
+        try:
+            runner = self._make_runner(yaml_path)
+            first = runner.run(
+                "takeout",
+                {
+                    "entries": [
+                        {
+                            "record_id": 5,
+                            "from_box": 1,
+                            "from_position": 10,
+                        }
+                    ],
+                    "date": "2026-02-10",
+                },
+            )
+            second = runner.run(
+                "takeout",
+                {
+                    "entries": [
+                        {
+                            "record_id": 5,
+                            "from_box": 1,
+                            "from_position": 10,
+                        }
+                    ],
+                    "date": "2026-02-10",
+                },
+            )
+
+            self.assertTrue(first.get("staged"))
+            self.assertTrue(second.get("ok"))
+            self.assertFalse(second.get("staged"))
+            self.assertEqual(1, self.store.count())
+            self.assertEqual(0, second.get("result", {}).get("staged_count"))
+            self.assertEqual(1, second.get("result", {}).get("already_staged_count"))
+        finally:
+            self._cleanup_yaml(tmpdir)
+
 class _ConfigurableBridge(_FakeOperationsBridge):
     """Bridge that can be configured to fail specific calls."""
 
@@ -1103,6 +1192,76 @@ class PlanPreflightGuardTests(ManagedPathTestCase):
             panel.add_plan_items(items)
 
             self.assertTrue(panel.plan_exec_btn.isEnabled())
+        finally:
+            self._cleanup_yaml(tmpdir)
+
+    def test_duplicate_takeout_staging_becomes_already_staged_notice(self):
+        """Re-staging the same takeout should be a noop notice, not a blocked error."""
+        records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "position": 5, "frozen_at": "2025-01-01"}]
+        yaml_path, tmpdir = self._seed_yaml(records)
+
+        try:
+            bridge = _FakeOperationsBridge()
+            panel = OperationsPanel(bridge=bridge, yaml_path_getter=lambda: yaml_path)
+
+            panel.add_plan_items([_make_takeout_item(record_id=1, position=5)])
+            self.assertEqual(1, len(panel.plan_items))
+
+            events = []
+            panel.operation_event.connect(lambda ev: events.append(ev))
+
+            panel.add_plan_items([_make_takeout_item(record_id=1, position=5)])
+
+            self.assertEqual(1, len(panel.plan_items))
+            self.assertTrue(panel.plan_exec_btn.isEnabled())
+            self.assertTrue(panel.plan_feedback_label.isHidden())
+            self.assertTrue(events)
+            self.assertEqual("plan.stage.already_staged", events[-1].get("code"))
+            self.assertFalse(any(v.get("blocked") for v in panel._plan_validation_by_key.values()))
+        finally:
+            self._cleanup_yaml(tmpdir)
+
+    def test_blocked_new_stage_does_not_poison_existing_plan_and_refresh_clears_feedback(self):
+        """A blocked incoming item must not leave the current valid plan blocked or sticky."""
+        records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "position": 5, "frozen_at": "2025-01-01"}]
+        yaml_path, tmpdir = self._seed_yaml(records)
+
+        try:
+            bridge = _FakeOperationsBridge()
+            panel = OperationsPanel(bridge=bridge, yaml_path_getter=lambda: yaml_path)
+
+            panel.add_plan_items([_make_takeout_item(record_id=1, position=5)])
+            self.assertEqual(1, len(panel.plan_items))
+            self.assertTrue(panel.plan_exec_btn.isEnabled())
+
+            events = []
+            panel.operation_event.connect(lambda ev: events.append(ev))
+
+            panel.add_plan_items([_make_takeout_item(record_id=999, position=5)])
+
+            self.assertEqual(1, len(panel.plan_items))
+            self.assertTrue(events)
+            self.assertEqual("plan.stage.blocked", events[-1].get("code"))
+            self.assertTrue(panel.plan_exec_btn.isEnabled())
+            self.assertEqual(tr("operations.planStatusReady"), panel.plan_table.item(0, 4).text())
+            self.assertFalse(panel.plan_feedback_label.isHidden())
+
+            panel.update_records_cache(
+                {
+                    1: {
+                        "id": 1,
+                        "parent_cell_line": "K562",
+                        "short_name": "A",
+                        "box": 1,
+                        "position": 5,
+                        "frozen_at": "2025-01-01",
+                    }
+                }
+            )
+
+            self.assertTrue(panel.plan_feedback_label.isHidden())
+            self.assertTrue(panel.plan_exec_btn.isEnabled())
+            self.assertEqual(tr("operations.planStatusReady"), panel.plan_table.item(0, 4).text())
         finally:
             self._cleanup_yaml(tmpdir)
 

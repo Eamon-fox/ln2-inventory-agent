@@ -263,6 +263,7 @@ def _should_hide_notice_details_line(self, code, details_text, op_lines):
     """Hide Details only when it duplicates operation lines for safe notice types."""
     dedupe_allowed_codes = {
         "plan.stage.accepted",
+        "plan.stage.already_staged",
         "plan.removed",
         "plan.cleared",
         "plan.restored",
@@ -284,11 +285,32 @@ def _should_hide_notice_details_line(self, code, details_text, op_lines):
 def _extract_notice_meta_lines(self, code, data):
     lines = []
     if code == "plan.stage.accepted":
+        already = int(data.get("already_staged_count") or 0)
+        if already:
+            lines.append(
+                self._trf(
+                    "ai.systemNotice.countsAdded",
+                    default="Counts: added={added}, already={already}, total={total}",
+                    added=int(data.get("added_count") or 0),
+                    already=already,
+                    total=int(data.get("total_count") or 0),
+                )
+            )
+        else:
+            lines.append(
+                self._trf(
+                    "ai.systemNotice.countsAdded",
+                    default="Counts: added={added}, total={total}",
+                    added=int(data.get("added_count") or 0),
+                    total=int(data.get("total_count") or 0),
+                )
+            )
+    elif code == "plan.stage.already_staged":
         lines.append(
             self._trf(
-                "ai.systemNotice.countsAdded",
-                default="Counts: added={added}, total={total}",
-                added=int(data.get("added_count") or 0),
+                "ai.systemNotice.countsAlreadyStaged",
+                default="Counts: already={already}, total={total}",
+                already=int(data.get("already_staged_count") or 0),
                 total=int(data.get("total_count") or 0),
             )
         )

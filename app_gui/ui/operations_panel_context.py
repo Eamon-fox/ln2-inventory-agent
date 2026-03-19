@@ -109,6 +109,12 @@ def _clear_context_label_groups(base_labels, extra_widgets):
         if isinstance(widget_pair, (tuple, list)) and len(widget_pair) >= 2:
             _set_text_widget_value(widget_pair[1], "-")
 
+
+def _clear_staging_feedback(self):
+    from app_gui.ui import operations_panel_forms as _ops_forms
+
+    _ops_forms._set_plan_feedback(self, "")
+
 def _populate_record_context_labels(
     self,
     *,
@@ -160,6 +166,7 @@ def _set_last_event_summary_label(self, label_widget, events):
     label_widget.setText(tr("operations.noHistory"))
 
 def _refresh_takeout_record_context(self):
+    _clear_staging_feedback(self)
     # Lookup record by box + position, or by ID if box/position not set
     from_box = self.t_from_box.value()
     from_pos = self._parse_position_text(self.t_from_position.text(), allow_empty=True)
@@ -267,6 +274,8 @@ def _on_move_source_changed(self):
 def _refresh_move_record_context(self):
     if not hasattr(self, "m_ctx_status"):
         return
+
+    _clear_staging_feedback(self)
 
     # Lookup record by box + position
     from_box = self.m_from_box.value()
