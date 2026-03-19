@@ -434,6 +434,13 @@ def _get_theme_vars(mode):
             --sheet-action-add: #8b5cf6;
             --sheet-action-edit: #06b6d4;
             --sheet-action-rollback: #6b7280;
+            --marker-add: #16a34a;
+            --marker-takeout: #dc2626;
+            --marker-edit: #0891b2;
+            --marker-move: #2b7fe5;
+            --badge-bg: rgba(0,0,0,160);
+            --indicator-active: var(--accent);
+            --watermark-tint: #94a3b8;
         """
     else:  # dark
         return """
@@ -576,6 +583,13 @@ def _get_theme_vars(mode):
             --sheet-action-add: #a78bfa;
             --sheet-action-edit: #22d3ee;
             --sheet-action-rollback: #94a3b8;
+            --marker-add: #22c55e;
+            --marker-takeout: #ef4444;
+            --marker-edit: #06b6d4;
+            --marker-move: #63b3ff;
+            --badge-bg: rgba(0,0,0,180);
+            --indicator-active: var(--accent);
+            --watermark-tint: #94a3b8;
         """
 
 

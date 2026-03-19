@@ -5,6 +5,8 @@ from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QLabel
 
+from app_gui.ui.theme import resolve_theme_token
+
 
 class SvgWatermarkLabel(QLabel):
     """Render a tinted SVG watermark with fixed opacity and right-top anchoring."""
@@ -29,7 +31,7 @@ class SvgWatermarkLabel(QLabel):
         self._max_width = max(self._min_width, int(max_width))
         self._margin_top = max(0, int(margin_top))
         self._margin_right = max(0, int(margin_right))
-        self._tint_color = QColor("#94a3b8")
+        self._tint_color = QColor(resolve_theme_token("watermark-tint", fallback="#94a3b8"))
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAlignment(Qt.AlignCenter)

@@ -12,6 +12,7 @@ from PySide6.QtGui import QPainter, QColor, QPen, QFontMetrics
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QSizePolicy
 
 from app_gui.i18n import tr
+from app_gui.ui.theme import FONT_SIZE_XS, SPACE_1, SPACE_2, resolve_theme_token
 
 
 # ---------------------------------------------------------------------------
@@ -24,8 +25,10 @@ class PulsingDot(QWidget):
     _DOT_RADIUS = 4
     _WIDGET_SIZE = 14
 
-    def __init__(self, color: str = "#38bdf8", parent: Optional[QWidget] = None) -> None:
+    def __init__(self, color: str = "", parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
+        if not color:
+            color = resolve_theme_token("indicator-active", fallback="#38bdf8")
         self._color = QColor(color)
         self._opacity: float = 1.0
         self.setFixedSize(self._WIDGET_SIZE, self._WIDGET_SIZE)
@@ -117,11 +120,11 @@ class ActivityIndicator(QWidget):
         layout = QHBoxLayout(self)
         if self._compact:
             layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(4)
+            layout.setSpacing(SPACE_1)
             self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         else:
-            layout.setContentsMargins(4, 2, 4, 2)
-            layout.setSpacing(6)
+            layout.setContentsMargins(SPACE_1, 2, SPACE_1, 2)
+            layout.setSpacing(SPACE_2)
             self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
         self._dot = PulsingDot(parent=self)
@@ -135,7 +138,9 @@ class ActivityIndicator(QWidget):
 
         self._elapsed_label = QLabel("")
         self._elapsed_label.setObjectName("activityElapsedLabel")
-        self._elapsed_label.setStyleSheet("color: #888; font-size: 11px;")
+        self._elapsed_label.setStyleSheet(
+            f"color: {resolve_theme_token('text-muted', fallback='#888888')}; font-size: {FONT_SIZE_XS}px;"
+        )
         self._elapsed_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
         layout.addWidget(self._elapsed_label)
 

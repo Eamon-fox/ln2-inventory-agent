@@ -124,13 +124,10 @@ class _FilterableHeaderView(QHeaderView):
         is_hovered = logicalIndex == self._hover_section
 
         if is_filtered:
-            # Blue color for filtered columns
-            icon_color = resolve_theme_token("primary", fallback="#3b82f6")
+            icon_color = resolve_theme_token("accent", fallback="#3b82f6")
         elif is_hovered:
-            # Lighter color on hover
-            icon_color = resolve_theme_token("text-primary", fallback="#e5e7eb")
+            icon_color = resolve_theme_token("text-strong", fallback="#e5e7eb")
         else:
-            # Muted color for normal state
             icon_color = resolve_theme_token("text-muted", fallback="#9ca3af")
 
         # Draw filter icon
