@@ -11,6 +11,8 @@ from lib.position_fmt import box_to_display, pos_to_display
 
 _BOX_TAG_TITLE_MAX_CHARS = 18
 _OCCUPIED_TEXT_SHOW_MIN_CELL_PX = 52
+_CELL_TEXT_MODE_DEFAULT = "default"
+_CELL_TEXT_MODE_WRAPPED = "wrapped"
 
 
 def _set_button_font_size(button, pixel_size):
@@ -36,14 +38,25 @@ def _update_cell_label_visibility(self, button):
 
     label_text = str(button.property("display_label_full") or "")
     is_empty = bool(button.property("is_empty"))
+    position_label = str(button.property("position_label") or "")
 
     if is_empty:
         target_text = label_text
     else:
         target_text = label_text if _should_show_occupied_label(button, label_text) else str(button.property("position_label") or "")
 
+    target_mode = _CELL_TEXT_MODE_DEFAULT
+    if not is_empty and target_text == label_text and label_text and label_text != position_label:
+        target_mode = _CELL_TEXT_MODE_WRAPPED
+    if hasattr(button, "set_text_display_mode"):
+        button.set_text_display_mode(target_mode)
+    else:
+        button.setProperty("cell_text_mode", target_mode)
+
     if button.text() != target_text:
         button.setText(target_text)
+    elif target_mode == _CELL_TEXT_MODE_WRAPPED:
+        button.update()
 
 
 def _normalize_positive_int(raw):

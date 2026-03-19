@@ -1,10 +1,91 @@
 """Cell widget used by OverviewPanel grid mode."""
 
 from PySide6.QtCore import QEasingCurve, QMimeData, QPropertyAnimation, QRect, Qt, Signal
-from PySide6.QtGui import QColor, QDrag
-from PySide6.QtWidgets import QLabel, QPushButton
+from PySide6.QtGui import QColor, QDrag, QFontMetrics, QPainter, QPalette, QTextLayout, QTextOption
+from PySide6.QtWidgets import QLabel, QPushButton, QStyle, QStyleOptionButton
 
 MIME_TYPE_MOVE = "application/x-ln2-move"
+_ELLIPSIS_TEXT = "..."
+_CELL_TEXT_MODE_DEFAULT = "default"
+_CELL_TEXT_MODE_WRAPPED = "wrapped"
+
+
+def _normalize_cell_text(text):
+    normalized = str(text or "").replace("\r", "\n")
+    parts = normalized.split()
+    return " ".join(parts)
+
+
+def _ascii_elide_text(text, font_metrics, max_width):
+    normalized = _normalize_cell_text(text)
+    if max_width <= 0 or not normalized:
+        return ""
+    if font_metrics.horizontalAdvance(normalized) <= max_width:
+        return normalized
+
+    ellipsis = _ELLIPSIS_TEXT
+    while ellipsis and font_metrics.horizontalAdvance(ellipsis) > max_width:
+        ellipsis = ellipsis[:-1]
+    if not ellipsis:
+        return ""
+
+    low = 0
+    high = len(normalized)
+    while low < high:
+        mid = (low + high + 1) // 2
+        candidate = normalized[:mid].rstrip()
+        if candidate:
+            candidate = f"{candidate}{ellipsis}"
+        else:
+            candidate = ellipsis
+        if font_metrics.horizontalAdvance(candidate) <= max_width:
+            low = mid
+        else:
+            high = mid - 1
+
+    prefix = normalized[:low].rstrip()
+    return f"{prefix}{ellipsis}" if prefix else ellipsis
+
+
+def _wrap_cell_text_lines(text, font, max_width, max_lines):
+    normalized = _normalize_cell_text(text)
+    if max_width <= 0 or max_lines <= 0 or not normalized:
+        return []
+
+    font_metrics = QFontMetrics(font)
+    if max_lines == 1:
+        return [_ascii_elide_text(normalized, font_metrics, max_width)]
+
+    text_layout = QTextLayout(normalized, font)
+    text_option = QTextOption()
+    text_option.setWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
+    text_layout.setTextOption(text_option)
+
+    ranges = []
+    text_layout.beginLayout()
+    try:
+        while len(ranges) < max_lines:
+            line = text_layout.createLine()
+            if not line.isValid():
+                break
+            line.setLineWidth(float(max_width))
+            ranges.append((line.textStart(), line.textLength()))
+    finally:
+        text_layout.endLayout()
+
+    if not ranges:
+        return []
+
+    lines = []
+    for start, length in ranges:
+        lines.append(normalized[start : start + length].strip())
+
+    last_start, last_length = ranges[-1]
+    rendered_end = last_start + last_length
+    if rendered_end < len(normalized):
+        lines[-1] = _ascii_elide_text(normalized[last_start:], font_metrics, max_width)
+
+    return [line for line in lines if line]
 
 
 class CellButton(QPushButton):
@@ -30,6 +111,8 @@ class CellButton(QPushButton):
         self._selection_inner_proxy = None
         self._operation_marker = ""
         self._operation_move_id = None
+        self._text_display_mode = _CELL_TEXT_MODE_DEFAULT
+        self.setProperty("cell_text_mode", self._text_display_mode)
         self._operation_badge = QLabel(self)
         self._operation_badge.setObjectName("OverviewCellOperationBadge")
         self._operation_badge.setAttribute(Qt.WA_TransparentForMouseEvents, True)
@@ -51,7 +134,7 @@ class CellButton(QPushButton):
         if self._hover_proxy is not None:
             return self._hover_proxy
         parent = self.parentWidget() or self
-        proxy = QPushButton(parent)
+        proxy = CellButton("", self.box, self.pos, parent)
         proxy.setObjectName("OverviewCellHoverProxy")
         proxy.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         proxy.setFocusPolicy(Qt.NoFocus)
@@ -74,6 +157,12 @@ class CellButton(QPushButton):
         proxy.setStyleSheet(self.styleSheet())
         proxy.setToolTip(self.toolTip())
         proxy.setFont(self.font())
+        proxy.set_text_display_mode(self._text_display_mode)
+        proxy.setProperty("is_empty", self.property("is_empty"))
+        proxy.setProperty("display_label_full", self.property("display_label_full"))
+        proxy.setProperty("position_label", self.property("position_label"))
+        proxy.set_record_id(self.record_id)
+        proxy.set_operation_marker(self._operation_marker, self._operation_move_id)
         proxy.setGeometry(self._base_rect)
 
     def _ensure_selection_proxies(self):
@@ -153,6 +242,73 @@ class CellButton(QPushButton):
         outer.raise_()
         inner.raise_()
 
+    def set_text_display_mode(self, mode):
+        normalized = str(mode or "").strip().lower()
+        target = _CELL_TEXT_MODE_WRAPPED if normalized == _CELL_TEXT_MODE_WRAPPED else _CELL_TEXT_MODE_DEFAULT
+        if self._text_display_mode == target:
+            return
+        self._text_display_mode = target
+        self.setProperty("cell_text_mode", target)
+        self.update()
+
+    def text_display_mode(self):
+        return self._text_display_mode
+
+    def _text_padding(self):
+        rect = self.contentsRect()
+        horizontal = max(3, min(8, rect.width() // 9))
+        vertical = max(2, min(6, rect.height() // 9))
+        return horizontal, vertical
+
+    def _wrapped_text_rect(self, option):
+        rect = self.style().subElementRect(QStyle.SE_PushButtonContents, option, self)
+        horizontal_padding, vertical_padding = self._text_padding()
+        rect = rect.adjusted(horizontal_padding, vertical_padding, -horizontal_padding, -vertical_padding)
+
+        badge = self._operation_badge
+        if badge is not None and badge.isVisible():
+            badge_height = max(badge.height(), badge.sizeHint().height())
+            rect.setBottom(max(rect.top(), rect.bottom() - badge_height - 2))
+
+        if rect.width() <= 0 or rect.height() <= 0:
+            return QRect()
+        return rect
+
+    def _paint_wrapped_text(self, painter, option, text):
+        text_rect = self._wrapped_text_rect(option)
+        if not text_rect.isValid():
+            return
+
+        line_height = max(1, painter.fontMetrics().lineSpacing())
+        max_lines = max(1, text_rect.height() // line_height)
+        lines = _wrap_cell_text_lines(text, painter.font(), text_rect.width(), max_lines)
+        if not lines:
+            return
+
+        painter.save()
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+        painter.setPen(option.palette.color(QPalette.ButtonText))
+        painter.setClipRect(text_rect)
+
+        baseline_y = text_rect.top() + painter.fontMetrics().ascent()
+        for index, line_text in enumerate(lines):
+            painter.drawText(text_rect.left(), baseline_y + index * line_height, line_text)
+
+        painter.restore()
+
+    def paintEvent(self, event):
+        if self._text_display_mode != _CELL_TEXT_MODE_WRAPPED:
+            super().paintEvent(event)
+            return
+
+        painter = QPainter(self)
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        display_text = str(option.text or self.text() or "")
+        option.text = ""
+        self.style().drawControl(QStyle.CE_PushButton, option, painter, self)
+        self._paint_wrapped_text(painter, option, display_text)
+
     @staticmethod
     def _badge_text_and_color(marker_type, move_id=None):
         marker = str(marker_type or "").strip().lower()
@@ -192,6 +348,7 @@ class CellButton(QPushButton):
             self._operation_badge.hide()
             self.setProperty("operation_marker", "")
             self.setProperty("operation_badge_text", "")
+            self.update()
             return
 
         self.setProperty("operation_marker", marker)
@@ -212,6 +369,7 @@ class CellButton(QPushButton):
         self._operation_badge.show()
         self._operation_badge.raise_()
         self._reposition_operation_badge()
+        self.update()
 
     def _animate_proxy_to(self, rect, on_finished=None):
         proxy = self._hover_proxy
@@ -345,3 +503,11 @@ class CellButton(QPushButton):
             event.acceptProposedAction()
         else:
             super().dropEvent(event)
+
+
+__all__ = [
+    "CellButton",
+    "MIME_TYPE_MOVE",
+    "_ascii_elide_text",
+    "_wrap_cell_text_lines",
+]

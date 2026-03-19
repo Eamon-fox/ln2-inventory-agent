@@ -4,6 +4,101 @@ from tests.integration.gui._gui_panels_shared import *  # noqa: F401,F403
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
 class GuiPanelsOverviewTests(GuiPanelsBaseCase):
+    def test_wrap_cell_text_lines_elides_last_visible_line_with_ascii_dots(self):
+        from app_gui.ui.overview_panel_cell_button import CellButton, _wrap_cell_text_lines
+
+        button = CellButton("", 1, 1)
+        lines = _wrap_cell_text_lines(
+            "very long display label for a frozen sample clone",
+            button.font(),
+            36,
+            2,
+        )
+        button.deleteLater()
+
+        self.assertEqual(2, len(lines))
+        self.assertTrue(lines[-1].endswith("..."))
+        self.assertNotIn("...", lines[0])
+
+    def test_overview_paint_cell_uses_wrapped_mode_for_display_field_values(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
+
+        button = panel.overview_cells[(1, 1)]
+        button.setFixedSize(72, 72)
+        record = {
+            "id": 11,
+            "cell_line": "Long Display Label For Sample Clone",
+            "short_name": "L-01",
+            "box": 1,
+            "position": 1,
+            "frozen_at": "2026-02-10",
+        }
+        panel._current_meta = {"display_key": "cell_line"}
+        panel._current_records = [record]
+        panel.overview_pos_map = {(1, 1): record}
+
+        panel._paint_cell(button, 1, 1, record)
+
+        self.assertEqual("wrapped", button.property("cell_text_mode"))
+        self.assertEqual(record["cell_line"], button.text())
+
+    def test_overview_small_cell_keeps_position_label_mode(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
+
+        button = panel.overview_cells[(1, 1)]
+        button.setFixedSize(36, 36)
+        record = {
+            "id": 13,
+            "cell_line": "Long Display Label For Sample Clone",
+            "short_name": "L-02",
+            "box": 1,
+            "position": 1,
+            "frozen_at": "2026-02-10",
+        }
+        panel._current_meta = {"display_key": "cell_line"}
+        panel._current_records = [record]
+        panel.overview_pos_map = {(1, 1): record}
+
+        panel._paint_cell(button, 1, 1, record)
+
+        self.assertEqual("default", button.property("cell_text_mode"))
+        self.assertEqual("1", button.text())
+
+    def test_overview_hover_proxy_keeps_wrapped_text_mode(self):
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
+        panel.show()
+        self._app.processEvents()
+
+        button = panel.overview_cells[(1, 1)]
+        button.setFixedSize(72, 72)
+        record = {
+            "id": 17,
+            "cell_line": "Long Display Label For Hover Proxy",
+            "short_name": "L-03",
+            "box": 1,
+            "position": 1,
+            "frozen_at": "2026-02-10",
+        }
+        panel._current_meta = {"display_key": "cell_line"}
+        panel._current_records = [record]
+        panel.overview_pos_map = {(1, 1): record}
+        panel._paint_cell(button, 1, 1, record)
+        button._hover_duration_ms = 0
+
+        button.start_hover_visual()
+        self._app.processEvents()
+
+        hover_proxy = button._hover_proxy
+        self.assertIsNotNone(hover_proxy)
+        self.assertEqual("wrapped", hover_proxy.property("cell_text_mode"))
+        self.assertEqual(record["cell_line"], hover_proxy.text())
+
+        button.stop_hover_visual()
+        self._app.processEvents()
+
     def test_overview_export_button_emits_request_signal(self):
         panel = self._new_overview_panel()
         emitted = []
