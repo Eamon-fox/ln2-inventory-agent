@@ -104,7 +104,7 @@ platforms["windows"] = {
 platforms["macos"] = {
     "download_url": "${MACOS_URL}",
     "asset_name": "${MACOS_ASSET}",
-    "auto_update": False,
+    "auto_update": True,
 }
 path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 PY

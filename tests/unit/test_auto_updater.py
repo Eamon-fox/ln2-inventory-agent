@@ -43,8 +43,12 @@ class TestInstallAndRestart(unittest.TestCase):
             on_error=lambda e: self.error_calls.append(e),
         )
         self.updater.temp_dir = self.temp_dir
+        self.platform_patcher = patch("app_gui.auto_updater.sys.platform", "win32")
+        self.platform_patcher.start()
 
     def tearDown(self):
+        if self.platform_patcher is not None:
+            self.platform_patcher.stop()
         if self.updater.temp_dir and os.path.exists(self.updater.temp_dir):
             shutil.rmtree(self.updater.temp_dir)
         if os.path.exists(self.temp_dir):
@@ -133,6 +137,42 @@ class TestInstallAndRestart(unittest.TestCase):
         self.updater.install_and_restart(self.installer_path)
 
         self.assertEqual(len(self.error_calls), 0)
+
+    def test_install_and_restart_rejects_non_windows_platforms(self):
+        self.platform_patcher.stop()
+        self.platform_patcher = None
+        with patch("app_gui.auto_updater.sys.platform", "linux"):
+            with self.assertRaisesRegex(RuntimeError, "only supported on Windows"):
+                self.updater.install_and_restart(self.installer_path)
+
+        self.assertTrue(self.error_calls)
+        self.assertIn("only supported on Windows", self.error_calls[-1])
+
+    @patch("subprocess.Popen")
+    def test_macos_install_and_restart_creates_shell_script(self, mock_popen):
+        self.platform_patcher.stop()
+        self.platform_patcher = None
+
+        pkg_path = os.path.join(self.temp_dir, "SnowFox-1.3.0-macOS.pkg")
+        with open(pkg_path, "wb") as f:
+            f.write(b"fake-pkg")
+
+        with patch("app_gui.auto_updater.sys.platform", "darwin"):
+            self.updater.install_and_restart(pkg_path)
+
+        script_path = os.path.join(self.temp_dir, "snowfox_update.sh")
+        self.assertTrue(os.path.isfile(script_path))
+        content = open(script_path, encoding="utf-8").read()
+        self.assertIn("open -W", content)
+        self.assertIn(pkg_path, content)
+        self.assertIn("/Applications/SnowFox.app", content)
+        self.assertEqual(len(self.complete_calls), 1)
+        self.assertIn("macOS installer", self.complete_calls[0][1])
+
+        mock_popen.assert_called_once()
+        kwargs = mock_popen.call_args.kwargs
+        self.assertTrue(kwargs.get("start_new_session"))
+        self.assertNotIn("creationflags", kwargs)
 
 
 if __name__ == "__main__":

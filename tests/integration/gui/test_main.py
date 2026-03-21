@@ -219,6 +219,7 @@ def test_app_version_constant_exists_and_about_uses_it():
     text = _combined_source_text()
 
     assert re.search(r'APP_VERSION\b.*=\s*"[\d.]+"', text)
+    assert 'APP_RELEASE_URL: str = "https://snowfox.bio/download.html"' in text
     assert re.search(r'v\{APP_VERSION\}', text) or re.search(r'v\{self\._app_version\}', text)
     assert "APP_RELEASE_URL" in text
     assert "_check_release_notice_once" in text

@@ -57,8 +57,9 @@
     "checkUpdate": "Check for Updates",
     "checking": "Checking...",
     "checkUpdateFailed": "Failed to check for updates: {error}",
-    "newVersionAvailable": "New version v{version} is available!\n\n{notes}\n\nVisit the GitHub Releases page to download.",
+    "newVersionAvailable": "New version v{version} is available!\n\n{notes}\n\nOpen the SnowFox download page to get the latest installer.",
     "alreadyLatest": "You are already on the latest version.",
+    "downloadPageLabel": "Download Page",
     "apiKeyMissing": "Oops! Your {provider} API key is missing!\nNo worries, let's get you set up real quick! Follow these simple steps:\n1) Open your browser and visit: {help_url}\n2) Sign up / log in, then head to the \"API Keys\" page\n3) Click \"Create API Key\" and copy the shiny new key (usually starts with \"sk-\")\n4) Come back here and click \"Settings\"\n5) Paste the key into the {provider} API Key field\n6) Click \"Save\", then give it another go! You got this!"
   },
   "main": {
@@ -151,7 +152,7 @@
     "newReleaseUpdate": "Update Now",
     "newReleaseDownload": "Download Update",
     "newReleaseCopy": "Copy Link",
-    "newReleaseOpen": "Open Release Page",
+    "newReleaseOpen": "Open Download Page",
     "newReleaseLater": "Later",
     "releaseNotesDefault": "Stability improvements and bug fixes.",
     "updatingTitle": "Updating SnowFox",
@@ -159,7 +160,7 @@
     "updateFailed": "Update failed",
     "updateManualTitle": "Download Opened",
     "updateManualMessage": "Opened the {platform} download link. Complete installation manually, then restart SnowFox.",
-    "updateManualNoUrl": "No download link is available for this platform yet. Please open the release page instead.",
+    "updateManualNoUrl": "No download link is available for this platform yet. Please open the download page instead.",
     "importStartupTitle": "Get Started",
     "importStartupMessage": "This dataset is empty. Choose one path to continue:\n1) Create a new inventory\n2) Import legacy data and migrate it with AI",
     "importExistingDataTitle": "Import Legacy Data",

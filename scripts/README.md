@@ -146,7 +146,7 @@ WEBSITE_HOST=ecs WEBSITE_DIR=/var/www/snowfox.bio ./scripts/sync-website.sh
     "macos": {
       "download_url": "https://snowfox-release.oss-cn-beijing.aliyuncs.com/SnowFox-1.3.6-macOS.pkg",
       "asset_name": "SnowFox-1.3.6-macOS.pkg",
-      "auto_update": false
+      "auto_update": true
     }
   },
   "release_notes": "..."
@@ -158,7 +158,7 @@ WEBSITE_HOST=ecs WEBSITE_DIR=/var/www/snowfox.bio ./scripts/sync-website.sh
 - `download_url` 是兼容字段，保留给旧版客户端，始终指向 Windows `.exe`
 - 新版客户端优先读取 `platforms.<platform>.download_url`
 - Windows 允许自动更新
-- macOS 当前只提供正确的 `.pkg` 下载链接，不走内置静默安装
+- macOS 也支持应用内一键进入安装流程，但仍然会调用系统 Installer，不是完全静默覆盖安装
 
 ## 正式发版顺序
 

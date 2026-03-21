@@ -6,7 +6,7 @@ import sys
 from typing import Mapping
 
 APP_VERSION: str = "1.3.6"
-APP_RELEASE_URL: str = "https://github.com/Eamon-fox/snowfox/releases"
+APP_RELEASE_URL: str = "https://snowfox.bio/download.html"
 UPDATE_CHECK_URL: str = "https://snowfox-release.oss-cn-beijing.aliyuncs.com/latest.json"
 
 DEFAULT_RELEASE_PLATFORM: str = "windows"

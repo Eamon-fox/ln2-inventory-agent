@@ -415,7 +415,7 @@ class SettingsDialog(QDialog):
         about_label = QLabel(
             f'{tr("app.title")}  v{self._app_version}<br>'
             f'{tr("settings.aboutDesc")}<br><br>'
-            f'GitHub: <a href="{self._app_release_url}">'
+            f'{tr("settings.downloadPageLabel")}: <a href="{self._app_release_url}">'
             f'SnowFox</a>'
         )
         about_label.setOpenExternalLinks(True)

@@ -33,7 +33,7 @@ class TestReleaseMetadata(unittest.TestCase):
                 },
                 "macos": {
                     "download_url": "https://example.com/SnowFox-1.3.5-macOS.pkg",
-                    "auto_update": False,
+                    "auto_update": True,
                 },
             },
         }
@@ -46,7 +46,7 @@ class TestReleaseMetadata(unittest.TestCase):
             result["download_url"],
             "https://example.com/SnowFox-1.3.5-macOS.pkg",
         )
-        self.assertFalse(result["auto_update"])
+        self.assertTrue(result["auto_update"])
 
     def test_resolve_platform_release_info_falls_back_to_legacy_download_url(self):
         payload = {
