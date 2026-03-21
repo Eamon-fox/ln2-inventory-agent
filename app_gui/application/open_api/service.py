@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from app_gui.plan_executor import preflight_plan
 from lib.inventory_paths import assert_allowed_inventory_yaml_path
+from lib.inventory_paths import list_managed_datasets
 from lib.plan_gate import validate_stage_request
 from lib.plan_item_factory import normalize_plan_action
 from lib.tool_api import (
@@ -104,6 +105,8 @@ class LocalOpenApiController:
         bridge,
         plan_store,
         gui_dispatcher=None,
+        list_datasets_fn: Callable[[], list] | None = None,
+        switch_dataset_fn: Callable[[str, str], str] | None = None,
         focus_window_fn: Callable[[], object] | None = None,
         prefill_takeout_fn: Callable[[dict], object] | None = None,
         prefill_add_fn: Callable[[dict], object] | None = None,
@@ -114,6 +117,8 @@ class LocalOpenApiController:
         self._bridge = bridge
         self._plan_store = plan_store
         self._gui_dispatcher = gui_dispatcher
+        self._list_datasets_fn = list_datasets_fn or list_managed_datasets
+        self._switch_dataset_fn = switch_dataset_fn
         self._focus_window_fn = focus_window_fn
         self._prefill_takeout_fn = prefill_takeout_fn
         self._prefill_add_fn = prefill_add_fn
@@ -196,6 +201,38 @@ class LocalOpenApiController:
             },
         )
 
+    def _managed_datasets(self):
+        rows = self._list_datasets_fn() if callable(self._list_datasets_fn) else []
+        current_yaml = os.path.abspath(str(self._yaml_path_getter() or "").strip()) if str(self._yaml_path_getter() or "").strip() else ""
+        items = []
+        for row in list(rows or []):
+            if not isinstance(row, dict):
+                continue
+            yaml_path = str(row.get("yaml_path") or "").strip()
+            if not yaml_path:
+                continue
+            normalized_yaml = os.path.abspath(yaml_path)
+            dataset_name = str(row.get("name") or "").strip() or os.path.basename(os.path.dirname(normalized_yaml)) or normalized_yaml
+            items.append(
+                {
+                    "dataset_name": dataset_name,
+                    "dataset_path": normalized_yaml,
+                    "is_current": bool(current_yaml and normalized_yaml == current_yaml),
+                }
+            )
+        return items
+
+    def _handle_datasets(self):
+        items = self._managed_datasets()
+        return _response_envelope(
+            ok=True,
+            message="Managed datasets",
+            result={
+                "datasets": items,
+                "count": len(items),
+            },
+        )
+
     def _handle_inventory_search(self, query_params):
         yaml_path = self._current_yaml_path(must_exist=True)
         position = _first(query_params.get("position"))
@@ -248,6 +285,58 @@ class LocalOpenApiController:
             yaml_path,
             mode=_first(query_params.get("mode")),
             fail_on_warnings=_coerce_bool(_first(query_params.get("fail_on_warnings")), default=False),
+        )
+
+    def _resolve_switch_target_yaml(self, body):
+        dataset_name = str((body or {}).get("dataset_name") or "").strip()
+        yaml_path = str((body or {}).get("yaml_path") or "").strip()
+        if yaml_path:
+            raise ValueError("yaml_path is not supported; use dataset_name.")
+        if not dataset_name:
+            raise ValueError("dataset_name is required.")
+
+        for item in self._managed_datasets():
+            if str(item.get("dataset_name") or "") == dataset_name:
+                return str(item.get("dataset_path") or "")
+        return ""
+
+    def _handle_session_switch_dataset(self, payload):
+        body = dict(payload or {}) if isinstance(payload, dict) else {}
+        target_yaml = self._resolve_switch_target_yaml(body)
+        if not target_yaml:
+            return 404, _response_envelope(
+                ok=False,
+                error_code="dataset_not_found",
+                message=f"Managed dataset not found: {body.get('dataset_name')}",
+            )
+
+        handler = self._switch_dataset_fn
+        if not callable(handler):
+            return 500, _response_envelope(
+                ok=False,
+                error_code="dataset_switch_unavailable",
+                message="Dataset switch handler is unavailable.",
+            )
+
+        def _apply():
+            return handler(target_yaml, "api_switch")
+
+        switched_yaml = str(self._call_gui(_apply) or "").strip() or target_yaml
+        focus = _coerce_bool(body.get("focus"), default=False)
+        if focus:
+            focus_fn = self._focus_window_fn
+            if callable(focus_fn):
+                self._call_gui(focus_fn)
+
+        dataset_name = os.path.basename(os.path.dirname(switched_yaml)) or os.path.basename(switched_yaml) or ""
+        return 200, _response_envelope(
+            ok=True,
+            message="Switched current dataset",
+            result={
+                "dataset_name": dataset_name,
+                "dataset_path": switched_yaml,
+                "focused": focus,
+            },
         )
 
     def _handle_focus(self):

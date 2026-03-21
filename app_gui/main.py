@@ -367,6 +367,11 @@ class MainWindow(QMainWindow):
             bridge=self.bridge,
             plan_store=self.plan_store,
             gui_dispatcher=self._local_open_api_dispatcher,
+            list_datasets_fn=list_managed_datasets,
+            switch_dataset_fn=lambda yaml_path, reason: self._dataset_session.switch_to(
+                yaml_path,
+                reason=reason,
+            ),
             focus_window_fn=self._focus_main_window_for_external_api,
             prefill_takeout_fn=self.operations_panel.set_prefill,
             prefill_add_fn=self.operations_panel.set_add_prefill,

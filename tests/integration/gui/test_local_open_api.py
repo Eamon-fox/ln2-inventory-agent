@@ -17,6 +17,7 @@ if str(ROOT) not in sys.path:
 
 from app_gui.application.open_api.service import LocalOpenApiController, LocalOpenApiService
 from app_gui.tool_bridge import GuiToolBridge
+from lib.inventory_paths import assert_allowed_inventory_yaml_path
 from lib.plan_item_factory import build_add_plan_item, build_rollback_plan_item
 from lib.plan_store import PlanStore
 from lib.yaml_ops import write_yaml
@@ -47,6 +48,22 @@ class LocalOpenApiTests(ManagedPathTestCase):
             path=self.fake_yaml_path,
             audit_meta={"action": "seed", "source": "tests"},
         )
+        self.dataset_state = {"yaml_path": self.fake_yaml_path}
+        self.other_yaml_path = self.ensure_dataset_yaml(
+            "dataset-b",
+            payload={
+                "meta": {"box_layout": {"rows": 9, "cols": 9, "box_count": 5, "box_numbers": [1, 2, 3, 4, 5]}},
+                "inventory": [
+                    {
+                        "id": 2,
+                        "short_name": "rec-2",
+                        "box": 2,
+                        "position": 2,
+                        "frozen_at": "2024-01-02",
+                    }
+                ],
+            },
+        )
         self.plan_store = PlanStore()
         self.bridge = GuiToolBridge()
         self.focus_calls = []
@@ -54,10 +71,11 @@ class LocalOpenApiTests(ManagedPathTestCase):
         self.add_prefills = []
         self.ai_prompts = []
         self.controller = LocalOpenApiController(
-            yaml_path_getter=lambda: self.fake_yaml_path,
+            yaml_path_getter=lambda: self.dataset_state["yaml_path"],
             bridge=self.bridge,
             plan_store=self.plan_store,
             gui_dispatcher=None,
+            switch_dataset_fn=self._switch_dataset,
             focus_window_fn=lambda: self.focus_calls.append("focus") or True,
             prefill_takeout_fn=lambda payload: self.takeout_prefills.append(dict(payload)),
             prefill_add_fn=lambda payload: self.add_prefills.append(dict(payload)),
@@ -88,6 +106,12 @@ class LocalOpenApiTests(ManagedPathTestCase):
                 return response.status, json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             return exc.code, json.loads(exc.read().decode("utf-8"))
+
+    def _switch_dataset(self, yaml_path, reason):
+        self.assertEqual("api_switch", reason)
+        normalized = assert_allowed_inventory_yaml_path(yaml_path, must_exist=True)
+        self.dataset_state["yaml_path"] = normalized
+        return normalized
 
     def test_http_health_and_search_routes_work_on_loopback(self):
         status, payload = self._request("/api/v1/health")
@@ -120,6 +144,52 @@ class LocalOpenApiTests(ManagedPathTestCase):
         report = payload.get("report") or {}
         self.assertEqual("current_inventory", report.get("mode"))
         self.assertEqual(0, report.get("error_count"))
+
+    def test_http_datasets_and_switch_dataset_routes_work_for_managed_sessions(self):
+        status, payload = self._request("/api/v1/datasets")
+
+        self.assertEqual(200, status)
+        self.assertTrue(payload["ok"])
+        datasets = list((payload.get("result") or {}).get("datasets") or [])
+        self.assertEqual(2, len(datasets))
+        self.assertTrue(any(item.get("dataset_name") == "_fake" and item.get("is_current") for item in datasets))
+
+        status, payload = self._request(
+            "/api/v1/session/switch-dataset",
+            method="POST",
+            payload={"dataset_name": "dataset-b"},
+        )
+
+        self.assertEqual(200, status)
+        self.assertTrue(payload["ok"], payload)
+        self.assertEqual(self.other_yaml_path, self.dataset_state["yaml_path"])
+        self.assertEqual("dataset-b", payload["result"]["dataset_name"])
+
+        status, payload = self._request("/api/v1/session")
+        self.assertEqual(200, status)
+        self.assertEqual(self.other_yaml_path, payload["result"]["dataset_path"])
+
+    def test_http_switch_dataset_rejects_unknown_dataset_name(self):
+        status, payload = self._request(
+            "/api/v1/session/switch-dataset",
+            method="POST",
+            payload={"dataset_name": "missing-dataset"},
+        )
+
+        self.assertEqual(404, status)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("dataset_not_found", payload["error_code"])
+
+    def test_http_switch_dataset_rejects_yaml_path_parameter(self):
+        status, payload = self._request(
+            "/api/v1/session/switch-dataset",
+            method="POST",
+            payload={"yaml_path": self.other_yaml_path},
+        )
+
+        self.assertEqual(400, status)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("invalid_request", payload["error_code"])
 
     def test_http_unknown_route_is_rejected(self):
         status, payload = self._request("/api/v1/inventory/add-entry")

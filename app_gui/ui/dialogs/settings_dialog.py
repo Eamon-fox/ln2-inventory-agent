@@ -3,9 +3,10 @@
 import os
 import sys
 
-from PySide6.QtCore import Qt, Slot, QSize
+from PySide6.QtCore import Qt, Slot, QSize, QTimer
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QInputDialog,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -36,7 +38,7 @@ from app_gui.application.settings_validation_use_case import SettingsValidationU
 from app_gui.application.open_api.contracts import LOCAL_OPEN_API_DEFAULT_PORT
 from app_gui.error_localizer import localize_error
 from app_gui.gui_config import DEFAULT_MAX_STEPS, MAX_AGENT_STEPS
-from app_gui.i18n import t, tr
+from app_gui.i18n import get_language, t, tr
 from app_gui.ui.icons import Icons, get_icon
 from lib.inventory_paths import normalize_inventory_yaml_path as _normalize_inventory_yaml_path
 from lib.position_fmt import box_to_display, pos_to_display
@@ -92,6 +94,16 @@ class _NoWheelTextEdit(QTextEdit):
         event.ignore()
 
 
+class _NoWheelPlainTextEdit(QPlainTextEdit):
+    """Scroll parent unless this editor is actively focused."""
+
+    def wheelEvent(self, event):
+        if self.hasFocus():
+            super().wheelEvent(event)
+            return
+        event.ignore()
+
+
 class _NoPasteLineEdit(QLineEdit):
     """QLineEdit that blocks paste paths for destructive confirmations."""
 
@@ -128,6 +140,14 @@ class _ProgrammaticClickButton(QPushButton):
 
     def click(self):
         self.clicked.emit()
+
+
+def _read_bundled_text_file(path: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return handle.read().strip()
+    except Exception:
+        return ""
 
 
 class SettingsDialog(QDialog):
@@ -183,6 +203,7 @@ class SettingsDialog(QDialog):
             settings_validation_use_case or SettingsValidationUseCase()
         )
         self._inventory_path_locked = True
+        self._local_api_skill_copy_reset_ms = 1800
 
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
@@ -375,6 +396,30 @@ class SettingsDialog(QDialog):
         local_api_hint.setWordWrap(True)
         local_api_layout.addRow("", local_api_hint)
 
+        local_api_skill_row = QWidget()
+        local_api_skill_row_layout = QHBoxLayout(local_api_skill_row)
+        local_api_skill_row_layout.setContentsMargins(0, 0, 0, 0)
+        local_api_skill_row_layout.setSpacing(8)
+
+        self.local_api_skill_template_edit = _NoWheelPlainTextEdit()
+        self.local_api_skill_template_edit.setObjectName("localApiSkillTemplateEdit")
+        self.local_api_skill_template_edit.setReadOnly(True)
+        self.local_api_skill_template_edit.setMaximumHeight(160)
+        self.local_api_skill_template_edit.setLineWrapMode(QPlainTextEdit.NoWrap)
+        local_api_skill_row_layout.addWidget(self.local_api_skill_template_edit, 1)
+
+        self.local_api_skill_copy_btn = QPushButton(tr("settings.localApiSkillCopy"))
+        self.local_api_skill_copy_btn.setObjectName("localApiSkillCopyButton")
+        self.local_api_skill_copy_btn.clicked.connect(self._copy_local_api_skill_template)
+        local_api_skill_row_layout.addWidget(self.local_api_skill_copy_btn, 0, Qt.AlignTop)
+
+        local_api_layout.addRow(tr("settings.localApiSkillTemplate"), local_api_skill_row)
+
+        local_api_skill_hint = QLabel(tr("settings.localApiSkillTemplateHint"))
+        local_api_skill_hint.setProperty("role", "settingsHint")
+        local_api_skill_hint.setWordWrap(True)
+        local_api_layout.addRow("", local_api_skill_hint)
+
         content_layout.addWidget(local_api_group)
 
         from app_gui.i18n import SUPPORTED_LANGUAGES
@@ -397,6 +442,7 @@ class SettingsDialog(QDialog):
         idx = self.lang_combo.findData(current_lang)
         if idx >= 0:
             self.lang_combo.setCurrentIndex(idx)
+        self.lang_combo.currentIndexChanged.connect(self._refresh_local_api_skill_template)
         row_layout.addWidget(self.lang_combo)
 
         theme_label = QLabel(tr("settings.theme"))
@@ -477,6 +523,8 @@ class SettingsDialog(QDialog):
 
         content_layout.addStretch()
 
+        self._refresh_local_api_skill_template()
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self._ok_button = buttons.button(QDialogButtonBox.Ok)
         if self._ok_button is not None:
@@ -499,6 +547,56 @@ class SettingsDialog(QDialog):
         if not hasattr(self, "_ok_button") or self._ok_button is None:
             return
         self._ok_button.setEnabled(self._is_valid_inventory_file_path(self.yaml_edit.text().strip()))
+
+    def _current_template_language(self) -> str:
+        combo = getattr(self, "lang_combo", None)
+        if combo is not None:
+            selected = str(combo.currentData() or "").strip()
+            if selected:
+                return selected
+        configured = str(self._config.get("language") or "").strip()
+        if configured:
+            return configured
+        return str(get_language() or "en").strip() or "en"
+
+    def _resolve_local_api_skill_template_text(self, language: str) -> tuple[str, bool]:
+        assets_root = os.path.join(self._root_dir, "app_gui", "assets")
+        normalized = str(language or "").strip() or "en"
+        candidates = []
+        if normalized:
+            candidates.append(normalized)
+        if "en" not in candidates:
+            candidates.append("en")
+
+        for candidate in candidates:
+            path = os.path.join(assets_root, f"local_api_skill_template.{candidate}.md")
+            text = _read_bundled_text_file(path)
+            if text:
+                return text, True
+        return tr("settings.localApiSkillTemplateUnavailable"), False
+
+    @Slot()
+    @Slot(int)
+    def _refresh_local_api_skill_template(self, *_args):
+        text, available = self._resolve_local_api_skill_template_text(self._current_template_language())
+        self.local_api_skill_template_edit.setPlainText(text)
+        self.local_api_skill_copy_btn.setEnabled(bool(available))
+        self._reset_local_api_skill_copy_button_text()
+
+    @Slot()
+    def _reset_local_api_skill_copy_button_text(self):
+        self.local_api_skill_copy_btn.setText(tr("settings.localApiSkillCopy"))
+
+    @Slot()
+    def _copy_local_api_skill_template(self):
+        if not self.local_api_skill_copy_btn.isEnabled():
+            return
+        QApplication.clipboard().setText(self.local_api_skill_template_edit.toPlainText())
+        self.local_api_skill_copy_btn.setText(tr("settings.localApiSkillCopied"))
+        QTimer.singleShot(
+            int(self._local_api_skill_copy_reset_ms),
+            self._reset_local_api_skill_copy_button_text,
+        )
 
     def _refresh_dataset_choices(self, selected_yaml=""):
         if self.dataset_switch_combo is None:

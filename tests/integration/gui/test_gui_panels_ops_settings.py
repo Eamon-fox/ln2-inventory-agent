@@ -668,6 +668,66 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         self.assertTrue(submission.open_api_enabled)
         self.assertEqual(40123, submission.open_api_port)
 
+    def test_settings_dialog_exposes_read_only_local_api_skill_template_and_copy_button(self):
+        from app_gui.main import SettingsDialog
+
+        previous_language = get_language()
+        self.addCleanup(lambda: set_language(previous_language))
+        self.assertTrue(set_language("en"))
+
+        dialog = SettingsDialog(config={"yaml_path": self.fake_yaml_path, "language": "en"})
+        template_edit = dialog.findChild(QPlainTextEdit, "localApiSkillTemplateEdit")
+        copy_button = dialog.findChild(QPushButton, "localApiSkillCopyButton")
+
+        self.assertIsNotNone(template_edit)
+        self.assertIsNotNone(copy_button)
+        self.assertTrue(template_edit.isReadOnly())
+        self.assertEqual(160, template_edit.maximumHeight())
+        self.assertIn("name: snowfox-local-api", template_edit.toPlainText())
+
+        QApplication.clipboard().setText("")
+        copy_button.click()
+
+        self.assertEqual(template_edit.toPlainText(), QApplication.clipboard().text())
+        self.assertEqual(tr("settings.localApiSkillCopied"), copy_button.text())
+
+    def test_settings_dialog_local_api_skill_template_follows_selected_language(self):
+        from app_gui.main import SettingsDialog
+
+        previous_language = get_language()
+        self.addCleanup(lambda: set_language(previous_language))
+        self.assertTrue(set_language("en"))
+
+        dialog = SettingsDialog(config={"yaml_path": self.fake_yaml_path, "language": "zh-CN"})
+        template_edit = dialog.findChild(QPlainTextEdit, "localApiSkillTemplateEdit")
+
+        self.assertIn("# SnowFox 本地 Open API", template_edit.toPlainText())
+
+    def test_settings_dialog_local_api_skill_template_falls_back_to_english(self):
+        import tempfile
+        from pathlib import Path
+
+        from app_gui.main import SettingsDialog
+
+        with tempfile.TemporaryDirectory(prefix="snowfox_skill_tpl_") as temp_dir:
+            root = Path(temp_dir)
+            assets_dir = root / "app_gui" / "assets"
+            assets_dir.mkdir(parents=True, exist_ok=True)
+            (assets_dir / "local_api_skill_template.en.md").write_text(
+                "english fallback template",
+                encoding="utf-8",
+            )
+
+            dialog = SettingsDialog(
+                config={"yaml_path": self.fake_yaml_path, "language": "zh-CN"},
+                root_dir=str(root),
+            )
+            template_edit = dialog.findChild(QPlainTextEdit, "localApiSkillTemplateEdit")
+            copy_button = dialog.findChild(QPushButton, "localApiSkillCopyButton")
+
+            self.assertEqual("english fallback template", template_edit.toPlainText())
+            self.assertTrue(copy_button.isEnabled())
+
     def test_settings_dialog_ai_model_is_editable_and_persisted(self):
         from app_gui.main import SettingsDialog, PROVIDER_DEFAULTS
 

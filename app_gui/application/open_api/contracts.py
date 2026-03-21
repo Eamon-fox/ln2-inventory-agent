@@ -4,6 +4,7 @@ LOCAL_OPEN_API_DEFAULT_PORT = 37666
 
 LOCAL_OPEN_API_ROUTE_SPECS = {
     ("GET", "/api/v1/health"): {"handler": "_handle_health", "request_arg": None, "status_code": 200},
+    ("GET", "/api/v1/datasets"): {"handler": "_handle_datasets", "request_arg": None, "status_code": 200},
     ("GET", "/api/v1/session"): {"handler": "_handle_session", "request_arg": None, "status_code": 200},
     ("GET", "/api/v1/inventory/search"): {
         "handler": "_handle_inventory_search",
@@ -26,6 +27,10 @@ LOCAL_OPEN_API_ROUTE_SPECS = {
         "status_code": 200,
     },
     ("POST", "/api/v1/gui/focus"): {"handler": "_handle_focus", "request_arg": None, "status_code": 200},
+    ("POST", "/api/v1/session/switch-dataset"): {
+        "handler": "_handle_session_switch_dataset",
+        "request_arg": "payload",
+    },
     ("POST", "/api/v1/gui/prefill-takeout"): {
         "handler": "_handle_prefill_takeout",
         "request_arg": "payload",
