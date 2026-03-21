@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 from functools import lru_cache
 
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
@@ -110,6 +111,45 @@ _MONO_FONT_FAMILIES = [
 MONO_FONT_CSS_FAMILY = ", ".join([f"'{name}'" for name in _MONO_FONT_FAMILIES] + ["monospace"])
 
 
+@lru_cache(maxsize=1)
+def _available_font_families():
+    return set(QFontDatabase.families())
+
+
+def _preferred_ui_font_families():
+    if sys.platform == "darwin":
+        return [
+            "SF Pro Text",
+            "SF Pro Display",
+            "Helvetica Neue",
+            "Arial",
+            "Inter",
+        ]
+    if sys.platform.startswith("win"):
+        return [
+            "Segoe UI Variable",
+            "Segoe UI",
+            "Arial",
+            "Inter",
+        ]
+    return [
+        "Inter",
+        "Noto Sans",
+        "Cantarell",
+        "Ubuntu",
+        "DejaVu Sans",
+        "Arial",
+    ]
+
+
+def _pick_installed_font(candidates):
+    available = _available_font_families()
+    for family in candidates:
+        if family in available:
+            return family
+    return None
+
+
 def _setup_cjk_font(app):
     loaded_family = None
     for path in _CJK_FONT_CANDIDATES:
@@ -123,20 +163,28 @@ def _setup_cjk_font(app):
             loaded_family = families[0]
             break
 
-    # Use Inter for English, Microsoft YaHei for Chinese
-    font = QFont("Inter")
+    primary_family = _pick_installed_font(_preferred_ui_font_families())
+    font = QFont(primary_family) if primary_family else QFont(app.font())
     font.setPointSize(FONT_POINT_SIZE)
-    fallbacks = [
-        "Segoe UI",
+    fallback_candidates = list(_preferred_ui_font_families()) + [
         "Roboto",
         "Cantarell",
         "DejaVu Sans",
     ]
     if loaded_family:
-        fallbacks.append(loaded_family)
-    # Microsoft YaHei as primary Chinese font
-    fallbacks.extend(["Microsoft YaHei", "Microsoft YaHei UI", "SimHei", "SimSun", "sans-serif"])
-    font.setFamilies([font.family()] + fallbacks)
+        fallback_candidates.append(loaded_family)
+    fallback_candidates.extend(["Microsoft YaHei", "Microsoft YaHei UI", "SimHei", "SimSun"])
+
+    family_chain = []
+    seen = set()
+    for family in [primary_family] + fallback_candidates:
+        if not family or family in seen:
+            continue
+        seen.add(family)
+        if family == loaded_family or family in _available_font_families():
+            family_chain.append(family)
+    if family_chain:
+        font.setFamilies(family_chain)
     app.setFont(font)
 
 
