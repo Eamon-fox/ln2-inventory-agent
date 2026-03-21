@@ -127,6 +127,22 @@ class LocalOpenApiTests(ManagedPathTestCase):
         self.assertTrue(records)
         self.assertEqual("rec-1", records[0].get("short_name"))
 
+    def test_http_capabilities_route_describes_allowlist_and_boundary(self):
+        status, payload = self._request("/api/v1/capabilities")
+
+        self.assertEqual(200, status)
+        self.assertTrue(payload["ok"])
+        result = payload.get("result") or {}
+        self.assertEqual("local_open_api", result.get("service"))
+        self.assertEqual(False, result.get("boundary", {}).get("inventory_write_enabled"))
+        self.assertIn("meta_only", result.get("validation_modes") or [])
+        routes = list(result.get("routes") or [])
+        validate_route = next(
+            item for item in routes if item.get("method") == "GET" and item.get("path") == "/api/v1/inventory/validate"
+        )
+        mode_param = next(item for item in (validate_route.get("params") or []) if item.get("name") == "mode")
+        self.assertEqual(["auto", "current_inventory", "document", "meta_only"], mode_param.get("accepted_values"))
+
     def test_http_validate_route_uses_current_gui_session_dataset(self):
         external_yaml = Path(self.install_root) / "outside.yaml"
         external_yaml.write_text("not: valid: yaml:\n", encoding="utf-8")
@@ -144,6 +160,34 @@ class LocalOpenApiTests(ManagedPathTestCase):
         report = payload.get("report") or {}
         self.assertEqual("current_inventory", report.get("mode"))
         self.assertEqual(0, report.get("error_count"))
+
+    def test_http_stats_route_supports_summary_only_mode(self):
+        status, payload = self._request("/api/v1/inventory/stats?summary_only=true")
+
+        self.assertEqual(200, status)
+        self.assertTrue(payload["ok"])
+        result = payload.get("result") or {}
+        self.assertTrue(result.get("summary_only"))
+        self.assertEqual(405, result.get("total_slots"))
+        self.assertEqual(1, result.get("record_count"))
+        self.assertEqual(5, result.get("box_count"))
+        self.assertNotIn("boxes", result)
+        self.assertNotIn("occupancy", result)
+        self.assertNotIn("inventory_preview", result)
+
+    def test_http_stats_route_supports_box_summary_only_mode(self):
+        status, payload = self._request("/api/v1/inventory/stats?box=1&summary_only=true")
+
+        self.assertEqual(200, status)
+        self.assertTrue(payload["ok"])
+        result = payload.get("result") or {}
+        self.assertTrue(result.get("summary_only"))
+        self.assertEqual(1, result.get("box"))
+        self.assertEqual(81, result.get("box_total_slots"))
+        self.assertEqual(1, result.get("box_occupied"))
+        self.assertEqual(1, result.get("box_record_count"))
+        self.assertNotIn("box_records", result)
+        self.assertNotIn("inventory_preview", result)
 
     def test_http_datasets_and_switch_dataset_routes_work_for_managed_sessions(self):
         status, payload = self._request("/api/v1/datasets")
@@ -164,6 +208,9 @@ class LocalOpenApiTests(ManagedPathTestCase):
         self.assertTrue(payload["ok"], payload)
         self.assertEqual(self.other_yaml_path, self.dataset_state["yaml_path"])
         self.assertEqual("dataset-b", payload["result"]["dataset_name"])
+        self.assertEqual("_fake", payload["result"]["previous_dataset_name"])
+        self.assertEqual("managed_dataset_session_switch", payload["effect"])
+        self.assertFalse(payload["inventory_written"])
 
         status, payload = self._request("/api/v1/session")
         self.assertEqual(200, status)
@@ -190,6 +237,7 @@ class LocalOpenApiTests(ManagedPathTestCase):
         self.assertEqual(400, status)
         self.assertFalse(payload["ok"])
         self.assertEqual("invalid_request", payload["error_code"])
+        self.assertEqual("yaml_path", payload["field"])
 
     def test_http_unknown_route_is_rejected(self):
         status, payload = self._request("/api/v1/inventory/add-entry")
@@ -203,6 +251,8 @@ class LocalOpenApiTests(ManagedPathTestCase):
         self.assertEqual(400, status)
         self.assertFalse(payload["ok"])
         self.assertEqual("invalid_request", payload["error_code"])
+        self.assertEqual("mode", payload["field"])
+        self.assertEqual(["auto", "current_inventory", "document", "meta_only"], payload["accepted_values"])
 
     def test_controller_prefill_routes_update_gui_handoff_targets(self):
         status, payload = self.controller.handle_request(
@@ -215,6 +265,9 @@ class LocalOpenApiTests(ManagedPathTestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(1, self.takeout_prefills[0]["record_id"])
         self.assertEqual(["focus"], self.focus_calls)
+        self.assertEqual("gui_handoff", payload["effect"])
+        self.assertFalse(payload["inventory_written"])
+        self.assertFalse(payload["executed"])
 
         status, payload = self.controller.handle_request(
             "POST",
@@ -225,6 +278,7 @@ class LocalOpenApiTests(ManagedPathTestCase):
         self.assertEqual(200, status)
         self.assertTrue(payload["ok"])
         self.assertEqual([2, 3], self.add_prefills[0]["positions"])
+        self.assertFalse(payload["inventory_written"])
 
         status, payload = self.controller.handle_request(
             "POST",
@@ -235,6 +289,7 @@ class LocalOpenApiTests(ManagedPathTestCase):
         self.assertEqual(200, status)
         self.assertTrue(payload["ok"])
         self.assertEqual("show the K562 records", self.ai_prompts[0]["prompt"])
+        self.assertEqual("gui_handoff", payload["effect"])
 
     def test_controller_stage_plan_only_stages_allowed_actions(self):
         item = build_add_plan_item(
@@ -254,6 +309,20 @@ class LocalOpenApiTests(ManagedPathTestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(1, payload["result"]["staged_count"])
         self.assertEqual(1, self.plan_store.count())
+        self.assertEqual("gui_stage_only", payload["effect"])
+        self.assertTrue(payload["staged"])
+        self.assertFalse(payload["inventory_written"])
+
+        status, payload = self.controller.handle_request(
+            "GET",
+            "/api/v1/gui/stage-plan",
+            {},
+        )
+        self.assertEqual(200, status)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(1, payload["result"]["count"])
+        self.assertEqual("add", payload["result"]["items"][0]["action"])
+        self.assertEqual("gui_stage_state", payload["effect"])
 
         status, payload = self.controller.handle_request(
             "POST",
@@ -275,6 +344,7 @@ class LocalOpenApiTests(ManagedPathTestCase):
         self.assertEqual(409, status)
         self.assertFalse(payload["ok"])
         self.assertEqual("plan_action_not_allowed", payload["error_code"])
+        self.assertEqual(["add", "edit", "move", "takeout"], payload["accepted_values"])
 
 
 if __name__ == "__main__":

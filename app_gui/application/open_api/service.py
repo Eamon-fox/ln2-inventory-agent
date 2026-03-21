@@ -25,10 +25,12 @@ from lib.validate_service import validate_yaml_file
 from lib.yaml_ops import load_yaml
 
 from .contracts import (
+    LOCAL_OPEN_API_CAPABILITY_DOCS,
     LOCAL_OPEN_API_DEFAULT_PORT,
     LOCAL_OPEN_API_ROUTE_ALLOWLIST,
     LOCAL_OPEN_API_ROUTE_SPECS,
     LOCAL_OPEN_API_STAGE_ALLOWED_ACTIONS,
+    LOCAL_OPEN_API_VALIDATION_MODES,
 )
 
 
@@ -45,6 +47,65 @@ def _response_envelope(*, ok: bool, message: str = "", result=None, error_code=N
     return payload
 
 
+class LocalOpenApiRequestError(ValueError):
+    """Structured request error for API responses."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int = 400,
+        error_code: str = "invalid_request",
+        field: str | None = None,
+        expected_type: str | None = None,
+        accepted_values=None,
+        example_request=None,
+    ):
+        super().__init__(str(message or "Invalid request"))
+        self.status_code = int(status_code or 400)
+        self.error_code = str(error_code or "invalid_request")
+        self.field = str(field or "").strip() or None
+        self.expected_type = str(expected_type or "").strip() or None
+        self.accepted_values = accepted_values
+        self.example_request = example_request
+
+    def to_response(self):
+        return self.status_code, _response_envelope(
+            ok=False,
+            error_code=self.error_code,
+            message=str(self),
+            field=self.field,
+            expected_type=self.expected_type,
+            accepted_values=self.accepted_values,
+            example_request=self.example_request,
+        )
+
+
+def _error_response(
+    *,
+    status_code: int,
+    error_code: str,
+    message: str,
+    field: str | None = None,
+    expected_type: str | None = None,
+    accepted_values=None,
+    example_request=None,
+    result=None,
+    **extra,
+):
+    return int(status_code), _response_envelope(
+        ok=False,
+        error_code=error_code,
+        message=message,
+        result=result,
+        field=field,
+        expected_type=expected_type,
+        accepted_values=accepted_values,
+        example_request=example_request,
+        **extra,
+    )
+
+
 def _first(values, default=None):
     if isinstance(values, list) and values:
         return values[0]
@@ -57,9 +118,17 @@ def _coerce_int(value, *, field_name, default=None, minimum=None):
     try:
         parsed = int(value)
     except Exception as exc:
-        raise ValueError(f"{field_name} must be an integer") from exc
+        raise LocalOpenApiRequestError(
+            f"{field_name} must be an integer",
+            field=field_name,
+            expected_type="integer",
+        ) from exc
     if minimum is not None and parsed < int(minimum):
-        raise ValueError(f"{field_name} must be >= {int(minimum)}")
+        raise LocalOpenApiRequestError(
+            f"{field_name} must be >= {int(minimum)}",
+            field=field_name,
+            expected_type="integer",
+        )
     return parsed
 
 
@@ -71,7 +140,11 @@ def _coerce_bool(value, *, default=False):
         return True
     if text in {"0", "false", "no", "off"}:
         return False
-    raise ValueError(f"Invalid boolean value: {value}")
+    raise LocalOpenApiRequestError(
+        f"Invalid boolean value: {value}",
+        expected_type="boolean",
+        accepted_values=["1", "0", "true", "false", "yes", "no", "on", "off"],
+    )
 
 
 def _coerce_json_object(value, *, field_name):
@@ -80,11 +153,19 @@ def _coerce_json_object(value, *, field_name):
     try:
         parsed = json.loads(str(value))
     except Exception as exc:
-        raise ValueError(f"{field_name} must be valid JSON") from exc
+        raise LocalOpenApiRequestError(
+            f"{field_name} must be valid JSON",
+            field=field_name,
+            expected_type="json-object",
+        ) from exc
     if parsed is None:
         return None
     if not isinstance(parsed, dict):
-        raise ValueError(f"{field_name} must be a JSON object")
+        raise LocalOpenApiRequestError(
+            f"{field_name} must be a JSON object",
+            field=field_name,
+            expected_type="json-object",
+        )
     return parsed
 
 
@@ -93,6 +174,37 @@ def _normalize_route_path(path: str) -> str:
     if text != "/" and text.endswith("/"):
         return text.rstrip("/")
     return text
+
+
+def _build_stats_summary(result: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(result or {})
+    if "box" in payload:
+        return {
+            "summary_only": True,
+            "box": payload.get("box"),
+            "box_total_slots": payload.get("box_total_slots"),
+            "box_occupied": payload.get("box_occupied"),
+            "box_empty": payload.get("box_empty"),
+            "box_occupancy_rate": payload.get("box_occupancy_rate"),
+            "box_record_count": payload.get("box_record_count"),
+            "record_count": payload.get("record_count"),
+            "include_inactive": payload.get("include_inactive"),
+        }
+
+    boxes = payload.get("boxes")
+    box_count = len(boxes) if isinstance(boxes, dict) else None
+    return {
+        "summary_only": True,
+        "total_slots": payload.get("total_slots"),
+        "slots_per_box": payload.get("slots_per_box"),
+        "total_occupied": payload.get("total_occupied"),
+        "total_empty": payload.get("total_empty"),
+        "total_capacity": payload.get("total_capacity"),
+        "occupancy_rate": payload.get("occupancy_rate"),
+        "record_count": payload.get("record_count"),
+        "include_inactive": payload.get("include_inactive"),
+        "box_count": box_count,
+    }
 
 
 class LocalOpenApiController:
@@ -188,6 +300,42 @@ class LocalOpenApiController:
             },
         )
 
+    def _handle_capabilities(self):
+        routes = []
+        for method, path in sorted(LOCAL_OPEN_API_ROUTE_ALLOWLIST):
+            spec = dict(LOCAL_OPEN_API_CAPABILITY_DOCS.get((method, path)) or {})
+            routes.append(
+                {
+                    "method": method,
+                    "path": path,
+                    "effect": str(spec.get("effect") or ""),
+                    "summary": str(spec.get("summary") or ""),
+                    "params": list(spec.get("params") or []),
+                }
+            )
+        return _response_envelope(
+            ok=True,
+            message="Local API capabilities",
+            result={
+                "service": "local_open_api",
+                "boundary": {
+                    "bind_host": "127.0.0.1",
+                    "requires_running_gui_instance": True,
+                    "dataset_source": "current_gui_session",
+                    "explicit_route_allowlist": True,
+                    "inventory_write_enabled": False,
+                    "notes": [
+                        "This API is loopback-only.",
+                        "It does not execute inventory write tools.",
+                        "GUI handoff routes prepare or stage work for human review.",
+                    ],
+                },
+                "validation_modes": list(LOCAL_OPEN_API_VALIDATION_MODES),
+                "stage_allowed_actions": sorted(LOCAL_OPEN_API_STAGE_ALLOWED_ACTIONS),
+                "routes": routes,
+            },
+        )
+
     def _handle_session(self):
         current_yaml = str(self._yaml_path_getter() or "").strip()
         dataset_name = os.path.basename(os.path.dirname(current_yaml)) or os.path.basename(current_yaml) or ""
@@ -272,18 +420,35 @@ class LocalOpenApiController:
 
     def _handle_inventory_stats(self, query_params):
         yaml_path = self._current_yaml_path(must_exist=True)
+        summary_only = _coerce_bool(_first(query_params.get("summary_only")), default=False)
         response = tool_generate_stats(
             yaml_path=yaml_path,
             box=_coerce_int(_first(query_params.get("box")), field_name="box", minimum=1),
             include_inactive=_coerce_bool(_first(query_params.get("include_inactive")), default=False),
         )
+        if summary_only and isinstance(response, dict) and bool(response.get("ok")):
+            result = response.get("result")
+            if isinstance(result, dict):
+                response = dict(response)
+                response["result"] = _build_stats_summary(result)
         return response
 
     def _handle_inventory_validate(self, query_params):
         yaml_path = self._current_yaml_path(must_exist=True)
+        requested_mode = _first(query_params.get("mode"))
+        if requested_mode not in (None, ""):
+            normalized_mode = str(requested_mode).strip().lower()
+            if normalized_mode not in LOCAL_OPEN_API_VALIDATION_MODES:
+                raise LocalOpenApiRequestError(
+                    f"Invalid validation mode: {requested_mode}",
+                    field="mode",
+                    expected_type="string",
+                    accepted_values=list(LOCAL_OPEN_API_VALIDATION_MODES),
+                    example_request={"mode": "current_inventory", "fail_on_warnings": False},
+                )
         return validate_yaml_file(
             yaml_path,
-            mode=_first(query_params.get("mode")),
+            mode=requested_mode,
             fail_on_warnings=_coerce_bool(_first(query_params.get("fail_on_warnings")), default=False),
         )
 
@@ -291,9 +456,19 @@ class LocalOpenApiController:
         dataset_name = str((body or {}).get("dataset_name") or "").strip()
         yaml_path = str((body or {}).get("yaml_path") or "").strip()
         if yaml_path:
-            raise ValueError("yaml_path is not supported; use dataset_name.")
+            raise LocalOpenApiRequestError(
+                "yaml_path is not supported; use dataset_name.",
+                field="yaml_path",
+                expected_type="managed dataset name",
+                example_request={"dataset_name": "inventory-fan", "focus": True},
+            )
         if not dataset_name:
-            raise ValueError("dataset_name is required.")
+            raise LocalOpenApiRequestError(
+                "dataset_name is required.",
+                field="dataset_name",
+                expected_type="string",
+                example_request={"dataset_name": "inventory-fan", "focus": True},
+            )
 
         for item in self._managed_datasets():
             if str(item.get("dataset_name") or "") == dataset_name:
@@ -302,6 +477,8 @@ class LocalOpenApiController:
 
     def _handle_session_switch_dataset(self, payload):
         body = dict(payload or {}) if isinstance(payload, dict) else {}
+        current_yaml = str(self._yaml_path_getter() or "").strip()
+        previous_dataset_name = os.path.basename(os.path.dirname(current_yaml)) or os.path.basename(current_yaml) or ""
         target_yaml = self._resolve_switch_target_yaml(body)
         if not target_yaml:
             return 404, _response_envelope(
@@ -332,9 +509,16 @@ class LocalOpenApiController:
         return 200, _response_envelope(
             ok=True,
             message="Switched current dataset",
+            effect="managed_dataset_session_switch",
+            executed=False,
+            staged=False,
+            inventory_written=False,
+            gui_changed=bool(switched_yaml != current_yaml or focus),
             result={
                 "dataset_name": dataset_name,
                 "dataset_path": switched_yaml,
+                "previous_dataset_name": previous_dataset_name,
+                "previous_dataset_path": current_yaml,
                 "focused": focus,
             },
         )
@@ -371,10 +555,13 @@ class LocalOpenApiController:
         if raw_position not in (None, ""):
             prefill["position"] = self._normalize_prefill_position(raw_position, field_name="position")
         if "record_id" not in prefill and not {"box", "position"} <= set(prefill):
-            return 400, _response_envelope(
-                ok=False,
+            return _error_response(
+                status_code=400,
                 error_code="invalid_request",
                 message="Provide record_id or both box and position.",
+                field="record_id",
+                expected_type="integer or {box, position}",
+                example_request={"record_id": 1, "focus": True},
             )
 
         focus = _coerce_bool(body.get("focus"), default=True)
@@ -398,6 +585,11 @@ class LocalOpenApiController:
         return 200, _response_envelope(
             ok=True,
             message="Prepared takeout context in GUI",
+            effect="gui_handoff",
+            executed=False,
+            staged=False,
+            inventory_written=False,
+            gui_changed=True,
             result={"prefill": prefill, "focused": focus},
         )
 
@@ -405,10 +597,13 @@ class LocalOpenApiController:
         body = dict(payload or {}) if isinstance(payload, dict) else {}
         box = _coerce_int(body.get("box"), field_name="box", minimum=1)
         if box is None:
-            return 400, _response_envelope(
-                ok=False,
+            return _error_response(
+                status_code=400,
                 error_code="invalid_request",
                 message="box is required.",
+                field="box",
+                expected_type="integer",
+                example_request={"box": 1, "position": "A1", "focus": True},
             )
         raw_positions = body.get("positions")
         normalized_positions = []
@@ -422,10 +617,13 @@ class LocalOpenApiController:
                 self._normalize_prefill_position(body.get("position"), field_name="position")
             )
         if not normalized_positions:
-            return 400, _response_envelope(
-                ok=False,
+            return _error_response(
+                status_code=400,
                 error_code="invalid_request",
                 message="Provide position or positions.",
+                field="position",
+                expected_type="string-or-integer or array",
+                example_request={"box": 1, "position": "A1", "focus": True},
             )
         prefill = {
             "box": box,
@@ -453,6 +651,11 @@ class LocalOpenApiController:
         return 200, _response_envelope(
             ok=True,
             message="Prepared add-entry context in GUI",
+            effect="gui_handoff",
+            executed=False,
+            staged=False,
+            inventory_written=False,
+            gui_changed=True,
             result={"prefill": prefill, "focused": focus},
         )
 
@@ -460,10 +663,13 @@ class LocalOpenApiController:
         body = dict(payload or {}) if isinstance(payload, dict) else {}
         prompt = str(body.get("prompt") or "").strip()
         if not prompt:
-            return 400, _response_envelope(
-                ok=False,
+            return _error_response(
+                status_code=400,
                 error_code="invalid_request",
                 message="prompt is required.",
+                field="prompt",
+                expected_type="string",
+                example_request={"prompt": "show the K562 records", "focus": True},
             )
         focus = _coerce_bool(body.get("focus"), default=True)
         handler = self._prefill_ai_prompt_fn
@@ -482,7 +688,34 @@ class LocalOpenApiController:
         return 200, _response_envelope(
             ok=True,
             message="Prepared AI prompt in GUI",
+            effect="gui_handoff",
+            executed=False,
+            staged=False,
+            inventory_written=False,
+            gui_changed=True,
             result={"focused": focus, "prompt_length": len(prompt)},
+        )
+
+    def _handle_get_stage_plan(self):
+        if self._plan_store is None:
+            return 500, _response_envelope(
+                ok=False,
+                error_code="plan_store_unavailable",
+                message="Plan store is unavailable.",
+            )
+        items = self._plan_store.list_items()
+        return 200, _response_envelope(
+            ok=True,
+            message="Current staged GUI plan",
+            effect="gui_stage_state",
+            executed=False,
+            staged=False,
+            inventory_written=False,
+            gui_changed=False,
+            result={
+                "count": len(items),
+                "items": items,
+            },
         )
 
     def _handle_stage_plan(self, payload):
@@ -495,33 +728,50 @@ class LocalOpenApiController:
         body = dict(payload or {}) if isinstance(payload, dict) else {}
         items = body.get("items")
         if not isinstance(items, list) or not items:
-            return 400, _response_envelope(
-                ok=False,
+            return _error_response(
+                status_code=400,
                 error_code="invalid_request",
                 message="items must be a non-empty list.",
+                field="items",
+                expected_type="non-empty array",
+                example_request={
+                    "items": [
+                        {"action": "add", "box": 1, "position": 2, "record_id": None, "source": "api", "payload": {"box": 1, "positions": [2], "stored_at": "2024-01-02", "fields": {}}},
+                    ]
+                },
             )
 
         normalized_items = []
         for idx, raw_item in enumerate(items):
             if not isinstance(raw_item, dict):
-                return 400, _response_envelope(
-                    ok=False,
+                return _error_response(
+                    status_code=400,
                     error_code="invalid_request",
                     message=f"items[{idx}] must be an object.",
+                    field=f"items[{idx}]",
+                    expected_type="object",
                 )
             item = copy.deepcopy(raw_item)
             action = normalize_plan_action(item.get("action"))
             if action not in LOCAL_OPEN_API_STAGE_ALLOWED_ACTIONS:
-                return 409, _response_envelope(
-                    ok=False,
+                return _error_response(
+                    status_code=409,
                     error_code="plan_action_not_allowed",
                     message=f"Action is not allowed for local API staging: {item.get('action')}",
+                    field=f"items[{idx}].action",
+                    expected_type="string",
+                    accepted_values=sorted(LOCAL_OPEN_API_STAGE_ALLOWED_ACTIONS),
+                    example_request={
+                        "items": [
+                            {"action": "takeout", "record_id": 1, "box": 1, "position": 1, "source": "api", "payload": {"record_id": 1, "position": 1, "date_str": "2024-03-22", "action": "takeout"}}
+                        ]
+                    },
                     blocked_items=[
                         {
                             "action": item.get("action"),
                             "error_code": "plan_action_not_allowed",
                             "message": "Only add/edit/takeout/move can be staged through local API.",
-                        }
+                        },
                     ],
                 )
             item["action"] = action
@@ -563,6 +813,11 @@ class LocalOpenApiController:
         return 200, _response_envelope(
             ok=True,
             message="Plan items staged in GUI",
+            effect="gui_stage_only",
+            executed=False,
+            staged=True,
+            inventory_written=False,
+            gui_changed=bool(accepted or noop_items or focus),
             result={
                 "staged_count": len(accepted),
                 "already_staged_count": len(noop_items),
@@ -636,11 +891,17 @@ class LocalOpenApiService:
                 try:
                     payload = json.loads(raw.decode("utf-8"))
                 except Exception as exc:
-                    raise ValueError("Request body must be valid JSON.") from exc
+                    raise LocalOpenApiRequestError(
+                        "Request body must be valid JSON.",
+                        expected_type="json-object",
+                    ) from exc
                 if payload is None:
                     return None
                 if not isinstance(payload, dict):
-                    raise ValueError("Request body must be a JSON object.")
+                    raise LocalOpenApiRequestError(
+                        "Request body must be a JSON object.",
+                        expected_type="json-object",
+                    )
                 return payload
 
             def _send_json(self, status_code, payload_dict):
@@ -661,13 +922,10 @@ class LocalOpenApiService:
                         parse_qs(parsed.query, keep_blank_values=True),
                         payload=payload,
                     )
+                except LocalOpenApiRequestError as exc:
+                    status_code, response_payload = exc.to_response()
                 except ValueError as exc:
-                    status_code = 400
-                    response_payload = _response_envelope(
-                        ok=False,
-                        error_code="invalid_request",
-                        message=str(exc),
-                    )
+                    status_code, response_payload = LocalOpenApiRequestError(str(exc)).to_response()
                 except Exception as exc:  # pragma: no cover - defensive server guard
                     status_code = 500
                     response_payload = _response_envelope(
