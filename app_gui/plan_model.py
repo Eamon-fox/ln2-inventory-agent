@@ -64,7 +64,7 @@ def extract_grid_state_for_print(overview_panel):
                 raw_color = cell_color(color_val if color_val else None)
                 cell.update({
                     "id": record.get("id"),
-                    "label": label_val if label_val else str(position),
+                    "label": label_val if label_val else pos_to_display(position, layout),
                     "color": raw_color,
                 })
 

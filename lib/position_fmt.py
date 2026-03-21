@@ -54,6 +54,16 @@ def pos_to_display(pos, layout=None):
     return str(pos)
 
 
+def position_display_text(position, layout=None, *, default="?"):
+    """Best-effort position display text for UI/export surfaces."""
+    if position in (None, ""):
+        return str(default)
+    try:
+        return pos_to_display(int(position), layout)
+    except Exception:
+        return str(position)
+
+
 def display_to_pos(display, layout=None):
     """Convert display string to internal 1-based integer position.
 
@@ -159,14 +169,15 @@ def format_box_position_display(
 ):
     """Return a stable identity-first box/position display string."""
     box_text = "?" if box in (None, "") else box_identity_label(box, layout)
-    if position in (None, ""):
-        pos_text = "?"
-    else:
-        try:
-            pos_text = pos_to_display(int(position), layout)
-        except Exception:
-            pos_text = str(position)
+    pos_text = position_display_text(position, layout, default="?")
     return f"{box_label} {box_text} {position_label} {pos_text}"
+
+
+def format_box_position_compact(box, position, *, layout=None, separator=":"):
+    """Return compact identity-first box/position text such as ``1:A1``."""
+    box_text = "?" if box in (None, "") else box_identity_label(box, layout)
+    pos_text = position_display_text(position, layout, default="?")
+    return f"{box_text}{separator}{pos_text}"
 
 
 def format_box_positions_display(
@@ -181,10 +192,7 @@ def format_box_positions_display(
     box_text = "?" if box in (None, "") else box_identity_label(box, layout)
     normalized_positions = []
     for raw_position in list(positions or []):
-        try:
-            normalized_positions.append(pos_to_display(int(raw_position), layout))
-        except Exception:
-            normalized_positions.append(str(raw_position))
+        normalized_positions.append(position_display_text(raw_position, layout))
 
     if not normalized_positions:
         positions_text = "?"

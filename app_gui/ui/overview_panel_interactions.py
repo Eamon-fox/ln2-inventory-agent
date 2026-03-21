@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt
 
 from app_gui.i18n import tr, t
 from app_gui.system_notice import build_system_notice
-from lib.position_fmt import box_tag_text
+from lib.position_fmt import box_tag_text, format_box_position_display, position_display_text
 
 
 def _emit_selected_empty_add_prefill(self, *, background=True, fallback_key=None):
@@ -180,8 +180,10 @@ def _resolve_preview_values(self, record):
 
 def _emit_hover_stats(self, box_num, position, record):
     """Emit formatted hover stats for status bar display."""
+    layout = getattr(self, "_current_layout", {}) or {}
+    position_text = position_display_text(position, layout, default="?")
     if not record:
-        self.hover_stats_changed.emit(t("overview.previewEmpty", box=box_num, pos=position))
+        self.hover_stats_changed.emit(t("overview.previewEmpty", box=box_num, pos=position_text))
         return
 
     from lib.custom_fields import get_display_key
@@ -192,14 +194,30 @@ def _emit_hover_stats(self, box_num, position, record):
     rec_id = str(record.get("id", "-"))
     dk_val = str(record.get(dk, "-"))
     frozen_at = str(record.get("frozen_at", "-"))
+    location_text = format_box_position_display(
+        box_num,
+        position,
+        layout=layout,
+        box_label=tr("operations.box", default="Box"),
+        position_label=tr("operations.position", default="Position"),
+    )
     self.hover_stats_changed.emit(
-        f"ID {rec_id} | {box_num}:{position} | {dk_val} | {tr('operations.frozenDate')}: {frozen_at}"
+        t(
+            "overview.hoverStatsRecord",
+            id=rec_id,
+            location=location_text,
+            value=dk_val,
+            date_label=tr("operations.frozenDate"),
+            date=frozen_at,
+        )
     )
 
 
 def _show_detail(self, box_num, position, record):
+    layout = getattr(self, "_current_layout", {}) or {}
+    position_text = position_display_text(position, layout, default="?")
     if not record:
-        self.ov_hover_hint.setText(t("overview.previewEmpty", box=box_num, pos=position))
+        self.ov_hover_hint.setText(t("overview.previewEmpty", box=box_num, pos=position_text))
         return
 
     rec_id = str(record.get("id", "-"))
@@ -209,7 +227,7 @@ def _show_detail(self, box_num, position, record):
             t(
                 "overview.previewRecord",
                 box=box_num,
-                pos=position,
+                pos=position_text,
                 id=rec_id,
                 cell=values[0],
                 short=values[1],
@@ -219,7 +237,7 @@ def _show_detail(self, box_num, position, record):
 
     value = values[0] if values else "-"
     self.ov_hover_hint.setText(
-        t("overview.previewRecordSingle", box=box_num, pos=position, id=rec_id, value=value)
+        t("overview.previewRecordSingle", box=box_num, pos=position_text, id=rec_id, value=value)
     )
 
 

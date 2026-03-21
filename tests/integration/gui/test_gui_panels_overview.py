@@ -66,6 +66,41 @@ class GuiPanelsOverviewTests(GuiPanelsBaseCase):
         self.assertEqual("default", button.property("cell_text_mode"))
         self.assertEqual("1", button.text())
 
+    def test_overview_tooltip_and_hover_preview_use_alphanumeric_positions(self):
+        previous_language = get_language()
+        self.addCleanup(lambda: set_language(previous_language))
+        self.assertTrue(set_language("en"))
+
+        panel = self._new_overview_panel()
+        panel._current_layout = {"rows": 3, "cols": 3, "indexing": "alphanumeric"}
+        panel._rebuild_boxes(rows=3, cols=3, box_numbers=[1])
+
+        record = {
+            "id": 21,
+            "cell_line": "K562",
+            "short_name": "clone-a2",
+            "box": 1,
+            "position": 2,
+            "frozen_at": "2026-02-10",
+        }
+        panel._current_meta = {"display_key": "cell_line"}
+        panel._current_records = [record]
+        panel.overview_pos_map = {(1, 2): record}
+
+        occupied = panel.overview_cells[(1, 2)]
+        panel._paint_cell(occupied, 1, 2, record)
+        self.assertIn("1:A2", occupied.toolTip())
+
+        empty = panel.overview_cells[(1, 3)]
+        panel._paint_cell(empty, 1, 3, record=None)
+        self.assertEqual("A3", empty.property("display_label_full"))
+
+        panel._show_detail(1, 2, record)
+        self.assertIn("A2", panel.ov_hover_hint.text())
+
+        panel._show_detail(1, 3, None)
+        self.assertIn("A3", panel.ov_hover_hint.text())
+
     def test_overview_public_plan_store_hooks_delegate_to_marker_refresh(self):
         panel = self._new_overview_panel()
         plan_store = SimpleNamespace(

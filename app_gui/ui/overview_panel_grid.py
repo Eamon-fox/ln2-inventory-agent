@@ -7,7 +7,13 @@ from app_gui.i18n import t, tr
 from app_gui.ui.overview_panel_cell_button import CellButton
 from app_gui.ui.theme import SPACE_1, SPACE_2, cell_empty_style, cell_occupied_style, resolve_theme_token
 from app_gui.ui.utils import cell_color
-from lib.position_fmt import box_tag_text, box_to_display, pos_to_display
+from lib.position_fmt import (
+    box_tag_text,
+    box_to_display,
+    format_box_position_compact,
+    pos_to_display,
+    position_display_text,
+)
 
 _BOX_TAG_TITLE_MAX_CHARS = 18
 _OCCUPIED_TEXT_SHOW_MIN_CELL_PX = 52
@@ -622,9 +628,10 @@ def _paint_cell(self, button, box_num, position, record):
         button.setProperty("is_empty", False)
         _update_cell_label_visibility(self, button)
 
+        compact_location = format_box_position_compact(box_num, position, layout=layout)
         tt = [
             f"{tr('overview.tooltipId')}: {record.get('id', '-')}",
-            f"{tr('overview.tooltipPos')}: {box_num}:{position}",
+            f"{tr('overview.tooltipPos')}: {compact_location}",
         ]
         field_defs = get_effective_fields(meta, inventory=inventory)
         field_label_map = {
@@ -653,6 +660,8 @@ def _paint_cell(self, button, box_num, position, record):
             str(record.get("id", "")),
             str(box_num),
             str(position),
+            compact_location,
+            display_pos,
             str(record.get("frozen_at") or ""),
         ]
         for key, value in record.items():
@@ -667,10 +676,19 @@ def _paint_cell(self, button, box_num, position, record):
         button.setProperty("display_label_full", display_pos)
         button.setProperty("is_empty", True)
         _update_cell_label_visibility(self, button)
-        button.setToolTip(t("overview.emptyCellTooltip", box=box_num, position=position))
+        button.setToolTip(
+            t(
+                "overview.emptyCellTooltip",
+                box=box_num,
+                position=position_display_text(position, layout, default="?"),
+            )
+        )
         base_style = cell_empty_style(is_selected)
         button.setStyleSheet(base_style)
-        button.setProperty("search_text", f"empty box {box_num} position {position}".lower())
+        button.setProperty(
+            "search_text",
+            f"empty box {box_num} position {position} {display_pos}".lower(),
+        )
         button.setProperty("color_key_value", "")
         button.set_record_id(None)
 

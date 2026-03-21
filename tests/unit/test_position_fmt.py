@@ -10,6 +10,7 @@ import pytest
 from lib.position_fmt import (
     BOX_LAYOUT_INDEXING_VALUES,
     DEFAULT_BOX_LAYOUT_INDEXING,
+    format_box_position_compact,
     pos_to_display,
     display_to_pos,
     box_to_display,
@@ -20,6 +21,7 @@ from lib.position_fmt import (
     get_position_range,
     is_valid_box_layout_indexing,
     normalize_box_layout_indexing,
+    position_display_text,
 )
 
 
@@ -123,6 +125,14 @@ class TestAlphanumericMode:
     def test_integer_input_rejected_in_alphanumeric_mode(self):
         with pytest.raises(ValueError):
             display_to_pos(5, self.LAYOUT_9x9)
+
+    def test_position_display_text_is_best_effort(self):
+        assert position_display_text(10, self.LAYOUT_9x9) == "B1"
+        assert position_display_text("", self.LAYOUT_9x9) == "?"
+        assert position_display_text("legacy", self.LAYOUT_9x9) == "legacy"
+
+    def test_format_box_position_compact_uses_alphanumeric_position(self):
+        assert format_box_position_compact(2, 10, layout=self.LAYOUT_9x9) == "2:B1"
 
 
 class TestBoxDisplay:

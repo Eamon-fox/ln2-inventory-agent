@@ -4,6 +4,7 @@ import csv
 import os
 
 from .custom_fields import get_effective_fields
+from .position_fmt import format_box_position_compact, position_display_text
 
 
 def _safe_int(value, default):
@@ -55,14 +56,23 @@ def build_export_columns(meta=None, *, inventory=None, split_location=False):
     return columns
 
 
-def _row_value(record, column, *, split_location=False):
+def _layout_from_meta(meta):
+    if not isinstance(meta, dict):
+        return {}
+    layout = meta.get("box_layout")
+    return layout if isinstance(layout, dict) else {}
+
+
+def _row_value(record, column, *, meta=None, split_location=False):
+    layout = _layout_from_meta(meta)
     if column == "location" and not split_location:
-        # Merge box:position format
         box = record.get("box")
         position = record.get("position")
         if box is not None and position is not None:
-            return f"{box}:{position}"
+            return format_box_position_compact(box, position, layout=layout)
         return ""
+    if column == "position" and split_location:
+        return position_display_text(record.get("position"), layout, default="")
     if column == "thaw_events":
         # Convert thaw_events to human-readable format
         events = record.get("thaw_events")
@@ -78,7 +88,11 @@ def _row_value(record, column, *, split_location=False):
             from_pos = ev.get("from_position")
             to_pos = ev.get("to_position")
             if action == "move" and from_pos and to_pos:
-                parts.append(f"{date} {action} {from_pos}->{to_pos}")
+                parts.append(
+                    f"{date} {action} "
+                    f"{position_display_text(from_pos, layout, default='')}->"
+                    f"{position_display_text(to_pos, layout, default='')}"
+                )
             else:
                 parts.append(f"{date} {action}")
         return "; ".join(parts) if parts else ""
@@ -112,7 +126,7 @@ def build_export_rows(records, meta=None, *, split_location=False):
     for record in normalized_records:
         rows.append(
             {
-                column: _row_value(record, column, split_location=split_location)
+                column: _row_value(record, column, meta=meta, split_location=split_location)
                 for column in columns
             }
         )

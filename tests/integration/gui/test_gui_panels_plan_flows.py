@@ -1085,6 +1085,35 @@ class PrintPlanRegressionTests(_NoStagePreflightMixin, ManagedPathTestCase):
         )
         self.assertNotIn(">operations.planStatusReady<", html)
 
+    def test_print_last_executed_uses_alphanumeric_positions_in_grid_snapshot(self):
+        bridge = _UndoBridge()
+        overview = SimpleNamespace(
+            overview_shape=(3, 3, [1]),
+            _current_meta={"display_key": "cell_line"},
+            _current_layout={"rows": 3, "cols": 3, "indexing": "alphanumeric"},
+            overview_pos_map={
+                (1, 2): {"id": 1, "box": 1, "position": 2, "cell_line": "K562"},
+            },
+        )
+        panel = OperationsPanel(
+            bridge=bridge,
+            yaml_path_getter=lambda: self.fake_yaml_path,
+            overview_panel=overview,
+        )
+
+        panel.add_plan_items([_make_takeout_item(record_id=1, position=2)])
+
+        from unittest.mock import patch
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        snapshot = panel._last_executed_print_snapshot
+        self.assertIsInstance(snapshot, dict)
+        grid_state = snapshot.get("grid_state") or {}
+        first_box = (grid_state.get("boxes") or [])[0]
+        cell = (first_box.get("cells") or [])[1]
+        self.assertEqual("A2", cell.get("display_pos"))
+
     def test_undo_clears_last_executed_print_snapshot(self):
         bridge = _UndoBridge()
         panel = self._new_panel(bridge)

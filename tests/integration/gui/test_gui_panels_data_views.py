@@ -979,6 +979,35 @@ class OverviewTableViewTests(ManagedPathTestCase):
                 panel.hide()
             self._cleanup(tmpdir)
 
+    def test_table_location_display_uses_alphanumeric_positions_when_layout_requires_it(self):
+        records = [
+            {"id": 201, "cell_line": "K562", "short_name": "p2", "box": 1, "position": 2, "frozen_at": "2025-01-01"},
+            {"id": 202, "cell_line": "K562", "short_name": "p4", "box": 1, "position": 4, "frozen_at": "2025-01-01"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(
+            records,
+            meta_extra={
+                "color_key": "cell_line",
+                "box_layout": {"rows": 3, "cols": 3, "indexing": "alphanumeric"},
+            },
+        )
+        panel = None
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            self.assertEqual(
+                ["1:A2", "1:B1"],
+                self._table_column_texts(panel, "location"),
+            )
+        finally:
+            if panel is not None:
+                panel.hide()
+            self._cleanup(tmpdir)
+
     def test_table_id_sort_uses_numeric_order(self):
         records = [
             {"id": 10, "cell_line": "K562", "short_name": "ten", "box": 1, "position": 1, "frozen_at": "2025-01-01"},

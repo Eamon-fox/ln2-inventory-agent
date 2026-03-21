@@ -397,6 +397,16 @@ class AuditDialogTests(ManagedPathTestCase):
         self.assertIn("short_name=clone-2", add_summary)
         self.assertIn("plasmid_name=pDemo", add_summary)
 
+        indexing_summary = audit_dialog_module._summarize_details(
+            {
+                "op": "set_box_layout_indexing",
+                "indexing_before": "numeric",
+                "indexing_after": "alphanumeric",
+            }
+        )
+        self.assertIn(audit_dialog_module.tr("main.indexNumeric"), indexing_summary)
+        self.assertIn(audit_dialog_module.tr("main.indexAlpha"), indexing_summary)
+
         dialog = self._new_dialog("D:/tmp/inventory.yaml")
         dialog._audit_field_order = ["short_name", "plasmid_name", "plasmid_id"]
         dialog._audit_events = [

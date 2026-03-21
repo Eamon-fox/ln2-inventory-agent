@@ -15,6 +15,7 @@ from app_gui.ui.icons import get_icon, Icons
 from app_gui.ui.theme import resolve_theme_token
 from lib.field_schema import ordered_field_items
 from lib.plan_item_factory import build_rollback_plan_item
+from lib.position_fmt import normalize_box_layout_indexing
 
 
 def _safe_html(value):
@@ -23,6 +24,13 @@ def _safe_html(value):
 
 def _field_label(field_key):
     return str(field_key or "")
+
+
+def _indexing_label(value):
+    normalized = normalize_box_layout_indexing(value)
+    if normalized == "alphanumeric":
+        return tr("main.indexAlpha")
+    return tr("main.indexNumeric")
 
 
 def _extract_field_payload(payload):
@@ -191,7 +199,7 @@ def _format_audit_details(details, muted_color, field_order=None):
     if op == "set_box_layout_indexing":
         before = details.get("indexing_before") or "numeric"
         after = details.get("indexing_after") or "numeric"
-        return [f"{h(before)} -> {h(after)}"]
+        return [f"{h(_indexing_label(before))} -> {h(_indexing_label(after))}"]
 
     if op in ("manage_boxes", "adjust_box_count"):
         sub = details.get("sub_op")
@@ -297,7 +305,7 @@ def _summarize_details(details, field_order=None):
     if op == "set_box_layout_indexing":
         before = details.get("indexing_before") or "numeric"
         after = details.get("indexing_after") or "numeric"
-        return f"{before} -> {after}"
+        return f"{_indexing_label(before)} -> {_indexing_label(after)}"
 
     if op in ("manage_boxes", "adjust_box_count"):
         sub = details.get("sub_op", "?")
@@ -774,5 +782,4 @@ class AuditLogDialog(QDialog):
             self.audit_info.setText(
                 tr("operations.auditRollbackStaged", backup=os.path.basename(str(backup_path)))
             )
-
 
