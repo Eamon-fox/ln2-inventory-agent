@@ -18,6 +18,9 @@ python3.11 -m pip install pyinstaller
 PYTHON=python3.11 bash installer/mac/build_app.sh
 ```
 
+`build_app.sh` now auto-generates `installer/mac/SnowFox.icns` from `app_gui/assets/icon.png`
+before invoking PyInstaller, so the bundled macOS app icon stays in sync with the project icon.
+
 Or run PyInstaller directly:
 
 ```bash

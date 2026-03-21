@@ -8,6 +8,8 @@ Usage (on macOS with PySide6 + dependencies installed):
 
 import os
 import re
+import subprocess
+import sys
 
 
 def _extract_app_version():
@@ -36,7 +38,29 @@ def _collect_datas():
     return datas
 
 
+def _resolve_bundle_icon():
+    icon_path = os.path.join("installer", "mac", "SnowFox.icns")
+    icon_source = os.path.join("app_gui", "assets", "icon.png")
+    generator = os.path.join("installer", "mac", "generate_icns.sh")
+
+    if (
+        os.path.exists(icon_path)
+        and os.path.exists(icon_source)
+        and os.path.getmtime(icon_path) >= os.path.getmtime(icon_source)
+    ):
+        return icon_path
+
+    if sys.platform == "darwin" and os.path.exists(generator):
+        try:
+            subprocess.run(["bash", generator], check=True)
+        except Exception as exc:
+            print(f"WARN: failed to generate macOS bundle icon: {exc}")
+
+    return icon_path if os.path.exists(icon_path) else None
+
+
 APP_VERSION = _extract_app_version()
+APP_ICON = _resolve_bundle_icon()
 block_cipher = None
 
 a = Analysis(
@@ -84,7 +108,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name="SnowFox.app",
-    icon=None,
+    icon=APP_ICON,
     bundle_identifier="com.eamonfox.snowfox",
     info_plist={
         "CFBundleName": "SnowFox",

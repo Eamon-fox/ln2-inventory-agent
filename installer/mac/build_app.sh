@@ -32,7 +32,10 @@ if ! "$PYTHON_BIN" -m PyInstaller --version >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "[1/1] Building macOS app bundle with PyInstaller..."
-"$PYTHON_BIN" -m PyInstaller ln2_inventory.mac.spec "$@"
+echo "[1/2] Preparing macOS app icon..."
+bash installer/mac/generate_icns.sh
+
+echo "[2/2] Building macOS app bundle with PyInstaller..."
+"$PYTHON_BIN" -m PyInstaller -y ln2_inventory.mac.spec "$@"
 
 echo "Done. App bundle is under dist/SnowFox.app"
