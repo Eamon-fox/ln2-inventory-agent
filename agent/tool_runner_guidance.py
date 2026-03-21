@@ -45,12 +45,10 @@ def _looks_like_execute_prerequisite_issue(payload):
     return any(marker in haystack for marker in markers)
 
 
-def _hint_for_error(self, tool_name, payload):
+def _hint_validate_error(self, payload, *, required_fields, optional_fields):
+    del required_fields, optional_fields
     error_code = str(payload.get("error_code") or "").strip()
-    input_schema = self._tool_input_schema(tool_name)
-    required_fields, optional_fields = self._tool_input_field_sets(tool_name)
-
-    if tool_name == "validate" and error_code in {
+    if error_code in {
         "validation_failed",
         "file_not_found",
         "load_failed",
@@ -58,21 +56,43 @@ def _hint_for_error(self, tool_name, payload):
         "invalid_path",
     }:
         return ""
+    return None
 
-    if tool_name == "add_entry" and error_code in {
+
+def _hint_add_entry_error(self, payload, *, required_fields, optional_fields):
+    error_code = str(payload.get("error_code") or "").strip()
+    if error_code not in {
         "invalid_tool_input",
         "forbidden_fields",
         "missing_required_fields",
         "validation_failed",
     }:
-        required_text = ", ".join(required_fields) if required_fields else "(none)"
-        optional_text = ", ".join(optional_fields) if optional_fields else "(none)"
-        return self._msg(
-            "hint.addEntrySharedFields",
-            "`add_entry` uses one shared `fields` object for all `positions` in that call. It does not support per-position cell_line/note. Split into multiple add_entry calls (or staged items) when metadata differs. Required: {required_text}. Optional: {optional_text}.",
-            required_text=required_text,
-            optional_text=optional_text,
+        return None
+    required_text = ", ".join(required_fields) if required_fields else "(none)"
+    optional_text = ", ".join(optional_fields) if optional_fields else "(none)"
+    return self._msg(
+        "hint.addEntrySharedFields",
+        "`add_entry` uses one shared `fields` object for all `positions` in that call. It does not support per-position cell_line/note. Split into multiple add_entry calls (or staged items) when metadata differs. Required: {required_text}. Optional: {optional_text}.",
+        required_text=required_text,
+        optional_text=optional_text,
+    )
+
+
+def _hint_for_error(self, tool_name, payload):
+    error_code = str(payload.get("error_code") or "").strip()
+    input_schema = self._tool_input_schema(tool_name)
+    required_fields, optional_fields = self._tool_input_field_sets(tool_name)
+    spec = self._runtime_spec(tool_name) if hasattr(self, "_runtime_spec") else None
+    runtime_hint = getattr(spec, "error_hint", None)
+    if callable(runtime_hint):
+        generated = runtime_hint(
+            self,
+            payload,
+            required_fields=required_fields,
+            optional_fields=optional_fields,
         )
+        if generated is not None:
+            return generated
 
     if error_code == "invalid_tool_input":
         required_text = ", ".join(required_fields) if required_fields else "(none)"

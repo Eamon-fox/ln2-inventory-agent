@@ -115,32 +115,17 @@ def _format_edit_entry(_tool_name, args):
     return "Stage edit record"
 
 
-TOOL_STATUS_FORMATTERS = {
-    "bash": _format_bash,
-    "powershell": _format_powershell,
-    "fs_list": _format_fs_list,
-    "fs_read": _format_fs_read,
-    "fs_write": _format_fs_write,
-    "fs_edit": _format_fs_edit,
-    "search_records": _format_search_records,
-    "filter_records": _format_filter_records,
-    "generate_stats": _format_generate_stats,
-    "add_entry": _format_add_entry,
-    "takeout": _format_takeout,
-    "move": _format_move,
-    "edit_entry": _format_edit_entry,
-}
-
-
-def format_tool_status(tool_name, args, max_length=MAX_STATUS_TEXT_LENGTH):
+def format_tool_status(tool_name, args, *, runtime_spec=None, formatter=None, max_length=MAX_STATUS_TEXT_LENGTH):
     """Return concise, UI-friendly status text for one tool call."""
     name = _clean_text(tool_name) or "tool"
     payload = args if isinstance(args, dict) else {}
-    formatter = TOOL_STATUS_FORMATTERS.get(name)
+    resolved_formatter = formatter
+    if resolved_formatter is None and runtime_spec is not None:
+        resolved_formatter = getattr(runtime_spec, "status_formatter", None)
     status = ""
-    if callable(formatter):
+    if callable(resolved_formatter):
         try:
-            status = _clean_text(formatter(name, payload))
+            status = _clean_text(resolved_formatter(name, payload))
         except Exception:
             status = ""
     if not status:

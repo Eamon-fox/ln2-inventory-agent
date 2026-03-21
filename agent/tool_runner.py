@@ -10,8 +10,7 @@ from lib.tool_api import (
     build_actor_context,
     tool_get_raw_entries,
 )
-from lib.tool_contracts import TOOL_CONTRACTS, WRITE_TOOLS
-from lib.tool_registry import iter_agent_dispatch_descriptors
+from lib.tool_registry import TOOL_CONTRACTS, WRITE_TOOLS
 from lib import tool_api_parsers as _tool_parsers
 from lib.inventory_paths import assert_allowed_inventory_yaml_path
 from lib.yaml_ops import load_yaml
@@ -20,7 +19,9 @@ from . import tool_runner_staging as _runner_staging
 from . import tool_runner_validation as _runner_validation
 from . import tool_runner_guidance as _runner_guidance
 from . import tool_hooks as _tool_hooks
+from . import tool_runtime_registry as _tool_runtime_registry
 from . import tool_runtime_paths as _tool_runtime_paths
+from . import tool_status_formatter as _tool_status_formatter
 
 
 def _default_tr(key, default=None, **kwargs):
@@ -72,7 +73,8 @@ class AgentToolRunner:
         self._plan_store = plan_store
         self._preflight_fn = preflight_fn
         self._tr = tr_func if callable(tr_func) else _default_tr
-        self._hook_manager = _tool_hooks.build_default_tool_hook_manager()
+        self._runtime_specs_cache = None
+        self._hook_manager = _tool_hooks.build_default_tool_hook_manager(self._runtime_specs())
         # Question tool synchronization
         self._answer_event = threading.Event()
         self._pending_answer = None
@@ -94,6 +96,22 @@ class AgentToolRunner:
         return build_actor_context(
             session_id=self._session_id,
             trace_id=trace_id,
+        )
+
+    def _runtime_specs(self):
+        if self._runtime_specs_cache is None:
+            self._runtime_specs_cache = _tool_runtime_registry.build_tool_runtime_specs(self)
+        return self._runtime_specs_cache
+
+    def _runtime_spec(self, tool_name):
+        return self._runtime_specs().get(str(tool_name or "").strip())
+
+    def format_tool_status(self, tool_name, args, max_length=_tool_status_formatter.MAX_STATUS_TEXT_LENGTH):
+        return _tool_status_formatter.format_tool_status(
+            tool_name,
+            args,
+            runtime_spec=self._runtime_spec(tool_name),
+            max_length=max_length,
         )
 
     def _required_int(self, payload, key):
@@ -507,16 +525,11 @@ class AgentToolRunner:
     _run_staged_plan = _runner_handlers._run_staged_plan
 
     def _dispatch_handlers(self):
-        handlers = {}
-        missing = []
-        for descriptor in iter_agent_dispatch_descriptors():
-            handler = getattr(self, str(descriptor.agent_handler_attr or ""), None)
-            if callable(handler):
-                handlers[descriptor.name] = handler
-            else:
-                missing.append(descriptor.name)
-        assert not missing, f"Dispatch handlers missing for tools: {set(missing)}"
-        return handlers
+        return {
+            name: spec.handler
+            for name, spec in self._runtime_specs().items()
+            if callable(spec.handler)
+        }
 
     def _run_dispatch(self, tool_name, payload, trace_id=None):
         if tool_name not in TOOL_CONTRACTS:

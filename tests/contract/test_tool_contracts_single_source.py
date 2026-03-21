@@ -17,17 +17,16 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agent import tool_runner
+from agent.tool_runtime_registry import build_tool_runtime_specs, expected_runtime_tool_names
 from app_gui.tool_bridge import GuiToolBridge
-from lib.tool_contracts import (
+from lib.tool_registry import (
     MIGRATION_TOOL_NAMES,
     TOOL_CONTRACTS,
     VALID_PLAN_ACTIONS,
+    WRITE_TOOL_TO_PLAN_ACTION,
     WRITE_TOOLS,
-    _WRITE_TOOL_TO_PLAN_ACTION,
-    get_tool_contracts,
-)
-from lib.tool_registry import (
     get_tool_descriptor,
+    get_tool_contracts,
     iter_agent_dispatch_descriptors,
     iter_gui_bridge_descriptors,
     iter_tool_descriptors,
@@ -86,9 +85,9 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
             self.assertIn(name, MIGRATION_TOOL_NAMES)
 
     def test_valid_plan_actions_derived_from_write_tool_map(self):
-        """VALID_PLAN_ACTIONS covers all write tools via _WRITE_TOOL_TO_PLAN_ACTION."""
-        self.assertEqual(set(_WRITE_TOOL_TO_PLAN_ACTION.keys()), set(WRITE_TOOLS))
-        self.assertEqual(VALID_PLAN_ACTIONS, frozenset(_WRITE_TOOL_TO_PLAN_ACTION.values()))
+        """VALID_PLAN_ACTIONS covers all write tools via WRITE_TOOL_TO_PLAN_ACTION."""
+        self.assertEqual(set(WRITE_TOOL_TO_PLAN_ACTION.keys()), set(WRITE_TOOLS))
+        self.assertEqual(VALID_PLAN_ACTIONS, frozenset(WRITE_TOOL_TO_PLAN_ACTION.values()))
 
     def test_plan_model_uses_canonical_valid_actions(self):
         """plan_model_sheet._VALID_ACTIONS should reference contracts."""
@@ -130,6 +129,34 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
                 callable(target),
                 f"{descriptor.name} missing tool_api target {bridge_spec.tool_api_attr}",
             )
+
+    def test_write_capable_descriptors_declare_explicit_write_api_attr(self):
+        for name in (
+            "add_entry",
+            "edit_entry",
+            "takeout",
+            "move",
+            "rollback",
+            "batch_add_entries",
+            "set_box_tag",
+            "manage_boxes",
+        ):
+            with self.subTest(tool=name):
+                descriptor = get_tool_descriptor(name)
+                self.assertIsNotNone(descriptor)
+                write_api_attr = str(descriptor.write_api_attr or "").strip()
+                self.assertTrue(write_api_attr, f"{name} missing explicit write_api_attr")
+                self.assertTrue(callable(resolve_tool_api_callable(write_api_attr)))
+
+    def test_runtime_specs_cover_all_dispatch_descriptors(self):
+        runner = object.__new__(tool_runner.AgentToolRunner)
+        runtime_specs = build_tool_runtime_specs(runner)
+
+        self.assertEqual(expected_runtime_tool_names(), frozenset(runtime_specs))
+        self.assertNotIn("question", runtime_specs)
+        for name in WRITE_TOOLS:
+            with self.subTest(tool=name):
+                self.assertTrue(callable(runtime_specs[name].stage_builder))
 
     def test_get_tool_contracts_strips_internal_flags(self):
         """Public API must not expose _write / _migration flags."""

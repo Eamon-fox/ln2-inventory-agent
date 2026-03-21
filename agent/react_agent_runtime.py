@@ -626,7 +626,10 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
             )
 
             for call in normalized_tool_calls:
-                status_text = format_tool_status(call.get("name"), call.get("arguments"))
+                if hasattr(self._tools, "format_tool_status"):
+                    status_text = self._tools.format_tool_status(call.get("name"), call.get("arguments"))
+                else:
+                    status_text = format_tool_status(call.get("name"), call.get("arguments"))
                 self._emit_event(
                     on_event,
                     {

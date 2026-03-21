@@ -1,15 +1,12 @@
 """Canonical registry for tool contracts, agent dispatch, and GUI exposure.
 
-This module is the actual single source of truth for:
+This module is the single source of truth for:
 - tool contract metadata
 - write-tool / migration-tool classification
 - plan action mapping for write tools
 - agent dispatch handler binding
 - plan-staging handler binding
 - GUI bridge exposure policy
-
-`lib.tool_contracts` remains as a compatibility facade that derives its exports
-from this registry.
 """
 
 from __future__ import annotations
@@ -63,6 +60,7 @@ class ToolDescriptor:
     agent_handler_attr: str | None = None
     stage_handler_attr: str | None = None
     gui_bridge: GuiBridgeSpec | None = None
+    write_api_attr: str | None = None
     public_contract: bool = True
     agent_enabled: bool = True
 
@@ -144,6 +142,7 @@ def _tool(
     agent_handler_attr: str | None = None,
     stage_handler_attr: str | None = None,
     gui_bridge: GuiBridgeSpec | None = None,
+    write_api_attr: str | None = None,
     public_contract: bool = True,
     agent_enabled: bool = True,
 ) -> ToolDescriptor:
@@ -163,6 +162,7 @@ def _tool(
         agent_handler_attr=agent_handler_attr,
         stage_handler_attr=stage_handler_attr,
         gui_bridge=gui_bridge,
+        write_api_attr=write_api_attr,
         public_contract=public_contract,
         agent_enabled=agent_enabled,
     )
@@ -702,6 +702,7 @@ _TOOL_DESCRIPTOR_LIST = (
         notes="Provide sample metadata through `fields` using declared keys (e.g. fields.cell_line, fields.note, fields.<custom_field>). Per-position metadata is not supported; split into multiple add_entry calls (or staged items) when cell_line/note differs.",
         is_write=True,
         plan_action="add",
+        write_api_attr="tool_add_entry",
         gui_bridge=_write_bridge(
             "add_entry",
             "tool_add_entry",
@@ -721,6 +722,7 @@ _TOOL_DESCRIPTOR_LIST = (
         },
         is_write=True,
         plan_action="edit",
+        write_api_attr="tool_edit_entry",
         gui_bridge=_write_bridge(
             "edit_entry",
             "tool_edit_entry",
@@ -757,6 +759,7 @@ _TOOL_DESCRIPTOR_LIST = (
         },
         is_write=True,
         plan_action="takeout",
+        write_api_attr="tool_takeout",
         gui_bridge=_write_bridge(
             "takeout",
             "tool_takeout",
@@ -781,6 +784,7 @@ _TOOL_DESCRIPTOR_LIST = (
         },
         is_write=True,
         plan_action="move",
+        write_api_attr="tool_move",
         gui_bridge=_write_bridge(
             "move",
             "tool_move",
@@ -803,6 +807,7 @@ _TOOL_DESCRIPTOR_LIST = (
         },
         public_contract=False,
         agent_enabled=False,
+        write_api_attr="tool_batch_add_entries",
     ),
     _tool(
         "rollback",
@@ -818,6 +823,7 @@ _TOOL_DESCRIPTOR_LIST = (
         notes="Always provide explicit backup_path selected from action=backup rows in list_audit_timeline.",
         is_write=True,
         plan_action="rollback",
+        write_api_attr="tool_rollback",
         gui_bridge=_write_bridge(
             "rollback",
             "tool_rollback",
@@ -851,6 +857,7 @@ _TOOL_DESCRIPTOR_LIST = (
             "required": ["box"],
             "additionalProperties": False,
         },
+        write_api_attr="tool_set_box_tag",
         gui_bridge=_write_bridge(
             "set_box_tag",
             "tool_set_box_tag",
@@ -902,6 +909,7 @@ _TOOL_DESCRIPTOR_LIST = (
             "required": ["action"],
             "additionalProperties": False,
         },
+        write_api_attr="tool_manage_boxes",
         gui_bridge=_write_bridge(
             "manage_boxes",
             "tool_manage_boxes",
@@ -990,7 +998,26 @@ def _validate_registry(entries: tuple[ToolDescriptor, ...]) -> None:
                 f"Non-write tool {descriptor.name} must not define stage_handler_attr"
             )
 
+        write_api_attr = str(descriptor.write_api_attr or "").strip()
         bridge = descriptor.gui_bridge
+        requires_write_api = bool(
+            descriptor.is_write
+            or write_api_attr
+            or (
+                bridge is not None
+                and bridge.strategy == GUI_BRIDGE_WRITE
+            )
+        )
+        if requires_write_api and not write_api_attr:
+            raise ValueError(f"Missing write_api_attr for write-capable tool {descriptor.name}")
+        if write_api_attr:
+            try:
+                resolve_tool_api_callable(write_api_attr)
+            except Exception as exc:
+                raise ValueError(
+                    f"Invalid write_api_attr for {descriptor.name}: {descriptor.write_api_attr}"
+                ) from exc
+
         if bridge is None:
             continue
         if bridge.strategy not in {GUI_BRIDGE_READ, GUI_BRIDGE_WRITE}:
@@ -1090,3 +1117,21 @@ def build_write_tool_to_plan_action() -> dict[str, str]:
         for descriptor in _contract_descriptors()
         if descriptor.is_write and descriptor.plan_action
     }
+
+
+TOOL_CONTRACTS: dict[str, dict[str, Any]] = build_tool_contracts()
+WRITE_TOOLS: frozenset[str] = build_write_tools()
+MIGRATION_TOOL_NAMES: frozenset[str] = build_migration_tool_names()
+WRITE_TOOL_TO_PLAN_ACTION: dict[str, str] = build_write_tool_to_plan_action()
+VALID_PLAN_ACTIONS: frozenset[str] = frozenset(WRITE_TOOL_TO_PLAN_ACTION.values())
+
+_PUBLIC_CONTRACT_INTERNAL_KEYS = {"_write", "_migration"}
+
+
+def get_tool_contracts() -> dict[str, dict[str, Any]]:
+    """Return public contracts stripped of internal registry-only flags."""
+    contracts = deepcopy(TOOL_CONTRACTS)
+    for spec in contracts.values():
+        for key in _PUBLIC_CONTRACT_INTERNAL_KEYS:
+            spec.pop(key, None)
+    return contracts

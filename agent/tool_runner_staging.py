@@ -4,9 +4,7 @@ from typing import List
 
 from lib.plan_gate import validate_stage_request
 from lib.plan_item_factory import PlanItem, build_add_plan_item, build_edit_plan_item, build_record_plan_item, build_rollback_plan_item
-from lib.tool_contracts import WRITE_TOOLS
-from lib.tool_registry import iter_write_tool_descriptors
-from .tool_runner_handlers import _validate_rollback_backup_candidate
+from lib.tool_registry import WRITE_TOOLS
 
 
 def _stage_to_plan(self, tool_name, payload, trace_id=None):
@@ -30,8 +28,10 @@ def _stage_to_plan_impl(self, tool_name, payload, trace_id=None):
             },
         )
 
-    if tool_name == "rollback":
-        issue = _validate_rollback_backup_candidate(self._yaml_path, payload.get("backup_path"))
+    runtime_spec = self._runtime_spec(tool_name) if hasattr(self, "_runtime_spec") else None
+    stage_guard = getattr(runtime_spec, "stage_guard", None)
+    if callable(stage_guard):
+        issue = stage_guard(self, payload)
         if issue:
             return self._with_hint(tool_name, issue)
 
@@ -116,15 +116,12 @@ def _stage_to_plan_impl(self, tool_name, payload, trace_id=None):
     }
 
 def _build_staged_plan_items(self, tool_name, payload, layout) -> List[PlanItem]:
-    staging_handlers = {}
-    missing = []
-    for descriptor in iter_write_tool_descriptors():
-        handler = getattr(self, str(descriptor.stage_handler_attr or ""), None)
-        if callable(handler):
-            staging_handlers[descriptor.name] = handler
-        else:
-            missing.append(descriptor.name)
-    assert not missing, f"Staging handlers missing for write tools: {set(missing)}"
+    runtime_specs = self._runtime_specs() if hasattr(self, "_runtime_specs") else {}
+    staging_handlers = {
+        name: spec.stage_builder
+        for name, spec in runtime_specs.items()
+        if callable(spec.stage_builder)
+    }
     assert WRITE_TOOLS <= staging_handlers.keys(), (
         f"Staging handlers missing for write tools: {WRITE_TOOLS - staging_handlers.keys()}"
     )

@@ -9,7 +9,7 @@ from lib.legacy_field_policy import (
     resolve_legacy_field_policy,
 )
 from lib.schema_aliases import normalize_record_sort_field, normalize_structural_alias_input_map
-from lib.tool_contracts import TOOL_CONTRACTS
+from lib.tool_registry import TOOL_CONTRACTS
 
 
 _HIDDEN_LLM_FIELDS = {"dry_run"}
@@ -103,7 +103,7 @@ def _dynamic_fields_schema(meta, inventory, *, include_stored_at):
     return field_properties, sorted(required_for_add)
 
 
-def _apply_dynamic_fields_rules(schema, meta, inventory, *, tool_name=None):
+def _enrich_add_entry_schema(_runner, schema, *, meta=None, inventory=None):
     if not isinstance(schema, dict):
         return schema
 
@@ -116,61 +116,73 @@ def _apply_dynamic_fields_rules(schema, meta, inventory, *, tool_name=None):
     if not isinstance(fields_schema, dict):
         return narrowed
 
-    if tool_name == "add_entry":
-        field_properties, required_for_add = _dynamic_fields_schema(
-            meta,
-            inventory,
-            include_stored_at=False,
-        )
-        dynamic_schema = {
-            "type": "object",
-            "properties": field_properties,
-            "additionalProperties": False,
-        }
-        if required_for_add:
-            dynamic_schema["required"] = required_for_add
-            required_top = list(narrowed.get("required") or [])
-            if "fields" not in required_top:
-                required_top.append("fields")
-            narrowed["required"] = required_top
-        properties["fields"] = _merge_schema_metadata(fields_schema, dynamic_schema)
-        return narrowed
-
-    if tool_name == "edit_entry":
-        field_properties, _required_for_add = _dynamic_fields_schema(
-            meta,
-            inventory,
-            include_stored_at=True,
-        )
-        dynamic_schema = {
-            "type": "object",
-            "properties": field_properties,
-            "additionalProperties": False,
-            "minProperties": 1,
-        }
-        properties["fields"] = _merge_schema_metadata(fields_schema, dynamic_schema)
-
+    field_properties, required_for_add = _dynamic_fields_schema(
+        meta,
+        inventory,
+        include_stored_at=False,
+    )
+    dynamic_schema = {
+        "type": "object",
+        "properties": field_properties,
+        "additionalProperties": False,
+    }
+    if required_for_add:
+        dynamic_schema["required"] = required_for_add
+        required_top = list(narrowed.get("required") or [])
+        if "fields" not in required_top:
+            required_top.append("fields")
+        narrowed["required"] = required_top
+    properties["fields"] = _merge_schema_metadata(fields_schema, dynamic_schema)
     return narrowed
 
 
-def _apply_layout_position_rules(schema, layout, *, tool_name=None):
+def _enrich_edit_entry_schema(_runner, schema, *, meta=None, inventory=None):
     if not isinstance(schema, dict):
         return schema
 
     narrowed = deepcopy(schema)
+    properties = narrowed.get("properties")
+    if not isinstance(properties, dict):
+        return narrowed
+
+    fields_schema = properties.get("fields")
+    if not isinstance(fields_schema, dict):
+        return narrowed
+
+    field_properties, _required_for_add = _dynamic_fields_schema(
+        meta,
+        inventory,
+        include_stored_at=True,
+    )
+    dynamic_schema = {
+        "type": "object",
+        "properties": field_properties,
+        "additionalProperties": False,
+        "minProperties": 1,
+    }
+    properties["fields"] = _merge_schema_metadata(fields_schema, dynamic_schema)
+    return narrowed
+
+
+def _apply_layout_position_rules(schema, layout, *, array_fields=()):
+    if not isinstance(schema, dict):
+        return schema
+
+    narrowed = deepcopy(schema)
+    strict_position_schema = _strict_position_value_schema(layout)
+    strict_array_fields = set(array_fields or ())
 
     properties = narrowed.get("properties")
     if isinstance(properties, dict):
         for key, value in list(properties.items()):
             if key in _POSITION_FIELD_KEYS:
-                strict_value_schema = _strict_position_value_schema(layout)
-                properties[key] = _merge_schema_metadata(value, strict_value_schema)
+                properties[key] = _merge_schema_metadata(value, strict_position_schema)
                 continue
 
-            if tool_name == "add_entry" and key == "positions":
+            if key in strict_array_fields:
                 strict_positions_schema = {
                     "type": "array",
-                    "items": _strict_position_value_schema(layout),
+                    "items": strict_position_schema,
                     "minItems": 1,
                 }
                 properties[key] = _merge_schema_metadata(value, strict_positions_schema)
@@ -179,17 +191,17 @@ def _apply_layout_position_rules(schema, layout, *, tool_name=None):
             properties[key] = _apply_layout_position_rules(
                 value,
                 layout,
-                tool_name=tool_name,
+                array_fields=strict_array_fields,
             )
 
     items = narrowed.get("items")
     if isinstance(items, dict):
-        narrowed["items"] = _apply_layout_position_rules(items, layout, tool_name=tool_name)
+        narrowed["items"] = _apply_layout_position_rules(items, layout, array_fields=strict_array_fields)
 
     one_of = narrowed.get("oneOf")
     if isinstance(one_of, list):
         narrowed["oneOf"] = [
-            _apply_layout_position_rules(option, layout, tool_name=tool_name)
+            _apply_layout_position_rules(option, layout, array_fields=strict_array_fields)
             if isinstance(option, dict)
             else option
             for option in one_of
@@ -217,15 +229,13 @@ def _sanitize_tool_input_payload(payload):
     return normalized
 
 
-def _schema_validation_payload(tool_name, payload, schema, *, meta=None, inventory=None):
+def _adapt_add_edit_schema_validation_payload(tool_name, payload, schema, *, meta=None, inventory=None):
     """Return a payload variant used only for strict schema validation.
 
     We keep some legacy add-entry fields accepted at staging time even when the
     LLM-facing schema intentionally hides them for new datasets.
     """
     normalized = dict(payload) if isinstance(payload, dict) else {}
-    if tool_name not in {"add_entry", "edit_entry"}:
-        return normalized
 
     policy = resolve_legacy_field_policy(
         meta if isinstance(meta, dict) else {},
@@ -265,6 +275,26 @@ def _schema_validation_payload(tool_name, payload, schema, *, meta=None, invento
     return adjusted
 
 
+def _adapt_add_entry_schema_validation_payload(_runner, payload, schema, *, meta=None, inventory=None):
+    return _adapt_add_edit_schema_validation_payload(
+        "add_entry",
+        payload,
+        schema,
+        meta=meta,
+        inventory=inventory,
+    )
+
+
+def _adapt_edit_entry_schema_validation_payload(_runner, payload, schema, *, meta=None, inventory=None):
+    return _adapt_add_edit_schema_validation_payload(
+        "edit_entry",
+        payload,
+        schema,
+        meta=meta,
+        inventory=inventory,
+    )
+
+
 def _normalize_search_mode(self, value):
     if value in (None, ""):
         return "fuzzy"
@@ -291,8 +321,18 @@ def _tool_input_schema(self, tool_name, *, include_hidden=False):
     meta = self._load_meta() if hasattr(self, "_load_meta") else {}
     inventory = self._load_inventory() if hasattr(self, "_load_inventory") else []
     layout = self._load_layout() if hasattr(self, "_load_layout") else {}
-    position_schema = _apply_layout_position_rules(base_schema, layout, tool_name=tool_name)
-    return _apply_dynamic_fields_rules(position_schema, meta, inventory, tool_name=tool_name)
+    runtime_spec = self._runtime_spec(tool_name) if hasattr(self, "_runtime_spec") else None
+    array_fields = tuple(getattr(runtime_spec, "layout_array_fields", ()) or ())
+    schema = _apply_layout_position_rules(base_schema, layout, array_fields=array_fields)
+    schema_enricher = getattr(runtime_spec, "schema_enricher", None)
+    if callable(schema_enricher):
+        return schema_enricher(
+            self,
+            schema,
+            meta=meta,
+            inventory=inventory,
+        )
+    return schema
 
 
 def _tool_input_field_sets(self, tool_name):
@@ -349,6 +389,78 @@ def _looks_absolute_path(value):
     if len(text) >= 2 and text[1] == ":" and text[0].isalpha():
         return True
     return Path(text).is_absolute()
+
+
+def _guard_repo_relative_path(self, payload, *, field_name, message_key, default_message):
+    path_value = payload.get(field_name)
+    if path_value not in (None, "") and _looks_absolute_path(path_value):
+        return self._msg(
+            message_key,
+            default_message,
+        )
+    return None
+
+
+def _guard_fs_read_write(self, payload):
+    return _guard_repo_relative_path(
+        self,
+        payload,
+        field_name="path",
+        message_key="input.pathMustBeRepoRelative",
+        default_message="path must be repository-relative (absolute paths are not allowed).",
+    )
+
+
+def _guard_fs_list(self, payload):
+    return _guard_repo_relative_path(
+        self,
+        payload,
+        field_name="path",
+        message_key="input.pathMustBeRepoRelative",
+        default_message="path must be repository-relative (absolute paths are not allowed).",
+    )
+
+
+def _guard_fs_edit(self, payload):
+    return _guard_repo_relative_path(
+        self,
+        payload,
+        field_name="filePath",
+        message_key="input.filePathMustBeRepoRelative",
+        default_message="filePath must be repository-relative (absolute paths are not allowed).",
+    )
+
+
+def _guard_shell_workdir(self, payload):
+    return _guard_repo_relative_path(
+        self,
+        payload,
+        field_name="workdir",
+        message_key="input.workdirMustBeRepoRelative",
+        default_message="workdir must be repository-relative (absolute paths are not allowed).",
+    )
+
+
+def _guard_recent_basis(self, payload):
+    basis = str(payload.get("basis") or "").strip().lower()
+    if basis not in {"days", "count"}:
+        return self._msg(
+            "validation.mustBeOneOf",
+            "{label} must be one of: {values}",
+            label="basis",
+            values="days, count",
+        )
+    return None
+
+
+def _guard_rollback_backup_path(self, payload):
+    backup_path = str(payload.get("backup_path") or "").strip()
+    if not backup_path:
+        return self._msg(
+            "input.backupPathRequired",
+            "backup_path must be a non-empty string",
+        )
+    return None
 
 
 def _validate_schema_value(self, value, schema, path):
@@ -522,68 +634,30 @@ def _validate_tool_input(self, tool_name, payload):
     schema = _tool_input_schema(self, tool_name, include_hidden=True)
     meta = self._load_meta() if hasattr(self, "_load_meta") else {}
     inventory = self._load_inventory() if hasattr(self, "_load_inventory") else []
-    schema_error = self._validate_schema_value(
-        _schema_validation_payload(
-            tool_name,
+    runtime_spec = self._runtime_spec(tool_name) if hasattr(self, "_runtime_spec") else None
+    validation_payload_adapter = getattr(runtime_spec, "validation_payload_adapter", None)
+    if callable(validation_payload_adapter):
+        validation_payload = validation_payload_adapter(
+            self,
             payload,
             schema,
             meta=meta,
             inventory=inventory,
-        ),
+        )
+    else:
+        validation_payload = dict(payload) if isinstance(payload, dict) else {}
+    schema_error = self._validate_schema_value(
+        validation_payload,
         schema,
         "",
     )
     if schema_error:
         return schema_error
 
-    if tool_name in {"fs_read", "fs_write"}:
-        path_value = str(payload.get("path") or "").strip()
-        if _looks_absolute_path(path_value):
-            return self._msg(
-                "input.pathMustBeRepoRelative",
-                "path must be repository-relative (absolute paths are not allowed).",
-            )
-
-    if tool_name == "fs_list":
-        path_value = payload.get("path")
-        if path_value not in (None, "") and _looks_absolute_path(path_value):
-            return self._msg(
-                "input.pathMustBeRepoRelative",
-                "path must be repository-relative (absolute paths are not allowed).",
-            )
-
-    if tool_name == "fs_edit":
-        file_path = str(payload.get("filePath") or "").strip()
-        if _looks_absolute_path(file_path):
-            return self._msg(
-                "input.filePathMustBeRepoRelative",
-                "filePath must be repository-relative (absolute paths are not allowed).",
-            )
-
-    if tool_name in {"bash", "powershell"}:
-        workdir = payload.get("workdir")
-        if workdir not in (None, "") and _looks_absolute_path(workdir):
-            return self._msg(
-                "input.workdirMustBeRepoRelative",
-                "workdir must be repository-relative (absolute paths are not allowed).",
-            )
-
-    if tool_name in {"recent_frozen", "recent_stored"}:
-        basis = str(payload.get("basis") or "").strip().lower()
-        if basis not in {"days", "count"}:
-            return self._msg(
-                "validation.mustBeOneOf",
-                "{label} must be one of: {values}",
-                label="basis",
-                values="days, count",
-            )
-
-    if tool_name == "rollback":
-        backup_path = str(payload.get("backup_path") or "").strip()
-        if not backup_path:
-            return self._msg(
-                "input.backupPathRequired",
-                "backup_path must be a non-empty string",
-            )
+    input_guard = getattr(runtime_spec, "input_guard", None)
+    if callable(input_guard):
+        guard_error = input_guard(self, payload)
+        if guard_error:
+            return guard_error
 
     return None

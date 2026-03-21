@@ -852,7 +852,8 @@ def test_main_window_on_rename_dataset_keeps_success_when_audit_append_fails():
     window._refresh_home_dataset_choices = MagicMock()
     window.statusBar = MagicMock(return_value=SimpleNamespace(showMessage=status_message))
 
-    result = MainWindow.on_rename_dataset(window, old_yaml, "new")
+    with patch("app_gui.main.t", side_effect=lambda key, **kwargs: key) as t_mock:
+        result = MainWindow.on_rename_dataset(window, old_yaml, "new")
 
     assert result == new_yaml
     window._dataset_lifecycle.rename_dataset.assert_called_once_with(
@@ -863,6 +864,11 @@ def test_main_window_on_rename_dataset_keeps_success_when_audit_append_fails():
     status_message.assert_called_once()
     assert status_message.call_args.args[1] == 6000
     assert status_message.call_args.args[0] == "settings.renameDatasetSuccessWithAuditWarning"
+    t_mock.assert_called_once_with(
+        "settings.renameDatasetSuccessWithAuditWarning",
+        path=new_yaml,
+        error="audit failed",
+    )
 
 
 def test_main_window_on_delete_dataset_switches_and_appends_audit():
@@ -921,7 +927,8 @@ def test_main_window_on_delete_dataset_keeps_success_when_audit_append_fails():
     window._refresh_home_dataset_choices = MagicMock()
     window.statusBar = MagicMock(return_value=SimpleNamespace(showMessage=status_message))
 
-    result = MainWindow.on_delete_dataset(window, old_yaml)
+    with patch("app_gui.main.t", side_effect=lambda key, **kwargs: key) as t_mock:
+        result = MainWindow.on_delete_dataset(window, old_yaml)
 
     assert result == switched_yaml
     window._dataset_lifecycle.delete_dataset.assert_called_once_with(
@@ -931,6 +938,11 @@ def test_main_window_on_delete_dataset_keeps_success_when_audit_append_fails():
     status_message.assert_called_once()
     assert status_message.call_args.args[1] == 6000
     assert status_message.call_args.args[0] == "settings.deleteDatasetSuccessWithAuditWarning"
+    t_mock.assert_called_once_with(
+        "settings.deleteDatasetSuccessWithAuditWarning",
+        path=switched_yaml,
+        error="audit failed",
+    )
 
 
 def test_main_window_on_delete_dataset_creates_fallback_when_empty():

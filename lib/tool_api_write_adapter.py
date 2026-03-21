@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from .position_fmt import pos_to_display
-from .tool_registry import GUI_BRIDGE_WRITE, get_tool_descriptor
+from .tool_registry import get_tool_descriptor
 from .tool_api_write_validation import resolve_request_backup_path
 
 
@@ -108,10 +108,10 @@ def _registry_tool_attr(tool_name: str) -> Optional[str]:
     descriptor = get_tool_descriptor(str(tool_name or "").strip())
     if descriptor is None:
         return None
-    bridge = descriptor.gui_bridge
-    if bridge is not None and str(bridge.tool_api_attr or "").strip():
-        return str(bridge.tool_api_attr).strip()
-    return f"tool_{descriptor.name}"
+    write_api_attr = str(descriptor.write_api_attr or "").strip()
+    if write_api_attr:
+        return write_api_attr
+    return None
 
 
 def _resolve_tool(tool_name: str) -> Callable[..., Dict[str, Any]]:
@@ -174,9 +174,7 @@ def invoke_write_tool(
     descriptor = get_tool_descriptor(str(tool_name or "").strip())
     if descriptor is None:
         raise ValueError(f"Unknown write tool: {tool_name}")
-    bridge = descriptor.gui_bridge
-    is_bridge_write = bridge is not None and bridge.strategy == GUI_BRIDGE_WRITE
-    if not descriptor.is_write and not is_bridge_write and descriptor.name != "batch_add_entries":
+    if not str(descriptor.write_api_attr or "").strip():
         raise ValueError(f"Tool is not write-capable: {tool_name}")
 
     merged_payload: Dict[str, Any] = {}

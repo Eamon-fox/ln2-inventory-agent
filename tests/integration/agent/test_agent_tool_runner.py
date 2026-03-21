@@ -42,37 +42,6 @@ def _collect_agent_tool_runner_i18n_keys():
         ):
             keys.add(node.args[0].value)
 
-    for node in module.body:
-        if not (
-            isinstance(node, ast.Assign)
-            and any(isinstance(t, ast.Name) and t.id == "_TOOL_CONTRACTS" for t in node.targets)
-            and isinstance(node.value, ast.Dict)
-        ):
-            continue
-
-        for name_node, contract_node in zip(node.value.keys, node.value.values):
-            if not (
-                isinstance(name_node, ast.Constant)
-                and isinstance(name_node.value, str)
-                and isinstance(contract_node, ast.Dict)
-            ):
-                continue
-
-            tool_name = name_node.value
-            has_description = False
-            has_notes = False
-            for key_node, _value_node in zip(contract_node.keys, contract_node.values):
-                if isinstance(key_node, ast.Constant) and key_node.value == "description":
-                    has_description = True
-                if isinstance(key_node, ast.Constant) and key_node.value == "notes":
-                    has_notes = True
-
-            if has_description:
-                keys.add(f"toolContracts.{tool_name}.description")
-            if has_notes:
-                keys.add(f"toolContracts.{tool_name}.notes")
-        break
-
     return keys
 
 

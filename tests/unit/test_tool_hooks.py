@@ -2,17 +2,21 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from agent.tool_runner import AgentToolRunner
 from agent.tool_hooks import (
-    DEFAULT_TOOL_HOOK_SPECS,
     apply_payload_patch,
     build_default_tool_hook_manager,
     merge_hook_result,
 )
+from tests.managed_paths import ManagedPathTestCase
 
 
-class ToolHookManagerTests(unittest.TestCase):
+class ToolHookManagerTests(ManagedPathTestCase):
     def setUp(self):
-        self.manager = build_default_tool_hook_manager()
+        super().setUp()
+        self.runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        self.runtime_specs = self.runner._runtime_specs()
+        self.manager = build_default_tool_hook_manager(self.runtime_specs)
         self.context = {
             "yaml_path": "/tmp/repo/inventories/demo/inventory.yaml",
             "repo_root": "/tmp/repo",
@@ -48,24 +52,18 @@ class ToolHookManagerTests(unittest.TestCase):
 
         self.assertEqual("output", patched.get("workdir"))
 
-    def test_default_hook_specs_are_explicit_per_tool(self):
-        self.assertEqual(
-            {
-                "use_skill",
-                "validate",
-                "search_records",
-                "filter_records",
-                "fs_list",
-                "fs_read",
-                "fs_write",
-                "fs_edit",
-                "bash",
-                "powershell",
-                "import_migration_output",
-            },
-            set(DEFAULT_TOOL_HOOK_SPECS),
-        )
-        self.assertTrue(all("*" not in name for name in DEFAULT_TOOL_HOOK_SPECS))
+    def test_default_hook_manager_registers_only_runtime_declared_hooks(self):
+        expected_names = {
+            name
+            for name, spec in self.runtime_specs.items()
+            if callable(spec.before_hook) or callable(spec.after_hook)
+        }
+        actual_names = {
+            pattern
+            for pattern, _hook in list(self.manager._before_hooks) + list(self.manager._after_hooks)
+        }
+        self.assertEqual(expected_names, actual_names)
+        self.assertTrue(all("*" not in name for name in actual_names))
 
     def test_use_skill_migration_after_hook_returns_hint_and_effect(self):
         hook_result = self.manager.run_after(

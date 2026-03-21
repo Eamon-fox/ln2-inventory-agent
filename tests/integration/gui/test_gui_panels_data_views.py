@@ -212,14 +212,18 @@ class OverviewColorKeyFilterTests(ManagedPathTestCase):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
     def _hover_preview_text(self, yaml_path, box=1, position=1):
-        from app_gui.i18n import set_language
+        from app_gui.i18n import get_language, set_language
         from app_gui.tool_bridge import GuiToolBridge
 
+        previous_language = get_language()
         set_language("en")
-        panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
-        panel.refresh()
-        panel._show_detail(box, position, panel.overview_pos_map.get((box, position)))
-        return panel.ov_hover_hint.text()
+        try:
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            panel._show_detail(box, position, panel.overview_pos_map.get((box, position)))
+            return panel.ov_hover_hint.text()
+        finally:
+            set_language(previous_language)
 
     def test_filter_dropdown_uses_color_key_values(self):
         """Filter dropdown should show unique values of the color_key field."""

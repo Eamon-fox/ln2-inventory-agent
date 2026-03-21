@@ -633,7 +633,7 @@ def run_plan(
             run_preflight=lambda: _run_preflight_tool(
                 bridge=bridge,
                 yaml_path=yaml_path,
-                tool_name="tool_rollback",
+                tool_name="rollback",
                 backup_path=target_backup_path,
                 source_event=source_event,
             ),
@@ -676,7 +676,7 @@ def run_plan(
             run_preflight=lambda: _run_preflight_tool(
                 bridge=bridge,
                 yaml_path=yaml_path,
-                tool_name="tool_edit_entry",
+                tool_name="edit_entry",
                 record_id=payload.get("record_id"),
                 fields=payload.get("fields", {}),
             ),
@@ -770,7 +770,7 @@ def _run_preflight_tool(
 ) -> Dict[str, object]:
     """Invoke a write tool in execute-shaped preflight mode."""
     return _write_adapter.call_preflight_tool(
-        tool_name.removeprefix("tool_"),
+        tool_name,
         yaml_path=yaml_path,
         actor_context=getattr(bridge, "_ctx", lambda: None)() or None,
         source="plan_executor.preflight",
@@ -809,7 +809,7 @@ def _preflight_add_entry(bridge: object, yaml_path: str, payload: Dict[str, obje
     return _run_preflight_tool(
         bridge=bridge,
         yaml_path=yaml_path,
-        tool_name="tool_add_entry",
+        tool_name="add_entry",
         box=payload.get("box"),
         positions=payload.get("positions"),
         stored_at=coalesce_stored_at_value(
@@ -825,7 +825,7 @@ def _preflight_takeout(bridge: object, yaml_path: str, payload: Dict[str, object
     return _run_preflight_tool(
         bridge=bridge,
         yaml_path=yaml_path,
-        tool_name="tool_takeout",
+        tool_name="takeout",
         entries=payload.get("entries", []),
         date_str=payload.get("date_str"),
     )
@@ -836,7 +836,7 @@ def _preflight_move(bridge: object, yaml_path: str, payload: Dict[str, object]) 
     return _run_preflight_tool(
         bridge=bridge,
         yaml_path=yaml_path,
-        tool_name="tool_move",
+        tool_name="move",
         entries=payload.get("entries", []),
         date_str=payload.get("date_str"),
     )

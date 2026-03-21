@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
-from lib.tool_contracts import TOOL_CONTRACTS
+from lib.tool_registry import TOOL_CONTRACTS
 
 from .tool_runner_guidance import MIGRATION_SESSION_CHECKLIST, merge_hint_text
 
@@ -177,13 +176,6 @@ class ToolHookManager:
                     )
                 )
         return _merge_many(matches)
-
-
-@dataclass(frozen=True)
-class ToolHookSpec:
-    before: object = None
-    after: object = None
-
 
 def _repo_relative_display(path_text, *, repo_root):
     path = str(path_text or "").strip()
@@ -489,34 +481,15 @@ def _after_import_migration_output(_tool_name, _payload, result, _context):
         ],
     }
 
-# Keep default hooks explicit per tool. Core inventory/business tools rely on
-# their handlers plus shared error guidance and do not need hook indirection.
-DEFAULT_TOOL_HOOK_SPECS = {
-    "use_skill": ToolHookSpec(after=_after_use_skill),
-    "validate": ToolHookSpec(after=_after_validate),
-    "search_records": ToolHookSpec(after=_after_search_records),
-    "filter_records": ToolHookSpec(after=_after_filter_records),
-    "fs_list": ToolHookSpec(before=_before_fs_list, after=_after_fs_list),
-    "fs_read": ToolHookSpec(after=_after_fs_read),
-    "fs_write": ToolHookSpec(before=_before_fs_write, after=_after_fs_write),
-    "fs_edit": ToolHookSpec(before=_before_fs_edit, after=_after_fs_edit),
-    "bash": ToolHookSpec(after=_after_shell),
-    "powershell": ToolHookSpec(after=_after_shell),
-    "import_migration_output": ToolHookSpec(after=_after_import_migration_output),
-}
-
-
-def build_default_tool_hook_manager():
-    invalid = sorted(name for name in DEFAULT_TOOL_HOOK_SPECS if name not in TOOL_CONTRACTS)
+def build_default_tool_hook_manager(runtime_specs):
+    specs = dict(runtime_specs or {})
+    invalid = sorted(name for name in specs if name not in TOOL_CONTRACTS)
     if invalid:
-        raise ValueError(f"Default tool hook specs reference unknown tools: {invalid}")
-    wildcard_patterns = sorted(name for name in DEFAULT_TOOL_HOOK_SPECS if "*" in name)
-    if wildcard_patterns:
-        raise ValueError(
-            f"Default tool hook specs must be explicit per tool, got patterns: {wildcard_patterns}"
-        )
-
+        raise ValueError(f"Runtime hook specs reference unknown tools: {invalid}")
     manager = ToolHookManager()
-    for tool_name, spec in DEFAULT_TOOL_HOOK_SPECS.items():
-        manager.register(tool_name, before=spec.before, after=spec.after)
+    for tool_name, spec in specs.items():
+        before = getattr(spec, "before_hook", None)
+        after = getattr(spec, "after_hook", None)
+        if callable(before) or callable(after):
+            manager.register(tool_name, before=before, after=after)
     return manager
