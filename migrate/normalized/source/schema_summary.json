@@ -1,186 +1,1233 @@
 {
-  "source_path": "D:\\github_repo\\ln2-inventory-agent\\migrate\\inputs\\樊一鸣的质粒索引表.xlsx",
-  "source_name": "樊一鸣的质粒索引表.xlsx",
+  "source_path": "D:\\github_repo\\ln2-inventory-agent\\migrate\\inputs\\樊一鸣的液氮罐索引表.xlsx",
+  "source_name": "樊一鸣的液氮罐索引表.xlsx",
   "status": "ok",
-  "sheet_count": 1,
+  "sheet_count": 2,
   "sheets": [
     {
       "sheet_name": "Sheet1",
       "sheet_index": 1,
-      "row_count": 229,
-      "non_empty_rows": 229,
-      "max_columns": 7,
+      "row_count": 190,
+      "non_empty_rows": 190,
+      "max_columns": 9,
       "header_candidate": {
         "row_index": 1,
         "values": [
-          "Identifier",
-          "DateOfAcquire",
-          "Name",
-          "Storage",
-          "Position",
-          "Source",
-          "Note"
+          "在杂物间的液氮罐4号架子，从下往上依次为1号盒子、2号盒子、3号盒子……"
         ]
       },
       "columns": [
         {
           "index": 1,
-          "non_empty": 228,
+          "non_empty": 190,
           "detected_type": "string",
           "type_counts": {
-            "string": 228,
-            "empty": 1
+            "string": 190
           },
           "sample_values": [
-            "Identifier",
-            "p220929-1",
-            "p221002-1",
-            "p221022-1",
-            "p221022-2",
-            "p221101-1",
-            "p221102-1",
-            "p221102-2",
-            "p230401-1",
-            "p230403-1",
-            "p230403-2",
-            "p230403-3"
+            "在杂物间的液氮罐4号架子，从下往上依次为1号盒子、2号盒子、3号盒子……",
+            "不可删除，只可添加单元格。每次更改表格后，把有细胞的位置的数字加粗，取出细胞后对应位置取消加粗。",
+            "父细胞系",
+            "NCCIT",
+            "HEK293T",
+            "Hela",
+            "NCCIT Des-MCP-APEX2",
+            "K562",
+            "K562 BFP-Cas9",
+            "K562 BFP-Cas9+TetOn-Csm-T2A-tagBFP",
+            "hela",
+            "K562 WT"
           ]
         },
         {
           "index": 2,
-          "non_empty": 228,
-          "detected_type": "integer",
+          "non_empty": 188,
+          "detected_type": "string",
           "type_counts": {
-            "string": 3,
-            "integer": 225,
-            "empty": 1
+            "string": 188
           },
           "sample_values": [
-            "DateOfAcquire",
-            "20220929",
-            "20221002",
-            "20221022",
-            "20221101",
-            "20221102",
-            "20230401",
-            "20230403",
-            "20230406",
-            "20230409",
-            "20230411",
-            "20230412"
+            "简称",
+            "dox-GFP-T2A-HA-RTCB",
+            "dox-GFP-T2A-HA-DDX1",
+            "dox-GFP-T2A-HA-CGI99",
+            "dox-GFP-T2A-HA-FAM98B",
+            "dox-GFP-T2A-HA-ASW",
+            "WT NCCIT",
+            "WT 293T",
+            "WT Hela",
+            "Cas13-N1",
+            "Cas13-N2",
+            "Cas13-C1"
           ]
         },
         {
           "index": 3,
-          "non_empty": 229,
+          "non_empty": 167,
           "detected_type": "string",
           "type_counts": {
-            "string": 229
+            "string": 167,
+            "empty": 21
           },
           "sample_values": [
-            "Name",
-            "Des-EF1a-Flag-biotin-X-BSD",
-            "HA-ANKRD11-dox",
-            "V5-NPM1",
-            "V5-SURF6",
-            "PX320-WDR18-sg2",
-            "pSPAX2",
-            "pMD2G",
-            "pCDNA3.1(-)-empty",
-            "PX330-empty",
-            "PX330-VPR-dCas9-GFP",
-            "PX330-KRAB-dCas9-GFP"
+            "稳转质粒名称",
+            "PB-tetOn-GFP-T2A-HA-RTCB",
+            "PB-tetOn-GFP-T2A-HA-DDX1",
+            "PB-tetOn-GFP-T2A-HA-CGI99",
+            "PB-tetOn-GFP-T2A-HA-FAM98B",
+            "PB-tetOn-GFP-T2A-HA-ASW",
+            "none",
+            "PB-tetOn-Cas13d-GFP,lenti-sgRNA(N1)-mCherry",
+            "PB-tetOn-Cas13d-GFP,lenti-sgRNA(N2)-mCherry",
+            "PB-tetOn-Cas13d-GFP,lenti-sgRNA(C1)-mCherry",
+            "PB-tetOn-Cas13d-GFP,lenti-sgRNA(C6)-mCherry",
+            "Des-EF1α-SL40NLS-V5tag-MCP-APEX2-IRES-BSD"
           ]
         },
         {
           "index": 4,
-          "non_empty": 224,
+          "non_empty": 116,
           "detected_type": "string",
           "type_counts": {
-            "string": 224,
-            "empty": 5
+            "string": 116,
+            "empty": 72
           },
           "sample_values": [
-            "Storage",
-            "1号盒子",
-            "2号盒子",
-            "张咏妍",
-            "杨乐",
-            "3号盒子"
+            "稳转质粒序号",
+            "p230406-1",
+            "p230406-2",
+            "p230406-3",
+            "p230411-1",
+            "p230406-4",
+            "none",
+            "杨乐构建，我没有质粒信息",
+            "p230726-6",
+            "p230726-1",
+            "p230726-5",
+            "p231116-1"
           ]
         },
         {
           "index": 5,
-          "non_empty": 226,
-          "detected_type": "integer",
+          "non_empty": 188,
+          "detected_type": "string",
           "type_counts": {
-            "string": 26,
-            "integer": 200,
-            "empty": 3
+            "string": 188
           },
           "sample_values": [
-            "Position",
-            "79",
-            "81",
-            "77",
-            "78",
-            "80",
-            "32,34",
-            "33,35",
-            "1,2",
-            "3,4",
-            "5,6,45,46",
-            "7,8,47"
+            "冻存盒",
+            "1号",
+            "2号",
+            "3号",
+            "4号",
+            "5号"
           ]
         },
         {
           "index": 6,
-          "non_empty": 228,
+          "non_empty": 188,
           "detected_type": "string",
           "type_counts": {
-            "string": 228
+            "string": 131,
+            "integer": 57
           },
           "sample_values": [
-            "Source",
-            "张涛",
-            "张涛从他同学实验室借得",
-            "程丽丽",
-            "别路垚。PX330-U6-Chimeric-BB-CBh-hSpCas9，实验室从某公司购买",
-            "别路垚。于艺丹在三轮轮转期间构建",
-            "杨乐。于艺丹在三轮轮转期间构建",
-            "樊一鸣",
-            "樊一鸣构建，杨乐设计sgRNA引物，用于验证Cas7/11功能的阳性对照",
-            "樊一鸣构建，往该载体构建sgRNA需要先将sgRNA构建到PX330-empty中，再用SacII和XbaI双酶切的方法将sgRNA片段转移到该质粒中。",
-            "严小涵",
-            "樊一鸣构建"
+            "盒内序号",
+            "1,2",
+            "3,4",
+            "5,6",
+            "7,8",
+            "9,10",
+            "11,12",
+            "13,14",
+            "15,16",
+            "17,18",
+            "19,20",
+            "28,29,30,31,32,33"
           ]
         },
         {
           "index": 7,
-          "non_empty": 27,
-          "detected_type": "string",
+          "non_empty": 188,
+          "detected_type": "integer",
           "type_counts": {
-            "string": 27,
-            "empty": 1
+            "string": 1,
+            "integer": 187
           },
           "sample_values": [
-            "Note",
-            "没有图谱",
-            "质粒中的FAM98B的CDS与NCBI参考序列NM_173611.4不完全一致，经与实验室K562和NCCIT的RNA-seq比对，NCBI中少注释了一段内含子。",
-            "K562的Cas9筛选细胞系的质粒。",
-            "质粒未测通，图谱是拼接的、错误的。",
-            "L1 antisense 5UTR",
-            "构建dTAG细胞系时的同源臂质粒",
-            "AAACAACAGTCTTTCCGAAGAGACCAAAGATCACCC\nTATCGGGTGATCTTTGGTCTCTTCGGAAAGACTGTT",
-            "AAACCCCTCTAGAACTTTGCCAAACACCACATGCTT\nTATCAAGCATGTGGTGTTTGGCAAAGTTCTAGAGGG",
-            "AAACCTTCAACAATTGCAAGCGCAAACTCGAAGCTG\nTATCCAGCTTCGAGTTTGCGCTTGCAATTGTTGAAG",
-            "AAACCCGCAAAAGTAGTAAGGACAGCGACTTCTGAA\nTATCTTCAGAAGTCGCTGTCCTTACTACTTTTGCGG",
-            "aaacccgtcttcgatgaagcgattcagaagactt\ntatcaagtcttctgaatcgcttcatcgaagacgg"
+            "冻存时间",
+            "45072",
+            "45068",
+            "45136",
+            "45155",
+            "45184",
+            "45188",
+            "45191",
+            "45246",
+            "45251",
+            "45270",
+            "45275"
+          ]
+        },
+        {
+          "index": 8,
+          "non_empty": 55,
+          "detected_type": "string",
+          "type_counts": {
+            "string": 55,
+            "empty": 69
+          },
+          "sample_values": [
+            "取出时间",
+            "2024年6月17日复苏43号，2024年7月6日复苏42号，2024年8月23日复苏41号,2024年10月16日复苏40号",
+            "2024年9月20日复苏51号,2024年11月3日复苏50号",
+            "2023年9月15日复苏36号",
+            "2023年8月14日复苏55号，2023年11月21日复苏56号",
+            "2023年8月14日复苏58号，2023年11月21日复苏59号",
+            "2023年8月14日复苏61号，2023年11月21日复苏62号",
+            "2023年8月14日复苏64号，2023年11月21日复苏65号",
+            "2023年10月14日复苏55号",
+            "2023年10月14日复苏58号",
+            "2023年10月14日复苏61号",
+            "2023年10月14日复苏64号"
+          ]
+        },
+        {
+          "index": 9,
+          "non_empty": 90,
+          "detected_type": "string",
+          "type_counts": {
+            "string": 90
+          },
+          "sample_values": [
+            "备注",
+            "在-80℃放了俩月",
+            "管子上标记成NCCIT了，实际是HEK293T",
+            "2023年7月29日以前很多批冻存的，2023年7月29日这天整理了一下",
+            "2023年4月11日冻存的野生型NCCIT，复苏后又冻存2份",
+            "2023年7月26日从杨乐处复苏，传代后保存",
+            "2023年7月26日从杨乐处复苏，传代后保存。C1: ccaagacacataattgtcagatt",
+            "2023年7月26日从杨乐处复苏，传代后保存。C6: ctcagaccacagtgcaatcaaac",
+            "可能存在支原体污染，因为长势很差",
+            "张咏妍构建",
+            "杨乐构建",
+            "重新构建"
           ]
         }
       ],
       "csv_path": "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\source\\sheets\\01_Sheet1.csv"
+    },
+    {
+      "sheet_name": "加粗",
+      "sheet_index": 2,
+      "row_count": 20,
+      "non_empty_rows": 13,
+      "max_columns": 55,
+      "header_candidate": {
+        "row_index": 1,
+        "values": [
+          "这是冻存盒的序号排列方式"
+        ]
+      },
+      "columns": [
+        {
+          "index": 1,
+          "non_empty": 2,
+          "detected_type": "string",
+          "type_counts": {
+            "string": 2,
+            "empty": 11
+          },
+          "sample_values": [
+            "这是冻存盒的序号排列方式",
+            "每次更改表格后，把有细胞的位置的数字加粗，取出细胞后对应位置取消加粗。"
+          ]
+        },
+        {
+          "index": 2,
+          "non_empty": 0,
+          "detected_type": "empty",
+          "type_counts": {
+            "empty": 11
+          },
+          "sample_values": []
+        },
+        {
+          "index": 3,
+          "non_empty": 10,
+          "detected_type": "integer",
+          "type_counts": {
+            "string": 1,
+            "integer": 9,
+            "empty": 1
+          },
+          "sample_values": [
+            "1号盒子",
+            "1",
+            "10",
+            "19",
+            "28",
+            "37",
+            "46",
+            "55",
+            "64",
+            "73"
+          ]
+        },
+        {
+          "index": 4,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 2,
+            "integer": 9
+          },
+          "sample_values": [
+            "2",
+            "11",
+            "20",
+            "29",
+            "38",
+            "47",
+            "56",
+            "65",
+            "74"
+          ]
+        },
+        {
+          "index": 5,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 2,
+            "integer": 9
+          },
+          "sample_values": [
+            "3",
+            "12",
+            "21",
+            "30",
+            "39",
+            "48",
+            "57",
+            "66",
+            "75"
+          ]
+        },
+        {
+          "index": 6,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 2,
+            "integer": 9
+          },
+          "sample_values": [
+            "4",
+            "13",
+            "22",
+            "31",
+            "40",
+            "49",
+            "58",
+            "67",
+            "76"
+          ]
+        },
+        {
+          "index": 7,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 2,
+            "integer": 9
+          },
+          "sample_values": [
+            "5",
+            "14",
+            "23",
+            "32",
+            "41",
+            "50",
+            "59",
+            "68",
+            "77"
+          ]
+        },
+        {
+          "index": 8,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 2,
+            "integer": 9
+          },
+          "sample_values": [
+            "6",
+            "15",
+            "24",
+            "33",
+            "42",
+            "51",
+            "60",
+            "69",
+            "78"
+          ]
+        },
+        {
+          "index": 9,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 2,
+            "integer": 9
+          },
+          "sample_values": [
+            "7",
+            "16",
+            "25",
+            "34",
+            "43",
+            "52",
+            "61",
+            "70",
+            "79"
+          ]
+        },
+        {
+          "index": 10,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 2,
+            "integer": 9
+          },
+          "sample_values": [
+            "8",
+            "17",
+            "26",
+            "35",
+            "44",
+            "53",
+            "62",
+            "71",
+            "80"
+          ]
+        },
+        {
+          "index": 11,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 2,
+            "integer": 9
+          },
+          "sample_values": [
+            "9",
+            "18",
+            "27",
+            "36",
+            "45",
+            "54",
+            "63",
+            "72",
+            "81"
+          ]
+        },
+        {
+          "index": 12,
+          "non_empty": 0,
+          "detected_type": "empty",
+          "type_counts": {
+            "empty": 11
+          },
+          "sample_values": []
+        },
+        {
+          "index": 13,
+          "non_empty": 0,
+          "detected_type": "empty",
+          "type_counts": {
+            "empty": 11
+          },
+          "sample_values": []
+        },
+        {
+          "index": 14,
+          "non_empty": 10,
+          "detected_type": "integer",
+          "type_counts": {
+            "string": 1,
+            "integer": 9,
+            "empty": 1
+          },
+          "sample_values": [
+            "2号盒子",
+            "1",
+            "10",
+            "19",
+            "28",
+            "37",
+            "46",
+            "55",
+            "64",
+            "73"
+          ]
+        },
+        {
+          "index": 15,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 2,
+            "integer": 9
+          },
+          "sample_values": [
+            "2",
+            "11",
+            "20",
+            "29",
+            "38",
+            "47",
+            "56",
+            "65",
+            "74"
+          ]
+        },
+        {
+          "index": 16,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 2,
+            "integer": 9
+          },
+          "sample_values": [
+            "3",
+            "12",
+            "21",
+            "30",
+            "39",
+            "48",
+            "57",
+            "66",
+            "75"
+          ]
+        },
+        {
+          "index": 17,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 2,
+            "integer": 9
+          },
+          "sample_values": [
+            "4",
+            "13",
+            "22",
+            "31",
+            "40",
+            "49",
+            "58",
+            "67",
+            "76"
+          ]
+        },
+        {
+          "index": 18,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 2,
+            "integer": 9
+          },
+          "sample_values": [
+            "5",
+            "14",
+            "23",
+            "32",
+            "41",
+            "50",
+            "59",
+            "68",
+            "77"
+          ]
+        },
+        {
+          "index": 19,
+          "non_empty": 10,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 1,
+            "integer": 9,
+            "string": 1
+          },
+          "sample_values": [
+            "6",
+            "15",
+            "24",
+            "33",
+            "42",
+            "51",
+            "60",
+            "69",
+            "78",
+            "`"
+          ]
+        },
+        {
+          "index": 20,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 1,
+            "integer": 9
+          },
+          "sample_values": [
+            "7",
+            "16",
+            "25",
+            "34",
+            "43",
+            "52",
+            "61",
+            "70",
+            "79"
+          ]
+        },
+        {
+          "index": 21,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 1,
+            "integer": 9
+          },
+          "sample_values": [
+            "8",
+            "17",
+            "26",
+            "35",
+            "44",
+            "53",
+            "62",
+            "71",
+            "80"
+          ]
+        },
+        {
+          "index": 22,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 1,
+            "integer": 9
+          },
+          "sample_values": [
+            "9",
+            "18",
+            "27",
+            "36",
+            "45",
+            "54",
+            "63",
+            "72",
+            "81"
+          ]
+        },
+        {
+          "index": 23,
+          "non_empty": 0,
+          "detected_type": "empty",
+          "type_counts": {
+            "empty": 10
+          },
+          "sample_values": []
+        },
+        {
+          "index": 24,
+          "non_empty": 0,
+          "detected_type": "empty",
+          "type_counts": {
+            "empty": 10
+          },
+          "sample_values": []
+        },
+        {
+          "index": 25,
+          "non_empty": 10,
+          "detected_type": "integer",
+          "type_counts": {
+            "string": 1,
+            "integer": 9
+          },
+          "sample_values": [
+            "3号盒子",
+            "1",
+            "10",
+            "19",
+            "28",
+            "37",
+            "46",
+            "55",
+            "64",
+            "73"
+          ]
+        },
+        {
+          "index": 26,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 1,
+            "integer": 9
+          },
+          "sample_values": [
+            "2",
+            "11",
+            "20",
+            "29",
+            "38",
+            "47",
+            "56",
+            "65",
+            "74"
+          ]
+        },
+        {
+          "index": 27,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 1,
+            "integer": 9
+          },
+          "sample_values": [
+            "3",
+            "12",
+            "21",
+            "30",
+            "39",
+            "48",
+            "57",
+            "66",
+            "75"
+          ]
+        },
+        {
+          "index": 28,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 1,
+            "integer": 9
+          },
+          "sample_values": [
+            "4",
+            "13",
+            "22",
+            "31",
+            "40",
+            "49",
+            "58",
+            "67",
+            "76"
+          ]
+        },
+        {
+          "index": 29,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 1,
+            "integer": 9
+          },
+          "sample_values": [
+            "5",
+            "14",
+            "23",
+            "32",
+            "41",
+            "50",
+            "59",
+            "68",
+            "77"
+          ]
+        },
+        {
+          "index": 30,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 1,
+            "integer": 9
+          },
+          "sample_values": [
+            "6",
+            "15",
+            "24",
+            "33",
+            "42",
+            "51",
+            "60",
+            "69",
+            "78"
+          ]
+        },
+        {
+          "index": 31,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 1,
+            "integer": 9
+          },
+          "sample_values": [
+            "7",
+            "16",
+            "25",
+            "34",
+            "43",
+            "52",
+            "61",
+            "70",
+            "79"
+          ]
+        },
+        {
+          "index": 32,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 1,
+            "integer": 9
+          },
+          "sample_values": [
+            "8",
+            "17",
+            "26",
+            "35",
+            "44",
+            "53",
+            "62",
+            "71",
+            "80"
+          ]
+        },
+        {
+          "index": 33,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 1,
+            "integer": 9
+          },
+          "sample_values": [
+            "9",
+            "18",
+            "27",
+            "36",
+            "45",
+            "54",
+            "63",
+            "72",
+            "81"
+          ]
+        },
+        {
+          "index": 34,
+          "non_empty": 0,
+          "detected_type": "empty",
+          "type_counts": {
+            "empty": 10
+          },
+          "sample_values": []
+        },
+        {
+          "index": 35,
+          "non_empty": 0,
+          "detected_type": "empty",
+          "type_counts": {
+            "empty": 10
+          },
+          "sample_values": []
+        },
+        {
+          "index": 36,
+          "non_empty": 10,
+          "detected_type": "integer",
+          "type_counts": {
+            "string": 1,
+            "integer": 9
+          },
+          "sample_values": [
+            "4号盒子",
+            "1",
+            "10",
+            "19",
+            "28",
+            "37",
+            "46",
+            "55",
+            "64",
+            "73"
+          ]
+        },
+        {
+          "index": 37,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 1,
+            "integer": 9
+          },
+          "sample_values": [
+            "2",
+            "11",
+            "20",
+            "29",
+            "38",
+            "47",
+            "56",
+            "65",
+            "74"
+          ]
+        },
+        {
+          "index": 38,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 1,
+            "integer": 9
+          },
+          "sample_values": [
+            "3",
+            "12",
+            "21",
+            "30",
+            "39",
+            "48",
+            "57",
+            "66",
+            "75"
+          ]
+        },
+        {
+          "index": 39,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 1,
+            "integer": 9
+          },
+          "sample_values": [
+            "4",
+            "13",
+            "22",
+            "31",
+            "40",
+            "49",
+            "58",
+            "67",
+            "76"
+          ]
+        },
+        {
+          "index": 40,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 1,
+            "integer": 9
+          },
+          "sample_values": [
+            "5",
+            "14",
+            "23",
+            "32",
+            "41",
+            "50",
+            "59",
+            "68",
+            "77"
+          ]
+        },
+        {
+          "index": 41,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 1,
+            "integer": 9
+          },
+          "sample_values": [
+            "6",
+            "15",
+            "24",
+            "33",
+            "42",
+            "51",
+            "60",
+            "69",
+            "78"
+          ]
+        },
+        {
+          "index": 42,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 1,
+            "integer": 9
+          },
+          "sample_values": [
+            "7",
+            "16",
+            "25",
+            "34",
+            "43",
+            "52",
+            "61",
+            "70",
+            "79"
+          ]
+        },
+        {
+          "index": 43,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 1,
+            "integer": 9
+          },
+          "sample_values": [
+            "8",
+            "17",
+            "26",
+            "35",
+            "44",
+            "53",
+            "62",
+            "71",
+            "80"
+          ]
+        },
+        {
+          "index": 44,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "empty": 1,
+            "integer": 9
+          },
+          "sample_values": [
+            "9",
+            "18",
+            "27",
+            "36",
+            "45",
+            "54",
+            "63",
+            "72",
+            "81"
+          ]
+        },
+        {
+          "index": 45,
+          "non_empty": 0,
+          "detected_type": "empty",
+          "type_counts": {
+            "empty": 10
+          },
+          "sample_values": []
+        },
+        {
+          "index": 46,
+          "non_empty": 0,
+          "detected_type": "empty",
+          "type_counts": {
+            "empty": 10
+          },
+          "sample_values": []
+        },
+        {
+          "index": 47,
+          "non_empty": 10,
+          "detected_type": "integer",
+          "type_counts": {
+            "string": 1,
+            "integer": 9
+          },
+          "sample_values": [
+            "5号盒子",
+            "1",
+            "10",
+            "19",
+            "28",
+            "37",
+            "46",
+            "55",
+            "64",
+            "73"
+          ]
+        },
+        {
+          "index": 48,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "integer": 9
+          },
+          "sample_values": [
+            "2",
+            "11",
+            "20",
+            "29",
+            "38",
+            "47",
+            "56",
+            "65",
+            "74"
+          ]
+        },
+        {
+          "index": 49,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "integer": 9
+          },
+          "sample_values": [
+            "3",
+            "12",
+            "21",
+            "30",
+            "39",
+            "48",
+            "57",
+            "66",
+            "75"
+          ]
+        },
+        {
+          "index": 50,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "integer": 9
+          },
+          "sample_values": [
+            "4",
+            "13",
+            "22",
+            "31",
+            "40",
+            "49",
+            "58",
+            "67",
+            "76"
+          ]
+        },
+        {
+          "index": 51,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "integer": 9
+          },
+          "sample_values": [
+            "5",
+            "14",
+            "23",
+            "32",
+            "41",
+            "50",
+            "59",
+            "68",
+            "77"
+          ]
+        },
+        {
+          "index": 52,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "integer": 9
+          },
+          "sample_values": [
+            "6",
+            "15",
+            "24",
+            "33",
+            "42",
+            "51",
+            "60",
+            "69",
+            "78"
+          ]
+        },
+        {
+          "index": 53,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "integer": 9
+          },
+          "sample_values": [
+            "7",
+            "16",
+            "25",
+            "34",
+            "43",
+            "52",
+            "61",
+            "70",
+            "79"
+          ]
+        },
+        {
+          "index": 54,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "integer": 9
+          },
+          "sample_values": [
+            "8",
+            "17",
+            "26",
+            "35",
+            "44",
+            "53",
+            "62",
+            "71",
+            "80"
+          ]
+        },
+        {
+          "index": 55,
+          "non_empty": 9,
+          "detected_type": "integer",
+          "type_counts": {
+            "integer": 9
+          },
+          "sample_values": [
+            "9",
+            "18",
+            "27",
+            "36",
+            "45",
+            "54",
+            "63",
+            "72",
+            "81"
+          ]
+        }
+      ],
+      "csv_path": "D:\\github_repo\\ln2-inventory-agent\\migrate\\normalized\\source\\sheets\\02_sheet_2.csv"
     }
   ],
-  "generated_at": "2026-03-18T15:41:50Z"
+  "generated_at": "2026-03-19T19:33:16Z"
 }
