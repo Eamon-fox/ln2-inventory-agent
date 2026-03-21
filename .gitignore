@@ -57,8 +57,12 @@ build-py311/
 migrate/manifest.json
 migrate/inputs/*
 !migrate/inputs/.gitkeep
+migrate/normalized/*
+!migrate/normalized/.gitkeep
 migrate/output/*
 !migrate/output/.gitkeep
+migrate/convert_data.py
+migrate/generate_yaml.py
 
 # Testing
 .pytest_cache/
