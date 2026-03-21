@@ -21,6 +21,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agent.tool_runner import AgentToolRunner
+from lib.app_storage import ensure_data_root_layout, set_session_data_root
 from lib.tool_api_write_validation import resolve_request_backup_path
 from lib.yaml_ops import create_yaml_backup, get_audit_log_path, load_yaml, read_audit_events, write_yaml
 from tests.managed_paths import ManagedPathTestCase
@@ -104,6 +105,7 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         self.assertIn("fs_list", names)
         self.assertIn("fs_read", names)
         self.assertIn("fs_write", names)
+        self.assertIn("fs_copy", names)
         self.assertIn("fs_edit", names)
         self.assertNotIn("edit", names)
         self.assertIn("validate", names)
@@ -154,11 +156,16 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         self.assertIn("Convert staged legacy source files", str(response.get("description") or ""))
         self.assertIn("Core Workflow", str(response.get("instructions_markdown") or ""))
         refs = list(response.get("references") or [])
+        ref_docs = list(response.get("reference_documents") or [])
         shared_refs = list(response.get("shared_references") or [])
+        shared_ref_docs = list(response.get("shared_reference_documents") or [])
         assets = list(response.get("assets") or [])
         self.assertIn("agent_skills/migration/references/runbook_en.md", refs)
         self.assertIn("agent_skills/shared/references/schema_context.md", shared_refs)
         self.assertIn("agent_skills/migration/assets/acceptance_checklist_en.md", assets)
+        self.assertTrue(any(doc.get("path") == "agent_skills/migration/references/runbook_en.md" for doc in ref_docs))
+        self.assertTrue(any("fs_copy" in str(doc.get("content") or "") for doc in ref_docs))
+        self.assertTrue(any(doc.get("path") == "agent_skills/shared/references/schema_context.md" for doc in shared_ref_docs))
 
     def test_use_skill_migration_returns_hook_hint_and_ui_effects(self):
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
@@ -447,6 +454,53 @@ class AgentToolRunnerTests(ManagedPathTestCase):
             ui_effects,
         )
 
+    def test_import_migration_output_reads_candidate_from_current_data_root(self):
+        data_root = self.install_root.parent / f"{self.install_root.name}_data"
+        ensure_data_root_layout(str(data_root))
+        set_session_data_root(str(data_root))
+        self.addCleanup(lambda: set_session_data_root(str(self.install_root)))
+
+        active_yaml_path = self.ensure_dataset_yaml("_fake_data_root")
+        candidate = Path(active_yaml_path).resolve().parents[2] / "migrate" / "output" / "ln2_inventory.yaml"
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        candidate.write_text(
+            (
+                "meta:\n"
+                "  box_layout:\n"
+                "    rows: 9\n"
+                "    cols: 9\n"
+                "    box_count: 5\n"
+                "    box_numbers: [1, 2, 3, 4, 5]\n"
+                "  custom_fields:\n"
+                "    - key: cell_line\n"
+                "      label: Cell Line\n"
+                "      type: str\n"
+                "inventory:\n"
+                "  - id: 1\n"
+                "    box: 1\n"
+                "    position: 1\n"
+                "    frozen_at: \"2024-01-01\"\n"
+                "    cell_line: K562\n"
+                "    note: null\n"
+                "    thaw_events: null\n"
+            ),
+            encoding="utf-8",
+        )
+
+        runner = AgentToolRunner(yaml_path=active_yaml_path)
+        response = runner.run(
+            "import_migration_output",
+            {
+                "confirmation_token": "CONFIRM_IMPORT",
+                "target_dataset_name": "migrated_data_root_batch",
+            },
+        )
+
+        self.assertTrue(response["ok"], response)
+        target_path = Path(str(response.get("target_path") or ""))
+        self.assertTrue(target_path.is_file())
+        self.assertIn(str(data_root / "inventories"), str(target_path))
+
     def test_manage_boxes_dry_run_remove_normalizes_aliases_and_preserves_yaml(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_box_dry_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
@@ -696,7 +750,7 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         response = runner.run(
             "bash",
             {
-                "command": "python -c \"import time; time.sleep(0.5)\"",
+                "command": f'"{sys.executable}" -c "import time; time.sleep(0.5)"',
                 "description": "timeout behavior check",
                 "timeout": 10,
             },
@@ -783,11 +837,22 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         self.assertEqual("hello", target.read_text(encoding="utf-8"))
         self.assertIn("Last write target: migrate/output/demo.txt", str(response.get("_hint") or ""))
 
-    def test_fs_copy_is_unknown_tool(self):
+    def test_fs_copy_copies_file_under_migrate(self):
+        source = self._repo_root() / "migrate" / "inputs" / "inventory.yaml"
+        target = self._repo_root() / "migrate" / "output" / "ln2_inventory.yaml"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("meta: {}\ninventory: []\n", encoding="utf-8")
+        target.unlink(missing_ok=True)
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
-        response = runner.run("fs_copy", {"src": "a", "dst": "b"})
-        self.assertFalse(response["ok"])
-        self.assertEqual("unknown_tool", response.get("error_code"))
+        response = runner.run(
+            "fs_copy",
+            {"src": "inputs/inventory.yaml", "dst": "output/ln2_inventory.yaml"},
+        )
+        self.assertTrue(response["ok"])
+        self.assertTrue(target.is_file())
+        self.assertEqual(source.read_text(encoding="utf-8"), target.read_text(encoding="utf-8"))
+        self.assertIn("Last copy target: migrate/output/ln2_inventory.yaml", str(response.get("_hint") or ""))
 
     def test_fs_edit_replaces_single_match(self):
         target = self._repo_root() / "migrate" / "notes.txt"

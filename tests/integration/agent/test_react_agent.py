@@ -1058,6 +1058,19 @@ class ReactAgentTests(ManagedPathTestCase):
         self.assertIn("- shell workdir uses repo-relative paths too", content)
         self.assertIn("- all tool paths must be repo-relative (no absolute paths)", content)
 
+    def test_system_prompt_prefers_fs_copy_over_fs_write_for_whole_file_materialization(self):
+        llm = _CapturePromptLLM()
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        agent = ReactAgent(llm_client=llm, tool_runner=runner)
+
+        agent.run("check file tool guidance")
+
+        system_msg = llm.last_messages[0]
+        self.assertEqual("system", system_msg["role"])
+        content = str(system_msg.get("content") or "")
+        self.assertIn("prefer `fs_copy` over re-emitting the file content through `fs_write`", content)
+        self.assertIn("`fs_write` only for small text artifacts", content)
+
     def test_run_start_emits_fileops_roots_from_managed_inventory_path(self):
         llm = _CapturePromptLLM()
         yaml_path = self.ensure_dataset_yaml("run_start_directory_context")
@@ -1093,6 +1106,7 @@ class ReactAgentTests(ManagedPathTestCase):
         tool_names = {item.get("function", {}).get("name") for item in tools if isinstance(item, dict)}
         self.assertIn("use_skill", tool_names)
         self.assertIn("fs_read", tool_names)
+        self.assertIn("fs_copy", tool_names)
         self.assertIn("bash", tool_names)
         self.assertIn("powershell", tool_names)
         self.assertIn("import_migration_output", tool_names)

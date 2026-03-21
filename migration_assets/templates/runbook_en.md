@@ -8,6 +8,7 @@ Follow every phase in order. Do not skip validation.
 2. Confirm required output path: `migrate/output/ln2_inventory.yaml`.
 3. Track execution progress in `migrate/output/migration_checklist.md` throughout this run.
 4. Scope reminder: work ONLY within `migrate/inputs/`, `migrate/normalized/`, and `migrate/output/`. Do not read from `inventories/` unless the user explicitly requests a comparison with an existing dataset.
+5. If `migrate/output/expected_schema.json`, `migrate/output/migration_checklist.md`, or `migrate/output/ln2_inventory.yaml` already exist, inspect them first and resume from the highest valid completed stage instead of restarting from Phase 1.
 
 ## Phase 2 - Inspect source structure
 
@@ -42,6 +43,7 @@ Follow every phase in order. Do not skip validation.
 1. Convert source records into tube-level `inventory[]` records.
 2. Normalize dates to `YYYY-MM-DD`.
 3. Keep source traceability for uncertain conversions.
+4. If the approved mapping is identity and the source file is already a valid LN2 YAML, materialize the final output with `fs_copy` rather than re-emitting the full file contents with `fs_write`.
 
 ## Phase 5 - Validate draft output
 
@@ -53,7 +55,7 @@ Follow every phase in order. Do not skip validation.
 
 ## Phase 6 - Finalize delivery
 
-1. Write final YAML to `migrate/output/ln2_inventory.yaml`.
+1. Materialize final YAML at `migrate/output/ln2_inventory.yaml`.
 2. Keep the locked `migrate/output/expected_schema.json` with your final mapping plan.
 3. Record the latest validation status in `migrate/output/migration_checklist.md`.
 4. Optionally write `migrate/output/conversion_report.md` with assumptions and unresolved blockers.

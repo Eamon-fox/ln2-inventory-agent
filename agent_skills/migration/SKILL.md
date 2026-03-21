@@ -13,7 +13,7 @@ Follow this skill when handling staged migration inputs.
 2. Keep live progress in `migrate/output/migration_checklist.md`.
 3. Propose the field mapping and schema plan before conversion.
 4. Ask for explicit approval before locking `migrate/output/expected_schema.json`.
-5. Write final output to `migrate/output/ln2_inventory.yaml`.
+5. Materialize final output at `migrate/output/ln2_inventory.yaml`.
 6. Run `validate` with `path` set to `migrate/output/ln2_inventory.yaml` before any import.
 7. Import only after collecting `target_dataset_name` and explicit `CONFIRM_IMPORT`.
 
@@ -32,3 +32,5 @@ Follow this skill when handling staged migration inputs.
 - Do not invent records, dates, positions, or metadata.
 - Do not bypass `validate(path="migrate/output/ln2_inventory.yaml")`.
 - Do not import before explicit human confirmation.
+- When source YAML is already a valid LN2 document and mapping is identity, use `fs_copy` for whole-file passthrough instead of re-emitting file contents with `fs_write`.
+- Resume from existing `migrate/output/expected_schema.json`, `migrate/output/migration_checklist.md`, and `migrate/output/ln2_inventory.yaml` when they are already present and still valid.

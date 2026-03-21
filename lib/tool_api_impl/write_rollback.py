@@ -139,14 +139,16 @@ def tool_rollback(
             }
     else:
         try:
-            target_backup_path = str(
-                resolve_dataset_backup_read_path(
-                    yaml_path=yaml_path,
-                    raw_path=normalized_backup_path,
-                    must_exist=True,
-                    must_be_file=True,
-                )
+            resolved_backup_path = resolve_dataset_backup_read_path(
+                yaml_path=yaml_path,
+                raw_path=normalized_backup_path,
+                must_exist=True,
+                must_be_file=True,
             )
+            if normalized_backup_path and os.path.isabs(normalized_backup_path):
+                target_backup_path = os.path.abspath(normalized_backup_path)
+            else:
+                target_backup_path = str(resolved_backup_path)
         except PathPolicyError as exc:
             payload = {
                 "ok": False,

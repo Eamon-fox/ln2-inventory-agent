@@ -67,7 +67,11 @@ def _is_managed_path_shape(path):
     dataset_dir = os.path.dirname(abs_path)
     root = get_inventories_root()
 
-    if _norm_path(os.path.dirname(dataset_dir)) != _norm_path(root):
+    dataset_parent = os.path.dirname(dataset_dir)
+    if (
+        _norm_path(dataset_parent) != _norm_path(root)
+        and _real_norm_path(dataset_parent) != _real_norm_path(root)
+    ):
         return False
 
     # Prevent symlink/path escapes: real dataset dir must remain a direct child of root.

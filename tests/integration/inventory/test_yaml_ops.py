@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from lib.app_storage import clear_session_data_root, set_session_data_root
 from lib.inventory_paths import InventoryPathError, create_managed_dataset_yaml_path
 from lib.yaml_ops import (
     create_yaml_backup,
@@ -68,7 +69,11 @@ def managed_inventory_root(prefix):
         "lib.inventory_paths.get_install_dir",
         return_value=install_dir,
     ):
-        yield Path(install_dir)
+        set_session_data_root(str(install_dir))
+        try:
+            yield Path(install_dir)
+        finally:
+            clear_session_data_root()
 
 
 def _managed_yaml(dataset_name):

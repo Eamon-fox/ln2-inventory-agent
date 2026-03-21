@@ -5,19 +5,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Environment Setup
 
 ```bash
-source /analysis4/software/miniconda3/etc/profile.d/conda.sh && conda activate /analysis4/fanym/conda/envs/bio-py
+source .venv/bin/activate
 ```
 
-All commands (python, pytest, etc.) must run inside `bio-py`. Do not use system python.
+All commands (python, pytest, etc.) must run inside the repository-local `.venv`. Do not use system python.
 
 ## Build & Run
 
 ```bash
 # Install (single dependency)
-pip install pyyaml
+python -m pip install pyyaml
 
 # GUI (requires PySide6)
-pip install PySide6
+python -m pip install PySide6
 python app_gui/main.py
 
 # AI Agent (requires DEEPSEEK_API_KEY)
@@ -34,16 +34,16 @@ iscc installer/windows/LN2InventoryAgent.iss
 
 ```bash
 # All tests
-pytest tests/
+python -m pytest tests/
 
 # Single test file
-pytest tests/test_tool_api.py -v
+python -m pytest tests/test_tool_api.py -v
 
 # Single test
-pytest tests/test_tool_api.py::TestToolAddEntry::test_basic_add -v
+python -m pytest tests/test_tool_api.py::TestToolAddEntry::test_basic_add -v
 
 # GUI tests (need PySide6)
-pytest tests/integration/gui -v
+python -m pytest tests/integration/gui -v
 ```
 
 No mocking framework required — tests use real YAML in temp directories.

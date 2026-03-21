@@ -141,6 +141,27 @@ def _list_resource_paths(skill_root: Path, resource_dir_name: str) -> List[str]:
     return entries
 
 
+def _read_text_documents(skill_root: Path, resource_dir_name: str) -> List[Dict[str, str]]:
+    root = skill_root / resource_dir_name
+    if not root.is_dir():
+        return []
+    documents: List[Dict[str, str]] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        documents.append(
+            {
+                "path": _display_path(path),
+                "content": content,
+            }
+        )
+    return documents
+
+
 def list_builtin_skills() -> List[Dict[str, str]]:
     """Return built-in skill metadata sorted by skill name."""
     rows: List[Dict[str, str]] = []
@@ -195,12 +216,14 @@ def load_builtin_skill(skill_name: str) -> Dict[str, object]:
                 "description": skill.description,
                 "instructions_markdown": skill.body,
                 "references": _list_resource_paths(skill.skill_root, "references"),
+                "reference_documents": _read_text_documents(skill.skill_root, "references"),
                 "scripts": _list_resource_paths(skill.skill_root, "scripts"),
                 "assets": _list_resource_paths(skill.skill_root, "assets"),
             }
             shared_root = skill.skill_root.parent / "shared"
             if shared_root.is_dir():
                 payload["shared_references"] = _list_resource_paths(shared_root, "references")
+                payload["shared_reference_documents"] = _read_text_documents(shared_root, "references")
             return payload
 
     raise BuiltinSkillError(

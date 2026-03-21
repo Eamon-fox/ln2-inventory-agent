@@ -49,6 +49,7 @@ _VALIDATION_PAYLOAD_ADAPTERS = {
 _INPUT_GUARDS = {
     "fs_read": _validation._guard_fs_read_write,
     "fs_write": _validation._guard_fs_read_write,
+    "fs_copy": _validation._guard_fs_copy,
     "fs_list": _validation._guard_fs_list,
     "fs_edit": _validation._guard_fs_edit,
     "bash": _validation._guard_shell_workdir,
@@ -69,6 +70,7 @@ _STATUS_FORMATTERS = {
     "fs_list": _status._format_fs_list,
     "fs_read": _status._format_fs_read,
     "fs_write": _status._format_fs_write,
+    "fs_copy": _status._format_fs_copy,
     "fs_edit": _status._format_fs_edit,
     "search_records": _status._format_search_records,
     "filter_records": _status._format_filter_records,
@@ -82,6 +84,7 @@ _STATUS_FORMATTERS = {
 _BEFORE_HOOKS = {
     "fs_list": _hooks._before_fs_list,
     "fs_write": _hooks._before_fs_write,
+    "fs_copy": _hooks._before_fs_copy,
     "fs_edit": _hooks._before_fs_edit,
 }
 
@@ -93,6 +96,7 @@ _AFTER_HOOKS = {
     "fs_list": _hooks._after_fs_list,
     "fs_read": _hooks._after_fs_read,
     "fs_write": _hooks._after_fs_write,
+    "fs_copy": _hooks._after_fs_copy,
     "fs_edit": _hooks._after_fs_edit,
     "bash": _hooks._after_shell,
     "powershell": _hooks._after_shell,

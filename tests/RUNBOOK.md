@@ -4,11 +4,15 @@ This runbook documents common local test commands and troubleshooting steps.
 
 ## Prerequisites
 
-1) Install project dependencies:
+1) Activate the repository-local virtual environment:
+
+    source .venv/bin/activate
+
+2) Install project dependencies:
 
     python -m pip install -r requirements.txt
 
-2) If needed, install the test runner in your environment:
+3) If needed, install the test runner in your environment:
 
     python -m pip install pytest
 
@@ -16,25 +20,25 @@ This runbook documents common local test commands and troubleshooting steps.
 
 Run all tests:
 
-    pytest -q
+    python -m pytest -q
 
 Run one file:
 
-    pytest -q tests/test_tool_api.py
+    python -m pytest -q tests/test_tool_api.py
 
 Run focused subsets:
 
-    pytest -q tests/test_agent_tool_runner.py tests/test_react_agent.py
-    pytest -q tests/test_plan_model.py tests/test_plan_executor.py
-    pytest -q tests/integration/gui
+    python -m pytest -q tests/test_agent_tool_runner.py tests/test_react_agent.py
+    python -m pytest -q tests/test_plan_model.py tests/test_plan_executor.py
+    python -m pytest -q tests/integration/gui
 
 Collect-only (discovery check):
 
-    pytest --collect-only -q
+    python -m pytest --collect-only -q
 
 Stop on first failure:
 
-    pytest -q -x
+    python -m pytest -q -x
 
 ## GUI Test Notes
 
@@ -48,7 +52,7 @@ Stop on first failure:
 
 1) Import error for local modules:
    - Run from repository root.
-   - Verify current interpreter points to the intended environment.
+   - Verify current interpreter points to `.venv/bin/python`.
 
 2) pytest command not found:
    - Use python -m pytest instead of pytest.

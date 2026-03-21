@@ -19,6 +19,11 @@ def derive_migrate_root(repo_root):
     return (Path(repo_root) / "migrate").resolve(strict=False)
 
 
+def derive_migration_output_yaml_from_yaml(yaml_path):
+    repo_root = derive_repo_root_from_yaml(yaml_path)
+    return (derive_migrate_root(repo_root) / "output" / "ln2_inventory.yaml").resolve(strict=False)
+
+
 def build_migration_path_env(repo_root, migrate_root=None):
     repo = Path(str(repo_root or "")).resolve(strict=False)
     migrate = (

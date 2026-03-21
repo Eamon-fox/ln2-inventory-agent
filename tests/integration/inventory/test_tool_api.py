@@ -795,7 +795,7 @@ class ToolApiTests(ManagedPathTestCase):
 
             self.assertFalse(result["ok"])
             self.assertEqual("rollback_backup_invalid", result["error_code"])
-            self.assertEqual(str(bad_backup), result["backup_path"])
+            self.assertEqual(str(bad_backup.resolve()), str(Path(result["backup_path"]).resolve()))
 
             rows = read_audit_rows(temp_dir)
             self.assertGreaterEqual(len(rows), 2)
@@ -2486,4 +2486,3 @@ class TestAdjustBoxCount(ManagedPathTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

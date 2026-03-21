@@ -53,3 +53,20 @@ def test_templates_require_repo_relative_paths_for_shell_and_file_tools():
 
     assert "repo-relative paths" in prompt_text
     assert "repo-relative paths" in runbook_text
+
+
+def test_templates_prefer_fs_copy_for_identity_yaml_passthrough():
+    prompt_text = _read(PROMPT_TEMPLATE)
+    runbook_text = _read(RUNBOOK_TEMPLATE)
+
+    assert "fs_copy" in prompt_text
+    assert "fs_copy" in runbook_text
+    assert "identity" in prompt_text
+
+
+def test_templates_define_resume_behavior_from_existing_outputs():
+    prompt_text = _read(PROMPT_TEMPLATE)
+    runbook_text = _read(RUNBOOK_TEMPLATE)
+
+    assert "resume from the highest valid completed stage" in prompt_text
+    assert "resume from the highest valid completed stage" in runbook_text

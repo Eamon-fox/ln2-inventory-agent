@@ -28,6 +28,11 @@ def test_load_builtin_skill_returns_skill_body_and_resources():
     assert "Core Workflow" in payload["instructions_markdown"]
     assert "agent_skills/migration/references/runbook_en.md" in payload["references"]
     assert "agent_skills/shared/references/schema_context.md" in payload["shared_references"]
+    ref_docs = list(payload["reference_documents"])
+    shared_docs = list(payload["shared_reference_documents"])
+    assert any(doc["path"] == "agent_skills/migration/references/runbook_en.md" for doc in ref_docs)
+    assert any("fs_copy" in doc["content"] for doc in ref_docs)
+    assert any(doc["path"] == "agent_skills/shared/references/schema_context.md" for doc in shared_docs)
 
 
 def test_skill_markdown_files_exist():

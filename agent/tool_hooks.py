@@ -244,6 +244,23 @@ def _before_fs_write(_tool_name, payload, context):
     return _patch_payload_path_under_migrate(payload, context, field_name="path")
 
 
+def _before_fs_copy(_tool_name, payload, context):
+    patched = {}
+    for field_name in ("src", "dst"):
+        hook_result = _patch_payload_path_under_migrate(
+            payload,
+            context,
+            field_name=field_name,
+            default_rel="migrate",
+        )
+        patch = dict(hook_result.get("payload_patch") or {})
+        if patch:
+            patched.update(patch)
+    if not patched:
+        return {}
+    return {"payload_patch": patched}
+
+
 def _before_fs_edit(_tool_name, payload, context):
     return _patch_payload_path_under_migrate(payload, context, field_name="filePath")
 
@@ -261,8 +278,8 @@ def _after_use_skill(_tool_name, payload, result, context):
         return {
             "_hint": (
                 "Migration workspace root: migrate/. Keep live progress in "
-                f"`{MIGRATION_SESSION_CHECKLIST}`. Write candidate output to "
-                "migrate/output/ln2_inventory.yaml, then run `validate` with that repo-relative path before import."
+                f"`{MIGRATION_SESSION_CHECKLIST}`. Materialize candidate output at "
+                "migrate/output/ln2_inventory.yaml. Use `fs_copy` for whole-file passthrough when the source is already a valid LN2 YAML, and reserve `fs_write` for small text artifacts. Resume from existing checklist/schema/output files when present, then run `validate` with that repo-relative path before import."
             ),
             "ui_effects": [
                 {
@@ -424,6 +441,14 @@ def _after_fs_write(_tool_name, _payload, result, context):
         return {}
     _repo_root, display_path, write_root = paths
     return _write_root_hint(write_root, label="Last write target", display_path=display_path)
+
+
+def _after_fs_copy(_tool_name, _payload, result, context):
+    paths = _fs_hint_paths(result, context)
+    if paths is None:
+        return {}
+    _repo_root, display_path, write_root = paths
+    return _write_root_hint(write_root, label="Last copy target", display_path=display_path)
 
 
 def _after_fs_edit(_tool_name, _payload, result, context):

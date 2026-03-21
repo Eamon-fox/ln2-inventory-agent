@@ -76,6 +76,7 @@ class ToolHookManagerTests(ManagedPathTestCase):
         merged = merge_hook_result({"ok": True}, hook_result)
 
         self.assertIn("migration_checklist.md", str(merged.get("_hint") or ""))
+        self.assertIn("fs_copy", str(merged.get("_hint") or ""))
         effects = list(merged.get("ui_effects") or [])
         self.assertEqual("migration_mode", effects[0].get("type"))
         self.assertTrue(bool(effects[0].get("enabled")))
@@ -210,6 +211,21 @@ class ToolHookManagerTests(ManagedPathTestCase):
 
         self.assertEqual("migrate/notes.txt", patched.get("filePath"))
 
+    def test_fs_copy_before_hook_normalizes_relative_paths_under_migrate(self):
+        hook_result = self.manager.run_before(
+            "fs_copy",
+            {"src": "inputs/inventory.yaml", "dst": "output/ln2_inventory.yaml"},
+            self.context,
+        )
+
+        patched = apply_payload_patch(
+            {"src": "inputs/inventory.yaml", "dst": "output/ln2_inventory.yaml"},
+            hook_result,
+        )
+
+        self.assertEqual("migrate/inputs/inventory.yaml", patched.get("src"))
+        self.assertEqual("migrate/output/ln2_inventory.yaml", patched.get("dst"))
+
     def test_fs_edit_before_hook_preserves_explicit_repo_relative_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
@@ -258,6 +274,23 @@ class ToolHookManagerTests(ManagedPathTestCase):
         )
         self.assertEqual("migration_mode", effects[1].get("type"))
         self.assertFalse(bool(effects[1].get("enabled")))
+
+    def test_fs_copy_after_hook_adds_hint(self):
+        hook_result = self.manager.run_after(
+            "fs_copy",
+            {
+                "src": "migrate/inputs/inventory.yaml",
+                "dst": "migrate/output/ln2_inventory.yaml",
+            },
+            {
+                "ok": True,
+                "effective_root": "/tmp/repo",
+                "resolved_path": "/tmp/repo/migrate/output/ln2_inventory.yaml",
+            },
+            self.context,
+        )
+
+        self.assertIn("Last copy target: migrate/output/ln2_inventory.yaml", str(hook_result.get("_hint") or ""))
 
 
 if __name__ == "__main__":

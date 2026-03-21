@@ -31,7 +31,7 @@ from lib.tool_api_write_validation import (
 )
 from lib.validate_service import validate_yaml_file
 from .file_ops_client import run_file_tool
-from .tool_runtime_paths import derive_repo_root_from_yaml
+from .tool_runtime_paths import derive_migration_output_yaml_from_yaml, derive_repo_root_from_yaml
 
 
 _IMPORT_CONFIRMATION_TOKEN = "CONFIRM_IMPORT"
@@ -62,7 +62,9 @@ def _run_use_skill(self, payload, _trace_id=None):
             "description": str(loaded.get("description") or ""),
             "instructions_markdown": str(loaded.get("instructions_markdown") or ""),
             "references": list(loaded.get("references") or []),
+            "reference_documents": list(loaded.get("reference_documents") or []),
             "shared_references": list(loaded.get("shared_references") or []),
+            "shared_reference_documents": list(loaded.get("shared_reference_documents") or []),
             "scripts": list(loaded.get("scripts") or []),
             "assets": list(loaded.get("assets") or []),
         }
@@ -546,6 +548,15 @@ def _run_fs_write(self, payload, _trace_id=None):
     )
 
 
+def _run_fs_copy(self, payload, _trace_id=None):
+    tool_name = "fs_copy"
+    return self._safe_call(
+        tool_name,
+        lambda: run_file_tool(tool_name, payload, yaml_path=self._yaml_path),
+        include_expected_schema=True,
+    )
+
+
 def _run_fs_edit(self, payload, _trace_id=None):
     tool_name = "fs_edit"
     return self._safe_call(
@@ -555,11 +566,8 @@ def _run_fs_edit(self, payload, _trace_id=None):
     )
 
 
-def _migration_output_yaml_path():
-    from lib import inventory_paths as _inventory_paths
-
-    root = os.path.abspath(_inventory_paths.get_install_dir())
-    return os.path.join(root, "migrate", "output", "ln2_inventory.yaml")
+def _migration_output_yaml_path(yaml_path):
+    return str(derive_migration_output_yaml_from_yaml(yaml_path))
 
 
 def _build_import_target_path(dataset_name):
@@ -619,7 +627,7 @@ def _run_import_migration_output(self, payload, _trace_id=None):
                 "details": {"target_dataset_name": dataset_name},
             }
 
-        candidate = _migration_output_yaml_path()
+        candidate = _migration_output_yaml_path(self._yaml_path)
         validation = validate_candidate_yaml(candidate, fail_on_warnings=True)
         if not validation.get("ok"):
             return {

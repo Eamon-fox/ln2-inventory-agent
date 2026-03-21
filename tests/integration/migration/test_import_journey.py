@@ -102,9 +102,12 @@ def test_run_success_stages_inputs_and_hands_off_to_ai():
     assert "normalized" in result.ai_prompt
     assert "migration_checklist.md" in result.ai_prompt
     assert "repo-relative paths" in result.ai_prompt
+    assert "reference_documents" in result.ai_prompt
     assert "expected_schema.json" in result.ai_prompt
     assert "APPROVE_MAPPING" in result.ai_prompt
     assert "REVISE_MAPPING" in result.ai_prompt
+    assert "fs_copy" in result.ai_prompt
+    assert "resume from the highest valid completed stage" in result.ai_prompt
     assert "`validate`" in result.ai_prompt
     assert "warning_count > 0" in result.ai_prompt
     assert "import_migration_output" in result.ai_prompt

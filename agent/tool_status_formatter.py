@@ -68,6 +68,16 @@ def _format_fs_write(_tool_name, args):
     return "Write file"
 
 
+def _format_fs_copy(_tool_name, args):
+    src = _clean_text(args.get("src"))
+    dst = _clean_text(args.get("dst"))
+    if src and dst:
+        return f"Copy file {src} to {dst}"
+    if dst:
+        return f"Copy file to {dst}"
+    return "Copy file"
+
+
 def _format_fs_edit(_tool_name, args):
     file_path = _clean_text(args.get("filePath"))
     if file_path:

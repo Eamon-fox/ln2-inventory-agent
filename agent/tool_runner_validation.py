@@ -411,6 +411,23 @@ def _guard_fs_read_write(self, payload):
     )
 
 
+def _guard_fs_copy(self, payload):
+    for field_name, message_key in (
+        ("src", "input.srcMustBeRepoRelative"),
+        ("dst", "input.dstMustBeRepoRelative"),
+    ):
+        message = _guard_repo_relative_path(
+            self,
+            payload,
+            field_name=field_name,
+            message_key=message_key,
+            default_message=f"{field_name} must be repository-relative (absolute paths are not allowed).",
+        )
+        if message:
+            return message
+    return None
+
+
 def _guard_fs_list(self, payload):
     return _guard_repo_relative_path(
         self,

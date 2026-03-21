@@ -7,6 +7,7 @@ from typing import Any, Dict, Iterable, List, Tuple
 
 from .custom_fields import get_effective_fields
 from .legacy_field_policy import (
+    ALIAS_COMPAT_END_DATE,
     canonicalize_record_legacy_fields,
     get_active_legacy_alias_map,
     normalize_legacy_input_fields,
@@ -128,3 +129,14 @@ def ordered_field_items(
             continue
         ordered.append((key, raw[key]))
     return ordered
+
+
+__all__ = [
+    "ALIAS_COMPAT_END_DATE",
+    "effective_field_keys",
+    "get_applicable_alias_map",
+    "normalize_input_fields",
+    "migrate_record_aliases",
+    "split_record_fields",
+    "ordered_field_items",
+]

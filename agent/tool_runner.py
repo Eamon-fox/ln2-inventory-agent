@@ -514,6 +514,7 @@ class AgentToolRunner:
     _run_fs_list = _runner_handlers._run_fs_list
     _run_fs_read = _runner_handlers._run_fs_read
     _run_fs_write = _runner_handlers._run_fs_write
+    _run_fs_copy = _runner_handlers._run_fs_copy
     _run_fs_edit = _runner_handlers._run_fs_edit
     _run_validate = _runner_handlers._run_validate
     _run_import_migration_output = _runner_handlers._run_import_migration_output

@@ -80,7 +80,7 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
         self.assertEqual(MIGRATION_TOOL_NAMES, expected)
         # Verify known members
         for name in ("question", "use_skill", "bash", "powershell", "fs_list", "fs_read",
-                      "fs_write", "fs_edit", "validate",
+                      "fs_write", "fs_copy", "fs_edit", "validate",
                       "import_migration_output"):
             self.assertIn(name, MIGRATION_TOOL_NAMES)
 
@@ -256,8 +256,11 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
         self.assertNotIn("validate", WRITE_TOOLS)
         self.assertNotIn("import_migration_output", WRITE_TOOLS)
 
-    def test_fs_copy_contract_removed(self):
-        self.assertNotIn("fs_copy", TOOL_CONTRACTS)
+    def test_fs_copy_contract_shape(self):
+        self.assertIn("fs_copy", TOOL_CONTRACTS)
+        params = TOOL_CONTRACTS["fs_copy"]["parameters"]
+        self.assertEqual(["src", "dst"], params.get("required"))
+        self.assertEqual({"src", "dst", "overwrite"}, set((params.get("properties") or {}).keys()))
         self.assertNotIn("python_run", TOOL_CONTRACTS)
         self.assertNotIn("edit", TOOL_CONTRACTS)
 

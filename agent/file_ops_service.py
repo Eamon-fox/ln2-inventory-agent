@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 
 from .file_ops_policy import (
@@ -161,6 +162,51 @@ def _handle_fs_write(args, *, repo_root, migrate_root):
     return payload
 
 
+def _handle_fs_copy(args, *, repo_root, migrate_root):
+    source = resolve_read_path(repo_root, args.get("src"), default_rel=".")
+    if not source.exists():
+        return _error_payload("path_not_found", f"Path not found: {source}", repo_root=repo_root, resolved_path=source)
+    if source.is_dir():
+        return _error_payload(
+            "path_is_directory",
+            f"Path is a directory: {source}",
+            repo_root=repo_root,
+            resolved_path=source,
+        )
+
+    destination = resolve_write_path(repo_root, migrate_root, args.get("dst"), default_rel="migrate")
+    overwrite = _as_bool(args.get("overwrite"), default=False)
+    if destination.exists():
+        if destination.is_dir():
+            return _error_payload(
+                "path_is_directory",
+                f"Path is a directory: {destination}",
+                repo_root=repo_root,
+                resolved_path=destination,
+            )
+        if not overwrite:
+            return _error_payload(
+                "file_exists_and_overwrite_false",
+                f"File already exists: {destination}",
+                repo_root=repo_root,
+                resolved_path=destination,
+            )
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        shutil.copy2(source, destination)
+    except Exception as exc:
+        return _error_payload("file_copy_failed", str(exc), repo_root=repo_root, resolved_path=destination)
+
+    payload = _ok_base(repo_root, destination)
+    payload["source_path"] = str(source)
+    try:
+        payload["bytes_copied"] = int(destination.stat().st_size)
+    except Exception:
+        pass
+    return payload
+
+
 def _handle_fs_edit(args, *, repo_root, migrate_root):
     file_path = str(args.get("filePath") or "").strip()
     if not file_path:
@@ -302,6 +348,7 @@ def handle_request(request):
         "fs_list": _handle_fs_list,
         "fs_read": _handle_fs_read,
         "fs_write": _handle_fs_write,
+        "fs_copy": _handle_fs_copy,
         "fs_edit": _handle_fs_edit,
         "bash": _handle_bash,
         "powershell": _handle_powershell,

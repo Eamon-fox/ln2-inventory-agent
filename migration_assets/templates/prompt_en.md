@@ -25,10 +25,13 @@ Hard requirements:
 - If clarification is unavailable, write blockers in `migrate/output/conversion_report.md` and avoid fake completion.
 - Before row-level conversion, propose the session schema and field mapping plan, get explicit user approval, then lock it in `migrate/output/expected_schema.json`.
 - If user requests mapping changes, update the proposal and re-confirm before conversion.
+- If the source file is already a valid LN2 YAML and the approved mapping is identity, materialize the final output with `fs_copy` instead of re-writing the whole file via `fs_write`.
 
 Execution discipline:
 1. Follow `agent_skills/migration/references/runbook_en.md` step by step.
 2. Complete all blocking checks in `agent_skills/migration/assets/acceptance_checklist_en.md`.
 3. Keep `migrate/output/migration_checklist.md` updated as live progress (check items as you complete them).
-4. After precheck, ask user to confirm the field mapping/schema plan before locking `migrate/output/expected_schema.json`.
-5. Deliver final YAML only after all blocking checks pass.
+4. Prefer the inline `reference_documents` and `shared_reference_documents` returned by `use_skill`; only call `fs_read` for additional repo-relative files you still need.
+5. If `migrate/output/expected_schema.json`, `migrate/output/migration_checklist.md`, or `migrate/output/ln2_inventory.yaml` already exist, inspect them first and resume from the highest valid completed stage instead of replaying the workflow from scratch.
+6. After precheck, ask user to confirm the field mapping/schema plan before locking `migrate/output/expected_schema.json`.
+7. Deliver final YAML only after all blocking checks pass.

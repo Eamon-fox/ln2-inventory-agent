@@ -192,8 +192,8 @@ def _apply_instance_guard(meta, current_path):
 
     decision = "stable"
     new_instance_id = old_instance_id
-    origin_before = origin_abs or ""
-    origin_after = current_abs
+    origin_before = os.path.realpath(origin_abs) if origin_abs else ""
+    origin_after = os.path.realpath(current_abs)
 
     if not old_instance_id:
         new_instance_id = str(uuid.uuid4())

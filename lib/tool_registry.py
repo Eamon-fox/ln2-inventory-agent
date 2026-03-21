@@ -600,7 +600,7 @@ _TOOL_DESCRIPTOR_LIST = (
     ),
     _tool(
         "fs_write",
-        "Write one text file under repository-relative path (migrate/ only).",
+        "Write one small text file under repository-relative path (migrate/ only). Use this for checklists, schema notes, or generated text; do not use it to copy an existing whole file.",
         {
             "type": "object",
             "properties": {
@@ -612,6 +612,27 @@ _TOOL_DESCRIPTOR_LIST = (
                 "overwrite": {"type": "boolean"},
             },
             "required": ["path", "content"],
+            "additionalProperties": False,
+        },
+        is_migration=True,
+    ),
+    _tool(
+        "fs_copy",
+        "Copy one existing file to a repository-relative destination under migrate/. Prefer this over fs_write when materializing a whole-file passthrough or moving validated outputs into place.",
+        {
+            "type": "object",
+            "properties": {
+                "src": {
+                    "type": "string",
+                    "description": "Repository-relative source file path.",
+                },
+                "dst": {
+                    "type": "string",
+                    "description": "Repository-relative destination file path under migrate/.",
+                },
+                "overwrite": {"type": "boolean"},
+            },
+            "required": ["src", "dst"],
             "additionalProperties": False,
         },
         is_migration=True,
