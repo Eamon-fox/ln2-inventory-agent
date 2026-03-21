@@ -45,6 +45,7 @@ from app_gui.version import (
     APP_RELEASE_URL,
     UPDATE_CHECK_URL as _GITHUB_API_LATEST,
     is_version_newer as _is_version_newer,
+    resolve_platform_release_info,
 )
 
 if getattr(sys, "frozen", False):
@@ -754,7 +755,8 @@ class SettingsDialog(QDialog):
                     data = json.loads(resp.read())
                 latest_tag = str(data.get("version", "")).strip()
                 body = str(data.get("release_notes", ""))[:200]
-                download_url = str(data.get("download_url", ""))
+                release_info = resolve_platform_release_info(data)
+                download_url = str(release_info.get("download_url", ""))
                 from PySide6.QtCore import QMetaObject, Qt, Q_ARG
                 QMetaObject.invokeMethod(
                     self, "_on_check_update_result",
@@ -785,11 +787,17 @@ class SettingsDialog(QDialog):
                                 t("settings.checkUpdateFailed", error=info))
             return
         if _is_version_newer(latest_tag, self._app_version):
+            release_info = resolve_platform_release_info({"download_url": download_url})
+            update_label = (
+                tr("main.newReleaseUpdate")
+                if bool(release_info.get("auto_update"))
+                else tr("main.newReleaseDownload")
+            )
             box = QMessageBox(self)
             box.setWindowTitle(tr("settings.checkUpdate"))
             box.setText(t("settings.newVersionAvailable", version=latest_tag, notes=info))
             box.setIcon(QMessageBox.Information)
-            update_btn = box.addButton(tr("main.newReleaseUpdate"), QMessageBox.AcceptRole)
+            update_btn = box.addButton(update_label, QMessageBox.AcceptRole)
             box.addButton(tr("main.newReleaseLater"), QMessageBox.RejectRole)
             box.exec()
             if box.clickedButton() == update_btn:

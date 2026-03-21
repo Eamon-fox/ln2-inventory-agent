@@ -15,6 +15,10 @@ SECTION_LABELS = {
     "Changed": "改进",
     "Fixed": "修复",
 }
+PLATFORM_LABELS = {
+    "windows": "Windows",
+    "macos": "macOS",
+}
 
 
 def parse_latest_release(changelog_path: Path) -> dict[str, object]:
@@ -77,7 +81,33 @@ def build_release_notes(version: str, sections: "OrderedDict[str, list[str]]") -
     return "\n".join(lines)
 
 
-def build_github_release(version: str, release_date: str, download_url: str, sections: "OrderedDict[str, list[str]]") -> str:
+def collect_download_entries(latest_payload: dict[str, object]) -> list[tuple[str, str]]:
+    entries: list[tuple[str, str]] = []
+    platforms = latest_payload.get("platforms")
+    if isinstance(platforms, dict):
+        for platform_key in ("windows", "macos"):
+            value = platforms.get(platform_key)
+            if not isinstance(value, dict):
+                continue
+            download_url = str(value.get("download_url", "")).strip()
+            if not download_url:
+                continue
+            entries.append((PLATFORM_LABELS.get(platform_key, platform_key), download_url))
+    if entries:
+        return entries
+
+    legacy_url = str(latest_payload.get("download_url", "")).strip()
+    if legacy_url:
+        return [(PLATFORM_LABELS["windows"], legacy_url)]
+    return []
+
+
+def build_github_release(
+    version: str,
+    release_date: str,
+    download_entries: list[tuple[str, str]],
+    sections: "OrderedDict[str, list[str]]",
+) -> str:
     lines = [
         f"# SnowFox v{version}",
         "",
@@ -87,11 +117,16 @@ def build_github_release(version: str, release_date: str, download_url: str, sec
         "",
         "## 下载",
         "",
-        f"- Windows 安装包：`{download_url}`",
-        "",
+    ]
+
+    if download_entries:
+        lines.extend(f"- {label} 安装包：`{url}`" for label, url in download_entries)
+        lines.append("")
+
+    lines.extend([
         "## 本次更新",
         "",
-    ]
+    ])
 
     for section_name, items in sections.items():
         if not items:
@@ -128,6 +163,14 @@ def main() -> int:
     if latest_version != version:
         raise SystemExit(f"latest.json 版本是 {latest_version}，与 CHANGELOG 顶部版本 {version} 不一致")
 
+    platforms = latest_payload.get("platforms")
+    if isinstance(platforms, dict):
+        windows_payload = platforms.get("windows")
+        if isinstance(windows_payload, dict):
+            windows_url = str(windows_payload.get("download_url", "")).strip()
+            if windows_url:
+                latest_payload["download_url"] = windows_url
+
     latest_payload["release_notes"] = build_release_notes(version, sections)
     latest_json_path.write_text(
         json.dumps(latest_payload, indent=2, ensure_ascii=False) + "\n",
@@ -137,7 +180,7 @@ def main() -> int:
     docs_release_dir.mkdir(parents=True, exist_ok=True)
     github_release_path = docs_release_dir / f"v{version}-github-release.md"
     github_release_path.write_text(
-        build_github_release(version, release_date, str(latest_payload.get("download_url", "")), sections),
+        build_github_release(version, release_date, collect_download_entries(latest_payload), sections),
         encoding="utf-8",
     )
 

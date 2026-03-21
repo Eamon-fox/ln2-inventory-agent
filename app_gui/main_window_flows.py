@@ -18,6 +18,7 @@ from app_gui.gui_config import DEFAULT_MAX_STEPS, save_gui_config
 from app_gui.i18n import t, tr
 from app_gui.system_notice import build_system_notice
 from app_gui.ui.limits import MAX_BOX_COUNT_UI
+from app_gui.version import resolve_platform_release_info
 from lib.inventory_paths import assert_allowed_inventory_yaml_path
 from lib.position_fmt import box_tag_text, get_box_numbers
 from lib.tool_api_write_validation import (
@@ -97,7 +98,8 @@ class StartupFlow:
                 if not self._is_version_newer(latest_tag, last_notified):
                     return
                 body = str(data.get("release_notes", ""))[:200]
-                download_url = str(data.get("download_url", ""))
+                release_info = resolve_platform_release_info(data)
+                download_url = str(release_info.get("download_url", ""))
                 QMetaObject.invokeMethod(
                     window,
                     "_show_update_dialog",
@@ -127,7 +129,14 @@ class StartupFlow:
                 icon=QMessageBox.Information,
             )
 
-            update_btn = msg_box.addButton(tr("main.newReleaseUpdate"), QMessageBox.ActionRole)
+            release_info = resolve_platform_release_info({"download_url": download_url})
+            update_label = (
+                tr("main.newReleaseUpdate")
+                if bool(release_info.get("auto_update"))
+                else tr("main.newReleaseDownload")
+            )
+
+            update_btn = msg_box.addButton(update_label, QMessageBox.ActionRole)
             copy_btn = msg_box.addButton(tr("main.newReleaseCopy"), QMessageBox.ActionRole)
             open_btn = msg_box.addButton(tr("main.newReleaseOpen"), QMessageBox.ActionRole)
             msg_box.addButton(tr("main.newReleaseLater"), QMessageBox.RejectRole)
@@ -162,6 +171,37 @@ class StartupFlow:
 
     def start_automatic_update(self, latest_tag, release_notes, download_url=""):
         """Run automatic update with progress dialog."""
+        release_info = resolve_platform_release_info({"download_url": download_url})
+        package_url = str(release_info.get("download_url", "")).strip()
+        target_url = package_url or self._release_url
+        if not bool(release_info.get("auto_update")):
+            try:
+                from PySide6.QtCore import QUrl
+                from PySide6.QtGui import QDesktopServices
+
+                if not target_url:
+                    raise RuntimeError(tr("main.updateManualNoUrl"))
+                QDesktopServices.openUrl(QUrl(target_url))
+                self._show_status_box(
+                    tr("main.updateManualTitle"),
+                    t(
+                        "main.updateManualMessage",
+                        platform=str(release_info.get("platform_name", "macOS")),
+                    ),
+                    QMessageBox.Information,
+                )
+            except Exception as exc:
+                self._show_status_box(tr("main.updateFailed"), str(exc), QMessageBox.Warning)
+            return
+
+        if not package_url:
+            self._show_status_box(
+                tr("main.updateFailed"),
+                tr("main.updateManualNoUrl"),
+                QMessageBox.Warning,
+            )
+            return
+
         from PySide6.QtCore import Qt, QObject, Signal
         from PySide6.QtWidgets import QApplication, QProgressDialog
 
@@ -212,7 +252,7 @@ class StartupFlow:
         updater = AutoUpdater(
             latest_tag=latest_tag,
             release_notes=release_notes,
-            download_url=download_url,
+            download_url=package_url,
             on_progress=bridge.sig_progress.emit,
             on_complete=bridge.sig_complete.emit,
             on_error=bridge.sig_error.emit,
