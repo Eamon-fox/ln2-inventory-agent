@@ -4,6 +4,51 @@ from tests.integration.gui._gui_panels_shared import *  # noqa: F401,F403
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
 class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
+    def test_operations_panel_refresh_custom_fields_delegates_to_apply_meta_update(self):
+        panel = self._new_operations_panel()
+
+        with patch.object(panel, "apply_meta_update") as apply_meta_update:
+            panel._refresh_custom_fields()
+
+        apply_meta_update.assert_called_once_with()
+
+    def test_operations_panel_apply_meta_update_without_args_loads_yaml_meta(self):
+        from lib.yaml_ops import write_yaml
+
+        panel = self._new_operations_panel()
+        write_yaml(
+            {
+                "meta": {
+                    "box_layout": {"rows": 9, "cols": 9},
+                    "custom_fields": [
+                        {"key": "sample_type", "label": "Sample Type", "type": "str"},
+                    ],
+                },
+                "inventory": [
+                    {
+                        "id": 1,
+                        "sample_type": "PBMC",
+                        "box": 1,
+                        "position": 1,
+                        "frozen_at": "2026-02-10",
+                    }
+                ],
+            },
+            path=self.fake_yaml_path,
+            audit_meta={"action": "seed", "source": "tests"},
+        )
+
+        panel.apply_meta_update()
+
+        custom_keys = [
+            field.get("key")
+            for field in panel._current_custom_fields
+            if isinstance(field, dict)
+        ]
+        self.assertIn("sample_type", custom_keys)
+        self.assertEqual("sample_type", panel._current_meta["custom_fields"][0]["key"])
+        self.assertEqual("PBMC", panel._current_inventory[0]["sample_type"])
+
     def test_operations_panel_migration_lock_disables_write_controls(self):
         panel = self._new_operations_panel()
 
@@ -588,6 +633,25 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
 
         values = dialog.get_values()
         self.assertEqual("sk-updated", values["api_keys"][provider_id])
+
+    def test_settings_dialog_get_submission_returns_typed_contract(self):
+        from app_gui.application import SettingsDialogSubmission
+        from app_gui.main import SettingsDialog, PROVIDER_DEFAULTS
+
+        provider_id = next(iter(PROVIDER_DEFAULTS))
+        dialog = SettingsDialog(
+            config={
+                "ai": {
+                    "provider": provider_id,
+                    "model": PROVIDER_DEFAULTS[provider_id]["model"],
+                }
+            }
+        )
+
+        submission = dialog.get_submission()
+
+        self.assertIsInstance(submission, SettingsDialogSubmission)
+        self.assertEqual(dialog.get_values(), submission.as_dict())
 
     def test_settings_dialog_ai_model_is_editable_and_persisted(self):
         from app_gui.main import SettingsDialog, PROVIDER_DEFAULTS
@@ -1656,9 +1720,6 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         with patch(
             "app_gui.ui.dialogs.settings_dialog.QInputDialog.getText",
             return_value=("renamed-by-settings", True),
-        ), patch(
-            "app_gui.ui.dialogs.settings_dialog.list_managed_datasets",
-            return_value=[{"name": "renamed-by-settings", "yaml_path": new_path}],
         ):
             dialog._emit_rename_dataset_request()
 
@@ -1696,10 +1757,8 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
 
         with patch.object(dialog, "_confirm_delete_dataset_initial", return_value=True), patch.object(
             dialog, "_confirm_phrase_dialog", return_value=True
-        ), patch.object(dialog, "_confirm_delete_dataset_final", return_value=True), patch(
-            "app_gui.ui.dialogs.settings_dialog.list_managed_datasets",
-            return_value=[{"name": "after-delete", "yaml_path": new_path}],
         ):
+            dialog._confirm_delete_dataset_final = MagicMock(return_value=True)
             dialog._emit_delete_dataset_request()
 
         delete_mock.assert_called_once_with(old_path)

@@ -876,7 +876,7 @@
         "notes": "Always provide explicit backup_path selected from action=backup rows in list_audit_timeline."
       },
       "search_records": {
-        "description": "Search inventory records with optional query and structured filters; use status=all|active|inactive and sort_by/sort_order (default: frozen_at desc, nulls last). 按可选 query 与结构化条件搜索库存记录；使用 status=all|active|inactive 与 sort_by/sort_order（默认 frozen_at desc，空值置后）。"
+        "description": "Search inventory records with optional query and structured filters; use status=all|active|inactive and sort_by/sort_order (default: stored_at desc, nulls last). 按可选 query 与结构化条件搜索库存记录；使用 status=all|active|inactive 与 sort_by/sort_order（默认 stored_at desc，空值置后）。"
       },
       "filter_records": {
         "description": "Filter Overview table rows with field filters, in-table search, and sorting; mirrors the GUI table semantics (default: location asc, nulls last). 按概览表格语义筛选记录，支持字段筛选、表内搜索与排序（默认 location asc，空值置后）。"

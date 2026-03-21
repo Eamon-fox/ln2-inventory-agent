@@ -9,8 +9,6 @@ from PySide6.QtWidgets import QHeaderView, QTableWidgetItem
 from app_gui.i18n import t, tr
 from app_gui.ui.theme import pick_contrasting_text_color
 from app_gui.ui.utils import cell_color
-from lib.csv_export import build_export_rows
-from lib.overview_table_query import query_overview_table
 from lib.position_fmt import pos_to_display
 from lib.validators import parse_date
 
@@ -186,58 +184,6 @@ def _set_table_columns(self, headers, *, header_labels=None):
             self.ov_table.setColumnWidth(idx, 120)
 
 
-def _rebuild_table_rows(self, records):
-    meta = getattr(self, "_current_meta", {})
-    from lib.custom_fields import get_color_key
-
-    payload = build_export_rows(records or [], meta=meta)
-    self._table_columns = list(payload.get("columns") or [])
-    header_labels = _resolve_table_header_labels(self, self._table_columns)
-
-    color_key = get_color_key(meta, inventory=records or [])
-    rows = []
-    for values in payload.get("rows") or []:
-        rid_raw = values.get("id")
-        record = None
-        if rid_raw not in (None, ""):
-            try:
-                record = self.overview_records_by_id.get(int(rid_raw))
-            except (TypeError, ValueError):
-                record = None
-
-        box_number = None
-        if isinstance(record, dict):
-            with suppress(TypeError, ValueError):
-                box_number = int(record.get("box"))
-
-        color_value = ""
-        if isinstance(record, dict):
-            color_value = str(record.get(color_key) or "")
-        elif color_key in values:
-            color_value = str(values.get(color_key) or "")
-
-        search_text = " ".join(str(values.get(col, "")) for col in self._table_columns).lower()
-        rows.append(
-            {
-                "values": values,
-                "record": record,
-                "box": box_number,
-                "color_value": color_value,
-                "search_text": search_text,
-            }
-        )
-
-    self._table_rows = rows
-    self._set_table_columns(self._table_columns, header_labels=header_labels)
-    self._table_row_records = []
-    self._table_version = int(getattr(self, "_table_version", 0) or 0) + 1
-    unique_cache = getattr(self, "_column_unique_cache", None)
-    if isinstance(unique_cache, dict):
-        unique_cache.clear()
-    else:
-        self._column_unique_cache = {}
-
-
 def _table_query_payload(self, *, keyword, selected_box, selected_cell):
     return {
         "keyword": keyword,
@@ -260,16 +206,13 @@ def _query_table_rows(self, *, keyword, selected_box, selected_cell):
         selected_cell=selected_cell,
     )
     yaml_path = self.yaml_path_getter()
-
-    if hasattr(self.bridge, "filter_records"):
-        return self.bridge.filter_records(yaml_path=yaml_path, **payload)
-
-    result = query_overview_table(
-        getattr(self, "_current_records", []) or [],
-        meta=getattr(self, "_current_meta", {}) or {},
-        **payload,
-    )
-    return {"ok": True, "result": result}
+    filter_records = getattr(self.bridge, "filter_records", None)
+    if not callable(filter_records):
+        return {
+            "ok": False,
+            "message": "OverviewPanel bridge must provide filter_records()",
+        }
+    return filter_records(yaml_path=yaml_path, **payload)
 
 
 def _sync_table_sort_indicator(self):

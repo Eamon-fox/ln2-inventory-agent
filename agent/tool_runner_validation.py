@@ -199,10 +199,8 @@ def _apply_layout_position_rules(schema, layout, *, tool_name=None):
 
 
 def _sanitize_tool_input_payload(payload):
-    """Ignore LLM-internal fields if the model still sends them."""
+    """Normalize direct caller payloads without dropping supported contract fields."""
     normalized = dict(payload) if isinstance(payload, dict) else {}
-    for field in _HIDDEN_LLM_FIELDS:
-        normalized.pop(field, None)
     normalized, _alias_errors = normalize_structural_alias_input_map(
         normalized,
         scope="payload",
@@ -267,7 +265,7 @@ def _schema_validation_payload(tool_name, payload, schema, *, meta=None, invento
     return adjusted
 
 
-def _normalize_search_mode(value):
+def _normalize_search_mode(self, value):
     if value in (None, ""):
         return "fuzzy"
 
@@ -275,21 +273,21 @@ def _normalize_search_mode(value):
     if text in {"fuzzy", "exact", "keywords"}:
         return text
 
-    from . import tool_runner as _runner
-
     raise ValueError(
-        _runner.AgentToolRunner._msg(
+        self._msg(
             "errors.modeMustBeOneOf",
             "mode must be one of: fuzzy, exact, keywords",
         )
         )
 
 
-def _tool_input_schema(self, tool_name):
+def _tool_input_schema(self, tool_name, *, include_hidden=False):
     contract = _tool_contracts().get(tool_name)
     if not isinstance(contract, dict):
         return {}
-    base_schema = _filter_schema_for_llm(contract.get("parameters") or {})
+    base_schema = deepcopy(contract.get("parameters") or {})
+    if not include_hidden:
+        base_schema = _filter_schema_for_llm(base_schema)
     meta = self._load_meta() if hasattr(self, "_load_meta") else {}
     inventory = self._load_inventory() if hasattr(self, "_load_inventory") else []
     layout = self._load_layout() if hasattr(self, "_load_layout") else {}
@@ -521,7 +519,7 @@ def _validate_tool_input(self, tool_name, payload):
     if not contract:
         return None
 
-    schema = _tool_input_schema(self, tool_name)
+    schema = _tool_input_schema(self, tool_name, include_hidden=True)
     meta = self._load_meta() if hasattr(self, "_load_meta") else {}
     inventory = self._load_inventory() if hasattr(self, "_load_inventory") else []
     schema_error = self._validate_schema_value(

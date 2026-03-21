@@ -10,6 +10,10 @@ from contextlib import suppress
 from datetime import date
 from typing import Callable, Dict, List, Optional, Tuple
 
+from app_gui.bridge_write_runner import (
+    execute_bridge_rollback as _execute_bridge_rollback,
+    execute_bridge_write as _execute_bridge_write,
+)
 from lib import tool_api_write_adapter as _write_adapter
 from lib.schema_aliases import coalesce_stored_at_value
 from lib.yaml_ops import load_yaml, write_yaml
@@ -389,52 +393,6 @@ def _run_mode_call(
     return run_execute()
 
 
-def _execute_bridge_write(
-    write_fn: Callable[..., Dict[str, object]],
-    *,
-    yaml_path: str,
-    request_backup_path: Optional[str] = None,
-    execution_mode: Optional[str] = None,
-    **payload: object,
-) -> Dict[str, object]:
-    effective_execution_mode = str(execution_mode or "execute")
-    call_kwargs = dict(payload)
-    call_kwargs["execution_mode"] = effective_execution_mode
-    if request_backup_path is not None:
-        call_kwargs["request_backup_path"] = request_backup_path
-    # Always pass yaml_path by keyword so registry-generated bridge methods and
-    # test doubles exercise the same call shape.
-    response = write_fn(
-        yaml_path=yaml_path,
-        **call_kwargs,
-    )
-    return _write_adapter.attach_request_backup(
-        response,
-        request_backup_path,
-    )
-
-
-def _run_execute_rollback(bridge: object, rollback_kwargs: Dict[str, object]) -> Dict[str, object]:
-    rollback_fn = getattr(bridge, "rollback", None)
-    if not callable(rollback_fn):
-        return {
-            "ok": False,
-            "error_code": "bridge_no_rollback",
-            "message": "Bridge does not provide rollback().",
-        }
-    try:
-        return _execute_bridge_write(
-            rollback_fn,
-            **rollback_kwargs,
-        )
-    except TypeError:
-        # Backward-compatible path for test doubles that do not accept
-        # request_backup_path yet.
-        fallback_kwargs = dict(rollback_kwargs)
-        fallback_kwargs.pop("request_backup_path", None)
-        return rollback_fn(**fallback_kwargs)
-
-
 def _items_with_action(
     items: List[Dict[str, object]],
     action: str,
@@ -679,7 +637,7 @@ def run_plan(
                 backup_path=target_backup_path,
                 source_event=source_event,
             ),
-            run_execute=lambda: _run_execute_rollback(bridge, rollback_kwargs),
+            run_execute=lambda: _execute_bridge_rollback(bridge, **rollback_kwargs),
         )
 
         last_backup = _append_and_consume_item_report(

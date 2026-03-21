@@ -9,12 +9,11 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QStyle, QStyledItemDelegate,
     QFormLayout, QDateEdit
 )
+from app_gui.application.audit_view_use_case import AuditViewUseCase
 from app_gui.i18n import tr
 from app_gui.ui.icons import get_icon, Icons
 from app_gui.ui.theme import resolve_theme_token
-from lib.custom_fields import get_effective_fields
 from lib.field_schema import ordered_field_items
-from lib.yaml_ops import get_audit_log_paths, load_yaml, read_audit_events
 from lib.plan_item_factory import build_rollback_plan_item
 
 
@@ -22,21 +21,8 @@ def _safe_html(value):
     return _escape_html(str(value or ""), quote=True)
 
 
-_FIELD_LABEL_KEYS = {
-    "cell_line": "operations.cellLine",
-    "short_name": "operations.shortName",
-    "note": "operations.note",
-}
-
-
 def _field_label(field_key):
-    key = _FIELD_LABEL_KEYS.get(str(field_key or ""))
-    if not key:
-        return str(field_key or "")
-    translated = tr(key)
-    if not translated or translated == key:
-        return str(field_key or "")
-    return translated
+    return str(field_key or "")
 
 
 def _extract_field_payload(payload):
@@ -382,10 +368,11 @@ class _AuditBackupTintDelegate(QStyledItemDelegate):
 class AuditLogDialog(QDialog):
     """Independent audit log viewer with filtering and rollback staging."""
 
-    def __init__(self, parent, yaml_path_getter, bridge):
+    def __init__(self, parent, yaml_path_getter, bridge, audit_view_use_case=None):
         super().__init__(parent)
         self.yaml_path_getter = yaml_path_getter
         self.bridge = bridge
+        self._audit_view_use_case = audit_view_use_case or AuditViewUseCase()
         self._audit_events = []
         self._audit_field_order = []
 
@@ -521,23 +508,21 @@ class AuditLogDialog(QDialog):
             return list(reversed(ordered))
         return ordered
 
+    def _load_audit_field_order(self, yaml_path):
+        loader = getattr(self._audit_view_use_case, "load_field_order", None)
+        if not callable(loader):
+            return []
+        field_order = loader(yaml_path=yaml_path)
+        if not isinstance(field_order, list):
+            return []
+        return [str(field) for field in field_order if str(field or "").strip()]
+
     def on_load_audit(self):
         """Load and display audit events from JSONL file."""
         self.audit_rollback_selected_btn.setEnabled(False)
         yaml_path = self.yaml_path_getter()
         yaml_abs = os.path.abspath(str(yaml_path or ""))
-        self._audit_field_order = []
-        try:
-            data = load_yaml(yaml_abs)
-            meta = data.get("meta", {}) if isinstance(data, dict) else {}
-            inventory = data.get("inventory", []) if isinstance(data, dict) else []
-            self._audit_field_order = [
-                str(field.get("key"))
-                for field in get_effective_fields(meta, inventory=inventory)
-                if isinstance(field, dict) and field.get("key")
-            ]
-        except Exception:
-            self._audit_field_order = []
+        self._audit_field_order = self._load_audit_field_order(yaml_abs)
 
         start = self.audit_start_date.date().toString("yyyy-MM-dd")
         end = self.audit_end_date.date().toString("yyyy-MM-dd")
@@ -545,52 +530,37 @@ class AuditLogDialog(QDialog):
         status_filter = self.audit_status_filter.currentData() or self.audit_status_filter.currentText()
 
         timeline_loader = getattr(self.bridge, "list_audit_timeline", None)
-        events = []
-        loaded_from_timeline_api = False
-        if callable(timeline_loader):
-            response = timeline_loader(
-                yaml_path=yaml_abs,
-                limit=None,
-                offset=0,
-                action_filter=None if action_filter == "All" else action_filter,
-                status_filter=None if status_filter == "All" else status_filter,
-                start_date=start,
-                end_date=end,
-            )
-            if not isinstance(response, dict) or not response.get("ok"):
-                message = (
-                    (response or {}).get("message")
-                    if isinstance(response, dict)
-                    else tr("operations.unknownError")
+        if not callable(timeline_loader):
+            self.audit_info.setText(
+                tr(
+                    "operations.failedToLoadAudit",
+                    error="Bridge must provide list_audit_timeline().",
                 )
-                self.audit_info.setText(tr("operations.failedToLoadAudit", error=message))
-                return
-            events = list((response.get("result") or {}).get("items") or [])
-            loaded_from_timeline_api = True
-        else:
-            candidate_paths = get_audit_log_paths(yaml_abs)
-            if not any(os.path.isfile(path) for path in candidate_paths):
-                hint_path = candidate_paths[0] if candidate_paths else ""
-                self.audit_info.setText(tr("operations.auditFileNotFound", path=hint_path))
-                return
+            )
+            return
 
-            try:
-                for ev in read_audit_events(yaml_abs):
-                    ts = str(ev.get("timestamp") or "")[:10]
-                    if ts and (ts < start or ts > end):
-                        continue
-                    if action_filter != "All" and str(ev.get("action") or "") != action_filter:
-                        continue
-                    if status_filter != "All" and str(ev.get("status") or "") != status_filter:
-                        continue
-                    events.append(ev)
-            except Exception as exc:
-                self.audit_info.setText(tr("operations.failedToLoadAudit", error=exc))
-                return
+        response = timeline_loader(
+            yaml_path=yaml_abs,
+            limit=None,
+            offset=0,
+            action_filter=None if action_filter == "All" else action_filter,
+            status_filter=None if status_filter == "All" else status_filter,
+            start_date=start,
+            end_date=end,
+        )
+        if not isinstance(response, dict) or not response.get("ok"):
+            message = (
+                (response or {}).get("message")
+                if isinstance(response, dict)
+                else tr("operations.unknownError")
+            )
+            self.audit_info.setText(tr("operations.failedToLoadAudit", error=message))
+            return
+        events = list((response.get("result") or {}).get("items") or [])
 
         events = self._sort_events_newest_first(
             events,
-            reverse_if_no_seq=not loaded_from_timeline_api,
+            reverse_if_no_seq=False,
         )
         self._audit_events = events
 

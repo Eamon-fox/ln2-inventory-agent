@@ -24,7 +24,11 @@ from lib.tool_api import (
     tool_recommend_positions,
     tool_search_records,
 )
-from lib.schema_aliases import coalesce_stored_at_value, present_record_sort_field
+from lib.schema_aliases import coalesce_stored_at_value
+from lib.tool_api_write_validation import (
+    normalize_manage_boxes_operation,
+    normalize_manage_boxes_renumber_mode,
+)
 from lib.validate_service import validate_yaml_file
 from .file_ops_client import run_file_tool
 from .tool_runtime_paths import derive_repo_root_from_yaml
@@ -177,7 +181,9 @@ def _run_manage_boxes(self, payload, trace_id=None):
     tool_name = "manage_boxes"
 
     def _call_manage_boxes():
-        action = str(payload.get("action") or "").strip().lower()
+        action = normalize_manage_boxes_operation(
+            payload.get("action") or payload.get("operation")
+        )
         if action not in {"add", "remove"}:
             raise ValueError(
                 self._msg(
@@ -189,6 +195,17 @@ def _run_manage_boxes(self, payload, trace_id=None):
             )
 
         dry_run = self._as_bool(payload.get("dry_run", False), default=False)
+        raw_renumber_mode = payload.get("renumber_mode")
+        renumber_mode = normalize_manage_boxes_renumber_mode(raw_renumber_mode)
+        if raw_renumber_mode not in (None, "") and renumber_mode is None:
+            raise ValueError(
+                self._msg(
+                    "validation.mustBeOneOf",
+                    "{label} must be one of: {values}",
+                    label="renumber_mode",
+                    values="keep_gaps, renumber_contiguous",
+                )
+            )
 
         if action == "add":
             count = self._required_int(payload, "count")
@@ -211,7 +228,6 @@ def _run_manage_boxes(self, payload, trace_id=None):
                 )
         else:
             box = self._required_int(payload, "box")
-            renumber_mode = payload.get("renumber_mode")
             request = {
                 "operation": "remove",
                 "count": None,
@@ -291,17 +307,6 @@ def _run_search_records(self, payload, _trace_id=None):
             sort_by=payload.get("sort_by"),
             sort_order=payload.get("sort_order"),
         ),
-    )
-    applied_filters = (
-        (response.get("result") or {}).get("applied_filters")
-        if isinstance(response, dict)
-        else None
-    )
-    if isinstance(applied_filters, dict):
-        applied_filters["sort_by"] = present_record_sort_field(
-            applied_filters.get("sort_by"),
-            requested=payload.get("sort_by"),
-            default_legacy=False,
     )
     return response
 

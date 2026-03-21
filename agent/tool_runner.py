@@ -34,15 +34,6 @@ def _default_tr(key, default=None, **kwargs):
     return str(text)
 
 
-_tr_func = _default_tr
-
-
-def set_agent_tr(fn):
-    """Inject a real i18n translator (e.g. ``app_gui.i18n.tr``) at GUI startup."""
-    global _tr_func
-    if callable(fn):
-        _tr_func = fn
-
 _TOOL_CONTRACTS = TOOL_CONTRACTS
 _WRITE_TOOLS = WRITE_TOOLS
 _QUESTION_OTHER_OPTION = "\u5176\u4ed6\uff1a\u8bf7\u8f93\u5165"
@@ -50,11 +41,10 @@ _QUESTION_OTHER_OPTION = "\u5176\u4ed6\uff1a\u8bf7\u8f93\u5165"
 class AgentToolRunner:
     """Executes named tools with normalized input payloads."""
 
-    @staticmethod
-    def _msg(msg_key, default, **kwargs):
+    def _msg(self, msg_key, default, **kwargs):
         full_key = f"agentToolRunner.{msg_key}"
         try:
-            text = _tr_func(full_key, default=default, **kwargs)
+            text = self._tr(full_key, default=default, **kwargs)
             if kwargs:
                 try:
                     return str(text).format(**kwargs)
@@ -75,11 +65,13 @@ class AgentToolRunner:
         session_id=None,
         plan_store=None,
         preflight_fn=None,
+        tr_func=None,
     ):
         self._yaml_path = assert_allowed_inventory_yaml_path(yaml_path, must_exist=True)
         self._session_id = session_id
         self._plan_store = plan_store
         self._preflight_fn = preflight_fn
+        self._tr = tr_func if callable(tr_func) else _default_tr
         self._hook_manager = _tool_hooks.build_default_tool_hook_manager()
         # Question tool synchronization
         self._answer_event = threading.Event()
@@ -104,12 +96,11 @@ class AgentToolRunner:
             trace_id=trace_id,
         )
 
-    @staticmethod
-    def _required_int(payload, key):
+    def _required_int(self, payload, key):
         value = payload.get(key)
         if value in (None, ""):
             raise ValueError(
-                AgentToolRunner._msg(
+                self._msg(
                     "errors.missingRequiredIntegerField",
                     "Missing required integer field: {key}",
                     key=key,
@@ -117,7 +108,7 @@ class AgentToolRunner:
             )
         if not AgentToolRunner._is_integer(value):
             raise ValueError(
-                AgentToolRunner._msg(
+                self._msg(
                     "errors.fieldMustBeInteger",
                     "{key} must be an integer",
                     key=key,
@@ -125,14 +116,13 @@ class AgentToolRunner:
             )
         return int(value)
 
-    @staticmethod
-    def _optional_int(payload, key, default=None):
+    def _optional_int(self, payload, key, default=None):
         value = payload.get(key)
         if value in (None, ""):
             return default
         if not AgentToolRunner._is_integer(value):
             raise ValueError(
-                AgentToolRunner._msg(
+                self._msg(
                     "errors.fieldMustBeInteger",
                     "{key} must be an integer",
                     key=key,
@@ -207,15 +197,14 @@ class AgentToolRunner:
         inventory = (data or {}).get("inventory", [])
         return inventory if isinstance(inventory, list) else []
 
-    @staticmethod
-    def _parse_position(value, layout=None, field_name="position"):
+    def _parse_position(self, value, layout=None, field_name="position"):
         if value in (None, ""):
             return None
         try:
             return int(_tool_parsers.coerce_position_value(value, layout=layout, field_name=field_name))
         except Exception as exc:
             raise ValueError(
-                AgentToolRunner._msg(
+                self._msg(
                     "errors.invalidPositionField",
                     "{field_name} is invalid: {value}",
                     field_name=field_name,
@@ -241,7 +230,7 @@ class AgentToolRunner:
         except ValueError as exc:
             raise ValueError(str(exc)) from exc
 
-    _normalize_search_mode = staticmethod(_runner_validation._normalize_search_mode)
+    _normalize_search_mode = _runner_validation._normalize_search_mode
 
     def list_tools(self):
         return list(TOOL_CONTRACTS.keys())

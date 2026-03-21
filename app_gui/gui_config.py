@@ -11,7 +11,11 @@ import sys
 import yaml
 
 from agent.agent_defaults import AGENT_HISTORY_MAX_TURNS, DEFAULT_MAX_STEPS
-from agent.llm_client import DEFAULT_PROVIDER, PROVIDER_DEFAULTS
+from app_gui.application.ai_provider_catalog import (
+    DEFAULT_AI_PROVIDER,
+    default_ai_model,
+    normalize_ai_provider,
+)
 from lib.inventory_paths import get_install_dir
 
 DEFAULT_CONFIG_DIR = os.path.join(get_install_dir(), "config")
@@ -49,7 +53,7 @@ DEFAULT_GUI_CONFIG = {
     "release_notes_preview": "",
     "import_onboarding_seen": False,
     "ai": {
-        "provider": DEFAULT_PROVIDER,
+        "provider": DEFAULT_AI_PROVIDER,
         "model": None,
         "max_steps": DEFAULT_MAX_STEPS,
         "thinking_enabled": True,
@@ -61,15 +65,13 @@ DEFAULT_GUI_CONFIG = {
 def load_gui_config(path=DEFAULT_CONFIG_FILE):
     """Load GUI config from YAML file. Returns dict with defaults merged."""
     def _apply_defaults(cfg):
-        provider = cfg.get("ai", {}).get("provider") or DEFAULT_PROVIDER
-        if provider not in PROVIDER_DEFAULTS:
-            provider = DEFAULT_PROVIDER
+        provider = normalize_ai_provider(cfg.get("ai", {}).get("provider"))
         cfg.setdefault("ai", {})["provider"] = provider
         cfg.setdefault("api_keys", {})
         if not isinstance(cfg.get("api_keys"), dict):
             cfg["api_keys"] = {}
         if not str(cfg.get("ai", {}).get("model") or "").strip():
-            cfg["ai"]["model"] = PROVIDER_DEFAULTS[provider]["model"]
+            cfg["ai"]["model"] = default_ai_model(provider)
         cfg["ai"]["thinking_enabled"] = bool(cfg.get("ai", {}).get("thinking_enabled", True))
         if not cfg.get("ai", {}).get("custom_prompt"):
             cfg["ai"]["custom_prompt"] = _load_default_prompt()

@@ -11,6 +11,23 @@ from .yaml_ops import append_backup_event, create_yaml_backup
 
 _ALLOWED_EXECUTION_MODES = {"direct", "preflight", "execute"}
 _BOX_TAG_MAX_LENGTH = 80
+_MANAGE_BOXES_OPERATION_ALIASES = {
+    "add": "add",
+    "add_boxes": "add",
+    "increase": "add",
+    "remove": "remove",
+    "remove_box": "remove",
+    "delete": "remove",
+}
+_MANAGE_BOXES_RENUMBER_MODE_ALIASES = {
+    "keep_gaps": "keep_gaps",
+    "keep": "keep_gaps",
+    "gaps": "keep_gaps",
+    "renumber_contiguous": "renumber_contiguous",
+    "renumber": "renumber_contiguous",
+    "compact": "renumber_contiguous",
+    "reindex": "renumber_contiguous",
+}
 
 
 def _normalize_execution_mode(execution_mode):
@@ -170,25 +187,43 @@ def _validate_takeout_request(payload):
     return None, {"action_en": action_en}
 
 
+def normalize_manage_boxes_operation(operation):
+    if operation in (None, ""):
+        return None
+    op_text = str(operation).strip().lower()
+    return _MANAGE_BOXES_OPERATION_ALIASES.get(op_text)
+
+
+def normalize_manage_boxes_renumber_mode(mode_value):
+    if mode_value in (None, ""):
+        return None
+    mode_text = str(mode_value).strip().lower()
+    return _MANAGE_BOXES_RENUMBER_MODE_ALIASES.get(mode_text)
+
+
 def _validate_manage_boxes_request(payload):
     operation = payload.get("operation")
-    op_text = str(operation or "").strip().lower()
-    op_alias = {
-        "add": "add",
-        "add_boxes": "add",
-        "increase": "add",
-        "remove": "remove",
-        "remove_box": "remove",
-        "delete": "remove",
-    }
-    op = op_alias.get(op_text)
+    op = normalize_manage_boxes_operation(operation)
     if not op:
         return {
             "error_code": "invalid_operation",
             "message": "operation must be add/remove",
             "details": {"operation": operation},
         }, {}
-    return None, {"op": op}
+
+    raw_mode = payload.get("renumber_mode")
+    normalized_mode = normalize_manage_boxes_renumber_mode(raw_mode)
+    if raw_mode not in (None, "") and normalized_mode is None:
+        return {
+            "error_code": "invalid_renumber_mode",
+            "message": "renumber_mode must be keep_gaps or renumber_contiguous",
+            "details": {"renumber_mode": raw_mode},
+        }, {}
+
+    return None, {
+        "op": op,
+        "renumber_mode": normalized_mode,
+    }
 
 
 def _validate_set_box_tag_request(payload):

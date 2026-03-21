@@ -4,6 +4,7 @@ from copy import deepcopy
 
 from ..migrate_cell_line_policy import normalize_field_options_policy_data
 from ..position_fmt import get_box_numbers
+from ..tool_api_write_validation import normalize_manage_boxes_renumber_mode
 from ..yaml_ops import load_yaml, write_yaml
 from .audit_details import manage_boxes_details, failure_details
 from .write_common import api
@@ -269,9 +270,7 @@ def _plan_manage_boxes(
         )
 
     is_middle = api._is_middle_box(current_boxes, target_box)
-    mode = str(renumber_mode or "").strip().lower() or None
-    if mode in {"renumber", "compact", "reindex"}:
-        mode = "renumber_contiguous"
+    mode = normalize_manage_boxes_renumber_mode(renumber_mode)
 
     if is_middle and mode not in {"keep_gaps", "renumber_contiguous"}:
         return None, api._failure_result(
@@ -432,7 +431,10 @@ def _tool_manage_boxes_impl(
         source=source,
         tool_name=tool_name,
         tool_input=tool_input,
-        payload={"operation": operation},
+        payload={
+            "operation": operation,
+            "renumber_mode": renumber_mode,
+        },
         dry_run=dry_run,
         execution_mode=execution_mode,
         actor_context=actor_context,
@@ -442,7 +444,9 @@ def _tool_manage_boxes_impl(
     if not validation.get("ok"):
         return validation
 
-    op = (validation.get("normalized") or {}).get("op")
+    normalized_validation = validation.get("normalized") or {}
+    op = normalized_validation.get("op")
+    renumber_mode = normalized_validation.get("renumber_mode")
 
     try:
         data = load_yaml(yaml_path)

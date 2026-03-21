@@ -3,7 +3,6 @@
 import os
 import sys
 from contextlib import suppress
-import yaml
 from PySide6.QtCore import Qt, QSettings, Slot, QTimer, QSize
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -22,35 +21,29 @@ else:
 from app_gui.tool_bridge import GuiToolBridge
 from app_gui.agent_session import AgentSessionService
 from app_gui.application import (
+    DatasetLifecycleUseCase,
     DatasetUseCase,
     EventBus,
     MigrationModeUseCase,
     PlanExecutionUseCase,
 )
+from app_gui.application.ai_provider_catalog import AI_PROVIDER_DEFAULTS
 from app_gui.gui_config import (
     DEFAULT_CONFIG_FILE,
     DEFAULT_MAX_STEPS,
     load_gui_config,
     save_gui_config,
 )
-from agent.llm_client import PROVIDER_DEFAULTS
 from app_gui.i18n import t, tr, set_language
 from lib.inventory_paths import (
     assert_allowed_inventory_yaml_path,
     build_dataset_combo_items,
-    build_dataset_delete_payload,
-    build_dataset_rename_payload,
     create_managed_dataset_yaml_path,
-    delete_managed_dataset_yaml_path,
-    ensure_inventories_root,
     list_managed_datasets,
-    latest_managed_inventory_yaml_path,
     normalize_inventory_yaml_path as _normalize_inventory_yaml_path,
-    rename_managed_dataset_yaml_path,
     sanitize_dataset_name,
 )
 from lib.plan_store import PlanStore
-from lib.yaml_ops import append_audit_event, load_yaml
 from app_gui.ui.theme import (
     apply_dark_theme, apply_light_theme,
     resolve_theme_token,
@@ -83,6 +76,7 @@ from app_gui.migration_workspace import MigrationWorkspaceService
 from app_gui.version import APP_VERSION, APP_RELEASE_URL, UPDATE_CHECK_URL, is_version_newer
 from lib.domain.events import DatasetSwitched, MigrationModeChanged, OperationExecuted
 
+PROVIDER_DEFAULTS = AI_PROVIDER_DEFAULTS
 _SETTINGS_EXPORTS = (PROVIDER_DEFAULTS,)
 
 
@@ -160,47 +154,18 @@ def _resolve_startup_ui_scale(*, config_exists: bool, configured_scale) -> float
 
 
 def _default_inventory_payload():
-    return {
-        "meta": {
-            "version": "1.0",
-            "box_layout": {
-                "rows": 9,
-                "cols": 9,
-                "box_count": 5,
-                "box_numbers": [1, 2, 3, 4, 5],
-            },
-            "custom_fields": [],
-        },
-        "inventory": [],
-    }
+    return DatasetLifecycleUseCase().default_inventory_payload()
 
 
 def _write_inventory_yaml(path, payload=None):
-    target_path = os.path.abspath(str(path or "").strip())
-    if not target_path:
-        raise ValueError("target inventory path is required")
-    os.makedirs(os.path.dirname(target_path), exist_ok=True)
-    with open(target_path, "w", encoding="utf-8") as handle:
-        yaml.safe_dump(payload or _default_inventory_payload(), handle, allow_unicode=True, sort_keys=False)
-    return target_path
+    return DatasetLifecycleUseCase().write_inventory_yaml(path, payload)
 
 
 def _resolve_managed_startup_yaml_path(configured_yaml_path):
     """Resolve active YAML path under managed-inventories lock mode."""
-    ensure_inventories_root()
-
-    configured = _normalize_inventory_yaml_path(configured_yaml_path)
-    if configured:
-        with suppress(Exception):
-            return assert_allowed_inventory_yaml_path(configured, must_exist=True)
-
-    latest = latest_managed_inventory_yaml_path()
-    if latest:
-        return assert_allowed_inventory_yaml_path(latest, must_exist=True)
-
-    default_yaml = create_managed_dataset_yaml_path("inventory")
-    _write_inventory_yaml(default_yaml)
-    return assert_allowed_inventory_yaml_path(default_yaml, must_exist=True)
+    return DatasetLifecycleUseCase().resolve_startup_yaml_path(
+        configured_yaml_path=configured_yaml_path,
+    )
 
 
 class MainWindow(QMainWindow):
@@ -222,6 +187,7 @@ class MainWindow(QMainWindow):
         self.bridge = GuiToolBridge()
         self.agent_session = AgentSessionService()
         self.agent_session.set_api_keys(self.gui_config.get("api_keys", {}))
+        self._dataset_lifecycle = DatasetLifecycleUseCase()
 
         # One-time migration from legacy QSettings if unified config file does not exist yet.
         # Guarded by a dedicated marker to avoid re-importing stale paths after users
@@ -239,7 +205,7 @@ class MainWindow(QMainWindow):
             self.settings.setValue("migration/unified_config_done", True)
 
         configured_yaml = _normalize_inventory_yaml_path(self.gui_config.get("yaml_path") or "")
-        self.current_yaml_path = _resolve_managed_startup_yaml_path(
+        self.current_yaml_path = self._dataset_lifecycle.resolve_startup_yaml_path(
             configured_yaml_path=configured_yaml,
         )
         self._migration_mode_enabled = False
@@ -287,7 +253,10 @@ class MainWindow(QMainWindow):
             start_import_journey=self.on_import_existing_data,
         )
         self._settings_flow = SettingsFlow(self, normalize_yaml_path=_normalize_inventory_yaml_path)
-        self._dataset_flow = DatasetFlow(self)
+        self._dataset_flow = DatasetFlow(
+            self,
+            dataset_lifecycle_use_case=self._dataset_lifecycle,
+        )
         self._boxes_flow = ManageBoxesFlow(self)
         self.connect_signals()
         self._setup_shortcuts()
@@ -318,6 +287,13 @@ class MainWindow(QMainWindow):
 
     def _run_startup_checks(self):
         self._check_release_notice_once()
+
+    def _ensure_dataset_lifecycle(self):
+        lifecycle = getattr(self, "_dataset_lifecycle", None)
+        if lifecycle is None:
+            lifecycle = DatasetLifecycleUseCase()
+            self._dataset_lifecycle = lifecycle
+        return lifecycle
 
     def setup_ui(self):
         container = QWidget()
@@ -756,14 +732,14 @@ class MainWindow(QMainWindow):
         if dialog.exec() != QDialog.Accepted:
             return
 
-        values = dialog.get_values()
-        selected_yaml = _normalize_inventory_yaml_path(values["yaml_path"])
+        submission = dialog.get_submission()
+        selected_yaml = _normalize_inventory_yaml_path(submission.yaml_path)
         try:
             self._dataset_session.switch_to(selected_yaml, reason="manual_switch")
         except Exception as exc:
             self.statusBar().showMessage(str(exc), 5000)
             return
-        self._settings_flow.apply_dialog_values(values)
+        self._settings_flow.apply_dialog_values(submission)
         self._settings_flow.finalize_after_settings()
         self._refresh_home_dataset_choices(selected_yaml=self.current_yaml_path)
 
@@ -871,40 +847,18 @@ class MainWindow(QMainWindow):
         return switched_path
 
     def on_rename_dataset(self, current_yaml_path, new_dataset_name):
-        source_yaml = _normalize_inventory_yaml_path(current_yaml_path or self.current_yaml_path)
-        new_yaml_path = rename_managed_dataset_yaml_path(source_yaml, new_dataset_name)
-
-        details = build_dataset_rename_payload(source_yaml, new_yaml_path)
-        try:
-            current_data = load_yaml(new_yaml_path)
-        except Exception:
-            current_data = None
-
-        audit_failed = None
-        try:
-            append_audit_event(
-                yaml_path=new_yaml_path,
-                before_data=current_data,
-                after_data=current_data,
-                backup_path=None,
-                warnings=[],
-                audit_meta={
-                    "action": "dataset_rename",
-                    "source": "app_gui.settings",
-                    "details": details,
-                },
-            )
-        except Exception as exc:
-            audit_failed = str(exc)
-
+        result = self._ensure_dataset_lifecycle().rename_dataset(
+            current_yaml_path=current_yaml_path or self.current_yaml_path,
+            new_dataset_name=new_dataset_name,
+        )
         switched = self._dataset_session.switch_to(
-            new_yaml_path,
+            result.target_path,
             reason="dataset_rename",
         )
         self._refresh_home_dataset_choices(selected_yaml=switched)
-        if audit_failed:
+        if result.audit_error:
             self.statusBar().showMessage(
-                t("settings.renameDatasetSuccessWithAuditWarning", path=switched, error=audit_failed),
+                t("settings.renameDatasetSuccessWithAuditWarning", path=switched, error=result.audit_error),
                 6000,
             )
         else:
@@ -915,50 +869,17 @@ class MainWindow(QMainWindow):
         return switched
 
     def on_delete_dataset(self, current_yaml_path):
-        source_yaml = _normalize_inventory_yaml_path(current_yaml_path or self.current_yaml_path)
-        deleted = delete_managed_dataset_yaml_path(source_yaml)
-        deleted_yaml = _normalize_inventory_yaml_path(deleted.get("yaml_path") or source_yaml)
-
-        rows = list_managed_datasets()
-        fallback_yaml = ""
-        if rows:
-            fallback_yaml = _normalize_inventory_yaml_path(rows[0].get("yaml_path"))
-        if not fallback_yaml:
-            fallback_yaml = create_managed_dataset_yaml_path("inventory")
-            _write_inventory_yaml(fallback_yaml)
-        fallback_yaml = assert_allowed_inventory_yaml_path(fallback_yaml, must_exist=True)
-
-        details = build_dataset_delete_payload(deleted_yaml, fallback_yaml)
-        try:
-            current_data = load_yaml(fallback_yaml)
-        except Exception:
-            current_data = None
-
-        audit_failed = None
-        try:
-            append_audit_event(
-                yaml_path=fallback_yaml,
-                before_data=current_data,
-                after_data=current_data,
-                backup_path=None,
-                warnings=[],
-                audit_meta={
-                    "action": "dataset_delete",
-                    "source": "app_gui.settings",
-                    "details": details,
-                },
-            )
-        except Exception as exc:
-            audit_failed = str(exc)
-
+        result = self._ensure_dataset_lifecycle().delete_dataset(
+            current_yaml_path=current_yaml_path or self.current_yaml_path,
+        )
         switched = self._dataset_session.switch_to(
-            fallback_yaml,
+            result.target_path,
             reason="dataset_delete",
         )
         self._refresh_home_dataset_choices(selected_yaml=switched)
-        if audit_failed:
+        if result.audit_error:
             self.statusBar().showMessage(
-                t("settings.deleteDatasetSuccessWithAuditWarning", path=switched, error=audit_failed),
+                t("settings.deleteDatasetSuccessWithAuditWarning", path=switched, error=result.audit_error),
                 6000,
             )
         else:

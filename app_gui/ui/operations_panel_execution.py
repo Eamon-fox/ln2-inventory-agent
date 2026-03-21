@@ -4,6 +4,7 @@ import os
 from datetime import datetime
 
 from app_gui.application import PlanRunUseCase
+from app_gui.bridge_write_runner import execute_bridge_rollback
 from app_gui.i18n import tr
 from app_gui.error_localizer import localize_error_payload
 from app_gui.system_notice import build_system_notice, coerce_system_notice
@@ -279,31 +280,14 @@ def _attempt_atomic_rollback(self, yaml_path, results, report=None):
             message=tr("operations.noRollbackBackup"),
         )
 
-    rollback_fn = getattr(self.bridge, "rollback", None)
-    if not callable(rollback_fn):
-        return _build_rollback_outcome(
-            attempted=False,
-            ok=False,
-            message=tr("operations.bridgeNoRollback"),
-            backup_path=first_backup,
-        )
-
     try:
-        try:
-            response = rollback_fn(
-                yaml_path=yaml_path,
-                backup_path=first_backup,
-                execution_mode="execute",
-                request_backup_path=first_backup,
-            )
-        except TypeError:
-            # Backward-compatible path for test doubles that do not accept
-            # request_backup_path yet.
-            response = rollback_fn(
-                yaml_path=yaml_path,
-                backup_path=first_backup,
-                execution_mode="execute",
-            )
+        payload = execute_bridge_rollback(
+            self.bridge,
+            yaml_path=yaml_path,
+            backup_path=first_backup,
+            execution_mode="execute",
+            request_backup_path=first_backup,
+        )
     except Exception as exc:
         return _build_rollback_outcome(
             attempted=True,
@@ -312,7 +296,14 @@ def _attempt_atomic_rollback(self, yaml_path, results, report=None):
             backup_path=first_backup,
         )
 
-    payload = response if isinstance(response, dict) else {}
+    if str(payload.get("error_code") or "") == "bridge_no_rollback":
+        return _build_rollback_outcome(
+            attempted=False,
+            ok=False,
+            message=tr("operations.bridgeNoRollback"),
+            backup_path=first_backup,
+        )
+
     if payload.get("ok"):
         return _build_rollback_outcome(
             attempted=True,

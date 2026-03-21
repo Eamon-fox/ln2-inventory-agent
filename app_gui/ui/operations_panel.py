@@ -591,16 +591,7 @@ class OperationsPanel(QWidget):
 
     def _refresh_custom_fields(self):
         """Reload custom field definitions from YAML meta and rebuild dynamic forms."""
-        from lib.yaml_ops import load_yaml
-        try:
-            yaml_path = self.yaml_path_getter()
-            data = load_yaml(yaml_path)
-            meta = data.get("meta", {})
-            inventory = data.get("inventory", [])
-        except Exception:
-            meta = {}
-            inventory = []
-        self.apply_meta_update(meta, inventory=inventory)
+        self.apply_meta_update()
 
     def apply_meta_update(self, meta=None, inventory=None):
         """Apply latest YAML meta to forms immediately (no restart needed)."""
@@ -1174,6 +1165,10 @@ class OperationsPanel(QWidget):
 
     # Stable public API: these wrappers keep the call surface fixed while the
     # implementation lives in extracted helper modules.
+    @Slot()
+    def refresh_plan_store_view(self):
+        self._on_store_changed()
+
     def add_plan_items(self, items):
         return _ops_plan_store.add_plan_items(self, items)
 

@@ -126,6 +126,16 @@ def test_main_creates_dataset_under_managed_root():
     assert "QFileDialog.getSaveFileName" not in text
 
 
+def test_main_wires_dataset_lifecycle_use_case_into_startup_and_dataset_flow():
+    text = _source_text()
+
+    assert "DatasetLifecycleUseCase" in text
+    assert "self._dataset_lifecycle = DatasetLifecycleUseCase()" in text
+    assert "self.current_yaml_path = self._dataset_lifecycle.resolve_startup_yaml_path(" in text
+    assert "dataset_lifecycle_use_case=self._dataset_lifecycle" in text
+    assert "submission = dialog.get_submission()" in text
+
+
 def test_settings_new_dataset_switches_immediately():
     text = _combined_source_text()
 
@@ -181,7 +191,7 @@ def test_qsettings_migration_is_guarded_by_marker():
 def test_settings_accept_does_not_force_rename_existing_yaml_filename():
     text = _source_text()
 
-    assert 'selected_yaml = _normalize_inventory_yaml_path(values["yaml_path"])' in text
+    assert "selected_yaml = _normalize_inventory_yaml_path(submission.yaml_path)" in text
 
 
 def test_path_utils_module_is_not_imported_by_main():

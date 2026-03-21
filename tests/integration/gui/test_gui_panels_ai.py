@@ -1073,6 +1073,28 @@ class OperationEventFeedTests(ManagedPathTestCase):
         self.assertFalse(panel._migration_mode_enabled)
         self.assertEqual(0, plan_store.count())
 
+    def test_ai_panel_runtime_settings_helpers_roundtrip(self):
+        panel = self._new_ai_panel()
+
+        panel.apply_runtime_settings(
+            provider="deepseek",
+            model="deepseek-chat",
+            max_steps=11,
+            thinking_enabled=False,
+            custom_prompt="stay concise",
+        )
+
+        snapshot = panel.runtime_settings_snapshot()
+
+        self.assertEqual("deepseek", snapshot["provider"])
+        self.assertEqual("deepseek-chat", snapshot["model"])
+        self.assertEqual(11, snapshot["max_steps"])
+        self.assertFalse(snapshot["thinking_enabled"])
+        self.assertEqual("stay concise", snapshot["custom_prompt"])
+        self.assertFalse(panel.has_running_task())
+        panel.ai_run_inflight = True
+        self.assertTrue(panel.has_running_task())
+
     def test_ai_panel_limits_operation_events(self):
         """AI panel should limit stored operation events to prevent memory growth."""
         from app_gui.gui_config import AI_OPERATION_EVENT_POOL_LIMIT

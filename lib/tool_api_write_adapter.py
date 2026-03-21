@@ -14,19 +14,8 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from .position_fmt import pos_to_display
+from .tool_registry import GUI_BRIDGE_WRITE, get_tool_descriptor
 from .tool_api_write_validation import resolve_request_backup_path
-
-
-_TOOL_ATTRS: Dict[str, str] = {
-    "add_entry": "tool_add_entry",
-    "edit_entry": "tool_edit_entry",
-    "takeout": "tool_takeout",
-    "move": "tool_move",
-    "rollback": "tool_rollback",
-    "manage_boxes": "tool_manage_boxes",
-    "set_box_tag": "tool_set_box_tag",
-    "batch_add_entries": "tool_batch_add_entries",
-}
 
 
 def prepare_write_tool_kwargs(
@@ -115,8 +104,19 @@ def _load_tool_api():
     return tool_api
 
 
+def _registry_tool_attr(tool_name: str) -> Optional[str]:
+    descriptor = get_tool_descriptor(str(tool_name or "").strip())
+    if descriptor is None:
+        return None
+    bridge = descriptor.gui_bridge
+    if bridge is not None and str(bridge.tool_api_attr or "").strip():
+        return str(bridge.tool_api_attr).strip()
+    return f"tool_{descriptor.name}"
+
+
 def _resolve_tool(tool_name: str) -> Callable[..., Dict[str, Any]]:
-    attr_name = _TOOL_ATTRS.get(str(tool_name or "").strip())
+    normalized_name = str(tool_name or "").strip()
+    attr_name = _registry_tool_attr(normalized_name)
     if not attr_name:
         raise ValueError(f"Unknown write tool: {tool_name}")
     tool_api = _load_tool_api()
@@ -153,6 +153,55 @@ def _invoke_with_backup(
         **payload,
     )
     return attach_request_backup(response, request_backup_path)
+
+
+def invoke_write_tool(
+    tool_name: str,
+    *,
+    yaml_path: str,
+    actor_context: Optional[Dict[str, Any]] = None,
+    source: str = "tool_api",
+    dry_run: bool = False,
+    execution_mode: Optional[str] = None,
+    request_backup_path: Optional[str] = None,
+    backup_event_source: Optional[str] = None,
+    default_execute: bool = False,
+    payload: Optional[Dict[str, Any]] = None,
+    **payload_kwargs: Any,
+) -> Dict[str, Any]:
+    """Invoke one registry-backed write entrypoint using canonical resolution."""
+
+    descriptor = get_tool_descriptor(str(tool_name or "").strip())
+    if descriptor is None:
+        raise ValueError(f"Unknown write tool: {tool_name}")
+    bridge = descriptor.gui_bridge
+    is_bridge_write = bridge is not None and bridge.strategy == GUI_BRIDGE_WRITE
+    if not descriptor.is_write and not is_bridge_write and descriptor.name != "batch_add_entries":
+        raise ValueError(f"Tool is not write-capable: {tool_name}")
+
+    merged_payload: Dict[str, Any] = {}
+    if payload:
+        merged_payload.update(dict(payload))
+    merged_payload.update(payload_kwargs)
+
+    tool_kwargs, resolved_backup = prepare_write_tool_kwargs(
+        yaml_path=yaml_path,
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        request_backup_path=request_backup_path,
+        backup_event_source=backup_event_source or source,
+        default_execute=default_execute,
+    )
+    merged_payload.update(tool_kwargs)
+
+    return _invoke_with_backup(
+        descriptor.name,
+        yaml_path=yaml_path,
+        actor_context=actor_context,
+        source=source,
+        request_backup_path=resolved_backup or request_backup_path,
+        payload=merged_payload,
+    )
 
 
 def call_preflight_tool(
@@ -197,14 +246,6 @@ def add_entry(
     backup_event_source: Optional[str] = None,
     default_execute: bool = False,
 ) -> Dict[str, Any]:
-    tool_kwargs, resolved_backup = prepare_write_tool_kwargs(
-        yaml_path=yaml_path,
-        dry_run=dry_run,
-        execution_mode=execution_mode,
-        request_backup_path=request_backup_path,
-        backup_event_source=backup_event_source or source,
-        default_execute=default_execute,
-    )
     payload: Dict[str, Any] = {
         "box": box,
         "positions": positions,
@@ -214,14 +255,17 @@ def add_entry(
         payload["stored_at"] = stored_at
     if frozen_at is not None:
         payload["frozen_at"] = frozen_at
-    payload.update(tool_kwargs)
-    return _invoke_with_backup(
+    return invoke_write_tool(
         "add_entry",
         yaml_path=yaml_path,
         actor_context=actor_context,
         source=source,
-        request_backup_path=resolved_backup or request_backup_path,
         payload=payload,
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        request_backup_path=request_backup_path,
+        backup_event_source=backup_event_source,
+        default_execute=default_execute,
     )
 
 
@@ -239,28 +283,22 @@ def edit_entry(
     backup_event_source: Optional[str] = None,
     default_execute: bool = False,
 ) -> Dict[str, Any]:
-    tool_kwargs, resolved_backup = prepare_write_tool_kwargs(
-        yaml_path=yaml_path,
-        dry_run=dry_run,
-        execution_mode=execution_mode,
-        request_backup_path=request_backup_path,
-        backup_event_source=backup_event_source or source,
-        default_execute=default_execute,
-    )
     payload: Dict[str, Any] = {
         "record_id": record_id,
         "fields": fields,
     }
-    if "auto_backup" not in tool_kwargs:
-        payload["auto_backup"] = auto_backup
-    payload.update(tool_kwargs)
-    return _invoke_with_backup(
+    payload["auto_backup"] = auto_backup
+    return invoke_write_tool(
         "edit_entry",
         yaml_path=yaml_path,
         actor_context=actor_context,
         source=source,
-        request_backup_path=resolved_backup or request_backup_path,
         payload=payload,
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        request_backup_path=request_backup_path,
+        backup_event_source=backup_event_source,
+        default_execute=default_execute,
     )
 
 
@@ -278,28 +316,22 @@ def takeout(
     backup_event_source: Optional[str] = None,
     default_execute: bool = False,
 ) -> Dict[str, Any]:
-    tool_kwargs, resolved_backup = prepare_write_tool_kwargs(
-        yaml_path=yaml_path,
-        dry_run=dry_run,
-        execution_mode=execution_mode,
-        request_backup_path=request_backup_path,
-        backup_event_source=backup_event_source or source,
-        default_execute=default_execute,
-    )
     payload: Dict[str, Any] = {
         "entries": entries,
         "date_str": date_str,
     }
-    if "auto_backup" not in tool_kwargs:
-        payload["auto_backup"] = auto_backup
-    payload.update(tool_kwargs)
-    return _invoke_with_backup(
+    payload["auto_backup"] = auto_backup
+    return invoke_write_tool(
         "takeout",
         yaml_path=yaml_path,
         actor_context=actor_context,
         source=source,
-        request_backup_path=resolved_backup or request_backup_path,
         payload=payload,
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        request_backup_path=request_backup_path,
+        backup_event_source=backup_event_source,
+        default_execute=default_execute,
     )
 
 
@@ -317,28 +349,22 @@ def move(
     backup_event_source: Optional[str] = None,
     default_execute: bool = False,
 ) -> Dict[str, Any]:
-    tool_kwargs, resolved_backup = prepare_write_tool_kwargs(
-        yaml_path=yaml_path,
-        dry_run=dry_run,
-        execution_mode=execution_mode,
-        request_backup_path=request_backup_path,
-        backup_event_source=backup_event_source or source,
-        default_execute=default_execute,
-    )
     payload: Dict[str, Any] = {
         "entries": entries,
         "date_str": date_str,
     }
-    if "auto_backup" not in tool_kwargs:
-        payload["auto_backup"] = auto_backup
-    payload.update(tool_kwargs)
-    return _invoke_with_backup(
+    payload["auto_backup"] = auto_backup
+    return invoke_write_tool(
         "move",
         yaml_path=yaml_path,
         actor_context=actor_context,
         source=source,
-        request_backup_path=resolved_backup or request_backup_path,
         payload=payload,
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        request_backup_path=request_backup_path,
+        backup_event_source=backup_event_source,
+        default_execute=default_execute,
     )
 
 
@@ -355,26 +381,21 @@ def rollback(
     backup_event_source: Optional[str] = None,
     default_execute: bool = False,
 ) -> Dict[str, Any]:
-    tool_kwargs, resolved_backup = prepare_write_tool_kwargs(
-        yaml_path=yaml_path,
-        dry_run=dry_run,
-        execution_mode=execution_mode,
-        request_backup_path=request_backup_path,
-        backup_event_source=backup_event_source or source,
-        default_execute=default_execute,
-    )
     payload: Dict[str, Any] = {
         "backup_path": backup_path,
         "source_event": source_event,
     }
-    payload.update(tool_kwargs)
-    return _invoke_with_backup(
+    return invoke_write_tool(
         "rollback",
         yaml_path=yaml_path,
         actor_context=actor_context,
         source=source,
-        request_backup_path=resolved_backup or request_backup_path,
         payload=payload,
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        request_backup_path=request_backup_path,
+        backup_event_source=backup_event_source,
+        default_execute=default_execute,
     )
 
 
@@ -394,30 +415,24 @@ def manage_boxes(
     backup_event_source: Optional[str] = None,
     default_execute: bool = False,
 ) -> Dict[str, Any]:
-    tool_kwargs, resolved_backup = prepare_write_tool_kwargs(
-        yaml_path=yaml_path,
-        dry_run=dry_run,
-        execution_mode=execution_mode,
-        request_backup_path=request_backup_path,
-        backup_event_source=backup_event_source or source,
-        default_execute=default_execute,
-    )
     payload: Dict[str, Any] = {
         "operation": operation,
         "count": count,
         "box": box,
         "renumber_mode": renumber_mode,
     }
-    if "auto_backup" not in tool_kwargs:
-        payload["auto_backup"] = auto_backup
-    payload.update(tool_kwargs)
-    return _invoke_with_backup(
+    payload["auto_backup"] = auto_backup
+    return invoke_write_tool(
         "manage_boxes",
         yaml_path=yaml_path,
         actor_context=actor_context,
         source=source,
-        request_backup_path=resolved_backup or request_backup_path,
         payload=payload,
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        request_backup_path=request_backup_path,
+        backup_event_source=backup_event_source,
+        default_execute=default_execute,
     )
 
 
@@ -435,28 +450,22 @@ def set_box_tag(
     backup_event_source: Optional[str] = None,
     default_execute: bool = False,
 ) -> Dict[str, Any]:
-    tool_kwargs, resolved_backup = prepare_write_tool_kwargs(
-        yaml_path=yaml_path,
-        dry_run=dry_run,
-        execution_mode=execution_mode,
-        request_backup_path=request_backup_path,
-        backup_event_source=backup_event_source or source,
-        default_execute=default_execute,
-    )
     payload: Dict[str, Any] = {
         "box": box,
         "tag": tag,
     }
-    if "auto_backup" not in tool_kwargs:
-        payload["auto_backup"] = auto_backup
-    payload.update(tool_kwargs)
-    return _invoke_with_backup(
+    payload["auto_backup"] = auto_backup
+    return invoke_write_tool(
         "set_box_tag",
         yaml_path=yaml_path,
         actor_context=actor_context,
         source=source,
-        request_backup_path=resolved_backup or request_backup_path,
         payload=payload,
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        request_backup_path=request_backup_path,
+        backup_event_source=backup_event_source,
+        default_execute=default_execute,
     )
 
 

@@ -541,6 +541,70 @@ class _UndoBridge(_FakeOperationsBridge):
         result["backup_path"] = "/tmp/backup_test.yaml"
         return result
 
+
+class _LegacyRollbackUndoBridge(_FakeOperationsBridge):
+    """Legacy rollback bridge that does not accept request_backup_path."""
+
+    def __init__(self):
+        super().__init__()
+        self.rollback_calls = []
+
+    def rollback(self, yaml_path, backup_path=None, execution_mode=None):
+        self.rollback_calls.append(
+            {
+                "yaml_path": yaml_path,
+                "backup_path": backup_path,
+                "execution_mode": execution_mode,
+            }
+        )
+        return {"ok": True, "message": "Rolled back"}
+
+
+class _MixedResultRunUseCase:
+    def __init__(self, ok_item, fail_item):
+        self._ok_item = dict(ok_item)
+        self._fail_item = dict(fail_item)
+
+    def execute(self, *, yaml_path, plan_items, bridge, mode="execute"):
+        _ = (yaml_path, plan_items, bridge, mode)
+
+        class _Result:
+            def __init__(self, report, results):
+                self.report = report
+                self.results = results
+
+        report = {
+            "ok": False,
+            "backup_path": "/tmp/execute-backup.bak",
+            "remaining_items": list(plan_items),
+            "stats": {"total": 2, "ok": 1, "blocked": 1, "remaining": 2},
+        }
+        results = [
+            ("OK", dict(self._ok_item), {"ok": True, "backup_path": "/tmp/execute-backup.bak"}),
+            (
+                "FAIL",
+                dict(self._fail_item),
+                {"message": "mock failure", "error_code": "validation_failed"},
+            ),
+        ]
+        return _Result(report, results)
+
+    @staticmethod
+    def summarize(*, report, rollback_info=None):
+        _ = report
+        rollback_payload = rollback_info if isinstance(rollback_info, dict) else {}
+        rollback_ok = bool(rollback_payload.get("ok"))
+        return {
+            "total_count": 2,
+            "ok_count": 1,
+            "fail_count": 1,
+            "applied_count": 0 if rollback_ok else 1,
+            "rollback_ok": rollback_ok,
+            "rollback_attempted": bool(rollback_payload.get("attempted")),
+            "rollback_message": str(rollback_payload.get("message") or ""),
+        }
+
+
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
 class UndoRestoresPlanRegressionTests(_NoStagePreflightMixin, ManagedPathTestCase):
     """Regression: undo should restore executed items back to plan."""
@@ -690,6 +754,27 @@ class UndoRestoresPlanRegressionTests(_NoStagePreflightMixin, ManagedPathTestCas
         self.assertTrue(bridge.rollback_called)
         self.assertIsNone(panel._last_operation_backup)
         self.assertFalse(panel.undo_btn.isEnabled())
+
+    def test_execute_failure_rollback_supports_legacy_bridge_signature(self):
+        bridge = _LegacyRollbackUndoBridge()
+        panel = self._new_panel(bridge)
+
+        items = [
+            _make_takeout_item(record_id=1, position=5),
+            _make_takeout_item(record_id=2, position=10),
+        ]
+        panel.add_plan_items(items)
+        panel._plan_run_use_case = _MixedResultRunUseCase(items[0], items[1])
+
+        from unittest.mock import patch
+
+        with patch.object(QMessageBox, "exec", return_value=QMessageBox.Yes):
+            panel.execute_plan()
+
+        self.assertEqual(1, len(bridge.rollback_calls))
+        self.assertEqual("execute", bridge.rollback_calls[0]["execution_mode"])
+        self.assertEqual("/tmp/execute-backup.bak", bridge.rollback_calls[0]["backup_path"])
+        self.assertEqual(2, len(panel.plan_items))
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
 class RollbackConfirmationDialogTests(ManagedPathTestCase):

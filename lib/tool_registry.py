@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field
+from importlib import import_module
 from typing import Any
 
 
@@ -24,6 +25,7 @@ DISPATCH_SPECIAL = "special"
 
 GUI_BRIDGE_READ = "read"
 GUI_BRIDGE_WRITE = "write"
+_TOOL_API_MODULE = "lib.tool_api"
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,8 @@ class ToolDescriptor:
     agent_handler_attr: str | None = None
     stage_handler_attr: str | None = None
     gui_bridge: GuiBridgeSpec | None = None
+    public_contract: bool = True
+    agent_enabled: bool = True
 
     def contract_spec(self) -> dict[str, Any]:
         spec = {
@@ -74,6 +78,21 @@ class ToolDescriptor:
         if self.is_migration:
             spec["_migration"] = True
         return spec
+
+
+def _resolve_callable(module_path: str, attr_name: str):
+    module = import_module(str(module_path))
+    normalized_attr = str(attr_name or "").strip()
+    value = getattr(module, normalized_attr, None)
+    if callable(value):
+        return value
+    raise AttributeError(f"{module_path}.{normalized_attr} is not callable")
+
+
+def resolve_tool_api_callable(tool_api_attr: str):
+    """Resolve one canonical Tool API callable from registry metadata."""
+
+    return _resolve_callable(_TOOL_API_MODULE, tool_api_attr)
 
 
 def _read_bridge(
@@ -125,8 +144,10 @@ def _tool(
     agent_handler_attr: str | None = None,
     stage_handler_attr: str | None = None,
     gui_bridge: GuiBridgeSpec | None = None,
+    public_contract: bool = True,
+    agent_enabled: bool = True,
 ) -> ToolDescriptor:
-    if dispatch_style == DISPATCH_HANDLER and agent_handler_attr is None:
+    if agent_enabled and dispatch_style == DISPATCH_HANDLER and agent_handler_attr is None:
         agent_handler_attr = f"_run_{name}"
     if is_write and stage_handler_attr is None:
         stage_handler_attr = f"_stage_items_{name}"
@@ -142,6 +163,8 @@ def _tool(
         agent_handler_attr=agent_handler_attr,
         stage_handler_attr=stage_handler_attr,
         gui_bridge=gui_bridge,
+        public_contract=public_contract,
+        agent_enabled=agent_enabled,
     )
 
 
@@ -201,6 +224,49 @@ _TOOL_DESCRIPTOR_LIST = (
             positional_payload_args=("box",),
             defaults={"box": None},
         ),
+    ),
+    _tool(
+        "export_inventory_csv",
+        "Export the full inventory snapshot as CSV for GUI workflows.",
+        {
+            "type": "object",
+            "properties": {
+                "output_path": {"type": "string"},
+            },
+            "required": ["output_path"],
+            "additionalProperties": False,
+        },
+        gui_bridge=_read_bridge(
+            "export_inventory_csv",
+            "tool_export_inventory_csv",
+            positional_payload_args=("output_path",),
+        ),
+        public_contract=False,
+        agent_enabled=False,
+    ),
+    _tool(
+        "collect_timeline",
+        "Collect aggregated takeout/move timeline statistics for GUI dashboards.",
+        {
+            "type": "object",
+            "properties": {
+                "days": {"type": "integer", "minimum": 1},
+                "all_history": {"type": "boolean"},
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+        gui_bridge=_read_bridge(
+            "collect_timeline",
+            "tool_collect_timeline",
+            positional_payload_args=("days", "all_history"),
+            defaults={
+                "days": 7,
+                "all_history": False,
+            },
+        ),
+        public_contract=False,
+        agent_enabled=False,
     ),
     _tool(
         "search_records",
@@ -721,6 +787,24 @@ _TOOL_DESCRIPTOR_LIST = (
         ),
     ),
     _tool(
+        "batch_add_entries",
+        "Internal helper that batches multiple add_entry payloads into one write cycle.",
+        {
+            "type": "object",
+            "properties": {
+                "entries": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {"type": "object"},
+                },
+            },
+            "required": ["entries"],
+            "additionalProperties": False,
+        },
+        public_contract=False,
+        agent_enabled=False,
+    ),
+    _tool(
         "rollback",
         "Rollback inventory YAML to a backup snapshot using explicit backup_path from list_audit_timeline.",
         {
@@ -752,23 +836,76 @@ _TOOL_DESCRIPTOR_LIST = (
         ),
     ),
     _tool(
+        "set_box_tag",
+        "Set or clear one box tag through the GUI bridge.",
+        {
+            "type": "object",
+            "properties": {
+                "box": {"type": "integer", "minimum": 1},
+                "tag": {"type": "string"},
+                "execution_mode": {"type": "string"},
+                "dry_run": {"type": "boolean"},
+                "auto_backup": {"type": "boolean"},
+                "request_backup_path": {"type": "string"},
+            },
+            "required": ["box"],
+            "additionalProperties": False,
+        },
+        gui_bridge=_write_bridge(
+            "set_box_tag",
+            "tool_set_box_tag",
+            positional_payload_args=(
+                "box",
+                "tag",
+                "execution_mode",
+                "dry_run",
+                "auto_backup",
+                "request_backup_path",
+            ),
+            defaults={
+                "tag": "",
+                "execution_mode": None,
+                "dry_run": False,
+                "auto_backup": True,
+                "request_backup_path": None,
+            },
+        ),
+        public_contract=False,
+        agent_enabled=False,
+    ),
+    _tool(
         "manage_boxes",
         "Safely add/remove inventory boxes (human confirmation required).",
         {
             "type": "object",
             "properties": {
-                "action": {"type": "string", "enum": ["add", "remove"]},
+                "action": {
+                    "type": "string",
+                    "enum": ["add", "remove", "add_boxes", "increase", "remove_box", "delete"],
+                },
                 "count": {"type": "integer", "minimum": 1},
                 "box": {"type": "integer", "minimum": 1},
                 "renumber_mode": {
                     "type": "string",
-                    "enum": ["keep_gaps", "renumber_contiguous"],
+                    "enum": [
+                        "keep_gaps",
+                        "renumber_contiguous",
+                        "keep",
+                        "gaps",
+                        "renumber",
+                        "compact",
+                        "reindex",
+                    ],
                 },
                 "dry_run": {"type": "boolean"},
             },
             "required": ["action"],
             "additionalProperties": False,
         },
+        gui_bridge=_write_bridge(
+            "manage_boxes",
+            "tool_manage_boxes",
+        ),
     ),
     _tool(
         "use_skill",
@@ -831,12 +968,17 @@ def _validate_registry(entries: tuple[ToolDescriptor, ...]) -> None:
             raise ValueError(f"Duplicate tool descriptor: {descriptor.name}")
         seen_names.add(descriptor.name)
 
-        if descriptor.dispatch_style not in {DISPATCH_HANDLER, DISPATCH_SPECIAL}:
+        if descriptor.agent_enabled:
+            if descriptor.dispatch_style not in {DISPATCH_HANDLER, DISPATCH_SPECIAL}:
+                raise ValueError(
+                    f"Unsupported dispatch_style for {descriptor.name}: {descriptor.dispatch_style}"
+                )
+            if descriptor.dispatch_style == DISPATCH_HANDLER and not descriptor.agent_handler_attr:
+                raise ValueError(f"Missing agent_handler_attr for {descriptor.name}")
+        elif descriptor.agent_handler_attr:
             raise ValueError(
-                f"Unsupported dispatch_style for {descriptor.name}: {descriptor.dispatch_style}"
+                f"Non-agent tool {descriptor.name} must not define agent_handler_attr"
             )
-        if descriptor.dispatch_style == DISPATCH_HANDLER and not descriptor.agent_handler_attr:
-            raise ValueError(f"Missing agent_handler_attr for {descriptor.name}")
 
         if descriptor.is_write:
             if not descriptor.plan_action:
@@ -859,6 +1001,12 @@ def _validate_registry(entries: tuple[ToolDescriptor, ...]) -> None:
             raise ValueError(f"Missing GUI bridge method_name for {descriptor.name}")
         if not bridge.tool_api_attr:
             raise ValueError(f"Missing GUI bridge tool_api_attr for {descriptor.name}")
+        try:
+            resolve_tool_api_callable(str(bridge.tool_api_attr))
+        except Exception as exc:
+            raise ValueError(
+                f"Invalid GUI bridge tool_api_attr for {descriptor.name}: {bridge.tool_api_attr}"
+            ) from exc
         if bridge.method_name in seen_bridge_methods:
             raise ValueError(
                 f"Duplicate GUI bridge method_name: {bridge.method_name}"
@@ -873,22 +1021,30 @@ TOOL_REGISTRY: dict[str, ToolDescriptor] = {
 }
 
 
+def _contract_descriptors() -> tuple[ToolDescriptor, ...]:
+    return tuple(
+        descriptor
+        for descriptor in _TOOL_DESCRIPTOR_LIST
+        if descriptor.public_contract
+    )
+
+
 def iter_tool_descriptors() -> tuple[ToolDescriptor, ...]:
-    return tuple(_TOOL_DESCRIPTOR_LIST)
+    return _contract_descriptors()
 
 
 def iter_agent_dispatch_descriptors() -> tuple[ToolDescriptor, ...]:
     return tuple(
         descriptor
         for descriptor in _TOOL_DESCRIPTOR_LIST
-        if descriptor.dispatch_style == DISPATCH_HANDLER
+        if descriptor.agent_enabled and descriptor.dispatch_style == DISPATCH_HANDLER
     )
 
 
 def iter_write_tool_descriptors() -> tuple[ToolDescriptor, ...]:
     return tuple(
         descriptor
-        for descriptor in _TOOL_DESCRIPTOR_LIST
+        for descriptor in _contract_descriptors()
         if descriptor.is_write
     )
 
@@ -908,14 +1064,14 @@ def get_tool_descriptor(tool_name: str) -> ToolDescriptor | None:
 def build_tool_contracts() -> dict[str, dict[str, Any]]:
     return {
         descriptor.name: descriptor.contract_spec()
-        for descriptor in _TOOL_DESCRIPTOR_LIST
+        for descriptor in _contract_descriptors()
     }
 
 
 def build_write_tools() -> frozenset[str]:
     return frozenset(
         descriptor.name
-        for descriptor in _TOOL_DESCRIPTOR_LIST
+        for descriptor in _contract_descriptors()
         if descriptor.is_write
     )
 
@@ -923,7 +1079,7 @@ def build_write_tools() -> frozenset[str]:
 def build_migration_tool_names() -> frozenset[str]:
     return frozenset(
         descriptor.name
-        for descriptor in _TOOL_DESCRIPTOR_LIST
+        for descriptor in _contract_descriptors()
         if descriptor.is_migration
     )
 
@@ -931,6 +1087,6 @@ def build_migration_tool_names() -> frozenset[str]:
 def build_write_tool_to_plan_action() -> dict[str, str]:
     return {
         descriptor.name: str(descriptor.plan_action)
-        for descriptor in _TOOL_DESCRIPTOR_LIST
+        for descriptor in _contract_descriptors()
         if descriptor.is_write and descriptor.plan_action
     }

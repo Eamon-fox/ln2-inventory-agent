@@ -101,7 +101,7 @@ Rules:
 9) For environment/file/script tasks, prefer `fs_list`/`fs_read`/`fs_write`/`fs_edit` first; use `bash` (bash -lc) or `powershell` (powershell -Command) for command/script execution, and always include a concise `description`. Consult the "Directory context" section for repo root, read/write scopes, and path format.
 10) When a request clearly matches a built-in skill advertised in the system message, call `use_skill` with the exact skill name before following that skill's workflow. Do not silently assume a skill is loaded.
 11) Keep replies concise and action-oriented.
-12) Choose the read tool by user intent: use `search_records` for direct lookup by free-text clue / slot / record_id, and use `filter_records` when the user is thinking in Overview-table terms such as field filters, color filters, include taken-out rows, in-table keyword search, or sort-by-column. Example: "find record 235" => `search_records`; "show genomic DNA in box 3 sorted by frozen_at" => `filter_records`.
+12) Choose the read tool by user intent: use `search_records` for direct lookup by free-text clue / slot / record_id, and use `filter_records` when the user is thinking in Overview-table terms such as field filters, color filters, include taken-out rows, in-table keyword search, or sort-by-column. Example: "find record 235" => `search_records`; "show genomic DNA in box 3 sorted by stored_at" => `filter_records`.
 13) If `search_records` or `filter_records` returns `display_count < total_count`, treat the visible rows as a partial page only. Do not claim "not found" until you refine the query/filters or rerun `search_records` with a larger `max_results` / rerun `filter_records` with a larger `limit`.
 """
 

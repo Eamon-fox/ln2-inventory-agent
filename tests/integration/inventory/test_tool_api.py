@@ -1401,7 +1401,7 @@ class ToolApiTests(ManagedPathTestCase):
             self.assertEqual([8], [item.get("id") for item in inactive_only["result"]["records"]])
             self.assertEqual("inactive", inactive_only["result"]["applied_filters"]["status"])
 
-    def test_tool_search_records_default_sort_is_recent_frozen_desc(self):
+    def test_tool_search_records_default_sort_is_recent_stored_desc(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_search_default_sort_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -1444,9 +1444,48 @@ class ToolApiTests(ManagedPathTestCase):
 
             self.assertTrue(response["ok"])
             self.assertEqual([3, 2, 1], [item.get("id") for item in response["result"]["records"]])
-            self.assertEqual("frozen_at", response["result"]["applied_filters"]["sort_by"])
+            self.assertEqual("stored_at", response["result"]["applied_filters"]["sort_by"])
             self.assertEqual("desc", response["result"]["applied_filters"]["sort_order"])
             self.assertEqual("last", response["result"]["applied_filters"]["sort_nulls"])
+
+    def test_tool_search_records_canonicalizes_legacy_sort_alias_in_response(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_search_legacy_sort_alias_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        {
+                            "id": 1,
+                            "parent_cell_line": "K562",
+                            "short_name": "older",
+                            "box": 1,
+                            "position": 1,
+                            "frozen_at": "2026-02-10",
+                        },
+                        {
+                            "id": 2,
+                            "parent_cell_line": "K562",
+                            "short_name": "newer",
+                            "box": 1,
+                            "position": 2,
+                            "frozen_at": "2026-02-11",
+                        },
+                    ]
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            response = tool_search_records(
+                yaml_path=str(yaml_path),
+                query="K562",
+                sort_by="frozen_at",
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertEqual([2, 1], [item.get("id") for item in response["result"]["records"]])
+            self.assertEqual("stored_at", response["result"]["applied_filters"]["sort_by"])
+            self.assertEqual("desc", response["result"]["applied_filters"]["sort_order"])
 
     def test_tool_search_records_supports_sort_by_position_with_nulls_last(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_search_sort_position_") as temp_dir:
@@ -2321,6 +2360,24 @@ class TestAdjustBoxCount(ManagedPathTestCase):
         layout = data["meta"]["box_layout"]
         self.assertEqual([1, 2, 3, 4], layout.get("box_numbers"))
         self.assertEqual({"2": "A", "3": "C", "4": "D"}, layout.get("box_tags"))
+
+    def test_remove_middle_box_accepts_delete_and_compact_aliases(self):
+        p, _ = self._seed([], {"rows": 9, "cols": 9, "box_count": 5})
+        result = tool_manage_boxes(
+            p,
+            operation="delete",
+            box=3,
+            renumber_mode="compact",
+            auto_backup=False,
+        )
+        self.assertTrue(result["ok"], result.get("message"))
+        self.assertEqual("remove", result["preview"]["operation"])
+        self.assertEqual("renumber_contiguous", result["preview"]["renumber_mode"])
+
+        data = load_yaml(p)
+        layout = data["meta"]["box_layout"]
+        self.assertEqual([1, 2, 3, 4], layout.get("box_numbers"))
+        self.assertEqual(4, layout.get("box_count"))
 
     def test_set_box_tag_updates_and_clears(self):
         p, _ = self._seed([], {"rows": 9, "cols": 9, "box_count": 3})

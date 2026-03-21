@@ -478,22 +478,37 @@ class AgentToolRunnerTests(ManagedPathTestCase):
             ui_effects,
         )
 
-    def test_manage_boxes_ignores_dry_run_input(self):
+    def test_manage_boxes_dry_run_remove_normalizes_aliases_and_preserves_yaml(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_box_dry_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
-                make_data([]),
+                {
+                    "meta": {"box_layout": {"rows": 9, "cols": 9, "box_count": 3}},
+                    "inventory": [],
+                },
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
             runner = AgentToolRunner(yaml_path=str(yaml_path))
             response = runner.run(
                 "manage_boxes",
-                {"action": "add", "count": 2, "dry_run": True},
+                {
+                    "action": "remove_box",
+                    "box": 2,
+                    "renumber_mode": "compact",
+                    "dry_run": True,
+                },
             )
             self.assertTrue(response["ok"])
-            self.assertTrue(response.get("waiting_for_user_confirmation"))
-            self.assertEqual("add", response.get("request", {}).get("operation"))
+            self.assertTrue(response.get("dry_run"))
+            self.assertFalse(response.get("waiting_for_user_confirmation", False))
+            preview = response.get("preview") or {}
+            self.assertEqual("remove", preview.get("operation"))
+            self.assertEqual("renumber_contiguous", preview.get("renumber_mode"))
+            self.assertEqual([1, 2], preview.get("box_numbers_after"))
+
+            current = load_yaml(str(yaml_path))
+            self.assertEqual(3, current["meta"]["box_layout"].get("box_count"))
 
 
     def test_add_entry_rejects_undeclared_fields_via_schema_validation(self):

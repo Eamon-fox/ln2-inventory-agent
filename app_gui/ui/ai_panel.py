@@ -10,7 +10,11 @@ from PySide6.QtWidgets import (
     QPushButton, QLineEdit, QLabel, QMenu,
     QTextEdit, QSpinBox, QCheckBox
 )
-from agent.llm_client import DEFAULT_PROVIDER, PROVIDER_DEFAULTS
+from app_gui.application.ai_provider_catalog import (
+    AI_PROVIDER_DEFAULTS,
+    DEFAULT_AI_PROVIDER,
+    normalize_ai_provider,
+)
 from app_gui.gui_config import AI_HISTORY_LIMIT, AI_OPERATION_EVENT_POOL_LIMIT, MAX_AGENT_STEPS
 from app_gui.ui.theme import FONT_SIZE_XS, FONT_SIZE_SM, MONO_FONT_CSS_FAMILY, resolve_theme_token
 from app_gui.ui.icons import get_icon, Icons
@@ -160,8 +164,8 @@ class AIPanel(QWidget):
         self.ai_steps.setRange(1, MAX_AGENT_STEPS)
         self.ai_thinking_enabled = QCheckBox()
         self.ai_custom_prompt = ""
-        provider_cfg = PROVIDER_DEFAULTS.get(DEFAULT_PROVIDER, {})
-        self.ai_provider.setText(DEFAULT_PROVIDER)
+        provider_cfg = AI_PROVIDER_DEFAULTS.get(DEFAULT_AI_PROVIDER, {})
+        self.ai_provider.setText(DEFAULT_AI_PROVIDER)
         self.ai_model.setText(str(provider_cfg.get("model") or "").strip())
 
         # Chat area (takes most space)
@@ -272,7 +276,7 @@ class AIPanel(QWidget):
         options = []
         seen = set()
 
-        current_provider = self.ai_provider.text().strip() or DEFAULT_PROVIDER
+        current_provider = normalize_ai_provider(self.ai_provider.text().strip())
         current_model = self.ai_model.text().strip()
         if current_model:
             key = (current_provider, current_model)
@@ -282,7 +286,7 @@ class AIPanel(QWidget):
                 "model": current_model,
             })
 
-        for provider_id, provider_cfg in PROVIDER_DEFAULTS.items():
+        for provider_id, provider_cfg in AI_PROVIDER_DEFAULTS.items():
             cfg = provider_cfg if isinstance(provider_cfg, dict) else {}
             candidates = []
             for raw_model in cfg.get("models") or []:
@@ -306,7 +310,7 @@ class AIPanel(QWidget):
 
     def _refresh_model_badge(self):
         model_id = self.ai_model.text().strip() or "-"
-        provider_id = self.ai_provider.text().strip() or DEFAULT_PROVIDER
+        provider_id = normalize_ai_provider(self.ai_provider.text().strip())
         self.ai_model_id_label.setText(model_id)
         self.ai_model_id_label.setToolTip(f"{provider_id}:{model_id}")
         self.ai_model_switch_btn.setEnabled((not self.ai_run_inflight) and bool(self._iter_model_switch_options()))
@@ -318,7 +322,7 @@ class AIPanel(QWidget):
         if not options:
             return
 
-        current_provider = self.ai_provider.text().strip() or DEFAULT_PROVIDER
+        current_provider = normalize_ai_provider(self.ai_provider.text().strip())
         current_model = self.ai_model.text().strip()
 
         menu = QMenu(self)
@@ -469,6 +473,42 @@ class AIPanel(QWidget):
             cursor = self.ai_prompt.textCursor()
             cursor.movePosition(QTextCursor.End)
             self.ai_prompt.setTextCursor(cursor)
+
+    def apply_runtime_settings(
+        self,
+        *,
+        provider,
+        model,
+        max_steps,
+        thinking_enabled,
+        custom_prompt="",
+    ):
+        normalized_provider = normalize_ai_provider(provider)
+        provider_cfg = AI_PROVIDER_DEFAULTS[normalized_provider]
+        self.ai_provider.setText(normalized_provider)
+        self.ai_model.setText(str(model or "").strip() or provider_cfg["model"])
+        try:
+            steps_value = int(max_steps)
+        except Exception:
+            steps_value = self.ai_steps.value() or 1
+        steps_value = max(1, min(MAX_AGENT_STEPS, steps_value))
+        self.ai_steps.setValue(steps_value)
+        self.ai_thinking_enabled.setChecked(bool(thinking_enabled))
+        self.ai_custom_prompt = str(custom_prompt or "")
+
+    def runtime_settings_snapshot(self):
+        provider = normalize_ai_provider(self.ai_provider.text().strip())
+        provider_cfg = AI_PROVIDER_DEFAULTS[provider]
+        return {
+            "provider": provider,
+            "model": self.ai_model.text().strip() or provider_cfg["model"],
+            "max_steps": self.ai_steps.value(),
+            "thinking_enabled": self.ai_thinking_enabled.isChecked(),
+            "custom_prompt": self.ai_custom_prompt,
+        }
+
+    def has_running_task(self):
+        return bool(self.ai_run_inflight)
 
     def _set_migration_mode_banner(self, visible):
         banner = getattr(self, "_migration_mode_banner", None)

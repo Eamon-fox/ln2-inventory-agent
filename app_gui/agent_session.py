@@ -116,6 +116,7 @@ class AgentSessionService:
                 session_id=self._session_id,
                 plan_store=plan_store,
                 preflight_fn=preflight_plan,
+                tr_func=tr,
             )
             if callable(_expose_runner):
                 _expose_runner(runner)

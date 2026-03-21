@@ -113,7 +113,6 @@ class OverviewPanel(QWidget):
 
     _resolve_table_header_labels = _ov_table._resolve_table_header_labels
     _set_table_columns = _ov_table._set_table_columns
-    _rebuild_table_rows = _ov_table._rebuild_table_rows
     _table_query_payload = _ov_table._table_query_payload
     _query_table_rows = _ov_table._query_table_rows
     _sync_table_sort_indicator = _ov_table._sync_table_sort_indicator
@@ -149,6 +148,13 @@ class OverviewPanel(QWidget):
     @Slot()
     def _on_plan_store_changed(self):
         _ov_grid._on_plan_store_changed(self)
+
+    def bind_plan_store(self, plan_store):
+        self._set_plan_store_ref(plan_store)
+
+    @Slot()
+    def refresh_plan_store_view(self):
+        self._on_plan_store_changed()
 
 
     _set_zoom = _ov_zoom._set_zoom

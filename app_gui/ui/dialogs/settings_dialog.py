@@ -25,30 +25,21 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from agent.llm_client import DEFAULT_PROVIDER, PROVIDER_DEFAULTS
+from app_gui.application.ai_provider_catalog import (
+    AI_PROVIDER_DEFAULTS,
+    normalize_ai_provider,
+)
+from app_gui.application.custom_fields_use_case import CustomFieldsUseCase
+from app_gui.application.settings_dialog_submission import SettingsDialogSubmission
+from app_gui.application.settings_dataset_use_case import SettingsDatasetUseCase
+from app_gui.application.settings_validation_use_case import SettingsValidationUseCase
 from app_gui.error_localizer import localize_error
 from app_gui.gui_config import DEFAULT_MAX_STEPS, MAX_AGENT_STEPS
 from app_gui.i18n import t, tr
 from app_gui.ui.icons import Icons, get_icon
-from lib.inventory_paths import (
-    assert_allowed_inventory_yaml_path,
-    build_dataset_combo_items,
-    list_managed_datasets,
-    managed_dataset_name_from_yaml_path,
-    normalize_inventory_yaml_path as _normalize_inventory_yaml_path,
-)
-from lib.import_acceptance import validate_candidate_yaml
+from lib.inventory_paths import normalize_inventory_yaml_path as _normalize_inventory_yaml_path
 from lib.position_fmt import box_to_display, pos_to_display
-from lib.validate_service import VALIDATION_MODE_META_ONLY, validate_yaml_data, validate_yaml_file
-from lib.custom_fields_update_service import (
-    build_custom_fields_update_audit_details,
-    drop_removed_fields_from_inventory,
-    prepare_custom_fields_update,
-    validate_custom_fields_update_draft,
-)
-from lib.settings_write_gateway import persist_custom_fields_update
 from lib.validators import format_validation_errors
-from lib.yaml_ops import load_yaml
 from app_gui.version import (
     APP_VERSION,
     APP_RELEASE_URL,
@@ -130,6 +121,13 @@ class _NoPasteLineEdit(QLineEdit):
         event.ignore()
 
 
+class _ProgrammaticClickButton(QPushButton):
+    """Keep programmatic test clicks non-blocking without affecting real UI clicks."""
+
+    def click(self):
+        self.clicked.emit()
+
+
 class SettingsDialog(QDialog):
     """Enhanced Settings dialog with sections and help text."""
 
@@ -150,6 +148,9 @@ class SettingsDialog(QDialog):
         on_import_existing_data=None,
         on_export_inventory_csv=None,
         custom_fields_dialog_cls=None,
+        custom_fields_use_case=None,
+        settings_dataset_use_case=None,
+        settings_validation_use_case=None,
         normalize_yaml_path=None,
     ):
         super().__init__(parent)
@@ -170,6 +171,13 @@ class SettingsDialog(QDialog):
         self._on_export_inventory_csv = on_export_inventory_csv
         self._custom_fields_dialog_cls = custom_fields_dialog_cls
         self._normalize_yaml_path = normalize_yaml_path or _normalize_inventory_yaml_path
+        self._settings_dataset_use_case = settings_dataset_use_case or SettingsDatasetUseCase(
+            normalize_yaml_path=self._normalize_yaml_path,
+        )
+        self._custom_fields_use_case = custom_fields_use_case or CustomFieldsUseCase()
+        self._settings_validation_use_case = (
+            settings_validation_use_case or SettingsValidationUseCase()
+        )
         self._inventory_path_locked = True
 
         layout = QVBoxLayout(self)
@@ -259,7 +267,7 @@ class SettingsDialog(QDialog):
         api_keys_config = self._config.get("api_keys", {})
         self._api_key_edits = {}
         self._api_key_lock_buttons = {}
-        for provider_id, cfg in PROVIDER_DEFAULTS.items():
+        for provider_id, cfg in AI_PROVIDER_DEFAULTS.items():
             key_row, key_edit, lock_btn = self._build_locked_api_key_row(
                 api_keys_config.get(provider_id, "")
             )
@@ -283,9 +291,9 @@ class SettingsDialog(QDialog):
             ai_layout.addRow("", api_hint)
 
         ai_advanced = self._config.get("ai", {})
-        current_provider = ai_advanced.get("provider") or DEFAULT_PROVIDER
+        current_provider = normalize_ai_provider(ai_advanced.get("provider"))
         self.ai_provider_combo = _NoWheelComboBox()
-        for provider_id, cfg in PROVIDER_DEFAULTS.items():
+        for provider_id, cfg in AI_PROVIDER_DEFAULTS.items():
             self.ai_provider_combo.addItem(cfg["display_name"], provider_id)
         idx = self.ai_provider_combo.findData(current_provider)
         if idx >= 0:
@@ -293,7 +301,7 @@ class SettingsDialog(QDialog):
         self.ai_provider_combo.currentIndexChanged.connect(self._on_provider_changed)
         ai_layout.addRow(tr("settings.aiProvider"), self.ai_provider_combo)
 
-        provider_cfg = PROVIDER_DEFAULTS.get(current_provider, PROVIDER_DEFAULTS[DEFAULT_PROVIDER])
+        provider_cfg = AI_PROVIDER_DEFAULTS[current_provider]
         default_model = ai_advanced.get("model") or provider_cfg["model"]
         self.ai_model_edit = _NoWheelComboBox()
         self.ai_model_edit.setEditable(True)
@@ -438,17 +446,9 @@ class SettingsDialog(QDialog):
         layout.addWidget(buttons)
 
     def _is_valid_inventory_file_path(self, path_text):
-        path = self._normalize_yaml_path(path_text)
-        if not path or os.path.isdir(path):
-            return False
-        suffix = os.path.splitext(path)[1].lower()
-        if suffix not in {".yaml", ".yml"}:
-            return False
-        try:
-            assert_allowed_inventory_yaml_path(path, must_exist=True)
-        except Exception:
-            return False
-        return True
+        return self._settings_dataset_use_case.is_valid_inventory_file_path(
+            path_text=path_text,
+        )
 
     def _refresh_yaml_path_validity(self):
         if not hasattr(self, "_ok_button") or self._ok_button is None:
@@ -459,10 +459,10 @@ class SettingsDialog(QDialog):
         if self.dataset_switch_combo is None:
             return
 
-        rows = list_managed_datasets()
         combo = self.dataset_switch_combo
-        current_yaml = self._normalize_yaml_path(selected_yaml or self.yaml_edit.text().strip())
-        items, selected_idx = build_dataset_combo_items(rows, current_yaml)
+        items, selected_idx = self._settings_dataset_use_case.build_dataset_choices(
+            selected_yaml=selected_yaml or self.yaml_edit.text().strip(),
+        )
 
         combo.blockSignals(True)
         combo.clear()
@@ -517,22 +517,6 @@ class SettingsDialog(QDialog):
             },
         }
 
-    @classmethod
-    def _rewrite_validation_failure_prefix(cls, result, *, prefix):
-        normalized = dict(result or {})
-        if normalized.get("ok"):
-            return normalized
-        if str(normalized.get("error_code") or "") != "validation_failed":
-            return normalized
-        report = dict(normalized.get("report") or {})
-        errors = list(report.get("errors") or [])
-        warnings = list(report.get("warnings") or [])
-        return cls._validation_failed_result(
-            errors,
-            warnings=warnings,
-            prefix=prefix,
-        )
-
     def _show_validation_blocked_result(self, result, *, include_dataset_hint=False):
         normalized = dict(result or {})
         report_text = self._render_validation_report(normalized.get("report") or {})
@@ -546,30 +530,6 @@ class SettingsDialog(QDialog):
             message += "\n\n" + tr("main.datasetYamlValidationHint")
         QMessageBox.warning(self, tr("main.importValidatedTitle"), message)
 
-    @classmethod
-    def _validate_inventory_payload_strict(cls, data):
-        """Validate an in-memory inventory payload with strict warning blocking."""
-        result = validate_yaml_data(
-            data,
-            mode="document",
-            fail_on_warnings=True,
-        )
-        return cls._rewrite_validation_failure_prefix(
-            result,
-            prefix="Import validation failed",
-        )
-
-    @classmethod
-    def _validate_inventory_yaml_meta_only(cls, yaml_path):
-        result = validate_yaml_file(
-            yaml_path,
-            mode=VALIDATION_MODE_META_ONLY,
-        )
-        return cls._rewrite_validation_failure_prefix(
-            result,
-            prefix="Validation failed",
-        )
-
     def accept(self):
         """Block saving settings when selected dataset YAML fails validation.
 
@@ -581,11 +541,10 @@ class SettingsDialog(QDialog):
         """
         yaml_path = self._normalize_yaml_path(self.yaml_edit.text().strip())
         if self._is_valid_inventory_file_path(yaml_path):
-            yaml_path_changed = yaml_path != getattr(self, "_initial_yaml_path", "")
-            if yaml_path_changed:
-                result = validate_candidate_yaml(yaml_path, fail_on_warnings=True)
-            else:
-                result = self._validate_inventory_yaml_meta_only(yaml_path)
+            result = self._settings_validation_use_case.validate_yaml_for_settings_accept(
+                yaml_path=yaml_path,
+                initial_yaml_path=getattr(self, "_initial_yaml_path", ""),
+            )
             if not result.get("ok"):
                 self._show_validation_blocked_result(
                     result,
@@ -619,10 +578,9 @@ class SettingsDialog(QDialog):
         if not current_yaml:
             return
 
-        try:
-            default_name = managed_dataset_name_from_yaml_path(current_yaml)
-        except Exception:
-            default_name = ""
+        default_name = self._settings_dataset_use_case.managed_dataset_name(
+            yaml_path=current_yaml,
+        )
         new_name, ok = QInputDialog.getText(
             self,
             tr("settings.renameDataset"),
@@ -688,10 +646,9 @@ class SettingsDialog(QDialog):
         if not current_yaml:
             return
 
-        try:
-            dataset_name = managed_dataset_name_from_yaml_path(current_yaml)
-        except Exception:
-            dataset_name = os.path.basename(os.path.dirname(current_yaml)) or current_yaml
+        dataset_name = self._settings_dataset_use_case.managed_dataset_name(
+            yaml_path=current_yaml,
+        )
 
         if not self._confirm_delete_dataset_initial(dataset_name):
             return
@@ -896,17 +853,10 @@ class SettingsDialog(QDialog):
                                 t("main.fileNotFound", path=yaml_path))
             return
 
-        try:
-            data = load_yaml(yaml_path) or {}
-        except Exception:
-            data = {}
-
-        meta = data.get("meta", {})
-        if not isinstance(meta, dict):
-            meta = {}
-        from lib.custom_fields import get_effective_fields, unsupported_box_fields_issue
-
-        unsupported_issue = unsupported_box_fields_issue(meta)
+        load_result = self._custom_fields_use_case.load_editor_state(yaml_path=yaml_path)
+        editor_state = load_result.state
+        meta = editor_state.meta
+        unsupported_issue = load_result.unsupported_issue
         if unsupported_issue:
             QMessageBox.warning(
                 self,
@@ -919,22 +869,14 @@ class SettingsDialog(QDialog):
             )
             return
 
-        inventory = data.get("inventory")
-        if not isinstance(inventory, list):
-            inventory = []
-
-        existing = get_effective_fields(meta, inventory=inventory)
-        current_dk = meta.get("display_key")
-        current_ck = meta.get("color_key")
-
         dialog_cls = self._custom_fields_dialog_cls
         if dialog_cls is None:
             from app_gui.ui.dialogs.custom_fields_dialog import CustomFieldsDialog as dialog_cls
         dlg = dialog_cls(
             self,
-            custom_fields=existing,
-            display_key=current_dk,
-            color_key=current_ck,
+            custom_fields=editor_state.existing_fields,
+            display_key=editor_state.current_display_key,
+            color_key=editor_state.current_color_key,
         )
         if dlg.exec() != QDialog.Accepted:
             return
@@ -943,13 +885,9 @@ class SettingsDialog(QDialog):
         new_dk = dlg.get_display_key()
         new_ck = dlg.get_color_key()
 
-        draft = prepare_custom_fields_update(
-            meta=meta,
-            inventory=inventory,
-            existing_fields=existing,
+        draft = self._custom_fields_use_case.prepare_update(
+            state=editor_state,
             new_fields=new_fields,
-            current_display_key=current_dk,
-            current_color_key=current_ck,
             requested_display_key=new_dk,
             requested_color_key=new_ck,
         )
@@ -1024,12 +962,14 @@ class SettingsDialog(QDialog):
                 msg.setDetailedText(
                     self._format_removed_field_preview_details(
                         draft.removed_field_previews,
-                        layout=box_layout,
-                    )
+                    layout=box_layout,
                 )
-            btn_clean = msg.addButton(tr("main.cfRemoveDataClean"), QMessageBox.DestructiveRole)
-            msg.addButton(QMessageBox.Cancel)
-            msg.setDefaultButton(msg.button(QMessageBox.Cancel))
+            )
+            btn_clean = _ProgrammaticClickButton(tr("main.cfRemoveDataClean"), msg)
+            btn_cancel = _ProgrammaticClickButton(tr("common.cancel"), msg)
+            msg.addButton(btn_clean, QMessageBox.DestructiveRole)
+            msg.addButton(btn_cancel, QMessageBox.RejectRole)
+            msg.setDefaultButton(btn_cancel)
             msg.exec()
             clicked = msg.clickedButton()
             if clicked != btn_clean:
@@ -1043,41 +983,28 @@ class SettingsDialog(QDialog):
                 strip_input=True,
             ):
                 return
-
-            removed_records_count = drop_removed_fields_from_inventory(
-                draft.pending_inventory,
-                draft.removed_keys,
-            )
             removed_data_cleaned = True
 
-        meta_errors, _warnings = validate_custom_fields_update_draft(draft)
-        if meta_errors:
+        commit_result = self._custom_fields_use_case.commit_update(
+            yaml_path=yaml_path,
+            state=editor_state,
+            draft=draft,
+            remove_removed_field_data=removed_data_cleaned,
+        )
+        if commit_result.meta_errors:
             self._show_validation_blocked_result(
                 self._validation_failed_result(
-                    meta_errors,
+                    commit_result.meta_errors,
                     prefix="Validation failed",
                 )
             )
             return
 
-        pending_data = dict(data) if isinstance(data, dict) else {}
-        pending_data["meta"] = draft.pending_meta
-        pending_data["inventory"] = draft.pending_inventory
-
-        persist_result = persist_custom_fields_update(
-            yaml_path=yaml_path,
-            pending_data=pending_data,
-            audit_details=build_custom_fields_update_audit_details(
-                draft,
-                removed_data_cleaned=removed_data_cleaned,
-                removed_records_count=removed_records_count,
-            ),
-        )
-        if not persist_result.get("ok"):
+        if not commit_result.ok:
             QMessageBox.warning(
                 self,
                 tr("main.customFieldsTitle"),
-                str(persist_result.get("message") or "Failed to save custom fields."),
+                str(commit_result.message or "Failed to save custom fields."),
             )
             return
 
@@ -1104,13 +1031,14 @@ class SettingsDialog(QDialog):
         )
 
     def _on_provider_changed(self):
-        provider = self.ai_provider_combo.currentData()
-        cfg = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS[DEFAULT_PROVIDER])
+        provider = normalize_ai_provider(self.ai_provider_combo.currentData())
+        cfg = AI_PROVIDER_DEFAULTS[provider]
         self._refresh_model_options(provider, selected_model=cfg["model"])
 
     @staticmethod
     def _provider_models(provider):
-        cfg = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS[DEFAULT_PROVIDER])
+        normalized_provider = normalize_ai_provider(provider)
+        cfg = AI_PROVIDER_DEFAULTS[normalized_provider]
         models = []
         seen = set()
         for raw in cfg.get("models") or []:
@@ -1184,31 +1112,32 @@ class SettingsDialog(QDialog):
         key_edit.setEchoMode(QLineEdit.Password)
         lock_btn.setText("\U0001F512")
 
-    def get_values(self):
-        provider = self.ai_provider_combo.currentData() or DEFAULT_PROVIDER
-        provider_cfg = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS[DEFAULT_PROVIDER])
+    def get_submission(self):
+        provider = normalize_ai_provider(self.ai_provider_combo.currentData())
+        provider_cfg = AI_PROVIDER_DEFAULTS[provider]
         api_keys = {}
         for prov_id, edit in self._api_key_edits.items():
             key_text = edit.text().strip()
             if key_text:
                 api_keys[prov_id] = key_text
-        yaml_path = self._normalize_yaml_path(self.yaml_edit.text().strip())
-        try:
-            yaml_path = assert_allowed_inventory_yaml_path(yaml_path, must_exist=True)
-        except Exception:
-            yaml_path = ""
-        return {
-            "yaml_path": yaml_path,
-            "api_keys": api_keys,
-            "language": self.lang_combo.currentData(),
-            "theme": self.theme_combo.currentData(),
-            "ui_scale": self.scale_combo.currentData(),
-            "ai_provider": provider,
-            "ai_model": self.ai_model_edit.currentText().strip() or provider_cfg["model"],
-            "ai_max_steps": self.ai_max_steps.value(),
-            "ai_thinking_enabled": self.ai_thinking_enabled.isChecked(),
-            "ai_custom_prompt": self.ai_custom_prompt.toPlainText().strip(),
-        }
+        yaml_path = self._settings_dataset_use_case.resolve_existing_yaml_path(
+            yaml_path=self.yaml_edit.text().strip(),
+        )
+        return SettingsDialogSubmission(
+            yaml_path=yaml_path,
+            api_keys=api_keys,
+            language=self.lang_combo.currentData(),
+            theme=self.theme_combo.currentData(),
+            ui_scale=self.scale_combo.currentData(),
+            ai_provider=provider,
+            ai_model=self.ai_model_edit.currentText().strip() or provider_cfg["model"],
+            ai_max_steps=self.ai_max_steps.value(),
+            ai_thinking_enabled=self.ai_thinking_enabled.isChecked(),
+            ai_custom_prompt=self.ai_custom_prompt.toPlainText().strip(),
+        )
+
+    def get_values(self):
+        return self.get_submission().as_dict()
 
 
 

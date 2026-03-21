@@ -27,10 +27,12 @@ from lib.tool_contracts import (
     get_tool_contracts,
 )
 from lib.tool_registry import (
+    get_tool_descriptor,
     iter_agent_dispatch_descriptors,
     iter_gui_bridge_descriptors,
     iter_tool_descriptors,
     iter_write_tool_descriptors,
+    resolve_tool_api_callable,
 )
 
 
@@ -40,6 +42,18 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
             [descriptor.name for descriptor in iter_tool_descriptors()],
             list(TOOL_CONTRACTS.keys()),
         )
+
+    def test_non_contract_registry_entries_do_not_leak_into_tool_contracts(self):
+        hidden_names = {
+            "export_inventory_csv",
+            "collect_timeline",
+            "set_box_tag",
+            "batch_add_entries",
+        }
+        for name in hidden_names:
+            with self.subTest(tool=name):
+                self.assertIsNotNone(get_tool_descriptor(name))
+                self.assertNotIn(name, TOOL_CONTRACTS)
 
     def test_agent_uses_canonical_tool_contracts(self):
         self.assertIs(tool_runner._TOOL_CONTRACTS, TOOL_CONTRACTS)
@@ -106,6 +120,15 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
             self.assertTrue(
                 callable(method),
                 f"{descriptor.name} missing bridge method {bridge_spec.method_name}",
+            )
+
+    def test_registry_gui_bridge_descriptors_resolve_tool_api_targets(self):
+        for descriptor in iter_gui_bridge_descriptors():
+            bridge_spec = descriptor.gui_bridge
+            target = resolve_tool_api_callable(bridge_spec.tool_api_attr)
+            self.assertTrue(
+                callable(target),
+                f"{descriptor.name} missing tool_api target {bridge_spec.tool_api_attr}",
             )
 
     def test_get_tool_contracts_strips_internal_flags(self):

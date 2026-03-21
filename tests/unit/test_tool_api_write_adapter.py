@@ -101,6 +101,66 @@ class ToolApiWriteAdapterTests(unittest.TestCase):
             fields={"note": "ok"},
         )
 
+    def test_invoke_write_tool_uses_registry_resolution_and_backup_protocol(self):
+        tool_fn = MagicMock(return_value={"ok": True})
+        with patch(
+            "lib.tool_api_write_adapter.resolve_request_backup_path",
+            return_value="/tmp/request.bak",
+        ), patch("lib.tool_api_write_adapter._resolve_tool", return_value=tool_fn), patch(
+            "lib.tool_api_write_adapter._resolve_actor_context",
+            return_value={"session_id": "sess-9"},
+        ):
+            response = adapter.invoke_write_tool(
+                "manage_boxes",
+                yaml_path="inventory.yaml",
+                actor_context={"session_id": "sess-9"},
+                source="app_gui",
+                execution_mode="execute",
+                backup_event_source="app_gui",
+                payload={"operation": "add", "count": 2, "auto_backup": True},
+            )
+
+        self.assertTrue(response["ok"])
+        self.assertEqual("/tmp/request.bak", response["backup_path"])
+        tool_fn.assert_called_once_with(
+            yaml_path="inventory.yaml",
+            actor_context={"session_id": "sess-9"},
+            source="app_gui",
+            operation="add",
+            count=2,
+            auto_backup=False,
+            dry_run=False,
+            execution_mode="execute",
+            request_backup_path="/tmp/request.bak",
+        )
+
+    def test_resolve_tool_prefers_registry_backed_tool_attr_for_registered_write_tools(self):
+        tool_fn = MagicMock()
+        fake_tool_api = type("FakeToolApi", (), {"tool_manage_boxes": tool_fn})()
+
+        with patch("lib.tool_api_write_adapter._load_tool_api", return_value=fake_tool_api):
+            resolved = adapter._resolve_tool("manage_boxes")
+
+        self.assertIs(tool_fn, resolved)
+
+    def test_resolve_tool_uses_registry_for_gui_only_box_tag_helper(self):
+        tool_fn = MagicMock()
+        fake_tool_api = type("FakeToolApi", (), {"tool_set_box_tag": tool_fn})()
+
+        with patch("lib.tool_api_write_adapter._load_tool_api", return_value=fake_tool_api):
+            resolved = adapter._resolve_tool("set_box_tag")
+
+        self.assertIs(tool_fn, resolved)
+
+    def test_resolve_tool_uses_registry_for_internal_batch_add_helper(self):
+        tool_fn = MagicMock()
+        fake_tool_api = type("FakeToolApi", (), {"tool_batch_add_entries": tool_fn})()
+
+        with patch("lib.tool_api_write_adapter._load_tool_api", return_value=fake_tool_api):
+            resolved = adapter._resolve_tool("batch_add_entries")
+
+        self.assertIs(tool_fn, resolved)
+
     def test_batch_add_entries_reuses_resolved_request_backup(self):
         tool_fn = MagicMock(return_value={"ok": True})
         with patch(

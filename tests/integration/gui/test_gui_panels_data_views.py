@@ -1231,7 +1231,7 @@ class OverviewTableViewTests(ManagedPathTestCase):
         finally:
             self._cleanup(tmpdir)
 
-    def test_rebuild_table_rows_bumps_version_and_clears_unique_cache(self):
+    def test_table_filter_requery_bumps_version_and_clears_unique_cache(self):
         records = [
             {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
         ]
@@ -1241,10 +1241,11 @@ class OverviewTableViewTests(ManagedPathTestCase):
 
             panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
             panel.refresh()
+            self._switch_to_table(panel)
 
             panel._table_version = 3
             panel._column_unique_cache = {("cell_line", 3): [("K562", 1)]}
-            panel._rebuild_table_rows(panel._current_records)
+            panel.ov_filter_keyword.setText("k562")
 
             self.assertEqual(4, panel._table_version)
             self.assertEqual({}, panel._column_unique_cache)

@@ -718,6 +718,53 @@ class RunPlanExecuteTests(ManagedPathTestCase):
             self.assertEqual(source_event, kwargs.get("source_event"))
             self.assertEqual(result.get("backup_path"), kwargs.get("request_backup_path"))
 
+    def test_run_plan_rollback_legacy_bridge_without_request_backup_path(self):
+        with tempfile.TemporaryDirectory() as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+            manual_backup = Path(td) / "manual_backup.bak"
+            _write_raw_yaml(
+                str(manual_backup),
+                make_data([make_record(2, box=1, position=2)]),
+            )
+
+            class _LegacyRollbackBridge:
+                def __init__(self):
+                    self.calls = []
+
+                def rollback(self, yaml_path, backup_path=None, execution_mode=None, source_event=None):
+                    self.calls.append(
+                        {
+                            "yaml_path": yaml_path,
+                            "backup_path": backup_path,
+                            "execution_mode": execution_mode,
+                            "source_event": source_event,
+                        }
+                    )
+                    return {"ok": True, "result": {}}
+
+            bridge = _LegacyRollbackBridge()
+            source_event = {
+                "timestamp": "2026-02-12T09:00:00",
+                "action": "takeout",
+                "trace_id": "trace-audit-legacy",
+            }
+            item = make_rollback_item(str(manual_backup))
+            item["payload"]["source_event"] = dict(source_event)
+
+            result = run_plan(str(yaml_path), [item], bridge=bridge, mode="execute")
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(1, len(bridge.calls))
+            self.assertEqual(str(yaml_path), bridge.calls[0]["yaml_path"])
+            self.assertEqual(str(manual_backup), bridge.calls[0]["backup_path"])
+            self.assertEqual("execute", bridge.calls[0]["execution_mode"])
+            self.assertEqual(source_event, bridge.calls[0]["source_event"])
+
     def test_run_plan_rollback_must_be_alone_blocks(self):
         bridge = MagicMock()
         items = [

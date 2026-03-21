@@ -25,6 +25,7 @@ try:
 
     from app_gui.ui import audit_dialog as audit_dialog_module
     from app_gui.ui.audit_dialog import AuditLogDialog
+    from lib.tool_api import tool_list_audit_timeline
     from lib.yaml_ops import get_audit_log_paths, write_yaml
     from tests.managed_paths import ManagedPathTestCase
 
@@ -44,7 +45,25 @@ except Exception:
 
 
 class _Bridge:
-    pass
+    @staticmethod
+    def list_audit_timeline(
+        yaml_path,
+        limit=50,
+        offset=0,
+        action_filter=None,
+        status_filter=None,
+        start_date=None,
+        end_date=None,
+    ):
+        return tool_list_audit_timeline(
+            str(yaml_path),
+            limit=limit,
+            offset=offset,
+            action_filter=action_filter,
+            status_filter=status_filter,
+            start_date=start_date,
+            end_date=end_date,
+        )
 
 
 class _TimelineBridge:
@@ -73,21 +92,41 @@ class _TimelineBridge:
         }
 
 
+class _AuditViewUseCase:
+    def __init__(self, field_order):
+        self._field_order = list(field_order or [])
+        self.calls = []
+
+    def load_field_order(self, *, yaml_path):
+        self.calls.append(str(yaml_path))
+        return list(self._field_order)
+
+
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 not available")
 class AuditDialogTests(ManagedPathTestCase):
     @classmethod
     def setUpClass(cls):
         cls._app = QApplication.instance() or QApplication([])
 
-    def _new_dialog(self, yaml_path):
+    def _new_dialog(self, yaml_path, audit_view_use_case=None):
         parent = QWidget()
-        dialog = AuditLogDialog(parent=parent, yaml_path_getter=lambda: str(yaml_path), bridge=_Bridge())
+        dialog = AuditLogDialog(
+            parent=parent,
+            yaml_path_getter=lambda: str(yaml_path),
+            bridge=_Bridge(),
+            audit_view_use_case=audit_view_use_case,
+        )
         dialog._test_parent_ref = parent
         return dialog
 
-    def _new_dialog_with_bridge(self, yaml_path, bridge):
+    def _new_dialog_with_bridge(self, yaml_path, bridge, audit_view_use_case=None):
         parent = QWidget()
-        dialog = AuditLogDialog(parent=parent, yaml_path_getter=lambda: str(yaml_path), bridge=bridge)
+        dialog = AuditLogDialog(
+            parent=parent,
+            yaml_path_getter=lambda: str(yaml_path),
+            bridge=bridge,
+            audit_view_use_case=audit_view_use_case,
+        )
         dialog._test_parent_ref = parent
         return dialog
 
@@ -225,6 +264,59 @@ class AuditDialogTests(ManagedPathTestCase):
         self.assertGreaterEqual(dialog.audit_table.rowCount(), 2)
         self.assertEqual("lower_ts_higher_seq", dialog.audit_table.item(0, 1).text())
         self.assertEqual("higher_ts_lower_seq", dialog.audit_table.item(1, 1).text())
+
+    def test_on_load_audit_delegates_field_order_loading_to_use_case(self):
+        yaml_path = "D:/tmp/inventory.yaml"
+        bridge = _TimelineBridge(
+            [
+                {
+                    "timestamp": "2026-02-21T09:00:00",
+                    "action": "add_entry",
+                    "status": "success",
+                    "details": {
+                        "op": "add_entry",
+                        "box": 1,
+                        "positions": [2],
+                        "count": 1,
+                        "fields": {
+                            "plasmid_name": "pDemo",
+                            "short_name": "clone-2",
+                        },
+                    },
+                }
+            ]
+        )
+        audit_view_use_case = _AuditViewUseCase(["short_name", "plasmid_name"])
+        dialog = self._new_dialog_with_bridge(
+            yaml_path,
+            bridge,
+            audit_view_use_case=audit_view_use_case,
+        )
+
+        dialog.audit_start_date.setDate(QDate(2000, 1, 1))
+        dialog.audit_end_date.setDate(QDate(2099, 12, 31))
+        dialog.on_load_audit()
+
+        self.assertEqual([os.path.abspath(yaml_path)], audit_view_use_case.calls)
+        self.assertEqual(["short_name", "plasmid_name"], dialog._audit_field_order)
+        self.assertEqual(
+            "Box1 Pos2 | short_name=clone-2, plasmid_name=pDemo | x1",
+            dialog.audit_table.item(0, 3).text(),
+        )
+
+    def test_on_load_audit_requires_timeline_bridge_method(self):
+        dialog = self._new_dialog_with_bridge("D:/tmp/inventory.yaml", object())
+
+        dialog.audit_start_date.setDate(QDate(2000, 1, 1))
+        dialog.audit_end_date.setDate(QDate(2099, 12, 31))
+        dialog.on_load_audit()
+
+        info_text = dialog.audit_info.text()
+        self.assertTrue(
+            ("list_audit_timeline" in info_text)
+            or (info_text == "operations.failedToLoadAudit")
+        )
+        self.assertEqual(0, dialog.audit_table.rowCount())
 
     def test_click_row_uses_source_index_after_sort(self):
         dialog = self._new_dialog("D:/tmp/inventory.yaml")

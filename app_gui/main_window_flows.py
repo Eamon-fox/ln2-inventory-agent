@@ -6,18 +6,31 @@ import subprocess
 import sys
 from typing import Callable, Optional
 
-import yaml
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QInputDialog
 
-from agent.llm_client import DEFAULT_PROVIDER, PROVIDER_DEFAULTS
+from app_gui.application import DatasetLifecycleUseCase
+from app_gui.application.ai_provider_catalog import (
+    default_ai_model,
+    normalize_ai_provider,
+)
 from app_gui.gui_config import DEFAULT_MAX_STEPS, save_gui_config
 from app_gui.i18n import t, tr
 from app_gui.system_notice import build_system_notice
 from app_gui.ui.limits import MAX_BOX_COUNT_UI
 from lib.inventory_paths import assert_allowed_inventory_yaml_path
 from lib.position_fmt import get_box_numbers
+from lib.tool_api_write_validation import (
+    normalize_manage_boxes_operation,
+    normalize_manage_boxes_renumber_mode,
+)
 from lib.yaml_ops import load_yaml
+
+
+def _submission_value(values, key, default=None):
+    if isinstance(values, dict):
+        return values.get(key, default)
+    return getattr(values, key, default)
 
 
 class StartupFlow:
@@ -260,14 +273,14 @@ class WindowStateFlow:
         window = self._window
         ops = window.operations_panel
         overview = getattr(window, "overview_panel", None)
-        if overview is not None and hasattr(overview, "_set_plan_store_ref"):
+        if overview is not None and hasattr(overview, "bind_plan_store"):
             with suppress(Exception):
-                overview._set_plan_store_ref(window.plan_store)
+                overview.bind_plan_store(window.plan_store)
 
         def _on_plan_changed():
-            QMetaObject.invokeMethod(ops, "_on_store_changed", QtConst.QueuedConnection)
-            if overview is not None and hasattr(overview, "_on_plan_store_changed"):
-                QMetaObject.invokeMethod(overview, "_on_plan_store_changed", QtConst.QueuedConnection)
+            QMetaObject.invokeMethod(ops, "refresh_plan_store_view", QtConst.QueuedConnection)
+            if overview is not None and hasattr(overview, "refresh_plan_store_view"):
+                QMetaObject.invokeMethod(overview, "refresh_plan_store_view", QtConst.QueuedConnection)
 
         window.plan_store._on_change = _on_plan_changed
 
@@ -325,17 +338,17 @@ class WindowStateFlow:
             window.restoreGeometry(geometry)
 
         ai_cfg = window.gui_config.get("ai", {})
-        provider = ai_cfg.get("provider") or DEFAULT_PROVIDER
-        provider_cfg = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS[DEFAULT_PROVIDER])
-        window.ai_panel.ai_provider.setText(provider)
-        window.ai_panel.ai_model.setText(ai_cfg.get("model") or provider_cfg["model"])
-        window.ai_panel.ai_steps.setValue(ai_cfg.get("max_steps", DEFAULT_MAX_STEPS))
-        window.ai_panel.ai_thinking_enabled.setChecked(bool(ai_cfg.get("thinking_enabled", True)))
-        window.ai_panel.ai_custom_prompt = ai_cfg.get("custom_prompt", "")
+        window.ai_panel.apply_runtime_settings(
+            provider=ai_cfg.get("provider"),
+            model=ai_cfg.get("model"),
+            max_steps=ai_cfg.get("max_steps", DEFAULT_MAX_STEPS),
+            thinking_enabled=ai_cfg.get("thinking_enabled", True),
+            custom_prompt=ai_cfg.get("custom_prompt", ""),
+        )
 
     def handle_close_event(self, event):
         window = self._window
-        if window.ai_panel.ai_run_inflight:
+        if window.ai_panel.has_running_task():
             QMessageBox.warning(
                 window,
                 tr("main.aiBusyTitle"),
@@ -346,16 +359,8 @@ class WindowStateFlow:
 
         window.settings.setValue("ui/geometry", window.saveGeometry())
 
-        provider = window.ai_panel.ai_provider.text().strip() or DEFAULT_PROVIDER
-        provider_cfg = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS[DEFAULT_PROVIDER])
         window.gui_config["yaml_path"] = window.current_yaml_path
-        window.gui_config["ai"] = {
-            "provider": provider,
-            "model": window.ai_panel.ai_model.text().strip() or provider_cfg["model"],
-            "max_steps": window.ai_panel.ai_steps.value(),
-            "thinking_enabled": window.ai_panel.ai_thinking_enabled.isChecked(),
-            "custom_prompt": window.ai_panel.ai_custom_prompt,
-        }
+        window.gui_config["ai"] = window.ai_panel.runtime_settings_snapshot()
         save_gui_config(window.gui_config)
         return True
 
@@ -369,19 +374,19 @@ class SettingsFlow:
 
     def apply_dialog_values(self, values):
         window = self._window
-        window.gui_config["api_keys"] = values.get("api_keys", {})
+        window.gui_config["api_keys"] = _submission_value(values, "api_keys", {})
 
-        new_lang = values.get("language", "en")
+        new_lang = _submission_value(values, "language", "en")
         if new_lang != window.gui_config.get("language"):
             window.gui_config["language"] = new_lang
             self.ask_restart(tr("main.languageChangedRestart"))
 
-        new_theme = values.get("theme", "dark")
+        new_theme = _submission_value(values, "theme", "dark")
         if new_theme != window.gui_config.get("theme"):
             window.gui_config["theme"] = new_theme
             self.ask_restart(tr("main.themeChangedRestart"))
 
-        new_scale = values.get("ui_scale", 1.0)
+        new_scale = _submission_value(values, "ui_scale", 1.0)
         if new_scale != window.gui_config.get("ui_scale"):
             window.gui_config["ui_scale"] = new_scale
             QMessageBox.information(
@@ -391,18 +396,24 @@ class SettingsFlow:
             )
 
         window.gui_config["ai"] = {
-            "provider": values.get("ai_provider", DEFAULT_PROVIDER),
-            "model": values.get("ai_model", PROVIDER_DEFAULTS[DEFAULT_PROVIDER]["model"]),
-            "max_steps": values.get("ai_max_steps", DEFAULT_MAX_STEPS),
-            "thinking_enabled": values.get("ai_thinking_enabled", True),
-            "custom_prompt": values.get("ai_custom_prompt", ""),
+            "provider": normalize_ai_provider(_submission_value(values, "ai_provider")),
+            "model": _submission_value(
+                values,
+                "ai_model",
+                default_ai_model(_submission_value(values, "ai_provider")),
+            ),
+            "max_steps": _submission_value(values, "ai_max_steps", DEFAULT_MAX_STEPS),
+            "thinking_enabled": _submission_value(values, "ai_thinking_enabled", True),
+            "custom_prompt": _submission_value(values, "ai_custom_prompt", ""),
         }
         window.agent_session.set_api_keys(window.gui_config["api_keys"])
-        window.ai_panel.ai_provider.setText(window.gui_config["ai"]["provider"])
-        window.ai_panel.ai_model.setText(window.gui_config["ai"]["model"])
-        window.ai_panel.ai_steps.setValue(window.gui_config["ai"]["max_steps"])
-        window.ai_panel.ai_thinking_enabled.setChecked(window.gui_config["ai"]["thinking_enabled"])
-        window.ai_panel.ai_custom_prompt = window.gui_config["ai"].get("custom_prompt", "")
+        window.ai_panel.apply_runtime_settings(
+            provider=window.gui_config["ai"]["provider"],
+            model=window.gui_config["ai"]["model"],
+            max_steps=window.gui_config["ai"]["max_steps"],
+            thinking_enabled=window.gui_config["ai"]["thinking_enabled"],
+            custom_prompt=window.gui_config["ai"].get("custom_prompt", ""),
+        )
 
     def finalize_after_settings(self):
         window = self._window
@@ -475,16 +486,11 @@ class SettingsFlow:
 class DatasetFlow:
     """Dataset creation workflow extracted from MainWindow."""
 
-    def __init__(self, window):
+    def __init__(self, window, *, dataset_lifecycle_use_case=None):
         self._window = window
+        self._dataset_lifecycle = dataset_lifecycle_use_case or DatasetLifecycleUseCase()
 
     def create_dataset_file(self, *, target_path, box_layout, custom_fields_dialog_cls) -> Optional[str]:
-        target_path = assert_allowed_inventory_yaml_path(target_path, must_exist=False)
-
-        target_dir = os.path.dirname(target_path)
-        if target_dir and not os.path.isdir(target_dir):
-            os.makedirs(target_dir, exist_ok=True)
-
         cf_dlg = custom_fields_dialog_cls(self._window)
         if cf_dlg.exec() != QDialog.Accepted:
             return None
@@ -492,24 +498,14 @@ class DatasetFlow:
         display_key = cf_dlg.get_display_key()
         color_key_getter = getattr(cf_dlg, "get_color_key", None)
         color_key = color_key_getter() if callable(color_key_getter) else ""
-
-        meta = {
-            "version": "1.0",
-            "box_layout": box_layout,
-            "custom_fields": custom_fields,
-        }
-        if display_key:
-            meta["display_key"] = display_key
-        if color_key:
-            meta["color_key"] = color_key
-
-        new_payload = {
-            "meta": meta,
-            "inventory": [],
-        }
-        with open(target_path, "w", encoding="utf-8") as handle:
-            yaml.safe_dump(new_payload, handle, allow_unicode=True, sort_keys=False)
-        return target_path
+        result = self._dataset_lifecycle.create_dataset(
+            target_path=target_path,
+            box_layout=box_layout,
+            custom_fields=custom_fields,
+            display_key=display_key,
+            color_key=color_key,
+        )
+        return result.target_path
 
 
 class _AsyncManageBoxesSession:
@@ -588,7 +584,11 @@ class ManageBoxesFlow:
         if not yaml_path or not os.path.isfile(yaml_path):
             return self._error_response("load_failed", t("main.fileNotFound", path=yaml_path))
 
-        op = str(request.get("operation") or "").strip().lower()
+        raw_op = str(request.get("operation") or "").strip().lower()
+        if raw_op == "set_tag":
+            op = "set_tag"
+        else:
+            op = normalize_manage_boxes_operation(raw_op)
         if op not in {"add", "remove", "set_tag"}:
             return self._error_response("invalid_operation", "operation must be add/remove/set_tag")
 
@@ -1009,16 +1009,7 @@ class ManageBoxesFlow:
 
     @staticmethod
     def _normalize_mode_alias(mode_value):
-        if mode_value in (None, ""):
-            return None
-        mode = str(mode_value).strip().lower()
-        alias = {
-            "keep": "keep_gaps",
-            "gaps": "keep_gaps",
-            "renumber": "renumber_contiguous",
-            "compact": "renumber_contiguous",
-        }
-        return alias.get(mode, mode)
+        return normalize_manage_boxes_renumber_mode(mode_value)
 
     @staticmethod
     def _invalid_count_response():

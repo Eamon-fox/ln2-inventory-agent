@@ -11,7 +11,6 @@ from .schema_aliases import (
     coalesce_stored_at_value,
     expand_structural_aliases_in_sections,
     get_stored_at,
-    present_record_sort_field,
 )
 from .takeout_parser import extract_events
 from .validators import (
@@ -588,16 +587,7 @@ def tool_search_records(
         sort_by=sort_by,
         sort_order=sort_order,
     )
-    response = _format_tool_response_positions(response, yaml_path=yaml_path)
-    result = response.get("result") if isinstance(response, dict) else None
-    applied_filters = result.get("applied_filters") if isinstance(result, dict) else None
-    if isinstance(applied_filters, dict):
-        applied_filters["sort_by"] = present_record_sort_field(
-            applied_filters.get("sort_by"),
-            requested=sort_by,
-            default_legacy=True,
-        )
-    return response
+    return _format_tool_response_positions(response, yaml_path=yaml_path)
 
 
 def tool_filter_records(

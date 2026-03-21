@@ -66,6 +66,29 @@ class GuiPanelsOverviewTests(GuiPanelsBaseCase):
         self.assertEqual("default", button.property("cell_text_mode"))
         self.assertEqual("1", button.text())
 
+    def test_overview_public_plan_store_hooks_delegate_to_marker_refresh(self):
+        panel = self._new_overview_panel()
+        plan_store = SimpleNamespace(
+            list_items=MagicMock(
+                return_value=[
+                    {
+                        "action": "add",
+                        "box": 1,
+                        "positions": [1],
+                        "fields": {"cell_line": "K562"},
+                    }
+                ]
+            )
+        )
+
+        with patch.object(panel, "_set_plan_markers_from_items") as markers_mock:
+            panel.bind_plan_store(plan_store)
+            markers_mock.assert_called_once_with(plan_store.list_items.return_value)
+
+            markers_mock.reset_mock()
+            panel.refresh_plan_store_view()
+            markers_mock.assert_called_once_with(plan_store.list_items.return_value)
+
     def test_overview_hover_proxy_keeps_wrapped_text_mode(self):
         panel = self._new_overview_panel()
         panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
