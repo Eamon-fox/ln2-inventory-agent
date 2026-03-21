@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.3.8 - 2026-03-22
+
+### Added
+- 本地 Open API 现在支持受控的只读查询与 validated inventory route，外部 Agent 可以在不开放写操作的前提下读取当前数据集内容并切换 API 会话上下文。
+- 设置页新增内置 Skill 模板展示与一键复制入口，帮助用户把 SnowFox 的本地 API 接入外部 AI Agent。
+- 新增内置 `snowfox-system` skill 契约与配套测试，用统一文档描述系统能力边界、字段语义和常见工作流。
+- 管理盒位对话框新增盒索引方式设置，支持在数据集层配置数字或 Alpha-Numeric 盒位索引。
+- macOS 安装包现在带有 SnowFox 应用图标资源。
+
+### Changed
+- 盒位索引展示统一走共享位置格式化逻辑，Overview、审计、导出、打印等展示面改为使用同一套索引语义。
+- 本地 API 与设置页文案补全后，Agent 接入流程更偏向“先拉起 App、检测 API、再读取能力”的结构化引导。
+
+### Fixed
+- 修复 Alpha-Numeric 索引在 Overview 表格视图、CSV 导出、打印快照与 Plan 展示中的格式漂移，避免不同入口混用“冒号+数字”和字母数字索引。
+- 修复相关 i18n 文案缺口，并补齐索引展示、API 帮助与 Skill 契约的回归测试覆盖。
+
 ## 1.3.7 - 2026-03-22
 
 ### Added
