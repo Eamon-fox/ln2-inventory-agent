@@ -33,6 +33,7 @@ from app_gui.application.custom_fields_use_case import CustomFieldsUseCase
 from app_gui.application.settings_dialog_submission import SettingsDialogSubmission
 from app_gui.application.settings_dataset_use_case import SettingsDatasetUseCase
 from app_gui.application.settings_validation_use_case import SettingsValidationUseCase
+from app_gui.application.open_api.contracts import LOCAL_OPEN_API_DEFAULT_PORT
 from app_gui.error_localizer import localize_error
 from app_gui.gui_config import DEFAULT_MAX_STEPS, MAX_AGENT_STEPS
 from app_gui.i18n import t, tr
@@ -349,6 +350,32 @@ class SettingsDialog(QDialog):
         ai_layout.addRow("", custom_prompt_hint)
 
         content_layout.addWidget(ai_group)
+
+        local_api_group = QGroupBox(tr("settings.localApi"))
+        local_api_layout = QFormLayout(local_api_group)
+
+        open_api_cfg = self._config.get("open_api", {})
+        self.open_api_enabled = QCheckBox()
+        self.open_api_enabled.setChecked(bool(open_api_cfg.get("enabled", False)))
+        local_api_layout.addRow(tr("settings.localApiEnabled"), self.open_api_enabled)
+
+        self.open_api_port = _NoWheelSpinBox()
+        self.open_api_port.setRange(1024, 65535)
+        try:
+            open_api_port = int(open_api_cfg.get("port", LOCAL_OPEN_API_DEFAULT_PORT))
+        except Exception:
+            open_api_port = LOCAL_OPEN_API_DEFAULT_PORT
+        if open_api_port <= 0:
+            open_api_port = LOCAL_OPEN_API_DEFAULT_PORT
+        self.open_api_port.setValue(open_api_port)
+        local_api_layout.addRow(tr("settings.localApiPort"), self.open_api_port)
+
+        local_api_hint = QLabel(tr("settings.localApiHint"))
+        local_api_hint.setProperty("role", "settingsHint")
+        local_api_hint.setWordWrap(True)
+        local_api_layout.addRow("", local_api_hint)
+
+        content_layout.addWidget(local_api_group)
 
         from app_gui.i18n import SUPPORTED_LANGUAGES
         preferences_group = QGroupBox(tr("settings.preferences"))
@@ -1170,6 +1197,8 @@ class SettingsDialog(QDialog):
             language=self.lang_combo.currentData(),
             theme=self.theme_combo.currentData(),
             ui_scale=self.scale_combo.currentData(),
+            open_api_enabled=self.open_api_enabled.isChecked(),
+            open_api_port=self.open_api_port.value(),
             ai_provider=provider,
             ai_model=self.ai_model_edit.currentText().strip() or provider_cfg["model"],
             ai_max_steps=self.ai_max_steps.value(),

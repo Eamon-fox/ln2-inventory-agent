@@ -29,6 +29,12 @@ from app_gui.application import (
     PlanExecutionUseCase,
 )
 from app_gui.application.ai_provider_catalog import AI_PROVIDER_DEFAULTS
+from app_gui.application.open_api import (
+    LOCAL_OPEN_API_DEFAULT_PORT,
+    LocalOpenApiController,
+    LocalOpenApiService,
+    MainThreadDispatcher,
+)
 from app_gui.gui_config import (
     DEFAULT_CONFIG_FILE,
     DEFAULT_MAX_STEPS,
@@ -355,6 +361,25 @@ class MainWindow(QMainWindow):
             dataset_lifecycle_use_case=self._dataset_lifecycle,
         )
         self._boxes_flow = ManageBoxesFlow(self)
+        self._local_open_api_dispatcher = MainThreadDispatcher(self)
+        self._local_open_api_controller = LocalOpenApiController(
+            yaml_path_getter=lambda: self.current_yaml_path,
+            bridge=self.bridge,
+            plan_store=self.plan_store,
+            gui_dispatcher=self._local_open_api_dispatcher,
+            focus_window_fn=self._focus_main_window_for_external_api,
+            prefill_takeout_fn=self.operations_panel.set_prefill,
+            prefill_add_fn=self.operations_panel.set_add_prefill,
+            prefill_ai_prompt_fn=lambda prompt, focus: self.ai_panel.prepare_external_prompt(
+                prompt,
+                focus=focus,
+                clear_plan=False,
+            ),
+        )
+        self._local_open_api_service = LocalOpenApiService(
+            self._local_open_api_controller,
+            port=int((self.gui_config.get("open_api") or {}).get("port", LOCAL_OPEN_API_DEFAULT_PORT) or LOCAL_OPEN_API_DEFAULT_PORT),
+        )
         self.connect_signals()
         self._setup_shortcuts()
         self.restore_ui_settings()
@@ -366,6 +391,7 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self._migration_status_indicator)
 
         self.statusBar().showMessage(tr("app.ready"), 2000)
+        self._apply_local_open_api_settings(show_feedback=False)
         self.overview_panel.refresh()
         if not os.path.isfile(self.current_yaml_path):
             self.statusBar().showMessage(
@@ -858,6 +884,7 @@ class MainWindow(QMainWindow):
                 "yaml_path": self.current_yaml_path,
                 "api_keys": self.gui_config.get("api_keys", {}),
                 "ai": self.gui_config.get("ai", {}),
+                "open_api": self.gui_config.get("open_api", {}),
                 "language": self.gui_config.get("language", "en"),
                 "theme": self.gui_config.get("theme", "dark"),
                 "ui_scale": self.gui_config.get("ui_scale", 1.0),
@@ -1095,6 +1122,72 @@ class MainWindow(QMainWindow):
         if not self._state_flow.handle_close_event(event):
             return
         super().closeEvent(event)
+
+    def _focus_main_window_for_external_api(self):
+        if self.isMinimized():
+            self.showNormal()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        return True
+
+    def _current_local_open_api_config(self):
+        config = self.gui_config.get("open_api", {})
+        try:
+            port = int(config.get("port", LOCAL_OPEN_API_DEFAULT_PORT))
+        except Exception:
+            port = LOCAL_OPEN_API_DEFAULT_PORT
+        if port <= 0:
+            port = LOCAL_OPEN_API_DEFAULT_PORT
+        return {
+            "enabled": bool(config.get("enabled", False)),
+            "port": port,
+        }
+
+    def _apply_local_open_api_settings(self, *, show_feedback=False):
+        service = getattr(self, "_local_open_api_service", None)
+        if service is None or not hasattr(service, "configure"):
+            return {
+                "ok": False,
+                "running": False,
+                "changed": False,
+                "message": "Local Open API service is unavailable.",
+            }
+
+        config = self._current_local_open_api_config()
+        result = service.configure(
+            enabled=bool(config.get("enabled", False)),
+            port=int(config.get("port", LOCAL_OPEN_API_DEFAULT_PORT)),
+        )
+        if result.get("ok"):
+            if show_feedback:
+                if result.get("running"):
+                    self.statusBar().showMessage(
+                        t("main.localApiStarted", port=result.get("port")),
+                        3000,
+                    )
+                else:
+                    self.statusBar().showMessage(tr("main.localApiStopped"), 3000)
+            return result
+
+        message = t(
+            "main.localApiStartFailed",
+            error=result.get("message") or "unknown error",
+        )
+        self.statusBar().showMessage(message, 6000)
+        if show_feedback:
+            self._emit_system_notice(
+                code="local_api.start_failed",
+                text=message,
+                level="error",
+                source="settings_dialog",
+                timeout_ms=6000,
+                data={
+                    "requested_port": int(config.get("port", LOCAL_OPEN_API_DEFAULT_PORT)),
+                    "error_code": result.get("error_code"),
+                },
+            )
+        return result
 
 def main():
     # Load GUI config BEFORE creating QApplication to set scale factor

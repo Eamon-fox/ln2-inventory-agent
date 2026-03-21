@@ -401,7 +401,14 @@ class WindowStateFlow:
 
         window.gui_config["yaml_path"] = window.current_yaml_path
         window.gui_config["ai"] = window.ai_panel.runtime_settings_snapshot()
+        local_api_state = getattr(window, "_current_local_open_api_config", None)
+        if callable(local_api_state):
+            window.gui_config["open_api"] = local_api_state()
         save_gui_config(window.gui_config)
+        local_api_service = getattr(window, "_local_open_api_service", None)
+        if local_api_service is not None and hasattr(local_api_service, "stop"):
+            with suppress(Exception):
+                local_api_service.stop()
         return True
 
 
@@ -446,6 +453,10 @@ class SettingsFlow:
             "thinking_enabled": _submission_value(values, "ai_thinking_enabled", True),
             "custom_prompt": _submission_value(values, "ai_custom_prompt", ""),
         }
+        window.gui_config["open_api"] = {
+            "enabled": bool(_submission_value(values, "open_api_enabled", False)),
+            "port": int(_submission_value(values, "open_api_port", 0) or 0),
+        }
         window.agent_session.set_api_keys(window.gui_config["api_keys"])
         window.ai_panel.apply_runtime_settings(
             provider=window.gui_config["ai"]["provider"],
@@ -454,6 +465,9 @@ class SettingsFlow:
             thinking_enabled=window.gui_config["ai"]["thinking_enabled"],
             custom_prompt=window.gui_config["ai"].get("custom_prompt", ""),
         )
+        apply_local_api = getattr(window, "_apply_local_open_api_settings", None)
+        if callable(apply_local_api):
+            apply_local_api(show_feedback=True)
 
     def finalize_after_settings(self):
         window = self._window

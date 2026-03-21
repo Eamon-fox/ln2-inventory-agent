@@ -48,6 +48,8 @@ class GuiConfigTests(unittest.TestCase):
         self.assertEqual("deepseek-chat", cfg["ai"]["model"])
         self.assertEqual(DEFAULT_MAX_STEPS, cfg["ai"]["max_steps"])
         self.assertTrue(cfg["ai"]["thinking_enabled"])
+        self.assertEqual(False, cfg["open_api"]["enabled"])
+        self.assertEqual(37666, cfg["open_api"]["port"])
 
     def test_load_gui_config_backfills_blank_model(self):
         with tempfile.TemporaryDirectory(prefix="ln2_gui_cfg_blank_") as temp_dir:
@@ -139,6 +141,21 @@ ai:
             cfg = load_gui_config(path=str(config_path))
 
         self.assertFalse(cfg["ai"]["thinking_enabled"])
+
+    def test_save_and_load_open_api_settings(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_gui_cfg_open_api_") as temp_dir:
+            config_path = Path(temp_dir) / "config.yaml"
+            source = {
+                "open_api": {
+                    "enabled": True,
+                    "port": 40123,
+                },
+            }
+            save_gui_config(source, path=str(config_path))
+            cfg = load_gui_config(path=str(config_path))
+
+        self.assertEqual(True, cfg["open_api"]["enabled"])
+        self.assertEqual(40123, cfg["open_api"]["port"])
 
 
 class ApiKeysConfigTests(unittest.TestCase):

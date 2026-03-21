@@ -12,6 +12,7 @@ from app_gui.application.ai_provider_catalog import (
     default_ai_model,
     normalize_ai_provider,
 )
+from app_gui.application.open_api.contracts import LOCAL_OPEN_API_DEFAULT_PORT
 from lib.app_storage import (
     get_legacy_config_file,
     get_user_config_dir,
@@ -52,6 +53,10 @@ DEFAULT_GUI_CONFIG = {
     "language": "zh-CN",
     "theme": "light",
     "ui_scale": 1.0,
+    "open_api": {
+        "enabled": False,
+        "port": LOCAL_OPEN_API_DEFAULT_PORT,
+    },
     "last_notified_release": "0.0.0",
     "release_notes_preview": "",
     "import_onboarding_seen": False,
@@ -83,6 +88,15 @@ def load_gui_config(path=None):
         cfg.setdefault("api_keys", {})
         if not isinstance(cfg.get("api_keys"), dict):
             cfg["api_keys"] = {}
+        cfg.setdefault("open_api", {})
+        if not isinstance(cfg.get("open_api"), dict):
+            cfg["open_api"] = {}
+        cfg["open_api"]["enabled"] = bool(cfg.get("open_api", {}).get("enabled", False))
+        try:
+            port = int(cfg.get("open_api", {}).get("port", LOCAL_OPEN_API_DEFAULT_PORT))
+        except Exception:
+            port = LOCAL_OPEN_API_DEFAULT_PORT
+        cfg["open_api"]["port"] = port if port > 0 else LOCAL_OPEN_API_DEFAULT_PORT
         if not str(cfg.get("ai", {}).get("model") or "").strip():
             cfg["ai"]["model"] = default_ai_model(provider)
         cfg["ai"]["thinking_enabled"] = bool(cfg.get("ai", {}).get("thinking_enabled", True))
@@ -109,6 +123,7 @@ def load_gui_config(path=None):
             "language",
             "theme",
             "ui_scale",
+            "open_api",
             "last_notified_release",
             "release_notes_preview",
             "import_onboarding_seen",

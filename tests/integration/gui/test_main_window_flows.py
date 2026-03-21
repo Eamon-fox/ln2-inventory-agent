@@ -229,11 +229,15 @@ def _build_settings_window(path_text):
         "theme": "dark",
         "ui_scale": 1.0,
         "api_keys": {},
+        "open_api": {"enabled": False, "port": 37666},
         "ai": {},
     }
     window.bridge = SimpleNamespace()
     window.agent_session = SimpleNamespace(set_api_keys=MagicMock())
     window.ai_panel = _FakeAIPanelState()
+    window._apply_local_open_api_settings = MagicMock(return_value={"ok": True, "running": False})
+    window._current_local_open_api_config = MagicMock(return_value={"enabled": False, "port": 37666})
+    window._local_open_api_service = SimpleNamespace(stop=MagicMock())
     window._update_dataset_label = MagicMock()
     window.overview_panel = SimpleNamespace(refresh=MagicMock())
     window.operations_panel = SimpleNamespace(apply_meta_update=MagicMock())
@@ -250,6 +254,8 @@ def test_settings_flow_apply_and_finalize_updates_runtime_state():
         language="zh-CN",
         theme="dark",
         ui_scale=1.0,
+        open_api_enabled=True,
+        open_api_port=40123,
         ai_provider="deepseek",
         ai_model="deepseek-chat",
         ai_max_steps=9,
@@ -262,6 +268,7 @@ def test_settings_flow_apply_and_finalize_updates_runtime_state():
         flow.finalize_after_settings()
 
     assert window.gui_config["api_keys"] == {"deepseek": "sk-test"}
+    assert window.gui_config["open_api"] == {"enabled": True, "port": 40123}
     assert window.gui_config["yaml_path"] == window.current_yaml_path
     assert window.ai_panel.ai_provider.value == "deepseek"
     assert window.ai_panel.ai_model.value == "deepseek-chat"
@@ -269,6 +276,7 @@ def test_settings_flow_apply_and_finalize_updates_runtime_state():
     assert window.ai_panel.ai_thinking_enabled.value is False
     assert window.ai_panel.ai_custom_prompt == "use concise style"
     window.agent_session.set_api_keys.assert_called_once_with({"deepseek": "sk-test"})
+    window._apply_local_open_api_settings.assert_called_once_with(show_feedback=True)
     window._update_dataset_label.assert_called_once()
     window.overview_panel.refresh.assert_called_once()
     window.operations_panel.apply_meta_update.assert_called_once_with()

@@ -11,6 +11,8 @@ class SettingsDialogSubmission:
     language: str = "en"
     theme: str = "dark"
     ui_scale: float = 1.0
+    open_api_enabled: bool = False
+    open_api_port: int = 0
     ai_provider: str = ""
     ai_model: str = ""
     ai_max_steps: int = 0
@@ -24,6 +26,8 @@ class SettingsDialogSubmission:
             "language": self.language,
             "theme": self.theme,
             "ui_scale": self.ui_scale,
+            "open_api_enabled": self.open_api_enabled,
+            "open_api_port": self.open_api_port,
             "ai_provider": self.ai_provider,
             "ai_model": self.ai_model,
             "ai_max_steps": self.ai_max_steps,

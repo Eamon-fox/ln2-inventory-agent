@@ -653,6 +653,21 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         self.assertIsInstance(submission, SettingsDialogSubmission)
         self.assertEqual(dialog.get_values(), submission.as_dict())
 
+    def test_settings_dialog_submission_includes_local_open_api_fields(self):
+        from app_gui.main import SettingsDialog
+
+        dialog = SettingsDialog(
+            config={
+                "yaml_path": self.fake_yaml_path,
+                "open_api": {"enabled": True, "port": 40123},
+            }
+        )
+
+        submission = dialog.get_submission()
+
+        self.assertTrue(submission.open_api_enabled)
+        self.assertEqual(40123, submission.open_api_port)
+
     def test_settings_dialog_ai_model_is_editable_and_persisted(self):
         from app_gui.main import SettingsDialog, PROVIDER_DEFAULTS
 

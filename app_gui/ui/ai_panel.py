@@ -460,20 +460,24 @@ class AIPanel(QWidget):
         self.ai_prompt.setTextCursor(cursor)
         return True
 
-    def prepare_import_migration(self, prompt_text, *, focus=True):
+    def prepare_external_prompt(self, prompt_text, *, focus=True, clear_plan=False):
         text = str(prompt_text or "").strip()
         if not text:
             return
-        clear_fn = getattr(self._plan_store, "clear", None)
-        if callable(clear_fn):
-            with suppress(Exception):
-                clear_fn()
+        if clear_plan:
+            clear_fn = getattr(self._plan_store, "clear", None)
+            if callable(clear_fn):
+                with suppress(Exception):
+                    clear_fn()
         self.ai_prompt.setPlainText(text)
         if focus:
             self.ai_prompt.setFocus(Qt.OtherFocusReason)
             cursor = self.ai_prompt.textCursor()
             cursor.movePosition(QTextCursor.End)
             self.ai_prompt.setTextCursor(cursor)
+
+    def prepare_import_migration(self, prompt_text, *, focus=True):
+        self.prepare_external_prompt(prompt_text, focus=focus, clear_plan=True)
 
     def apply_runtime_settings(
         self,
