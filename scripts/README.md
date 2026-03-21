@@ -7,6 +7,16 @@
 - 一个发布元数据入口：`latest.json`
 - 一份发布说明真相源：`CHANGELOG.md` 顶部条目
 
+## 常用仓库路径
+
+- macOS 开发仓库：`/Users/eamon/code/snowfox`
+- Windows 开发仓库：`D:\github_repo\ln2-inventory-agent`
+
+说明：
+
+- Windows 的 `D:\SnowFox` 是安装目录，不是 git 仓库
+- 正式发版时，Windows 侧应在 `D:\github_repo\ln2-inventory-agent` 拉代码、构建安装包
+
 ## 脚本边界
 
 本目录脚本默认只负责仓库内确定性、低环境耦合、可重复校验的步骤。
