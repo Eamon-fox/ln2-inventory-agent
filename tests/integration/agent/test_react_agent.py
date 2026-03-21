@@ -1013,6 +1013,7 @@ class ReactAgentTests(ManagedPathTestCase):
         self.assertIn(f"Current inventory (yaml_path): {yaml_path}", content)
         self.assertIn("Built-in skills are available via the `use_skill` tool.", content)
         self.assertIn("`migration`:", content)
+        self.assertIn("`snowfox-system`:", content)
         self.assertIn("`yaml-repair`:", content)
         self.assertNotIn("agent_skills/migration/SKILL.md", content)
         self.assertNotIn("Current time:", content)

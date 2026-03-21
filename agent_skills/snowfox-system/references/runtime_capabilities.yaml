@@ -1,0 +1,134 @@
+settings:
+  data:
+    path: "Settings > Data"
+    section_ui_marker: 'QGroupBox(tr("settings.data"))'
+    actions:
+      - create_new_dataset
+      - change_data_root
+      - switch_dataset
+      - rename_dataset
+      - delete_dataset
+      - manage_fields
+      - manage_boxes
+      - import_existing_data
+      - export_full_csv
+    ui_markers:
+      create_new_dataset: 'QPushButton(tr("main.new"))'
+      change_data_root: 'QPushButton(tr("settings.changeDataRoot"))'
+      switch_dataset: 'tr("settings.datasetSwitch")'
+      rename_dataset: 'QPushButton(tr("settings.renameDataset"))'
+      delete_dataset: 'QPushButton(tr("settings.deleteDataset"))'
+      manage_fields: 'QPushButton(tr("main.manageCustomFields"))'
+      manage_boxes: 'QPushButton(tr("main.manageBoxes"))'
+      import_existing_data: 'QPushButton(tr("main.importExistingDataTitle"))'
+      export_full_csv: 'QPushButton(tr("operations.exportFullCsv"))'
+  ai:
+    path: "Settings > AI"
+    section_ui_marker: 'QGroupBox(tr("settings.ai"))'
+    actions:
+      - change_provider
+      - change_model
+      - change_max_steps
+      - toggle_thinking
+      - edit_custom_prompt
+    ui_markers:
+      change_provider: 'tr("settings.aiProvider")'
+      change_model: 'tr("settings.aiModel")'
+      change_max_steps: 'tr("settings.aiMaxSteps")'
+      toggle_thinking: 'tr("settings.aiThinking")'
+      edit_custom_prompt: 'tr("settings.customPrompt")'
+  local_api:
+    path: "Settings > Local API"
+    section_ui_marker: 'QGroupBox(tr("settings.localApi"))'
+    actions:
+      - enable_or_disable
+      - change_port
+      - copy_external_skill_template
+    ui_markers:
+      enable_or_disable: 'tr("settings.localApiEnabled")'
+      change_port: 'tr("settings.localApiPort")'
+      copy_external_skill_template: 'tr("settings.localApiSkillTemplate")'
+  preferences:
+    path: "Settings > Preferences"
+    section_ui_marker: 'QGroupBox(tr("settings.preferences"))'
+    actions:
+      - change_language
+      - change_theme
+      - change_ui_scale
+    ui_markers:
+      change_language: 'tr("settings.language")'
+      change_theme: 'tr("settings.theme")'
+      change_ui_scale: 'tr("settings.uiScale")'
+  about:
+    path: "Settings > About"
+    section_ui_marker: 'QGroupBox(tr("settings.about"))'
+    actions:
+      - check_for_updates
+    ui_markers:
+      check_for_updates: 'QPushButton(tr("settings.checkUpdate"))'
+
+manage_boxes:
+  entry_path: "Settings > Data > Manage Boxes"
+  entry_ui_marker: 'QPushButton(tr("main.manageBoxes"))'
+  operations:
+    add:
+      requires_confirmation: true
+      ui_marker: 'addItem(tr("main.boxOpAdd"), "add")'
+    remove:
+      requires_confirmation: true
+      ui_marker: 'addItem(tr("main.boxOpRemove"), "remove")'
+    set_tag:
+      requires_confirmation: false
+      ui_marker: 'addItem(tr("main.boxOpSetTag"), "set_tag")'
+    set_indexing:
+      requires_confirmation: false
+      ui_marker: 'addItem(tr("main.boxOpSetIndexing"), "set_indexing")'
+
+position_indexing:
+  gui_path: "Settings > Data > Manage Boxes > Set position indexing"
+  allowed_values:
+    - numeric
+    - alphanumeric
+  storage_field: meta.box_layout.indexing
+  storage_rule: switching indexing changes display/input mode only
+  inventory_position_field: inventory[].position
+  inventory_position_rule: stored inventory positions remain integers
+
+local_open_api:
+  route_groups:
+    read_routes:
+      - GET /api/v1/health
+      - GET /api/v1/datasets
+      - GET /api/v1/session
+      - GET /api/v1/inventory/search
+      - GET /api/v1/inventory/filter
+      - GET /api/v1/inventory/stats
+      - GET /api/v1/inventory/validate
+    gui_handoff_routes:
+      - POST /api/v1/gui/focus
+      - POST /api/v1/session/switch-dataset
+      - POST /api/v1/gui/prefill-takeout
+      - POST /api/v1/gui/prefill-add
+      - POST /api/v1/gui/prefill-ai-prompt
+      - POST /api/v1/gui/stage-plan
+  stage_allowed_actions:
+    - add
+    - edit
+    - takeout
+    - move
+  restrictions:
+    - loopback_only
+    - disabled_by_default
+    - current_gui_session_dataset_only
+    - explicit_route_allowlist_only
+    - no_write_tool_execution
+    - no_agent_runtime_exposure
+
+agent_boundaries:
+  rules:
+    - field_management_is_gui_only
+    - inventory_mutation_tools_are_stage_only
+    - do_not_patch_managed_inventory_yaml_with_file_tools
+    - local_api_cannot_execute_write_tools
+    - local_api_cannot_expose_agent_runtime
+    - migrate_write_scope_only_for_agent_file_tools

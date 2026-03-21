@@ -193,7 +193,34 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         self.assertFalse(response["ok"])
         self.assertEqual("unknown_skill", response.get("error_code"))
         self.assertIn("migration", list(response.get("available_skills") or []))
+        self.assertIn("snowfox-system", list(response.get("available_skills") or []))
         self.assertIn("yaml-repair", list(response.get("available_skills") or []))
+
+    def test_use_skill_returns_snowfox_system_skill_body_and_resources(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+
+        response = runner.run("use_skill", {"skill_name": "snowfox-system"})
+
+        self.assertTrue(response["ok"])
+        self.assertEqual("snowfox-system", response.get("skill_name"))
+        self.assertIn("architecture", str(response.get("description") or "").lower())
+        self.assertIn("Core Workflow", str(response.get("instructions_markdown") or ""))
+        refs = list(response.get("references") or [])
+        ref_docs = list(response.get("reference_documents") or [])
+        self.assertIn("agent_skills/snowfox-system/references/architecture_map.md", refs)
+        self.assertNotIn("agent_skills/snowfox-system/references/repo_sources.md", refs)
+        self.assertTrue(
+            any(
+                doc.get("path") == "agent_skills/snowfox-system/references/user_workflows.md"
+                for doc in ref_docs
+            )
+        )
+        self.assertFalse(
+            any(
+                doc.get("path") == "agent_skills/snowfox-system/references/repo_sources.md"
+                for doc in ref_docs
+            )
+        )
 
     def _migration_output_path(self):
         repo_root = self._repo_root()

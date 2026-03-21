@@ -18,6 +18,7 @@ class DocContractIntegrityTests(unittest.TestCase):
             ARCH_DOC: {
                 "layer_rules",
                 "agent_context_checkpointing",
+                "agent_builtin_skills",
                 "local_open_api_boundary",
                 "inventory_position_indexing_rules",
             },
