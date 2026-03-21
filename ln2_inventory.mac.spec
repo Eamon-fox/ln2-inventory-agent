@@ -11,9 +11,9 @@ import re
 
 
 def _extract_app_version():
-    with open("app_gui/main.py", encoding="utf-8") as handle:
+    with open("app_gui/version.py", encoding="utf-8") as handle:
         content = handle.read()
-    match = re.search(r'APP_VERSION\s*=\s*["\']([^"\']+)["\']', content)
+    match = re.search(r'APP_VERSION[^=]*=\s*["\']([^"\']+)["\']', content)
     if match:
         return match.group(1)
     return "1.0.0"

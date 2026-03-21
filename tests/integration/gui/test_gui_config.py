@@ -6,6 +6,7 @@ Covers: app_gui/gui_config.py
 GUI 配置持久化、默认值与迁移测试
 """
 
+import os
 import sys
 import tempfile
 import unittest
@@ -78,7 +79,7 @@ ai:
             save_gui_config(source, path=str(config_path))
             cfg = load_gui_config(path=str(config_path))
 
-        self.assertEqual("/tmp/snowfox-data", cfg["data_root"])
+        self.assertEqual(os.path.abspath("/tmp/snowfox-data"), cfg["data_root"])
         self.assertEqual("deepseek-chat", cfg["ai"]["model"])
         self.assertEqual(12, cfg["ai"]["max_steps"])
         self.assertTrue(cfg["ai"]["thinking_enabled"])

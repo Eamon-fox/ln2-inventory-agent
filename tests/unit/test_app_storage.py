@@ -21,7 +21,10 @@ class AppStorageTests(unittest.TestCase):
             source_root="/tmp/source",
             target_root="/tmp/target",
         )
-        self.assertEqual("/tmp/target/inventories/demo/inventory.yaml", remapped)
+        expected = os.path.abspath(
+            os.path.join("/tmp/target", "inventories", "demo", "inventory.yaml")
+        )
+        self.assertEqual(expected, remapped)
 
     def test_migrate_data_root_copies_inventories_and_migrate(self):
         with tempfile.TemporaryDirectory() as source_dir, tempfile.TemporaryDirectory() as target_dir:

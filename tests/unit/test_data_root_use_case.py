@@ -1,5 +1,6 @@
 """Unit tests for data-root migration orchestration."""
 
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -41,7 +42,7 @@ class DataRootUseCaseTests(unittest.TestCase):
             current_yaml_path=current_yaml,
         )
 
-        self.assertEqual(target_root, result.data_root)
+        self.assertEqual(os.path.abspath(target_root), result.data_root)
         self.assertEqual("/tmp/target-root/inventories/demo/inventory.yaml", result.yaml_path)
         self.assertTrue(result.migrated)
 

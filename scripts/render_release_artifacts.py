@@ -184,8 +184,8 @@ def main() -> int:
         encoding="utf-8",
     )
 
-    print(f"✅ 已更新 latest.json.release_notes -> v{version}")
-    print(f"✅ 已生成 GitHub Release 文档 -> {github_release_path}")
+    print(f"[OK] 已更新 latest.json.release_notes -> v{version}")
+    print(f"[OK] 已生成 GitHub Release 文档 -> {github_release_path}")
     return 0
 
 
