@@ -332,6 +332,31 @@ def tool_set_box_tag(
     return _format_tool_response_positions(response, yaml_path=yaml_path)
 
 
+def tool_set_box_layout_indexing(
+    yaml_path,
+    indexing,
+    dry_run=False,
+    execution_mode=None,
+    actor_context=None,
+    source="tool_api",
+    auto_backup=True,
+    request_backup_path=None,
+):
+    from .tool_api_impl import write_ops as _write_ops
+
+    response = _write_ops.tool_set_box_layout_indexing(
+        yaml_path=yaml_path,
+        indexing=indexing,
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+        source=source,
+        auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
+    )
+    return _format_tool_response_positions(response, yaml_path=yaml_path)
+
+
 def tool_export_inventory_csv(yaml_path, output_path):
     from .tool_api_impl import read_ops as _read_ops
 

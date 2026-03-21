@@ -129,3 +129,25 @@ class ValidateServiceTests(ManagedPathTestCase):
         self.assertEqual("meta_only", report.get("mode"))
         self.assertEqual(0, report.get("error_count"))
         self.assertEqual(0, report.get("warning_count"))
+
+    def test_validate_yaml_data_meta_only_rejects_invalid_indexing(self):
+        payload = {
+            "meta": {
+                "box_layout": {
+                    "rows": 9,
+                    "cols": 9,
+                    "box_count": 5,
+                    "box_numbers": [1, 2, 3, 4, 5],
+                    "indexing": "letters_first",
+                },
+            },
+            "inventory": [],
+        }
+
+        result = validate_yaml_data(payload, mode=VALIDATION_MODE_META_ONLY)
+
+        self.assertFalse(result.get("ok"))
+        report = result.get("report") or {}
+        self.assertEqual("meta_only", report.get("mode"))
+        self.assertGreater(report.get("error_count") or 0, 0)
+        self.assertTrue(any("meta.box_layout.indexing" in item for item in report.get("errors") or []))

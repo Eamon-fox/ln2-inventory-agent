@@ -8,6 +8,7 @@ from lib.tool_api_impl.audit_details import (
     failure_details,
     move_details,
     rollback_details,
+    set_box_layout_indexing_details,
     set_box_tag_details,
     takeout_details,
 )
@@ -268,6 +269,22 @@ class TestSetBoxTagDetails:
         d = set_box_tag_details(box=3, tag_before="Old", tag_after="")
         assert d["tag_before"] == "Old"
         assert d["tag_after"] == ""
+
+
+# ── set_box_layout_indexing_details ───────────────────────────────
+
+
+class TestSetBoxLayoutIndexingDetails:
+    def test_concise(self):
+        d = set_box_layout_indexing_details(
+            indexing_before="numeric",
+            indexing_after="alphanumeric",
+        )
+        assert d == {
+            "op": "set_box_layout_indexing",
+            "indexing_before": "numeric",
+            "indexing_after": "alphanumeric",
+        }
 
 
 # ── manage_boxes_details ──────────────────────────────────────

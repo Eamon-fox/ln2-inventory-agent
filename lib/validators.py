@@ -14,6 +14,7 @@ from .position_fmt import (
     get_box_numbers,
     get_position_range,
     display_to_pos,
+    is_valid_box_layout_indexing,
     _indexing,
 )
 from .validation_primitives import (
@@ -416,6 +417,9 @@ def validate_inventory(data):
         return [str(unsupported_issue.get("message") or "Unsupported dataset model.")], []
 
     layout = meta.get("box_layout", {})
+    indexing = str((layout or {}).get("indexing") or "").strip().lower()
+    if indexing and not is_valid_box_layout_indexing(indexing):
+        errors.append("meta.box_layout.indexing must be 'numeric' or 'alphanumeric'")
 
     for idx, rec in enumerate(inventory):
         if not isinstance(rec, dict):

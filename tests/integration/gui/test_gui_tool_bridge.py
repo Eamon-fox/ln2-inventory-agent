@@ -438,8 +438,31 @@ inventory:
             self.assertEqual(1, payload.get("box"))
             self.assertEqual("frozen", payload.get("tag"))
             self.assertEqual("execute", kwargs.get("execution_mode"))
+
+    def test_set_box_layout_indexing_routes_explicit_write_through_shared_adapter(self):
+        with _managed_data_root("ln2_bridge_") as install_dir:
+            path = self._write_inventory("bridge-box-indexing")
+            bridge = GuiToolBridge(session_id="bridge-indexing")
+
+            with patch("app_gui.tool_bridge._write_adapter.invoke_write_tool") as mock_invoke:
+                mock_invoke.return_value = {"ok": True}
+                response = bridge.set_box_layout_indexing(
+                    str(path),
+                    indexing="alphanumeric",
+                    execution_mode="execute",
+                )
+
+            self.assertTrue(response.get("ok"))
+            mock_invoke.assert_called_once()
+            self.assertEqual("set_box_layout_indexing", mock_invoke.call_args.args[0])
+            kwargs = mock_invoke.call_args.kwargs
+            self.assertEqual(str(path), kwargs.get("yaml_path"))
+            payload = kwargs.get("payload") or {}
+            self.assertEqual("alphanumeric", payload.get("indexing"))
+            self.assertEqual("execute", kwargs.get("execution_mode"))
             self.assertEqual("app_gui", kwargs.get("source"))
-            self.assertEqual("bridge-tag", kwargs.get("actor_context", {}).get("session_id"))
+            self.assertEqual("app_gui", kwargs.get("backup_event_source"))
+            self.assertEqual("bridge-indexing", kwargs.get("actor_context", {}).get("session_id"))
 
 
 if __name__ == "__main__":

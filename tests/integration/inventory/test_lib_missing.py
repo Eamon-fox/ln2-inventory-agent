@@ -339,6 +339,12 @@ class ValidatorsRecordTests(unittest.TestCase):
         errors, _warnings = validate_inventory(data)
         self.assertTrue(any("'box' must be an integer" in e for e in errors))
 
+    def test_validate_inventory_rejects_unknown_indexing_value(self):
+        data = make_data([make_record(1, box=1, position=1)])
+        data["meta"]["box_layout"]["indexing"] = "letters_first"
+        errors, _warnings = validate_inventory(data)
+        self.assertTrue(any("meta.box_layout.indexing" in e for e in errors))
+
     def test_validate_box_and_position_reject_bool(self):
         """Field-level validators should treat bool as invalid integer input."""
         self.assertFalse(validate_box(True))
@@ -531,4 +537,3 @@ class NormalizeActionConsistencyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

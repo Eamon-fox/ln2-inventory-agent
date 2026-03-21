@@ -236,6 +236,15 @@ def set_box_tag_details(*, box, tag_before, tag_after):
     }
 
 
+def set_box_layout_indexing_details(*, indexing_before, indexing_after):
+    """Build details for a successful set_box_layout_indexing audit event."""
+    return {
+        "op": "set_box_layout_indexing",
+        "indexing_before": indexing_before,
+        "indexing_after": indexing_after,
+    }
+
+
 def manage_boxes_details(*, sub_op, preview):
     """Build details for a successful manage_boxes audit event.
 

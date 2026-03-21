@@ -3,6 +3,7 @@
 from . import (
     write_add_edit,
     write_rollback_box,
+    write_set_box_layout_indexing,
     write_set_box_tag,
     write_takeout_batch,
 )
@@ -162,6 +163,28 @@ def tool_set_box_tag(
         yaml_path=yaml_path,
         box=box,
         tag=tag,
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        actor_context=actor_context,
+        source=source,
+        auto_backup=auto_backup,
+        request_backup_path=request_backup_path,
+    )
+
+
+def tool_set_box_layout_indexing(
+    yaml_path,
+    indexing,
+    dry_run=False,
+    execution_mode=None,
+    actor_context=None,
+    source="tool_api",
+    auto_backup=True,
+    request_backup_path=None,
+):
+    return write_set_box_layout_indexing.tool_set_box_layout_indexing(
+        yaml_path=yaml_path,
+        indexing=indexing,
         dry_run=dry_run,
         execution_mode=execution_mode,
         actor_context=actor_context,

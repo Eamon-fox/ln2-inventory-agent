@@ -21,6 +21,7 @@ try:
     from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
     from app_gui.main_window_flows import DatasetFlow, ManageBoxesFlow, SettingsFlow, WindowStateFlow
+    from app_gui.ui.dialogs.manage_boxes_dialog import ManageBoxesDialog
     from app_gui.ui.dialogs.new_dataset_dialog import NewDatasetDialog
     from app_gui.ui.limits import MAX_BOX_COUNT_UI
 
@@ -34,6 +35,7 @@ except Exception:
     ManageBoxesFlow = None
     SettingsFlow = None
     WindowStateFlow = None
+    ManageBoxesDialog = None
     NewDatasetDialog = None
     MAX_BOX_COUNT_UI = 200
     PYSIDE_AVAILABLE = False
@@ -405,7 +407,10 @@ def test_manage_boxes_flow_add_request_executes_and_emits_notice():
             bridge=_Bridge(),
             overview_panel=SimpleNamespace(refresh=MagicMock()),
             on_operation_completed=MagicMock(),
-            operations_panel=SimpleNamespace(emit_external_operation_event=MagicMock()),
+            operations_panel=SimpleNamespace(
+                emit_external_operation_event=MagicMock(),
+                apply_meta_update=MagicMock(),
+            ),
             show_status=MagicMock(),
         )
         flow = ManageBoxesFlow(window)
@@ -421,6 +426,7 @@ def test_manage_boxes_flow_add_request_executes_and_emits_notice():
         assert bridge_calls
         assert bridge_calls[0]["operation"] == "add"
         assert bridge_calls[0]["count"] == 2
+        window.operations_panel.apply_meta_update.assert_called_once()
         window.overview_panel.refresh.assert_called_once()
         window.on_operation_completed.assert_called_once_with(True)
         window.show_status.assert_called_once()
@@ -445,7 +451,10 @@ def test_manage_boxes_flow_async_add_uses_non_modal_confirm_and_callback():
         window.bridge = _Bridge()
         window.overview_panel = SimpleNamespace(refresh=MagicMock())
         window.on_operation_completed = MagicMock()
-        window.operations_panel = SimpleNamespace(emit_external_operation_event=MagicMock())
+        window.operations_panel = SimpleNamespace(
+            emit_external_operation_event=MagicMock(),
+            apply_meta_update=MagicMock(),
+        )
         window.show_status = MagicMock()
         window._floating_dialog_refs = []
         flow = ManageBoxesFlow(window)
@@ -472,6 +481,7 @@ def test_manage_boxes_flow_async_add_uses_non_modal_confirm_and_callback():
         assert bridge_calls
         assert bridge_calls[0]["operation"] == "add"
         assert bridge_calls[0]["count"] == 2
+        window.operations_panel.apply_meta_update.assert_called_once()
         window.overview_panel.refresh.assert_called_once()
         window.on_operation_completed.assert_called_once_with(True)
         window.show_status.assert_called_once()
@@ -500,7 +510,10 @@ def test_manage_boxes_flow_async_remove_cancel_returns_user_cancelled():
         window.bridge = SimpleNamespace(manage_boxes=adjust_mock)
         window.overview_panel = SimpleNamespace(refresh=MagicMock())
         window.on_operation_completed = MagicMock()
-        window.operations_panel = SimpleNamespace(emit_external_operation_event=MagicMock())
+        window.operations_panel = SimpleNamespace(
+            emit_external_operation_event=MagicMock(),
+            apply_meta_update=MagicMock(),
+        )
         window.show_status = MagicMock()
         window._floating_dialog_refs = []
         flow = ManageBoxesFlow(window)
@@ -526,37 +539,57 @@ def test_manage_boxes_flow_async_remove_cancel_returns_user_cancelled():
         assert results and results[0]["ok"] is False
         assert results[0]["error_code"] == "user_cancelled"
         adjust_mock.assert_not_called()
+        window.operations_panel.apply_meta_update.assert_not_called()
         window.overview_panel.refresh.assert_not_called()
         window.on_operation_completed.assert_not_called()
         window.operations_panel.emit_external_operation_event.assert_not_called()
         window.show_status.assert_not_called()
 
 
-def test_manage_boxes_prompt_add_uses_ui_max_limit():
+def test_manage_boxes_dialog_add_uses_ui_max_limit():
+    _ensure_qapp()
+    dialog = ManageBoxesDialog(layout={"rows": 9, "cols": 9, "box_count": 3})
+
+    assert dialog.add_count_spin.maximum() == MAX_BOX_COUNT_UI
+
+
+def test_manage_boxes_flow_prompt_request_uses_dialog_result():
     with tempfile.TemporaryDirectory() as tmpdir:
         yaml_path = os.path.join(tmpdir, "inventory.yaml")
-        Path(yaml_path).write_text("meta: {}\ninventory: []\n", encoding="utf-8")
+        Path(yaml_path).write_text(
+            (
+                "meta:\n"
+                "  box_layout:\n"
+                "    rows: 9\n"
+                "    cols: 9\n"
+                "    box_count: 3\n"
+                "    indexing: alphanumeric\n"
+                "inventory: []\n"
+            ),
+            encoding="utf-8",
+        )
+
+        captured = {}
+
+        class _FakeDialog:
+            def __init__(self, *, layout, parent):
+                captured["layout"] = dict(layout or {})
+                captured["parent"] = parent
+
+            def exec(self):
+                return QDialog.Accepted
+
+            def get_request(self):
+                return {"operation": "set_indexing", "indexing": "numeric"}
 
         window = SimpleNamespace(current_yaml_path=yaml_path)
         flow = ManageBoxesFlow(window)
 
-        with patch(
-            "app_gui.main_window_flows.QInputDialog.getItem",
-            return_value=("Add boxes", True),
-        ), patch(
-            "app_gui.main_window_flows.tr",
-            side_effect=lambda key, **kwargs: (
-                "Add boxes" if key == "main.boxOpAdd" else str(key)
-            ),
-        ), patch(
-            "app_gui.main_window_flows.QInputDialog.getInt",
-            return_value=(MAX_BOX_COUNT_UI, True),
-        ) as get_int_mock:
+        with patch("app_gui.main_window_flows.ManageBoxesDialog", _FakeDialog):
             result = flow.prompt_request(yaml_path_override=yaml_path)
 
-        assert result == {"operation": "add", "count": MAX_BOX_COUNT_UI}
-        assert get_int_mock.call_count == 1
-        assert get_int_mock.call_args.args[5] == MAX_BOX_COUNT_UI
+        assert result == {"operation": "set_indexing", "indexing": "numeric"}
+        assert captured["layout"]["indexing"] == "alphanumeric"
 
 
 def test_manage_boxes_flow_add_requires_explicit_count():
@@ -570,7 +603,10 @@ def test_manage_boxes_flow_add_requires_explicit_count():
             bridge=SimpleNamespace(manage_boxes=adjust_mock),
             overview_panel=SimpleNamespace(refresh=MagicMock()),
             on_operation_completed=MagicMock(),
-            operations_panel=SimpleNamespace(emit_external_operation_event=MagicMock()),
+            operations_panel=SimpleNamespace(
+                emit_external_operation_event=MagicMock(),
+                apply_meta_update=MagicMock(),
+            ),
             show_status=MagicMock(),
         )
         flow = ManageBoxesFlow(window)
@@ -584,6 +620,7 @@ def test_manage_boxes_flow_add_requires_explicit_count():
         assert result["ok"] is False
         assert result["error_code"] == "invalid_count"
         adjust_mock.assert_not_called()
+        window.operations_panel.apply_meta_update.assert_not_called()
         window.overview_panel.refresh.assert_not_called()
         window.on_operation_completed.assert_not_called()
         window.operations_panel.emit_external_operation_event.assert_not_called()
@@ -611,7 +648,10 @@ def test_manage_boxes_flow_remove_invalid_box_fails_before_confirm():
             bridge=SimpleNamespace(manage_boxes=adjust_mock),
             overview_panel=SimpleNamespace(refresh=MagicMock()),
             on_operation_completed=MagicMock(),
-            operations_panel=SimpleNamespace(emit_external_operation_event=MagicMock()),
+            operations_panel=SimpleNamespace(
+                emit_external_operation_event=MagicMock(),
+                apply_meta_update=MagicMock(),
+            ),
             show_status=MagicMock(),
         )
         flow = ManageBoxesFlow(window)
@@ -627,6 +667,7 @@ def test_manage_boxes_flow_remove_invalid_box_fails_before_confirm():
         assert result["error_code"] == "invalid_box"
         confirm_mock.assert_not_called()
         adjust_mock.assert_not_called()
+        window.operations_panel.apply_meta_update.assert_not_called()
         window.overview_panel.refresh.assert_not_called()
         window.on_operation_completed.assert_not_called()
         window.operations_panel.emit_external_operation_event.assert_not_called()
@@ -684,7 +725,10 @@ def test_manage_boxes_flow_set_tag_executes_and_emits_notice():
             bridge=SimpleNamespace(manage_boxes=adjust_mock, set_box_tag=set_tag_mock),
             overview_panel=SimpleNamespace(refresh=MagicMock()),
             on_operation_completed=MagicMock(),
-            operations_panel=SimpleNamespace(emit_external_operation_event=MagicMock()),
+            operations_panel=SimpleNamespace(
+                emit_external_operation_event=MagicMock(),
+                apply_meta_update=MagicMock(),
+            ),
             show_status=MagicMock(),
         )
         flow = ManageBoxesFlow(window)
@@ -703,6 +747,66 @@ def test_manage_boxes_flow_set_tag_executes_and_emits_notice():
             execution_mode="execute",
         )
         adjust_mock.assert_not_called()
+        window.operations_panel.apply_meta_update.assert_called_once()
+        window.overview_panel.refresh.assert_called_once()
+        window.on_operation_completed.assert_called_once_with(True)
+        window.show_status.assert_called_once()
+        window.operations_panel.emit_external_operation_event.assert_called_once()
+
+
+def test_manage_boxes_flow_set_indexing_executes_and_emits_notice():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yaml_path = os.path.join(tmpdir, "inventory.yaml")
+        Path(yaml_path).write_text(
+            (
+                "meta:\n"
+                "  box_layout:\n"
+                "    rows: 9\n"
+                "    cols: 9\n"
+                "    box_count: 2\n"
+                "inventory: []\n"
+            ),
+            encoding="utf-8",
+        )
+
+        set_indexing_mock = MagicMock(
+            return_value={
+                "ok": True,
+                "result": {"indexing_before": "numeric", "indexing_after": "alphanumeric"},
+            }
+        )
+        adjust_mock = MagicMock(return_value={"ok": True})
+        apply_meta_update = MagicMock()
+        window = SimpleNamespace(
+            current_yaml_path=yaml_path,
+            bridge=SimpleNamespace(
+                manage_boxes=adjust_mock,
+                set_box_layout_indexing=set_indexing_mock,
+            ),
+            overview_panel=SimpleNamespace(refresh=MagicMock()),
+            on_operation_completed=MagicMock(),
+            operations_panel=SimpleNamespace(
+                emit_external_operation_event=MagicMock(),
+                apply_meta_update=apply_meta_update,
+            ),
+            show_status=MagicMock(),
+        )
+        flow = ManageBoxesFlow(window)
+
+        result = flow.handle_request(
+            {"operation": "set_indexing", "indexing": "alphanumeric"},
+            from_ai=False,
+            yaml_path_override=yaml_path,
+        )
+
+        assert result["ok"] is True
+        set_indexing_mock.assert_called_once_with(
+            yaml_path=yaml_path,
+            indexing="alphanumeric",
+            execution_mode="execute",
+        )
+        adjust_mock.assert_not_called()
+        apply_meta_update.assert_called_once()
         window.overview_panel.refresh.assert_called_once()
         window.on_operation_completed.assert_called_once_with(True)
         window.show_status.assert_called_once()

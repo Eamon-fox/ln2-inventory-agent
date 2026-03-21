@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 
 from app_gui.i18n import tr
 from app_gui.ui.limits import MAX_BOX_COUNT_UI
+from lib.position_fmt import BOX_LAYOUT_INDEXING_VALUES, DEFAULT_BOX_LAYOUT_INDEXING
 
 _BOX_PRESETS = [
     ("9 x 9  (81)", 9, 9),
@@ -60,8 +61,9 @@ class NewDatasetDialog(QDialog):
         form.addRow(tr("main.boxCount"), self.box_count_spin)
 
         self.indexing_combo = QComboBox()
-        self.indexing_combo.addItem(tr("main.indexNumeric"), "numeric")
-        self.indexing_combo.addItem(tr("main.indexAlpha"), "alphanumeric")
+        for indexing in BOX_LAYOUT_INDEXING_VALUES:
+            label_key = "main.indexNumeric" if indexing == "numeric" else "main.indexAlpha"
+            self.indexing_combo.addItem(tr(label_key), indexing)
         form.addRow(tr("main.indexing"), self.indexing_combo)
 
         layout.addLayout(form)
@@ -104,7 +106,7 @@ class NewDatasetDialog(QDialog):
             "box_numbers": list(range(1, box_count + 1)),
         }
         indexing = self.indexing_combo.currentData()
-        if indexing and indexing != "numeric":
+        if indexing and indexing != DEFAULT_BOX_LAYOUT_INDEXING:
             result["indexing"] = indexing
         return result
 

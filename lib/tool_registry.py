@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from importlib import import_module
 from typing import Any
 
+from .position_fmt import BOX_LAYOUT_INDEXING_VALUES
 
 DISPATCH_HANDLER = "handler"
 DISPATCH_SPECIAL = "special"
@@ -892,6 +893,45 @@ _TOOL_DESCRIPTOR_LIST = (
             ),
             defaults={
                 "tag": "",
+                "execution_mode": None,
+                "dry_run": False,
+                "auto_backup": True,
+                "request_backup_path": None,
+            },
+        ),
+        public_contract=False,
+        agent_enabled=False,
+    ),
+    _tool(
+        "set_box_layout_indexing",
+        "Set box position indexing mode through the GUI bridge.",
+        {
+            "type": "object",
+            "properties": {
+                "indexing": {
+                    "type": "string",
+                    "enum": list(BOX_LAYOUT_INDEXING_VALUES),
+                },
+                "execution_mode": {"type": "string"},
+                "dry_run": {"type": "boolean"},
+                "auto_backup": {"type": "boolean"},
+                "request_backup_path": {"type": "string"},
+            },
+            "required": ["indexing"],
+            "additionalProperties": False,
+        },
+        write_api_attr="tool_set_box_layout_indexing",
+        gui_bridge=_write_bridge(
+            "set_box_layout_indexing",
+            "tool_set_box_layout_indexing",
+            positional_payload_args=(
+                "indexing",
+                "execution_mode",
+                "dry_run",
+                "auto_backup",
+                "request_backup_path",
+            ),
+            defaults={
                 "execution_mode": None,
                 "dry_run": False,
                 "auto_backup": True,

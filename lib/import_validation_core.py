@@ -20,6 +20,7 @@ from .legacy_field_policy import (
     resolve_legacy_field_policy,
     normalize_legacy_custom_field_defs,
 )
+from .position_fmt import is_valid_box_layout_indexing
 from .schema_aliases import (
     ALL_STRUCTURAL_FIELD_KEYS,
     CANONICAL_STORAGE_EVENTS_KEY,
@@ -219,6 +220,15 @@ def _validate_box_tags(layout: Dict[str, Any]) -> List[str]:
     return errors
 
 
+def _validate_box_layout_indexing(layout: Dict[str, Any]) -> List[str]:
+    raw_indexing = (layout or {}).get("indexing")
+    if raw_indexing in (None, ""):
+        return []
+    if is_valid_box_layout_indexing(raw_indexing):
+        return []
+    return ["meta.box_layout.indexing must be 'numeric' or 'alphanumeric'"]
+
+
 def _check_inventory_boxes_match_layout(
     records: List[Dict[str, Any]],
     layout: Dict[str, Any],
@@ -288,6 +298,7 @@ def validate_root_and_layout(data: Any) -> List[str]:
 
     errors.extend(_validate_box_layout_contract(layout))
     errors.extend(_validate_box_tags(layout))
+    errors.extend(_validate_box_layout_indexing(layout))
 
     return errors
 

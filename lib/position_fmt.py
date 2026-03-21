@@ -11,6 +11,8 @@ Supported indexing modes:
 from lib.config import BOX_RANGE
 
 _LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+BOX_LAYOUT_INDEXING_VALUES = ("numeric", "alphanumeric")
+DEFAULT_BOX_LAYOUT_INDEXING = "numeric"
 
 
 def _cols(layout):
@@ -22,7 +24,19 @@ def _rows(layout):
 
 
 def _indexing(layout):
-    return str((layout or {}).get("indexing", "numeric")).lower()
+    return normalize_box_layout_indexing((layout or {}).get("indexing"))
+
+
+def normalize_box_layout_indexing(value, *, default=DEFAULT_BOX_LAYOUT_INDEXING):
+    text = str(value or "").strip().lower()
+    if text in BOX_LAYOUT_INDEXING_VALUES:
+        return text
+    return default
+
+
+def is_valid_box_layout_indexing(value):
+    text = str(value or "").strip().lower()
+    return text in BOX_LAYOUT_INDEXING_VALUES
 
 
 # ---------------------------------------------------------------------------

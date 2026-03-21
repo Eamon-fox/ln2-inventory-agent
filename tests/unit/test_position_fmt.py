@@ -8,6 +8,8 @@ Covers: lib/position_fmt.py
 
 import pytest
 from lib.position_fmt import (
+    BOX_LAYOUT_INDEXING_VALUES,
+    DEFAULT_BOX_LAYOUT_INDEXING,
     pos_to_display,
     display_to_pos,
     box_to_display,
@@ -16,6 +18,8 @@ from lib.position_fmt import (
     get_box_numbers,
     get_total_slots,
     get_position_range,
+    is_valid_box_layout_indexing,
+    normalize_box_layout_indexing,
 )
 
 
@@ -40,6 +44,21 @@ class TestNumericMode:
         layout = {"rows": 9, "cols": 9}
         for pos in range(1, 82):
             assert display_to_pos(pos_to_display(pos, layout), layout) == pos
+
+
+class TestIndexingHelpers:
+    def test_allowed_values_are_stable(self):
+        assert BOX_LAYOUT_INDEXING_VALUES == ("numeric", "alphanumeric")
+        assert DEFAULT_BOX_LAYOUT_INDEXING == "numeric"
+
+    def test_normalize_box_layout_indexing_defaults_numeric(self):
+        assert normalize_box_layout_indexing(None) == "numeric"
+        assert normalize_box_layout_indexing(" letters_first ") == "numeric"
+
+    def test_is_valid_box_layout_indexing(self):
+        assert is_valid_box_layout_indexing("numeric") is True
+        assert is_valid_box_layout_indexing("ALPHANUMERIC") is True
+        assert is_valid_box_layout_indexing("letters_first") is False
 
 
 class TestAlphanumericMode:

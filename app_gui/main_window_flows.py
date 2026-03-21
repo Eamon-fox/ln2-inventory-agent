@@ -7,7 +7,7 @@ import sys
 from typing import Callable, Optional
 
 from PySide6.QtCore import QTimer, Qt
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QInputDialog
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from app_gui.application import DatasetLifecycleUseCase
 from app_gui.application.ai_provider_catalog import (
@@ -17,10 +17,14 @@ from app_gui.application.ai_provider_catalog import (
 from app_gui.gui_config import DEFAULT_MAX_STEPS, save_gui_config
 from app_gui.i18n import t, tr
 from app_gui.system_notice import build_system_notice
-from app_gui.ui.limits import MAX_BOX_COUNT_UI
+from app_gui.ui.dialogs.manage_boxes_dialog import ManageBoxesDialog
 from app_gui.version import resolve_platform_release_info
 from lib.inventory_paths import assert_allowed_inventory_yaml_path
-from lib.position_fmt import box_tag_text, get_box_numbers
+from lib.position_fmt import (
+    get_box_numbers,
+    is_valid_box_layout_indexing,
+    normalize_box_layout_indexing,
+)
 from lib.tool_api_write_validation import (
     normalize_manage_boxes_operation,
     normalize_manage_boxes_renumber_mode,
@@ -639,12 +643,12 @@ class ManageBoxesFlow:
             return self._error_response("load_failed", t("main.fileNotFound", path=yaml_path))
 
         raw_op = str(request.get("operation") or "").strip().lower()
-        if raw_op == "set_tag":
-            op = "set_tag"
+        if raw_op in {"set_tag", "set_indexing"}:
+            op = raw_op
         else:
             op = normalize_manage_boxes_operation(raw_op)
-        if op not in {"add", "remove", "set_tag"}:
-            return self._error_response("invalid_operation", "operation must be add/remove/set_tag")
+        if op not in {"add", "remove", "set_tag", "set_indexing"}:
+            return self._error_response("invalid_operation", "operation must be add/remove/set_tag/set_indexing")
 
         prepared = {
             "yaml_path": yaml_path,
@@ -689,6 +693,16 @@ class ManageBoxesFlow:
                 )
             return prepared
 
+        if op == "set_indexing":
+            indexing = normalize_box_layout_indexing(request.get("indexing"), default="")
+            if not is_valid_box_layout_indexing(indexing):
+                return self._error_response(
+                    "invalid_indexing",
+                    "indexing must be one of: numeric, alphanumeric",
+                )
+            prepared["payload"]["indexing"] = indexing
+            return prepared
+
         try:
             target_box = int(request.get("box"))
         except Exception:
@@ -708,6 +722,8 @@ class ManageBoxesFlow:
             )
 
         prepared["box_numbers"] = box_numbers
+        if mode:
+            prepared["payload"]["renumber_mode"] = mode
         prepared["suggested_mode"] = mode
         return prepared
 
@@ -724,6 +740,12 @@ class ManageBoxesFlow:
                 tag=payload.get("tag", ""),
                 execution_mode="execute",
             )
+        elif op == "set_indexing":
+            response = window.bridge.set_box_layout_indexing(
+                yaml_path=yaml_path,
+                indexing=payload["indexing"],
+                execution_mode="execute",
+            )
         else:
             response = window.bridge.manage_boxes(
                 yaml_path=yaml_path,
@@ -732,6 +754,9 @@ class ManageBoxesFlow:
             )
 
         if response.get("ok"):
+            apply_meta_update = getattr(getattr(window, "operations_panel", None), "apply_meta_update", None)
+            if callable(apply_meta_update):
+                apply_meta_update()
             window.overview_panel.refresh()
             window.on_operation_completed(True)
         notice_level = "success" if response.get("ok") else "error"
@@ -777,89 +802,17 @@ class ManageBoxesFlow:
             self._show_warning(t("main.fileNotFound", path=yaml_path))
             return None
 
-        operation, ok = QInputDialog.getItem(
-            window,
-            tr("main.manageBoxes"),
-            tr("main.boxActionPrompt"),
-            [tr("main.boxOpAdd"), tr("main.boxOpRemove"), tr("main.boxOpSetTag")],
-            0,
-            False,
-        )
-        if not ok:
-            return None
-
-        if operation == tr("main.boxOpAdd"):
-            count, ok = QInputDialog.getInt(
-                window,
-                tr("main.manageBoxes"),
-                tr("main.boxAddCountPrompt"),
-                1,
-                1,
-                MAX_BOX_COUNT_UI,
-                1,
-            )
-            if not ok:
-                return None
-            return {"operation": "add", "count": int(count)}
-
-        if operation == tr("main.boxOpSetTag"):
-            try:
-                data = load_yaml(yaml_path)
-                layout = (data or {}).get("meta", {}).get("box_layout", {})
-                box_numbers = get_box_numbers(layout)
-            except Exception as exc:
-                self._show_warning("%s: %s" % (tr("main.boxAdjustFailed"), exc))
-                return None
-
-            if not box_numbers:
-                self._show_warning(tr("main.boxNoAvailable"))
-                return None
-
-            box_text, ok = QInputDialog.getItem(
-                window,
-                tr("main.manageBoxes"),
-                tr("main.boxTagTargetPrompt"),
-                [str(box_num) for box_num in box_numbers],
-                0,
-                False,
-            )
-            if not ok:
-                return None
-
-            current_tag = self._get_box_tag(layout, int(box_text))
-            tag_text, ok = QInputDialog.getText(
-                window,
-                tr("main.manageBoxes"),
-                t("main.boxTagInputPrompt", box=box_text),
-                text=current_tag,
-            )
-            if not ok:
-                return None
-            return {"operation": "set_tag", "box": int(box_text), "tag": str(tag_text or "")}
-
         try:
             data = load_yaml(yaml_path)
             layout = (data or {}).get("meta", {}).get("box_layout", {})
-            box_numbers = get_box_numbers(layout)
         except Exception as exc:
             self._show_warning("%s: %s" % (tr("main.boxAdjustFailed"), exc))
             return None
 
-        if not box_numbers:
-            self._show_warning(tr("main.boxNoAvailable"))
+        dialog = ManageBoxesDialog(layout=layout, parent=window)
+        if dialog.exec() != QDialog.Accepted:
             return None
-
-        box_text, ok = QInputDialog.getItem(
-            window,
-            tr("main.manageBoxes"),
-            tr("main.boxRemovePrompt"),
-            [str(box_num) for box_num in box_numbers],
-            0,
-            False,
-        )
-        if not ok:
-            return None
-        return {"operation": "remove", "box": int(box_text)}
+        return dialog.get_request()
 
     def ask_remove_mode(self, box_numbers, target_box, suggested_mode=None):
         window = self._window
@@ -910,13 +863,15 @@ class ManageBoxesFlow:
                 return self._user_cancelled_response()
         elif op == "remove":
             target_box = payload["box"]
-            chosen_mode = self.ask_remove_mode(
-                prepared.get("box_numbers") or [],
-                target_box,
-                suggested_mode=prepared.get("suggested_mode"),
-            )
-            if chosen_mode is None:
-                return self._user_cancelled_response()
+            chosen_mode = str(payload.get("renumber_mode") or "").strip().lower() or None
+            if not chosen_mode:
+                chosen_mode = self.ask_remove_mode(
+                    prepared.get("box_numbers") or [],
+                    target_box,
+                    suggested_mode=prepared.get("suggested_mode"),
+                )
+                if chosen_mode is None:
+                    return self._user_cancelled_response()
             payload["renumber_mode"] = chosen_mode
 
             mode_label = (
@@ -939,7 +894,7 @@ class ManageBoxesFlow:
         if not callable(on_result):
             return self._execute_prepared_request(prepared, from_ai=from_ai)
 
-        if prepared["op"] == "set_tag":
+        if prepared["op"] in {"set_tag", "set_indexing"}:
             return self._execute_prepared_request(prepared, from_ai=from_ai)
 
         session = _AsyncManageBoxesSession()
@@ -1091,7 +1046,3 @@ class ManageBoxesFlow:
             QMessageBox.Cancel,
         )
         return reply == QMessageBox.Yes
-
-    @staticmethod
-    def _get_box_tag(layout, box_num):
-        return box_tag_text(box_num, layout)

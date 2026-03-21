@@ -188,6 +188,11 @@ def _format_audit_details(details, muted_color, field_order=None):
         after = details.get("tag_after") or "''"
         return [f"{tr('operations.auditDetailBox')} {h(box)}: '{h(before)}' -> '{h(after)}'"]
 
+    if op == "set_box_layout_indexing":
+        before = details.get("indexing_before") or "numeric"
+        after = details.get("indexing_after") or "numeric"
+        return [f"{h(before)} -> {h(after)}"]
+
     if op in ("manage_boxes", "adjust_box_count"):
         sub = details.get("sub_op")
         cb = details.get("box_count_before")
@@ -289,6 +294,11 @@ def _summarize_details(details, field_order=None):
         after = details.get("tag_after") or "''"
         return f"Box{box} -> '{after}'"
 
+    if op == "set_box_layout_indexing":
+        before = details.get("indexing_before") or "numeric"
+        after = details.get("indexing_after") or "numeric"
+        return f"{before} -> {after}"
+
     if op in ("manage_boxes", "adjust_box_count"):
         sub = details.get("sub_op", "?")
         cb = details.get("box_count_before")
@@ -326,6 +336,7 @@ _ACTION_TR_KEYS = {
     "edit_custom_fields": "operations.auditActionEditCustomFields",
     "edit_entry": "operations.auditActionEditEntry",
     "set_box_tag": "operations.auditActionSetBoxTag",
+    "set_box_layout_indexing": "operations.auditActionSetBoxLayoutIndexing",
     "manage_boxes": "operations.auditActionAdjustBoxCount",
     "adjust_box_count": "operations.auditActionAdjustBoxCount",  # legacy
 }
@@ -763,6 +774,5 @@ class AuditLogDialog(QDialog):
             self.audit_info.setText(
                 tr("operations.auditRollbackStaged", backup=os.path.basename(str(backup_path)))
             )
-
 
 

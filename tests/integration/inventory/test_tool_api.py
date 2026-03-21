@@ -29,6 +29,7 @@ from lib.tool_api import (
     tool_export_inventory_csv,
     tool_move,
     tool_rollback,
+    tool_set_box_layout_indexing,
     tool_set_box_tag,
     tool_takeout,
 )
@@ -2424,6 +2425,60 @@ class TestAdjustBoxCount(ManagedPathTestCase):
         )
         self.assertFalse(result["ok"])
         self.assertEqual("invalid_tag", result.get("error_code"))
+
+    def test_set_box_layout_indexing_updates_meta_only(self):
+        p, _ = self._seed(
+            [make_record(1, box=1, position=10)],
+            {"rows": 9, "cols": 9, "box_count": 3},
+        )
+
+        result = tool_set_box_layout_indexing(
+            p,
+            indexing="alphanumeric",
+            auto_backup=False,
+        )
+
+        self.assertTrue(result["ok"], result.get("message"))
+        self.assertEqual("numeric", result["result"]["indexing_before"])
+        self.assertEqual("alphanumeric", result["result"]["indexing_after"])
+
+        data = load_yaml(p)
+        layout = data["meta"]["box_layout"]
+        self.assertEqual("alphanumeric", layout.get("indexing"))
+        self.assertEqual(10, data["inventory"][0]["position"])
+
+    def test_set_box_layout_indexing_numeric_removes_default_field(self):
+        p, _ = self._seed(
+            [make_record(1, box=1, position=10)],
+            {"rows": 9, "cols": 9, "box_count": 3, "indexing": "alphanumeric"},
+        )
+
+        result = tool_set_box_layout_indexing(
+            p,
+            indexing="numeric",
+            auto_backup=False,
+        )
+
+        self.assertTrue(result["ok"], result.get("message"))
+        self.assertEqual("alphanumeric", result["result"]["indexing_before"])
+        self.assertEqual("numeric", result["result"]["indexing_after"])
+
+        data = load_yaml(p)
+        layout = data["meta"]["box_layout"]
+        self.assertNotIn("indexing", layout)
+        self.assertEqual(10, data["inventory"][0]["position"])
+
+    def test_set_box_layout_indexing_rejects_invalid_value(self):
+        p, _ = self._seed([], {"rows": 9, "cols": 9, "box_count": 3})
+
+        result = tool_set_box_layout_indexing(
+            p,
+            indexing="letters_first",
+            auto_backup=False,
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("invalid_indexing", result.get("error_code"))
 
     def test_remove_non_empty_box_blocked(self):
         records = [make_record(1, box=2, position=1)]

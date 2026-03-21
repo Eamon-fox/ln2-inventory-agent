@@ -15,7 +15,12 @@ POLICY_DOC = ROOT / "docs" / "00-约束模型.md"
 class DocContractIntegrityTests(unittest.TestCase):
     def test_required_contract_blocks_exist(self):
         expected = {
-            ARCH_DOC: {"layer_rules", "agent_context_checkpointing", "local_open_api_boundary"},
+            ARCH_DOC: {
+                "layer_rules",
+                "agent_context_checkpointing",
+                "local_open_api_boundary",
+                "inventory_position_indexing_rules",
+            },
             MODULE_MAP_DOC: {"module_map"},
             CHOKEPOINT_DOC: {"shared_chokepoints"},
         }

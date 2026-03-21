@@ -47,6 +47,7 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
             "export_inventory_csv",
             "collect_timeline",
             "set_box_tag",
+            "set_box_layout_indexing",
             "batch_add_entries",
         }
         for name in hidden_names:
@@ -139,6 +140,7 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
             "rollback",
             "batch_add_entries",
             "set_box_tag",
+            "set_box_layout_indexing",
             "manage_boxes",
         ):
             with self.subTest(tool=name):

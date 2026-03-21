@@ -467,6 +467,37 @@ def set_box_tag(
     )
 
 
+def set_box_layout_indexing(
+    *,
+    yaml_path: str,
+    indexing: str,
+    dry_run: bool = False,
+    execution_mode: Optional[str] = None,
+    actor_context: Optional[Dict[str, Any]] = None,
+    source: str = "tool_api",
+    auto_backup: bool = True,
+    request_backup_path: Optional[str] = None,
+    backup_event_source: Optional[str] = None,
+    default_execute: bool = False,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "indexing": indexing,
+    }
+    payload["auto_backup"] = auto_backup
+    return invoke_write_tool(
+        "set_box_layout_indexing",
+        yaml_path=yaml_path,
+        actor_context=actor_context,
+        source=source,
+        payload=payload,
+        dry_run=dry_run,
+        execution_mode=execution_mode,
+        request_backup_path=request_backup_path,
+        backup_event_source=backup_event_source,
+        default_execute=default_execute,
+    )
+
+
 def batch_add_entries(
     *,
     yaml_path: str,

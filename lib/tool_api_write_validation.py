@@ -3,6 +3,7 @@
 import os
 
 from .path_policy import PathPolicyError, resolve_dataset_backup_request_path
+from .position_fmt import is_valid_box_layout_indexing, normalize_box_layout_indexing
 from .schema_aliases import get_input_stored_at, normalize_structural_alias_input_map
 from .takeout_parser import normalize_action
 from .validators import validate_date
@@ -259,6 +260,22 @@ def _validate_set_box_tag_request(payload):
     return None, {"box": box}
 
 
+def _validate_set_box_layout_indexing_request(payload):
+    indexing = normalize_box_layout_indexing(payload.get("indexing"), default="")
+    if not indexing:
+        return {
+            "error_code": "invalid_indexing",
+            "message": "indexing is required",
+        }, {}
+    if not is_valid_box_layout_indexing(indexing):
+        return {
+            "error_code": "invalid_indexing",
+            "message": "indexing must be one of: numeric, alphanumeric",
+            "details": {"indexing": payload.get("indexing")},
+        }, {}
+    return None, {"indexing": indexing}
+
+
 def _validate_rollback_request(payload):
     backup_path = str(payload.get("backup_path") or "").strip()
     if not backup_path:
@@ -277,6 +294,7 @@ _WRITE_REQUEST_VALIDATORS = {
     "tool_rollback": _validate_rollback_request,
     "tool_manage_boxes": _validate_manage_boxes_request,
     "tool_set_box_tag": _validate_set_box_tag_request,
+    "tool_set_box_layout_indexing": _validate_set_box_layout_indexing_request,
 }
 
 

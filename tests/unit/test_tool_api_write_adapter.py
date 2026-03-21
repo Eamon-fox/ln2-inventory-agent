@@ -152,6 +152,15 @@ class ToolApiWriteAdapterTests(unittest.TestCase):
 
         self.assertIs(tool_fn, resolved)
 
+    def test_resolve_tool_uses_registry_for_gui_only_box_layout_indexing_helper(self):
+        tool_fn = MagicMock()
+        fake_tool_api = type("FakeToolApi", (), {"tool_set_box_layout_indexing": tool_fn})()
+
+        with patch("lib.tool_api_write_adapter._load_tool_api", return_value=fake_tool_api):
+            resolved = adapter._resolve_tool("set_box_layout_indexing")
+
+        self.assertIs(tool_fn, resolved)
+
     def test_resolve_tool_uses_registry_for_internal_batch_add_helper(self):
         tool_fn = MagicMock()
         fake_tool_api = type("FakeToolApi", (), {"tool_batch_add_entries": tool_fn})()
