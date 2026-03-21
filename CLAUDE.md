@@ -76,7 +76,7 @@ Agent (agent/)  ─┘           │                              │
 
 ### Data model
 
-Single YAML file (`ln2_inventory.yaml`): `inventory[]` records with `id`, `cell_line`, `short_name`, `box`, `position`, `frozen_at`, `thaw_events[]`, plus `meta.box_layout`. Default grid is 9x9 (positions 1-81) across boxes 1-5.
+Single YAML file (`ln2_inventory.yaml`): `inventory[]` records with structural fields `id`, `box`, `position`, `stored_at`, `storage_events[]`, plus schema-declared custom fields (for example `cell_line`, `short_name`, `note`) and `meta.box_layout`. Legacy aliases like `frozen_at` / `thaw_events` may still be accepted on read, but canonical persisted/output names are `stored_at` / `storage_events`. Default grid is 9x9 (positions 1-81) across boxes 1-5.
 
 ### GUI panel communication (Qt signals)
 

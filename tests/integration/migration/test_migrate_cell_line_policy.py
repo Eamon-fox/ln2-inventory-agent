@@ -34,7 +34,7 @@ def _seed_yaml(path, data):
 
 
 class TestMigrateCellLinePolicy(ManagedPathTestCase):
-    def test_migrate_normalizes_required_options_and_records(self):
+    def test_migrate_legacy_options_without_required_flag_keeps_cell_line_optional(self):
         with tempfile.TemporaryDirectory(prefix="ln2_migrate_cl_") as td:
             yaml_path = Path(td) / "inventory.yaml"
             _seed_yaml(
@@ -70,14 +70,55 @@ class TestMigrateCellLinePolicy(ManagedPathTestCase):
                 for field in meta.get("custom_fields", [])
                 if str(field.get("key") or "") == "cell_line"
             )
+            self.assertFalse(cell_line_field.get("required"))
+            self.assertNotIn("default", cell_line_field)
+            self.assertIn("U2OS", cell_line_field.get("options") or [])
+
+            by_id = {int(rec["id"]): rec for rec in data["inventory"]}
+            self.assertNotIn("cell_line", by_id[1])
+            self.assertEqual("", by_id[2]["cell_line"])
+            self.assertEqual("U2OS", by_id[3]["cell_line"])
+
+    def test_migrate_explicit_legacy_required_flag_keeps_cell_line_required(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_migrate_cl_required_") as td:
+            yaml_path = Path(td) / "inventory.yaml"
+            _seed_yaml(
+                yaml_path,
+                {
+                    "meta": {
+                        "box_layout": {"rows": 9, "cols": 9},
+                        "cell_line_options": ["K562", "HeLa"],
+                        "cell_line_required": True,
+                    },
+                    "inventory": [
+                        {"id": 1, "box": 1, "position": 1, "frozen_at": "2026-02-10"},
+                        {"id": 2, "cell_line": "", "box": 1, "position": 2, "frozen_at": "2026-02-10"},
+                    ],
+                },
+            )
+
+            result = migrate_cell_line_policy(
+                yaml_path=str(yaml_path),
+                dry_run=False,
+                auto_backup=False,
+                audit_source="tests",
+            )
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["changed"])
+
+            data = load_yaml(str(yaml_path))
+            meta = data["meta"]
+            cell_line_field = next(
+                field
+                for field in meta.get("custom_fields", [])
+                if str(field.get("key") or "") == "cell_line"
+            )
             self.assertTrue(cell_line_field.get("required"))
             self.assertIn(DEFAULT_UNKNOWN_CELL_LINE, cell_line_field.get("options") or [])
-            self.assertIn("U2OS", cell_line_field.get("options") or [])
 
             by_id = {int(rec["id"]): rec for rec in data["inventory"]}
             self.assertEqual(DEFAULT_UNKNOWN_CELL_LINE, by_id[1]["cell_line"])
             self.assertEqual(DEFAULT_UNKNOWN_CELL_LINE, by_id[2]["cell_line"])
-            self.assertEqual("U2OS", by_id[3]["cell_line"])
 
     def test_migrate_is_idempotent(self):
         with tempfile.TemporaryDirectory(prefix="ln2_migrate_cl_idem_") as td:

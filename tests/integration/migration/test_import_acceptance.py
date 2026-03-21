@@ -40,10 +40,10 @@ def _valid_payload():
                 "id": 1,
                 "box": 1,
                 "position": 1,
-                "frozen_at": "2025-01-01",
+                "stored_at": "2025-01-01",
                 "cell_line": "K562",
                 "note": None,
-                "thaw_events": None,
+                "storage_events": None,
             }
         ],
     }
@@ -359,10 +359,9 @@ class ImportAcceptanceTests(unittest.TestCase):
             self.assertEqual("validation_failed", result.get("error_code"))
             self.assertFalse(target.exists())
 
-    def test_validate_candidate_yaml_blocks_warnings_in_strict_mode(self):
+    def test_validate_candidate_yaml_does_not_assume_missing_cell_line_field(self):
         with tempfile.TemporaryDirectory() as td:
             payload = _valid_payload()
-            # Trigger legacy compatibility mode and then remove cell_line to get a warning.
             payload["meta"].pop("custom_fields", None)
             payload["inventory"][0].pop("cell_line", None)
             candidate = Path(td) / "warn.yaml"
@@ -371,10 +370,26 @@ class ImportAcceptanceTests(unittest.TestCase):
                 encoding="utf-8",
             )
             result = validate_candidate_yaml(str(candidate), fail_on_warnings=True)
+            self.assertTrue(result.get("ok"), result)
+            report = result.get("report") or {}
+            self.assertEqual(0, (report.get("warning_count") or 0))
+
+    def test_validate_candidate_yaml_rejects_missing_cell_line_when_legacy_required_flag_is_explicit(self):
+        with tempfile.TemporaryDirectory() as td:
+            payload = _valid_payload()
+            payload["meta"].pop("custom_fields", None)
+            payload["meta"]["cell_line_required"] = True
+            payload["inventory"][0].pop("cell_line", None)
+            candidate = Path(td) / "missing_required_cell_line.yaml"
+            candidate.write_text(
+                yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
+                encoding="utf-8",
+            )
+            result = validate_candidate_yaml(str(candidate))
             self.assertFalse(result.get("ok"))
             self.assertEqual("validation_failed", result.get("error_code"))
-            report = result.get("report") or {}
-            self.assertGreater((report.get("warning_count") or 0), 0)
+            errors = list((result.get("report") or {}).get("errors") or [])
+            self.assertTrue(any("missing required field 'cell_line'" in msg for msg in errors), errors)
 
     def test_validate_candidate_yaml_blocks_non_option_cell_line_in_strict_mode(self):
         with tempfile.TemporaryDirectory() as td:

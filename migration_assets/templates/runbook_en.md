@@ -13,14 +13,15 @@ Follow every phase in order. Do not skip validation.
 ## Phase 2 - Inspect source structure
 
 1. Inspect each listed source file.
-2. Identify how required fields map to YAML fields (`id`, `box`, `position`, `frozen_at`).
+2. Identify how required fields map to YAML fields (`id`, `box`, `position`, `stored_at`) plus any schema-declared required custom fields.
 3. Run quick prechecks before transformation:
-   - required-field coverage (`box`, `position`, `frozen_at`; also `cell_line` when marked required)
+   - required-field coverage for structural fields plus any custom field explicitly marked `required`
+   - legacy structural aliases are normalized to canonical output field names
    - for any field with `options` in `meta.custom_fields` (including `cell_line`), values match the declared options
    - duplicate active locations on `(box, position)`
    - date parseability and future-date risks
    - custom-field metadata shape (`meta.custom_fields` entries use `key` + `type`)
-   - custom fields do not collide with structural keys (`id`, `box`, `position`, `frozen_at`, `thaw_events`)
+   - custom fields do not collide with structural keys (`id`, `box`, `position`, `stored_at`, `storage_events`)
 4. Record unresolved ambiguities before transformation.
 
 ## Phase 3 - Design field mapping
@@ -31,7 +32,7 @@ Follow every phase in order. Do not skip validation.
    - `box_layout.box_count` or `box_numbers`
    - optional `box_layout.box_tags` when source provides per-box labels (rack/shelf/layer names)
 2. Propose field policy:
-   - fixed required fields (`id`, `box`, `position`, `frozen_at`); `cell_line` and other custom fields are required only when their field definition says so
+   - fixed required fields (`id`, `box`, `position`, `stored_at`); custom fields are required only when their field definition says so
    - optional/custom fields that can be agreed with user
 3. Present the mapping/schema proposal to user and request explicit approval.
 4. If user requests changes, revise the proposal and confirm again before conversion.

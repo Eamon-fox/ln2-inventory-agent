@@ -50,8 +50,8 @@ class TestMigrationConflictReport(unittest.TestCase):
         """Position conflicts within import data must say 'Import data internal conflict'."""
         payload = _base_payload()
         payload["inventory"] = [
-            {"id": 1, "box": 1, "position": 34, "frozen_at": "2025-01-01", "cell_line": "K562"},
-            {"id": 2, "box": 1, "position": 34, "frozen_at": "2025-01-02", "cell_line": "HeLa"},
+            {"id": 1, "box": 1, "position": 34, "stored_at": "2025-01-01", "cell_line": "K562"},
+            {"id": 2, "box": 1, "position": 34, "stored_at": "2025-01-02", "cell_line": "HeLa"},
         ]
         errors, _warnings = validate_inventory_document(payload)
         conflict_errors = [e for e in errors if "Position" in e and "34" in e]
@@ -62,8 +62,8 @@ class TestMigrationConflictReport(unittest.TestCase):
     def test_no_conflict_different_positions(self):
         payload = _base_payload()
         payload["inventory"] = [
-            {"id": 1, "box": 1, "position": 1, "frozen_at": "2025-01-01", "cell_line": "K562"},
-            {"id": 2, "box": 1, "position": 2, "frozen_at": "2025-01-01", "cell_line": "HeLa"},
+            {"id": 1, "box": 1, "position": 1, "stored_at": "2025-01-01", "cell_line": "K562"},
+            {"id": 2, "box": 1, "position": 2, "stored_at": "2025-01-01", "cell_line": "HeLa"},
         ]
         errors, _warnings = validate_inventory_document(payload)
         conflict_errors = [e for e in errors if "conflict" in e.lower()]
@@ -73,10 +73,10 @@ class TestMigrationConflictReport(unittest.TestCase):
         """Multiple position conflicts each get the 'Import data internal' label."""
         payload = _base_payload()
         payload["inventory"] = [
-            {"id": 1, "box": 1, "position": 10, "frozen_at": "2025-01-01", "cell_line": "A"},
-            {"id": 2, "box": 1, "position": 10, "frozen_at": "2025-01-01", "cell_line": "B"},
-            {"id": 3, "box": 2, "position": 20, "frozen_at": "2025-01-01", "cell_line": "C"},
-            {"id": 4, "box": 2, "position": 20, "frozen_at": "2025-01-01", "cell_line": "D"},
+            {"id": 1, "box": 1, "position": 10, "stored_at": "2025-01-01", "cell_line": "A"},
+            {"id": 2, "box": 1, "position": 10, "stored_at": "2025-01-01", "cell_line": "B"},
+            {"id": 3, "box": 2, "position": 20, "stored_at": "2025-01-01", "cell_line": "C"},
+            {"id": 4, "box": 2, "position": 20, "stored_at": "2025-01-01", "cell_line": "D"},
         ]
         errors, _warnings = validate_inventory_document(payload)
         conflict_errors = [e for e in errors if "Import data internal conflict" in e]
@@ -86,8 +86,8 @@ class TestMigrationConflictReport(unittest.TestCase):
         """End-to-end: validate_candidate_yaml surfaces the improved message."""
         payload = _base_payload()
         payload["inventory"] = [
-            {"id": 218, "box": 1, "position": 34, "frozen_at": "2025-01-01", "cell_line": "K562"},
-            {"id": 219, "box": 1, "position": 34, "frozen_at": "2025-01-02", "cell_line": "HeLa"},
+            {"id": 218, "box": 1, "position": 34, "stored_at": "2025-01-01", "cell_line": "K562"},
+            {"id": 219, "box": 1, "position": 34, "stored_at": "2025-01-02", "cell_line": "HeLa"},
         ]
         with tempfile.TemporaryDirectory() as td:
             candidate = Path(td) / "candidate.yaml"

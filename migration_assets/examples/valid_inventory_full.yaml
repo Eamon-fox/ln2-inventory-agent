@@ -18,22 +18,22 @@ inventory:
   - id: 1
     box: 1
     position: 1
-    frozen_at: "2024-01-10"
+    stored_at: "2024-01-10"
     cell_line: K562
     note: "active tube"
     batch: "BATCH-001"
     operator: "alice"
-    thaw_events: null
+    storage_events: null
 
   - id: 2
     box: 1
     position: null
-    frozen_at: "2023-11-08"
+    stored_at: "2023-11-08"
     cell_line: HeLa
     note: "taken out"
     batch: "BATCH-002"
     operator: "bob"
-    thaw_events:
+    storage_events:
       - action: takeout
         date: "2024-06-17"
         positions: [14]
@@ -41,12 +41,12 @@ inventory:
   - id: 3
     box: 2
     position: 20
-    frozen_at: "2024-03-02"
+    stored_at: "2024-03-02"
     cell_line: U2OS
     note: null
     batch: "BATCH-003"
     operator: "alice"
-    thaw_events:
+    storage_events:
       - action: move
         date: "2024-04-01"
         positions: [11]

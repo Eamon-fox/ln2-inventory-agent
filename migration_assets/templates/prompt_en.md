@@ -17,9 +17,9 @@ Hard requirements:
 - Do not invent records, fields, dates, or positions.
 - Use `null` only when allowed by `agent_skills/shared/references/validation_contract.md`.
 - Keep active tubes unique on `(box, position)`.
-- When `cell_line` is configured as required, ensure every inventory record has non-empty `cell_line`; use `"Unknown"` only when the source truly cannot provide it.
+- Do not assume any built-in business field beyond the structural inventory fields. Treat fields like `cell_line` as ordinary custom fields that only exist when the approved schema declares them.
 - For any field with `options` defined (including `cell_line`), ensure non-empty values are in the declared options list.
-- Keep `meta.custom_fields` strictly non-structural (`id`, `box`, `position`, `frozen_at`, `thaw_events` must not appear there). Note: `cell_line` and `note` are default custom fields and belong in `meta.custom_fields`.
+- Keep `meta.custom_fields` strictly non-structural (`id`, `box`, `position`, `stored_at`, `storage_events` must not appear there). Legacy input aliases like `frozen_at`/`thaw_events` may be accepted on read, but final migration output should use canonical structural names.
 - If source data includes per-box labels (rack/shelf/layer), map them to optional `meta.box_layout.box_tags` using box-number keys.
 - If required fields are ambiguous, ask clarifying questions before final output.
 - If clarification is unavailable, write blockers in `migrate/output/conversion_report.md` and avoid fake completion.

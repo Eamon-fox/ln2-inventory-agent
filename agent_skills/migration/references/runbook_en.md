@@ -13,9 +13,10 @@ Follow every phase in order. Do not skip validation.
 ## Phase 2 - Inspect source structure
 
 1. Inspect each listed source file.
-2. Identify how required fields map to YAML fields (`id`, `box`, `position`, `frozen_at`).
+2. Identify how required fields map to YAML fields (`id`, `box`, `position`, `stored_at`) plus any schema-declared required custom fields.
 3. Run quick prechecks before transformation:
-   - required-field coverage (`box`, `position`, `frozen_at`; also `cell_line` when marked required)
+   - required-field coverage for structural fields plus any custom field explicitly marked `required`
+   - legacy structural aliases are normalized to canonical output field names
    - option-list conformity for declared fields
    - duplicate active locations on `(box, position)`
    - date parseability and future-date risks

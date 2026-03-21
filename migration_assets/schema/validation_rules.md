@@ -11,14 +11,14 @@ The generated file **must** be `migrate/output/ln2_inventory.yaml`.
 
 - `id`: unique positive integer.
 - `box`: positive integer within configured box layout.
-- `frozen_at`: date in `YYYY-MM-DD`.
-- If `cell_line` is configured as required (via `meta.cell_line_required` or field-level `required: true` in `meta.custom_fields`), include non-empty `cell_line` for every record. If source value is unknown, use `"Unknown"`.
+- `stored_at`: date in `YYYY-MM-DD`. Legacy input alias `frozen_at` may be accepted on read, but canonical migration output should use `stored_at`.
+- Do not assume any built-in business field beyond the structural inventory fields. A field like `cell_line` is only required when it is explicitly declared as required by the effective schema.
 - For any field with `options` defined (in `meta.custom_fields` or legacy `meta.cell_line_options`), non-empty values must be in that options list.
 
 ## Position rules
 
 - `position` may be integer or null.
-- If `position` is null, record must include valid takeout history in `thaw_events`.
+- If `position` is null, record must include valid takeout history in `storage_events`.
 - Active records must not conflict on `(box, position)`. Any active-position conflict is a blocking failure.
 - If one source row contains multiple positions (for example `1,2,3`), split it into multiple tube-level records (one inventory item per position).
 
@@ -26,13 +26,13 @@ The generated file **must** be `migrate/output/ln2_inventory.yaml`.
 
 - `meta.custom_fields` is optional.
 - If present, each item should be a structured object with `key` (identifier-style) and `type` (for example `str`, `int`, `float`, `date`).
-- `meta.custom_fields` must not reuse structural keys (`id`, `box`, `position`, `frozen_at`, `thaw_events`). Note: `cell_line` and `note` are default custom fields and may appear in `meta.custom_fields`.
+- `meta.custom_fields` must not reuse structural keys (`id`, `box`, `position`, `stored_at`, `storage_events`). Note: `cell_line` and `note` are default custom fields and may appear in `meta.custom_fields`.
 - Optional keys such as `label`, `required`, and `default` are allowed.
 - `meta.box_layout.box_tags` is optional. If provided, each key must map to a declared box number and each value must be a non-empty single-line tag (<= 80 chars).
 
 ## Date rules
 
-- `frozen_at` and takeout-event dates must be `YYYY-MM-DD`.
+- `stored_at` and event dates must be `YYYY-MM-DD`.
 - If a source date is an Excel serial number (for example `45072`), convert it to `YYYY-MM-DD` before writing output.
 - Future dates are invalid.
 

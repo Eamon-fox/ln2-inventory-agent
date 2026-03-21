@@ -7,13 +7,19 @@ Covers: agent_skills/migration/*, agent_skills/shared/*
 运行手册定义审批步骤以及验收检查清单的会话跟踪功能。
 """
 
+import json
 from pathlib import Path
+
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
 PROMPT_TEMPLATE = ROOT / "agent_skills" / "migration" / "references" / "prompt_en.md"
 RUNBOOK_TEMPLATE = ROOT / "agent_skills" / "migration" / "references" / "runbook_en.md"
 CHECKLIST_TEMPLATE = ROOT / "agent_skills" / "migration" / "assets" / "acceptance_checklist_en.md"
+IMPORT_SCHEMA = ROOT / "migration_assets" / "schema" / "ln2_import_schema.json"
+EXAMPLE_MIN = ROOT / "migration_assets" / "examples" / "valid_inventory_min.yaml"
+EXAMPLE_FULL = ROOT / "migration_assets" / "examples" / "valid_inventory_full.yaml"
 
 
 def _read(path: Path) -> str:
@@ -64,9 +70,48 @@ def test_templates_prefer_fs_copy_for_identity_yaml_passthrough():
     assert "identity" in prompt_text
 
 
+def test_templates_do_not_special_case_cell_line_as_builtin_field():
+    prompt_text = _read(PROMPT_TEMPLATE)
+    runbook_text = _read(RUNBOOK_TEMPLATE)
+    checklist_text = _read(CHECKLIST_TEMPLATE)
+
+    assert "Treat fields like `cell_line` as ordinary custom fields" in prompt_text
+    assert "schema-declared required custom fields" in runbook_text
+    assert "Every custom field marked `required: true`" in checklist_text
+
+
+def test_templates_use_stored_at_as_canonical_migration_field():
+    prompt_text = _read(PROMPT_TEMPLATE)
+    runbook_text = _read(RUNBOOK_TEMPLATE)
+    checklist_text = _read(CHECKLIST_TEMPLATE)
+
+    assert "stored_at" in prompt_text
+    assert "stored_at" in runbook_text
+    assert "stored_at" in checklist_text
+    assert "frozen_at" not in runbook_text
+
+
 def test_templates_define_resume_behavior_from_existing_outputs():
     prompt_text = _read(PROMPT_TEMPLATE)
     runbook_text = _read(RUNBOOK_TEMPLATE)
 
     assert "resume from the highest valid completed stage" in prompt_text
     assert "resume from the highest valid completed stage" in runbook_text
+
+
+def test_migration_schema_and_examples_use_canonical_storage_field_names():
+    schema = json.loads(_read(IMPORT_SCHEMA))
+    item_properties = schema["properties"]["inventory"]["items"]["properties"]
+    assert "stored_at" in item_properties
+    assert "storage_events" in item_properties
+    assert "frozen_at" not in item_properties
+    assert "thaw_events" not in item_properties
+
+    example_min = yaml.safe_load(_read(EXAMPLE_MIN))
+    example_full = yaml.safe_load(_read(EXAMPLE_FULL))
+    for document in (example_min, example_full):
+        for record in document["inventory"]:
+            assert "stored_at" in record
+            assert "storage_events" in record
+            assert "frozen_at" not in record
+            assert "thaw_events" not in record

@@ -227,7 +227,7 @@ def _build_meta_backed_cell_line_field(meta: Dict[str, Any]) -> Dict[str, Any]:
         options = list(DEFAULT_CELL_LINE_OPTIONS)
     if options:
         field["options"] = options
-    required = bool((meta or {}).get(CELL_LINE_REQUIRED_META_KEY, True))
+    required = bool((meta or {}).get(CELL_LINE_REQUIRED_META_KEY)) if CELL_LINE_REQUIRED_META_KEY in (meta or {}) else False
     if required:
         field["required"] = True
         field["default"] = DEFAULT_UNKNOWN_CELL_LINE
@@ -239,17 +239,6 @@ def _build_record_backed_cell_line_field() -> Dict[str, Any]:
         "key": CELL_LINE_FIELD_KEY,
         "label": "Cell Line",
         "type": "str",
-    }
-
-
-def _build_staging_default_cell_line_field() -> Dict[str, Any]:
-    return {
-        "key": CELL_LINE_FIELD_KEY,
-        "label": "Cell Line",
-        "type": "str",
-        "required": True,
-        "default": DEFAULT_UNKNOWN_CELL_LINE,
-        "options": list(DEFAULT_CELL_LINE_OPTIONS),
     }
 
 
@@ -279,7 +268,7 @@ def resolve_legacy_field_policy(
     custom_fields_missing = "custom_fields" not in meta_dict
 
     runtime_cell_line = bool(explicit_cell_line or has_legacy_meta or has_legacy_inventory)
-    staging_cell_line = bool(runtime_cell_line or custom_fields_missing)
+    staging_cell_line = bool(runtime_cell_line)
     schema_cell_line = bool(explicit_cell_line or has_legacy_meta)
     write_cell_line = bool(explicit_cell_line or has_legacy_meta or has_legacy_inventory)
 
@@ -293,8 +282,6 @@ def resolve_legacy_field_policy(
                 synthetic_reason = "legacy_meta"
             elif has_legacy_inventory:
                 synthetic_reason = "legacy_inventory"
-            elif custom_fields_missing:
-                synthetic_reason = "staging_default"
         elif phase_text in {PHASE_RUNTIME, PHASE_WRITE}:
             if has_legacy_meta:
                 synthetic_reason = "legacy_meta"
@@ -307,8 +294,6 @@ def resolve_legacy_field_policy(
             effective_fields.insert(0, _build_meta_backed_cell_line_field(meta_dict))
         elif synthetic_reason == "legacy_inventory":
             effective_fields.insert(0, _build_record_backed_cell_line_field())
-        elif synthetic_reason == "staging_default":
-            effective_fields.insert(0, _build_staging_default_cell_line_field())
 
     effective_keys = [
         str(item.get("key") or "").strip()

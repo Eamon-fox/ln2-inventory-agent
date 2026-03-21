@@ -8,7 +8,7 @@ inventory:
   - id: 1
     box: 1
     position: 1
-    frozen_at: "2024-01-01"
+    stored_at: "2024-01-01"
     cell_line: K562
     note: null
-    thaw_events: null
+    storage_events: null

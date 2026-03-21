@@ -7,7 +7,7 @@ Use validation rules as the final authority over generated or repaired YAML.
 - Top-level keys must be exactly `meta` and `inventory`.
 - The data model is tube-level: one `inventory[]` item per physical tube.
 - Active records must not conflict on `(box, position)`.
-- `frozen_at` and event dates must use `YYYY-MM-DD` and must not be future dates.
+- `stored_at` and event dates must use `YYYY-MM-DD` and must not be future dates. Legacy input alias `frozen_at` is accepted, but canonical output should use `stored_at`.
 - Required fields must be present and non-empty when policy says they are required.
 - Declared options constrain non-empty values for their fields.
 - `meta.custom_fields` must not collide with structural fields.
