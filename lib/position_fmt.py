@@ -97,6 +97,88 @@ def box_to_display(box, layout=None):
     return str(box)
 
 
+def box_tag_text(box, layout=None):
+    """Return the optional per-box tag stored in ``box_tags``.
+
+    The stored field name remains ``meta.box_layout.box_tags`` for backward
+    compatibility, but the semantic role is display-only and never identity.
+    """
+    box_tags = (layout or {}).get("box_tags")
+    if not isinstance(box_tags, dict):
+        return ""
+
+    raw_value = box_tags.get(str(box))
+    if raw_value is None:
+        return ""
+
+    text = str(raw_value)
+    if "\n" in text or "\r" in text:
+        text = text.replace("\r", " ").replace("\n", " ")
+    return text.strip()
+
+
+def box_identity_label(box, layout=None):
+    """Return stable numeric box identity with optional tag suffix."""
+    try:
+        box_num = int(box)
+        base = str(box_num)
+    except Exception:
+        box_num = None
+        base = str(box)
+
+    if box_num is None:
+        return base
+
+    tag_text = box_tag_text(box_num, layout)
+    if not tag_text:
+        return base
+    return f"{base} ({tag_text})"
+
+
+def format_box_position_display(
+    box,
+    position,
+    *,
+    layout=None,
+    box_label="Box",
+    position_label="Position",
+):
+    """Return a stable identity-first box/position display string."""
+    box_text = "?" if box in (None, "") else box_identity_label(box, layout)
+    if position in (None, ""):
+        pos_text = "?"
+    else:
+        try:
+            pos_text = pos_to_display(int(position), layout)
+        except Exception:
+            pos_text = str(position)
+    return f"{box_label} {box_text} {position_label} {pos_text}"
+
+
+def format_box_positions_display(
+    box,
+    positions,
+    *,
+    layout=None,
+    box_label="Box",
+    positions_label="Positions",
+):
+    """Return a stable identity-first box/multi-position display string."""
+    box_text = "?" if box in (None, "") else box_identity_label(box, layout)
+    normalized_positions = []
+    for raw_position in list(positions or []):
+        try:
+            normalized_positions.append(pos_to_display(int(raw_position), layout))
+        except Exception:
+            normalized_positions.append(str(raw_position))
+
+    if not normalized_positions:
+        positions_text = "?"
+    else:
+        positions_text = f"[{', '.join(normalized_positions)}]"
+    return f"{box_label} {box_text} {positions_label} {positions_text}"
+
+
 def display_to_box(display, layout=None):
     """Convert display label to box number."""
     labels = (layout or {}).get("box_labels")

@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt
 
 from app_gui.i18n import tr, t
 from app_gui.system_notice import build_system_notice
+from lib.position_fmt import box_tag_text
 
 
 def _emit_selected_empty_add_prefill(self, *, background=True, fallback_key=None):
@@ -260,13 +261,7 @@ def on_cell_context_menu(self, box_num, position, global_pos):
 
 
 def _current_box_tag(self, box_num):
-    box_tags = (getattr(self, "_current_layout", {}) or {}).get("box_tags")
-    if not isinstance(box_tags, dict):
-        return ""
-    raw_value = box_tags.get(str(box_num))
-    if raw_value is None:
-        return ""
-    return str(raw_value).replace("\r", " ").replace("\n", " ").strip()
+    return box_tag_text(box_num, getattr(self, "_current_layout", {}) or {})
 
 
 def _emit_box_tag_notice(self, *, operation, box_num, tag_value, response, text, level, timeout_ms):

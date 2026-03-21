@@ -2544,9 +2544,9 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         action_text = panel.plan_table.item(0, 0).text()
         self.assertIn("takeout", action_text.lower())
         self.assertIn("10", action_text)  # ID should be in the text
-        # Column 1 now shows position (box:position)
+        # Column 1 now shows identity-first location text
         pos_text = panel.plan_table.item(0, 1).text()
-        self.assertEqual("Box 1:5", pos_text)
+        self.assertEqual("Box 1 Position 5", pos_text)
 
         # Badge should show count
         idx = panel.op_mode_combo.findData("plan")
@@ -2578,7 +2578,41 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
 
         self.assertEqual(1, panel.plan_table.rowCount())
         pos_text = panel.plan_table.item(0, 1).text()
-        self.assertEqual("Box 1:5 -> Box 2:8", pos_text)
+        self.assertEqual("Box 1 Position 5 -> Box 2 Position 8", pos_text)
+
+    def test_add_plan_items_target_text_includes_box_tag_when_available(self):
+        panel = self._new_operations_panel()
+        panel._current_layout = {
+            "rows": 9,
+            "cols": 9,
+            "box_tags": {"1": "virus stock", "2": "backup shelf"},
+        }
+        items = [
+            {
+                "action": "move",
+                "box": 1,
+                "position": 5,
+                "to_box": 2,
+                "to_position": 8,
+                "record_id": 10,
+                "source": "human",
+                "payload": {
+                    "record_id": 10,
+                    "position": 5,
+                    "to_position": 8,
+                    "to_box": 2,
+                    "date_str": "2026-02-10",
+                    "action": "Move",
+                },
+            },
+        ]
+
+        panel.add_plan_items(items)
+
+        self.assertEqual(
+            "Box 1 (virus stock) Position 5 -> Box 2 (backup shelf) Position 8",
+            panel.plan_table.item(0, 1).text(),
+        )
 
     def test_add_plan_items_move_same_box_target_repeats_box_prefix(self):
         panel = self._new_operations_panel()
@@ -2603,7 +2637,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
 
         self.assertEqual(1, panel.plan_table.rowCount())
         pos_text = panel.plan_table.item(0, 1).text()
-        self.assertEqual("Box 1:5 -> Box 1:8", pos_text)
+        self.assertEqual("Box 1 Position 5 -> Box 1 Position 8", pos_text)
 
     def test_add_plan_items_validates_and_rejects_invalid(self):
         panel = self._new_operations_panel()

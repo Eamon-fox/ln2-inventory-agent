@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QHeaderView, QTableWidgetItem
 from app_gui.i18n import t, tr
 from app_gui.ui.theme import pick_contrasting_text_color
 from app_gui.ui.utils import cell_color
-from lib.position_fmt import pos_to_display
+from lib.position_fmt import format_box_position_display, pos_to_display
 from lib.validators import parse_date
 
 
@@ -92,6 +92,11 @@ def _item_display_sort_value(item):
 
 
 def _location_sort_key(row_data, value):
+    box = _safe_int(row_data.get("box"))
+    position = _safe_int(row_data.get("position"))
+    if box is not None and position is not None:
+        return (box, position)
+
     record = row_data.get("record")
     if isinstance(record, dict):
         box = _safe_int(record.get("box"))
@@ -168,7 +173,7 @@ def _set_table_columns(self, headers, *, header_labels=None):
 
     default_widths = {
         "id": 60,
-        "location": 80,
+        "location": 220,
         "frozen_at": 100,
         "stored_at": 100,
         "thaw_events": 200,
@@ -182,6 +187,21 @@ def _set_table_columns(self, headers, *, header_labels=None):
             self.ov_table.setColumnWidth(idx, default_widths[col_name])
         else:
             self.ov_table.setColumnWidth(idx, 120)
+
+
+def _format_location_value(self, row_data, fallback_value):
+    box = _safe_int(row_data.get("box"))
+    position = _safe_int(row_data.get("position"))
+    if box is None or position is None:
+        return str(fallback_value or "")
+
+    return format_box_position_display(
+        box,
+        position,
+        layout=getattr(self, "_current_layout", {}) or {},
+        box_label=tr("operations.box", default="Box"),
+        position_label=tr("operations.position", default="Position"),
+    )
 
 
 def _table_query_payload(self, *, keyword, selected_box, selected_cell):
@@ -290,8 +310,9 @@ def _render_table_rows(self, rows):
 
             for col_index, column in enumerate(self._table_columns):
                 value = values.get(column, "")
+                display_value = _format_location_value(self, row_data, value) if column == "location" else value
                 item = _SortableOverviewItem(
-                    str(value),
+                    str(display_value),
                     sort_key=_column_sort_key(
                         column,
                         value,
@@ -310,9 +331,9 @@ def _render_table_rows(self, rows):
                         item.setData(Qt.UserRole, int(value))
                 elif column == "location":
                     try:
-                        parts = str(value).split(":")
-                        if len(parts) == 2:
-                            box, pos = int(parts[0]), int(parts[1])
+                        box = _safe_int(row_data.get("box"))
+                        pos = _safe_int(row_data.get("position"))
+                        if box is not None and pos is not None:
                             item.setData(Qt.UserRole, box * 1000 + pos)
                     except (ValueError, TypeError):
                         pass

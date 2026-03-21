@@ -59,13 +59,12 @@ def test_workspace_init_bootstraps_from_internal_layout_when_available():
         assert os.path.samefile(svc.workspace_root, requested_root)
         assert (install_root / "migrate" / "inputs").is_dir()
         assert (install_root / "migrate" / "output").is_dir()
-        assert (
-            install_root
-            / "agent_skills"
-            / "migration"
-            / "assets"
-            / "acceptance_checklist_en.md"
-        ).is_file()
+        assert svc.session_checklist_path.endswith("migrate/output/migration_checklist.md")
+
+        src = Path(td) / "input.csv"
+        src.write_text("A", encoding="utf-8")
+        svc.stage_input_files([str(src)])
+        assert (requested_root / "output" / "migration_checklist.md").is_file()
 
 
 def test_workspace_init_recreates_missing_runtime_dirs():

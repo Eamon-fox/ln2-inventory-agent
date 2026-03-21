@@ -33,8 +33,10 @@ echo "  1. 更新 app_gui/version.py 中的 APP_VERSION"
 echo "  2. 更新 installer/windows/LN2InventoryAgent.iss 的默认版本"
 echo "  3. 更新 latest.json"
 echo "  4. 提醒你更新 CHANGELOG.md"
-echo "  5. 构建安装包"
-echo "  6. 同步版本到网站"
+echo "  5. 从 CHANGELOG 生成更新说明产物"
+echo "  6. 构建安装包"
+echo "  7. 上传 OSS（安装包 / latest.json / CHANGELOG.md）"
+echo "  8. 在 OSS 上传完成后同步网站"
 echo ""
 
 read -p "确认发布 v$NEW_VERSION? [y/N] " -n 1 -r
@@ -115,9 +117,14 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     exit 1
 fi
 
-# 5. 构建安装包
+# 5. 生成更新说明产物
 echo ""
-echo "5️⃣  构建安装包..."
+echo "5️⃣  从 CHANGELOG 生成更新说明产物..."
+python3 scripts/render_release_artifacts.py --version "$NEW_VERSION"
+
+# 6. 构建安装包
+echo ""
+echo "6️⃣  构建安装包..."
 echo "   提示: Windows 用户请在 Windows 上运行:"
 echo "   cd ~/snowfox && installer/windows/build_installer.bat"
 echo ""
@@ -127,15 +134,38 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     echo "⚠️  跳过构建步骤"
 fi
 
-# 6. 同步到网站
+# 7. 上传 OSS
 echo ""
-echo "6️⃣  同步版本到网站..."
-python3 scripts/sync_website_version.py
-python3 scripts/update_history_versions.py
+echo "7️⃣  上传 OSS（完成后才能同步网站）"
+echo "   至少需要上传以下对象:"
+echo "   - dist/installer/SnowFox-Setup-$NEW_VERSION.exe"
+echo "   - latest.json"
+echo "   - CHANGELOG.md"
+echo ""
+echo "   示例命令:"
+echo "   python3 ~/.agents/skills/aliyun-oss-upload/scripts/oss_upload.py upload-file dist/installer/SnowFox-Setup-$NEW_VERSION.exe --bucket snowfox-release"
+echo "   python3 ~/.agents/skills/aliyun-oss-upload/scripts/oss_upload.py upload-file latest.json --bucket snowfox-release"
+echo "   python3 ~/.agents/skills/aliyun-oss-upload/scripts/oss_upload.py upload-file CHANGELOG.md --bucket snowfox-release"
+echo ""
+read -p "是否已完成 OSS 上传? [y/N] " -n 1 -r
+echo
+OSS_UPLOADED=false
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    OSS_UPLOADED=true
+else
+    echo "⚠️  暂未同步网站。完成 OSS 上传后，请手动运行: ./scripts/sync-website.sh"
+fi
 
-# 7. Git 提交
+# 8. 同步到网站
+if [[ "$OSS_UPLOADED" == true ]]; then
+    echo ""
+    echo "8️⃣  同步版本到网站..."
+    ./scripts/sync-website.sh
+fi
+
+# 9. Git 提交
 echo ""
-echo "7️⃣  创建 Git 提交..."
+echo "9️⃣  创建 Git 提交..."
 git add -A
 git commit -m "chore: release v$NEW_VERSION"
 git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION"
@@ -144,7 +174,13 @@ echo ""
 echo "✅ 发布准备完成!"
 echo ""
 echo "下一步:"
-echo "  1. 上传安装包到 OSS: ossutil cp dist/installer/SnowFox-Setup-$NEW_VERSION.exe oss://snowfox-release/"
-echo "  2. 推送到 GitHub: git push && git push --tags"
-echo "  3. 在 GitHub 创建 Release"
+if [[ "$OSS_UPLOADED" != true ]]; then
+    echo "  1. 先上传 OSS: 安装包 / latest.json / CHANGELOG.md"
+    echo "  2. 上传完成后运行: ./scripts/sync-website.sh"
+    echo "  3. 推送到 GitHub: git push && git push --tags"
+    echo "  4. 在 GitHub 创建 Release"
+else
+    echo "  1. 推送到 GitHub: git push && git push --tags"
+    echo "  2. 在 GitHub 创建 Release"
+fi
 echo ""

@@ -52,10 +52,12 @@ python app_gui/main.py
 
 Config paths and defaults:
 
-- GUI settings: `<install-root>/config/config.yaml`
+- GUI settings: user config directory (`config.yaml`)
 - AI default model: `deepseek-chat`
 - Missing key hint: GUI chat shows where to set `DEEPSEEK_API_KEY` or auth file
-- Active inventory datasets: `<install-root>/inventories/<dataset>/inventory.yaml`
+- Active inventory datasets: `<data-root>/inventories/<dataset>/inventory.yaml`
+- Migration workspace: `<data-root>/migrate/`
+- On first startup the app asks the user to choose `data-root`
 
 Dataset rename behavior:
 
@@ -81,6 +83,8 @@ Release directory layout (installed EXE):
 ```text
 <install-dir>/
   SnowFox-<version>.exe
+
+<data-root>/
   inventories/
     <dataset-1>/
       inventory.yaml
@@ -90,12 +94,13 @@ Release directory layout (installed EXE):
         *.bak
     <dataset-2>/
       ...
-  config/
-    config.yaml
+  migrate/
+    ...
 ```
 
-- Inventory data is fixed under `<install-dir>/inventories/`.
-- GUI config is fixed at `<install-dir>/config/config.yaml` (same path used by app runtime and installer bootstrap).
+- Inventory data is fixed under the selected `<data-root>/inventories/`.
+- GUI config is stored in the per-user config directory and records the selected `data-root`.
+- Changing `data-root` is supported from `Settings`; the app copies existing inventories and migration workspace into the new root before switching.
 
 Packaging notes:
 
@@ -108,4 +113,3 @@ Packaging notes:
 - macOS app bundle output: `dist/SnowFox.app`
 
 The scaffold is intentionally minimal and exists to unblock M2 implementation.
-

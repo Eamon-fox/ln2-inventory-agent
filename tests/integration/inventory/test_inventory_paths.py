@@ -30,6 +30,7 @@ from lib.inventory_paths import (
     managed_dataset_name_from_yaml_path,
     rename_managed_dataset_yaml_path,
 )
+from lib.app_storage import set_session_data_root
 from lib import yaml_ops
 
 
@@ -38,6 +39,7 @@ def _enable_frozen(monkeypatch, install_dir):
     exe_path.write_text("", encoding="utf-8")
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "executable", str(exe_path))
+    set_session_data_root(str(install_dir))
 
 
 def _write_inventory(path):

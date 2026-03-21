@@ -19,7 +19,7 @@ from app_gui.i18n import t, tr
 from app_gui.system_notice import build_system_notice
 from app_gui.ui.limits import MAX_BOX_COUNT_UI
 from lib.inventory_paths import assert_allowed_inventory_yaml_path
-from lib.position_fmt import get_box_numbers
+from lib.position_fmt import box_tag_text, get_box_numbers
 from lib.tool_api_write_validation import (
     normalize_manage_boxes_operation,
     normalize_manage_boxes_renumber_mode,
@@ -1040,10 +1040,4 @@ class ManageBoxesFlow:
 
     @staticmethod
     def _get_box_tag(layout, box_num):
-        box_tags = (layout or {}).get("box_tags")
-        if not isinstance(box_tags, dict):
-            return ""
-        text = box_tags.get(str(box_num))
-        if text is None:
-            return ""
-        return str(text).replace("\r", " ").replace("\n", " ").strip()
+        return box_tag_text(box_num, layout)

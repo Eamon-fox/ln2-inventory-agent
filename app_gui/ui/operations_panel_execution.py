@@ -8,6 +8,7 @@ from app_gui.bridge_write_runner import execute_bridge_rollback
 from app_gui.i18n import tr
 from app_gui.error_localizer import localize_error_payload
 from app_gui.system_notice import build_system_notice, coerce_system_notice
+from lib.position_fmt import format_box_position_display
 
 
 def _build_rollback_outcome(
@@ -63,6 +64,16 @@ def _summarize_execution(panel, report, rollback_info):
     if callable(summarize_fn):
         return summarize_fn(report=report, rollback_info=rollback_info)
     return {}
+
+
+def _format_box_position(panel, box, position):
+    return format_box_position_display(
+        box,
+        position,
+        layout=panel._current_layout,
+        box_label=tr("operations.box", default="Box"),
+        position_label=tr("operations.position", default="Position"),
+    )
 
 
 def execute_plan(self):
@@ -196,14 +207,14 @@ def _build_execute_confirmation_lines(self, plan_items, yaml_path):
             )
             continue
 
-        line = f"  {action}: {label} @ Box {item.get('box', '?')}:{self._position_to_display(pos)}"
+        line = f"  {action}: {label} @ {_format_box_position(self, item.get('box', '?'), pos)}"
         to_pos = item.get("to_position")
         to_box = item.get("to_box")
         if to_pos:
             if to_box:
-                line += f" \u2192 Box {to_box}:{self._position_to_display(to_pos)}"
+                line += f" \u2192 {_format_box_position(self, to_box, to_pos)}"
             else:
-                line += f" \u2192 {self._position_to_display(to_pos)}"
+                line += f" \u2192 {_format_box_position(self, item.get('box', '?'), to_pos)}"
         lines.append(line)
     return lines
 

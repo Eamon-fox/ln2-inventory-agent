@@ -29,6 +29,7 @@ ln2_inventory_audit.jsonl
 ln2_inventory.html
 .ln2_inventory_http_server.json
 .ln2agent-data/
+snowfox_data/
 config/config.yaml
 inventories/
 

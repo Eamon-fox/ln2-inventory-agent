@@ -17,19 +17,7 @@ from app_gui.plan_model_sheet import (
     validate_plan_item,
     render_operation_sheet,
 )
-
-
-def _box_tag_for_box(layout, box_num):
-    box_tags = (layout or {}).get("box_tags")
-    if not isinstance(box_tags, dict):
-        return ""
-    raw_tag = box_tags.get(str(box_num))
-    if raw_tag is None:
-        return ""
-    text = str(raw_tag).replace("\r", " ").replace("\n", " ").strip()
-    if len(text) > 80:
-        return text[:80]
-    return text
+from lib.position_fmt import box_tag_text, format_box_position_display, format_box_positions_display
 
 
 def extract_grid_state_for_print(overview_panel):
@@ -85,7 +73,7 @@ def extract_grid_state_for_print(overview_panel):
         boxes_data.append({
             "box_number": box_num,
             "box_label": box_to_display(box_num, layout),
-            "box_tag": _box_tag_for_box(layout, box_num),
+            "box_tag": box_tag_text(box_num, layout),
             "cells": cells_data,
         })
 
@@ -295,7 +283,7 @@ def render_grid_html(grid_state):
                 normalized_label = suffix
 
         badge_num = str(box_num_int) if box_num_int is not None else normalized_label
-        box_tag = str(box_data.get("box_tag") or "").replace("\r", " ").replace("\n", " ").strip()
+        box_tag_text_value = str(box_data.get("box_tag") or "").replace("\r", " ").replace("\n", " ").strip()
         grid_style = (
             f"grid-template-columns: repeat({grid_cols}, var(--cell-size, 7.2mm)); "
             f"--cell-size-print-mm: {grid_cell_mm:.2f}mm; "
@@ -307,10 +295,10 @@ def render_grid_html(grid_state):
             f"--cell-marker-font-size: {grid_marker_font_px}px;"
         )
         tag_html = ""
-        if box_tag:
+        if box_tag_text_value:
             tag_html = (
-                f'<span class="box-header-tag" title="{escape(box_tag)}">'
-                f"{escape(box_tag)}</span>"
+                f'<span class="box-header-tag" title="{escape(box_tag_text_value)}">'
+                f"{escape(box_tag_text_value)}</span>"
             )
 
         box_html = f"""
@@ -373,26 +361,28 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
     def _build_fallback_row(item):
         action_norm = _normalize_action(item.get("action"))
         payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+        layout = grid_state.get("layout") if isinstance(grid_state, dict) else None
 
         if action_norm == "rollback":
             target = "-"
         else:
-            box_text = _safe_cell(item.get("box"))
-            pos_text = _safe_cell(item.get("position"))
-            target = f"Box {box_text}:{pos_text}"
+            target = format_box_position_display(item.get("box"), item.get("position"), layout=layout)
 
             if action_norm == "move":
                 to_pos = item.get("to_position")
                 if to_pos not in (None, ""):
                     to_box = item.get("to_box")
-                    to_box_text = _safe_cell(to_box if to_box not in (None, "") else item.get("box"))
-                    target = f"{target} -> Box {to_box_text}:{_safe_cell(to_pos)}"
+                    target = (
+                        f"{target} -> "
+                        f"{format_box_position_display(to_box if to_box not in (None, '') else item.get('box'), to_pos, layout=layout)}"
+                    )
             elif action_norm == "add":
                 positions = payload.get("positions") if isinstance(payload.get("positions"), list) else []
                 if positions:
-                    shown = ", ".join(_safe_cell(p) for p in positions[:6])
+                    shown_positions = list(positions[:6])
+                    base_text = format_box_positions_display(item.get("box"), shown_positions, layout=layout)
                     suffix = f", ... +{len(positions) - 6}" if len(positions) > 6 else ""
-                    target = f"Box {_safe_cell(item.get('box'))}: [{shown}{suffix}]"
+                    target = base_text[:-1] + f"{suffix}]" if base_text.endswith("]") and suffix else base_text
 
         fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
         if action_norm == "rollback":
@@ -1067,5 +1057,3 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
 </body>
 </html>"""
     return _apply_sheet_theme_tokens(html)
-
-

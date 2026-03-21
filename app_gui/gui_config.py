@@ -1,8 +1,4 @@
-"""Unified GUI configuration manager.
-
-Canonical config: <install_root>/config/config.yaml
-Falls back to defaults if file does not exist.
-"""
+"""Unified GUI configuration manager."""
 
 import copy
 import os
@@ -16,10 +12,16 @@ from app_gui.application.ai_provider_catalog import (
     default_ai_model,
     normalize_ai_provider,
 )
-from lib.inventory_paths import get_install_dir
+from lib.app_storage import (
+    get_legacy_config_file,
+    get_user_config_dir,
+    get_user_config_file,
+    normalize_data_root,
+)
 
-DEFAULT_CONFIG_DIR = os.path.join(get_install_dir(), "config")
-DEFAULT_CONFIG_FILE = os.path.join(DEFAULT_CONFIG_DIR, "config.yaml")
+DEFAULT_CONFIG_DIR = get_user_config_dir()
+DEFAULT_CONFIG_FILE = get_user_config_file()
+LEGACY_CONFIG_FILE = get_legacy_config_file()
 
 MAX_AGENT_STEPS = 120
 AI_HISTORY_LIMIT = 80
@@ -44,6 +46,7 @@ def _load_default_prompt():
         return ""
 
 DEFAULT_GUI_CONFIG = {
+    "data_root": None,
     "yaml_path": None,
     "api_keys": {},
     "language": "zh-CN",
@@ -62,9 +65,19 @@ DEFAULT_GUI_CONFIG = {
 }
 
 
-def load_gui_config(path=DEFAULT_CONFIG_FILE):
+def config_file_exists(path=None):
+    target = str(path or "").strip() or DEFAULT_CONFIG_FILE
+    if os.path.isfile(target):
+        return True
+    if os.path.abspath(target) == os.path.abspath(DEFAULT_CONFIG_FILE):
+        return os.path.isfile(LEGACY_CONFIG_FILE)
+    return False
+
+
+def load_gui_config(path=None):
     """Load GUI config from YAML file. Returns dict with defaults merged."""
     def _apply_defaults(cfg):
+        cfg["data_root"] = normalize_data_root(cfg.get("data_root")) or None
         provider = normalize_ai_provider(cfg.get("ai", {}).get("provider"))
         cfg.setdefault("ai", {})["provider"] = provider
         cfg.setdefault("api_keys", {})
@@ -78,14 +91,29 @@ def load_gui_config(path=DEFAULT_CONFIG_FILE):
         cfg["import_onboarding_seen"] = bool(cfg.get("import_onboarding_seen", False))
         return cfg
 
-    if not os.path.isfile(path):
+    candidate_path = str(path or "").strip() or DEFAULT_CONFIG_FILE
+    if not os.path.isfile(candidate_path) and os.path.abspath(candidate_path) == os.path.abspath(DEFAULT_CONFIG_FILE):
+        candidate_path = LEGACY_CONFIG_FILE if os.path.isfile(LEGACY_CONFIG_FILE) else candidate_path
+
+    if not os.path.isfile(candidate_path):
         cfg = copy.deepcopy(DEFAULT_GUI_CONFIG)
         return _apply_defaults(cfg)
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(candidate_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         merged = copy.deepcopy(DEFAULT_GUI_CONFIG)
-        for key in ("yaml_path", "api_keys", "language", "theme", "ui_scale", "last_notified_release", "release_notes_preview", "import_onboarding_seen"):
+        for key in (
+            "data_root",
+            "yaml_path",
+            "api_keys",
+            "language",
+            "theme",
+            "ui_scale",
+            "last_notified_release",
+            "release_notes_preview",
+            "import_onboarding_seen",
+            "migration_mode_notice_suppressed",
+        ):
             if key in data:
                 merged[key] = data[key]
         if "ai" in data and isinstance(data["ai"], dict):
@@ -99,10 +127,19 @@ def load_gui_config(path=DEFAULT_CONFIG_FILE):
         return _apply_defaults(cfg)
 
 
-def save_gui_config(config, path=DEFAULT_CONFIG_FILE):
+def save_gui_config(config, path=None):
     """Save GUI config to YAML file."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(config, f, allow_unicode=True, sort_keys=False)
+    target = str(path or "").strip() or DEFAULT_CONFIG_FILE
+    payload = copy.deepcopy(DEFAULT_GUI_CONFIG)
+    if isinstance(config, dict):
+        for key, value in config.items():
+            if key == "ai" and isinstance(value, dict):
+                payload["ai"].update(value)
+            else:
+                payload[key] = value
+    payload["data_root"] = normalize_data_root(payload.get("data_root")) or None
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "w", encoding="utf-8") as f:
+        yaml.safe_dump(payload, f, allow_unicode=True, sort_keys=False)
         f.flush()  # Ensure data is written to disk
         os.fsync(f.fileno())  # Force write to disk

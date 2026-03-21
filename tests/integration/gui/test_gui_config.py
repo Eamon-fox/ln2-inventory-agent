@@ -21,24 +21,28 @@ from app_gui.gui_config import (
     DEFAULT_CONFIG_FILE,
     DEFAULT_GUI_CONFIG,
     DEFAULT_MAX_STEPS,
+    LEGACY_CONFIG_FILE,
     _load_default_prompt,
+    config_file_exists,
     load_gui_config,
     save_gui_config,
 )
-from lib.inventory_paths import get_install_dir
+from lib.app_storage import get_legacy_config_dir, get_user_config_dir
 
 
 class GuiConfigTests(unittest.TestCase):
-    def test_default_config_location_under_install_root(self):
-        expected_dir = Path(get_install_dir()) / "config"
+    def test_default_config_location_under_user_config_root(self):
+        expected_dir = Path(get_user_config_dir())
         self.assertEqual(expected_dir.resolve(), Path(DEFAULT_CONFIG_DIR).resolve())
         self.assertEqual((expected_dir / "config.yaml").resolve(), Path(DEFAULT_CONFIG_FILE).resolve())
+        self.assertEqual((Path(get_legacy_config_dir()) / "config.yaml").resolve(), Path(LEGACY_CONFIG_FILE).resolve())
 
     def test_load_gui_config_defaults(self):
         with tempfile.TemporaryDirectory(prefix="ln2_gui_cfg_") as temp_dir:
             config_path = Path(temp_dir) / "config.yaml"
             cfg = load_gui_config(path=str(config_path))
 
+        self.assertIsNone(cfg["data_root"])
         self.assertEqual("deepseek", cfg["ai"]["provider"])
         self.assertEqual("deepseek-chat", cfg["ai"]["model"])
         self.assertEqual(DEFAULT_MAX_STEPS, cfg["ai"]["max_steps"])
@@ -64,6 +68,7 @@ ai:
         with tempfile.TemporaryDirectory(prefix="ln2_gui_cfg_save_") as temp_dir:
             config_path = Path(temp_dir) / "config.yaml"
             source = {
+                "data_root": "/tmp/snowfox-data",
                 "yaml_path": "/tmp/inventory.yaml",
                 "ai": {
                     "model": "deepseek-chat",
@@ -73,9 +78,33 @@ ai:
             save_gui_config(source, path=str(config_path))
             cfg = load_gui_config(path=str(config_path))
 
+        self.assertEqual("/tmp/snowfox-data", cfg["data_root"])
         self.assertEqual("deepseek-chat", cfg["ai"]["model"])
         self.assertEqual(12, cfg["ai"]["max_steps"])
         self.assertTrue(cfg["ai"]["thinking_enabled"])
+
+    def test_config_file_exists_falls_back_to_legacy_path(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_gui_cfg_legacy_file_") as temp_dir:
+            legacy_path = Path(temp_dir) / "legacy.yaml"
+            legacy_path.write_text("theme: light\n", encoding="utf-8")
+            from unittest.mock import patch
+
+            with patch("app_gui.gui_config.LEGACY_CONFIG_FILE", str(legacy_path)):
+                self.assertTrue(config_file_exists(DEFAULT_CONFIG_FILE))
+
+    def test_load_gui_config_falls_back_to_legacy_path_when_default_missing(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_gui_cfg_legacy_load_") as temp_dir:
+            default_path = Path(temp_dir) / "user-config.yaml"
+            legacy_path = Path(temp_dir) / "legacy-config.yaml"
+            legacy_path.write_text("theme: light\n", encoding="utf-8")
+            from unittest.mock import patch
+
+            with patch("app_gui.gui_config.DEFAULT_CONFIG_FILE", str(default_path)), patch(
+                "app_gui.gui_config.LEGACY_CONFIG_FILE", str(legacy_path)
+            ):
+                cfg = load_gui_config()
+
+        self.assertEqual("light", cfg["theme"])
 
     def test_load_gui_config_ignores_legacy_mock_field(self):
         with tempfile.TemporaryDirectory(prefix="ln2_gui_cfg_legacy_") as temp_dir:

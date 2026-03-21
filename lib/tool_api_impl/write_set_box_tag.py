@@ -53,7 +53,7 @@ def tool_set_box_tag(
     auto_backup=True,
     request_backup_path=None,
 ):
-    """Set or clear per-box single-line tag stored in meta.box_layout.box_tags."""
+    """Set or clear a per-box tag stored in meta.box_layout.box_tags."""
     action = "set_box_tag"
     tool_name = "tool_set_box_tag"
     tool_input = {

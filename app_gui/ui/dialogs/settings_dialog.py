@@ -138,6 +138,7 @@ class SettingsDialog(QDialog):
         on_create_new_dataset=None,
         on_rename_dataset=None,
         on_delete_dataset=None,
+        on_change_data_root=None,
         on_manage_boxes=None,
         on_data_changed=None,
         *,
@@ -161,6 +162,7 @@ class SettingsDialog(QDialog):
         self._on_create_new_dataset = on_create_new_dataset
         self._on_rename_dataset = on_rename_dataset
         self._on_delete_dataset = on_delete_dataset
+        self._on_change_data_root = on_change_data_root
         self._on_manage_boxes = on_manage_boxes
         self._on_data_changed = on_data_changed
         self._app_version = str(app_version or APP_VERSION)
@@ -211,6 +213,16 @@ class SettingsDialog(QDialog):
         yaml_row.addWidget(self.yaml_new_btn)
         data_layout.addRow(tr("settings.inventoryFile"), yaml_row)
 
+        data_root_row = QHBoxLayout()
+        self.data_root_edit = QLineEdit(self._config.get("data_root", ""))
+        self.data_root_edit.setReadOnly(True)
+        self.data_root_change_btn = QPushButton(tr("settings.changeDataRoot"))
+        self.data_root_change_btn.clicked.connect(self._emit_change_data_root_request)
+        self.data_root_change_btn.setEnabled(callable(self._on_change_data_root))
+        data_root_row.addWidget(self.data_root_edit, 1)
+        data_root_row.addWidget(self.data_root_change_btn)
+        data_layout.addRow(tr("settings.dataRoot"), data_root_row)
+
         self.dataset_switch_combo = None
         self.dataset_rename_btn = None
         self.dataset_delete_btn = None
@@ -233,6 +245,11 @@ class SettingsDialog(QDialog):
         lock_hint.setProperty("role", "settingsHint")
         lock_hint.setWordWrap(True)
         data_layout.addRow("", lock_hint)
+
+        data_root_hint = QLabel(tr("settings.dataRootHint"))
+        data_root_hint.setProperty("role", "settingsHint")
+        data_root_hint.setWordWrap(True)
+        data_layout.addRow("", data_root_hint)
 
         tool_row = QHBoxLayout()
         cf_btn = QPushButton(tr("main.manageCustomFields"))
@@ -569,6 +586,22 @@ class SettingsDialog(QDialog):
         if new_path:
             self.yaml_edit.setText(self._normalize_yaml_path(new_path))
             self._refresh_dataset_choices(selected_yaml=new_path)
+
+    def _emit_change_data_root_request(self):
+        if not callable(self._on_change_data_root):
+            return
+        result = self._on_change_data_root(self.data_root_edit.text().strip())
+        if not isinstance(result, dict):
+            return
+        new_root = str(result.get("data_root") or "").strip()
+        new_yaml = str(result.get("yaml_path") or "").strip()
+        if new_root:
+            self.data_root_edit.setText(new_root)
+            self._config["data_root"] = new_root
+        if new_yaml:
+            self.yaml_edit.setText(self._normalize_yaml_path(new_yaml))
+            self._initial_yaml_path = self._normalize_yaml_path(new_yaml)
+        self._refresh_dataset_choices(selected_yaml=new_yaml or self.yaml_edit.text().strip())
 
     def _emit_rename_dataset_request(self):
         if not callable(self._on_rename_dataset):

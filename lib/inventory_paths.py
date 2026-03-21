@@ -1,15 +1,16 @@
 ﻿"""Inventory path policy helpers.
 
 Inventory files are always locked to:
-    <install_dir>/inventories/<dataset_name>/inventory.yaml
-where install_dir is:
-    - dirname(sys.executable) in frozen runtime
-    - project root in source runtime
+    <data_root>/inventories/<dataset_name>/inventory.yaml
 """
 
 import os
 import shutil
-import sys
+
+from .app_storage import (
+    get_install_dir,
+    get_inventories_root as _get_data_root_inventories_root,
+)
 
 INVENTORIES_DIR_NAME = "inventories"
 INVENTORY_FILE_NAME = "inventory.yaml"
@@ -31,16 +32,9 @@ def inventory_lock_enabled():
     return True
 
 
-def get_install_dir():
-    """Return install directory (or project root in source mode)."""
-    if getattr(sys, "frozen", False):
-        return os.path.abspath(os.path.dirname(sys.executable))
-    return os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
-
-
 def get_inventories_root():
     """Return managed inventories root directory."""
-    return os.path.join(get_install_dir(), INVENTORIES_DIR_NAME)
+    return _get_data_root_inventories_root()
 
 
 def ensure_inventories_root():

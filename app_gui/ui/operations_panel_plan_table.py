@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 from app_gui.error_localizer import localize_error_payload
 from app_gui.ui.theme import pick_contrasting_text_color
 from app_gui.ui.utils import cell_color
+from lib.position_fmt import format_box_position_display, format_box_positions_display
 
 PLAN_ROW_TINT_ROLE = int(Qt.UserRole) + 201
 
@@ -151,31 +152,49 @@ def _build_plan_action_text(self, action_norm, item):
 
 
 def _build_plan_target_text(self, action_norm, item, payload):
+    box_label = _tr("operations.box", default="Box")
+    position_label = _tr("operations.position", default="Position")
+    positions_label = _tr("operations.positions", default="Positions")
+
     if action_norm == "rollback":
         return "-"
 
     box = item.get("box", "")
-    pos = item.get("position", "")
-    pos_text = self._position_to_display(pos)
-    box_text = box if box not in (None, "") else "?"
-    box_prefix = f"Box {box_text}"
 
     if action_norm == "add":
         positions = payload.get("positions") if isinstance(payload.get("positions"), list) else []
-        if not positions:
-            return f"{box_prefix}: ?"
-        shown = ", ".join(self._position_to_display(p) for p in positions[:6])
+        shown_positions = list(positions[:6]) if positions else []
         suffix = f", ... +{len(positions) - 6}" if len(positions) > 6 else ""
-        return f"{box_prefix}: [{shown}{suffix}]"
+        base_text = format_box_positions_display(
+            box,
+            shown_positions,
+            layout=self._current_layout,
+            box_label=box_label,
+            positions_label=positions_label,
+        )
+        return base_text[:-1] + f"{suffix}]" if base_text.endswith("]") and suffix else base_text
 
     to_pos = item.get("to_position")
     to_box = item.get("to_box")
-    to_pos_text = self._position_to_display(to_pos)
     if to_pos and (to_box is None or to_box == box):
-        return f"{box_prefix}:{pos_text} -> {box_prefix}:{to_pos_text}"
+        return (
+            f"{format_box_position_display(box, item.get('position'), layout=self._current_layout, box_label=box_label, position_label=position_label)}"
+            f" -> "
+            f"{format_box_position_display(box, to_pos, layout=self._current_layout, box_label=box_label, position_label=position_label)}"
+        )
     if to_pos and to_box:
-        return f"{box_prefix}:{pos_text} -> Box {to_box}:{to_pos_text}"
-    return f"{box_prefix}:{pos_text}"
+        return (
+            f"{format_box_position_display(box, item.get('position'), layout=self._current_layout, box_label=box_label, position_label=position_label)}"
+            f" -> "
+            f"{format_box_position_display(to_box, to_pos, layout=self._current_layout, box_label=box_label, position_label=position_label)}"
+        )
+    return format_box_position_display(
+        box,
+        item.get("position"),
+        layout=self._current_layout,
+        box_label=box_label,
+        position_label=position_label,
+    )
 
 
 def _build_plan_date_text(self, action_norm, payload):

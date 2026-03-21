@@ -7,7 +7,7 @@ from app_gui.i18n import t, tr
 from app_gui.ui.overview_panel_cell_button import CellButton
 from app_gui.ui.theme import SPACE_1, SPACE_2, cell_empty_style, cell_occupied_style, resolve_theme_token
 from app_gui.ui.utils import cell_color
-from lib.position_fmt import box_to_display, pos_to_display
+from lib.position_fmt import box_tag_text, box_to_display, pos_to_display
 
 _BOX_TAG_TITLE_MAX_CHARS = 18
 _OCCUPIED_TEXT_SHOW_MIN_CELL_PX = 52
@@ -349,16 +349,7 @@ def _marker_css_overlay(marker_type, *, is_selected=False):
 
 
 def _get_box_tag(layout, box_num):
-    box_tags = (layout or {}).get("box_tags")
-    if not isinstance(box_tags, dict):
-        return ""
-    raw_value = box_tags.get(str(box_num))
-    if raw_value is None:
-        return ""
-    text = str(raw_value)
-    if "\n" in text or "\r" in text:
-        text = text.replace("\r", " ").replace("\n", " ")
-    return text.strip()
+    return box_tag_text(box_num, layout)
 
 
 def _truncate_box_tag_for_title(tag_text, max_chars=_BOX_TAG_TITLE_MAX_CHARS):
@@ -372,19 +363,19 @@ def _truncate_box_tag_for_title(tag_text, max_chars=_BOX_TAG_TITLE_MAX_CHARS):
 def _format_box_group_title(box_num, layout):
     box_label = box_to_display(box_num, layout)
     title = t("overview.boxLabel", box=box_label)
-    box_tag = _get_box_tag(layout, box_num)
-    if not box_tag:
+    tag_text = _get_box_tag(layout, box_num)
+    if not tag_text:
         return title
-    return f"{title} | {_truncate_box_tag_for_title(box_tag)}"
+    return f"{title} | {_truncate_box_tag_for_title(tag_text)}"
 
 
 def _format_box_group_tooltip(box_num, layout):
     box_label = box_to_display(box_num, layout)
     title = t("overview.boxLabel", box=box_label)
-    box_tag = _get_box_tag(layout, box_num)
-    if not box_tag:
+    tag_text = _get_box_tag(layout, box_num)
+    if not tag_text:
         return title
-    return f"{title} | {box_tag}"
+    return f"{title} | {tag_text}"
 
 
 def _build_operation_marker_map(plan_items):

@@ -6,6 +6,10 @@ from .custom_fields_use_case import (
     CustomFieldsEditorState,
     CustomFieldsUseCase,
 )
+from .data_root_use_case import (
+    DataRootChangeResult,
+    DataRootUseCase,
+)
 from .dataset_lifecycle_use_case import (
     DatasetDeleteResult,
     DatasetLifecycleResult,
@@ -29,6 +33,8 @@ __all__ = [
     "CustomFieldsEditorLoadResult",
     "CustomFieldsEditorState",
     "CustomFieldsUseCase",
+    "DataRootChangeResult",
+    "DataRootUseCase",
     "DatasetDeleteResult",
     "DatasetLifecycleResult",
     "DatasetLifecycleUseCase",

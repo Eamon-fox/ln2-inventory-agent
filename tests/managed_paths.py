@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import yaml
 
+from lib.app_storage import set_session_data_root
 from lib.inventory_paths import create_managed_dataset_yaml_path
 
 
@@ -36,11 +37,13 @@ class ManagedPathTestCase(unittest.TestCase):
         self.inventories_root.mkdir(parents=True, exist_ok=True)
 
         self._patch_install_dir = patch(
-            "lib.inventory_paths.get_install_dir",
+            "lib.app_storage.get_install_dir",
             return_value=str(self.install_root),
         )
         self._patch_install_dir.start()
         self.addCleanup(self._patch_install_dir.stop)
+        set_session_data_root(str(self.install_root))
+        self.addCleanup(lambda: set_session_data_root(""))
 
         original_tempdir = tempfile.TemporaryDirectory
         original_mkdtemp = tempfile.mkdtemp

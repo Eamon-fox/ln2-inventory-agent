@@ -465,6 +465,12 @@ class RenderOperationSheetWithGridTests(unittest.TestCase):
         self.assertIn("Blocked", html)
         self.assertIn('class="op-row op-row-blocked"', html)
 
+    def test_fallback_rows_use_identity_first_box_position_display(self):
+        item = _base_item(action="takeout", box=7, position=15, record_id=99)
+        html = render_operation_sheet_with_grid([item], _grid_state_with_markers(), table_rows=None)
+        self.assertIn("Box 7 Position 15", html)
+        self.assertNotIn("Box 7:15", html)
+
     def test_render_grid_html_hides_non_active_boxes(self):
         grid_state = {
             "rows": 1,
@@ -827,4 +833,3 @@ class FactoryValidateRoundTripTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

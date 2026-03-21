@@ -939,16 +939,44 @@ class OverviewTableViewTests(ManagedPathTestCase):
 
             panel.ov_table.sortItems(location_col, Qt.DescendingOrder)
             self.assertEqual(
-                ["1:10", "1:2", "1:1"],
+                ["Box 1 Position 10", "Box 1 Position 2", "Box 1 Position 1"],
                 self._table_column_texts(panel, "location"),
             )
 
             panel.ov_table.sortItems(location_col, Qt.AscendingOrder)
             self.assertEqual(
-                ["1:1", "1:2", "1:10"],
+                ["Box 1 Position 1", "Box 1 Position 2", "Box 1 Position 10"],
                 self._table_column_texts(panel, "location"),
             )
         finally:
+            self._cleanup(tmpdir)
+
+    def test_table_location_display_includes_box_tag_when_available(self):
+        records = [
+            {"id": 201, "cell_line": "K562", "short_name": "p10", "box": 1, "position": 10, "frozen_at": "2025-01-01"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(
+            records,
+            meta_extra={
+                "color_key": "cell_line",
+                "box_layout": {"rows": 9, "cols": 9, "box_tags": {"1": "virus stock"}},
+            },
+        )
+        panel = None
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            self.assertEqual(
+                ["Box 1 (virus stock) Position 10"],
+                self._table_column_texts(panel, "location"),
+            )
+        finally:
+            if panel is not None:
+                panel.hide()
             self._cleanup(tmpdir)
 
     def test_table_id_sort_uses_numeric_order(self):
@@ -1031,7 +1059,7 @@ class OverviewTableViewTests(ManagedPathTestCase):
                 self.assertEqual("location", panel._table_sort_by)
                 self.assertEqual("desc", panel._table_sort_order)
                 self.assertEqual(
-                    ["1:10", "1:2", "1:1"],
+                    ["Box 1 Position 10", "Box 1 Position 2", "Box 1 Position 1"],
                     self._table_column_texts(panel, "location"),
                 )
 
@@ -1041,7 +1069,7 @@ class OverviewTableViewTests(ManagedPathTestCase):
             self.assertEqual("location", panel._table_sort_by)
             self.assertEqual("asc", panel._table_sort_order)
             self.assertEqual(
-                ["1:1", "1:2", "1:10"],
+                ["Box 1 Position 1", "Box 1 Position 2", "Box 1 Position 10"],
                 self._table_column_texts(panel, "location"),
             )
         finally:

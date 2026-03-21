@@ -8,7 +8,7 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QPushButton, QLabel, QSplitter, QComboBox,
-    QDialog, QLineEdit, QInputDialog, QMessageBox, QTextEdit, QPlainTextEdit, QCheckBox,
+    QDialog, QFileDialog, QLineEdit, QInputDialog, QMessageBox, QTextEdit, QPlainTextEdit, QCheckBox,
 )
 
 if getattr(sys, "frozen", False):
@@ -21,6 +21,7 @@ else:
 from app_gui.tool_bridge import GuiToolBridge
 from app_gui.agent_session import AgentSessionService
 from app_gui.application import (
+    DataRootUseCase,
     DatasetLifecycleUseCase,
     DatasetUseCase,
     EventBus,
@@ -31,6 +32,7 @@ from app_gui.application.ai_provider_catalog import AI_PROVIDER_DEFAULTS
 from app_gui.gui_config import (
     DEFAULT_CONFIG_FILE,
     DEFAULT_MAX_STEPS,
+    config_file_exists,
     load_gui_config,
     save_gui_config,
 )
@@ -42,6 +44,14 @@ from lib.inventory_paths import (
     list_managed_datasets,
     normalize_inventory_yaml_path as _normalize_inventory_yaml_path,
     sanitize_dataset_name,
+)
+from lib.app_storage import (
+    get_legacy_data_root,
+    get_legacy_inventories_root,
+    get_legacy_migrate_root,
+    has_any_legacy_data,
+    normalize_data_root,
+    set_session_data_root,
 )
 from lib.plan_store import PlanStore
 from app_gui.ui.theme import (
@@ -168,13 +178,96 @@ def _resolve_managed_startup_yaml_path(configured_yaml_path):
     )
 
 
+def _choose_data_root(parent=None, *, title="", initial_dir="") -> str:
+    return normalize_data_root(
+        QFileDialog.getExistingDirectory(
+            parent,
+            str(title or tr("settings.changeDataRoot")),
+            str(initial_dir or os.path.expanduser("~")),
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks,
+        )
+    )
+
+
+def _bootstrap_data_root(app, gui_config: dict) -> bool:
+    del app
+    data_root = normalize_data_root(gui_config.get("data_root"))
+    if data_root:
+        set_session_data_root(data_root)
+        return True
+
+    use_case = DataRootUseCase()
+    legacy_root = get_legacy_data_root()
+    initial_dir = legacy_root if has_any_legacy_data() else os.path.expanduser("~")
+
+    if has_any_legacy_data():
+        intro = QMessageBox()
+        intro.setWindowTitle(tr("main.dataRootSetupTitle"))
+        intro.setIcon(QMessageBox.Information)
+        intro.setText(tr("main.dataRootSetupLegacyText"))
+        intro.setInformativeText(tr("main.dataRootSetupLegacyDetail"))
+        choose_btn = intro.addButton(tr("main.dataRootChooseAction"), QMessageBox.AcceptRole)
+        intro.addButton(tr("common.cancel"), QMessageBox.RejectRole)
+        intro.setDefaultButton(choose_btn)
+        intro.exec()
+        if intro.clickedButton() != choose_btn:
+            return False
+    else:
+        intro = QMessageBox()
+        intro.setWindowTitle(tr("main.dataRootSetupTitle"))
+        intro.setIcon(QMessageBox.Information)
+        intro.setText(tr("main.dataRootSetupText"))
+        intro.setInformativeText(tr("main.dataRootSetupDetail"))
+        choose_btn = intro.addButton(tr("main.dataRootChooseAction"), QMessageBox.AcceptRole)
+        intro.addButton(tr("common.cancel"), QMessageBox.RejectRole)
+        intro.setDefaultButton(choose_btn)
+        intro.exec()
+        if intro.clickedButton() != choose_btn:
+            return False
+
+    selected_root = _choose_data_root(
+        None,
+        title=tr("main.dataRootChooseTitle"),
+        initial_dir=initial_dir,
+    )
+    if not selected_root:
+        return False
+
+    try:
+        if has_any_legacy_data():
+            result = use_case.migrate_root(
+                source_root=legacy_root,
+                target_root=selected_root,
+                current_yaml_path=gui_config.get("yaml_path") or "",
+            )
+        else:
+            result = use_case.initialize_root(target_root=selected_root)
+    except Exception as exc:
+        QMessageBox.warning(
+            None,
+            tr("main.dataRootSetupTitle"),
+            t("main.dataRootSetupFailed", error=str(exc)),
+        )
+        return False
+
+    gui_config["data_root"] = result.data_root
+    if result.yaml_path:
+        gui_config["yaml_path"] = result.yaml_path
+    save_gui_config(gui_config)
+    set_session_data_root(result.data_root)
+    return True
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.settings = QSettings("EamonFox", "LN2InventoryAgent")
-        config_file_exists = os.path.isfile(DEFAULT_CONFIG_FILE)
+        config_exists = config_file_exists(DEFAULT_CONFIG_FILE)
         self.gui_config = load_gui_config()
-        if not config_file_exists:
+        self.gui_config["data_root"] = normalize_data_root(self.gui_config.get("data_root"))
+        set_session_data_root(self.gui_config.get("data_root"))
+        self._data_root_use_case = DataRootUseCase()
+        if not config_exists:
             self.gui_config["ui_scale"] = _resolve_startup_ui_scale(
                 config_exists=False,
                 configured_scale=self.gui_config.get("ui_scale", 1.0),
@@ -193,7 +286,7 @@ class MainWindow(QMainWindow):
         # Guarded by a dedicated marker to avoid re-importing stale paths after users
         # intentionally remove managed config.yaml.
         migrated_once = self.settings.value("migration/unified_config_done", False, type=bool)
-        if (not config_file_exists) and (not migrated_once):
+        if (not config_exists) and (not migrated_once):
             migrated_model = self.settings.value("ai/model", "", type=str)
             migrated_steps = self.settings.value("ai/max_steps", DEFAULT_MAX_STEPS, type=int)
             self.gui_config["ai"] = {
@@ -689,6 +782,55 @@ class MainWindow(QMainWindow):
         combo.setToolTip(tooltip_text)
         combo.blockSignals(False)
 
+    def _current_data_root(self) -> str:
+        return normalize_data_root(self.gui_config.get("data_root"))
+
+    def on_change_data_root(self, current_data_root=""):
+        source_root = normalize_data_root(current_data_root) or self._current_data_root()
+        target_root = _choose_data_root(
+            self,
+            title=tr("settings.changeDataRoot"),
+            initial_dir=source_root or os.path.expanduser("~"),
+        )
+        if not target_root:
+            return {}
+
+        try:
+            result = self._data_root_use_case.migrate_root(
+                source_root=source_root,
+                target_root=target_root,
+                current_yaml_path=self.current_yaml_path,
+            )
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                tr("settings.changeDataRoot"),
+                t("settings.changeDataRootFailed", error=str(exc)),
+            )
+            return {}
+
+        self.gui_config["data_root"] = result.data_root
+        set_session_data_root(result.data_root)
+        self.current_yaml_path = self._dataset_lifecycle.resolve_startup_yaml_path(
+            configured_yaml_path=result.yaml_path or self.current_yaml_path,
+        )
+        self.gui_config["yaml_path"] = self.current_yaml_path
+        save_gui_config(self.gui_config)
+        self._import_journey = ImportJourneyService(
+            workspace_service=MigrationWorkspaceService(),
+        )
+        self._refresh_home_dataset_choices(selected_yaml=self.current_yaml_path)
+        self.overview_panel.refresh()
+        self.operations_panel.apply_meta_update()
+        self.statusBar().showMessage(
+            t("settings.changeDataRootSuccess", path=result.data_root),
+            5000,
+        )
+        return {
+            "data_root": result.data_root,
+            "yaml_path": self.current_yaml_path,
+        }
+
     def _on_home_dataset_switch_changed(self):
         combo = getattr(self, "home_dataset_switch_combo", None)
         if combo is None:
@@ -712,6 +854,7 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(
             self,
             config={
+                "data_root": self.gui_config.get("data_root", ""),
                 "yaml_path": self.current_yaml_path,
                 "api_keys": self.gui_config.get("api_keys", {}),
                 "ai": self.gui_config.get("ai", {}),
@@ -724,6 +867,7 @@ class MainWindow(QMainWindow):
             on_delete_dataset=self.on_delete_dataset,
             on_manage_boxes=self.on_manage_boxes,
             on_data_changed=self._on_settings_data_changed,
+            on_change_data_root=self.on_change_data_root,
             app_version=APP_VERSION,
             app_release_url=APP_RELEASE_URL,
             github_api_latest=UPDATE_CHECK_URL,
@@ -954,10 +1098,11 @@ class MainWindow(QMainWindow):
 
 def main():
     # Load GUI config BEFORE creating QApplication to set scale factor
-    config_file_exists = os.path.isfile(DEFAULT_CONFIG_FILE)
+    config_exists = config_file_exists(DEFAULT_CONFIG_FILE)
     gui_config = load_gui_config()
+    set_language(gui_config.get("language") or "zh-CN")
     ui_scale = _resolve_startup_ui_scale(
-        config_exists=config_file_exists,
+        config_exists=config_exists,
         configured_scale=gui_config.get("ui_scale", 1.0),
     )
     gui_config["ui_scale"] = ui_scale
@@ -974,6 +1119,9 @@ def main():
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
 
     app = QApplication(sys.argv)
+
+    if not _bootstrap_data_root(app, gui_config):
+        return 0
 
     # Set application icon (taskbar, window title bar, etc.)
     icon_candidates = [
@@ -1004,4 +1152,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

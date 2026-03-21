@@ -1,179 +1,280 @@
 # SnowFox 发布脚本
 
-自动化版本管理和网站同步工具集。
+本目录维护发版过程中会直接执行的脚本。当前正式流程的关键目标有三个：
 
-## 📦 脚本说明
+- 保证桌面应用版本元数据一致
+- 保证 GitHub Release、自动更新说明、网站最新版说明三处从同一份变更记录派生
+- 在 OSS 上传完成后，把网站服务器上的 `latest.json` 和 `dist/` 同步到同一版本
 
-### `sync_website_version.py`
-从 `latest.json` 同步版本号到网站。
-
-**功能：**
-- 更新 `hero.html` 中的下载链接
-- 更新 `download.html` 中的版本号和下载链接
-
-**使用：**
-```bash
-cd ~/snowfox
-python3 scripts/sync_website_version.py
-```
-
----
-
-### `update_history_versions.py`
-从 `CHANGELOG.md` 自动提取历史版本并更新网站。
-
-**功能：**
-- 解析 `CHANGELOG.md` 提取版本号与发布日期
-- 生成历史版本下载链接
-- 更新 `download.html` 的历史版本列表
-- 为历史版本项补充悬停摘要提示，方便快速查看版本变化
-
-**使用：**
-```bash
-cd ~/snowfox
-python3 scripts/update_history_versions.py
-```
-
----
+## 当前推荐脚本
 
 ### `release.sh`
-完整的发布流程脚本（交互式）。
 
-**功能：**
-1. 更新 `app_gui/version.py` 中的 `APP_VERSION`
-2. 更新 `installer/windows/LN2InventoryAgent.iss` 的默认版本
+交互式正式发版脚本。
+
+职责：
+
+1. 更新 `app_gui/version.py`
+2. 更新 `installer/windows/LN2InventoryAgent.iss`
 3. 更新 `latest.json`
-4. 提醒更新 `CHANGELOG.md`
-5. 提示构建安装包
-6. 同步版本到网站
-7. 创建 Git 提交和标签
+4. 提醒手动补齐 `CHANGELOG.md`
+5. 从 `CHANGELOG.md` 生成更新说明产物
+6. 提示完成 Windows 安装包构建
+7. 提示上传 OSS 资产
+8. 在确认 OSS 已上传后调用 `sync-website.sh`
+9. 创建 Git 提交和 tag
 
-**使用：**
+使用：
+
 ```bash
-cd ~/snowfox
+cd ~/code/snowfox
 ./scripts/release.sh
 ```
 
----
+### `sync-website.sh`
 
-## 🚀 发布流程
+从 MacBook 通过 SSH 同步网站版本。
 
-### 方式一：使用 `release.sh`（推荐）
+职责：
+
+1. 把当前仓库的 `latest.json` 复制到网站服务器 `/var/www/snowfox.bio/latest.json`
+2. 在网站服务器执行 `node scripts/build.js`
+3. 校验服务器 `dist/latest.json` 的版本号与本地一致
+
+使用：
 
 ```bash
-cd ~/snowfox
+cd ~/code/snowfox
+./scripts/sync-website.sh
+```
+
+默认它会连接 SSH 别名 `ecs` 并操作 `/var/www/snowfox.bio`。如有需要，可以覆盖：
+
+```bash
+WEBSITE_HOST=ecs WEBSITE_DIR=/var/www/snowfox.bio ./scripts/sync-website.sh
+```
+
+### `render_release_artifacts.py`
+
+从 `CHANGELOG.md` 顶部条目生成发布说明产物。
+
+职责：
+
+1. 读取 `CHANGELOG.md` 顶部版本条目
+2. 更新 `latest.json.release_notes`
+3. 生成 `docs/releases/v<version>-github-release.md`
+
+这意味着以下三处内容保持同源：
+
+- GitHub Release 页面正文
+- 软件自动更新提示
+- 网站下载页的“最新版”说明
+
+使用：
+
+```bash
+cd ~/code/snowfox
+python3 scripts/render_release_artifacts.py --version 1.3.6
+```
+
+## 旧脚本状态
+
+### `sync_website_version.py`
+
+旧版网站模板注入脚本。当前下载页已经改成运行时读取网站服务器本地的 `/latest.json`，不再依赖这个脚本更新 HTML 片段。
+
+### `update_history_versions.py`
+
+旧版历史版本列表生成脚本。当前下载页历史版本来自 OSS 上的 `CHANGELOG.md` 运行时解析，不再依赖这个脚本预生成列表。
+
+这两个 Python 脚本暂时保留，但不再是正式发版流程的一部分。
+
+## 正式发版顺序
+
+### 方式一：使用 `release.sh`
+
+```bash
+cd ~/code/snowfox
 ./scripts/release.sh
 ```
 
-按提示输入新版本号，脚本会自动完成大部分工作。
+推荐顺序：
 
-### 方式二：手动发布
+1. 更新版本文件与 `CHANGELOG.md`
+2. 运行 `python3 scripts/render_release_artifacts.py --version <version>`
+3. 在 Windows 构建 `dist/installer/SnowFox-Setup-<version>.exe`
+4. 上传 OSS 对象
+5. 运行 `./scripts/sync-website.sh`
+6. 用 `docs/releases/v<version>-github-release.md` 填 GitHub Release 页面
+7. 推送 GitHub 并创建 Release
 
-1. **更新版本号**
-   ```bash
-   # 编辑 app_gui/version.py
-   APP_VERSION = "1.3.5"
+### 方式二：手动执行
 
-   # 编辑 installer/windows/LN2InventoryAgent.iss
-   #define MyAppVersion "1.3.5"
-   
-   # 编辑 latest.json
-   {
-     "version": "1.3.5",
-     "download_url": "https://snowfox-release.oss-cn-beijing.aliyuncs.com/SnowFox-Setup-1.3.5.exe",
-     "release_notes": "..."
-   }
-   ```
+1. 更新版本文件
 
-2. **更新 CHANGELOG.md**
-   ```markdown
-   ## 1.3.5 - 2026-03-20
-   
-   ### Added
-   - 新功能...
-   
-   ### Changed
-   - 改进...
-   
-   ### Fixed
-   - 修复...
-   ```
+```bash
+# app_gui/version.py
+APP_VERSION = "1.3.6"
 
-3. **构建安装包**（在 Windows 上）
-   ```bash
-   cd C:\path\to\snowfox
-   installer\windows\build_installer.bat
-   ```
+# installer/windows/LN2InventoryAgent.iss
+#define MyAppVersion "1.3.6"
 
-4. **上传到 OSS**
-   ```bash
-   ossutil cp dist/installer/SnowFox-Setup-1.3.5.exe oss://snowfox-release/
-   ```
-
-5. **同步到网站**
-   ```bash
-   cd ~/snowfox
-   python3 scripts/sync_website_version.py
-   python3 scripts/update_history_versions.py
-   ```
-
-6. **提交和推送**
-   ```bash
-   git add -A
-   git commit -m "chore: release v1.3.5"
-   git tag v1.3.5
-   git push && git push --tags
-   ```
-
----
-
-## 📋 文件依赖关系
-
+# latest.json
+{
+  "version": "1.3.6",
+  "download_url": "https://snowfox-release.oss-cn-beijing.aliyuncs.com/SnowFox-Setup-1.3.6.exe",
+  "release_notes": "..."
+}
 ```
-~/snowfox/
-├── app_gui/version.py     # APP_VERSION 权威来源
-├── installer/windows/LN2InventoryAgent.iss  # Windows 安装器默认版本
-├── latest.json            # 版本配置（单一数据源）
-├── CHANGELOG.md           # 版本历史
+
+2. 更新 `CHANGELOG.md`
+
+```markdown
+## 1.3.6 - 2026-03-21
+
+### Added
+- ...
+
+### Changed
+- ...
+
+### Fixed
+- ...
+```
+
+3. 从 `CHANGELOG.md` 生成发布说明产物
+
+```bash
+python3 scripts/render_release_artifacts.py --version 1.3.6
+```
+
+4. 运行一致性检查
+
+```bash
+python3 scripts/validate_version.py
+```
+
+5. 在 Windows 构建安装包
+
+```bat
+installer\windows\build_installer.bat
+```
+
+6. 上传 OSS
+
+必须先上传安装包，再上传 `latest.json`，并同步上传 `CHANGELOG.md`，否则网站历史版本和更新说明会滞后。
+
+```bash
+python3 ~/.agents/skills/aliyun-oss-upload/scripts/oss_upload.py \
+  upload-file dist/installer/SnowFox-Setup-1.3.6.exe --bucket snowfox-release
+
+python3 ~/.agents/skills/aliyun-oss-upload/scripts/oss_upload.py \
+  upload-file latest.json --bucket snowfox-release
+
+python3 ~/.agents/skills/aliyun-oss-upload/scripts/oss_upload.py \
+  upload-file CHANGELOG.md --bucket snowfox-release
+```
+
+7. 同步网站
+
+```bash
+./scripts/sync-website.sh
+```
+
+8. 用 `docs/releases/v1.3.6-github-release.md` 作为 GitHub Release 正文
+
+9. 提交和推送
+
+```bash
+git add -A
+git commit -m "chore: release v1.3.6"
+git tag -a "v1.3.6" -m "Release v1.3.6"
+git push
+git push --tags
+```
+
+## 网站同步机制
+
+当前网站实际服务目录是 Linux 服务器上的 `/var/www/snowfox.bio/dist`。
+
+同步时要区分两层：
+
+- 源文件层：`/var/www/snowfox.bio/latest.json`
+- 对外服务层：`/var/www/snowfox.bio/dist/latest.json`
+
+`sync-website.sh` 做的是：
+
+1. 从 MacBook 把开发仓库中的 `latest.json` 拷到服务器源目录
+2. 在服务器端重跑 `node scripts/build.js`
+3. 让新的 `latest.json` 进入 `dist/`
+
+所以网站不会自动因为 OSS 更新而刷新 `dist/`。每次正式发版后，只要版本要对外展示，就需要执行一次网站同步。
+
+## 发布说明唯一真相源
+
+当前约定：
+
+- `CHANGELOG.md` 顶部条目是发布说明唯一真相源
+- `render_release_artifacts.py` 从它生成 `latest.json.release_notes`
+- GitHub Release 正文文件也由它生成
+
+不要手工分别维护 GitHub Release、`latest.json.release_notes` 和网站最新版说明。
+
+## 文件关系
+
+```text
+~/code/snowfox/
+├── app_gui/version.py
+├── installer/windows/LN2InventoryAgent.iss
+├── latest.json
+├── CHANGELOG.md
 └── scripts/
-    ├── sync_website_version.py
-    ├── update_history_versions.py
-    └── release.sh
+    ├── release.sh
+    ├── render_release_artifacts.py
+    ├── sync-website.sh
+    └── validate_version.py
 
-/var/www/snowfox.bio/
-└── assets/partials/
-    ├── hero.html          # 首页下载链接
-    └── download.html      # 下载页面（最新版+历史版本）
+网站服务器 ecs:/var/www/snowfox.bio/
+├── latest.json
+├── scripts/build.js
+└── dist/
+    └── latest.json
 ```
 
----
+## 常见问题
 
-## ⚙️ 配置要求
+### 网站已经显示新版本，但下载打不开
 
-- Python 3.6+
-- Git
-- ossutil（用于上传到 OSS）
-- Inno Setup 6（Windows 构建）
+通常说明网站同步早于 OSS 安装包上传。
 
----
+处理：
 
-## 🔍 故障排查
+1. 先确认 `SnowFox-Setup-<version>.exe` 已在 `snowfox-release` 中可访问
+2. 再重新运行 `./scripts/sync-website.sh`
 
-### 问题：脚本提示 `latest.json` 不存在
-**解决：** 确保在 `~/snowfox` 根目录运行脚本
+### 下载页历史版本没更新
 
-### 问题：网站文件未更新
-**解决：** 检查 `/var/www/snowfox.bio` 路径权限
+当前历史版本来自 OSS 上的 `CHANGELOG.md`。
 
-### 问题：历史版本列表未更新
-**解决：** 确保 `CHANGELOG.md` 格式正确（`## 1.3.3 - 2026-03-05`）
+处理：
 
----
+1. 确认 `CHANGELOG.md` 已上传到 `snowfox-release`
+2. 确认顶部条目格式是 `## <version> - <date>`
 
-## 📝 注意事项
+### 网站同步脚本报 SSH 或路径错误
 
-- 发布前确保所有测试通过
-- 保持 `CHANGELOG.md` 格式一致
-- 版本号遵循语义化版本规范（SemVer）
-- 发布前可运行 `python3 scripts/validate_version.py` 检查版本一致性
-- 发布后检查网站是否正常更新
+处理：
+
+1. 确认 Mac 上 `ssh ecs` 可连通
+2. 确认服务器目录 `/var/www/snowfox.bio` 存在
+3. 确认服务器上 `node scripts/build.js` 可执行
+
+### GitHub Release、自动更新说明、网站最新版说明不一致
+
+通常说明 `latest.json.release_notes` 或 GitHub Release 正文被手工改过，没有重新从 `CHANGELOG.md` 生成。
+
+处理：
+
+```bash
+python3 scripts/render_release_artifacts.py --version <version>
+```
