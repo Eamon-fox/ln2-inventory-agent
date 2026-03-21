@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.3.9 - 2026-03-22
+
+### Added
+- 本地 Open API 新增 `/api/v1/capabilities`，可显式返回 allowlist、校验模式、stage 允许动作和每个接口的参数说明，便于外部 Agent 先读能力再调用。
+- 本地 Open API 新增只读 `/api/v1/gui/stage-plan`，可查看当前 GUI 暂存计划区而不改变已有 staged items。
+
+### Changed
+- `/inventory/stats` 现在支持 `summary_only=true` 轻量模式，便于外部 Agent 先读取摘要统计而不是默认拉取完整重字段。
+- `/session/switch-dataset`、`/gui/prefill-*`、`/gui/stage-plan` 的返回语义现在更明确，会显式区分 GUI handoff、仅暂存和未执行写入等状态。
+- 发布文档契约明确“完整正式发版”必须包含 GitHub Release，同步收口到同一份 release 文案来源。
+
+### Fixed
+- 本地 Open API 的错误返回现在带有更可操作的结构化信息，例如 `field`、`expected_type`、`accepted_values` 和 `example_request`，减少调用方猜参成本。
+- 本地 Open API 的校验模式提示与实际实现保持一致，不再让调用方误以为存在未开放的 `full` 模式。
+
 ## 1.3.8 - 2026-03-22
 
 ### Added
