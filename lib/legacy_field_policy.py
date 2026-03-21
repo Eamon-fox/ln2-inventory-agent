@@ -579,13 +579,6 @@ def canonicalize_legacy_document(data: Dict[str, Any] | None) -> Dict[str, Any]:
             "alias_changes": alias_changes,
         },
     }
-
-
-def build_cell_line_field_from_meta(meta: Dict[str, Any] | None) -> Dict[str, Any]:
-    """Backward-compatible helper for callers that need the synthetic field def."""
-    return _build_meta_backed_cell_line_field(meta if isinstance(meta, dict) else {})
-
-
 __all__ = [
     "ALIAS_COMPAT_END_DATE",
     "CELL_LINE_FIELD_KEY",
@@ -600,7 +593,6 @@ __all__ = [
     "PHASE_SCHEMA",
     "PHASE_STAGING",
     "PHASE_WRITE",
-    "build_cell_line_field_from_meta",
     "canonicalize_legacy_document",
     "canonicalize_record_legacy_fields",
     "get_active_legacy_alias_map",

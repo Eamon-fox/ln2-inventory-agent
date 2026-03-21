@@ -218,6 +218,10 @@ class MainWindow(QMainWindow):
             normalize_yaml_path=_normalize_inventory_yaml_path,
             assert_allowed_path=assert_allowed_inventory_yaml_path,
             save_gui_config=save_gui_config,
+            ensure_runtime_ready=lambda yaml_path: self._dataset_lifecycle.prepare_runtime_yaml_path(
+                yaml_path,
+                source="app_gui.dataset_switch",
+            ),
             event_bus=self._app_event_bus,
         )
         self._migration_mode_use_case = MigrationModeUseCase(

@@ -15,7 +15,7 @@ def _load_layout_context(
     actor_context,
     tool_input,
 ):
-    from . import tool_api as api
+    from . import tool_api_support as api
 
     try:
         data = load_yaml(yaml_path)
@@ -72,7 +72,7 @@ def _entry_failure(
     field_path=None,
     details=None,
 ):
-    from . import tool_api as api
+    from . import tool_api_support as api
 
     merged_details = {}
     if entry_index is not None:
@@ -132,7 +132,7 @@ def _normalize_takeout_entries(
     tool_input,
     before_data,
 ):
-    from . import tool_api as api
+    from . import tool_api_support as api
 
     normalized_entries = []
     for idx, entry in enumerate(entries or []):
@@ -245,7 +245,7 @@ def _normalize_move_entries(
     tool_input,
     before_data,
 ):
-    from . import tool_api as api
+    from . import tool_api_support as api
 
     normalized_entries = []
     for idx, entry in enumerate(entries or []):
@@ -385,7 +385,7 @@ def tool_takeout(
     request_backup_path=None,
 ):
     """V2 takeout API using explicit source slots."""
-    from . import tool_api as api
+    from . import tool_api_support as api
 
     audit_action = "takeout"
     tool_name = "tool_takeout_v2"
@@ -448,7 +448,7 @@ def tool_move(
     request_backup_path=None,
 ):
     """V2 move API using explicit source and target slots."""
-    from . import tool_api as api
+    from . import tool_api_support as api
 
     audit_action = "move"
     tool_name = "tool_move_v2"
@@ -512,7 +512,7 @@ def _tool_takeout_impl(
     request_backup_path=None,
     tool_name="tool_takeout",
 ):
-    from . import tool_api as api
+    from . import tool_api_support as api
     from .tool_api_impl import write_ops as _write_ops
 
     response = _write_ops._tool_takeout_impl(

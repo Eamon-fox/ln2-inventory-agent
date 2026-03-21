@@ -220,7 +220,7 @@ def _format_system_notice_details(self, event):
     if not op_lines and not meta_lines and data:
         scalar_lines = []
         for key, value in sorted(data.items()):
-            if key == "legacy_event":
+            if key == "raw_event":
                 continue
             if isinstance(value, (str, int, float, bool)):
                 scalar_lines.append(f"{key}: {value}")

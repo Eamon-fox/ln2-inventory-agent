@@ -44,11 +44,13 @@ class DatasetUseCase:
         normalize_yaml_path: Callable[[str], str],
         assert_allowed_path: Callable[..., str],
         save_gui_config: Callable[[dict], None],
+        ensure_runtime_ready: Optional[Callable[[str], str]] = None,
         event_bus: Optional[EventBus] = None,
     ):
         self._normalize_yaml_path = normalize_yaml_path
         self._assert_allowed_path = assert_allowed_path
         self._save_gui_config = save_gui_config
+        self._ensure_runtime_ready = ensure_runtime_ready
         self._event_bus = event_bus
 
     def switch_dataset(
@@ -61,6 +63,10 @@ class DatasetUseCase:
         old_abs = os.path.abspath(str(getattr(session, "current_yaml_path", "") or ""))
         normalized = self._normalize_yaml_path(command.yaml_path)
         target = self._assert_allowed_path(normalized, must_exist=True)
+        if callable(self._ensure_runtime_ready):
+            prepared = self._ensure_runtime_ready(target)
+            if isinstance(prepared, str) and prepared.strip():
+                target = self._assert_allowed_path(prepared, must_exist=True)
         new_abs = os.path.abspath(str(target))
         reason = str(command.reason or "manual_switch")
 

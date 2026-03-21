@@ -4,7 +4,7 @@ import os
 
 from app_gui.error_localizer import localize_error_payload
 from app_gui.plan_executor import preflight_plan
-from app_gui.plan_gate import validate_stage_request
+from lib.plan_gate import validate_stage_request
 
 
 def _tr(key, **kwargs):
@@ -209,6 +209,7 @@ def add_plan_items(self, items):
         yaml_path=self.yaml_path_getter(),
         bridge=self.bridge,
         run_preflight=True,
+        preflight_fn=preflight_plan,
     )
 
     blocked_messages = []

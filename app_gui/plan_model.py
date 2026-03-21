@@ -18,9 +18,6 @@ from app_gui.plan_model_sheet import (
     render_operation_sheet,
 )
 
-# Compatibility export consumed by app_gui.plan_gate and tests.
-_PLAN_MODEL_EXPORTS = (validate_plan_item,)
-
 
 def _box_tag_for_box(layout, box_num):
     box_tags = (layout or {}).get("box_tags")

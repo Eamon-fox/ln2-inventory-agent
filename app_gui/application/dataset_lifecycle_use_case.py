@@ -18,7 +18,7 @@ from lib.inventory_paths import (
     normalize_inventory_yaml_path,
     rename_managed_dataset_yaml_path,
 )
-from lib.yaml_ops import append_audit_event, load_yaml
+from lib.yaml_ops import append_audit_event, ensure_runtime_dataset_canonical, load_yaml
 
 
 @dataclass(frozen=True)
@@ -50,6 +50,7 @@ class DatasetLifecycleUseCase:
         build_dataset_rename_payload_fn: Optional[Callable[[str, str], dict]] = None,
         build_dataset_delete_payload_fn: Optional[Callable[[str, str], dict]] = None,
         append_audit_event_fn: Optional[Callable[..., None]] = None,
+        ensure_runtime_ready_fn: Optional[Callable[[str], dict]] = None,
         load_yaml_fn: Optional[Callable[[str], dict]] = None,
     ):
         self._normalize_yaml_path = normalize_yaml_path or normalize_inventory_yaml_path
@@ -75,6 +76,7 @@ class DatasetLifecycleUseCase:
             build_dataset_delete_payload_fn or build_dataset_delete_payload
         )
         self._append_audit_event = append_audit_event_fn or append_audit_event
+        self._ensure_runtime_ready = ensure_runtime_ready_fn or ensure_runtime_dataset_canonical
         self._load_yaml = load_yaml_fn or load_yaml
 
     @staticmethod
@@ -115,17 +117,41 @@ class DatasetLifecycleUseCase:
         configured = self._normalize_yaml_path(configured_yaml_path)
         if configured:
             try:
-                return self._assert_allowed_path(configured, must_exist=True)
+                resolved = self._assert_allowed_path(configured, must_exist=True)
+                return self.prepare_runtime_yaml_path(
+                    resolved,
+                    source="app_gui.startup.resolve_dataset",
+                )
             except Exception:
                 pass
 
         latest = self._latest_inventory_yaml_path()
         if latest:
-            return self._assert_allowed_path(latest, must_exist=True)
+            resolved = self._assert_allowed_path(latest, must_exist=True)
+            return self.prepare_runtime_yaml_path(
+                resolved,
+                source="app_gui.startup.latest_dataset",
+            )
 
         default_yaml = self._create_dataset_yaml_path("inventory")
         self.write_inventory_yaml(default_yaml)
-        return self._assert_allowed_path(default_yaml, must_exist=True)
+        resolved = self._assert_allowed_path(default_yaml, must_exist=True)
+        return self.prepare_runtime_yaml_path(
+            resolved,
+            source="app_gui.startup.default_dataset",
+        )
+
+    def prepare_runtime_yaml_path(self, yaml_path: str, *, source: str = "app_gui.dataset_open") -> str:
+        """Ensure one managed dataset is canonical before runtime reads/writes."""
+        target = self._assert_allowed_path(yaml_path, must_exist=True)
+        result = self._ensure_runtime_ready(
+            target,
+            source=str(source or "app_gui.dataset_open"),
+        )
+        if isinstance(result, dict):
+            prepared = str(result.get("path") or target)
+            return self._assert_allowed_path(prepared, must_exist=True)
+        return self._assert_allowed_path(str(result or target), must_exist=True)
 
     def create_dataset(
         self,

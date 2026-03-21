@@ -1181,7 +1181,7 @@ class AIPanel(QWidget):
                 text=str(raw_event.get("message") or "System event"),
                 level="info",
                 source=str(raw_event.get("source") or "operations"),
-                data={"legacy_event": raw_event},
+                data={"raw_event": raw_event},
             )
             if raw_event.get("timestamp"):
                 notice["timestamp"] = raw_event.get("timestamp")

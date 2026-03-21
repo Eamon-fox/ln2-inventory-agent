@@ -354,6 +354,124 @@ def load_yaml(path=YAML_PATH):
     return data
 
 
+def load_yaml_raw(path=YAML_PATH):
+    """Load one YAML file without expanding runtime alias views."""
+    abs_path = _abs_path(path)
+    with open(abs_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    return _repair_mojibake_values(data)
+
+
+def inspect_runtime_dataset_migration(path=YAML_PATH):
+    """Inspect whether one managed dataset needs legacy auto-migration."""
+    yaml_abs = assert_allowed_inventory_yaml_path(_abs_path(path), must_exist=True)
+    original = load_yaml_raw(yaml_abs)
+    canonical_data, alias_errors = canonicalize_inventory_document(original)
+    if alias_errors:
+        return {
+            "ok": False,
+            "path": yaml_abs,
+            "error_code": "legacy_structural_alias_conflict",
+            "message": format_validation_errors(
+                alias_errors,
+                prefix="Legacy dataset auto-migration failed",
+            ),
+            "data": None,
+            "changed": False,
+            "summary": {},
+        }
+
+    legacy_result = canonicalize_legacy_document(canonical_data)
+    if not legacy_result.get("ok"):
+        return {
+            "ok": False,
+            "path": yaml_abs,
+            "error_code": str(legacy_result.get("error_code") or "legacy_migration_failed"),
+            "message": str(legacy_result.get("message") or "Legacy dataset auto-migration failed."),
+            "data": None,
+            "changed": False,
+            "summary": {},
+        }
+
+    migrated = legacy_result.get("data")
+    summary = dict(legacy_result.get("summary") or {})
+    summary["structural_alias_changed"] = bool(canonical_data != original)
+    changed = bool(canonical_data != original or legacy_result.get("changed"))
+    return {
+        "ok": True,
+        "path": yaml_abs,
+        "data": migrated,
+        "changed": changed,
+        "summary": summary,
+    }
+
+
+def ensure_runtime_dataset_canonical(
+    path=YAML_PATH,
+    *,
+    source="runtime.dataset_open",
+):
+    """Auto-migrate one managed dataset in-place before steady-state runtime use."""
+    yaml_abs = assert_allowed_inventory_yaml_path(_abs_path(path), must_exist=True)
+    inspection = inspect_runtime_dataset_migration(yaml_abs)
+    if not inspection.get("ok"):
+        raise ValueError(str(inspection.get("message") or "Legacy dataset auto-migration failed."))
+
+    if not inspection.get("changed"):
+        return {
+            "path": yaml_abs,
+            "changed": False,
+            "backup_path": None,
+            "summary": dict(inspection.get("summary") or {}),
+        }
+
+    backup_path = create_yaml_backup(yaml_abs)
+    if not backup_path:
+        raise RuntimeError(f"Failed to create backup before auto-migrating dataset: {yaml_abs}")
+
+    summary = dict(inspection.get("summary") or {})
+    with suppress(Exception):
+        append_backup_event(
+            yaml_path=yaml_abs,
+            backup_path=backup_path,
+            source=str(source or "runtime.dataset_open"),
+            details={
+                "kind": "legacy_auto_migration",
+                "migration_action": "backup_before_canonicalize",
+            },
+        )
+
+    audit_details = {
+        "kind": "legacy_auto_migration",
+        "backup_path": os.path.abspath(str(backup_path)),
+        "alias_records_changed": int(summary.get("alias_records_changed") or 0),
+        "alias_conflict_count": int(summary.get("alias_conflict_count") or 0),
+        "structural_alias_changed": bool(summary.get("structural_alias_changed")),
+        "custom_field_alias_changes": list(summary.get("custom_field_alias_changes") or []),
+    }
+    changed_ids = list(summary.get("alias_changed_record_ids") or [])
+    if changed_ids:
+        audit_details["alias_changed_record_ids"] = changed_ids
+
+    write_yaml(
+        inspection.get("data"),
+        path=yaml_abs,
+        auto_backup=False,
+        backup_path=backup_path,
+        audit_meta={
+            "action": "dataset_auto_migrate_legacy",
+            "source": str(source or "runtime.dataset_open"),
+            "details": audit_details,
+        },
+    )
+    return {
+        "path": yaml_abs,
+        "changed": True,
+        "backup_path": os.path.abspath(str(backup_path)),
+        "summary": summary,
+    }
+
+
 def _backup_dir(yaml_path, instance_id_override=None):
     """Return the dataset-local backup directory for a YAML file."""
     _ = instance_id_override
@@ -594,11 +712,6 @@ def coerce_audit_seq(value):
     if seq <= 0:
         return None
     return seq
-
-
-# Backward-compatible alias for existing internal callsites.
-_coerce_audit_seq = coerce_audit_seq
-
 
 def _next_audit_seq(log_path):
     if not os.path.exists(log_path):

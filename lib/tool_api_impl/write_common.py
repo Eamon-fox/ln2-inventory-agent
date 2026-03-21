@@ -6,16 +6,7 @@ from ..schema_aliases import (
     CANONICAL_STORAGE_EVENTS_KEY,
     LEGACY_STORAGE_EVENTS_KEY,
 )
-
-
-class _ApiProxy:
-    def __getattr__(self, name):
-        from .. import tool_api as _api_mod
-
-        return getattr(_api_mod, name)
-
-
-api = _ApiProxy()
+from .. import tool_api_support as api
 
 
 def _integrity_error_payload(candidate_data):

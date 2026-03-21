@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from lib.plan_item_factory import PlanItem
-from lib.tool_contracts import VALID_PLAN_ACTIONS
+from lib.tool_registry import VALID_PLAN_ACTIONS
 
 _VALID_ACTIONS = VALID_PLAN_ACTIONS
 

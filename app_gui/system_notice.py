@@ -31,10 +31,10 @@ def build_system_notice(
     return payload
 
 
-def _with_legacy_data(event: Mapping[str, Any], **kwargs: Any) -> Dict[str, Any]:
-    """Attach legacy event payload for debugging/context tracing."""
+def _notice_data(event: Mapping[str, Any], **kwargs: Any) -> Dict[str, Any]:
+    """Attach normalized debug/context payload without preserving legacy shape keys."""
     data = dict(kwargs)
-    data["legacy_event"] = dict(event)
+    data["raw_event"] = dict(event)
     return data
 
 
@@ -72,7 +72,7 @@ def coerce_system_notice(event: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
             level="info",
             source=source,
             details=details,
-            data=_with_legacy_data(
+            data=_notice_data(
                 event,
                 added_count=count,
                 total_count=int(event.get("total_count") or 0),
@@ -93,7 +93,7 @@ def coerce_system_notice(event: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
             level="error",
             source=source,
             details=str(details) if details else None,
-            data=_with_legacy_data(
+            data=_notice_data(
                 event,
                 blocked_items=blocked_items,
                 errors=event.get("errors") if isinstance(event.get("errors"), list) else [],
@@ -125,7 +125,7 @@ def coerce_system_notice(event: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
             level=level,
             source=source,
             details=str(event.get("details") or "") or None,
-            data=_with_legacy_data(
+            data=_notice_data(
                 event,
                 blocked_count=int(event.get("blocked_count") or 0),
                 stats=stats_map,
@@ -142,7 +142,7 @@ def coerce_system_notice(event: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
             text=text,
             level="info",
             source=source,
-            data=_with_legacy_data(
+            data=_notice_data(
                 event,
                 removed_count=count,
                 total_count=int(event.get("total_count") or 0),
@@ -157,7 +157,7 @@ def coerce_system_notice(event: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
             text=text,
             level="info",
             source=source,
-            data=_with_legacy_data(
+            data=_notice_data(
                 event,
                 cleared_count=int(event.get("cleared_count") or 0),
                 action_counts=event.get("action_counts") or {},
@@ -172,7 +172,7 @@ def coerce_system_notice(event: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
             text=text,
             level="success",
             source=source,
-            data=_with_legacy_data(
+            data=_notice_data(
                 event,
                 restored_count=count,
                 action_counts=event.get("action_counts") or {},
@@ -187,7 +187,7 @@ def coerce_system_notice(event: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
             text=text,
             level="success" if ok else "error",
             source=source,
-            data=_with_legacy_data(
+            data=_notice_data(
                 event,
                 ok=ok,
                 operation=str(event.get("operation") or "unknown"),
@@ -207,7 +207,7 @@ def coerce_system_notice(event: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
             text=text,
             level="success",
             source=source,
-            data=_with_legacy_data(
+            data=_notice_data(
                 event,
                 record_id=rid,
                 field=field,

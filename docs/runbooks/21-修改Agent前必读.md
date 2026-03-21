@@ -30,7 +30,7 @@
 ## 开工顺序
 
 1. 先读 `docs/modules/12-智能体运行时.md`
-2. 判断是否会改 `lib/tool_registry.py`、`lib/tool_contracts.py`、`app_gui/tool_bridge.py`
+2. 判断是否会改 `lib/tool_registry.py`、`app_gui/tool_bridge.py`
 3. 如果会改这些共享文件，先按跨模块任务拆分
 4. 先改 agent 内部行为
 5. 最后才改工具注册、桥接和外部暴露面
@@ -62,7 +62,6 @@
 ## 高冲突文件
 
 - `lib/tool_registry.py`
-- `lib/tool_contracts.py`
 - `app_gui/tool_bridge.py`
 
 如果动到这些文件，就不是单纯的 Agent 调整。

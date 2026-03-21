@@ -18,7 +18,8 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app_gui.plan_gate import validate_stage_request
+from app_gui.plan_executor import preflight_plan
+from lib.plan_gate import validate_stage_request
 
 
 def make_add_item():
@@ -286,6 +287,7 @@ class PlanGateDedupStageTests(unittest.TestCase):
             yaml_path=yaml_path,
             bridge=None,
             run_preflight=True,
+            preflight_fn=preflight_plan,
         )
 
         self.assertFalse(result["ok"])

@@ -66,6 +66,7 @@ class DatasetLifecycleUseCaseTests(unittest.TestCase):
                 latest_inventory_yaml_path_fn=lambda: "",
                 create_dataset_yaml_path_fn=lambda name: create_path_calls.append(name) or default_yaml,
                 assert_allowed_path=_assert_existing_if_needed,
+                ensure_runtime_ready_fn=lambda yaml_path, source="": {"path": os.path.abspath(yaml_path)},
             )
 
             resolved = use_case.resolve_startup_yaml_path(configured_yaml_path="")
@@ -75,6 +76,28 @@ class DatasetLifecycleUseCaseTests(unittest.TestCase):
             self.assertEqual([True], ensure_root_calls)
             payload = yaml.safe_load(Path(default_yaml).read_text(encoding="utf-8"))
             self.assertEqual(use_case.default_inventory_payload(), payload)
+
+    def test_resolve_startup_yaml_path_runs_runtime_preparation(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            current_yaml = os.path.join(tmpdir, "legacy", "inventory.yaml")
+            os.makedirs(os.path.dirname(current_yaml), exist_ok=True)
+            Path(current_yaml).write_text("meta: {}\ninventory: []\n", encoding="utf-8")
+            prepare_calls = []
+            use_case = DatasetLifecycleUseCase(
+                assert_allowed_path=_assert_existing_if_needed,
+                ensure_runtime_ready_fn=lambda yaml_path, source="": (
+                    prepare_calls.append((os.path.abspath(yaml_path), str(source)))
+                    or {"path": os.path.abspath(yaml_path)}
+                ),
+            )
+
+            resolved = use_case.resolve_startup_yaml_path(configured_yaml_path=current_yaml)
+
+            self.assertEqual(os.path.abspath(current_yaml), resolved)
+            self.assertEqual(
+                [(os.path.abspath(current_yaml), "app_gui.startup.resolve_dataset")],
+                prepare_calls,
+            )
 
     def test_rename_dataset_returns_audit_warning_without_failing_switch(self):
         appended = []

@@ -610,7 +610,7 @@ def _handle_progress_chunk(self, event):
 
 
 def _handle_progress_step_end(self, event):
-    # Parse step_end payload for compatibility with legacy producer fields.
+    # Parse step_end payload from the normalized progress producer.
     step = event.get("step")
     action = str(event.get("action") or "tool")
     raw_obs = event.get("observation") or {}

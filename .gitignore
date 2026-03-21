@@ -73,3 +73,7 @@ htmlcov/
 
 # Local changelog (use GitHub Releases for published notes)
 CHANGELOG.md
+
+# Local media exports
+snowfox-promo-1080p.mp4
+snowfox-promo-4k.mp4

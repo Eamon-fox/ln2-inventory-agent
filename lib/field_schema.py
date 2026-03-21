@@ -7,8 +7,6 @@ from typing import Any, Dict, Iterable, List, Tuple
 
 from .custom_fields import get_effective_fields
 from .legacy_field_policy import (
-    ALIAS_COMPAT_END_DATE,
-    LEGACY_FIELD_ALIAS_MAP,
     canonicalize_record_legacy_fields,
     get_active_legacy_alias_map,
     normalize_legacy_input_fields,
@@ -17,9 +15,6 @@ from .schema_aliases import ALL_STRUCTURAL_FIELD_KEYS
 
 
 _BASE_RECORD_STRUCTURAL_KEYS = ALL_STRUCTURAL_FIELD_KEYS
-
-# Backward-compatible re-export for existing callers/tests.
-FIELD_ALIAS_RULES: Dict[str, str] = dict(LEGACY_FIELD_ALIAS_MAP)
 
 
 def _is_nonempty_value(value: Any) -> bool:

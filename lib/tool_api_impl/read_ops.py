@@ -28,16 +28,7 @@ from ..yaml_ops import (
     load_yaml,
     read_audit_events,
 )
-
-
-class _ApiProxy:
-    def __getattr__(self, name):
-        from .. import tool_api as _api_mod
-
-        return getattr(_api_mod, name)
-
-
-api = _ApiProxy()
+from .. import tool_api_support as api
 
 INVENTORY_PREVIEW_LIMIT = 100
 

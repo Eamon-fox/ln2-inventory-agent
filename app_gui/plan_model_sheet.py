@@ -15,7 +15,7 @@ from app_gui.ui.theme import (
 )
 from lib.plan_item_factory import PlanItem
 from lib.plan_validation import validate_plan_item
-from lib.tool_contracts import VALID_PLAN_ACTIONS
+from lib.tool_registry import VALID_PLAN_ACTIONS
 
 _VALID_ACTIONS = VALID_PLAN_ACTIONS
 _SHEET_THEME_MODE = "light"

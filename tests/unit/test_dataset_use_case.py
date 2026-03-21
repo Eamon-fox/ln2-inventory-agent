@@ -26,6 +26,7 @@ class DatasetUseCaseTests(unittest.TestCase):
     def test_switch_dataset_updates_state_and_publishes_event(self):
         saved_configs = []
         events = []
+        prepared = []
 
         bus = EventBus()
         bus.subscribe(DatasetSwitched, events.append)
@@ -33,6 +34,7 @@ class DatasetUseCaseTests(unittest.TestCase):
             normalize_yaml_path=lambda path: str(path or "").strip(),
             assert_allowed_path=lambda path, must_exist=True: path,
             save_gui_config=lambda cfg: saved_configs.append(dict(cfg)),
+            ensure_runtime_ready=lambda path: prepared.append(path) or path,
             event_bus=bus,
         )
         session = SimpleNamespace(
@@ -49,6 +51,7 @@ class DatasetUseCaseTests(unittest.TestCase):
         self.assertTrue(result.changed)
         self.assertEqual(target, session.current_yaml_path)
         self.assertEqual(target, session.gui_config["yaml_path"])
+        self.assertEqual([target], prepared)
         self.assertEqual(1, len(saved_configs))
         self.assertEqual(1, len(events))
         self.assertEqual("manual_switch", events[0].reason)
@@ -58,6 +61,7 @@ class DatasetUseCaseTests(unittest.TestCase):
         saves = []
         events = []
         path = os.path.abspath("D:/inventories/same/inventory.yaml")
+        prepared = []
 
         bus = EventBus()
         bus.subscribe(DatasetSwitched, events.append)
@@ -65,6 +69,7 @@ class DatasetUseCaseTests(unittest.TestCase):
             normalize_yaml_path=lambda value: str(value),
             assert_allowed_path=lambda value, must_exist=True: value,
             save_gui_config=lambda cfg: saves.append(dict(cfg)),
+            ensure_runtime_ready=lambda value: prepared.append(value) or value,
             event_bus=bus,
         )
         session = SimpleNamespace(
@@ -78,6 +83,7 @@ class DatasetUseCaseTests(unittest.TestCase):
         )
 
         self.assertFalse(result.changed)
+        self.assertEqual([path], prepared)
         self.assertEqual([], saves)
         self.assertEqual([], events)
         self.assertNotIn("yaml_path", session.gui_config)
@@ -86,6 +92,7 @@ class DatasetUseCaseTests(unittest.TestCase):
         saves = []
         events = []
         path = os.path.abspath("D:/inventories/same/inventory.yaml")
+        prepared = []
 
         bus = EventBus()
         bus.subscribe(DatasetSwitched, events.append)
@@ -93,6 +100,7 @@ class DatasetUseCaseTests(unittest.TestCase):
             normalize_yaml_path=lambda value: str(value),
             assert_allowed_path=lambda value, must_exist=True: value,
             save_gui_config=lambda cfg: saves.append(dict(cfg)),
+            ensure_runtime_ready=lambda value: prepared.append(value) or value,
             event_bus=bus,
         )
         session = SimpleNamespace(
@@ -106,6 +114,7 @@ class DatasetUseCaseTests(unittest.TestCase):
         )
 
         self.assertTrue(result.changed)
+        self.assertEqual([path], prepared)
         self.assertEqual(1, len(saves))
         self.assertEqual(1, len(events))
         self.assertEqual("import_success", events[0].reason)
