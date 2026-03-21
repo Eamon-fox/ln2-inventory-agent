@@ -111,6 +111,7 @@ class AIPanel(QWidget):
         self._migration_mode_enabled = False
         
         self.ai_history = []
+        self.ai_summary_state = None
         self._prompt_history = []      # past user prompts (oldest first)
         self._prompt_history_index = -1  # -1 = not browsing
         self._prompt_history_stash = ""  # stash current input while browsing
@@ -619,6 +620,7 @@ class AIPanel(QWidget):
 
         self.ai_chat.clear()
         self.ai_history = []
+        self.ai_summary_state = None
         self.ai_operation_events = []
         self.ai_collapsible_blocks = []
         self.ai_active_trace_id = None
@@ -1134,6 +1136,7 @@ class AIPanel(QWidget):
     set_busy = _ai_runtime.set_busy
     on_progress = _ai_runtime.on_progress
     _extract_progress_observation = _ai_runtime._extract_progress_observation
+    _handle_progress_context_checkpoint = _ai_runtime._handle_progress_context_checkpoint
     _handle_progress_tool_end = _ai_runtime._handle_progress_tool_end
     _handle_progress_tool_start = _ai_runtime._handle_progress_tool_start
     _handle_progress_chunk = _ai_runtime._handle_progress_chunk

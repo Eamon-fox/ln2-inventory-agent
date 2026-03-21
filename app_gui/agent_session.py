@@ -49,6 +49,7 @@ class AgentSessionService:
         model=None,
         max_steps=DEFAULT_MAX_STEPS,
         history=None,
+        summary_state=None,
         on_event=None,
         plan_store=None,
         thinking_enabled=True,
@@ -126,6 +127,7 @@ class AgentSessionService:
                 conversation_history=history,
                 on_event=on_event,
                 stop_event=stop_event,
+                summary_state=summary_state,
             )
         except RuntimeError as exc:
             message = str(exc)

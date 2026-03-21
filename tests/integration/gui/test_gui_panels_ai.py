@@ -707,6 +707,10 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
                         },
                         {"role": "assistant", "content": "done", "timestamp": 4.0},
                     ],
+                    "summary_state": {
+                        "checkpoint_id": "checkpoint-1",
+                        "summary_text": "## Current Objective\nResume work",
+                    },
                 },
             }
         )
@@ -714,6 +718,7 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
         self.assertEqual(4, len(panel.ai_history))
         self.assertEqual("tool", panel.ai_history[2].get("role"))
         self.assertEqual("call_1", panel.ai_history[2].get("tool_call_id"))
+        self.assertEqual("checkpoint-1", (panel.ai_summary_state or {}).get("checkpoint_id"))
 
         panel.on_finished({"ok": True, "result": {"final": "done", "trace_id": "trace-stream-end"}})
         final_assistant_count = sum(
@@ -722,6 +727,24 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
             if item.get("role") == "assistant" and item.get("content") == "done"
         )
         self.assertEqual(1, final_assistant_count)
+
+    def test_ai_panel_context_checkpoint_event_appends_system_notice(self):
+        panel = self._new_ai_panel()
+
+        panel.on_progress({"event": "run_start", "trace_id": "trace-checkpoint"})
+        panel.on_progress(
+            {
+                "event": "context_checkpoint",
+                "trace_id": "trace-checkpoint",
+                "data": {
+                    "checkpoint_id": "checkpoint-ctx",
+                    "message": "Context checkpoint created. Agent memory will continue from condensed summary.",
+                },
+            }
+        )
+
+        self.assertEqual("checkpoint-ctx", (panel.ai_summary_state or {}).get("checkpoint_id"))
+        self.assertIn("Context checkpoint created", panel.ai_chat.toPlainText())
 
     def test_ai_panel_finished_flags_protocol_error_without_result(self):
         panel = self._new_ai_panel()

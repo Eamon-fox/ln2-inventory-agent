@@ -15,6 +15,7 @@ class AgentRunWorker(QObject):
         model,
         max_steps,
         history,
+        summary_state=None,
         thinking_enabled=True,
         custom_prompt="",
         plan_store=None,
@@ -27,6 +28,7 @@ class AgentRunWorker(QObject):
         self._model = model
         self._max_steps = max_steps
         self._history = history
+        self._summary_state = summary_state if isinstance(summary_state, dict) else None
         self._thinking_enabled = bool(thinking_enabled)
         self._custom_prompt = str(custom_prompt or "")
         self._plan_store = plan_store
@@ -73,6 +75,7 @@ class AgentRunWorker(QObject):
                 model=self._model,
                 max_steps=self._max_steps,
                 history=self._history,
+                summary_state=self._summary_state,
                 on_event=self._emit_progress,
                 plan_store=self._plan_store,
                 thinking_enabled=self._thinking_enabled,

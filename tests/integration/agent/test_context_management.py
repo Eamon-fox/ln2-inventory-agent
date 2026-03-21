@@ -140,8 +140,8 @@ class TestBulkOperationContextRetention(ManagedPathTestCase):
         self.assertIn(1, llm.tool_results_visible)
         self.assertIn(100, llm.tool_results_visible)
 
-    def test_100_adds_early_results_compressed(self):
-        """Early tool results should be compressed (shorter) but retain key fields."""
+    def test_100_adds_early_results_still_retain_key_fields(self):
+        """Before checkpointing triggers, early tool results should remain visible with key fields."""
         llm = _BulkAddLLM(expected_count=100)
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=1)
@@ -158,12 +158,14 @@ class TestBulkOperationContextRetention(ManagedPathTestCase):
         parsed = json.loads(first_tool["content"])
         self.assertTrue(parsed["ok"])
         items = parsed.get("items", [])
+        if not items:
+            items = (parsed.get("result") or {}).get("items") or []
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["id"], 1)
         self.assertEqual(items[0]["cell_line"], "CellLine_1")
 
-    def test_reasoning_content_stripped_from_old(self):
-        """Old assistant messages should not carry reasoning_content."""
+    def test_reasoning_content_retained_before_checkpoint(self):
+        """Without checkpointing, raw history should still carry reasoning content."""
         llm = _BulkAddLLM(expected_count=50)
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=1)
@@ -179,9 +181,8 @@ class TestBulkOperationContextRetention(ManagedPathTestCase):
         # At least some should exist.
         self.assertGreater(len(assistant_with_tools), 0)
 
-        # Old ones (early in list) should not have reasoning_content.
         first_assistant = assistant_with_tools[0]
-        self.assertNotIn("reasoning_content", first_assistant)
+        self.assertIn("reasoning_content", first_assistant)
 
     def test_recent_messages_verbatim(self):
         """Messages within the recent window must not be altered."""

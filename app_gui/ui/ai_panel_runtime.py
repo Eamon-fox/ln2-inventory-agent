@@ -92,6 +92,7 @@ def start_worker(self, prompt):
         model=model,
         max_steps=self.ai_steps.value(),
         history=history,
+        summary_state=self.ai_summary_state,
         thinking_enabled=self.ai_thinking_enabled.isChecked(),
         custom_prompt=self.ai_custom_prompt,
         plan_store=self._plan_store,
@@ -517,6 +518,7 @@ def on_progress(self, event):
         return
 
     handlers = {
+        "context_checkpoint": self._handle_progress_context_checkpoint,
         "tool_end": self._handle_progress_tool_end,
         "tool_start": self._handle_progress_tool_start,
         "chunk": self._handle_progress_chunk,
@@ -635,9 +637,24 @@ def _handle_progress_error(event):
     _ = err
 
 
+def _handle_progress_context_checkpoint(self, event):
+    data = event.get("data") or {}
+    message = str(data.get("message") or "").strip()
+    checkpoint_id = str(data.get("checkpoint_id") or "").strip()
+    if checkpoint_id:
+        self.ai_summary_state = {
+            **(self.ai_summary_state or {}),
+            "checkpoint_id": checkpoint_id,
+        }
+    if message:
+        self._append_chat("System", message)
+
+
 def _handle_progress_stream_end(self, event):
     data = event.get("data") or {}
     raw_messages = data.get("messages")
+    summary_state = data.get("summary_state")
+    self.ai_summary_state = summary_state if isinstance(summary_state, dict) else None
     if not isinstance(raw_messages, list):
         return
 
@@ -792,6 +809,7 @@ def on_finished(self, response):
     if not isinstance(raw_result, dict):
         raw_result = {}
         protocol_error = bool(response.get("ok"))
+    self.ai_summary_state = raw_result.get("summary_state") if isinstance(raw_result.get("summary_state"), dict) else self.ai_summary_state
 
     if protocol_error:
         final_text = "Internal protocol error: missing result payload."

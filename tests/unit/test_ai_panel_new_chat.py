@@ -56,6 +56,14 @@ class TestOnNewChatContextReset(unittest.TestCase):
             panel.on_new_chat()
         self.assertEqual(panel.ai_operation_events, [])
 
+    def test_resets_ai_summary_state(self):
+        panel = self._make_panel()
+        panel.ai_history = [{"role": "user", "content": "x"}]
+        panel.ai_summary_state = {"checkpoint_id": "checkpoint-1", "summary_text": "summary"}
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.Yes):
+            panel.on_new_chat()
+        self.assertIsNone(panel.ai_summary_state)
+
     def test_resets_streaming_state(self):
         panel = self._make_panel()
         panel.ai_history = [{"role": "user", "content": "x"}]

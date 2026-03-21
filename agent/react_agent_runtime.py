@@ -8,6 +8,7 @@ from datetime import datetime
 
 from lib.builtin_skills import build_skill_catalog_prompt
 
+from .context_checkpoint import build_resume_messages, checkpoint_context, normalize_summary_state
 from .tool_status_formatter import format_tool_status
 from .tool_runtime_paths import build_tool_hook_context
 
@@ -19,10 +20,26 @@ def _is_stop_requested(stop_event):
         return False
 
 
-def _stopped_result(self, *, on_event, trace_id, step, memory, messages):
+def _emit_stream_end(self, on_event, messages, *, status, trace_id, summary_state=None):
+    payload = self._yield_stream_end(messages, status=status)
+    data = payload.get("data") or {}
+    data["summary_state"] = normalize_summary_state(summary_state, llm_client=self._llm)
+    payload["data"] = data
+    payload["trace_id"] = trace_id
+    self._emit_event(on_event, payload)
+
+
+def _build_main_messages(system_content, raw_messages, summary_state=None):
+    messages = [{"role": "system", "content": system_content}]
+    messages.extend(build_resume_messages(summary_state))
+    messages.extend(list(raw_messages or []))
+    return messages
+
+
+def _stopped_result(self, *, on_event, trace_id, step, memory, raw_messages, summary_state):
     # Trim messages to a consistent tool-call/result boundary before emitting,
     # so that conversation history never contains orphaned tool_calls entries.
-    consistent_messages = self._ensure_tool_results_consistent(list(messages))
+    consistent_messages = self._ensure_tool_results_consistent(list(raw_messages))
     final_text = "Run stopped by user."
     self._emit_event(
         on_event,
@@ -34,7 +51,14 @@ def _stopped_result(self, *, on_event, trace_id, step, memory, messages):
             "data": final_text,
         },
     )
-    self._emit_event(on_event, {**self._yield_stream_end(consistent_messages, status="stopped"), "trace_id": trace_id})
+    _emit_stream_end(
+        self,
+        on_event,
+        consistent_messages,
+        status="stopped",
+        trace_id=trace_id,
+        summary_state=summary_state,
+    )
     return {
         "ok": False,
         "error_code": "run_stopped",
@@ -42,6 +66,7 @@ def _stopped_result(self, *, on_event, trace_id, step, memory, messages):
         "steps": int(step or 0),
         "final": final_text,
         "conversation_history_used": len(memory),
+        "summary_state": normalize_summary_state(summary_state, llm_client=self._llm),
     }
 
 
@@ -408,12 +433,13 @@ def _request_direct_answer(self, messages, stop_event=None):
     return ""
 
 
-def run(self, user_query, conversation_history=None, on_event=None, stop_event=None):
+def run(self, user_query, conversation_history=None, on_event=None, stop_event=None, summary_state=None):
     self._on_event = on_event  # Store for _run_tool_call to use
     trace_id = f"trace-{uuid.uuid4().hex}"
     tool_names = self._tools.list_tools()
     tool_schemas = self._tools.tool_schemas() if hasattr(self._tools, "tool_schemas") else []
     memory = self._normalize_history(conversation_history)
+    summary_state = normalize_summary_state(summary_state, llm_client=self._llm)
 
     yaml_path = str(getattr(self._tools, "_yaml_path", "") or "").strip()
     fileops_context = build_tool_hook_context(yaml_path, trace_id=trace_id)
@@ -448,14 +474,8 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
     normalized_query = self._resolve_numeric_choice_query(user_query, memory)
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    messages = [
-        {
-            "role": "system",
-            "content": system_content,
-        },
-    ]
-    messages.extend(memory)
-    messages.append(
+    raw_messages = list(memory)
+    raw_messages.append(
         {
             "role": "user",
             "content": f"${ts}\n{str(normalized_query or '')}",
@@ -485,7 +505,8 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
             trace_id=trace_id,
             step=0,
             memory=memory,
-            messages=messages,
+            raw_messages=raw_messages,
+            summary_state=summary_state,
         )
 
     last_answer_text = ""
@@ -502,7 +523,8 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
                 trace_id=trace_id,
                 step=step,
                 memory=memory,
-                messages=messages,
+                raw_messages=raw_messages,
+                summary_state=summary_state,
             )
         current_answer_buf = []
         self._emit_event(
@@ -515,10 +537,36 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
             },
         )
 
+        raw_messages, summary_state, checkpoint_event = checkpoint_context(
+            system_content,
+            raw_messages,
+            tool_schemas,
+            summary_state,
+            self._llm,
+            stop_event=stop_event,
+        )
+        if checkpoint_event:
+            self._emit_event(
+                on_event,
+                {
+                    "event": "context_checkpoint",
+                    "type": "context_checkpoint",
+                    "trace_id": trace_id,
+                    "step": step,
+                    "data": {
+                        "checkpoint_id": checkpoint_event.get("checkpoint_id"),
+                        "covered_message_count": checkpoint_event.get("covered_message_count"),
+                        "tail_message_count": checkpoint_event.get("tail_message_count"),
+                        "message": "Context checkpoint created. Agent memory will continue from condensed summary.",
+                    },
+                },
+            )
+        request_messages = _build_main_messages(system_content, raw_messages, summary_state=summary_state)
+
         model_response = {}
         for retry_idx in range(2):
             model_response = self._collect_model_response(
-                messages=messages,
+                messages=request_messages,
                 tool_schemas=tool_schemas,
                 trace_id=trace_id,
                 step=step,
@@ -533,7 +581,8 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
                     trace_id=trace_id,
                     step=step,
                     memory=memory,
-                    messages=messages,
+                    raw_messages=raw_messages,
+                    summary_state=summary_state,
                 )
 
             if not model_response.get("error"):
@@ -561,13 +610,21 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
                     "data": observation.get("message"),
                 },
             )
-            self._emit_event(on_event, {**self._yield_stream_end(messages, status="error"), "trace_id": trace_id})
+            _emit_stream_end(
+                self,
+                on_event,
+                raw_messages,
+                status="error",
+                trace_id=trace_id,
+                summary_state=summary_state,
+            )
             return {
                 "ok": False,
                 "trace_id": trace_id,
                 "steps": step,
                 "final": "Agent failed: LLM stream error.",
                 "conversation_history_used": len(memory),
+                "summary_state": normalize_summary_state(summary_state, llm_client=self._llm),
             }
 
         assistant_content = str(model_response.get("content") or "").strip()
@@ -601,7 +658,7 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
                 },
             )
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            messages.append(
+            raw_messages.append(
                 {
                     "role": "user",
                     "content": f"{ts}\nPrevious tool call format was invalid. Retry with valid function name and JSON-object arguments.",
@@ -617,7 +674,7 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
 
         if normalized_tool_calls:
             assistant_reasoning = str(model_response.get("thought") or "")
-            messages.append(
+            raw_messages.append(
                 self._assistant_tool_message(
                     assistant_content,
                     normalized_tool_calls,
@@ -662,7 +719,7 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
                             "message": "question tool must be called alone, not with other tools.",
                             "_hint": "Call question separately, then use other tools after getting the answer.",
                         }
-                        messages.append(
+                        raw_messages.append(
                             self._tool_message(
                                 call["id"],
                                 question_observation,
@@ -695,7 +752,7 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
                                 "observation": result["observation"],
                             },
                         )
-                        messages.append(self._tool_message(result["tool_call_id"], result["observation"]))
+                        raw_messages.append(self._tool_message(result["tool_call_id"], result["observation"]))
                 step += 1
                 if step > self._max_steps:
                     if self._ask_user_continue(on_event, trace_id, stop_event=stop_event):
@@ -745,7 +802,7 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
                         "observation": observation,
                     },
                 )
-                messages.append(self._tool_message(tool_call_id, observation))
+                raw_messages.append(self._tool_message(tool_call_id, observation))
             if _is_stop_requested(stop_event):
                 return _stopped_result(
                     self,
@@ -753,7 +810,8 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
                     trace_id=trace_id,
                     step=step,
                     memory=memory,
-                    messages=messages,
+                    raw_messages=raw_messages,
+                    summary_state=summary_state,
                 )
             step += 1
             if step > self._max_steps:
@@ -766,7 +824,7 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
         if not assistant_content and not forced_final_retry and step < self._max_steps:
             forced_final_retry = True
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            messages.append(
+            raw_messages.append(
                 {
                     "role": "user",
                     "content": f"{ts}\nPlease provide a concise final answer to the user now.",
@@ -788,9 +846,11 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
                     trace_id=trace_id,
                     step=step,
                     memory=memory,
-                    messages=messages,
+                    raw_messages=raw_messages,
+                    summary_state=summary_state,
                 )
-            direct_text = self._request_direct_answer(messages, stop_event=stop_event)
+            request_messages = _build_main_messages(system_content, raw_messages, summary_state=summary_state)
+            direct_text = self._request_direct_answer(request_messages, stop_event=stop_event)
             if direct_text:
                 assistant_content = direct_text
                 last_answer_text = assistant_content
@@ -812,7 +872,7 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
             final_text = "I could not generate a complete answer. Please retry."
 
         if current_answer_buf:
-            messages.append(
+            raw_messages.append(
                 {
                     "role": "assistant",
                     "content": "".join(current_answer_buf),
@@ -839,13 +899,21 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
                 "final": final_text,
             },
         )
-        self._emit_event(on_event, {**self._yield_stream_end(messages, status="complete"), "trace_id": trace_id})
+        _emit_stream_end(
+            self,
+            on_event,
+            raw_messages,
+            status="complete",
+            trace_id=trace_id,
+            summary_state=summary_state,
+        )
         return {
             "ok": True,
             "trace_id": trace_id,
             "steps": step,
             "final": final_text,
             "conversation_history_used": len(memory),
+            "summary_state": normalize_summary_state(summary_state, llm_client=self._llm),
         }
 
     self._emit_event(
@@ -869,7 +937,14 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
             "data": final_text,
         },
     )
-    self._emit_event(on_event, {**self._yield_stream_end(messages, status="max_steps"), "trace_id": trace_id})
+    _emit_stream_end(
+        self,
+        on_event,
+        raw_messages,
+        status="max_steps",
+        trace_id=trace_id,
+        summary_state=summary_state,
+    )
 
     return {
         "ok": False,
@@ -877,4 +952,5 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
         "steps": self._max_steps,
         "final": final_text,
         "conversation_history_used": len(memory),
+        "summary_state": normalize_summary_state(summary_state, llm_client=self._llm),
     }

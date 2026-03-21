@@ -269,6 +269,7 @@ class ReactAgent:
                 "internal_messages": internal_messages,
                 "last_user_ts": user_timestamps[-1] if user_timestamps else None,
                 "earliest_retryable_ts": user_timestamps[0] if user_timestamps else None,
+                "summary_state": None,
             },
         }
 
