@@ -10,6 +10,7 @@ import csv
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -20,8 +21,19 @@ if str(ROOT) not in sys.path:
 
 from app_gui.tool_bridge import GuiToolBridge
 from app_gui.i18n import tr
+from lib.app_storage import clear_session_data_root, set_session_data_root
 from lib.inventory_paths import create_managed_dataset_yaml_path
 from lib.tool_registry import GUI_BRIDGE_READ, iter_gui_bridge_descriptors
+
+
+@contextmanager
+def _managed_data_root(prefix):
+    with tempfile.TemporaryDirectory(prefix=prefix) as install_root:
+        set_session_data_root(install_root)
+        try:
+            yield Path(install_root)
+        finally:
+            clear_session_data_root()
 
 
 class GuiToolBridgeTests(unittest.TestCase):
@@ -70,10 +82,7 @@ inventory:
         return "app_gui.tool_bridge._write_adapter.invoke_write_tool"
 
     def test_export_inventory_csv_writes_full_snapshot(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_bridge_") as install_dir, patch(
-            "lib.inventory_paths.get_install_dir",
-            return_value=install_dir,
-        ):
+        with _managed_data_root("ln2_bridge_") as install_dir:
             path = self._write_inventory("bridge-export")
             bridge = GuiToolBridge()
 
@@ -93,10 +102,7 @@ inventory:
             self.assertIn("test note", rows[1])
 
     def test_generate_stats_requests_full_records_for_gui(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_bridge_") as install_dir, patch(
-            "lib.inventory_paths.get_install_dir",
-            return_value=install_dir,
-        ):
+        with _managed_data_root("ln2_bridge_") as install_dir:
             path = self._write_inventory("bridge-stats")
             bridge = GuiToolBridge()
 
@@ -115,10 +121,7 @@ inventory:
             )
 
     def test_registry_generated_list_empty_positions_calls_tool_api(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_bridge_") as install_dir, patch(
-            "lib.inventory_paths.get_install_dir",
-            return_value=install_dir,
-        ):
+        with _managed_data_root("ln2_bridge_") as install_dir:
             path = self._write_inventory("bridge-empty-slots")
             bridge = GuiToolBridge()
 
@@ -135,10 +138,7 @@ inventory:
             )
 
     def test_registry_generated_filter_records_calls_tool_api(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_bridge_") as install_dir, patch(
-            "lib.inventory_paths.get_install_dir",
-            return_value=install_dir,
-        ):
+        with _managed_data_root("ln2_bridge_") as install_dir:
             path = self._write_inventory("bridge-filter-table")
             bridge = GuiToolBridge()
 
@@ -176,10 +176,7 @@ inventory:
             )
 
     def test_registry_generated_edit_entry_preserves_write_bridge_behavior(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_bridge_") as install_dir, patch(
-            "lib.inventory_paths.get_install_dir",
-            return_value=install_dir,
-        ):
+        with _managed_data_root("ln2_bridge_") as install_dir:
             path = self._write_inventory("bridge-edit")
             bridge = GuiToolBridge(session_id="gui-session-1")
 
@@ -207,10 +204,7 @@ inventory:
             self.assertEqual("gui-session-1", kwargs.get("actor_context", {}).get("session_id"))
 
     def test_registry_generated_manage_boxes_preserves_write_bridge_behavior(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_bridge_") as install_dir, patch(
-            "lib.inventory_paths.get_install_dir",
-            return_value=install_dir,
-        ):
+        with _managed_data_root("ln2_bridge_") as install_dir:
             path = self._write_inventory("bridge-manage-boxes")
             bridge = GuiToolBridge(session_id="boxes-session")
 
@@ -239,10 +233,7 @@ inventory:
     def test_registry_generated_edit_entry_execute_mode_creates_backup_and_persists(self):
         from lib.yaml_ops import load_yaml
 
-        with tempfile.TemporaryDirectory(prefix="ln2_bridge_") as install_dir, patch(
-            "lib.inventory_paths.get_install_dir",
-            return_value=install_dir,
-        ):
+        with _managed_data_root("ln2_bridge_") as install_dir:
             path = self._write_inventory("bridge-edit-execute")
             bridge = GuiToolBridge(session_id="gui-session-2")
 
@@ -259,10 +250,7 @@ inventory:
             self.assertEqual("updated", current["inventory"][0]["note"])
 
     def test_registry_generated_methods_accept_keyword_yaml_path(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_bridge_") as install_dir, patch(
-            "lib.inventory_paths.get_install_dir",
-            return_value=install_dir,
-        ):
+        with _managed_data_root("ln2_bridge_") as install_dir:
             path = self._write_inventory("bridge-keyword-yaml-path")
             bridge = GuiToolBridge(session_id="keyword-session")
 
@@ -291,10 +279,7 @@ inventory:
                         self.assertEqual(str(path), mock_target.call_args.kwargs.get("yaml_path"))
 
     def test_registry_generated_methods_accept_positional_yaml_path(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_bridge_") as install_dir, patch(
-            "lib.inventory_paths.get_install_dir",
-            return_value=install_dir,
-        ):
+        with _managed_data_root("ln2_bridge_") as install_dir:
             path = self._write_inventory("bridge-positional-yaml-path")
             bridge = GuiToolBridge(session_id="positional-session")
 
@@ -355,10 +340,7 @@ inventory:
     def test_run_agent_query_builds_runner_without_access_profile(self):
         from app_gui.agent_session import AgentSessionService
 
-        with tempfile.TemporaryDirectory(prefix="ln2_bridge_") as install_dir, patch(
-            "lib.inventory_paths.get_install_dir",
-            return_value=install_dir,
-        ):
+        with _managed_data_root("ln2_bridge_") as install_dir:
             path = self._write_inventory("bridge-agent-mode")
             service = AgentSessionService()
             service.set_api_keys({"deepseek": "sk-test"})
@@ -385,10 +367,7 @@ inventory:
             self.assertNotIn("expose_inventory_context", kwargs)
 
     def test_add_entry_routes_registry_write_through_shared_adapter(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_bridge_") as install_dir, patch(
-            "lib.inventory_paths.get_install_dir",
-            return_value=install_dir,
-        ):
+        with _managed_data_root("ln2_bridge_") as install_dir:
             path = self._write_inventory("bridge-add-write")
             bridge = GuiToolBridge(session_id="bridge-session")
 
@@ -416,10 +395,7 @@ inventory:
             self.assertEqual("bridge-session", kwargs.get("actor_context", {}).get("session_id"))
 
     def test_registry_write_backup_failure_maps_to_gui_error(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_bridge_") as install_dir, patch(
-            "lib.inventory_paths.get_install_dir",
-            return_value=install_dir,
-        ):
+        with _managed_data_root("ln2_bridge_") as install_dir:
             path = self._write_inventory("bridge-add-failure")
             bridge = GuiToolBridge()
 
@@ -440,10 +416,7 @@ inventory:
             self.assertIn("backup exploded", response.get("message", ""))
 
     def test_set_box_tag_routes_explicit_write_through_shared_adapter(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_bridge_") as install_dir, patch(
-            "lib.inventory_paths.get_install_dir",
-            return_value=install_dir,
-        ):
+        with _managed_data_root("ln2_bridge_") as install_dir:
             path = self._write_inventory("bridge-box-tag")
             bridge = GuiToolBridge(session_id="bridge-tag")
 

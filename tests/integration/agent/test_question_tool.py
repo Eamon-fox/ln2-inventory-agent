@@ -9,22 +9,30 @@ Agent 用户询问工具的交互流程
 import threading
 import time
 import tempfile
-from unittest.mock import patch
+from contextlib import contextmanager
 
 import pytest
 
 from agent.tool_runner import AgentToolRunner
+from lib.app_storage import clear_session_data_root, set_session_data_root
 from lib.inventory_paths import create_managed_dataset_yaml_path
 
 OTHER_OPTION = "\u5176\u4ed6\uff1a\u8bf7\u8f93\u5165"
 
 
+@contextmanager
+def _managed_data_root(prefix):
+    with tempfile.TemporaryDirectory(prefix=prefix) as install_root:
+        set_session_data_root(install_root)
+        try:
+            yield install_root
+        finally:
+            clear_session_data_root()
+
+
 @pytest.fixture
 def runner():
-    with tempfile.TemporaryDirectory(prefix="ln2_question_") as install_root, patch(
-        "lib.inventory_paths.get_install_dir",
-        return_value=install_root,
-    ):
+    with _managed_data_root("ln2_question_"):
         yaml_path = create_managed_dataset_yaml_path("question")
         with open(yaml_path, "w", encoding="utf-8") as handle:
             handle.write("inventory: []\nmeta:\n  box_layout: {rows: 9, cols: 9}\n")

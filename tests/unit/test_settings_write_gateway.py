@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from lib.inventory_paths import create_managed_dataset_yaml_path
+from lib.app_storage import clear_session_data_root, set_session_data_root
 from lib.settings_write_gateway import persist_custom_fields_update
 from lib.yaml_ops import (
     list_yaml_backups,
@@ -24,11 +25,12 @@ from lib.yaml_ops import (
 
 @contextmanager
 def _managed_inventory_root(prefix):
-    with tempfile.TemporaryDirectory(prefix=prefix) as install_dir, patch(
-        "lib.inventory_paths.get_install_dir",
-        return_value=install_dir,
-    ):
-        yield Path(install_dir)
+    with tempfile.TemporaryDirectory(prefix=prefix) as install_dir:
+        set_session_data_root(install_dir)
+        try:
+            yield Path(install_dir)
+        finally:
+            clear_session_data_root()
 
 
 def _managed_yaml(dataset_name):
@@ -129,4 +131,3 @@ class SettingsWriteGatewayTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
