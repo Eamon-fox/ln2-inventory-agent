@@ -3,6 +3,7 @@
 from contextlib import suppress
 
 from app_gui.i18n import tr
+from lib.schema_aliases import get_storage_events, get_stored_at
 
 
 def _coerce_int_or_none(value):
@@ -217,7 +218,7 @@ def _populate_record_context_labels(
         position_label,
         self._position_to_display(position) if position is not None else "-",
     )
-    _set_text_widget_value(frozen_label, str(record.get("frozen_at") or "-"))
+    _set_text_widget_value(frozen_label, str(get_stored_at(record, default="-") or "-"))
     _set_text_widget_value(note_label, str(record.get("note") or "-"))
     _set_text_widget_value(cell_line_label, str(record.get("cell_line") or "-"))
     for key, widget_pair in (extra_widgets or {}).items():
@@ -341,7 +342,7 @@ def _refresh_takeout_record_context(self):
         self.t_position.setCurrentIndex(0)
     self.t_position.blockSignals(False)
 
-    _set_last_event_summary_label(self, self.t_ctx_events, record.get("thaw_events"))
+    _set_last_event_summary_label(self, self.t_ctx_events, get_storage_events(record))
 
 def _on_move_source_changed(self):
     """Called when user manually changes source box/position."""
@@ -413,5 +414,5 @@ def _refresh_move_record_context(self):
         cell_line_label=self.m_ctx_cell_line,
         extra_widgets=self._move_ctx_widgets,
     )
-    _set_last_event_summary_label(self, self.m_ctx_events, record.get("thaw_events"))
+    _set_last_event_summary_label(self, self.m_ctx_events, get_storage_events(record))
 

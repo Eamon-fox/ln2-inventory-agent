@@ -258,6 +258,28 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         record = panel.records_cache.get(1)
         self.assertIsInstance(record, dict)
         self.assertEqual(1, int(record.get("id")))
+        self.assertEqual("2026-02-10", record.get("stored_at"))
+        self.assertEqual("2026-02-10", record.get("frozen_at"))
+
+    def test_operations_panel_cache_expands_canonical_stored_at_aliases(self):
+        panel = self._new_operations_panel()
+        panel.update_records_cache(
+            {
+                "1": {
+                    "id": 1,
+                    "parent_cell_line": "K562",
+                    "short_name": "k562-a",
+                    "box": 1,
+                    "position": 1,
+                    "stored_at": "2026-02-10",
+                }
+            }
+        )
+
+        record = panel.records_cache.get(1)
+        self.assertIsInstance(record, dict)
+        self.assertEqual("2026-02-10", record.get("stored_at"))
+        self.assertEqual("2026-02-10", record.get("frozen_at"))
 
     def test_operations_panel_cache_normalizes_alphanumeric_positions(self):
         panel = self._new_operations_panel()
@@ -2002,6 +2024,42 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         self.assertEqual("execute", kwargs["execution_mode"])
         self.assertEqual([True], emitted)
         self.assertTrue(panel.t_ctx_note.isReadOnly())
+        self.assertTrue(confirm_btn.isHidden())
+
+    def test_operations_panel_inline_stored_date_edit_uses_canonical_field_name(self):
+        panel = self._new_operations_panel()
+        panel.update_records_cache({
+            1: {
+                "id": 1,
+                "cell_line": "K562",
+                "box": 1,
+                "position": 1,
+                "stored_at": "2025-01-01",
+            },
+        })
+        panel.t_id.setValue(1)
+        from app_gui.ui import operations_panel_context as _ops_context
+
+        _ops_context._refresh_takeout_record_context(panel)
+
+        bridge = SimpleNamespace(
+            edit_entry=MagicMock(return_value={"ok": True})
+        )
+        panel.bridge = bridge
+
+        container = panel.t_ctx_frozen.parentWidget()
+        lock_btn = container.findChild(QPushButton, "inlineLockBtn")
+        confirm_btn = container.findChild(QPushButton, "inlineConfirmBtn")
+
+        self.assertEqual("2025-01-01", panel.t_ctx_frozen.text())
+        lock_btn.click()
+        panel.t_ctx_frozen.setText("2025-02-01")
+        confirm_btn.click()
+
+        bridge.edit_entry.assert_called_once()
+        kwargs = bridge.edit_entry.call_args.kwargs
+        self.assertEqual({"stored_at": "2025-02-01"}, kwargs["fields"])
+        self.assertTrue(panel.t_ctx_frozen.isReadOnly())
         self.assertTrue(confirm_btn.isHidden())
 
     def test_operations_panel_inline_edit_confirm_works_with_real_gui_bridge(self):

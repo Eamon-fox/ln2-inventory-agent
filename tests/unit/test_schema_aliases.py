@@ -2,7 +2,10 @@ import unittest
 
 from lib.schema_aliases import (
     coalesce_stored_at_value,
+    expand_record_structural_aliases,
     expand_structural_aliases_in_sections,
+    get_storage_events,
+    get_stored_at,
     normalize_record_sort_field,
     normalize_structural_alias_input_map,
     present_record_sort_field,
@@ -108,6 +111,36 @@ class TestSchemaAliases(unittest.TestCase):
             payload["after"]["storage_events"],
         )
         self.assertNotIn("frozen_at", payload["other"])
+
+    def test_expand_record_structural_aliases_populates_legacy_from_canonical(self):
+        record = {
+            "id": 1,
+            "stored_at": "2026-02-10",
+            "storage_events": [{"action": "takeout"}],
+        }
+
+        result = expand_record_structural_aliases(record)
+
+        self.assertIs(record, result)
+        self.assertEqual("2026-02-10", record["frozen_at"])
+        self.assertEqual([{"action": "takeout"}], record["thaw_events"])
+        self.assertEqual("2026-02-10", get_stored_at(record))
+        self.assertEqual([{"action": "takeout"}], get_storage_events(record))
+
+    def test_expand_record_structural_aliases_populates_canonical_from_legacy(self):
+        record = {
+            "id": 1,
+            "frozen_at": "2026-02-11",
+            "thaw_events": [{"action": "move"}],
+        }
+
+        result = expand_record_structural_aliases(record)
+
+        self.assertIs(record, result)
+        self.assertEqual("2026-02-11", record["stored_at"])
+        self.assertEqual([{"action": "move"}], record["storage_events"])
+        self.assertEqual("2026-02-11", get_stored_at(record))
+        self.assertEqual([{"action": "move"}], get_storage_events(record))
 
 
 if __name__ == "__main__":

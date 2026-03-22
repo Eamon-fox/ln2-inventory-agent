@@ -268,7 +268,7 @@ def resolve_legacy_field_policy(
     custom_fields_missing = "custom_fields" not in meta_dict
 
     runtime_cell_line = bool(explicit_cell_line or has_legacy_meta or has_legacy_inventory)
-    staging_cell_line = bool(runtime_cell_line)
+    staging_cell_line = bool(runtime_cell_line or custom_fields_missing)
     schema_cell_line = bool(explicit_cell_line or has_legacy_meta)
     write_cell_line = bool(explicit_cell_line or has_legacy_meta or has_legacy_inventory)
 

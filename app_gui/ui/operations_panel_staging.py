@@ -30,7 +30,7 @@ def on_add_entry(self):
     item = build_add_plan_item(
         box=self.a_box.value(),
         positions=positions,
-        frozen_at=self.a_date.date().toString("yyyy-MM-dd"),
+        stored_at=self.a_date.date().toString("yyyy-MM-dd"),
         fields=fields,
         source="human",
     )

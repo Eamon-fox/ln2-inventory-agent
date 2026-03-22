@@ -441,8 +441,8 @@ def _build_takeout_tab(self):
     _t_rid = lambda: self.t_id.value()
     _t_refresh = lambda: _ops_context._refresh_takeout_record_context(self)
 
-    # Editable context fields -?frozen_at/note are core fields.
-    t_frozen_w, self.t_ctx_frozen = _make_editable_field(self, "frozen_at", _t_rid, _t_refresh)
+    # Editable context fields - stored_at/note are core fields.
+    t_frozen_w, self.t_ctx_frozen = _make_editable_field(self, "stored_at", _t_rid, _t_refresh)
     t_note_w, self.t_ctx_note = _make_editable_field(
         self,
         "note",
@@ -589,8 +589,8 @@ def _build_move_tab(self):
     _m_rid = lambda: self.m_id.value()
     _m_refresh = lambda: _ops_context._refresh_move_record_context(self)
 
-    # Editable context fields -?frozen_at/note are core fields.
-    m_frozen_w, self.m_ctx_frozen = _make_editable_field(self, "frozen_at", _m_rid, _m_refresh)
+    # Editable context fields - stored_at/note are core fields.
+    m_frozen_w, self.m_ctx_frozen = _make_editable_field(self, "stored_at", _m_rid, _m_refresh)
     m_note_w, self.m_ctx_note = _make_editable_field(
         self,
         "note",

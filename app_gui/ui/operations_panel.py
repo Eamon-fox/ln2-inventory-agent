@@ -19,6 +19,7 @@ from app_gui.application import PlanRunUseCase
 from app_gui.gui_config import load_gui_config
 from app_gui.i18n import tr
 from lib.position_fmt import pos_to_display
+from lib.schema_aliases import expand_record_structural_aliases
 from lib import tool_api_parsers as _tool_parsers
 from lib.plan_store import PlanStore
 from app_gui.ui import operations_panel_execution as _ops_exec
@@ -553,6 +554,7 @@ class OperationsPanel(QWidget):
                 continue
 
             normalized_record = dict(record)
+            expand_record_structural_aliases(normalized_record)
             try:
                 normalized_record["box"] = self._normalize_box_value(
                     normalized_record.get("box"),
@@ -741,10 +743,12 @@ class OperationsPanel(QWidget):
                     if model_item is not None and not bool(model_item.data(_CHOICE_HINT_ROLE)):
                         target_index = idx
 
-            if target_index < 0 and not frequired and combo.count() > 0:
-                target_index = 0
-
-            if target_index < 0 and frequired and options:
+            if target_index < 0 and options:
+                if frequired:
+                    target_index = 0
+                else:
+                    target_index = 1 if combo.count() > 1 else 0
+            elif target_index < 0 and combo.count() > 0:
                 target_index = 0
 
             if target_index >= 0:

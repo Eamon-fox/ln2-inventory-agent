@@ -19,6 +19,7 @@ from app_gui.error_localizer import localize_error_payload
 from app_gui.ui.theme import pick_contrasting_text_color
 from app_gui.ui.utils import cell_color
 from lib.position_fmt import format_box_position_display, format_box_positions_display
+from lib.schema_aliases import get_input_stored_at
 
 PLAN_ROW_TINT_ROLE = int(Qt.UserRole) + 201
 
@@ -204,7 +205,7 @@ def _build_plan_date_text(self, action_norm, payload):
             return str(source_event.get("timestamp"))
         return ""
     if action_norm == "add":
-        return str(payload.get("frozen_at", ""))
+        return str(get_input_stored_at(payload, default="") or "")
     return str(payload.get("date_str", ""))
 
 
@@ -218,6 +219,7 @@ def _build_plan_changes(self, action_norm, item, payload, custom_fields):
     }
     label_map.setdefault("short_name", _tr("operations.shortName"))
     label_map.setdefault("cell_line", _tr("operations.cellLine"))
+    label_map.setdefault("stored_at", _tr("operations.frozenDate"))
     label_map.setdefault("frozen_at", _tr("operations.frozenDate"))
     label_map.setdefault("box", _tr("operations.box"))
     label_map.setdefault("position", _tr("operations.position"))

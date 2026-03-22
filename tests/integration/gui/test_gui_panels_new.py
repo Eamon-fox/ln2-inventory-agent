@@ -66,6 +66,7 @@ class BoxPositionLookupTests(unittest.TestCase):
         self.assertEqual(42, panel.m_id.value())
         # Context should show record info
         self.assertEqual("K562", panel.m_ctx_cell_line.text())
+        self.assertEqual("2025-01-01", panel.m_ctx_frozen.text())
 
     def test_thaw_form_looks_up_record_by_box_position(self):
         """Thaw form should find record by box + position, not ID."""
@@ -83,6 +84,21 @@ class BoxPositionLookupTests(unittest.TestCase):
         self.assertEqual(99, panel.t_id.value())
         # Context should show record info
         self.assertEqual("HeLa", panel.t_ctx_cell_line.text())
+        self.assertEqual("2025-02-01", panel.t_ctx_frozen.text())
+
+    def test_takeout_form_shows_stored_date_from_canonical_field(self):
+        panel = self._new_operations_panel()
+        panel.update_records_cache({
+            100: {"id": 100, "cell_line": "Raji", "short_name": "test",
+                  "box": 4, "position": 8, "stored_at": "2025-03-01"},
+        })
+
+        panel.t_from_box.setValue(4)
+        panel.t_from_position.setText("8")
+
+        self.assertEqual(100, panel.t_id.value())
+        self.assertEqual("Raji", panel.t_ctx_cell_line.text())
+        self.assertEqual("2025-03-01", panel.t_ctx_frozen.text())
 
     def test_move_source_change_autofills_target_box(self):
         """Move source selection should auto-fill target box to the same box."""
@@ -348,6 +364,31 @@ class PlanTableColumnsTests(unittest.TestCase):
         self.assertNotIn("clone-1", cell_text)
         self.assertNotIn("Box", cell_text)
         self.assertNotIn("2025-02-19", cell_text)
+
+    def test_plan_table_add_row_uses_canonical_stored_at_payload_for_date(self):
+        panel = self._new_operations_panel()
+        panel.add_plan_items(
+            [
+                {
+                    "action": "add",
+                    "box": 1,
+                    "position": 1,
+                    "payload": {
+                        "box": 1,
+                        "stored_at": "2025-02-19",
+                        "positions": [1],
+                        "fields": {"cell_line": "K562"},
+                    },
+                }
+            ]
+        )
+
+        headers = [
+            panel.plan_table.horizontalHeaderItem(i).text()
+            for i in range(panel.plan_table.columnCount())
+        ]
+        date_col = headers.index(tr("operations.date"))
+        self.assertEqual("2025-02-19", panel.plan_table.item(0, date_col).text())
 
     def test_plan_table_takeout_summary_is_sample_centric(self):
         panel = self._new_operations_panel()
