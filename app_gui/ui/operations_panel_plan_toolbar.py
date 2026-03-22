@@ -37,6 +37,12 @@ def _refresh_after_plan_items_changed(self):
     apply_mode_fn = getattr(self, "_apply_migration_mode_ui_state", None)
     if callable(apply_mode_fn):
         apply_mode_fn()
+    sync_locked_add_fn = getattr(self, "_sync_locked_staged_add_state", None)
+    if callable(sync_locked_add_fn):
+        sync_locked_add_fn()
+    sync_selection_fn = getattr(self, "_sync_plan_table_add_prefill_lock", None)
+    if callable(sync_selection_fn):
+        sync_selection_fn()
 
 
 def remove_selected_plan_items(self):

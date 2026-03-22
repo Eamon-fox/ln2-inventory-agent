@@ -5,22 +5,11 @@ from copy import deepcopy
 from ..migrate_cell_line_policy import normalize_field_options_policy_data
 from ..position_fmt import (
     DEFAULT_BOX_LAYOUT_INDEXING,
-    is_valid_box_layout_indexing,
     normalize_box_layout_indexing,
 )
 from ..yaml_ops import load_yaml, write_yaml
 from .audit_details import failure_details, set_box_layout_indexing_details
 from .write_common import api
-
-
-def _normalize_indexing_value(raw_value):
-    text = normalize_box_layout_indexing(raw_value, default="")
-    if not text:
-        return None, "indexing is required"
-    if not is_valid_box_layout_indexing(text):
-        return None, "indexing must be one of: numeric, alphanumeric"
-    return text, None
-
 
 def tool_set_box_layout_indexing(
     yaml_path,
@@ -58,20 +47,8 @@ def tool_set_box_layout_indexing(
     )
     if not validation.get("ok"):
         return validation
-
-    normalized_indexing, indexing_error = _normalize_indexing_value(indexing)
-    if indexing_error:
-        return api._failure_result(
-            yaml_path=yaml_path,
-            action=action,
-            source=source,
-            tool_name=tool_name,
-            error_code="invalid_indexing",
-            message=indexing_error,
-            actor_context=actor_context,
-            tool_input=tool_input,
-            details=failure_details(op="set_box_layout_indexing", indexing=indexing),
-        )
+    normalized_validation = validation.get("normalized") or {}
+    normalized_indexing = normalized_validation.get("indexing")
 
     try:
         data = load_yaml(yaml_path)

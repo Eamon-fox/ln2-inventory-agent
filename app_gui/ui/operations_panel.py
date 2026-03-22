@@ -19,7 +19,7 @@ from app_gui.application import PlanRunUseCase
 from app_gui.gui_config import load_gui_config
 from app_gui.i18n import tr
 from lib.position_fmt import pos_to_display
-from lib.schema_aliases import expand_record_structural_aliases
+from lib.schema_aliases import expand_record_structural_aliases, get_input_stored_at
 from lib import tool_api_parsers as _tool_parsers
 from lib.plan_store import PlanStore
 from app_gui.ui import operations_panel_execution as _ops_exec
@@ -153,6 +153,8 @@ class OperationsPanel(QWidget):
         self._current_custom_fields = []
         self._current_meta = {}
         self._current_layout = {}
+        self._staged_add_lock_signature = None
+        self._staged_add_lock_source = None
         self._plan_run_use_case = PlanRunUseCase()
 
         self.setup_ui()
@@ -166,6 +168,281 @@ class OperationsPanel(QWidget):
     def plan_items(self):
         """Read-only snapshot for backward compatibility (tests, external reads)."""
         return self._plan_store.list_items()
+
+    def _iter_staged_add_items(self):
+        for item in self._plan_store.list_items():
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("action") or "").strip().lower() != "add":
+                continue
+            yield item
+
+    def _normalize_add_item_positions(self, item):
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+        raw_positions = payload.get("positions") if isinstance(payload.get("positions"), list) else []
+        if not raw_positions:
+            raw_positions = [item.get("position")]
+
+        normalized = []
+        for raw_position in raw_positions:
+            try:
+                position = self._normalize_position_value(
+                    raw_position,
+                    field_name="position",
+                    allow_empty=True,
+                )
+            except ValueError:
+                continue
+            if position is None or position in normalized:
+                continue
+            normalized.append(position)
+        return tuple(sorted(normalized))
+
+    def _staged_add_item_signature(self, item):
+        if not isinstance(item, dict):
+            return None
+        try:
+            box = self._normalize_box_value(
+                item.get("box"),
+                field_name="box",
+                allow_empty=True,
+            )
+        except ValueError:
+            return None
+        positions = self._normalize_add_item_positions(item)
+        if box is None or not positions:
+            return None
+        return int(box), positions
+
+    def _find_staged_add_item_by_signature(self, signature):
+        if not signature:
+            return None
+        for item in self._iter_staged_add_items():
+            if self._staged_add_item_signature(item) == signature:
+                return item
+        return None
+
+    def _resolve_overview_active_add_position(self, source_info):
+        payload = dict(source_info or {})
+        active_position = payload.get("active_position")
+        overview = getattr(self, "_overview_panel_ref", None)
+        if active_position in (None, "") and overview is not None:
+            active_key = getattr(overview, "overview_selected_key", None)
+            if isinstance(active_key, (tuple, list)) and len(active_key) == 2:
+                box = payload.get("box")
+                if box in (None, "") or str(active_key[0]) == str(box):
+                    active_position = active_key[1]
+        try:
+            return self._normalize_position_value(
+                active_position,
+                field_name="position",
+                allow_empty=True,
+            )
+        except ValueError:
+            return None
+
+    def _resolve_staged_add_item_for_prefill(self, source_info):
+        payload = dict(source_info or {})
+        try:
+            box = self._normalize_box_value(
+                payload.get("box"),
+                field_name="box",
+                allow_empty=True,
+            )
+        except ValueError:
+            return None
+        if box is None:
+            return None
+
+        requested_positions = []
+        for raw_position in list(payload.get("positions") or []):
+            try:
+                position = self._normalize_position_value(
+                    raw_position,
+                    field_name="position",
+                    allow_empty=True,
+                )
+            except ValueError:
+                continue
+            if position is None or position in requested_positions:
+                continue
+            requested_positions.append(position)
+        if not requested_positions:
+            try:
+                single_position = self._normalize_position_value(
+                    payload.get("position"),
+                    field_name="position",
+                    allow_empty=True,
+                )
+            except ValueError:
+                single_position = None
+            if single_position is not None:
+                requested_positions.append(single_position)
+
+        exact_match = tuple(sorted(requested_positions)) if requested_positions else ()
+        active_position = self._resolve_overview_active_add_position(payload)
+
+        candidates = []
+        for item in self._iter_staged_add_items():
+            signature = self._staged_add_item_signature(item)
+            if signature is None or signature[0] != int(box):
+                continue
+            positions = signature[1]
+            if exact_match and positions == exact_match:
+                return item
+            if active_position is not None and active_position in positions:
+                candidates.insert(0, item)
+                continue
+            if any(position in positions for position in requested_positions):
+                candidates.append(item)
+
+        if not candidates:
+            return None
+        return candidates[0]
+
+    def _iter_add_form_widgets(self):
+        for attr_name in ("a_box", "a_positions", "a_date", "a_apply_btn"):
+            widget = getattr(self, attr_name, None)
+            if widget is not None:
+                yield widget
+        for widget in dict(getattr(self, "_add_custom_widgets", {}) or {}).values():
+            if widget is not None:
+                yield widget
+
+    def _set_add_form_locked(self, locked):
+        for widget in self._iter_add_form_widgets():
+            widget.setEnabled(not bool(locked))
+
+    def _clear_staged_add_lock(self, *, only_source=None):
+        if only_source is not None and self._staged_add_lock_source != only_source:
+            return False
+        had_lock = bool(self._staged_add_lock_signature)
+        self._staged_add_lock_signature = None
+        self._staged_add_lock_source = None
+        self._set_add_form_locked(False)
+        return had_lock
+
+    def _reset_add_form_to_defaults(self):
+        self._ensure_today_defaults()
+        self.a_box.blockSignals(True)
+        self.a_box.setValue(max(1, int(self.a_box.minimum())))
+        self.a_box.blockSignals(False)
+        self.a_positions.blockSignals(True)
+        self.a_positions.clear()
+        self.a_positions.blockSignals(False)
+        self.a_date.blockSignals(True)
+        self.a_date.setDate(QDate.currentDate())
+        self.a_date.blockSignals(False)
+
+        for field_def in list(getattr(self, "_current_custom_fields", []) or []):
+            if not isinstance(field_def, dict):
+                continue
+            key = str(field_def.get("key") or "").strip()
+            if not key:
+                continue
+            widget = self._add_custom_widgets.get(key)
+            if widget is None:
+                continue
+            self._apply_add_form_widget_value(widget, field_def, field_def.get("default"))
+
+    def _apply_add_form_widget_value(self, widget, field_def, value):
+        if widget is None:
+            return
+        if isinstance(widget, QComboBox):
+            text = "" if value is None else str(value)
+            widget.blockSignals(True)
+            if text:
+                widget.setCurrentText(text)
+            elif widget.findText("", Qt.MatchFixedString) >= 0:
+                widget.setCurrentText("")
+            elif widget.count() > 0:
+                widget.setCurrentIndex(0)
+            else:
+                widget.setEditText("")
+            widget.blockSignals(False)
+            return
+        if isinstance(widget, QDateEdit):
+            text = str(value or "").strip()
+            parsed = QDate.fromString(text, "yyyy-MM-dd") if text else QDate()
+            widget.blockSignals(True)
+            widget.setDate(parsed if parsed.isValid() else QDate.currentDate())
+            widget.blockSignals(False)
+            return
+        if isinstance(widget, QSpinBox):
+            widget.blockSignals(True)
+            if value in (None, ""):
+                widget.setValue(0)
+            else:
+                try:
+                    widget.setValue(int(value))
+                except (TypeError, ValueError):
+                    widget.setValue(0)
+            widget.blockSignals(False)
+            return
+        if isinstance(widget, QDoubleSpinBox):
+            widget.blockSignals(True)
+            if value in (None, ""):
+                widget.setValue(0.0)
+            else:
+                try:
+                    widget.setValue(float(value))
+                except (TypeError, ValueError):
+                    widget.setValue(0.0)
+            widget.blockSignals(False)
+            return
+        _ops_forms._write_text_widget_value(widget, "" if value is None else value)
+
+    def _apply_staged_add_item_to_form(self, item, *, source):
+        signature = self._staged_add_item_signature(item)
+        if signature is None:
+            return False
+
+        self._reset_add_form_to_defaults()
+
+        box, positions = signature
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+        fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
+        stored_at = str(get_input_stored_at(payload, default="") or "").strip()
+
+        self.a_box.blockSignals(True)
+        self.a_box.setValue(int(box))
+        self.a_box.blockSignals(False)
+
+        self.a_positions.blockSignals(True)
+        self.a_positions.setText(self._positions_to_display_text(list(positions)))
+        self.a_positions.blockSignals(False)
+
+        if stored_at:
+            parsed_date = QDate.fromString(stored_at, "yyyy-MM-dd")
+            if parsed_date.isValid():
+                self.a_date.blockSignals(True)
+                self.a_date.setDate(parsed_date)
+                self.a_date.blockSignals(False)
+
+        for field_def in list(getattr(self, "_current_custom_fields", []) or []):
+            if not isinstance(field_def, dict):
+                continue
+            key = str(field_def.get("key") or "").strip()
+            if not key:
+                continue
+            widget = self._add_custom_widgets.get(key)
+            if widget is None:
+                continue
+            self._apply_add_form_widget_value(widget, field_def, fields.get(key))
+
+        self.set_mode("add")
+        self._staged_add_lock_signature = signature
+        self._staged_add_lock_source = str(source or "overview")
+        self._set_add_form_locked(True)
+        return True
+
+    def _sync_locked_staged_add_state(self):
+        if not self._staged_add_lock_signature:
+            return
+        if self._find_staged_add_item_by_signature(self._staged_add_lock_signature) is not None:
+            self._set_add_form_locked(True)
+            return
+        self._clear_staged_add_lock()
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -626,6 +903,7 @@ class OperationsPanel(QWidget):
             self._sync_cell_line_context_visibility([])
             self._plan_preflight_report = None
             self._plan_validation_by_key = {}
+            self._clear_staged_add_lock()
             _ops_plan_table._refresh_plan_table(self)
             _ops_plan_store._update_execute_button_state(self)
             self.status_message.emit(
@@ -658,6 +936,16 @@ class OperationsPanel(QWidget):
             self._plan_validation_by_key = {}
             _ops_plan_table._refresh_plan_table(self)
             _ops_plan_store._update_execute_button_state(self)
+
+        if self._staged_add_lock_signature:
+            locked_item = self._find_staged_add_item_by_signature(self._staged_add_lock_signature)
+            if locked_item is not None:
+                self._apply_staged_add_item_to_form(
+                    locked_item,
+                    source=self._staged_add_lock_source or "overview",
+                )
+            else:
+                self._clear_staged_add_lock()
 
     def _sync_cell_line_context_visibility(self, custom_fields):
         has_cell_line = any(
@@ -1127,6 +1415,11 @@ class OperationsPanel(QWidget):
 
     def set_add_prefill_background(self, source_info):
         """Pre-fill the Add Entry form and switch to Add mode."""
+        staged_item = self._resolve_staged_add_item_for_prefill(source_info)
+        if staged_item is not None:
+            self._apply_staged_add_item_to_form(staged_item, source="overview")
+            return
+        self._clear_staged_add_lock()
         self._apply_add_prefill(source_info)
 
     def _ensure_today_defaults(self):
@@ -1166,6 +1459,29 @@ class OperationsPanel(QWidget):
     def _on_store_changed(self):
         """Slot invoked (via QueuedConnection) when PlanStore mutates from any thread."""
         _ops_plan_toolbar._refresh_after_plan_items_changed(self)
+
+    def _sync_plan_table_add_prefill_lock(self):
+        rows = _ops_plan_toolbar._get_selected_plan_rows(self)
+        if len(rows) != 1:
+            self._clear_staged_add_lock(only_source="plan")
+            return
+
+        items = self._plan_store.list_items()
+        row = rows[0]
+        if row < 0 or row >= len(items):
+            self._clear_staged_add_lock(only_source="plan")
+            return
+
+        item = items[row]
+        if str(item.get("action") or "").strip().lower() != "add":
+            self._clear_staged_add_lock(only_source="plan")
+            return
+
+        self._apply_staged_add_item_to_form(item, source="plan")
+
+    def _on_plan_table_selection_changed(self, *_args):
+        _ops_plan_toolbar._refresh_plan_toolbar_state(self)
+        self._sync_plan_table_add_prefill_lock()
 
     # Stable public API: these wrappers keep the call surface fixed while the
     # implementation lives in extracted helper modules.

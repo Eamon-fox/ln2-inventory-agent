@@ -2,45 +2,12 @@
 
 from copy import deepcopy
 
+from ..box_layout_requests import normalize_box_tag_value, normalize_box_tags
 from ..migrate_cell_line_policy import normalize_field_options_policy_data
 from ..position_fmt import get_box_numbers
-from ..tool_api_write_validation import normalize_manage_boxes_renumber_mode
 from ..yaml_ops import load_yaml, write_yaml
 from .audit_details import manage_boxes_details, failure_details
 from .write_common import api
-
-_BOX_TAG_MAX_LENGTH = 80
-
-
-def _normalize_box_tag_value(raw_tag):
-    text = "" if raw_tag is None else str(raw_tag)
-    if "\n" in text or "\r" in text:
-        return None
-    normalized = text.strip()
-    if not normalized:
-        return None
-    if len(normalized) > _BOX_TAG_MAX_LENGTH:
-        return None
-    return normalized
-
-
-def _normalize_box_tags(raw_tags, allowed_boxes):
-    if not isinstance(raw_tags, dict):
-        return {}
-
-    allowed = {int(box_num) for box_num in list(allowed_boxes or [])}
-    normalized = {}
-    for raw_box, raw_tag in raw_tags.items():
-        try:
-            box_num = int(raw_box)
-        except Exception:
-            continue
-        if box_num not in allowed:
-            continue
-        tag_value = _normalize_box_tag_value(raw_tag)
-        if tag_value:
-            normalized[str(box_num)] = tag_value
-    return normalized
 
 
 def _remap_box_tags_for_renumber(box_tags, box_mapping):
@@ -56,7 +23,7 @@ def _remap_box_tags_for_renumber(box_tags, box_mapping):
         new_box = box_mapping.get(old_box)
         if new_box is None:
             continue
-        tag_value = _normalize_box_tag_value(raw_tag)
+        tag_value, _err = normalize_box_tag_value(raw_tag)
         if tag_value:
             remapped[str(int(new_box))] = tag_value
     return remapped
@@ -79,7 +46,7 @@ def _prepare_manage_boxes_context(
     current_boxes = list(get_box_numbers(layout))
     if not current_boxes:
         current_boxes = [1]
-    current_box_tags = _normalize_box_tags((layout or {}).get("box_tags"), current_boxes)
+    current_box_tags = normalize_box_tags((layout or {}).get("box_tags"), current_boxes)
 
     candidate_data = deepcopy(data)
     if not isinstance(candidate_data, dict):
@@ -182,13 +149,13 @@ def _plan_manage_boxes(
                 "added_boxes": added_boxes,
                 "box_numbers_after": new_boxes,
                 "box_count_after": len(new_boxes),
-                "box_tags_after": _normalize_box_tags(current_box_tags, new_boxes),
+                "box_tags_after": normalize_box_tags(current_box_tags, new_boxes),
             }
         )
         return {
             "new_boxes": new_boxes,
             "preview": preview,
-            "box_tags_after": _normalize_box_tags(current_box_tags, new_boxes),
+            "box_tags_after": normalize_box_tags(current_box_tags, new_boxes),
         }, None
 
     try:
@@ -270,8 +237,7 @@ def _plan_manage_boxes(
         )
 
     is_middle = api._is_middle_box(current_boxes, target_box)
-    mode = normalize_manage_boxes_renumber_mode(renumber_mode)
-
+    mode = renumber_mode
     if is_middle and mode not in {"keep_gaps", "renumber_contiguous"}:
         return None, api._failure_result(
             yaml_path=yaml_path,
@@ -332,7 +298,7 @@ def _plan_manage_boxes(
         box_tags_after = _remap_box_tags_for_renumber(current_box_tags, box_mapping)
     else:
         new_boxes = sorted(remaining_boxes)
-        box_tags_after = _normalize_box_tags(current_box_tags, new_boxes)
+        box_tags_after = normalize_box_tags(current_box_tags, new_boxes)
 
     preview.update(
         {
@@ -433,6 +399,8 @@ def _tool_manage_boxes_impl(
         tool_input=tool_input,
         payload={
             "operation": operation,
+            "count": count,
+            "box": box,
             "renumber_mode": renumber_mode,
         },
         dry_run=dry_run,
@@ -446,6 +414,8 @@ def _tool_manage_boxes_impl(
 
     normalized_validation = validation.get("normalized") or {}
     op = normalized_validation.get("op")
+    count = normalized_validation.get("count", count)
+    box = normalized_validation.get("box", box)
     renumber_mode = normalized_validation.get("renumber_mode")
 
     try:

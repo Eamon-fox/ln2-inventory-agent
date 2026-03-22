@@ -2,8 +2,15 @@
 
 import os
 
+from .box_layout_requests import (
+    normalize_box_layout_indexing_request,
+    normalize_box_layout_indexing_value,
+    normalize_box_tag_request,
+    normalize_manage_boxes_operation,
+    normalize_manage_boxes_renumber_mode,
+    normalize_manage_boxes_request,
+)
 from .path_policy import PathPolicyError, resolve_dataset_backup_request_path
-from .position_fmt import is_valid_box_layout_indexing, normalize_box_layout_indexing
 from .schema_aliases import get_input_stored_at, normalize_structural_alias_input_map
 from .takeout_parser import normalize_action
 from .validators import validate_date
@@ -11,24 +18,6 @@ from .yaml_ops import append_backup_event, create_yaml_backup
 
 
 _ALLOWED_EXECUTION_MODES = {"direct", "preflight", "execute"}
-_BOX_TAG_MAX_LENGTH = 80
-_MANAGE_BOXES_OPERATION_ALIASES = {
-    "add": "add",
-    "add_boxes": "add",
-    "increase": "add",
-    "remove": "remove",
-    "remove_box": "remove",
-    "delete": "remove",
-}
-_MANAGE_BOXES_RENUMBER_MODE_ALIASES = {
-    "keep_gaps": "keep_gaps",
-    "keep": "keep_gaps",
-    "gaps": "keep_gaps",
-    "renumber_contiguous": "renumber_contiguous",
-    "renumber": "renumber_contiguous",
-    "compact": "renumber_contiguous",
-    "reindex": "renumber_contiguous",
-}
 
 
 def _normalize_execution_mode(execution_mode):
@@ -187,93 +176,16 @@ def _validate_takeout_request(payload):
 
     return None, {"action_en": action_en}
 
-
-def normalize_manage_boxes_operation(operation):
-    if operation in (None, ""):
-        return None
-    op_text = str(operation).strip().lower()
-    return _MANAGE_BOXES_OPERATION_ALIASES.get(op_text)
-
-
-def normalize_manage_boxes_renumber_mode(mode_value):
-    if mode_value in (None, ""):
-        return None
-    mode_text = str(mode_value).strip().lower()
-    return _MANAGE_BOXES_RENUMBER_MODE_ALIASES.get(mode_text)
-
-
 def _validate_manage_boxes_request(payload):
-    operation = payload.get("operation")
-    op = normalize_manage_boxes_operation(operation)
-    if not op:
-        return {
-            "error_code": "invalid_operation",
-            "message": "operation must be add/remove",
-            "details": {"operation": operation},
-        }, {}
-
-    raw_mode = payload.get("renumber_mode")
-    normalized_mode = normalize_manage_boxes_renumber_mode(raw_mode)
-    if raw_mode not in (None, "") and normalized_mode is None:
-        return {
-            "error_code": "invalid_renumber_mode",
-            "message": "renumber_mode must be keep_gaps or renumber_contiguous",
-            "details": {"renumber_mode": raw_mode},
-        }, {}
-
-    return None, {
-        "op": op,
-        "renumber_mode": normalized_mode,
-    }
+    return normalize_manage_boxes_request(payload)
 
 
 def _validate_set_box_tag_request(payload):
-    try:
-        box = int(payload.get("box"))
-    except Exception:
-        return {
-            "error_code": "invalid_box",
-            "message": "box must be an integer",
-            "details": {"box": payload.get("box")},
-        }, {}
-    if box <= 0:
-        return {
-            "error_code": "invalid_box",
-            "message": "box must be >= 1",
-            "details": {"box": box},
-        }, {}
-
-    raw_tag = payload.get("tag", "")
-    tag_text = "" if raw_tag is None else str(raw_tag)
-    if "\n" in tag_text or "\r" in tag_text:
-        return {
-            "error_code": "invalid_tag",
-            "message": "Box tag must be a single line",
-            "details": {"max_length": _BOX_TAG_MAX_LENGTH},
-        }, {}
-    if len(tag_text.strip()) > _BOX_TAG_MAX_LENGTH:
-        return {
-            "error_code": "invalid_tag",
-            "message": f"Box tag must be <= {_BOX_TAG_MAX_LENGTH} characters",
-            "details": {"max_length": _BOX_TAG_MAX_LENGTH},
-        }, {}
-    return None, {"box": box}
+    return normalize_box_tag_request(payload)
 
 
 def _validate_set_box_layout_indexing_request(payload):
-    indexing = normalize_box_layout_indexing(payload.get("indexing"), default="")
-    if not indexing:
-        return {
-            "error_code": "invalid_indexing",
-            "message": "indexing is required",
-        }, {}
-    if not is_valid_box_layout_indexing(indexing):
-        return {
-            "error_code": "invalid_indexing",
-            "message": "indexing must be one of: numeric, alphanumeric",
-            "details": {"indexing": payload.get("indexing")},
-        }, {}
-    return None, {"indexing": indexing}
+    return normalize_box_layout_indexing_request(payload)
 
 
 def _validate_rollback_request(payload):

@@ -33,51 +33,58 @@ class DatasetDeleteResult(DatasetLifecycleResult):
     fallback_created: bool = False
 
 
+@dataclass(frozen=True)
+class DatasetLifecyclePathPolicy:
+    normalize_yaml_path: Callable[[str], str] = normalize_inventory_yaml_path
+    assert_allowed_path: Callable[..., str] = assert_allowed_inventory_yaml_path
+
+
+@dataclass(frozen=True)
+class ManagedDatasetGateway:
+    ensure_inventories_root: Callable[[], None] = ensure_inventories_root
+    latest_inventory_yaml_path: Callable[[], str] = latest_managed_inventory_yaml_path
+    create_dataset_yaml_path: Callable[[str], str] = create_managed_dataset_yaml_path
+    list_managed_datasets: Callable[[], list] = list_managed_datasets
+    rename_dataset_yaml_path: Callable[[str, str], str] = rename_managed_dataset_yaml_path
+    delete_dataset_yaml_path: Callable[[str], dict] = delete_managed_dataset_yaml_path
+
+
+@dataclass(frozen=True)
+class DatasetLifecycleServices:
+    build_dataset_rename_payload: Callable[[str, str], dict] = build_dataset_rename_payload
+    build_dataset_delete_payload: Callable[[str, str], dict] = build_dataset_delete_payload
+    append_audit_event: Callable[..., None] = append_audit_event
+    ensure_runtime_ready: Callable[..., object] = ensure_runtime_dataset_canonical
+    load_yaml: Callable[[str], dict] = load_yaml
+
+
 class DatasetLifecycleUseCase:
     """Coordinate managed dataset create/rename/delete/startup behaviors."""
 
     def __init__(
         self,
         *,
-        normalize_yaml_path: Optional[Callable[[str], str]] = None,
-        assert_allowed_path: Optional[Callable[..., str]] = None,
-        ensure_inventories_root_fn: Optional[Callable[[], None]] = None,
-        latest_inventory_yaml_path_fn: Optional[Callable[[], str]] = None,
-        create_dataset_yaml_path_fn: Optional[Callable[[str], str]] = None,
-        list_managed_datasets_fn: Optional[Callable[[], list]] = None,
-        rename_dataset_yaml_path_fn: Optional[Callable[[str, str], str]] = None,
-        delete_dataset_yaml_path_fn: Optional[Callable[[str], dict]] = None,
-        build_dataset_rename_payload_fn: Optional[Callable[[str, str], dict]] = None,
-        build_dataset_delete_payload_fn: Optional[Callable[[str, str], dict]] = None,
-        append_audit_event_fn: Optional[Callable[..., None]] = None,
-        ensure_runtime_ready_fn: Optional[Callable[[str], dict]] = None,
-        load_yaml_fn: Optional[Callable[[str], dict]] = None,
+        path_policy: Optional[DatasetLifecyclePathPolicy] = None,
+        managed_datasets: Optional[ManagedDatasetGateway] = None,
+        services: Optional[DatasetLifecycleServices] = None,
     ):
-        self._normalize_yaml_path = normalize_yaml_path or normalize_inventory_yaml_path
-        self._assert_allowed_path = assert_allowed_path or assert_allowed_inventory_yaml_path
-        self._ensure_inventories_root = ensure_inventories_root_fn or ensure_inventories_root
-        self._latest_inventory_yaml_path = (
-            latest_inventory_yaml_path_fn or latest_managed_inventory_yaml_path
-        )
-        self._create_dataset_yaml_path = (
-            create_dataset_yaml_path_fn or create_managed_dataset_yaml_path
-        )
-        self._list_managed_datasets = list_managed_datasets_fn or list_managed_datasets
-        self._rename_dataset_yaml_path = (
-            rename_dataset_yaml_path_fn or rename_managed_dataset_yaml_path
-        )
-        self._delete_dataset_yaml_path = (
-            delete_dataset_yaml_path_fn or delete_managed_dataset_yaml_path
-        )
-        self._build_dataset_rename_payload = (
-            build_dataset_rename_payload_fn or build_dataset_rename_payload
-        )
-        self._build_dataset_delete_payload = (
-            build_dataset_delete_payload_fn or build_dataset_delete_payload
-        )
-        self._append_audit_event = append_audit_event_fn or append_audit_event
-        self._ensure_runtime_ready = ensure_runtime_ready_fn or ensure_runtime_dataset_canonical
-        self._load_yaml = load_yaml_fn or load_yaml
+        self._path_policy = path_policy or DatasetLifecyclePathPolicy()
+        self._managed_datasets = managed_datasets or ManagedDatasetGateway()
+        self._services = services or DatasetLifecycleServices()
+
+        self._normalize_yaml_path = self._path_policy.normalize_yaml_path
+        self._assert_allowed_path = self._path_policy.assert_allowed_path
+        self._ensure_inventories_root = self._managed_datasets.ensure_inventories_root
+        self._latest_inventory_yaml_path = self._managed_datasets.latest_inventory_yaml_path
+        self._create_dataset_yaml_path = self._managed_datasets.create_dataset_yaml_path
+        self._list_managed_datasets = self._managed_datasets.list_managed_datasets
+        self._rename_dataset_yaml_path = self._managed_datasets.rename_dataset_yaml_path
+        self._delete_dataset_yaml_path = self._managed_datasets.delete_dataset_yaml_path
+        self._build_dataset_rename_payload = self._services.build_dataset_rename_payload
+        self._build_dataset_delete_payload = self._services.build_dataset_delete_payload
+        self._append_audit_event = self._services.append_audit_event
+        self._ensure_runtime_ready = self._services.ensure_runtime_ready
+        self._load_yaml = self._services.load_yaml
 
     @staticmethod
     def default_inventory_payload():

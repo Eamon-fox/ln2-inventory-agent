@@ -32,76 +32,19 @@ class ToolRuntimeSpec:
     after_hook: Callable[..., dict] | None = None
 
 
-_LAYOUT_ARRAY_FIELDS: dict[str, tuple[str, ...]] = {
-    "add_entry": ("positions",),
-}
+@dataclass(frozen=True)
+class ToolRuntimeOverride:
+    """Optional runtime-only overrides grouped by tool name."""
 
-_SCHEMA_ENRICHERS = {
-    "add_entry": _validation._enrich_add_entry_schema,
-    "edit_entry": _validation._enrich_edit_entry_schema,
-}
-
-_VALIDATION_PAYLOAD_ADAPTERS = {
-    "add_entry": _validation._adapt_add_entry_schema_validation_payload,
-    "edit_entry": _validation._adapt_edit_entry_schema_validation_payload,
-}
-
-_INPUT_GUARDS = {
-    "fs_read": _validation._guard_fs_read_write,
-    "fs_write": _validation._guard_fs_read_write,
-    "fs_copy": _validation._guard_fs_copy,
-    "fs_list": _validation._guard_fs_list,
-    "fs_edit": _validation._guard_fs_edit,
-    "bash": _validation._guard_shell_workdir,
-    "powershell": _validation._guard_shell_workdir,
-    "recent_frozen": _validation._guard_recent_basis,
-    "recent_stored": _validation._guard_recent_basis,
-    "rollback": _validation._guard_rollback_backup_path,
-}
-
-_ERROR_HINTS = {
-    "validate": _guidance._hint_validate_error,
-    "add_entry": _guidance._hint_add_entry_error,
-}
-
-_STATUS_FORMATTERS = {
-    "bash": _status._format_bash,
-    "powershell": _status._format_powershell,
-    "fs_list": _status._format_fs_list,
-    "fs_read": _status._format_fs_read,
-    "fs_write": _status._format_fs_write,
-    "fs_copy": _status._format_fs_copy,
-    "fs_edit": _status._format_fs_edit,
-    "search_records": _status._format_search_records,
-    "filter_records": _status._format_filter_records,
-    "generate_stats": _status._format_generate_stats,
-    "add_entry": _status._format_add_entry,
-    "takeout": _status._format_takeout,
-    "move": _status._format_move,
-    "edit_entry": _status._format_edit_entry,
-}
-
-_BEFORE_HOOKS = {
-    "fs_list": _hooks._before_fs_list,
-    "fs_write": _hooks._before_fs_write,
-    "fs_copy": _hooks._before_fs_copy,
-    "fs_edit": _hooks._before_fs_edit,
-}
-
-_AFTER_HOOKS = {
-    "use_skill": _hooks._after_use_skill,
-    "validate": _hooks._after_validate,
-    "search_records": _hooks._after_search_records,
-    "filter_records": _hooks._after_filter_records,
-    "fs_list": _hooks._after_fs_list,
-    "fs_read": _hooks._after_fs_read,
-    "fs_write": _hooks._after_fs_write,
-    "fs_copy": _hooks._after_fs_copy,
-    "fs_edit": _hooks._after_fs_edit,
-    "bash": _hooks._after_shell,
-    "powershell": _hooks._after_shell,
-    "import_migration_output": _hooks._after_import_migration_output,
-}
+    layout_array_fields: tuple[str, ...] = ()
+    schema_enricher: Callable[..., dict] | None = None
+    validation_payload_adapter: Callable[..., dict] | None = None
+    input_guard: Callable[..., str | None] | None = None
+    error_hint: Callable[..., str | None] | None = None
+    status_formatter: Callable[..., str] | None = None
+    before_hook: Callable[..., dict] | None = None
+    after_hook: Callable[..., dict] | None = None
+    stage_guard: Callable[..., dict | None] | None = None
 
 
 def _guard_stage_rollback(runner, payload):
@@ -111,8 +54,89 @@ def _guard_stage_rollback(runner, payload):
     )
 
 
-_STAGE_GUARDS = {
-    "rollback": _guard_stage_rollback,
+_DEFAULT_RUNTIME_OVERRIDE = ToolRuntimeOverride()
+
+_TOOL_RUNTIME_OVERRIDES: dict[str, ToolRuntimeOverride] = {
+    "add_entry": ToolRuntimeOverride(
+        layout_array_fields=("positions",),
+        schema_enricher=_validation._enrich_add_entry_schema,
+        validation_payload_adapter=_validation._adapt_add_entry_schema_validation_payload,
+        error_hint=_guidance._hint_add_entry_error,
+        status_formatter=_status._format_add_entry,
+    ),
+    "edit_entry": ToolRuntimeOverride(
+        schema_enricher=_validation._enrich_edit_entry_schema,
+        validation_payload_adapter=_validation._adapt_edit_entry_schema_validation_payload,
+        status_formatter=_status._format_edit_entry,
+    ),
+    "takeout": ToolRuntimeOverride(status_formatter=_status._format_takeout),
+    "move": ToolRuntimeOverride(status_formatter=_status._format_move),
+    "search_records": ToolRuntimeOverride(
+        status_formatter=_status._format_search_records,
+        after_hook=_hooks._after_search_records,
+    ),
+    "filter_records": ToolRuntimeOverride(
+        status_formatter=_status._format_filter_records,
+        after_hook=_hooks._after_filter_records,
+    ),
+    "generate_stats": ToolRuntimeOverride(status_formatter=_status._format_generate_stats),
+    "validate": ToolRuntimeOverride(
+        error_hint=_guidance._hint_validate_error,
+        after_hook=_hooks._after_validate,
+    ),
+    "use_skill": ToolRuntimeOverride(after_hook=_hooks._after_use_skill),
+    "import_migration_output": ToolRuntimeOverride(
+        after_hook=_hooks._after_import_migration_output,
+    ),
+    "bash": ToolRuntimeOverride(
+        input_guard=_validation._guard_shell_workdir,
+        status_formatter=_status._format_bash,
+        after_hook=_hooks._after_shell,
+    ),
+    "powershell": ToolRuntimeOverride(
+        input_guard=_validation._guard_shell_workdir,
+        status_formatter=_status._format_powershell,
+        after_hook=_hooks._after_shell,
+    ),
+    "fs_list": ToolRuntimeOverride(
+        input_guard=_validation._guard_fs_list,
+        status_formatter=_status._format_fs_list,
+        before_hook=_hooks._before_fs_list,
+        after_hook=_hooks._after_fs_list,
+    ),
+    "fs_read": ToolRuntimeOverride(
+        input_guard=_validation._guard_fs_read_write,
+        status_formatter=_status._format_fs_read,
+        after_hook=_hooks._after_fs_read,
+    ),
+    "fs_write": ToolRuntimeOverride(
+        input_guard=_validation._guard_fs_read_write,
+        status_formatter=_status._format_fs_write,
+        before_hook=_hooks._before_fs_write,
+        after_hook=_hooks._after_fs_write,
+    ),
+    "fs_copy": ToolRuntimeOverride(
+        input_guard=_validation._guard_fs_copy,
+        status_formatter=_status._format_fs_copy,
+        before_hook=_hooks._before_fs_copy,
+        after_hook=_hooks._after_fs_copy,
+    ),
+    "fs_edit": ToolRuntimeOverride(
+        input_guard=_validation._guard_fs_edit,
+        status_formatter=_status._format_fs_edit,
+        before_hook=_hooks._before_fs_edit,
+        after_hook=_hooks._after_fs_edit,
+    ),
+    "recent_frozen": ToolRuntimeOverride(
+        input_guard=_validation._guard_recent_basis,
+    ),
+    "recent_stored": ToolRuntimeOverride(
+        input_guard=_validation._guard_recent_basis,
+    ),
+    "rollback": ToolRuntimeOverride(
+        input_guard=_validation._guard_rollback_backup_path,
+        stage_guard=_guard_stage_rollback,
+    ),
 }
 
 
@@ -122,18 +146,7 @@ def _validate_named_map(label: str, mapping: dict[str, Any]) -> None:
         raise ValueError(f"{label} reference unknown tools: {invalid}")
 
 
-for _label, _mapping in (
-    ("layout array fields", _LAYOUT_ARRAY_FIELDS),
-    ("schema enrichers", _SCHEMA_ENRICHERS),
-    ("validation payload adapters", _VALIDATION_PAYLOAD_ADAPTERS),
-    ("input guards", _INPUT_GUARDS),
-    ("error hints", _ERROR_HINTS),
-    ("status formatters", _STATUS_FORMATTERS),
-    ("before hooks", _BEFORE_HOOKS),
-    ("after hooks", _AFTER_HOOKS),
-    ("stage guards", _STAGE_GUARDS),
-):
-    _validate_named_map(_label, _mapping)
+_validate_named_map("runtime overrides", _TOOL_RUNTIME_OVERRIDES)
 
 
 def expected_runtime_tool_names() -> frozenset[str]:
@@ -160,19 +173,20 @@ def build_tool_runtime_specs(runner) -> dict[str, ToolRuntimeSpec]:
                 missing_stage_builders.append(descriptor.name)
                 continue
 
+        override = _TOOL_RUNTIME_OVERRIDES.get(descriptor.name, _DEFAULT_RUNTIME_OVERRIDE)
         runtime_specs[descriptor.name] = ToolRuntimeSpec(
             name=descriptor.name,
             handler=handler,
             stage_builder=stage_builder,
-            stage_guard=_STAGE_GUARDS.get(descriptor.name),
-            layout_array_fields=tuple(_LAYOUT_ARRAY_FIELDS.get(descriptor.name, ())),
-            schema_enricher=_SCHEMA_ENRICHERS.get(descriptor.name),
-            validation_payload_adapter=_VALIDATION_PAYLOAD_ADAPTERS.get(descriptor.name),
-            input_guard=_INPUT_GUARDS.get(descriptor.name),
-            error_hint=_ERROR_HINTS.get(descriptor.name),
-            status_formatter=_STATUS_FORMATTERS.get(descriptor.name),
-            before_hook=_BEFORE_HOOKS.get(descriptor.name),
-            after_hook=_AFTER_HOOKS.get(descriptor.name),
+            stage_guard=override.stage_guard,
+            layout_array_fields=override.layout_array_fields,
+            schema_enricher=override.schema_enricher,
+            validation_payload_adapter=override.validation_payload_adapter,
+            input_guard=override.input_guard,
+            error_hint=override.error_hint,
+            status_formatter=override.status_formatter,
+            before_hook=override.before_hook,
+            after_hook=override.after_hook,
         )
 
     if missing_handlers:

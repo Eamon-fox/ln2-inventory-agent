@@ -25,10 +25,7 @@ from lib.tool_api import (
     tool_search_records,
 )
 from lib.schema_aliases import coalesce_stored_at_value
-from lib.tool_api_write_validation import (
-    normalize_manage_boxes_operation,
-    normalize_manage_boxes_renumber_mode,
-)
+from lib.box_layout_requests import normalize_manage_boxes_request
 from lib.validate_service import validate_yaml_file
 from .file_ops_client import run_file_tool
 from .tool_runtime_paths import derive_migration_output_yaml_from_yaml, derive_repo_root_from_yaml
@@ -183,34 +180,25 @@ def _run_manage_boxes(self, payload, trace_id=None):
     tool_name = "manage_boxes"
 
     def _call_manage_boxes():
-        action = normalize_manage_boxes_operation(
-            payload.get("action") or payload.get("operation")
-        )
-        if action not in {"add", "remove"}:
-            raise ValueError(
-                self._msg(
-                    "validation.mustBeOneOf",
-                    "{label} must be one of: {values}",
-                    label="action",
-                    values="add, remove",
+        issue, normalized = normalize_manage_boxes_request(payload)
+        if issue:
+            label = "action" if issue.get("error_code") == "invalid_operation" else "renumber_mode"
+            if issue.get("error_code") in {"invalid_operation", "invalid_renumber_mode"}:
+                values = "add, remove" if label == "action" else "keep_gaps, renumber_contiguous"
+                raise ValueError(
+                    self._msg(
+                        "validation.mustBeOneOf",
+                        "{label} must be one of: {values}",
+                        label=label,
+                        values=values,
+                    )
                 )
-            )
+            raise ValueError(str(issue.get("message") or "Invalid manage boxes request"))
 
+        action = normalized.get("operation")
         dry_run = self._as_bool(payload.get("dry_run", False), default=False)
-        raw_renumber_mode = payload.get("renumber_mode")
-        renumber_mode = normalize_manage_boxes_renumber_mode(raw_renumber_mode)
-        if raw_renumber_mode not in (None, "") and renumber_mode is None:
-            raise ValueError(
-                self._msg(
-                    "validation.mustBeOneOf",
-                    "{label} must be one of: {values}",
-                    label="renumber_mode",
-                    values="keep_gaps, renumber_contiguous",
-                )
-            )
-
         if action == "add":
-            count = self._required_int(payload, "count")
+            count = normalized.get("count")
             request = {
                 "operation": "add",
                 "count": count,
@@ -229,7 +217,8 @@ def _run_manage_boxes(self, payload, trace_id=None):
                     default_execute=True,
                 )
         else:
-            box = self._required_int(payload, "box")
+            box = normalized.get("box")
+            renumber_mode = normalized.get("renumber_mode")
             request = {
                 "operation": "remove",
                 "count": None,

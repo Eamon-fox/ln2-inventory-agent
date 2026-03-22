@@ -13,7 +13,12 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app_gui.application import DatasetLifecycleUseCase
+from app_gui.application import (
+    DatasetLifecyclePathPolicy,
+    DatasetLifecycleServices,
+    DatasetLifecycleUseCase,
+    ManagedDatasetGateway,
+)
 
 
 def _assert_existing_if_needed(path, must_exist=False):
@@ -28,7 +33,9 @@ class DatasetLifecycleUseCaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             target = os.path.join(tmpdir, "demo", "inventory.yaml")
             use_case = DatasetLifecycleUseCase(
-                assert_allowed_path=_assert_existing_if_needed,
+                path_policy=DatasetLifecyclePathPolicy(
+                    assert_allowed_path=_assert_existing_if_needed,
+                ),
             )
 
             result = use_case.create_dataset(
@@ -62,11 +69,17 @@ class DatasetLifecycleUseCaseTests(unittest.TestCase):
             create_path_calls = []
             ensure_root_calls = []
             use_case = DatasetLifecycleUseCase(
-                ensure_inventories_root_fn=lambda: ensure_root_calls.append(True),
-                latest_inventory_yaml_path_fn=lambda: "",
-                create_dataset_yaml_path_fn=lambda name: create_path_calls.append(name) or default_yaml,
-                assert_allowed_path=_assert_existing_if_needed,
-                ensure_runtime_ready_fn=lambda yaml_path, source="": {"path": os.path.abspath(yaml_path)},
+                path_policy=DatasetLifecyclePathPolicy(
+                    assert_allowed_path=_assert_existing_if_needed,
+                ),
+                managed_datasets=ManagedDatasetGateway(
+                    ensure_inventories_root=lambda: ensure_root_calls.append(True),
+                    latest_inventory_yaml_path=lambda: "",
+                    create_dataset_yaml_path=lambda name: create_path_calls.append(name) or default_yaml,
+                ),
+                services=DatasetLifecycleServices(
+                    ensure_runtime_ready=lambda yaml_path, source="": {"path": os.path.abspath(yaml_path)},
+                ),
             )
 
             resolved = use_case.resolve_startup_yaml_path(configured_yaml_path="")
@@ -84,10 +97,14 @@ class DatasetLifecycleUseCaseTests(unittest.TestCase):
             Path(current_yaml).write_text("meta: {}\ninventory: []\n", encoding="utf-8")
             prepare_calls = []
             use_case = DatasetLifecycleUseCase(
-                assert_allowed_path=_assert_existing_if_needed,
-                ensure_runtime_ready_fn=lambda yaml_path, source="": (
-                    prepare_calls.append((os.path.abspath(yaml_path), str(source)))
-                    or {"path": os.path.abspath(yaml_path)}
+                path_policy=DatasetLifecyclePathPolicy(
+                    assert_allowed_path=_assert_existing_if_needed,
+                ),
+                services=DatasetLifecycleServices(
+                    ensure_runtime_ready=lambda yaml_path, source="": (
+                        prepare_calls.append((os.path.abspath(yaml_path), str(source)))
+                        or {"path": os.path.abspath(yaml_path)}
+                    ),
                 ),
             )
 
@@ -109,14 +126,20 @@ class DatasetLifecycleUseCaseTests(unittest.TestCase):
             raise RuntimeError("audit failed")
 
         use_case = DatasetLifecycleUseCase(
-            normalize_yaml_path=lambda value: os.path.abspath(str(value or "")),
-            rename_dataset_yaml_path_fn=lambda source_yaml, dataset_name: new_yaml,
-            build_dataset_rename_payload_fn=lambda source_yaml, target_yaml: {
-                "source_yaml": source_yaml,
-                "target_yaml": target_yaml,
-            },
-            load_yaml_fn=lambda yaml_path: {"meta": {}, "inventory": []},
-            append_audit_event_fn=_append_audit_event,
+            path_policy=DatasetLifecyclePathPolicy(
+                normalize_yaml_path=lambda value: os.path.abspath(str(value or "")),
+            ),
+            managed_datasets=ManagedDatasetGateway(
+                rename_dataset_yaml_path=lambda source_yaml, dataset_name: new_yaml,
+            ),
+            services=DatasetLifecycleServices(
+                build_dataset_rename_payload=lambda source_yaml, target_yaml: {
+                    "source_yaml": source_yaml,
+                    "target_yaml": target_yaml,
+                },
+                load_yaml=lambda yaml_path: {"meta": {}, "inventory": []},
+                append_audit_event=_append_audit_event,
+            ),
         )
 
         result = use_case.rename_dataset(
@@ -137,17 +160,23 @@ class DatasetLifecycleUseCaseTests(unittest.TestCase):
             fallback_yaml = os.path.join(tmpdir, "inventory", "inventory.yaml")
             appended = []
             use_case = DatasetLifecycleUseCase(
-                normalize_yaml_path=lambda value: os.path.abspath(str(value or "")),
-                assert_allowed_path=_assert_existing_if_needed,
-                delete_dataset_yaml_path_fn=lambda source_yaml: {"yaml_path": source_yaml},
-                list_managed_datasets_fn=lambda: [],
-                create_dataset_yaml_path_fn=lambda dataset_name: fallback_yaml,
-                build_dataset_delete_payload_fn=lambda removed_yaml, target_yaml: {
-                    "removed_yaml": removed_yaml,
-                    "target_yaml": target_yaml,
-                },
-                load_yaml_fn=lambda yaml_path: yaml.safe_load(Path(yaml_path).read_text(encoding="utf-8")),
-                append_audit_event_fn=lambda **kwargs: appended.append(kwargs),
+                path_policy=DatasetLifecyclePathPolicy(
+                    normalize_yaml_path=lambda value: os.path.abspath(str(value or "")),
+                    assert_allowed_path=_assert_existing_if_needed,
+                ),
+                managed_datasets=ManagedDatasetGateway(
+                    delete_dataset_yaml_path=lambda source_yaml: {"yaml_path": source_yaml},
+                    list_managed_datasets=lambda: [],
+                    create_dataset_yaml_path=lambda dataset_name: fallback_yaml,
+                ),
+                services=DatasetLifecycleServices(
+                    build_dataset_delete_payload=lambda removed_yaml, target_yaml: {
+                        "removed_yaml": removed_yaml,
+                        "target_yaml": target_yaml,
+                    },
+                    load_yaml=lambda yaml_path: yaml.safe_load(Path(yaml_path).read_text(encoding="utf-8")),
+                    append_audit_event=lambda **kwargs: appended.append(kwargs),
+                ),
             )
 
             result = use_case.delete_dataset(current_yaml_path=deleted_yaml)

@@ -97,6 +97,7 @@ position_indexing:
 local_open_api:
   route_groups:
     read_routes:
+      - GET /api/v1/capabilities
       - GET /api/v1/health
       - GET /api/v1/datasets
       - GET /api/v1/session
@@ -104,6 +105,7 @@ local_open_api:
       - GET /api/v1/inventory/filter
       - GET /api/v1/inventory/stats
       - GET /api/v1/inventory/validate
+      - GET /api/v1/gui/stage-plan
     gui_handoff_routes:
       - POST /api/v1/gui/focus
       - POST /api/v1/session/switch-dataset

@@ -21,6 +21,7 @@ else:
 from app_gui.tool_bridge import GuiToolBridge
 from app_gui.agent_session import AgentSessionService
 from app_gui.application import (
+    BoxLayoutMutationUseCase,
     DataRootUseCase,
     DatasetLifecycleUseCase,
     DatasetUseCase,
@@ -29,6 +30,7 @@ from app_gui.application import (
     PlanExecutionUseCase,
 )
 from app_gui.application.ai_provider_catalog import AI_PROVIDER_DEFAULTS
+from app_gui.application.manage_boxes_flow import ManageBoxesFlow
 from app_gui.application.open_api import (
     LOCAL_OPEN_API_DEFAULT_PORT,
     LocalOpenApiController,
@@ -84,7 +86,6 @@ from app_gui.main_window_flows import (
     WindowStateFlow,
     SettingsFlow,
     DatasetFlow,
-    ManageBoxesFlow,
 )
 from app_gui.dataset_session import DatasetSessionController
 from app_gui.import_journey import ImportJourneyService
@@ -360,7 +361,14 @@ class MainWindow(QMainWindow):
             self,
             dataset_lifecycle_use_case=self._dataset_lifecycle,
         )
-        self._boxes_flow = ManageBoxesFlow(self)
+        self._box_layout_mutation_use_case = BoxLayoutMutationUseCase(
+            bridge=self.bridge,
+            current_yaml_path_getter=lambda: self.current_yaml_path,
+        )
+        self._boxes_flow = ManageBoxesFlow(
+            self,
+            mutation_use_case=self._box_layout_mutation_use_case,
+        )
         self._local_open_api_dispatcher = MainThreadDispatcher(self)
         self._local_open_api_controller = LocalOpenApiController(
             yaml_path_getter=lambda: self.current_yaml_path,

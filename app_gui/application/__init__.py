@@ -1,5 +1,6 @@
 """Application layer interfaces for GUI orchestration."""
 
+from .box_layout_mutation_use_case import BoxLayoutMutationUseCase
 from .custom_fields_use_case import (
     CustomFieldsCommitResult,
     CustomFieldsEditorLoadResult,
@@ -13,7 +14,10 @@ from .data_root_use_case import (
 from .dataset_lifecycle_use_case import (
     DatasetDeleteResult,
     DatasetLifecycleResult,
+    DatasetLifecyclePathPolicy,
+    DatasetLifecycleServices,
     DatasetLifecycleUseCase,
+    ManagedDatasetGateway,
 )
 from .event_bus import EventBus
 from .settings_dialog_submission import SettingsDialogSubmission
@@ -29,6 +33,7 @@ from .use_cases import (
 )
 
 __all__ = [
+    "BoxLayoutMutationUseCase",
     "CustomFieldsCommitResult",
     "CustomFieldsEditorLoadResult",
     "CustomFieldsEditorState",
@@ -37,7 +42,10 @@ __all__ = [
     "DataRootUseCase",
     "DatasetDeleteResult",
     "DatasetLifecycleResult",
+    "DatasetLifecyclePathPolicy",
+    "DatasetLifecycleServices",
     "DatasetLifecycleUseCase",
+    "ManagedDatasetGateway",
     "PlanRunResult",
     "PlanRunUseCase",
     "DatasetSwitchResult",

@@ -751,9 +751,7 @@ def _build_plan_tab(self):
         sortable=False,
     )
     self.plan_table.setVisible(False)
-    self.plan_table.selectionModel().selectionChanged.connect(
-        lambda *_args: _ops_plan_toolbar._refresh_plan_toolbar_state(self)
-    )
+    self.plan_table.selectionModel().selectionChanged.connect(self._on_plan_table_selection_changed)
     self.plan_table.setContextMenuPolicy(Qt.CustomContextMenu)
     self.plan_table.customContextMenuRequested.connect(self.on_plan_table_context_menu)
     layout.addWidget(self.plan_table, 1)

@@ -1,6 +1,7 @@
 """Split from test_gui_panels.py."""
 
 from tests.integration.gui._gui_panels_shared import *  # noqa: F401,F403
+from lib.plan_store import PlanStore
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
 class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
@@ -706,6 +707,9 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         self.assertTrue(template_edit.isReadOnly())
         self.assertEqual(160, template_edit.maximumHeight())
         self.assertIn("name: snowfox-local-api", template_edit.toPlainText())
+        self.assertIn("`case_sensitive`", template_edit.toPlainText())
+        self.assertIn("`summary_only`", template_edit.toPlainText())
+        self.assertIn("`keywords`", template_edit.toPlainText())
 
         QApplication.clipboard().setText("")
         copy_button.click()
@@ -724,6 +728,8 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         template_edit = dialog.findChild(QPlainTextEdit, "localApiSkillTemplateEdit")
 
         self.assertIn("# SnowFox 本地 Open API", template_edit.toPlainText())
+        self.assertIn("查询参数", template_edit.toPlainText())
+        self.assertIn("`summary_only`", template_edit.toPlainText())
 
     def test_settings_dialog_local_api_skill_template_falls_back_to_english(self):
         import tempfile
@@ -2644,6 +2650,177 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
 
         self.assertEqual("A1,A2,A3", panel.a_positions.text())
         self.assertEqual("add", panel.current_operation_mode)
+
+    def test_overview_click_staged_add_prefills_full_form_and_locks_inputs(self):
+        plan_store = PlanStore()
+        overview = OverviewPanel(bridge=object(), yaml_path_getter=lambda: self.fake_yaml_path)
+        panel = OperationsPanel(
+            bridge=object(),
+            yaml_path_getter=lambda: self.fake_yaml_path,
+            plan_store=plan_store,
+            overview_panel=overview,
+        )
+        overview.request_add_prefill_background.connect(panel.set_add_prefill_background)
+        overview.request_prefill_background.connect(panel.set_prefill_background)
+        overview.bind_plan_store(plan_store)
+
+        panel._current_custom_fields = [
+            {"key": "short_name", "label": "Short Name", "type": "str", "required": False},
+        ]
+        from app_gui.ui import operations_panel_forms as _ops_forms
+
+        _ops_forms._rebuild_custom_add_fields(panel, panel._current_custom_fields)
+
+        item = {
+            "action": "add",
+            "box": 1,
+            "position": 2,
+            "record_id": None,
+            "source": "human",
+            "payload": {
+                "box": 1,
+                "positions": [2, 3],
+                "stored_at": "2026-02-10",
+                "fields": {
+                    "short_name": "clone-23",
+                },
+            },
+        }
+        panel.add_plan_items([item])
+
+        overview._rebuild_boxes(rows=1, cols=4, box_numbers=[1])
+        overview.overview_pos_map = {}
+        for key, button in overview.overview_cells.items():
+            overview._paint_cell(button, key[0], key[1], record=None)
+
+        QTest.mouseClick(overview.overview_cells[(1, 3)], Qt.LeftButton)
+        self._app.processEvents()
+
+        self.assertEqual("add", panel.current_operation_mode)
+        self.assertEqual(1, panel.a_box.value())
+        self.assertEqual("2,3", panel.a_positions.text())
+        self.assertEqual("2026-02-10", panel.a_date.date().toString("yyyy-MM-dd"))
+        self.assertEqual("clone-23", panel._add_custom_widgets["short_name"].text())
+        self.assertFalse(panel.a_box.isEnabled())
+        self.assertFalse(panel.a_positions.isEnabled())
+        self.assertFalse(panel._add_custom_widgets["short_name"].isEnabled())
+        self.assertFalse(panel.a_apply_btn.isEnabled())
+
+    def test_plan_table_selecting_add_row_prefills_full_form_and_locks_inputs(self):
+        panel = self._new_operations_panel()
+        panel._current_custom_fields = [
+            {"key": "short_name", "label": "Short Name", "type": "str", "required": False},
+        ]
+        from app_gui.ui import operations_panel_forms as _ops_forms
+
+        _ops_forms._rebuild_custom_add_fields(panel, panel._current_custom_fields)
+
+        item = {
+            "action": "add",
+            "box": 2,
+            "position": 9,
+            "record_id": None,
+            "source": "human",
+            "payload": {
+                "box": 2,
+                "positions": [9, 10],
+                "stored_at": "2026-02-11",
+                "fields": {
+                    "short_name": "clone-910",
+                },
+            },
+        }
+        panel.add_plan_items([item])
+
+        panel.plan_table.selectRow(0)
+        self._app.processEvents()
+
+        self.assertEqual("add", panel.current_operation_mode)
+        self.assertEqual(2, panel.a_box.value())
+        self.assertEqual("9,10", panel.a_positions.text())
+        self.assertEqual("2026-02-11", panel.a_date.date().toString("yyyy-MM-dd"))
+        self.assertEqual("clone-910", panel._add_custom_widgets["short_name"].text())
+        self.assertFalse(panel.a_box.isEnabled())
+        self.assertFalse(panel.a_positions.isEnabled())
+        self.assertFalse(panel._add_custom_widgets["short_name"].isEnabled())
+        self.assertFalse(panel.a_apply_btn.isEnabled())
+
+    def test_plan_table_clearing_add_selection_unlocks_form_but_keeps_values(self):
+        panel = self._new_operations_panel()
+        panel._current_custom_fields = [
+            {"key": "short_name", "label": "Short Name", "type": "str", "required": False},
+        ]
+        from app_gui.ui import operations_panel_forms as _ops_forms
+
+        _ops_forms._rebuild_custom_add_fields(panel, panel._current_custom_fields)
+
+        item = {
+            "action": "add",
+            "box": 2,
+            "position": 9,
+            "record_id": None,
+            "source": "human",
+            "payload": {
+                "box": 2,
+                "positions": [9, 10],
+                "stored_at": "2026-02-11",
+                "fields": {
+                    "short_name": "clone-910",
+                },
+            },
+        }
+        panel.add_plan_items([item])
+
+        panel.plan_table.selectRow(0)
+        self._app.processEvents()
+        panel.plan_table.clearSelection()
+        self._app.processEvents()
+
+        self.assertTrue(panel.a_box.isEnabled())
+        self.assertTrue(panel.a_positions.isEnabled())
+        self.assertTrue(panel._add_custom_widgets["short_name"].isEnabled())
+        self.assertTrue(panel.a_apply_btn.isEnabled())
+        self.assertEqual("9,10", panel.a_positions.text())
+        self.assertEqual("clone-910", panel._add_custom_widgets["short_name"].text())
+
+    def test_plan_store_removing_locked_staged_add_unlocks_form(self):
+        panel = self._new_operations_panel()
+        panel._current_custom_fields = [
+            {"key": "short_name", "label": "Short Name", "type": "str", "required": False},
+        ]
+        from app_gui.ui import operations_panel_forms as _ops_forms
+
+        _ops_forms._rebuild_custom_add_fields(panel, panel._current_custom_fields)
+
+        item = {
+            "action": "add",
+            "box": 3,
+            "position": 7,
+            "record_id": None,
+            "source": "human",
+            "payload": {
+                "box": 3,
+                "positions": [7, 8],
+                "stored_at": "2026-02-12",
+                "fields": {
+                    "short_name": "clone-78",
+                },
+            },
+        }
+        panel.add_plan_items([item])
+        panel.plan_table.selectRow(0)
+        self._app.processEvents()
+
+        panel._plan_store.clear()
+        panel._on_store_changed()
+        self._app.processEvents()
+
+        self.assertTrue(panel.a_box.isEnabled())
+        self.assertTrue(panel.a_positions.isEnabled())
+        self.assertTrue(panel._add_custom_widgets["short_name"].isEnabled())
+        self.assertTrue(panel.a_apply_btn.isEnabled())
+        self.assertEqual("7,8", panel.a_positions.text())
+        self.assertEqual("clone-78", panel._add_custom_widgets["short_name"].text())
 
     def test_plan_tab_exists_in_mode_selector(self):
         panel = self._new_operations_panel()

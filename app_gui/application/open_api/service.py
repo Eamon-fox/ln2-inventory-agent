@@ -25,7 +25,6 @@ from lib.validate_service import validate_yaml_file
 from lib.yaml_ops import load_yaml
 
 from .contracts import (
-    LOCAL_OPEN_API_CAPABILITY_DOCS,
     LOCAL_OPEN_API_DEFAULT_PORT,
     LOCAL_OPEN_API_ROUTE_ALLOWLIST,
     LOCAL_OPEN_API_ROUTE_SPECS,
@@ -303,7 +302,7 @@ class LocalOpenApiController:
     def _handle_capabilities(self):
         routes = []
         for method, path in sorted(LOCAL_OPEN_API_ROUTE_ALLOWLIST):
-            spec = dict(LOCAL_OPEN_API_CAPABILITY_DOCS.get((method, path)) or {})
+            spec = dict(LOCAL_OPEN_API_ROUTE_SPECS.get((method, path)) or {})
             routes.append(
                 {
                     "method": method,

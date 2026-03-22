@@ -36,6 +36,7 @@ from app_gui.application.settings_dialog_submission import SettingsDialogSubmiss
 from app_gui.application.settings_dataset_use_case import SettingsDatasetUseCase
 from app_gui.application.settings_validation_use_case import SettingsValidationUseCase
 from app_gui.application.open_api.contracts import LOCAL_OPEN_API_DEFAULT_PORT
+from app_gui.application.open_api.skill_template import render_local_api_skill_template
 from app_gui.error_localizer import localize_error
 from app_gui.gui_config import DEFAULT_MAX_STEPS, MAX_AGENT_STEPS
 from app_gui.i18n import get_language, t, tr
@@ -572,7 +573,7 @@ class SettingsDialog(QDialog):
             path = os.path.join(assets_root, f"local_api_skill_template.{candidate}.md")
             text = _read_bundled_text_file(path)
             if text:
-                return text, True
+                return render_local_api_skill_template(text, language=normalized), True
         return tr("settings.localApiSkillTemplateUnavailable"), False
 
     @Slot()

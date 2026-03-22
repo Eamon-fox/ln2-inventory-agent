@@ -65,3 +65,11 @@ class ToolRuntimeRegistryTests(ManagedPathTestCase):
         self.assertTrue(callable(spec.before_hook))
         self.assertTrue(callable(spec.after_hook))
         self.assertTrue(callable(spec.status_formatter))
+
+    def test_rollback_runtime_spec_owns_input_guard_and_stage_guard(self):
+        runner = self._make_runner()
+
+        spec = build_tool_runtime_specs(runner)["rollback"]
+
+        self.assertTrue(callable(spec.input_guard))
+        self.assertTrue(callable(spec.stage_guard))

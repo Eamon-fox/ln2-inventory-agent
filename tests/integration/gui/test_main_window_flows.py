@@ -423,9 +423,13 @@ def test_manage_boxes_flow_add_request_executes_and_emits_notice():
             )
 
         assert result["ok"] is True
-        assert bridge_calls
+        assert len(bridge_calls) == 2
         assert bridge_calls[0]["operation"] == "add"
         assert bridge_calls[0]["count"] == 2
+        assert bridge_calls[0]["dry_run"] is True
+        assert bridge_calls[1]["operation"] == "add"
+        assert bridge_calls[1]["count"] == 2
+        assert bridge_calls[1]["execution_mode"] == "execute"
         window.operations_panel.apply_meta_update.assert_called_once()
         window.overview_panel.refresh.assert_called_once()
         window.on_operation_completed.assert_called_once_with(True)
@@ -464,8 +468,8 @@ def test_manage_boxes_flow_async_add_uses_non_modal_confirm_and_callback():
             {"operation": "add", "count": 2},
             on_result=results.append,
             from_ai=True,
-            yaml_path_override=yaml_path,
-        )
+                yaml_path_override=yaml_path,
+            )
 
         assert session is not None
         app.processEvents()
@@ -478,9 +482,13 @@ def test_manage_boxes_flow_async_add_uses_non_modal_confirm_and_callback():
         app.processEvents()
 
         assert results and results[0]["ok"] is True
-        assert bridge_calls
+        assert len(bridge_calls) == 2
         assert bridge_calls[0]["operation"] == "add"
         assert bridge_calls[0]["count"] == 2
+        assert bridge_calls[0]["dry_run"] is True
+        assert bridge_calls[1]["operation"] == "add"
+        assert bridge_calls[1]["count"] == 2
+        assert bridge_calls[1]["execution_mode"] == "execute"
         window.operations_panel.apply_meta_update.assert_called_once()
         window.overview_panel.refresh.assert_called_once()
         window.on_operation_completed.assert_called_once_with(True)
@@ -538,7 +546,12 @@ def test_manage_boxes_flow_async_remove_cancel_returns_user_cancelled():
 
         assert results and results[0]["ok"] is False
         assert results[0]["error_code"] == "user_cancelled"
-        adjust_mock.assert_not_called()
+        adjust_mock.assert_called_once_with(
+            yaml_path=yaml_path,
+            dry_run=True,
+            operation="remove",
+            box=2,
+        )
         window.operations_panel.apply_meta_update.assert_not_called()
         window.overview_panel.refresh.assert_not_called()
         window.on_operation_completed.assert_not_called()
@@ -597,7 +610,13 @@ def test_manage_boxes_flow_add_requires_explicit_count():
         yaml_path = os.path.join(tmpdir, "inventory.yaml")
         Path(yaml_path).write_text("meta: {}\ninventory: []\n", encoding="utf-8")
 
-        adjust_mock = MagicMock(return_value={"ok": True})
+        adjust_mock = MagicMock(
+            return_value={
+                "ok": False,
+                "error_code": "invalid_count",
+                "message": "count must be a positive integer",
+            }
+        )
         window = SimpleNamespace(
             current_yaml_path=yaml_path,
             bridge=SimpleNamespace(manage_boxes=adjust_mock),
@@ -619,7 +638,12 @@ def test_manage_boxes_flow_add_requires_explicit_count():
 
         assert result["ok"] is False
         assert result["error_code"] == "invalid_count"
-        adjust_mock.assert_not_called()
+        adjust_mock.assert_called_once_with(
+            yaml_path=yaml_path,
+            dry_run=True,
+            operation="add",
+            count=None,
+        )
         window.operations_panel.apply_meta_update.assert_not_called()
         window.overview_panel.refresh.assert_not_called()
         window.on_operation_completed.assert_not_called()
@@ -642,7 +666,13 @@ def test_manage_boxes_flow_remove_invalid_box_fails_before_confirm():
             encoding="utf-8",
         )
 
-        adjust_mock = MagicMock(return_value={"ok": True})
+        adjust_mock = MagicMock(
+            return_value={
+                "ok": False,
+                "error_code": "invalid_box",
+                "message": "Box 99 does not exist",
+            }
+        )
         window = SimpleNamespace(
             current_yaml_path=yaml_path,
             bridge=SimpleNamespace(manage_boxes=adjust_mock),
@@ -666,7 +696,12 @@ def test_manage_boxes_flow_remove_invalid_box_fails_before_confirm():
         assert result["ok"] is False
         assert result["error_code"] == "invalid_box"
         confirm_mock.assert_not_called()
-        adjust_mock.assert_not_called()
+        adjust_mock.assert_called_once_with(
+            yaml_path=yaml_path,
+            dry_run=True,
+            operation="remove",
+            box=99,
+        )
         window.operations_panel.apply_meta_update.assert_not_called()
         window.overview_panel.refresh.assert_not_called()
         window.on_operation_completed.assert_not_called()
@@ -700,7 +735,7 @@ def test_manage_boxes_flow_prepare_request_normalizes_remove_aliases():
         assert prepared["op"] == "remove"
         assert prepared["payload"]["operation"] == "remove"
         assert prepared["payload"]["box"] == 2
-        assert prepared["suggested_mode"] == "renumber_contiguous"
+        assert prepared["payload"]["renumber_mode"] == "compact"
 
 
 def test_manage_boxes_flow_set_tag_executes_and_emits_notice():
@@ -718,7 +753,12 @@ def test_manage_boxes_flow_set_tag_executes_and_emits_notice():
             encoding="utf-8",
         )
 
-        set_tag_mock = MagicMock(return_value={"ok": True, "result": {"box": 1, "tag_after": "virus"}})
+        set_tag_mock = MagicMock(
+            side_effect=[
+                {"ok": True, "dry_run": True, "preview": {"box": 1, "tag_after": "virus"}},
+                {"ok": True, "result": {"box": 1, "tag_after": "virus"}},
+            ]
+        )
         adjust_mock = MagicMock(return_value={"ok": True})
         window = SimpleNamespace(
             current_yaml_path=yaml_path,
@@ -740,12 +780,18 @@ def test_manage_boxes_flow_set_tag_executes_and_emits_notice():
         )
 
         assert result["ok"] is True
-        set_tag_mock.assert_called_once_with(
-            yaml_path=yaml_path,
-            box=1,
-            tag="virus",
-            execution_mode="execute",
-        )
+        assert set_tag_mock.call_args_list[0].kwargs == {
+            "yaml_path": yaml_path,
+            "box": 1,
+            "tag": "virus",
+            "dry_run": True,
+        }
+        assert set_tag_mock.call_args_list[1].kwargs == {
+            "yaml_path": yaml_path,
+            "box": 1,
+            "tag": "virus",
+            "execution_mode": "execute",
+        }
         adjust_mock.assert_not_called()
         window.operations_panel.apply_meta_update.assert_called_once()
         window.overview_panel.refresh.assert_called_once()
@@ -770,10 +816,17 @@ def test_manage_boxes_flow_set_indexing_executes_and_emits_notice():
         )
 
         set_indexing_mock = MagicMock(
-            return_value={
-                "ok": True,
-                "result": {"indexing_before": "numeric", "indexing_after": "alphanumeric"},
-            }
+            side_effect=[
+                {
+                    "ok": True,
+                    "dry_run": True,
+                    "preview": {"indexing_before": "numeric", "indexing_after": "alphanumeric"},
+                },
+                {
+                    "ok": True,
+                    "result": {"indexing_before": "numeric", "indexing_after": "alphanumeric"},
+                },
+            ]
         )
         adjust_mock = MagicMock(return_value={"ok": True})
         apply_meta_update = MagicMock()
@@ -800,11 +853,16 @@ def test_manage_boxes_flow_set_indexing_executes_and_emits_notice():
         )
 
         assert result["ok"] is True
-        set_indexing_mock.assert_called_once_with(
-            yaml_path=yaml_path,
-            indexing="alphanumeric",
-            execution_mode="execute",
-        )
+        assert set_indexing_mock.call_args_list[0].kwargs == {
+            "yaml_path": yaml_path,
+            "indexing": "alphanumeric",
+            "dry_run": True,
+        }
+        assert set_indexing_mock.call_args_list[1].kwargs == {
+            "yaml_path": yaml_path,
+            "indexing": "alphanumeric",
+            "execution_mode": "execute",
+        }
         adjust_mock.assert_not_called()
         apply_meta_update.assert_called_once()
         window.overview_panel.refresh.assert_called_once()

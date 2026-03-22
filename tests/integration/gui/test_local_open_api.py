@@ -143,6 +143,20 @@ class LocalOpenApiTests(ManagedPathTestCase):
         mode_param = next(item for item in (validate_route.get("params") or []) if item.get("name") == "mode")
         self.assertEqual(["auto", "current_inventory", "document", "meta_only"], mode_param.get("accepted_values"))
 
+        search_route = next(
+            item for item in routes if item.get("method") == "GET" and item.get("path") == "/api/v1/inventory/search"
+        )
+        search_param_names = {item.get("name") for item in (search_route.get("params") or [])}
+        self.assertTrue({"case_sensitive", "status", "sort_by", "sort_order"} <= search_param_names)
+        mode_param = next(item for item in (search_route.get("params") or []) if item.get("name") == "mode")
+        self.assertEqual(["fuzzy", "exact", "keywords"], mode_param.get("accepted_values"))
+
+        filter_route = next(
+            item for item in routes if item.get("method") == "GET" and item.get("path") == "/api/v1/inventory/filter"
+        )
+        filter_param_names = {item.get("name") for item in (filter_route.get("params") or [])}
+        self.assertTrue({"include_inactive", "sort_by", "sort_order"} <= filter_param_names)
+
     def test_http_validate_route_uses_current_gui_session_dataset(self):
         external_yaml = Path(self.install_root) / "outside.yaml"
         external_yaml.write_text("not: valid: yaml:\n", encoding="utf-8")
