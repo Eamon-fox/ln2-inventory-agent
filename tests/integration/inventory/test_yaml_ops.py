@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from lib.app_storage import clear_session_data_root, set_session_data_root
+from lib.app_storage import clear_session_data_root, migrate_data_root, set_session_data_root
 from lib.inventory_paths import InventoryPathError, create_managed_dataset_yaml_path
 from lib.yaml_ops import (
     create_yaml_backup,
@@ -459,6 +459,54 @@ class YamlOpsSafetyTests(unittest.TestCase):
             last = rows[-1]
             details = last.get("details") or {}
             self.assertEqual("adopted_rename", details.get("instance_guard_decision"))
+
+    def test_data_root_migration_preserves_audit_visibility_and_instance_identity(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_root_migrate_src_") as source_root, tempfile.TemporaryDirectory(
+            prefix="ln2_root_migrate_dst_"
+        ) as target_root:
+            set_session_data_root(source_root)
+            try:
+                source_yaml = _managed_yaml("migrate-demo")
+                write_yaml(
+                    make_data([make_record(1, box=1, position=1)]),
+                    path=str(source_yaml),
+                    audit_meta={"action": "seed", "source": "tests"},
+                )
+                before = load_yaml(str(source_yaml))
+                original_meta = dict(before.get("meta") or {})
+                original_id = str(original_meta.get("inventory_instance_id") or "")
+                self.assertTrue(original_id)
+
+                migrate_data_root(source_root, target_root)
+                set_session_data_root(target_root)
+
+                target_yaml = Path(target_root) / "inventories" / "migrate-demo" / "inventory.yaml"
+                migrated = load_yaml(str(target_yaml))
+                migrated_meta = dict(migrated.get("meta") or {})
+                self.assertEqual(original_id, str(migrated_meta.get("inventory_instance_id") or ""))
+                self.assertEqual(str(target_yaml.resolve()), str(Path(migrated_meta.get("instance_origin_path")).resolve()))
+
+                migrated_events = read_audit_events(str(target_yaml))
+                self.assertEqual(["seed"], [str(row.get("action") or "") for row in migrated_events])
+
+                migrated["inventory"][0]["position"] = 2
+                write_yaml(
+                    migrated,
+                    path=str(target_yaml),
+                    audit_meta={"action": "post_migrate_write", "source": "tests"},
+                )
+
+                after = load_yaml(str(target_yaml))
+                after_meta = dict(after.get("meta") or {})
+                self.assertEqual(original_id, str(after_meta.get("inventory_instance_id") or ""))
+
+                rows = read_audit_events(str(target_yaml))
+                self.assertEqual(["seed", "post_migrate_write"], [str(row.get("action") or "") for row in rows])
+                last = rows[-1]
+                details = last.get("details") or {}
+                self.assertNotEqual("forked_copy", details.get("instance_guard_decision"))
+            finally:
+                clear_session_data_root()
 
     def test_instance_guard_backfills_missing_origin_without_fork(self):
         with managed_inventory_root("ln2_instance_guard_backfill_"):

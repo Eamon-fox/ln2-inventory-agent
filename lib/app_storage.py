@@ -190,6 +190,13 @@ def migrate_data_root(source_root: str, target_root: str) -> dict:
     ensure_data_root_layout(target)
     _copy_tree_if_present(source, target, "inventories")
     _copy_tree_if_present(source, target, "migrate")
+    from .data_root_migration import rewrite_migrated_inventory_tree
+
+    rewrite_migrated_inventory_tree(
+        source_root=source,
+        target_root=target,
+        inventories_root=get_inventories_root(data_root=target, fallback_to_legacy=False),
+    )
     return {
         "data_root": target,
         "inventories_root": get_inventories_root(data_root=target, fallback_to_legacy=False),
@@ -208,6 +215,11 @@ def remap_inventory_yaml_path(yaml_path: str, *, source_root: str, target_root: 
         rel = Path(current).relative_to(inventories_root)
     except Exception:
         return ""
-    return os.path.abspath(
-        os.path.join(get_inventories_root(data_root=target, fallback_to_legacy=False), os.fspath(rel))
+    from .data_root_migration import remap_path_between_data_roots
+
+    remapped = remap_path_between_data_roots(
+        str(Path(source) / "inventories" / rel),
+        source_root=source,
+        target_root=target,
     )
+    return remapped if remapped else ""
