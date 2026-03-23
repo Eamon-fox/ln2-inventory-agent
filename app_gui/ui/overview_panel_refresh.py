@@ -23,6 +23,7 @@ def _reset_after_load_failure(self):
     self._overview_selection_anchor_key = None
     self._table_rows = []
     self._table_columns = []
+    self._table_data_columns = []
     self._table_header_labels = {}
     self._table_column_types = {}
     self._table_row_records = []

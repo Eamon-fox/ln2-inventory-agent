@@ -5,6 +5,7 @@ from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QDateEdit,
     QDialog,
     QDialogButtonBox,
@@ -90,6 +91,65 @@ class _OverviewTableTintDelegate(QStyledItemDelegate):
         painter.drawText(text_rect, alignment | int(Qt.TextSingleLine), elided)
         painter.restore()
 
+    def createEditor(self, parent, option, index):
+        from app_gui.ui import overview_panel as _ov_panel
+
+        editor_kind = str(index.data(_ov_panel.TABLE_EDITOR_KIND_ROLE) or "").strip().lower()
+        if editor_kind == "date":
+            editor = QDateEdit(parent)
+            editor.setCalendarPopup(True)
+            editor.setDisplayFormat("yyyy-MM-dd")
+            return editor
+        if editor_kind == "choice":
+            editor = QComboBox(parent)
+            editor.setEditable(True)
+            editor.setInsertPolicy(QComboBox.NoInsert)
+            options = list(index.data(_ov_panel.TABLE_EDITOR_OPTIONS_ROLE) or [])
+            required = bool(index.data(_ov_panel.TABLE_EDITOR_REQUIRED_ROLE))
+            if not required:
+                editor.addItem("")
+            for option_text in options:
+                text = str(option_text or "").strip()
+                if not text:
+                    continue
+                if editor.findText(text, Qt.MatchFixedString) >= 0:
+                    continue
+                editor.addItem(text)
+            return editor
+        return QLineEdit(parent)
+
+    def setEditorData(self, editor, index):
+        text = str(index.data(Qt.DisplayRole) or "")
+        if isinstance(editor, QDateEdit):
+            from PySide6.QtCore import QDate
+
+            parsed = QDate.fromString(text, "yyyy-MM-dd")
+            editor.setDate(parsed if parsed.isValid() else QDate.currentDate())
+            return
+        if isinstance(editor, QComboBox):
+            if editor.findText(text, Qt.MatchFixedString) >= 0:
+                editor.setCurrentText(text)
+            else:
+                editor.setEditText(text)
+            return
+        if isinstance(editor, QLineEdit):
+            editor.setText(text)
+            editor.selectAll()
+            return
+        super().setEditorData(editor, index)
+
+    def setModelData(self, editor, model, index):
+        if isinstance(editor, QDateEdit):
+            model.setData(index, editor.date().toString("yyyy-MM-dd"), Qt.EditRole)
+            return
+        if isinstance(editor, QComboBox):
+            model.setData(index, editor.currentText().strip(), Qt.EditRole)
+            return
+        if isinstance(editor, QLineEdit):
+            model.setData(index, editor.text(), Qt.EditRole)
+            return
+        super().setModelData(editor, model, index)
+
 
 class _FilterableHeaderView(QHeaderView):
     """Custom header view with filter icons in each column."""
@@ -114,6 +174,10 @@ class _FilterableHeaderView(QHeaderView):
     def paintSection(self, painter, rect, logicalIndex):
         """Paint section with filter icon."""
         super().paintSection(painter, rect, logicalIndex)
+
+        column_name = self.model().headerData(logicalIndex, Qt.Horizontal, Qt.UserRole)
+        if str(column_name or "") == "__confirm__":
+            return
 
         # Draw filter icon on the right side of the header
         icon_size = 14
@@ -157,6 +221,9 @@ class _FilterableHeaderView(QHeaderView):
         if event.button() == Qt.LeftButton:
             logical_index = self.logicalIndexAt(event.pos())
             if logical_index >= 0:
+                column_name = self.model().headerData(logical_index, Qt.Horizontal, Qt.UserRole)
+                if str(column_name or "") == "__confirm__":
+                    return
                 # Check if click is on the filter icon area
                 section_rect = self.sectionViewportPosition(logical_index)
                 section_width = self.sectionSize(logical_index)

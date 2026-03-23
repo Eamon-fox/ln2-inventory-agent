@@ -151,6 +151,7 @@ def _apply_filters_table(self, keyword, selected_box, selected_cell):
     if not isinstance(response, dict) or not response.get("ok"):
         self._table_rows = []
         self._table_columns = []
+        self._table_data_columns = []
         self._table_header_labels = {}
         self._table_column_types = {}
         self._table_version = int(getattr(self, "_table_version", 0) or 0) + 1
@@ -169,15 +170,19 @@ def _apply_filters_table(self, keyword, selected_box, selected_cell):
         return
 
     result = dict(response.get("result") or {})
-    columns = list(result.get("columns") or [])
+    data_columns = list(result.get("columns") or [])
+    columns = self._display_table_columns(data_columns)
     header_labels = self._resolve_table_header_labels(columns)
     if (
         columns != list(getattr(self, "_table_columns", []) or [])
+        or data_columns != list(getattr(self, "_table_data_columns", []) or [])
         or header_labels != dict(getattr(self, "_table_header_labels", {}) or {})
     ):
+        self._table_data_columns = list(data_columns)
         self._table_columns = list(columns)
         self._set_table_columns(self._table_columns, header_labels=header_labels)
     else:
+        self._table_data_columns = list(data_columns)
         self._table_columns = list(columns)
         self._table_header_labels = dict(header_labels)
     self._table_column_types = dict(result.get("column_types") or {})

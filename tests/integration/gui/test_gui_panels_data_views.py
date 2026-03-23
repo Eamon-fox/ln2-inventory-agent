@@ -497,12 +497,80 @@ class OverviewTableViewTests(ManagedPathTestCase):
                 return idx
         raise ValueError(f"column not found: {column_name}")
 
-    def _table_column_texts(self, panel, column_name):
-        column_index = self._table_column_index(panel, column_name)
-        return [
-            panel.ov_table.item(row, column_index).text()
+    def _table_row_item(self, panel, row):
+        for column in range(panel.ov_table.columnCount()):
+            item = panel.ov_table.item(row, column)
+            if item is not None:
+                return item
+        return None
+
+    def _table_row_kind(self, panel, row):
+        from app_gui.ui.overview_panel import TABLE_ROW_KIND_ROLE
+
+        item = self._table_row_item(panel, row)
+        return str(item.data(TABLE_ROW_KIND_ROLE) or "") if item is not None else ""
+
+    def _table_row_confirmed(self, panel, row):
+        from app_gui.ui.overview_panel import TABLE_ROW_CONFIRMED_ROLE
+
+        item = self._table_row_item(panel, row)
+        return bool(item.data(TABLE_ROW_CONFIRMED_ROLE)) if item is not None else False
+
+    def _table_row_locked(self, panel, row):
+        from app_gui.ui.overview_panel import TABLE_ROW_LOCKED_ROLE
+
+        item = self._table_row_item(panel, row)
+        return bool(item.data(TABLE_ROW_LOCKED_ROLE)) if item is not None else False
+
+    def _table_row_count(self, panel, *, row_kind=None):
+        if row_kind is None:
+            return panel.ov_table.rowCount()
+        expected_kind = str(row_kind)
+        return sum(
+            1
             for row in range(panel.ov_table.rowCount())
-        ]
+            if self._table_row_kind(panel, row) == expected_kind
+        )
+
+    def _table_find_row(self, panel, *, row_kind=None, record_id=None, box=None, position=None):
+        from app_gui.ui.overview_panel import TABLE_ROW_BOX_ROLE, TABLE_ROW_POSITION_ROLE
+
+        id_column = None
+        if record_id is not None:
+            id_column = self._table_column_index(panel, "id")
+
+        for row in range(panel.ov_table.rowCount()):
+            item = self._table_row_item(panel, row)
+            if item is None:
+                continue
+            if row_kind is not None and self._table_row_kind(panel, row) != str(row_kind):
+                continue
+            if box is not None and item.data(TABLE_ROW_BOX_ROLE) != box:
+                continue
+            if position is not None and item.data(TABLE_ROW_POSITION_ROLE) != position:
+                continue
+            if id_column is not None:
+                id_item = panel.ov_table.item(row, id_column)
+                if str(id_item.text() if id_item is not None else "") != str(record_id):
+                    continue
+            return row
+
+        raise AssertionError(
+            f"table row not found: row_kind={row_kind!r}, record_id={record_id!r}, box={box!r}, position={position!r}"
+        )
+
+    def _table_column_texts(self, panel, column_name, *, row_kind=None, non_empty_only=False):
+        column_index = self._table_column_index(panel, column_name)
+        texts = []
+        for row in range(panel.ov_table.rowCount()):
+            if row_kind is not None and self._table_row_kind(panel, row) != str(row_kind):
+                continue
+            item = panel.ov_table.item(row, column_index)
+            text = item.text() if item is not None else ""
+            if non_empty_only and not str(text).strip():
+                continue
+            texts.append(text)
+        return texts
 
     def _click_table_header(self, panel, column_name):
         column_index = self._table_column_index(panel, column_name)
@@ -561,7 +629,18 @@ class OverviewTableViewTests(ManagedPathTestCase):
                 "passage_number",
                 panel.ov_table.horizontalHeaderItem(self._table_column_index(panel, "passage_number")).data(Qt.UserRole),
             )
-            self.assertEqual(2, panel.ov_table.rowCount())
+            expected_total = 81 * len({int(record["box"]) for record in records})
+            self.assertEqual(expected_total, panel.ov_table.rowCount())
+            self.assertEqual(len(records), self._table_row_count(panel, row_kind="active"))
+            self.assertEqual(
+                expected_total - len(records),
+                self._table_row_count(panel, row_kind="empty_slot"),
+            )
+            confirm_col = self._table_column_index(panel, "__confirm__")
+            self.assertEqual(
+                "__confirm__",
+                panel.ov_table.horizontalHeaderItem(confirm_col).data(Qt.UserRole),
+            )
         finally:
             self._cleanup(tmpdir)
 
@@ -829,7 +908,8 @@ class OverviewTableViewTests(ManagedPathTestCase):
             panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
             panel.refresh()
             self._switch_to_table(panel)
-            self.assertEqual(2, panel.ov_table.rowCount())
+            self.assertEqual(2, self._table_row_count(panel, row_kind="active"))
+            self.assertEqual(162, panel.ov_table.rowCount())
 
             panel.ov_filter_keyword.setText("hela")
             self.assertEqual(1, panel.ov_table.rowCount())
@@ -839,8 +919,9 @@ class OverviewTableViewTests(ManagedPathTestCase):
             box_idx = panel.ov_filter_box.findData(1)
             self.assertGreaterEqual(box_idx, 0)
             panel.ov_filter_box.setCurrentIndex(box_idx)
-            self.assertEqual(1, panel.ov_table.rowCount())
-            self.assertEqual("1", panel.ov_table.item(0, 0).text())
+            self.assertEqual(81, panel.ov_table.rowCount())
+            self.assertEqual(1, self._table_row_count(panel, row_kind="active"))
+            self.assertEqual(["1"], self._table_column_texts(panel, "id", row_kind="active"))
 
             panel.ov_filter_box.setCurrentIndex(0)
             cell_idx = panel.ov_filter_cell.findData("K562")
@@ -875,13 +956,18 @@ class OverviewTableViewTests(ManagedPathTestCase):
             with patch.object(bridge, "filter_records", wraps=bridge.filter_records) as mock_filter:
                 QTest.mouseClick(panel.ov_view_table_btn, Qt.LeftButton)
                 QTest.qWait(20)
-                self.assertEqual(1, mock_filter.call_count)
+                self.assertEqual(0, mock_filter.call_count)
 
             self.assertEqual("table", panel._overview_view_mode)
             self.assertEqual(1, panel.ov_view_stack.currentIndex())
             self.assertTrue(panel.ov_view_table_btn.isChecked())
             self.assertFalse(panel.ov_view_grid_btn.isChecked())
-            self.assertEqual(len(records), panel.ov_table.rowCount())
+            self.assertEqual(len(records), self._table_row_count(panel, row_kind="active"))
+            self.assertGreater(panel.ov_table.rowCount(), len(records))
+            self.assertEqual(
+                "__confirm__",
+                panel.ov_table.horizontalHeaderItem(self._table_column_index(panel, "__confirm__")).data(Qt.UserRole),
+            )
         finally:
             if panel is not None:
                 panel.hide()
@@ -908,14 +994,16 @@ class OverviewTableViewTests(ManagedPathTestCase):
                 QTest.mouseClick(panel.ov_view_table_btn, Qt.LeftButton)
                 QTest.qWait(10)
                 self.assertEqual("table", panel._overview_view_mode)
-                self.assertEqual(len(records), panel.ov_table.rowCount())
+                self.assertEqual(len(records), self._table_row_count(panel, row_kind="active"))
+                self.assertGreater(panel.ov_table.rowCount(), len(records))
 
                 QTest.mouseClick(panel.ov_view_grid_btn, Qt.LeftButton)
                 QTest.qWait(10)
                 self.assertEqual("grid", panel._overview_view_mode)
                 self.assertEqual(0, panel.ov_view_stack.currentIndex())
 
-            self.assertEqual(len(records), panel.ov_table.rowCount())
+            self.assertEqual(len(records), self._table_row_count(panel, row_kind="active"))
+            self.assertGreater(panel.ov_table.rowCount(), len(records))
         finally:
             if panel is not None:
                 panel.hide()
@@ -940,13 +1028,13 @@ class OverviewTableViewTests(ManagedPathTestCase):
             panel.ov_table.sortItems(location_col, Qt.DescendingOrder)
             self.assertEqual(
                 ["Box 1 Position 10", "Box 1 Position 2", "Box 1 Position 1"],
-                self._table_column_texts(panel, "location"),
+                self._table_column_texts(panel, "location", row_kind="active"),
             )
 
             panel.ov_table.sortItems(location_col, Qt.AscendingOrder)
             self.assertEqual(
                 ["Box 1 Position 1", "Box 1 Position 2", "Box 1 Position 10"],
-                self._table_column_texts(panel, "location"),
+                self._table_column_texts(panel, "location", row_kind="active"),
             )
         finally:
             self._cleanup(tmpdir)
@@ -972,7 +1060,7 @@ class OverviewTableViewTests(ManagedPathTestCase):
 
             self.assertEqual(
                 ["Box 1 (virus stock) Position 10"],
-                self._table_column_texts(panel, "location"),
+                self._table_column_texts(panel, "location", row_kind="active"),
             )
         finally:
             if panel is not None:
@@ -1000,8 +1088,8 @@ class OverviewTableViewTests(ManagedPathTestCase):
             self._switch_to_table(panel)
 
             self.assertEqual(
-                ["1:A2", "1:B1"],
-                self._table_column_texts(panel, "location"),
+                ["Box 1 Position A2", "Box 1 Position B1"],
+                self._table_column_texts(panel, "location", row_kind="active"),
             )
         finally:
             if panel is not None:
@@ -1025,7 +1113,7 @@ class OverviewTableViewTests(ManagedPathTestCase):
             id_col = self._table_column_index(panel, "id")
 
             panel.ov_table.sortItems(id_col, Qt.AscendingOrder)
-            self.assertEqual(["1", "2", "10"], self._table_column_texts(panel, "id"))
+            self.assertEqual(["1", "2", "10"], self._table_column_texts(panel, "id", row_kind="active"))
         finally:
             self._cleanup(tmpdir)
 
@@ -1056,7 +1144,7 @@ class OverviewTableViewTests(ManagedPathTestCase):
             self.assertEqual("asc", panel._table_sort_order)
             self.assertEqual(
                 ["aardvark", "Alpha", "beta"],
-                self._table_column_texts(panel, "cell_line"),
+                self._table_column_texts(panel, "cell_line", row_kind="active"),
             )
         finally:
             if panel is not None:
@@ -1089,7 +1177,7 @@ class OverviewTableViewTests(ManagedPathTestCase):
                 self.assertEqual("desc", panel._table_sort_order)
                 self.assertEqual(
                     ["Box 1 Position 10", "Box 1 Position 2", "Box 1 Position 1"],
-                    self._table_column_texts(panel, "location"),
+                    self._table_column_texts(panel, "location", row_kind="active"),
                 )
 
                 self._click_table_header(panel, "location")
@@ -1099,7 +1187,7 @@ class OverviewTableViewTests(ManagedPathTestCase):
             self.assertEqual("asc", panel._table_sort_order)
             self.assertEqual(
                 ["Box 1 Position 1", "Box 1 Position 2", "Box 1 Position 10"],
-                self._table_column_texts(panel, "location"),
+                self._table_column_texts(panel, "location", row_kind="active"),
             )
         finally:
             if panel is not None:
@@ -1153,7 +1241,7 @@ class OverviewTableViewTests(ManagedPathTestCase):
             panel.ov_table.sortItems(passage_col, Qt.AscendingOrder)
             self.assertEqual(
                 ["1", "2", "10"],
-                self._table_column_texts(panel, "passage_number"),
+                self._table_column_texts(panel, "passage_number", row_kind="active"),
             )
         finally:
             self._cleanup(tmpdir)
@@ -1213,7 +1301,7 @@ class OverviewTableViewTests(ManagedPathTestCase):
             self.assertEqual("asc", panel._table_sort_order)
             self.assertEqual(
                 ["1", "2", "10"],
-                self._table_column_texts(panel, "passage_number"),
+                self._table_column_texts(panel, "passage_number", row_kind="active"),
             )
         finally:
             if panel is not None:
@@ -1390,11 +1478,12 @@ class OverviewTableViewTests(ManagedPathTestCase):
             panel.show()
             self._app.processEvents()
             self.assertTrue(panel.isVisible())
-            self.assertEqual(2, panel.ov_table.rowCount())
+            self.assertEqual(162, panel.ov_table.rowCount())
+            self.assertEqual(2, self._table_row_count(panel, row_kind="active"))
 
             panel.ov_filter_keyword.setText("hela")
             # Visible mode uses debounced filter application.
-            self.assertEqual(2, panel.ov_table.rowCount())
+            self.assertEqual(162, panel.ov_table.rowCount())
             QTest.qWait(int(panel._filter_debounce_ms) + 40)
             self.assertEqual(1, panel.ov_table.rowCount())
         finally:
@@ -1542,8 +1631,9 @@ class OverviewTableViewTests(ManagedPathTestCase):
                 panel.refresh()
                 self._switch_to_table(panel)
 
-            self.assertEqual(1, panel.ov_table.rowCount())
-            first_cell = panel.ov_table.item(0, 0)
+            self.assertEqual(1, self._table_row_count(panel, row_kind="active"))
+            active_row = self._table_find_row(panel, row_kind="active", record_id=1)
+            first_cell = panel.ov_table.item(active_row, 0)
             self.assertIsNotNone(first_cell)
             self.assertEqual("#000000", str(first_cell.data(int(TABLE_ROW_TINT_ROLE)) or "").lower())
             self.assertEqual("#ffffff", first_cell.foreground().color().name())
@@ -1598,18 +1688,30 @@ class OverviewTableViewTests(ManagedPathTestCase):
             panel.refresh()
             self._switch_to_table(panel)
 
-            self.assertEqual(1, panel.ov_table.rowCount())
+            self.assertEqual(81, panel.ov_table.rowCount())
+            self.assertEqual(1, self._table_row_count(panel, row_kind="active"))
+            self.assertEqual(80, self._table_row_count(panel, row_kind="empty_slot"))
             self.assertFalse(panel.ov_filter_secondary_toggle.isChecked())
+            self.assertEqual(
+                "__confirm__",
+                panel.ov_table.horizontalHeaderItem(self._table_column_index(panel, "__confirm__")).data(Qt.UserRole),
+            )
 
             panel.ov_filter_secondary_toggle.setChecked(True)
             self.assertEqual(2, panel.ov_table.rowCount())
+            self.assertEqual(1, self._table_row_count(panel, row_kind="active"))
+            self.assertEqual(1, self._table_row_count(panel, row_kind="taken_out"))
+            with self.assertRaises(ValueError):
+                self._table_column_index(panel, "__confirm__")
 
             panel.ov_filter_secondary_toggle.setChecked(False)
-            self.assertEqual(1, panel.ov_table.rowCount())
+            self.assertEqual(81, panel.ov_table.rowCount())
+            self.assertEqual(1, self._table_row_count(panel, row_kind="active"))
+            self.assertEqual(80, self._table_row_count(panel, row_kind="empty_slot"))
         finally:
             self._cleanup(tmpdir)
 
-    def test_table_mode_delegates_queries_to_filter_records_bridge(self):
+    def test_table_history_view_delegates_queries_to_filter_records_bridge(self):
         records = [
             {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
             {"id": 2, "cell_line": "HeLa", "short_name": "B", "box": 2, "position": 2, "frozen_at": "2025-01-02"},
@@ -1624,13 +1726,17 @@ class OverviewTableViewTests(ManagedPathTestCase):
 
             with patch.object(bridge, "filter_records", wraps=bridge.filter_records) as mock_filter:
                 self._switch_to_table(panel)
+                self.assertEqual(0, mock_filter.call_count)
+                panel.ov_filter_secondary_toggle.setChecked(True)
+                self.assertEqual(1, mock_filter.call_count)
+                panel.ov_filter_secondary_toggle.setChecked(False)
+                self.assertEqual(1, mock_filter.call_count)
 
-            mock_filter.assert_called()
             kwargs = mock_filter.call_args.kwargs
             self.assertEqual(str(yaml_path), kwargs.get("yaml_path"))
             self.assertEqual("location", kwargs.get("sort_by"))
             self.assertEqual("asc", kwargs.get("sort_order"))
-            self.assertEqual(False, kwargs.get("include_inactive"))
+            self.assertEqual(True, kwargs.get("include_inactive"))
             self.assertEqual({}, kwargs.get("column_filters"))
         finally:
             self._cleanup(tmpdir)
@@ -1649,10 +1755,172 @@ class OverviewTableViewTests(ManagedPathTestCase):
 
             emitted = []
             panel.request_prefill_background.connect(lambda payload: emitted.append(payload))
-            panel.on_table_row_double_clicked(0, 0)
+            row = self._table_find_row(panel, row_kind="active", record_id=1)
+            panel.on_table_row_double_clicked(row, 0)
 
             self.assertEqual(
                 [{"box": 1, "position": 5, "record_id": 1}],
+                emitted,
+            )
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_table_inline_entry_confirm_emits_add_plan_item(self):
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+        ]
+        meta_extra = {
+            "color_key": "cell_line",
+            "custom_fields": [
+                {"key": "cell_line", "label": "Cell Line", "type": "str", "required": True},
+                {"key": "short_name", "label": "Short Name", "type": "str"},
+            ],
+        }
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra=meta_extra)
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            empty_row = self._table_find_row(panel, row_kind="empty_slot", box=1, position=2)
+            date_item = panel.ov_table.item(empty_row, self._table_column_index(panel, "frozen_at"))
+            cell_line_item = panel.ov_table.item(empty_row, self._table_column_index(panel, "cell_line"))
+            confirm_col = self._table_column_index(panel, "__confirm__")
+
+            self.assertTrue(bool(date_item.flags() & Qt.ItemIsEditable))
+            self.assertTrue(bool(cell_line_item.flags() & Qt.ItemIsEditable))
+
+            staged_items = []
+            panel.plan_items_requested.connect(lambda payload: staged_items.extend(payload))
+
+            date_item.setText("2026-02-10")
+            self._app.processEvents()
+            empty_row = self._table_find_row(panel, row_kind="empty_slot", box=1, position=2)
+            cell_line_item = panel.ov_table.item(empty_row, self._table_column_index(panel, "cell_line"))
+            cell_line_item.setText("HeLa")
+            self._app.processEvents()
+            panel.on_table_cell_clicked(empty_row, confirm_col)
+
+            self.assertEqual(1, len(staged_items))
+            item = staged_items[0]
+            self.assertEqual("add", item.get("action"))
+            self.assertEqual("overview_table", item.get("source"))
+            self.assertEqual(1, item.get("box"))
+            payload = item.get("payload") or {}
+            self.assertEqual([2], payload.get("positions"))
+            self.assertEqual("2026-02-10", payload.get("stored_at"))
+            self.assertEqual("2026-02-10", payload.get("frozen_at"))
+            self.assertEqual("HeLa", (payload.get("fields") or {}).get("cell_line"))
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_table_single_slot_staged_entry_loses_confirm_mark_when_draft_diverges(self):
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+        ]
+        meta_extra = {
+            "color_key": "cell_line",
+            "custom_fields": [
+                {"key": "cell_line", "label": "Cell Line", "type": "str", "required": True},
+            ],
+        }
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra=meta_extra)
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+            from lib.plan_item_factory import build_add_plan_item
+            from lib.plan_store import PlanStore
+
+            store = PlanStore()
+            store.add(
+                [
+                    build_add_plan_item(
+                        box=1,
+                        positions=[2],
+                        stored_at="2026-02-10",
+                        fields={"cell_line": "K562"},
+                        source="tests",
+                    )
+                ]
+            )
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.bind_plan_store(store)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            row = self._table_find_row(panel, row_kind="empty_slot", box=1, position=2)
+            confirm_col = self._table_column_index(panel, "__confirm__")
+            cell_line_col = self._table_column_index(panel, "cell_line")
+
+            self.assertTrue(self._table_row_confirmed(panel, row))
+            self.assertFalse(self._table_row_locked(panel, row))
+            self.assertEqual("√", panel.ov_table.item(row, confirm_col).text())
+
+            panel.ov_table.item(row, cell_line_col).setText("HeLa")
+            self._app.processEvents()
+            row = self._table_find_row(panel, row_kind="empty_slot", box=1, position=2)
+            self.assertFalse(self._table_row_confirmed(panel, row))
+            self.assertEqual("", panel.ov_table.item(row, confirm_col).text())
+
+            panel.ov_table.item(row, cell_line_col).setText("K562")
+            self._app.processEvents()
+            row = self._table_find_row(panel, row_kind="empty_slot", box=1, position=2)
+            self.assertTrue(self._table_row_confirmed(panel, row))
+            self.assertEqual("√", panel.ov_table.item(row, confirm_col).text())
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_table_multi_slot_staged_entry_row_is_locked_and_prefills_positions(self):
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+        ]
+        meta_extra = {
+            "color_key": "cell_line",
+            "custom_fields": [
+                {"key": "cell_line", "label": "Cell Line", "type": "str", "required": True},
+            ],
+        }
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra=meta_extra)
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+            from lib.plan_item_factory import build_add_plan_item
+            from lib.plan_store import PlanStore
+
+            store = PlanStore()
+            store.add(
+                [
+                    build_add_plan_item(
+                        box=1,
+                        positions=[2, 3],
+                        stored_at="2026-02-10",
+                        fields={"cell_line": "K562"},
+                        source="tests",
+                    )
+                ]
+            )
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.bind_plan_store(store)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            row = self._table_find_row(panel, row_kind="empty_slot", box=1, position=2)
+            date_item = panel.ov_table.item(row, self._table_column_index(panel, "frozen_at"))
+            cell_line_item = panel.ov_table.item(row, self._table_column_index(panel, "cell_line"))
+
+            self.assertTrue(self._table_row_confirmed(panel, row))
+            self.assertTrue(self._table_row_locked(panel, row))
+            self.assertFalse(bool(date_item.flags() & Qt.ItemIsEditable))
+            self.assertFalse(bool(cell_line_item.flags() & Qt.ItemIsEditable))
+
+            emitted = []
+            panel.request_add_prefill_background.connect(lambda payload: emitted.append(payload))
+            panel.on_table_cell_clicked(row, self._table_column_index(panel, "__confirm__"))
+
+            self.assertEqual(
+                [{"box": 1, "position": 2, "positions": [2, 3]}],
                 emitted,
             )
         finally:

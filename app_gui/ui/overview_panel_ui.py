@@ -273,12 +273,14 @@ def setup_ui(self):
 
     # Table Area
     self.ov_table = QTableWidget()
-    self.ov_table.setEditTriggers(QTableWidget.NoEditTriggers)
+    self.ov_table._overview_panel_owner = self
+    self.ov_table.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.EditKeyPressed)
     self.ov_table.verticalHeader().setVisible(False)
     self.ov_table.setSelectionBehavior(QTableWidget.SelectRows)
     self.ov_table.setSelectionMode(QTableWidget.SingleSelection)
     self.ov_table.setItemDelegate(_ov_widgets._OverviewTableTintDelegate(self.ov_table))
-    self.ov_table.cellClicked.connect(self.on_table_row_double_clicked)
+    self.ov_table.cellClicked.connect(self.on_table_cell_clicked)
+    self.ov_table.itemChanged.connect(self._on_table_item_changed)
 
     # Replace horizontal header with filterable header
     self.ov_table_header = _ov_widgets._FilterableHeaderView(Qt.Horizontal, self.ov_table)

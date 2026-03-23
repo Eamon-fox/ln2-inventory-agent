@@ -9,6 +9,7 @@ from typing import Any
 
 from .csv_export import build_export_rows
 from .custom_fields import get_color_key
+from .position_fmt import display_to_pos, format_box_position_compact, get_box_numbers
 from .validators import parse_date
 
 
@@ -52,7 +53,55 @@ def _normalize_text(value):
     return " ".join(str(value or "").split()).strip()
 
 
-def build_overview_table_projection(records, *, meta=None):
+def _normalize_position_value(value, layout=None):
+    position = _safe_int(value)
+    if position is not None:
+        return position
+    with suppress(TypeError, ValueError):
+        return int(display_to_pos(value, layout))
+    return None
+
+
+def _projection_box_numbers(layout, records):
+    layout = layout if isinstance(layout, dict) else {}
+    raw_numbers = list(get_box_numbers(layout) or [])
+    if "box_numbers" in layout or "box_count" in layout:
+        return raw_numbers
+
+    record_numbers = []
+    seen = set()
+    for record in records or []:
+        if not isinstance(record, dict):
+            continue
+        box_num = _safe_int(record.get("box"))
+        if box_num is None or box_num in seen:
+            continue
+        seen.add(box_num)
+        record_numbers.append(box_num)
+    if record_numbers:
+        record_numbers.sort()
+        return record_numbers
+    return raw_numbers
+
+
+def _empty_slot_row(columns, *, box, position, meta=None, inventory=None):
+    values = {str(column): "" for column in list(columns or [])}
+    values["location"] = format_box_position_compact(box, position, layout=meta.get("box_layout") if isinstance(meta, dict) else {})
+    search_text = " ".join(str(values.get(column, "")) for column in values).lower()
+    return {
+        "row_kind": "empty_slot",
+        "record_id": None,
+        "record": None,
+        "box": int(box),
+        "position": int(position),
+        "active": True,
+        "color_value": "",
+        "values": values,
+        "search_text": search_text,
+    }
+
+
+def build_overview_table_projection(records, *, meta=None, layout=None, include_empty_slots=False):
     """Project inventory records into the Overview table row model."""
     payload = build_export_rows(records or [], meta=meta or {})
     columns = list(payload.get("columns") or [])
@@ -72,7 +121,10 @@ def build_overview_table_projection(records, *, meta=None):
         record = records_by_id.get(record_id)
 
         box = _safe_int(record.get("box")) if isinstance(record, dict) else None
-        position = _safe_int(record.get("position")) if isinstance(record, dict) else None
+        position = _normalize_position_value(
+            record.get("position") if isinstance(record, dict) else None,
+            layout,
+        )
         active = position is not None
 
         color_value = ""
@@ -84,7 +136,9 @@ def build_overview_table_projection(records, *, meta=None):
         search_text = " ".join(str(values.get(column, "")) for column in columns).lower()
         rows.append(
             {
+                "row_kind": "active" if active else "taken_out",
                 "record_id": record_id,
+                "record": record,
                 "box": box,
                 "position": position,
                 "active": active,
@@ -93,6 +147,34 @@ def build_overview_table_projection(records, *, meta=None):
                 "search_text": search_text,
             }
         )
+
+    if include_empty_slots:
+        effective_layout = layout if isinstance(layout, dict) else ((meta or {}).get("box_layout") or {})
+        box_numbers = _projection_box_numbers(effective_layout, records or [])
+        rows_per_box = _safe_int((effective_layout or {}).get("rows")) or 9
+        cols_per_box = _safe_int((effective_layout or {}).get("cols")) or 9
+        total_slots = max(1, rows_per_box * cols_per_box)
+        occupied = {
+            (int(row["box"]), int(row["position"]))
+            for row in rows
+            if row.get("row_kind") == "active"
+            and row.get("box") is not None
+            and row.get("position") is not None
+        }
+        for box_num in list(box_numbers or []):
+            for position in range(1, total_slots + 1):
+                key = (int(box_num), int(position))
+                if key in occupied:
+                    continue
+                rows.append(
+                    _empty_slot_row(
+                        columns,
+                        box=box_num,
+                        position=position,
+                        meta=meta or {},
+                        inventory=records or [],
+                    )
+                )
 
     return {
         "columns": columns,
@@ -472,6 +554,7 @@ def query_overview_table(
     for row_data in paged_rows:
         display_rows.append(
             {
+                "row_kind": row_data.get("row_kind"),
                 "record_id": row_data.get("record_id"),
                 "box": row_data.get("box"),
                 "position": row_data.get("position"),

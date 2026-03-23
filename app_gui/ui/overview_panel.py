@@ -19,6 +19,15 @@ from app_gui.ui import overview_panel_runtime as _ov_runtime
 # - _ov_refresh/_ov_runtime: refresh pipelines and runtime glue logic.
 MIME_TYPE_MOVE = _ov_cell_button.MIME_TYPE_MOVE
 TABLE_ROW_TINT_ROLE = Qt.UserRole + 41
+TABLE_ROW_KIND_ROLE = Qt.UserRole + 42
+TABLE_ROW_BOX_ROLE = Qt.UserRole + 43
+TABLE_ROW_POSITION_ROLE = Qt.UserRole + 44
+TABLE_COLUMN_NAME_ROLE = Qt.UserRole + 45
+TABLE_EDITOR_KIND_ROLE = Qt.UserRole + 46
+TABLE_EDITOR_OPTIONS_ROLE = Qt.UserRole + 47
+TABLE_EDITOR_REQUIRED_ROLE = Qt.UserRole + 48
+TABLE_ROW_LOCKED_ROLE = Qt.UserRole + 49
+TABLE_ROW_CONFIRMED_ROLE = Qt.UserRole + 50
 _MONKEYPATCH_EXPORTS = (QMenu, FONT_SIZE_CELL)
 
 
@@ -69,13 +78,16 @@ class OverviewPanel(QWidget):
         self._stats_include_inactive_loaded = False
         self._table_rows = []
         self._table_columns = []
+        self._table_data_columns = []
         self._table_header_labels = {}
         self._table_column_types = {}
         self._table_row_records = []
+        self._table_draft_by_slot = {}
         self._table_version = 0
         self._table_sort_by = "location"
         self._table_sort_order = "asc"
         self._ignore_table_sort_change = False
+        self._ignore_table_item_change = False
         self._column_unique_cache = {}
         self._hover_warmed = False
         self._show_summary_cards = True  # Can be set to False to hide cards
@@ -112,13 +124,16 @@ class OverviewPanel(QWidget):
 
 
     _resolve_table_header_labels = _ov_table._resolve_table_header_labels
+    _display_table_columns = _ov_table._display_table_columns
     _set_table_columns = _ov_table._set_table_columns
     _table_query_payload = _ov_table._table_query_payload
     _query_table_rows = _ov_table._query_table_rows
     _sync_table_sort_indicator = _ov_table._sync_table_sort_indicator
     _on_table_sort_changed = _ov_table._on_table_sort_changed
     _render_table_rows = _ov_table._render_table_rows
+    on_table_cell_clicked = _ov_table.on_table_cell_clicked
     on_table_row_double_clicked = _ov_table.on_table_row_double_clicked
+    _on_table_item_changed = _ov_table._on_table_item_changed
     _emit_takeout_prefill_background = _ov_table._emit_takeout_prefill_background
     _emit_add_prefill_background = _ov_table._emit_add_prefill_background
     _emit_add_prefill = _ov_table._emit_add_prefill
@@ -148,6 +163,7 @@ class OverviewPanel(QWidget):
     @Slot()
     def _on_plan_store_changed(self):
         _ov_grid._on_plan_store_changed(self)
+        _ov_table._on_plan_store_changed(self)
 
     def bind_plan_store(self, plan_store):
         self._set_plan_store_ref(plan_store)
