@@ -15,6 +15,7 @@ def test_render_local_api_skill_template_injects_route_contract_reference():
     assert "`keywords`" in rendered
     assert "### `GET /api/v1/capabilities`" in rendered
     assert "### `GET /api/v1/gui/stage-plan`" in rendered
+    assert "at least one required" in rendered
 
 
 def test_render_local_api_skill_template_uses_chinese_labels():
@@ -24,6 +25,7 @@ def test_render_local_api_skill_template_uses_chinese_labels():
 
     assert "查询参数" in rendered
     assert "请求体参数" in rendered
+    assert "至少提供一个" in rendered
     assert "`summary_only`" in rendered
 
 

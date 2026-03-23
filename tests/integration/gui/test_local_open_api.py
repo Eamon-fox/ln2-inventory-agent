@@ -157,6 +157,19 @@ class LocalOpenApiTests(ManagedPathTestCase):
         filter_param_names = {item.get("name") for item in (filter_route.get("params") or [])}
         self.assertTrue({"include_inactive", "sort_by", "sort_order"} <= filter_param_names)
 
+        prefill_add_route = next(
+            item for item in routes if item.get("method") == "POST" and item.get("path") == "/api/v1/gui/prefill-add"
+        )
+        self.assertEqual(
+            [{"kind": "at_least_one_of", "params": ["position", "positions"]}],
+            prefill_add_route.get("constraints"),
+        )
+
+        stage_plan_route = next(
+            item for item in routes if item.get("method") == "GET" and item.get("path") == "/api/v1/gui/stage-plan"
+        )
+        self.assertEqual("gui_stage_state", stage_plan_route.get("effect"))
+
     def test_http_validate_route_uses_current_gui_session_dataset(self):
         external_yaml = Path(self.install_root) / "outside.yaml"
         external_yaml.write_text("not: valid: yaml:\n", encoding="utf-8")
@@ -304,6 +317,18 @@ class LocalOpenApiTests(ManagedPathTestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual("show the K562 records", self.ai_prompts[0]["prompt"])
         self.assertEqual("gui_handoff", payload["effect"])
+
+    def test_controller_prefill_add_requires_position_or_positions(self):
+        status, payload = self.controller.handle_request(
+            "POST",
+            "/api/v1/gui/prefill-add",
+            {},
+            payload={"box": 1},
+        )
+        self.assertEqual(400, status)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("invalid_request", payload["error_code"])
+        self.assertEqual("position", payload["field"])
 
     def test_controller_stage_plan_only_stages_allowed_actions(self):
         item = build_add_plan_item(

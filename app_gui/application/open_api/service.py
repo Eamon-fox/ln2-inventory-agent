@@ -30,6 +30,7 @@ from .contracts import (
     LOCAL_OPEN_API_ROUTE_SPECS,
     LOCAL_OPEN_API_STAGE_ALLOWED_ACTIONS,
     LOCAL_OPEN_API_VALIDATION_MODES,
+    iter_local_open_api_route_descriptions,
 )
 
 
@@ -300,18 +301,6 @@ class LocalOpenApiController:
         )
 
     def _handle_capabilities(self):
-        routes = []
-        for method, path in sorted(LOCAL_OPEN_API_ROUTE_ALLOWLIST):
-            spec = dict(LOCAL_OPEN_API_ROUTE_SPECS.get((method, path)) or {})
-            routes.append(
-                {
-                    "method": method,
-                    "path": path,
-                    "effect": str(spec.get("effect") or ""),
-                    "summary": str(spec.get("summary") or ""),
-                    "params": list(spec.get("params") or []),
-                }
-            )
         return _response_envelope(
             ok=True,
             message="Local API capabilities",
@@ -331,7 +320,7 @@ class LocalOpenApiController:
                 },
                 "validation_modes": list(LOCAL_OPEN_API_VALIDATION_MODES),
                 "stage_allowed_actions": sorted(LOCAL_OPEN_API_STAGE_ALLOWED_ACTIONS),
-                "routes": routes,
+                "routes": list(iter_local_open_api_route_descriptions(sort_routes=True)),
             },
         )
 

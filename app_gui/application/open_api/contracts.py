@@ -1,5 +1,7 @@
 """Explicit route contracts for the local loopback API."""
 
+from copy import deepcopy
+
 from lib.tool_registry import TOOL_CONTRACTS
 
 LOCAL_OPEN_API_DEFAULT_PORT = 37666
@@ -168,6 +170,12 @@ LOCAL_OPEN_API_ROUTE_SPECS = {
             {"name": "positions", "in": "body", "type": "array", "required": False},
             {"name": "focus", "in": "body", "type": "boolean", "required": False},
         ],
+        "constraints": [
+            {
+                "kind": "at_least_one_of",
+                "params": ["position", "positions"],
+            }
+        ],
     },
     ("POST", "/api/v1/gui/prefill-ai-prompt"): {
         "handler": "_handle_prefill_ai_prompt",
@@ -183,7 +191,7 @@ LOCAL_OPEN_API_ROUTE_SPECS = {
         "handler": "_handle_get_stage_plan",
         "request_arg": None,
         "status_code": 200,
-        "effect": "gui_handoff",
+        "effect": "gui_stage_state",
         "summary": "Read the current staged GUI plan items without mutating them.",
         "params": [],
     },
@@ -206,3 +214,31 @@ LOCAL_OPEN_API_ROUTE_SPECS = {
 }
 
 LOCAL_OPEN_API_ROUTE_ALLOWLIST = frozenset(LOCAL_OPEN_API_ROUTE_SPECS)
+
+
+def describe_local_open_api_route(route_key):
+    """Return the public route description derived from the explicit route contract."""
+
+    normalized_route_key = tuple(route_key or ())
+    spec = dict(LOCAL_OPEN_API_ROUTE_SPECS.get(normalized_route_key) or {})
+    if not spec:
+        raise KeyError(f"Unknown local open api route: {normalized_route_key!r}")
+    method, path = normalized_route_key
+    return {
+        "method": str(method or "").upper().strip(),
+        "path": str(path or "").strip(),
+        "effect": str(spec.get("effect") or ""),
+        "summary": str(spec.get("summary") or ""),
+        "params": deepcopy(list(spec.get("params") or [])),
+        "constraints": deepcopy(list(spec.get("constraints") or [])),
+    }
+
+
+def iter_local_open_api_route_descriptions(*, sort_routes=False):
+    route_keys = (
+        sorted(LOCAL_OPEN_API_ROUTE_ALLOWLIST)
+        if sort_routes
+        else LOCAL_OPEN_API_ROUTE_SPECS.keys()
+    )
+    for route_key in route_keys:
+        yield describe_local_open_api_route(route_key)
