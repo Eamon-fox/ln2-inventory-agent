@@ -10,6 +10,7 @@ re-attached to the main agent call via a fixed resume prompt.
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tests.managed_paths import ManagedPathTestCase
 
@@ -18,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import agent.context_checkpoint as context_checkpoint
 from agent.context_checkpoint import RESUME_CONTEXT_PROMPT, SUMMARY_SYSTEM_PROMPT
 from agent.react_agent import ReactAgent
 from agent.tool_runner import AgentToolRunner
@@ -118,6 +120,23 @@ class ContextCheckpointTests(ManagedPathTestCase):
             "glm-5",
             ((stream_end.get("data") or {}).get("summary_state") or {}).get("model"),
         )
+
+    def test_summary_cap_uses_bounded_budget_checks(self):
+        llm = _CheckpointAwareLLM()
+        fold_messages = [
+            {"role": "user" if idx % 2 else "assistant", "content": f"msg-{idx} " + ("A" * 200)}
+            for idx in range(64)
+        ]
+
+        with patch.object(
+            context_checkpoint,
+            "build_summary_call_messages",
+            wraps=context_checkpoint.build_summary_call_messages,
+        ) as build_mock:
+            capped = context_checkpoint._cap_fold_messages_for_summary(None, fold_messages, llm)
+
+        self.assertGreaterEqual(len(capped), 1)
+        self.assertLessEqual(build_mock.call_count, 8)
 
 
 if __name__ == "__main__":

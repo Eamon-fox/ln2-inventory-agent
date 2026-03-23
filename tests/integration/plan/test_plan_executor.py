@@ -11,7 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -1286,6 +1286,55 @@ class MultiAddPreflightTests(ManagedPathTestCase):
             self.assertEqual(len(blocked_items), 1)
             self.assertIn("position_conflict", blocked_items[0].get("error_code", ""))
             self.assertTrue(blocked_items[0].get("message"))
+
+    def test_preflight_multi_add_uses_batch_fast_path_on_success(self):
+        yaml_path = self.ensure_dataset_yaml("preflight_add_fast_path", make_data([]))
+        bridge = MagicMock()
+        items = [
+            make_add_item(box=1, position=1),
+            make_add_item(box=1, position=2),
+        ]
+
+        from app_gui import plan_executor as _executor
+
+        with patch.object(
+            _executor._write_adapter,
+            "batch_add_entries",
+            return_value={"ok": True, "count": 2},
+        ) as batch_mock, patch.object(_executor, "_preflight_add_entry") as single_mock:
+            result = preflight_plan(str(yaml_path), items, bridge=bridge)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(2, result["stats"]["ok"])
+        batch_mock.assert_called_once()
+        single_mock.assert_not_called()
+
+    def test_preflight_multi_takeout_uses_batch_fast_path_on_success(self):
+        yaml_path = self.ensure_dataset_yaml(
+            "preflight_takeout_fast_path",
+            make_data([
+                make_record(1, box=1, position=1),
+                make_record(2, box=1, position=2),
+            ]),
+        )
+        bridge = MagicMock()
+        items = [
+            make_takeout_item(record_id=1, box=1, position=1),
+            make_takeout_item(record_id=2, box=1, position=2),
+        ]
+
+        from app_gui import plan_executor as _executor
+
+        with patch.object(
+            _executor,
+            "_preflight_takeout",
+            return_value={"ok": True},
+        ) as takeout_mock:
+            result = preflight_plan(str(yaml_path), items, bridge=bridge)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(2, result["stats"]["ok"])
+        self.assertEqual(1, takeout_mock.call_count)
 
 
 if __name__ == "__main__":

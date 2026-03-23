@@ -89,6 +89,15 @@ def detect_llm_identity(llm_client) -> tuple[str, str]:
     return provider, model
 
 
+def _estimate_text_token_count(text: str) -> int:
+    raw = str(text or "").encode("utf-8", errors="ignore")
+    return max(1, int(math.ceil(len(raw) / 3.0)))
+
+
+def _dump_json_compact(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
 def resolve_model_budget(llm_client) -> dict[str, int]:
     provider, _model = detect_llm_identity(llm_client)
     budget = dict(_PROVIDER_BUDGETS.get(provider) or {})
@@ -123,9 +132,8 @@ def estimate_token_count(value: Any) -> int:
     if isinstance(value, str):
         text = value
     else:
-        text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-    raw = text.encode("utf-8", errors="ignore")
-    return max(1, int(math.ceil(len(raw) / 3.0)))
+        text = _dump_json_compact(value)
+    return _estimate_text_token_count(text)
 
 
 def normalize_summary_state(summary_state, llm_client=None) -> dict | None:
@@ -237,7 +245,7 @@ def build_summary_call_messages(summary_state, fold_messages: list[dict]) -> lis
             "role": "user",
             "content": (
                 "Conversation content to checkpoint:\n"
-                f"{json.dumps(list(fold_messages or []), ensure_ascii=False, indent=2)}"
+                f"{_dump_json_compact(list(fold_messages or []))}"
             ),
         }
     )
@@ -254,13 +262,22 @@ def _cap_fold_messages_for_summary(summary_state, fold_messages: list[dict], llm
         budget["context_window"] - budget["summary_output_reserve"] - budget["safety_margin"],
     )
 
-    selected: list[dict] = []
-    for message in list(fold_messages or []):
-        candidate = selected + [dict(message)]
-        if selected and estimate_token_count(build_summary_call_messages(summary_state, candidate)) > max_input_tokens:
-            break
-        selected.append(dict(message))
-    return selected or [dict(fold_messages[0])]
+    candidates = list(fold_messages or [])
+    if len(candidates) == 1:
+        return [dict(candidates[0])]
+
+    best = 1
+    low = 1
+    high = len(candidates)
+    while low <= high:
+        mid = (low + high) // 2
+        candidate = candidates[:mid]
+        if estimate_token_count(build_summary_call_messages(summary_state, candidate)) <= max_input_tokens:
+            best = mid
+            low = mid + 1
+        else:
+            high = mid - 1
+    return [dict(item) for item in candidates[:best]]
 
 
 def call_summary_model(llm_client, summary_state, fold_messages: list[dict], stop_event=None) -> dict:

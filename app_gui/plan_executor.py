@@ -367,6 +367,13 @@ def _append_and_consume_item_report(
     )
 
 
+def _batch_ok_reports(
+    items: List[Dict[str, object]],
+    response: Dict[str, object],
+) -> Tuple[bool, List[Dict[str, object]]]:
+    return True, [_make_ok_item(item, response) for item in items]
+
+
 def _apply_batch_phase_reports(
     reports: List[Dict[str, object]],
     remaining: List[Dict[str, object]],
@@ -980,6 +987,26 @@ def _execute_takeout(
     layout = _load_box_layout(yaml_path)
 
     if mode == "preflight":
+        if len(items) > 1:
+            try:
+                batch_payload = _build_takeout_payload(
+                    items,
+                    date_str=date_str,
+                    layout=layout,
+                    include_target=False,
+                )
+            except ValueError:
+                batch_payload = None
+            if batch_payload:
+                response = _run_takeout(
+                    bridge,
+                    yaml_path,
+                    batch_payload,
+                    mode="preflight",
+                )
+                if response.get("ok"):
+                    return _batch_ok_reports(items, response)
+
         all_ok = True
         for item in items:
             p = item.get("payload") or {}
@@ -1187,7 +1214,46 @@ def _preflight_batch_add(
     bridge: object,
     yaml_path: str,
 ) -> Tuple[bool, List[Dict[str, object]]]:
-    """Validate each add individually in preflight mode."""
+    """Preflight add operations with a batch fast path plus per-item fallback."""
+    valid_entries: List[Dict[str, object]] = []
+    valid_items: List[Dict[str, object]] = []
+    for item, tool_payload in zip(items, tool_payloads):
+        if id(item) in pre_blocked:
+            continue
+        valid_entries.append({
+            "box": tool_payload.get("box"),
+            "positions": tool_payload.get("positions"),
+            "stored_at": coalesce_stored_at_value(
+                stored_at=tool_payload.get("stored_at"),
+                frozen_at=tool_payload.get("frozen_at"),
+            ),
+            "fields": tool_payload.get("fields"),
+        })
+        valid_items.append(item)
+
+    if len(valid_items) > 1:
+        actor_context = getattr(bridge, "_ctx", lambda: None)() or None
+        batch_response = _write_adapter.batch_add_entries(
+            yaml_path=yaml_path,
+            entries=valid_entries,
+            execution_mode="execute",
+            actor_context=actor_context,
+            source="plan_executor.preflight",
+            auto_backup=False,
+        )
+        if batch_response.get("ok"):
+            reports: List[Dict[str, object]] = []
+            for item in items:
+                if id(item) in pre_blocked:
+                    reports.append(_make_error_item(
+                        item,
+                        "validation_failed" if "conflict" not in pre_blocked[id(item)].lower() else "position_conflict",
+                        pre_blocked[id(item)],
+                    ))
+                    continue
+                reports.append(_make_ok_item(item, batch_response))
+            return not pre_blocked, reports
+
     reports: List[Dict[str, object]] = []
     all_ok = True
 
