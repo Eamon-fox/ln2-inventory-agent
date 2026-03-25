@@ -1123,6 +1123,45 @@ class AgentToolRunnerTests(ManagedPathTestCase):
             )
             self.assertEqual("", wildcard_response["result"]["normalized_query"])
 
+    def test_search_records_keywords_normalize_separator_variants(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_search_sep_keywords_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        {
+                            "id": 2,
+                            "parent_cell_line": "K562",
+                            "short_name": "RTCB-dTAG_clone3",
+                            "box": 2,
+                            "position": 15,
+                            "frozen_at": "2024-01-02",
+                        },
+                        {
+                            "id": 1,
+                            "parent_cell_line": "K562",
+                            "short_name": "RTCB control",
+                            "box": 2,
+                            "position": 16,
+                            "frozen_at": "2024-01-01",
+                        },
+                    ]
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            response = runner.run(
+                "search_records",
+                {"query": "RTCB_dTAG_clone3", "mode": "keywords"},
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(1, response["result"]["total_count"])
+            self.assertEqual([2], [item.get("id") for item in response["result"]["records"]])
+            self.assertEqual(["rtcb", "dtag", "clone3"], response["result"]["keywords"])
+
     def test_search_records_supports_structured_slot_filters(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_search_slot_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"

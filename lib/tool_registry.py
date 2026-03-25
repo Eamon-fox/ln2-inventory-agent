@@ -16,6 +16,11 @@ from dataclasses import dataclass, field
 from importlib import import_module
 from typing import Any
 
+from .inventory_query_contracts import (
+    SEARCH_MODE_DESCRIPTION,
+    SEARCH_MODE_VALUES,
+    SEARCH_QUERY_DESCRIPTION,
+)
 from .position_fmt import BOX_LAYOUT_INDEXING_VALUES
 
 DISPATCH_HANDLER = "handler"
@@ -271,18 +276,18 @@ _TOOL_DESCRIPTOR_LIST = (
     ),
     _tool(
         "search_records",
-        "Search inventory records via text and structured filters. Use status=all|active|inactive and optional sort_by/sort_order.",
+        "Search inventory records via separator-normalized text and structured filters. Use status=all|active|inactive and optional sort_by/sort_order.",
         {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Optional search text (cell line, short name, notes, etc); empty or '*' skips text filtering.",
+                    "description": SEARCH_QUERY_DESCRIPTION,
                 },
                 "mode": {
                     "type": "string",
-                    "enum": ["fuzzy", "exact", "keywords"],
-                    "description": "Search strategy.",
+                    "enum": list(SEARCH_MODE_VALUES),
+                    "description": SEARCH_MODE_DESCRIPTION,
                 },
                 "max_results": {"type": "integer", "minimum": 1},
                 "case_sensitive": {"type": "boolean"},

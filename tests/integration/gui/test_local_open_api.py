@@ -128,6 +128,38 @@ class LocalOpenApiTests(ManagedPathTestCase):
         self.assertEqual("rec-1", records[0].get("short_name"))
 
     def test_http_capabilities_route_describes_allowlist_and_boundary(self):
+        write_yaml(
+            {
+                "meta": {
+                    "box_layout": {
+                        "rows": 9,
+                        "cols": 9,
+                        "box_count": 5,
+                        "box_numbers": [1, 2, 3, 4, 5],
+                        "indexing": "alphanumeric",
+                    },
+                    "custom_fields": [
+                        {"key": "cell_line", "label": "Cell Line", "type": "str", "required": True},
+                        {"key": "short_name", "label": "Short Name", "type": "str"},
+                    ],
+                    "display_key": "short_name",
+                    "color_key": "cell_line",
+                },
+                "inventory": [
+                    {
+                        "id": 1,
+                        "parent_cell_line": "K562",
+                        "short_name": "rec-1",
+                        "box": 1,
+                        "position": 1,
+                        "stored_at": "2024-01-01",
+                    }
+                ],
+            },
+            path=self.fake_yaml_path,
+            audit_meta={"action": "seed", "source": "tests"},
+        )
+
         status, payload = self._request("/api/v1/capabilities")
 
         self.assertEqual(200, status)
@@ -136,6 +168,31 @@ class LocalOpenApiTests(ManagedPathTestCase):
         self.assertEqual("local_open_api", result.get("service"))
         self.assertEqual(False, result.get("boundary", {}).get("inventory_write_enabled"))
         self.assertIn("meta_only", result.get("validation_modes") or [])
+        dataset_schema = result.get("dataset_schema") or {}
+        self.assertEqual("alphanumeric", (dataset_schema.get("box_layout") or {}).get("indexing"))
+        self.assertEqual("short_name", dataset_schema.get("display_key"))
+        self.assertEqual("cell_line", dataset_schema.get("color_key"))
+        self.assertEqual("stored_at", (dataset_schema.get("alias_map") or {}).get("frozen_at"))
+        self.assertEqual("cell_line", (dataset_schema.get("alias_map") or {}).get("parent_cell_line"))
+        custom_field_keys = {item.get("key") for item in (dataset_schema.get("custom_fields") or [])}
+        self.assertTrue({"cell_line", "short_name", "note"} <= custom_field_keys)
+        response_shapes = result.get("response_shapes") or {}
+        search_shape = response_shapes.get("inventory_search") or {}
+        self.assertEqual("GET /api/v1/inventory/search", search_shape.get("route"))
+        self.assertTrue(
+            any("fuzzy = separator-normalized substring match" in note for note in (search_shape.get("notes") or []))
+        )
+        self.assertTrue(
+            any(
+                item.get("name") == "slot_lookup" and item.get("optional")
+                for item in (search_shape.get("result_fields") or [])
+            )
+        )
+        filter_shape = response_shapes.get("inventory_filter") or {}
+        self.assertEqual("GET /api/v1/inventory/filter", filter_shape.get("route"))
+        self.assertTrue(
+            any(item.get("name") == "values" for item in ((filter_shape.get("nested_objects") or {}).get("rows[]") or []))
+        )
         routes = list(result.get("routes") or [])
         validate_route = next(
             item for item in routes if item.get("method") == "GET" and item.get("path") == "/api/v1/inventory/validate"

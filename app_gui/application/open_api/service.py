@@ -12,6 +12,10 @@ from urllib.parse import parse_qs, urlsplit
 
 from app_gui.plan_executor import preflight_plan
 from lib.inventory_paths import assert_allowed_inventory_yaml_path
+from lib.inventory_query_contracts import (
+    build_inventory_dataset_schema_payload,
+    build_inventory_response_shapes_payload,
+)
 from lib.inventory_paths import list_managed_datasets
 from lib.plan_gate import validate_stage_request
 from lib.plan_item_factory import normalize_plan_action
@@ -206,7 +210,6 @@ def _build_stats_summary(result: dict[str, Any]) -> dict[str, Any]:
         "box_count": box_count,
     }
 
-
 class LocalOpenApiController:
     """Business/controller layer behind the loopback HTTP surface."""
 
@@ -276,6 +279,17 @@ class LocalOpenApiController:
         layout = (meta or {}).get("box_layout") if isinstance(meta, dict) else {}
         return yaml_path, layout if isinstance(layout, dict) else {}
 
+    def _load_current_dataset_data_for_capabilities(self):
+        raw_yaml = str(self._yaml_path_getter() or "").strip()
+        if not raw_yaml or not os.path.isfile(raw_yaml):
+            return None
+        try:
+            yaml_path = assert_allowed_inventory_yaml_path(raw_yaml, must_exist=True)
+            data = load_yaml(yaml_path)
+        except Exception:
+            return None
+        return data if isinstance(data, dict) else None
+
     def _call_gui(self, fn: Callable[[], object]):
         dispatcher = self._gui_dispatcher
         if dispatcher is None or not hasattr(dispatcher, "call"):
@@ -301,6 +315,9 @@ class LocalOpenApiController:
         )
 
     def _handle_capabilities(self):
+        dataset_schema = build_inventory_dataset_schema_payload(
+            self._load_current_dataset_data_for_capabilities()
+        )
         return _response_envelope(
             ok=True,
             message="Local API capabilities",
@@ -320,6 +337,8 @@ class LocalOpenApiController:
                 },
                 "validation_modes": list(LOCAL_OPEN_API_VALIDATION_MODES),
                 "stage_allowed_actions": sorted(LOCAL_OPEN_API_STAGE_ALLOWED_ACTIONS),
+                "dataset_schema": dataset_schema,
+                "response_shapes": build_inventory_response_shapes_payload(),
                 "routes": list(iter_local_open_api_route_descriptions(sort_routes=True)),
             },
         )

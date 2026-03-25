@@ -5,6 +5,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from functools import cmp_to_key
 
+from ..inventory_query_contracts import SEARCH_MODE_VALUES
 from ..csv_export import export_inventory_to_csv
 from ..custom_fields import get_color_key, unsupported_box_fields_issue
 from ..position_fmt import (
@@ -150,11 +151,11 @@ def tool_search_records(
     records = data.get("inventory", [])
     layout = api._get_layout(data)
 
-    if mode not in {"fuzzy", "exact", "keywords"}:
+    if mode not in SEARCH_MODE_VALUES:
         return {
             "ok": False,
             "error_code": "invalid_mode",
-            "message": "mode must be fuzzy/exact/keywords",
+            "message": "mode must be " + "/".join(SEARCH_MODE_VALUES),
         }
 
     normalized_record_id = None
@@ -233,19 +234,20 @@ def tool_search_records(
             }
         normalized_sort_order = sort_order_value
 
-    normalized_query = " ".join(str(query or "").split())
-    if normalized_query == "*":
-        normalized_query = ""
+    raw_query = " ".join(str(query or "").split())
+    if raw_query == "*":
+        raw_query = ""
     query_shortcut = None
-    if normalized_query and normalized_box is None and normalized_position is None:
-        parsed = api.parse_search_location_shortcut(normalized_query, layout)
+    if raw_query and normalized_box is None and normalized_position is None:
+        parsed = api.parse_search_location_shortcut(raw_query, layout)
         if parsed is not None:
             normalized_box, normalized_position = parsed
-            query_shortcut = normalized_query
-            normalized_query = ""
+            query_shortcut = raw_query
+            raw_query = ""
 
+    normalized_query = api.normalize_search_text(raw_query, case_sensitive=case_sensitive)
     keywords = normalized_query.split() if normalized_query else []
-    q = normalized_query if case_sensitive else normalized_query.lower()
+    q = normalized_query
 
     scoped_records = []
     for rec in records:
@@ -294,20 +296,20 @@ def tool_search_records(
     matches = []
     if q:
         for rec in scoped_records:
-            blob = api.record_search_blob(rec, case_sensitive=case_sensitive)
-            if mode in {"fuzzy", "exact"}:
+            if mode == "fuzzy":
+                blob = api.record_search_blob(rec, case_sensitive=case_sensitive)
                 if q in blob:
                     matches.append(rec)
                 continue
 
-            # keywords (AND)
-            ok = True
-            for kw in keywords:
-                kw_cmp = kw if case_sensitive else kw.lower()
-                if kw_cmp not in blob:
-                    ok = False
-                    break
-            if ok and keywords:
+            if mode == "exact":
+                search_values = api.record_search_values(rec, case_sensitive=case_sensitive)
+                if q in search_values:
+                    matches.append(rec)
+                continue
+
+            record_tokens = api.record_search_tokens(rec, case_sensitive=case_sensitive)
+            if keywords and all(kw in record_tokens for kw in keywords):
                 matches.append(rec)
     elif has_structured_filter or not normalized_query:
         matches = list(scoped_records)

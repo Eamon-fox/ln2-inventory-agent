@@ -276,6 +276,18 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
         )
         self.assertEqual(False, params.get("additionalProperties"))
 
+    def test_search_records_contract_describes_separator_normalized_modes(self):
+        self.assertIn("search_records", TOOL_CONTRACTS)
+        params = TOOL_CONTRACTS["search_records"]["parameters"]["properties"]
+
+        query_description = str((params.get("query") or {}).get("description") or "")
+        mode_description = str((params.get("mode") or {}).get("description") or "")
+
+        self.assertIn("spaces, hyphens, and underscores", query_description)
+        self.assertIn("empty or '*'", query_description)
+        self.assertIn("separator-normalized text", mode_description)
+        self.assertIn("keywords = AND-token match", mode_description)
+
 
 class PlanItemTypeTests(unittest.TestCase):
     """Verify PlanItem TypedDict is importable and builders return correct shapes."""

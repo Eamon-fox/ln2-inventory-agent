@@ -955,6 +955,80 @@ class ToolApiTests(ManagedPathTestCase):
             self.assertEqual(1, response["result"]["total_count"])
             self.assertEqual(2, response["result"]["records"][0]["id"])
 
+    def test_tool_search_records_keywords_normalize_separator_variants(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_search_sep_keywords_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        {
+                            "id": 1,
+                            "parent_cell_line": "K562",
+                            "short_name": "RTCB-dTAG_clone3",
+                            "box": 1,
+                            "position": 1,
+                            "frozen_at": "2025-01-01",
+                        },
+                        {
+                            "id": 2,
+                            "parent_cell_line": "K562",
+                            "short_name": "RTCB control",
+                            "box": 1,
+                            "position": 2,
+                            "frozen_at": "2025-01-01",
+                        },
+                    ]
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            spaced = tool_search_records(str(yaml_path), query="RTCB dTAG clone3", mode="keywords")
+            underscored = tool_search_records(str(yaml_path), query="RTCB_dTAG_clone3", mode="keywords")
+
+            self.assertTrue(spaced["ok"])
+            self.assertEqual([1], [item["id"] for item in spaced["result"]["records"]])
+            self.assertEqual(["rtcb", "dtag", "clone3"], spaced["result"]["keywords"])
+            self.assertTrue(underscored["ok"])
+            self.assertEqual([1], [item["id"] for item in underscored["result"]["records"]])
+
+    def test_tool_search_records_exact_matches_normalized_scalar_values_only(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_search_exact_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        {
+                            "id": 1,
+                            "parent_cell_line": "K562",
+                            "short_name": "RTCB-dTAG",
+                            "box": 1,
+                            "position": 1,
+                            "frozen_at": "2025-01-01",
+                        },
+                        {
+                            "id": 2,
+                            "parent_cell_line": "K562",
+                            "short_name": "RTCB-dTAG clone3",
+                            "box": 1,
+                            "position": 2,
+                            "frozen_at": "2025-01-01",
+                        },
+                    ]
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            exact_response = tool_search_records(str(yaml_path), query="RTCB dTAG", mode="exact")
+            fuzzy_response = tool_search_records(str(yaml_path), query="RTCB dTAG", mode="fuzzy")
+
+            self.assertTrue(exact_response["ok"])
+            self.assertEqual([1], [item["id"] for item in exact_response["result"]["records"]])
+            self.assertEqual("rtcb dtag", exact_response["result"]["normalized_query"])
+            self.assertTrue(fuzzy_response["ok"])
+            self.assertEqual(2, fuzzy_response["result"]["total_count"])
+
     def test_tool_search_records_by_box_and_position(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_search_slot_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"

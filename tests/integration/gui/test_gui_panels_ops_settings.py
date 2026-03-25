@@ -729,6 +729,9 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
 
         self.assertIn("# SnowFox 本地 Open API", template_edit.toPlainText())
         self.assertIn("查询参数", template_edit.toPlainText())
+        self.assertIn("`/api/v1/capabilities`", template_edit.toPlainText())
+        self.assertIn("`dataset_schema`", template_edit.toPlainText())
+        self.assertIn("`response_shapes`", template_edit.toPlainText())
         self.assertIn("`summary_only`", template_edit.toPlainText())
 
     def test_settings_dialog_local_api_skill_template_falls_back_to_english(self):

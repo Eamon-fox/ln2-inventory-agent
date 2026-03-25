@@ -23,6 +23,7 @@ _POSITION_SCALAR_KEYS = {
 }
 
 _POSITION_LIST_KEYS = {"positions", "empty_positions"}
+_SEARCH_SEPARATOR_RE = re.compile(r"[\s_-]+")
 
 
 def coerce_position_value(raw_value, layout=None, field_name="position"):
@@ -300,20 +301,48 @@ def validate_source_slot_match(record, *, record_id, from_box, from_pos):
 
 
 def record_search_blob(record, case_sensitive=False):
-    """Build a normalized text blob from one inventory record for matching."""
-    parts = []
-    for value in (record or {}).values():
-        if value is None:
+    """Build a separator-normalized text blob from one inventory record."""
+    return " ".join(record_search_values(record, case_sensitive=case_sensitive))
+
+
+def normalize_search_text(value, case_sensitive=False):
+    """Normalize search text while treating space/hyphen/underscore as equivalent."""
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not case_sensitive:
+        text = text.lower()
+    text = _SEARCH_SEPARATOR_RE.sub(" ", text)
+    return " ".join(text.split())
+
+
+def record_search_values(record, case_sensitive=False):
+    """Return normalized scalar values from one record for exact-style matching."""
+    values = []
+    for raw_value in (record or {}).values():
+        if raw_value is None:
             continue
-        if isinstance(value, (str, int, float, bool)):
-            parts.append(str(value))
+        if isinstance(raw_value, (str, int, float, bool)):
+            normalized = normalize_search_text(raw_value, case_sensitive=case_sensitive)
+            if normalized:
+                values.append(normalized)
             continue
-        if isinstance(value, list):
-            for item in value:
-                if isinstance(item, (str, int, float, bool)):
-                    parts.append(str(item))
-    blob = " ".join(parts)
-    return blob if case_sensitive else blob.lower()
+        if isinstance(raw_value, list):
+            for item in raw_value:
+                if not isinstance(item, (str, int, float, bool)):
+                    continue
+                normalized = normalize_search_text(item, case_sensitive=case_sensitive)
+                if normalized:
+                    values.append(normalized)
+    return values
+
+
+def record_search_tokens(record, case_sensitive=False):
+    """Return normalized search tokens extracted from one record."""
+    tokens = set()
+    for value in record_search_values(record, case_sensitive=case_sensitive):
+        tokens.update(token for token in value.split() if token)
+    return tokens
 
 
 def parse_search_location_shortcut(query_text, layout):
@@ -354,4 +383,7 @@ _parse_slot_payload = parse_slot_payload
 _find_record_by_id_local = find_record_by_id_local
 _validate_source_slot_match = validate_source_slot_match
 _record_search_blob = record_search_blob
+_normalize_search_text = normalize_search_text
+_record_search_values = record_search_values
+_record_search_tokens = record_search_tokens
 _parse_search_location_shortcut = parse_search_location_shortcut

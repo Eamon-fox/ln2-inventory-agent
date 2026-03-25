@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from app_gui.application.open_api.skill_template import (
     LOCAL_OPEN_API_ROUTE_REFERENCE_PLACEHOLDER,
     render_local_api_skill_template,
@@ -35,3 +37,25 @@ def test_render_local_api_skill_template_keeps_plain_text_without_placeholder():
     rendered = render_local_api_skill_template(template, language="en")
 
     assert rendered == template
+
+
+def test_default_english_local_api_skill_template_mentions_capabilities_schema_guidance():
+    root = Path(__file__).resolve().parents[2]
+    template = (root / "app_gui" / "assets" / "local_api_skill_template.en.md").read_text(encoding="utf-8")
+
+    rendered = render_local_api_skill_template(template, language="en")
+
+    assert "call `/api/v1/capabilities` before assuming field names or response keys" in rendered
+    assert "`dataset_schema`" in rendered
+    assert "`response_shapes`" in rendered
+
+
+def test_default_chinese_local_api_skill_template_mentions_capabilities_schema_guidance():
+    root = Path(__file__).resolve().parents[2]
+    template = (root / "app_gui" / "assets" / "local_api_skill_template.zh-CN.md").read_text(encoding="utf-8")
+
+    rendered = render_local_api_skill_template(template, language="zh-CN")
+
+    assert "`/api/v1/capabilities`" in rendered
+    assert "`dataset_schema`" in rendered
+    assert "`response_shapes`" in rendered

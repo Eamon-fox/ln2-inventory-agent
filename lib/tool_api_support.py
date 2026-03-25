@@ -86,6 +86,9 @@ format_positions_in_payload = _parsers.format_positions_in_payload
 find_record_by_id_local = _parsers.find_record_by_id_local
 validate_source_slot_match = _parsers.validate_source_slot_match
 record_search_blob = _parsers.record_search_blob
+normalize_search_text = _parsers.normalize_search_text
+record_search_values = _parsers.record_search_values
+record_search_tokens = _parsers.record_search_tokens
 parse_search_location_shortcut = _parsers.parse_search_location_shortcut
 
 

@@ -30,7 +30,7 @@ LOCAL_OPEN_API_ROUTE_SPECS = {
         "request_arg": None,
         "status_code": 200,
         "effect": "capability_read",
-        "summary": "Describe the local API allowlist, request shapes, and boundary limits.",
+        "summary": "Describe the local API allowlist, request/response shapes, current dataset schema, and boundary limits.",
         "params": [],
     },
     ("GET", "/api/v1/health"): {
