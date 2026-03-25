@@ -205,12 +205,12 @@ def migrate_data_root(source_root: str, target_root: str) -> dict:
 
 
 def remap_inventory_yaml_path(yaml_path: str, *, source_root: str, target_root: str) -> str:
-    current = os.path.abspath(str(yaml_path or "").strip())
+    current = os.path.realpath(os.path.abspath(str(yaml_path or "").strip()))
     source = normalize_data_root(source_root)
     target = normalize_data_root(target_root)
     if not current or not source or not target:
         return ""
-    inventories_root = Path(get_inventories_root(data_root=source, fallback_to_legacy=False))
+    inventories_root = Path(os.path.realpath(get_inventories_root(data_root=source, fallback_to_legacy=False)))
     try:
         rel = Path(current).relative_to(inventories_root)
     except Exception:

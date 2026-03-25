@@ -27,13 +27,13 @@ def _normalize_root(path: str) -> str:
 
 def remap_path_between_data_roots(path: str, *, source_root: str, target_root: str) -> str:
     """Map one absolute path from source_root to target_root when possible."""
-    current = os.path.abspath(str(path or "").strip())
+    current = os.path.realpath(os.path.abspath(str(path or "").strip()))
     source = _normalize_root(source_root)
     target = _normalize_root(target_root)
     if not current or not source or not target:
         return str(path or "")
     try:
-        rel = Path(current).relative_to(Path(source))
+        rel = Path(current).relative_to(Path(os.path.realpath(source)))
     except Exception:
         return str(path or "")
     return os.path.abspath(os.path.join(target, os.fspath(rel)))

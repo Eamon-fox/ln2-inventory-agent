@@ -97,14 +97,23 @@ class AppStorageTests(unittest.TestCase):
 
             payload = yaml.safe_load(target_yaml.read_text(encoding="utf-8")) or {}
             meta = payload.get("meta") or {}
-            self.assertEqual(str(target_yaml.resolve()), meta.get("instance_origin_path"))
+            self.assertEqual(
+                str(target_yaml.resolve()),
+                str(Path(str(meta.get("instance_origin_path") or "")).resolve()),
+            )
             self.assertEqual("demo-instance", meta.get("inventory_instance_id"))
 
             lines = [line for line in target_audit.read_text(encoding="utf-8").splitlines() if line.strip()]
             self.assertEqual(1, len(lines))
             event = json.loads(lines[0])
-            self.assertEqual(str(target_yaml.resolve()), event.get("yaml_path"))
-            self.assertEqual(str(target_backup.resolve()), event.get("backup_path"))
+            self.assertEqual(
+                str(target_yaml.resolve()),
+                str(Path(str(event.get("yaml_path") or "")).resolve()),
+            )
+            self.assertEqual(
+                str(target_backup.resolve()),
+                str(Path(str(event.get("backup_path") or "")).resolve()),
+            )
 
     def test_migrate_data_root_preserves_blank_and_invalid_audit_lines(self):
         with tempfile.TemporaryDirectory() as source_dir, tempfile.TemporaryDirectory() as target_dir:
@@ -134,7 +143,7 @@ class AppStorageTests(unittest.TestCase):
             event = json.loads(first_line)
             self.assertEqual(
                 str(Path(target_dir, "inventories", "demo", "inventory.yaml").resolve()),
-                event.get("yaml_path"),
+                str(Path(str(event.get("yaml_path") or "")).resolve()),
             )
 
 
