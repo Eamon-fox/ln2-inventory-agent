@@ -1,8 +1,8 @@
 """Cell widget used by OverviewPanel grid mode."""
 
-from PySide6.QtCore import QEasingCurve, QMimeData, QPropertyAnimation, QRect, Qt, Signal
+from PySide6.QtCore import QEasingCurve, QMimeData, QPropertyAnimation, QRect, Qt, Signal, QTimer
 from PySide6.QtGui import QColor, QDrag, QFontMetrics, QPainter, QPalette, QPen, QTextLayout, QTextOption
-from PySide6.QtWidgets import QLabel, QPushButton, QStyle, QStyleOptionButton
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QStyle, QStyleOptionButton
 
 from app_gui.ui.theme import resolve_theme_token
 
@@ -11,6 +11,22 @@ _ELLIPSIS_TEXT = "..."
 _CELL_TEXT_MODE_DEFAULT = "default"
 _CELL_TEXT_MODE_WRAPPED = "wrapped"
 _SELECTION_EDGE_ORDER = ("top", "right", "bottom", "left")
+OVERVIEW_CELL_DRAG_MIN_HOLD_MS = 250
+OVERVIEW_CELL_DRAG_MIN_DISTANCE_PX = 20
+
+
+def overview_cell_drag_hold_delay_ms(app=None):
+    current_app = app or QApplication.instance()
+    style_hints = current_app.styleHints() if current_app is not None else None
+    start_drag_time = int(style_hints.startDragTime()) if style_hints is not None else 500
+    return max(OVERVIEW_CELL_DRAG_MIN_HOLD_MS, start_drag_time)
+
+
+def overview_cell_drag_distance_px(app=None):
+    current_app = app or QApplication.instance()
+    style_hints = current_app.styleHints() if current_app is not None else None
+    start_drag_distance = int(style_hints.startDragDistance()) if style_hints is not None else 10
+    return max(OVERVIEW_CELL_DRAG_MIN_DISTANCE_PX, start_drag_distance)
 
 
 def _normalize_cell_text(text):
@@ -102,6 +118,10 @@ class CellButton(QPushButton):
         self.record_id = None
         self.setAcceptDrops(True)
         self._drag_start_pos = None
+        self._drag_hold_armed = False
+        self._drag_hold_timer = QTimer(self)
+        self._drag_hold_timer.setSingleShot(True)
+        self._drag_hold_timer.timeout.connect(self._arm_drag_hold)
         self._last_mouse_modifiers = Qt.NoModifier
         # Keep hover feedback snappy; long animations feel laggy in dense grids.
         self._hover_duration_ms = 120
@@ -131,6 +151,28 @@ class CellButton(QPushButton):
 
     def last_click_modifiers(self):
         return self._last_mouse_modifiers
+
+    @staticmethod
+    def _mouse_event_pos(event):
+        if hasattr(event, "position"):
+            return event.position().toPoint()
+        return event.pos()
+
+    def _drag_hold_delay_ms(self):
+        return overview_cell_drag_hold_delay_ms()
+
+    def _drag_distance_threshold(self):
+        return overview_cell_drag_distance_px()
+
+    def _arm_drag_hold(self):
+        if self._drag_start_pos is None or self.record_id is None:
+            return
+        self._drag_hold_armed = True
+
+    def _clear_drag_state(self):
+        self._drag_hold_timer.stop()
+        self._drag_start_pos = None
+        self._drag_hold_armed = False
 
     def _scaled_rect(self):
         if not self._base_rect.isValid() or self._base_rect.width() <= 0 or self._base_rect.height() <= 0:
@@ -543,6 +585,7 @@ class CellButton(QPushButton):
 
     def hideEvent(self, event):
         self.reset_hover_state()
+        self._clear_drag_state()
         super().hideEvent(event)
 
     def resizeEvent(self, event):
@@ -555,13 +598,17 @@ class CellButton(QPushButton):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            self._drag_start_pos = event.pos()
+            self._drag_start_pos = self._mouse_event_pos(event)
+            self._drag_hold_armed = False
+            if self.record_id is not None:
+                self._drag_hold_timer.start(self._drag_hold_delay_ms())
             self._last_mouse_modifiers = event.modifiers()
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
             self._last_mouse_modifiers = event.modifiers()
+            self._clear_drag_state()
         super().mouseReleaseEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -569,7 +616,16 @@ class CellButton(QPushButton):
             super().mouseMoveEvent(event)
             return
 
-        if (event.pos() - self._drag_start_pos).manhattanLength() < 20:
+        if not (event.buttons() & Qt.LeftButton):
+            self._clear_drag_state()
+            super().mouseMoveEvent(event)
+            return
+
+        if not self._drag_hold_armed:
+            super().mouseMoveEvent(event)
+            return
+
+        if (self._mouse_event_pos(event) - self._drag_start_pos).manhattanLength() < self._drag_distance_threshold():
             super().mouseMoveEvent(event)
             return
 
@@ -578,7 +634,7 @@ class CellButton(QPushButton):
         mime.setData(MIME_TYPE_MOVE, f"{self.box}:{self.pos}:{self.record_id}".encode())
         drag.setMimeData(mime)
         drag.exec(Qt.MoveAction)
-        self._drag_start_pos = None
+        self._clear_drag_state()
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasFormat(MIME_TYPE_MOVE):
@@ -609,6 +665,10 @@ class CellButton(QPushButton):
 __all__ = [
     "CellButton",
     "MIME_TYPE_MOVE",
+    "OVERVIEW_CELL_DRAG_MIN_DISTANCE_PX",
+    "OVERVIEW_CELL_DRAG_MIN_HOLD_MS",
     "_ascii_elide_text",
     "_wrap_cell_text_lines",
+    "overview_cell_drag_distance_px",
+    "overview_cell_drag_hold_delay_ms",
 ]

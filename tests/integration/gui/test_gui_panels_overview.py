@@ -2,6 +2,30 @@
 
 from tests.integration.gui._gui_panels_shared import *  # noqa: F401,F403
 
+
+def _send_widget_mouse_event(
+    widget,
+    event_type,
+    x,
+    y,
+    *,
+    button=Qt.NoButton,
+    buttons=Qt.NoButton,
+    modifiers=Qt.NoModifier,
+):
+    pos = QPointF(float(x), float(y))
+    event = QMouseEvent(
+        event_type,
+        pos,
+        pos,
+        pos,
+        button,
+        buttons,
+        modifiers,
+    )
+    QApplication.sendEvent(widget, event)
+
+
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
 class GuiPanelsOverviewTests(GuiPanelsBaseCase):
     def test_wrap_cell_text_lines_elides_last_visible_line_with_ascii_dots(self):
@@ -832,6 +856,167 @@ class GuiPanelsOverviewTests(GuiPanelsBaseCase):
             ),
             status_messages[-1][0],
         )
+
+    def test_overview_drag_requires_long_press_before_starting_drag(self):
+        from app_gui.ui.overview_panel_cell_button import (
+            MIME_TYPE_MOVE,
+            overview_cell_drag_distance_px,
+            overview_cell_drag_hold_delay_ms,
+        )
+
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
+        panel.show()
+        self._app.processEvents()
+
+        record = {
+            "id": 5,
+            "parent_cell_line": "K562",
+            "short_name": "K562_test",
+            "box": 1,
+            "position": 1,
+        }
+        panel.overview_pos_map = {(1, 1): record}
+        button = panel.overview_cells[(1, 1)]
+        panel._paint_cell(button, 1, 1, record)
+        center = button.rect().center()
+        target_x = center.x() + overview_cell_drag_distance_px(self._app) + 5
+        target_y = center.y()
+
+        class FakeDrag:
+            called = False
+            payload = None
+
+            def __init__(self, parent):
+                FakeDrag.called = True
+                self.parent = parent
+
+            def setMimeData(self, mime):
+                FakeDrag.payload = bytes(mime.data(MIME_TYPE_MOVE)).decode()
+
+            def exec(self, action):
+                return action
+
+        with patch("app_gui.ui.overview_panel_cell_button.QDrag", FakeDrag):
+            _send_widget_mouse_event(
+                button,
+                QEvent.MouseButtonPress,
+                center.x(),
+                center.y(),
+                button=Qt.LeftButton,
+                buttons=Qt.LeftButton,
+            )
+            self._app.processEvents()
+            _send_widget_mouse_event(
+                button,
+                QEvent.MouseMove,
+                target_x,
+                target_y,
+                buttons=Qt.LeftButton,
+            )
+            self._app.processEvents()
+        self.assertFalse(FakeDrag.called)
+
+        with patch("app_gui.ui.overview_panel_cell_button.QDrag", FakeDrag):
+            QTest.qWait(overview_cell_drag_hold_delay_ms(self._app) + 20)
+            _send_widget_mouse_event(
+                button,
+                QEvent.MouseMove,
+                target_x,
+                target_y,
+                buttons=Qt.LeftButton,
+            )
+            self._app.processEvents()
+        self.assertTrue(FakeDrag.called)
+        self.assertEqual("1:1:5", FakeDrag.payload)
+        panel.hide()
+
+    def test_overview_drag_requires_a_new_hold_after_mouse_release(self):
+        from app_gui.ui.overview_panel_cell_button import overview_cell_drag_distance_px, overview_cell_drag_hold_delay_ms
+
+        panel = self._new_overview_panel()
+        panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
+        panel.show()
+        self._app.processEvents()
+
+        record = {
+            "id": 7,
+            "parent_cell_line": "K562",
+            "short_name": "K562_test",
+            "box": 1,
+            "position": 1,
+        }
+        panel.overview_pos_map = {(1, 1): record}
+        button = panel.overview_cells[(1, 1)]
+        panel._paint_cell(button, 1, 1, record)
+        center = button.rect().center()
+        target_x = center.x() + overview_cell_drag_distance_px(self._app) + 5
+        target_y = center.y()
+
+        class FakeDrag:
+            called = False
+
+            def __init__(self, parent):
+                FakeDrag.called = True
+                self.parent = parent
+
+            def setMimeData(self, mime):
+                pass
+
+            def exec(self, action):
+                return action
+
+        with patch("app_gui.ui.overview_panel_cell_button.QDrag", FakeDrag):
+            _send_widget_mouse_event(
+                button,
+                QEvent.MouseButtonPress,
+                center.x(),
+                center.y(),
+                button=Qt.LeftButton,
+                buttons=Qt.LeftButton,
+            )
+            QTest.qWait(overview_cell_drag_hold_delay_ms(self._app) + 20)
+            _send_widget_mouse_event(
+                button,
+                QEvent.MouseButtonRelease,
+                center.x(),
+                center.y(),
+                button=Qt.LeftButton,
+                buttons=Qt.NoButton,
+            )
+            self._app.processEvents()
+
+            _send_widget_mouse_event(
+                button,
+                QEvent.MouseButtonPress,
+                center.x(),
+                center.y(),
+                button=Qt.LeftButton,
+                buttons=Qt.LeftButton,
+            )
+            _send_widget_mouse_event(
+                button,
+                QEvent.MouseMove,
+                target_x,
+                target_y,
+                buttons=Qt.LeftButton,
+            )
+            self._app.processEvents()
+
+        self.assertFalse(FakeDrag.called)
+
+        with patch("app_gui.ui.overview_panel_cell_button.QDrag", FakeDrag):
+            QTest.qWait(overview_cell_drag_hold_delay_ms(self._app) + 20)
+            _send_widget_mouse_event(
+                button,
+                QEvent.MouseMove,
+                target_x,
+                target_y,
+                buttons=Qt.LeftButton,
+            )
+            self._app.processEvents()
+        self.assertTrue(FakeDrag.called)
+        panel.hide()
 
     def test_overview_context_menu_empty_slot_emits_add_prefill(self):
         panel = self._new_overview_panel()
