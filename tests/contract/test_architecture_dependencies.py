@@ -32,45 +32,37 @@ def _import_modules(path: Path):
 
 
 class ArchitectureDependencyTests(unittest.TestCase):
-    def test_domain_layer_does_not_depend_on_pyside(self):
-        rule = _layer_rule("domain_framework_free")
-        target_paths = [ROOT / rel_path for rel_path in list(rule.get("paths") or [])]
-        forbidden_prefixes = tuple(str(item) for item in list(rule.get("forbidden_import_prefixes") or []))
-        self.assertTrue(target_paths, "domain_framework_free paths must not be empty")
-        self.assertTrue(forbidden_prefixes, "domain_framework_free forbidden imports must not be empty")
+    def test_layer_rules_forbid_declared_import_prefixes(self):
+        rules = dict((LAYER_RULES or {}).get("rules") or {})
+        self.assertTrue(rules, "layer_rules.rules must not be empty")
 
-        for target_root in target_paths:
-            self.assertTrue(target_root.exists(), f"{target_root} should exist")
-            for file_path in target_root.rglob("*.py"):
-                modules = _import_modules(file_path)
-                offenders = sorted(
-                    mod for mod in modules if any(mod.startswith(prefix) for prefix in forbidden_prefixes)
+        for rule_name, raw_rule in rules.items():
+            with self.subTest(rule=rule_name):
+                rule = dict(raw_rule or {})
+                target_paths = [ROOT / rel_path for rel_path in list(rule.get("paths") or [])]
+                forbidden_prefixes = tuple(
+                    str(item) for item in list(rule.get("forbidden_import_prefixes") or [])
                 )
-                self.assertEqual(
-                    [],
-                    offenders,
-                    f"{file_path} should not import forbidden modules: {offenders}",
+                self.assertTrue(target_paths, f"{rule_name} paths must not be empty")
+                self.assertTrue(
+                    forbidden_prefixes,
+                    f"{rule_name} forbidden imports must not be empty",
                 )
 
-    def test_ui_layer_does_not_import_write_validation_infra_directly(self):
-        rule = _layer_rule("ui_no_direct_write_validation")
-        target_paths = [ROOT / rel_path for rel_path in list(rule.get("paths") or [])]
-        disallowed_prefixes = tuple(str(item) for item in list(rule.get("forbidden_import_prefixes") or []))
-        self.assertTrue(target_paths, "ui_no_direct_write_validation paths must not be empty")
-        self.assertTrue(disallowed_prefixes, "ui_no_direct_write_validation forbidden imports must not be empty")
-
-        for target_root in target_paths:
-            self.assertTrue(target_root.exists(), f"{target_root} should exist")
-            for file_path in target_root.rglob("*.py"):
-                modules = _import_modules(file_path)
-                offenders = sorted(
-                    mod for mod in modules if any(mod.startswith(prefix) for prefix in disallowed_prefixes)
-                )
-                self.assertEqual(
-                    [],
-                    offenders,
-                    f"{file_path} imports infra write modules directly: {offenders}",
-                )
+                for target_root in target_paths:
+                    self.assertTrue(target_root.exists(), f"{target_root} should exist")
+                    for file_path in target_root.rglob("*.py"):
+                        modules = _import_modules(file_path)
+                        offenders = sorted(
+                            mod
+                            for mod in modules
+                            if any(mod.startswith(prefix) for prefix in forbidden_prefixes)
+                        )
+                        self.assertEqual(
+                            [],
+                            offenders,
+                            f"{file_path} violates {rule_name}: {offenders}",
+                        )
 
 
 if __name__ == "__main__":

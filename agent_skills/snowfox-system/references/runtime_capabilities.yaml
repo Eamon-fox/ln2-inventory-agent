@@ -99,8 +99,10 @@ local_open_api:
     read_routes:
       - GET /api/v1/capabilities
       - GET /api/v1/health
+      - GET /api/v1/capabilities
       - GET /api/v1/datasets
       - GET /api/v1/session
+      - GET /api/v1/gui/stage-plan
       - GET /api/v1/inventory/search
       - GET /api/v1/inventory/filter
       - GET /api/v1/inventory/stats

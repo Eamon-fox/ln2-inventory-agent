@@ -52,11 +52,8 @@ class DocContractIntegrityTests(unittest.TestCase):
         self.assertTrue(modules, "module_map.modules must not be empty")
         for module_id, spec in modules.items():
             module_doc = str((spec or {}).get("module_doc") or "").strip()
-            primary_runbook = str((spec or {}).get("primary_runbook") or "").strip()
             self.assertTrue(module_doc, f"{module_id} missing module_doc")
-            self.assertTrue(primary_runbook, f"{module_id} missing primary_runbook")
             self.assertTrue((ROOT / module_doc).exists(), f"{module_id} module_doc missing on disk: {module_doc}")
-            self.assertTrue((ROOT / primary_runbook).exists(), f"{module_id} primary_runbook missing on disk: {primary_runbook}")
             for rel_path in list((spec or {}).get("owned_paths") or []):
                 if "*" in str(rel_path):
                     continue

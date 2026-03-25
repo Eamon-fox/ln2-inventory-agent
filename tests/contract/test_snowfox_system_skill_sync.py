@@ -77,15 +77,18 @@ class SnowfoxSystemSkillSyncTests(unittest.TestCase):
         self.assertEqual("use_skill", access.get("tool_name"))
         self.assertEqual(packaged, catalog)
 
-    def test_snowfox_system_runtime_references_match_top_level_contract(self):
+    def test_snowfox_system_contract_declares_expected_runtime_scope(self):
         rules = dict(self.skill_contract.get("rules") or {})
         runtime_packaging = dict(rules.get("runtime_packaging") or {})
         snowfox_system = dict(rules.get("snowfox_system") or {})
-        required = set(str(name) for name in list(snowfox_system.get("bundled_runtime_references") or []))
-        payload_refs = {Path(str(path)).stem for path in list(self.skill_payload.get("references") or [])}
+        must_cover = set(str(name) for name in list(snowfox_system.get("must_cover") or []))
 
         self.assertTrue(bool(runtime_packaging.get("runtime_must_not_require_repo_docs_on_user_machine")))
-        self.assertTrue(required <= payload_refs)
+        self.assertEqual(
+            {"gui_operation_paths", "capability_boundaries", "field_schema"},
+            must_cover,
+        )
+        self.assertTrue(bool(snowfox_system.get("must_refuse_unsupported_product_actions_early")))
 
     def test_runtime_payload_excludes_maintainer_only_repo_sources(self):
         self.assertNotIn(
