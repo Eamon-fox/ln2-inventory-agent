@@ -765,6 +765,33 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
         self.assertTrue(messages)
         self.assertIn("api key", messages[-1][0].lower())
 
+    def test_ai_panel_finished_renders_explicit_agent_error_details(self):
+        panel = self._new_ai_panel()
+
+        panel.on_finished(
+            {
+                "ok": False,
+                "result": {
+                    "final": "Agent failed: LLM stream error.",
+                    "error_code": "llm_transport_error",
+                    "message": "MiniMax request failed: EOF occurred in violation of protocol",
+                    "details": {
+                        "provider": "MiniMax",
+                        "endpoint": "https://api.minimaxi.com/v1/chat/completions",
+                        "exception_type": "URLError",
+                    },
+                    "trace_id": "trace-err",
+                },
+            }
+        )
+
+        self.assertTrue(panel.ai_collapsible_blocks)
+        self.assertIn("MiniMax request failed", panel.ai_collapsible_blocks[-1]["content"])
+        self.assertEqual(
+            "MiniMax request failed: EOF occurred in violation of protocol",
+            panel.ai_history[-1]["content"],
+        )
+
     def test_ai_panel_stop_blocks_late_progress_updates(self):
         panel = self._new_ai_panel()
         panel.ai_run_inflight = True

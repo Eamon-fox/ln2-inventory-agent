@@ -371,6 +371,90 @@ class OpenAICompatibleClient(LLMClient, ABC):
             headers=headers,
         )
 
+    @staticmethod
+    def _truncate_text(text, limit=600):
+        clean = str(text or "")
+        if len(clean) <= int(limit):
+            return clean
+        return clean[: int(limit)] + "..."
+
+    @staticmethod
+    def _summarize_exception(exc):
+        return {
+            "exception_type": type(exc).__name__,
+            "exception": str(exc),
+        }
+
+    def _build_error_event(self, error, *, error_code, details=None):
+        payload = {
+            "type": "error",
+            "error": str(error or f"{self.PROVIDER_NAME} stream failed"),
+            "error_code": str(error_code or "llm_stream_failed"),
+        }
+        if isinstance(details, dict) and details:
+            payload["details"] = details
+        return payload
+
+    def _build_api_error_event(self, error_payload, *, endpoint):
+        if isinstance(error_payload, dict):
+            message = error_payload.get("message") or json.dumps(error_payload, ensure_ascii=False)
+        else:
+            message = str(error_payload)
+        return self._build_error_event(
+            f"{self.PROVIDER_NAME} API error: {message}",
+            error_code="llm_api_error",
+            details={
+                "provider": self.PROVIDER_NAME,
+                "endpoint": endpoint,
+                "api_error": error_payload,
+            },
+        )
+
+    def _build_http_error_event(self, exc, *, endpoint):
+        body_text = ""
+        try:
+            body_text = exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            body_text = ""
+        detail = f"HTTP {exc.code}"
+        if body_text:
+            detail = f"{detail}: {self._truncate_text(body_text)}"
+        return self._build_error_event(
+            f"{self.PROVIDER_NAME} request failed ({detail})",
+            error_code="llm_http_error",
+            details={
+                "provider": self.PROVIDER_NAME,
+                "endpoint": endpoint,
+                "http_status": int(exc.code),
+                "response_body": self._truncate_text(body_text),
+                **self._summarize_exception(exc),
+            },
+        )
+
+    def _build_url_error_event(self, exc, *, endpoint):
+        reason = getattr(exc, "reason", exc)
+        return self._build_error_event(
+            f"{self.PROVIDER_NAME} request failed: {reason}",
+            error_code="llm_transport_error",
+            details={
+                "provider": self.PROVIDER_NAME,
+                "endpoint": endpoint,
+                "reason": str(reason),
+                **self._summarize_exception(exc),
+            },
+        )
+
+    def _build_unexpected_error_event(self, exc, *, endpoint):
+        return self._build_error_event(
+            f"{self.PROVIDER_NAME} stream failed: {exc}",
+            error_code="llm_stream_failed",
+            details={
+                "provider": self.PROVIDER_NAME,
+                "endpoint": endpoint,
+                **self._summarize_exception(exc),
+            },
+        )
+
     @abstractmethod
     def _build_request_payload(self, messages, tools=None, temperature=0.0):
         raise NotImplementedError
@@ -403,6 +487,7 @@ class OpenAICompatibleClient(LLMClient, ABC):
     def stream_chat(self, messages, tools=None, temperature=0.0, stop_event=None):
         self._local_stop.clear()
         req = self._build_request(messages, tools=tools, temperature=temperature)
+        endpoint = getattr(req, "full_url", "") or f"{self._base_url}/chat/completions"
 
         pending_tool_calls = {}
         saw_sse = False
@@ -436,7 +521,7 @@ class OpenAICompatibleClient(LLMClient, ABC):
                             continue
 
                         if isinstance(chunk, dict) and chunk.get("error"):
-                            yield {"type": "error", "error": self._format_api_error(chunk.get("error"))}
+                            yield self._build_api_error_event(chunk.get("error"), endpoint=endpoint)
                             return
 
                         for event in self._yield_events_from_chunk(chunk, pending_tool_calls):
@@ -467,9 +552,11 @@ class OpenAICompatibleClient(LLMClient, ABC):
                     yield event
 
         except urlerror.HTTPError as exc:
-            yield {"type": "error", "error": self._format_http_error(exc)}
+            yield self._build_http_error_event(exc, endpoint=endpoint)
         except urlerror.URLError as exc:
-            yield {"type": "error", "error": self._format_url_error(exc)}
+            yield self._build_url_error_event(exc, endpoint=endpoint)
+        except Exception as exc:
+            yield self._build_unexpected_error_event(exc, endpoint=endpoint)
 
     def chat(self, messages, tools=None, temperature=0.0, stop_event=None):
         content_parts = []

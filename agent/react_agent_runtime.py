@@ -318,6 +318,7 @@ def _collect_model_response(self, messages, tool_schemas, trace_id, step, on_eve
     if not hasattr(iterator, "__iter__"):
         return {
             "error": "LLM stream handler returned non-iterable payload.",
+            "error_code": "llm_stream_failed",
             "content": "",
             "tool_calls": [],
         }
@@ -382,6 +383,8 @@ def _collect_model_response(self, messages, tool_schemas, trace_id, step, on_eve
         if event_type == "error":
             return {
                 "error": str(raw_event.get("error") or "LLM stream failed"),
+                "error_code": str(raw_event.get("error_code") or "llm_stream_failed"),
+                "details": raw_event.get("details") if isinstance(raw_event.get("details"), dict) else None,
                 "stopped": False,
                 "content": "".join(answer_parts).strip(),
                 "thought": "".join(thought_parts).strip(),
@@ -592,11 +595,16 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
                 break
 
         if model_response.get("error"):
+            error_code = str(model_response.get("error_code") or "llm_stream_failed")
+            error_message = str(model_response.get("error") or "LLM stream failed")
+            error_details = model_response.get("details") if isinstance(model_response.get("details"), dict) else None
             observation = {
                 "ok": False,
-                "error_code": "llm_stream_failed",
-                "message": str(model_response.get("error") or "LLM stream failed"),
+                "error_code": error_code,
+                "message": error_message,
             }
+            if error_details:
+                observation["details"] = error_details
             self._emit_event(
                 on_event,
                 {
@@ -620,6 +628,9 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
             )
             return {
                 "ok": False,
+                "error_code": error_code,
+                "message": error_message,
+                "details": error_details,
                 "trace_id": trace_id,
                 "steps": step,
                 "final": "Agent failed: LLM stream error.",

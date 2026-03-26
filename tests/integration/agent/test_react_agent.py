@@ -873,6 +873,8 @@ class ReactAgentTests(ManagedPathTestCase):
 
         self.assertFalse(result["ok"])
         self.assertEqual("Agent failed: LLM stream error.", result["final"])
+        self.assertEqual("llm_stream_failed", result.get("error_code"))
+        self.assertEqual("persistent stream error", result.get("message"))
         self.assertEqual(2, llm.calls)
         llm_errors = [
             evt
@@ -880,6 +882,9 @@ class ReactAgentTests(ManagedPathTestCase):
             if evt.get("event") == "error" and evt.get("action") == "llm_response"
         ]
         self.assertEqual(1, len(llm_errors))
+        observation = llm_errors[0].get("observation") or {}
+        self.assertEqual("llm_stream_failed", observation.get("error_code"))
+        self.assertEqual("persistent stream error", observation.get("message"))
 
     def test_react_agent_keeps_reasoning_content_in_tool_assistant_message(self):
         llm = _StreamingToolThenAnswerLLM()

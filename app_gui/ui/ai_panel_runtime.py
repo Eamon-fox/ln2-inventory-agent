@@ -548,6 +548,64 @@ def _extract_progress_observation(self, event):
     return {}
 
 
+def _extract_agent_error_payload(response, raw_result):
+    payload = {}
+    for source in (raw_result, response):
+        if not isinstance(source, dict):
+            continue
+        error_code = str(source.get("error_code") or "").strip()
+        message = str(source.get("message") or "").strip()
+        details = source.get("details")
+        if error_code and not payload.get("error_code"):
+            payload["error_code"] = error_code
+        if message and not payload.get("message"):
+            payload["message"] = message
+        if isinstance(details, dict) and details and not payload.get("details"):
+            payload["details"] = details
+    return payload
+
+
+def _summarize_agent_error(payload):
+    if not isinstance(payload, dict):
+        return ""
+
+    message = str(payload.get("message") or "").strip()
+    if message:
+        return message
+
+    localized = localize_error_payload(
+        {
+            "error_code": payload.get("error_code"),
+            "details": payload.get("details"),
+        },
+        fallback="",
+    ).strip()
+    if localized:
+        return localized
+    return ""
+
+
+def _render_agent_error(self, payload, *, trace_id=""):
+    summary = _summarize_agent_error(payload) or "Unknown error"
+    final_text = summary
+    details_payload = {}
+    if isinstance(payload, dict):
+        details_payload.update(payload)
+    trace_text = str(trace_id or "").strip()
+    if trace_text:
+        details_payload.setdefault("trace_id", trace_text)
+    if details_payload:
+        self._append_chat_with_collapsible(
+            "System",
+            final_text,
+            details_payload,
+            collapsed_preview_lines=0,
+        )
+    else:
+        self._append_chat("System", final_text)
+    return final_text
+
+
 def _handle_progress_tool_end(self, event):
     data = event.get("data") or {}
     name = str(data.get("name") or event.get("action") or "tool")
@@ -810,6 +868,7 @@ def on_finished(self, response):
         raw_result = {}
         protocol_error = bool(response.get("ok"))
     self.ai_summary_state = raw_result.get("summary_state") if isinstance(raw_result.get("summary_state"), dict) else self.ai_summary_state
+    error_payload = _extract_agent_error_payload(response, raw_result)
 
     if protocol_error:
         final_text = "Internal protocol error: missing result payload."
@@ -824,14 +883,25 @@ def on_finished(self, response):
         self._end_stream_chat()
         streamed_text = str((self.ai_last_stream_block or {}).get("text") or "").strip()
 
+    rendered_error_notice = False
+    if not protocol_error and not bool(response.get("ok")) and error_payload:
+        final_text = _render_agent_error(
+            self,
+            error_payload,
+            trace_id=str(raw_result.get("trace_id") or ""),
+        )
+        rendered_error_notice = True
+
     used_stream_markdown_rewrite = False
-    if streamed_text and final_text.strip() == streamed_text and not had_thought_stream:
+    if not rendered_error_notice and streamed_text and final_text.strip() == streamed_text and not had_thought_stream:
         used_stream_markdown_rewrite = self._replace_stream_block_with_markdown(
             self.ai_last_stream_block,
             final_text,
         )
 
-    if not streamed_text:
+    if rendered_error_notice:
+        pass
+    elif not streamed_text:
         self._append_chat("Agent", final_text)
     elif final_text.strip() != streamed_text:
         # Keep a final canonical message if streamed chunks differ.
