@@ -189,7 +189,12 @@ def _build_audit_meta(action, source, tool_name, actor_context=None, details=Non
     }
 
 
-def _validate_data_or_error(data, message_prefix="Write blocked: integrity validation failed"):
+def _validate_data_or_error(
+    data,
+    message_prefix="Write blocked: integrity validation failed",
+    *,
+    changed_ids=None,
+):
     """Return structured validation error payload when data is invalid.
 
     Legacy-data policy (see docs/modules/13-库存核心.md「校验错误输出契约」):
@@ -197,8 +202,16 @@ def _validate_data_or_error(data, message_prefix="Write blocked: integrity valid
     block writes by default. Set the ``LN2_STRICT_LEGACY_VALIDATION`` env
     var (or ``validation.strict_legacy_validation`` in the runtime config)
     to ``true`` to promote those warnings into blocking errors.
+
+    Args:
+        data: YAML document dict.
+        message_prefix: Prefix for the human-readable summary.
+        changed_ids: Optional iterable of record ids touched by the current
+            write. When supplied, per-record rules only apply to those
+            records — cross-record checks (duplicate id / position conflict)
+            remain global. Passing ``None`` validates every record.
     """
-    errors, warnings = validate_inventory(data)
+    errors, warnings = validate_inventory(data, changed_ids=changed_ids)
     if _config.strict_legacy_validation() and warnings:
         errors = list(errors) + list(warnings)
     if not errors:
@@ -212,9 +225,9 @@ def _validate_data_or_error(data, message_prefix="Write blocked: integrity valid
     }
 
 
-def _collect_legacy_warnings(data):
+def _collect_legacy_warnings(data, *, changed_ids=None):
     """Return structured detail dicts for non-blocking legacy warnings."""
-    _errors, warnings = validate_inventory(data)
+    _errors, warnings = validate_inventory(data, changed_ids=changed_ids)
     return extract_error_details(warnings)
 
 

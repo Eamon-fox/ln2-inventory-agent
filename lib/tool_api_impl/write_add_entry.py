@@ -309,7 +309,13 @@ def _persist_add_entry(
             )
 
         candidate_inventory.extend(new_records)
-        validation_error = api._validate_data_or_error(candidate_data)
+        new_ids = [
+            r.get("id") for r in new_records
+            if isinstance(r, dict) and r.get("id") is not None
+        ]
+        validation_error = api._validate_data_or_error(
+            candidate_data, changed_ids=new_ids or None
+        )
         if validation_error:
             validation_error = validation_error or {
                 "error_code": "integrity_validation_failed",

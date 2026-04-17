@@ -261,7 +261,9 @@ def tool_edit_entry(
     response_before = response_sections["before"]
     response_after = response_sections["after"]
 
-    validation_error = api._validate_data_or_error(candidate_data)
+    validation_error = api._validate_data_or_error(
+        candidate_data, changed_ids=[record_id]
+    )
     if validation_error:
         return api._failure_result(
             yaml_path=yaml_path,

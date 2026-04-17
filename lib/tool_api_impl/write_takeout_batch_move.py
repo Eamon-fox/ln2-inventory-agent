@@ -415,7 +415,14 @@ def _persist_move_plan(
             if failure:
                 return None, None, failure
 
-        if api._validate_data_or_error(candidate_data):
+        touched_ids = [
+            records[idx].get("id")
+            for idx in touched_indices
+            if isinstance(records[idx], dict) and records[idx].get("id") is not None
+        ]
+        if api._validate_data_or_error(
+            candidate_data, changed_ids=touched_ids or None
+        ):
             return None, None, build_integrity_failure(
                 candidate_data=candidate_data,
                 yaml_path=yaml_path,

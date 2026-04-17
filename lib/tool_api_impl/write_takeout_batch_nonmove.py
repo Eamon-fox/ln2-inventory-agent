@@ -176,7 +176,12 @@ def _persist_batch_nonmove_plan(
             if failure:
                 return None, failure
 
-        if api._validate_data_or_error(candidate_data):
+        touched_ids = [
+            op.get("record_id") for op in operations if op.get("record_id") is not None
+        ]
+        if api._validate_data_or_error(
+            candidate_data, changed_ids=touched_ids or None
+        ):
             return None, build_integrity_failure(
                 candidate_data=candidate_data,
                 yaml_path=yaml_path,

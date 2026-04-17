@@ -192,7 +192,13 @@ def tool_batch_add_entries(
         }
 
     # Phase 2: Single integrity validation on final state
-    validation_error = api._validate_data_or_error(candidate_data)
+    batch_changed_ids = []
+    for r in entry_results:
+        if r.get("ok"):
+            batch_changed_ids.extend(r.get("new_ids") or [])
+    validation_error = api._validate_data_or_error(
+        candidate_data, changed_ids=batch_changed_ids or None
+    )
     if validation_error:
         return {
             "ok": False,

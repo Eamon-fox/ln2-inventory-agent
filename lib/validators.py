@@ -423,8 +423,18 @@ def _format_conflict_with_source(
     )
 
 
-def validate_inventory(data):
+def validate_inventory(data, *, changed_ids=None):
     """Validate full inventory document.
+
+    Args:
+        data: YAML-loaded dict with ``inventory`` + ``meta``.
+        changed_ids: Optional iterable of record ids touched by the current
+            write. When supplied, per-record checks (``validate_record``)
+            only run for those records; cross-record checks
+            (``check_duplicate_ids`` / ``check_position_conflicts``) still
+            scan the full inventory because their constraints are global
+            by definition. Passing ``None`` preserves the legacy
+            "validate everything" behavior.
 
     Returns:
         tuple[list[str], list[str]]: (errors, warnings)
@@ -455,9 +465,15 @@ def validate_inventory(data):
     if indexing and not is_valid_box_layout_indexing(indexing):
         errors.append("meta.box_layout.indexing must be 'numeric' or 'alphanumeric'")
 
+    changed_id_set = None
+    if changed_ids is not None:
+        changed_id_set = {cid for cid in changed_ids if cid is not None}
+
     for idx, rec in enumerate(inventory):
         if not isinstance(rec, dict):
             errors.append(f"Record #{idx + 1}: must be an object")
+            continue
+        if changed_id_set is not None and rec.get("id") not in changed_id_set:
             continue
         rec_errors, rec_warnings = validate_record(
             rec,
