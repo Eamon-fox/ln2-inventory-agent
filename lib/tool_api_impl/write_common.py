@@ -42,6 +42,7 @@ def build_integrity_failure(
         tool_input=tool_input,
         before_data=before_data,
         errors=payload.get("errors"),
+        errors_detail=payload.get("errors_detail"),
         details=details,
         extra=extra,
     )

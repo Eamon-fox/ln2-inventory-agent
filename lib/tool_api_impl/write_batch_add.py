@@ -199,6 +199,7 @@ def tool_batch_add_entries(
             "error_code": validation_error.get("error_code", "integrity_validation_failed"),
             "message": validation_error.get("message", "Validation failed"),
             "errors": validation_error.get("errors"),
+            "errors_detail": validation_error.get("errors_detail"),
         }
 
     # Phase 3: Single disk write

@@ -274,6 +274,7 @@ def tool_edit_entry(
             tool_input=tool_input,
             before_data=data,
             errors=validation_error.get("errors"),
+            errors_detail=validation_error.get("errors_detail"),
         )
 
     if dry_run:

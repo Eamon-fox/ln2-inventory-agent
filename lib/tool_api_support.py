@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from .position_fmt import get_box_numbers
 from .schema_aliases import get_stored_at
 from .takeout_parser import extract_events
+from .validation_primitives import extract_error_details
 from .validators import format_validation_errors, validate_inventory
 from .yaml_ops import append_audit_event, load_yaml
 from . import tool_api_parsers as _parsers
@@ -196,7 +197,8 @@ def _validate_data_or_error(data, message_prefix="Write blocked: integrity valid
         "ok": False,
         "error_code": "integrity_validation_failed",
         "message": format_validation_errors(errors, prefix=message_prefix),
-        "errors": errors,
+        "errors": [str(err) for err in errors],
+        "errors_detail": extract_error_details(errors),
     }
 
 
@@ -211,6 +213,7 @@ def _append_failed_audit(
     error_code=None,
     message=None,
     errors=None,
+    errors_detail=None,
     before_data=None,
 ):
     """Best-effort audit append for blocked/failed write operations."""
@@ -228,7 +231,9 @@ def _append_failed_audit(
         "message": message,
     }
     if errors:
-        error_payload["errors"] = errors
+        error_payload["errors"] = [str(err) for err in errors]
+    if errors_detail:
+        error_payload["errors_detail"] = list(errors_detail)
     meta["error"] = error_payload
 
     snapshot = before_data if isinstance(before_data, dict) else None
@@ -257,6 +262,7 @@ def _failure_result(
     tool_input=None,
     before_data=None,
     errors=None,
+    errors_detail=None,
     extra=None,
 ):
     payload = {
@@ -265,7 +271,9 @@ def _failure_result(
         "message": message,
     }
     if errors is not None:
-        payload["errors"] = errors
+        payload["errors"] = [str(err) for err in errors]
+    if errors_detail is not None:
+        payload["errors_detail"] = list(errors_detail)
     if extra:
         payload.update(extra)
 
@@ -280,6 +288,7 @@ def _failure_result(
         error_code=error_code,
         message=message,
         errors=errors,
+        errors_detail=errors_detail,
         before_data=before_data,
     )
     layout = _get_layout(before_data) if isinstance(before_data, dict) else {}

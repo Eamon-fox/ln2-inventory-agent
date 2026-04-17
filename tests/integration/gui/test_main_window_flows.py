@@ -17,7 +17,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import Qt, QObject
     from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
     from app_gui.main_window_flows import DatasetFlow, ManageBoxesFlow, SettingsFlow, WindowStateFlow
@@ -28,6 +28,7 @@ try:
     PYSIDE_AVAILABLE = True
 except Exception:
     Qt = None
+    QObject = object
     QApplication = None
     QDialog = None
     QMessageBox = None
@@ -176,16 +177,14 @@ class _FakeMessageBox:
         self.default_button = button
 
 
-class _FakeComboBox:
+class _FakeComboBox(QObject):
     def __init__(self):
+        super().__init__()
         self.items = []
         self.current_index = -1
         self.enabled = True
         self.tooltip = ""
         self.blocked = False
-
-    def blockSignals(self, value):
-        self.blocked = bool(value)
 
     def clear(self):
         self.items = []

@@ -18,6 +18,8 @@ from .position_fmt import (
     _indexing,
 )
 from .validation_primitives import (
+    ValidationMessage,
+    _vmsg,
     is_plain_int as _is_plain_int,
     validate_date_format,
     parse_date as _parse_date_impl,
@@ -282,7 +284,16 @@ def validate_record(rec, idx=None, layout=None, meta=None, inventory=None):
     for field in sorted(strict_required_keys):
         value = rec.get(field)
         if isinstance(value, str) and not value.strip():
-            errors.append(f"{rec_label}: '{field}' must be a non-empty string")
+            errors.append(_vmsg(
+                f"{rec_label}: '{field}' must be a non-empty string",
+                rule="required_empty_string",
+                field=field,
+                value=value,
+                record_id=rec.get("id") if isinstance(rec, dict) else None,
+                record_index=idx,
+                box=rec.get("box") if isinstance(rec, dict) else None,
+                position=rec.get("position") if isinstance(rec, dict) else None,
+            ))
 
     return errors, warnings
 
@@ -299,9 +310,15 @@ def check_duplicate_ids(records):
             continue
         if rec_id in id_map:
             prev_idx = id_map[rec_id]
-            errors.append(
-                f"Duplicate ID {rec_id}: Record #{prev_idx + 1} and Record #{idx + 1}"
-            )
+            errors.append(_vmsg(
+                f"Duplicate ID {rec_id}: Record #{prev_idx + 1} and Record #{idx + 1}",
+                rule="duplicate_id",
+                field="id",
+                value=rec_id,
+                record_id=rec_id,
+                record_index=idx,
+                previous_record_index=prev_idx,
+            ))
         else:
             id_map[rec_id] = idx
     return errors
@@ -329,22 +346,39 @@ def check_position_conflicts(records, *, existing_count: int = 0):
         if _is_plain_int(box) and _is_plain_int(position):
             usage[(box, position)].append((idx, rec))
 
-    conflicts: list[str] = []
+    conflicts: list = []
     for (box, pos), entries in usage.items():
         if len(entries) <= 1:
             continue
+        entry_refs = [
+            {"record_id": rec.get("id"), "record_index": idx}
+            for idx, rec in entries
+        ]
         if existing_count > 0:
-            conflicts.append(
-                _format_conflict_with_source(box, pos, entries, existing_count)
-            )
+            text = _format_conflict_with_source(box, pos, entries, existing_count)
+            conflicts.append(_vmsg(
+                text,
+                rule="position_conflict",
+                field="position",
+                box=box,
+                position=pos,
+                entries=entry_refs,
+                conflict_scope="cross_source",
+            ))
         else:
             rec_ids = ", ".join(
                 f"#{idx + 1} (id={rec.get('id')})" for idx, rec in entries
             )
-            conflicts.append(
+            conflicts.append(_vmsg(
                 f"Position conflict: Box {box} Position {pos} "
-                f"is occupied by multiple records: {rec_ids}"
-            )
+                f"is occupied by multiple records: {rec_ids}",
+                rule="position_conflict",
+                field="position",
+                box=box,
+                position=pos,
+                entries=entry_refs,
+                conflict_scope="single_source",
+            ))
     return conflicts
 
 

@@ -305,6 +305,7 @@ def _persist_add_entry(
                 tool_input=tool_input,
                 before_data=data,
                 errors=validation_error.get("errors"),
+                errors_detail=validation_error.get("errors_detail"),
             )
 
         candidate_inventory.extend(new_records)
@@ -326,6 +327,7 @@ def _persist_add_entry(
                 tool_input=tool_input,
                 before_data=data,
                 errors=validation_error.get("errors"),
+                errors_detail=validation_error.get("errors_detail"),
                 details=failure_details(
                     op="add_entry",
                     record_ids=[item["id"] for item in created],

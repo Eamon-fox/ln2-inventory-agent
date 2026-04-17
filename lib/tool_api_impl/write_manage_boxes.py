@@ -500,6 +500,7 @@ def _tool_manage_boxes_impl(
             tool_input=tool_input,
             before_data=context["data"],
             errors=validation_error.get("errors"),
+            errors_detail=validation_error.get("errors_detail"),
             details=manage_boxes_details(sub_op=preview.get("operation"), preview=preview),
         )
 

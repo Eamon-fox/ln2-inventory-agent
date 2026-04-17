@@ -20,6 +20,44 @@ from .schema_aliases import (
 )
 
 
+class ValidationMessage(str):
+    """Error/warning message that also carries structured detail metadata.
+
+    Subclassing ``str`` keeps backward compatibility: every place that currently
+    treats validator output as strings (formatting, logging, test assertions on
+    message text) continues to work unchanged. GUI layers can probe
+    ``getattr(msg, "detail", None)`` to recover the structured payload.
+    """
+
+    __slots__ = ("detail",)
+
+    def __new__(cls, text: str, **detail: Any):
+        instance = super().__new__(cls, text)
+        instance.detail = dict(detail)
+        return instance
+
+
+def _vmsg(text: str, **detail: Any) -> ValidationMessage:
+    return ValidationMessage(text, **detail)
+
+
+def extract_error_details(errors: Any) -> List[Dict[str, Any]]:
+    """Return structured detail dicts for every ValidationMessage in *errors*.
+
+    Plain strings are returned with ``{"message": str}`` so callers always get a
+    uniform list of dicts (possibly with sparse fields).
+    """
+    result: List[Dict[str, Any]] = []
+    for err in errors or []:
+        if isinstance(err, ValidationMessage):
+            entry = dict(err.detail)
+            entry.setdefault("message", str(err))
+            result.append(entry)
+        else:
+            result.append({"message": str(err)})
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Scalar type helpers
 # ---------------------------------------------------------------------------
@@ -148,50 +186,95 @@ def validate_record_fields(
     warnings: List[str] = []
     label = record_label(rec, idx)
     pos_lo, pos_hi = pos_range
+    rec_id = rec.get("id") if isinstance(rec, dict) else None
+    rec_box = rec.get("box") if isinstance(rec, dict) else None
+    rec_position = rec.get("position") if isinstance(rec, dict) else None
+
+    def _ctx(**extra: Any) -> Dict[str, Any]:
+        base = {
+            "record_id": rec_id,
+            "record_index": idx,
+            "box": rec_box,
+            "position": rec_position,
+        }
+        base.update(extra)
+        return base
 
     # --- required fields ---
     for field in required_fields:
         if field not in rec or rec[field] is None:
-            errors.append(f"{label}: missing required field '{field}'")
+            errors.append(_vmsg(
+                f"{label}: missing required field '{field}'",
+                rule="missing_required",
+                field=field,
+                **_ctx(),
+            ))
 
     # --- id ---
     rec_id_value = rec.get("id")
     if not is_plain_int(rec_id_value):
-        errors.append(f"{label}: 'id' must be a positive integer")
+        errors.append(_vmsg(
+            f"{label}: 'id' must be a positive integer",
+            rule="invalid_id", field="id", value=rec_id_value, **_ctx(),
+        ))
     elif rec_id_value <= 0:
-        errors.append(f"{label}: 'id' must be a positive integer")
+        errors.append(_vmsg(
+            f"{label}: 'id' must be a positive integer",
+            rule="invalid_id", field="id", value=rec_id_value, **_ctx(),
+        ))
 
     # --- box ---
     box = rec.get("box")
     if not is_plain_int(box):
-        errors.append(f"{label}: 'box' must be an integer")
+        errors.append(_vmsg(
+            f"{label}: 'box' must be an integer",
+            rule="invalid_box", field="box", value=box, **_ctx(),
+        ))
     elif not validate_box_fn(box):
         box_rule = format_box_constraint_fn()
-        errors.append(f"{label}: 'box' out of range ({box_rule})")
+        errors.append(_vmsg(
+            f"{label}: 'box' out of range ({box_rule})",
+            rule="box_out_of_range", field="box", value=box,
+            expected=box_rule, **_ctx(),
+        ))
 
     # --- position ---
     position = rec.get("position")
     if position is not None:
         if not is_plain_int(position):
-            errors.append(f"{label}: 'position' must be an integer")
+            errors.append(_vmsg(
+                f"{label}: 'position' must be an integer",
+                rule="invalid_position", field="position", value=position, **_ctx(),
+            ))
         elif not (pos_lo <= position <= pos_hi):
-            errors.append(
-                f"{label}: 'position' {position} out of range ({pos_lo}-{pos_hi})"
-            )
+            errors.append(_vmsg(
+                f"{label}: 'position' {position} out of range ({pos_lo}-{pos_hi})",
+                rule="position_out_of_range", field="position", value=position,
+                expected=f"{pos_lo}-{pos_hi}", **_ctx(),
+            ))
     else:
         if not has_takeout_history(rec, normalize_action_fn):
-            errors.append(
-                f"{label}: 'position' is null but no takeout history found"
-            )
+            errors.append(_vmsg(
+                f"{label}: 'position' is null but no takeout history found",
+                rule="position_null_without_takeout", field="position", **_ctx(),
+            ))
 
     # --- frozen_at ---
     stored_at = get_stored_at(rec)
     if not validate_date_format(stored_at):
-        errors.append(f"{label}: '{CANONICAL_STORED_AT_KEY}' must be YYYY-MM-DD")
+        errors.append(_vmsg(
+            f"{label}: '{CANONICAL_STORED_AT_KEY}' must be YYYY-MM-DD",
+            rule="invalid_date", field=CANONICAL_STORED_AT_KEY,
+            value=stored_at, expected="YYYY-MM-DD", **_ctx(),
+        ))
     else:
         frozen_date = parse_date(stored_at)
         if frozen_date and frozen_date > datetime.now():
-            errors.append(f"{label}: stored date {stored_at} is in the future")
+            errors.append(_vmsg(
+                f"{label}: stored date {stored_at} is in the future",
+                rule="date_in_future", field=CANONICAL_STORED_AT_KEY,
+                value=stored_at, **_ctx(),
+            ))
 
     # --- thaw_events ---
     _validate_thaw_events(
@@ -216,57 +299,97 @@ def _validate_thaw_events(
 ) -> None:
     """Validate the thaw_events list within a record."""
     event_field_label = structural_field_label("storage_events")
+    rec_id = rec.get("id") if isinstance(rec, dict) else None
+    rec_box = rec.get("box") if isinstance(rec, dict) else None
+    rec_position = rec.get("position") if isinstance(rec, dict) else None
+
+    def _ev_ctx(event_idx: int, **extra: Any) -> Dict[str, Any]:
+        base = {
+            "record_id": rec_id,
+            "box": rec_box,
+            "position": rec_position,
+            "field": "storage_events",
+            "event_index": event_idx,
+        }
+        base.update(extra)
+        return base
+
     storage_events = get_storage_events(rec)
     if storage_events is None:
         return
     if not isinstance(storage_events, list):
-        errors.append(f"{label}: '{event_field_label}' must be a list")
+        errors.append(_vmsg(
+            f"{label}: '{event_field_label}' must be a list",
+            rule="invalid_storage_events", field="storage_events",
+            record_id=rec_id, box=rec_box, position=rec_position,
+        ))
         return
 
     for event_idx, ev in enumerate(storage_events, 1):
         if not isinstance(ev, dict):
-            errors.append(f"{label}: {event_field_label}[{event_idx}] must be an object")
+            errors.append(_vmsg(
+                f"{label}: {event_field_label}[{event_idx}] must be an object",
+                rule="invalid_event_shape", **_ev_ctx(event_idx),
+            ))
             continue
 
         ev_action = normalize_action_fn(ev.get("action"))
         if not ev_action:
-            errors.append(f"{label}: {event_field_label}[{event_idx}] has invalid action")
+            errors.append(_vmsg(
+                f"{label}: {event_field_label}[{event_idx}] has invalid action",
+                rule="invalid_event_action", value=ev.get("action"),
+                **_ev_ctx(event_idx),
+            ))
 
         ev_date = ev.get("date")
         if not validate_date_format(ev_date):
-            errors.append(f"{label}: {event_field_label}[{event_idx}] has invalid date")
+            errors.append(_vmsg(
+                f"{label}: {event_field_label}[{event_idx}] has invalid date",
+                rule="invalid_event_date", value=ev_date,
+                expected="YYYY-MM-DD", **_ev_ctx(event_idx),
+            ))
         elif check_event_future_dates:
             parsed_ev_date = parse_date(ev_date)
             if parsed_ev_date and parsed_ev_date > datetime.now():
-                errors.append(
-                    f"{label}: {event_field_label}[{event_idx}] date {ev_date} is in the future"
-                )
+                errors.append(_vmsg(
+                    f"{label}: {event_field_label}[{event_idx}] date {ev_date} is in the future",
+                    rule="event_date_in_future", value=ev_date,
+                    **_ev_ctx(event_idx),
+                ))
 
         ev_positions = ev.get("positions")
         if isinstance(ev_positions, int):
             ev_positions = [ev_positions]
         if not isinstance(ev_positions, list) or not ev_positions:
-            errors.append(
-                f"{label}: {event_field_label}[{event_idx}] positions must be a non-empty list"
-            )
+            errors.append(_vmsg(
+                f"{label}: {event_field_label}[{event_idx}] positions must be a non-empty list",
+                rule="invalid_event_positions", value=ev.get("positions"),
+                **_ev_ctx(event_idx),
+            ))
             continue
 
         seen_ev_pos: Set[int] = set()
         for ev_pos in ev_positions:
             if not isinstance(ev_pos, int):
-                errors.append(
-                    f"{label}: {event_field_label}[{event_idx}] position {ev_pos} must be an integer"
-                )
+                errors.append(_vmsg(
+                    f"{label}: {event_field_label}[{event_idx}] position {ev_pos} must be an integer",
+                    rule="invalid_event_position_type", value=ev_pos,
+                    **_ev_ctx(event_idx),
+                ))
                 continue
             if not (pos_lo <= ev_pos <= pos_hi):
-                errors.append(
-                    f"{label}: {event_field_label}[{event_idx}] position {ev_pos} out of range ({pos_lo}-{pos_hi})"
-                )
+                errors.append(_vmsg(
+                    f"{label}: {event_field_label}[{event_idx}] position {ev_pos} out of range ({pos_lo}-{pos_hi})",
+                    rule="event_position_out_of_range", value=ev_pos,
+                    expected=f"{pos_lo}-{pos_hi}", **_ev_ctx(event_idx),
+                ))
                 continue
             if ev_pos in seen_ev_pos:
-                errors.append(
-                    f"{label}: {event_field_label}[{event_idx}] duplicate position {ev_pos}"
-                )
+                errors.append(_vmsg(
+                    f"{label}: {event_field_label}[{event_idx}] duplicate position {ev_pos}",
+                    rule="duplicate_event_position", value=ev_pos,
+                    **_ev_ctx(event_idx),
+                ))
             seen_ev_pos.add(ev_pos)
 
 
@@ -277,13 +400,30 @@ def _validate_option_fields(
     warnings: List[str],
 ) -> None:
     """Validate option-bearing fields with relaxed (warning-only) semantics."""
+    rec_id = rec.get("id") if isinstance(rec, dict) else None
+    rec_box = rec.get("box") if isinstance(rec, dict) else None
+    rec_position = rec.get("position") if isinstance(rec, dict) else None
+
+    def _opt_ctx(fkey: str, **extra: Any) -> Dict[str, Any]:
+        base = {
+            "record_id": rec_id,
+            "box": rec_box,
+            "position": rec_position,
+            "field": fkey,
+        }
+        base.update(extra)
+        return base
+
     for field_def in option_fields:
         fkey = field_def["key"]
         foptions = field_def.get("options") or []
         frequired = field_def.get("required", False)
 
         if fkey not in rec:
-            warnings.append(f"{label}: missing '{fkey}' (legacy-compatible warning)")
+            warnings.append(_vmsg(
+                f"{label}: missing '{fkey}' (legacy-compatible warning)",
+                rule="option_field_missing", **_opt_ctx(fkey),
+            ))
             continue
 
         raw_val = rec.get(fkey)
@@ -293,19 +433,25 @@ def _validate_option_fields(
             val = raw_val.strip()
         else:
             val = str(raw_val).strip()
-            warnings.append(
-                f"{label}: '{fkey}' is not a string (legacy-compatible warning)"
-            )
+            warnings.append(_vmsg(
+                f"{label}: '{fkey}' is not a string (legacy-compatible warning)",
+                rule="option_field_not_string", value=raw_val,
+                **_opt_ctx(fkey),
+            ))
 
         if frequired and not val:
-            warnings.append(
-                f"{label}: '{fkey}' is empty while required=true (legacy-compatible warning)"
-            )
+            warnings.append(_vmsg(
+                f"{label}: '{fkey}' is empty while required=true (legacy-compatible warning)",
+                rule="option_field_empty_required", value=raw_val,
+                **_opt_ctx(fkey),
+            ))
         elif val and foptions and val not in foptions:
             opts_str = ", ".join(foptions[:5])
             if len(foptions) > 5:
                 opts_str += f" ... total {len(foptions)}"
-            warnings.append(
+            warnings.append(_vmsg(
                 f"{label}: '{fkey}' not in configured options ({opts_str}) "
-                "(legacy-compatible warning)"
-            )
+                "(legacy-compatible warning)",
+                rule="option_field_not_in_options", value=val,
+                expected=list(foptions), **_opt_ctx(fkey),
+            ))

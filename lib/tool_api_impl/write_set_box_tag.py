@@ -148,6 +148,7 @@ def tool_set_box_tag(
             tool_input=tool_input,
             before_data=data,
             errors=integrity_error.get("errors"),
+            errors_detail=integrity_error.get("errors_detail"),
             details=failure_details(op="set_box_tag", box=box_num),
         )
 
