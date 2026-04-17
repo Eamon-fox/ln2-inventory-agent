@@ -1,17 +1,17 @@
 {
-  "version": "1.3.10",
-  "download_url": "https://snowfox-release.oss-cn-beijing.aliyuncs.com/SnowFox-Setup-1.3.10.exe",
+  "version": "1.3.11",
+  "download_url": "https://snowfox-release.oss-cn-beijing.aliyuncs.com/SnowFox-Setup-1.3.11.exe",
   "platforms": {
     "windows": {
-      "download_url": "https://snowfox-release.oss-cn-beijing.aliyuncs.com/SnowFox-Setup-1.3.10.exe",
-      "asset_name": "SnowFox-Setup-1.3.10.exe",
+      "download_url": "https://snowfox-release.oss-cn-beijing.aliyuncs.com/SnowFox-Setup-1.3.11.exe",
+      "asset_name": "SnowFox-Setup-1.3.11.exe",
       "auto_update": true
     },
     "macos": {
-      "download_url": "https://snowfox-release.oss-cn-beijing.aliyuncs.com/SnowFox-1.3.10-macOS.pkg",
-      "asset_name": "SnowFox-1.3.10-macOS.pkg",
+      "download_url": "https://snowfox-release.oss-cn-beijing.aliyuncs.com/SnowFox-1.3.11-macOS.pkg",
+      "asset_name": "SnowFox-1.3.11-macOS.pkg",
       "auto_update": true
     }
   },
-  "release_notes": "SnowFox 1.3.10 更新内容：\n改进\n- Overview 拖拽现在更强调明确意图，降低鼠标移动时误触发格位移动的概率，尤其是在 macOS 上。\n修复\n- 修复旧用户迁移 `data-root` 后的数据集路径改写问题，升级后更不容易出现库存文件、审计日志或回滚备份仍指向旧目录。\n- 补强相关回归测试，覆盖拖拽判定与 `data-root` 迁移后的路径重写。"
+  "release_notes": "SnowFox 1.3.11 更新内容：\n新增\n- 自定义字段键现在会严格拒绝带空格的名字，避免导入或新增字段时被静默丢弃（#32）。\n- 设置面板新增 `strict_legacy_validation` 开关，可选择让旧数据中 options 不匹配的历史记录升级为硬错误；默认宽松，不阻塞日常新写。\n- AI 面板现在会把模型上游返回的错误原样展示，便于排查凭证、限流或网关问题。\n改进\n- 字段编辑显著提速：校验改为按变更记录增量跑，YAML 备份按内容哈希和时间窗口节流，Overview 表改为按行签名增量渲染，数百条记录下单字段保存从\"秒级\"降到次秒级。\n- 写入失败时，错误信息从单行文字升级为结构化列表，GUI 会弹出可定位、可复制的详情对话框，能看到具体记录 ID / Box-Position / 字段 / 规则 / 期望值。\n- Overview 网格现在会把 plan 区里待执行的 add 操作以占位样式原位展示 display_key 预填值，便于在空位上直接看到即将写入的内容（#31）。\n- macOS 更新提示在未签名场景下文案更清楚：明确告知无法直接安装更新，只能下载新包手动替换（#30 第一部分）。\n- 默认库存文件名改用 `SnowFox-` 前缀命名，桌面端多开仍以文件锁形式阻止。\n修复\n- 同一台电脑打开多个 GUI 实例会导致库存文件互相覆盖、审计日志错乱；现在会通过文件锁拒绝二次启动，弹窗提示已有实例在运行（#21）。\n- 校验失败时工具层原本只能返回一行人类可读错误，现已把结构化 errors 透出给调用方。"
 }
