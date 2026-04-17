@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from .position_fmt import get_box_numbers
 from .schema_aliases import get_stored_at
 from .takeout_parser import extract_events
+from . import config as _config
 from .validation_primitives import extract_error_details
 from .validators import format_validation_errors, validate_inventory
 from .yaml_ops import append_audit_event, load_yaml
@@ -189,8 +190,17 @@ def _build_audit_meta(action, source, tool_name, actor_context=None, details=Non
 
 
 def _validate_data_or_error(data, message_prefix="Write blocked: integrity validation failed"):
-    """Return structured validation error payload when data is invalid."""
-    errors, _warnings = validate_inventory(data)
+    """Return structured validation error payload when data is invalid.
+
+    Legacy-data policy (see docs/modules/13-库存核心.md「校验错误输出契约」):
+    warnings produced by option-field checks or other relaxed rules do NOT
+    block writes by default. Set the ``LN2_STRICT_LEGACY_VALIDATION`` env
+    var (or ``validation.strict_legacy_validation`` in the runtime config)
+    to ``true`` to promote those warnings into blocking errors.
+    """
+    errors, warnings = validate_inventory(data)
+    if _config.strict_legacy_validation() and warnings:
+        errors = list(errors) + list(warnings)
     if not errors:
         return None
     return {
@@ -200,6 +210,12 @@ def _validate_data_or_error(data, message_prefix="Write blocked: integrity valid
         "errors": [str(err) for err in errors],
         "errors_detail": extract_error_details(errors),
     }
+
+
+def _collect_legacy_warnings(data):
+    """Return structured detail dicts for non-blocking legacy warnings."""
+    _errors, warnings = validate_inventory(data)
+    return extract_error_details(warnings)
 
 
 def _append_failed_audit(

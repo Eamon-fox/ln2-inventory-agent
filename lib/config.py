@@ -79,6 +79,9 @@ DEFAULT_CONFIG = {
         "valid_actions": ["takeout", "move", "取出", "移动"],
         "valid_cell_lines": [],
     },
+    "validation": {
+        "strict_legacy_validation": False,
+    },
 }
 
 
@@ -234,3 +237,34 @@ VALID_CELL_LINES = _as_list(
     RUNTIME_CONFIG["schema"].get("valid_cell_lines"),
     DEFAULT_CONFIG["schema"]["valid_cell_lines"],
 )
+
+
+_STRICT_LEGACY_ENV = "LN2_STRICT_LEGACY_VALIDATION"
+
+
+def _parse_bool_env(name, fallback):
+    raw = os.environ.get(name)
+    if raw is None:
+        return bool(fallback)
+    lowered = str(raw).strip().lower()
+    if lowered in ("1", "true", "yes", "on"):
+        return True
+    if lowered in ("0", "false", "no", "off", ""):
+        return False
+    _warn_bad_value(name, raw, fallback)
+    return bool(fallback)
+
+
+def strict_legacy_validation():
+    """Return the current strict-legacy-validation setting.
+
+    Priority: ``LN2_STRICT_LEGACY_VALIDATION`` env var → RUNTIME_CONFIG →
+    DEFAULT_CONFIG. Read dynamically so tests can toggle it via env vars or
+    by mutating ``RUNTIME_CONFIG["validation"]``.
+    """
+    cfg_default = (
+        RUNTIME_CONFIG.get("validation", {}).get("strict_legacy_validation")
+        if isinstance(RUNTIME_CONFIG.get("validation"), dict)
+        else DEFAULT_CONFIG["validation"]["strict_legacy_validation"]
+    )
+    return _parse_bool_env(_STRICT_LEGACY_ENV, cfg_default)
