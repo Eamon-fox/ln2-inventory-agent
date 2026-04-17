@@ -146,6 +146,8 @@ class OperationsPanel(QWidget):
         self._last_operation_backup = None
         self._last_executed_plan = []
         self._last_executed_print_snapshot = None
+        self._last_validation_errors_detail = None
+        self._last_validation_summary = ""
         self._plan_preflight_report = None
         self._plan_validation_by_key = {}
         self._undo_timer = None
@@ -650,6 +652,15 @@ class OperationsPanel(QWidget):
         result_actions_layout.setSpacing(8)
         result_actions_layout.addStretch()
 
+        self.view_validation_details_btn = QPushButton(
+            tr("operations.viewValidationDetails")
+        )
+        self.view_validation_details_btn.clicked.connect(
+            self._on_view_validation_details
+        )
+        self.view_validation_details_btn.setVisible(False)
+        result_actions_layout.addWidget(self.view_validation_details_btn)
+
         self.undo_btn = QPushButton(tr("operations.undoLast"))
         self.undo_btn.setIcon(get_icon(Icons.ROTATE_CCW))
         self.undo_btn.clicked.connect(self.on_undo_last)
@@ -705,12 +716,29 @@ class OperationsPanel(QWidget):
     def _on_hide_result_card(self):
         """Hide last result card and dismiss quick actions."""
         self.result_card.setVisible(False)
+        self._last_validation_errors_detail = None
+        self._last_validation_summary = ""
         _ops_actions._disable_undo(self, clear_last_executed=True)
+
+    def _on_view_validation_details(self):
+        from app_gui.ui.dialogs.validation_error_dialog import (
+            show_validation_error_dialog,
+        )
+
+        show_validation_error_dialog(
+            self,
+            errors_detail=self._last_validation_errors_detail,
+            summary_message=self._last_validation_summary,
+        )
 
     def _sync_result_actions(self):
         """Sync visibility/enabled state of result-card action buttons."""
         has_last_executed = bool(self._last_executed_plan)
         has_undo = bool(self._last_operation_backup)
+        has_validation_details = bool(self._last_validation_errors_detail)
+
+        self.view_validation_details_btn.setVisible(has_validation_details)
+        self.view_validation_details_btn.setEnabled(has_validation_details)
 
         self.print_last_result_btn.setVisible(has_last_executed)
         self.print_last_result_btn.setEnabled(has_last_executed)
@@ -725,7 +753,9 @@ class OperationsPanel(QWidget):
         if self._is_write_locked_by_migration_mode():
             self.undo_btn.setEnabled(False)
 
-        self.result_actions.setVisible(has_last_executed or has_undo)
+        self.result_actions.setVisible(
+            has_last_executed or has_undo or has_validation_details
+        )
 
     def _is_write_locked_by_migration_mode(self):
         return bool(getattr(self, "_migration_mode_enabled", False))

@@ -480,6 +480,18 @@
     "planExecutionRollbackFailed": "Rollback failed: {reason}",
     "planExecutionRollbackUnavailable": "Rollback unavailable: {reason}",
     "planExecutionSuccess": "Plan executed successfully",
+    "viewValidationDetails": "View details",
+    "validationError": {
+      "title": "Validation error details",
+      "summary": "Write blocked: {count} validation issue(s) detected.",
+      "columnRecordId": "Record ID",
+      "columnLocation": "Location",
+      "columnField": "Field",
+      "columnValue": "Value",
+      "columnRule": "Rule",
+      "columnExpected": "Expected",
+      "copy": "Copy"
+    },
     "noCurrentPlanToPrint": "No staged plan to print.",
     "noLastExecutedToPrint": "No recent executed result to print.",
     "planPrintOpened": "Plan operation sheet opened in browser.",

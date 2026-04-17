@@ -458,7 +458,17 @@ def _show_plan_result(self, results, report=None, rollback_info=None, execution_
 
     if fail_count:
         fail_item = [r for r in results if r[0] == "FAIL"][-1]
-        error_msg = fail_item[2].get("message", "Unknown error")
+        fail_info = fail_item[2] if isinstance(fail_item[2], dict) else {}
+        error_msg = fail_info.get("message", "Unknown error")
+        errors_detail = fail_info.get("errors_detail")
+        if isinstance(errors_detail, list) and errors_detail:
+            self._last_validation_errors_detail = [
+                d for d in errors_detail if isinstance(d, dict)
+            ]
+            self._last_validation_summary = str(error_msg or "")
+        else:
+            self._last_validation_errors_detail = None
+            self._last_validation_summary = ""
         lines = _build_execution_failure_lines(
             self,
             execution_stats=execution_stats,
@@ -470,6 +480,8 @@ def _show_plan_result(self, results, report=None, rollback_info=None, execution_
         )
         self._show_result_card(lines, _execution_failure_level(execution_stats))
     else:
+        self._last_validation_errors_detail = None
+        self._last_validation_summary = ""
         lines = [
             f"<b style='color: var(--status-success);'>{tr('operations.planExecutionSuccess')}</b>",
             tr("operations.planExecutionSuccessSummary", applied=applied_count, total=applied_count),

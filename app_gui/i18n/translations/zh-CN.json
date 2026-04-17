@@ -473,6 +473,18 @@
     "planExecutionRollbackFailed": "回滚失败：{reason}",
     "planExecutionRollbackUnavailable": "回滚不可用：{reason}",
     "planExecutionSuccess": "计划执行成功",
+    "viewValidationDetails": "查看详情",
+    "validationError": {
+      "title": "校验错误详情",
+      "summary": "写入被阻止：检测到 {count} 条校验问题。",
+      "columnRecordId": "记录 ID",
+      "columnLocation": "位置",
+      "columnField": "字段",
+      "columnValue": "值",
+      "columnRule": "规则",
+      "columnExpected": "期望",
+      "copy": "复制"
+    },
     "noCurrentPlanToPrint": "当前计划为空，无法打印。",
     "noLastExecutedToPrint": "暂无最近执行记录可打印。",
     "planPrintOpened": "已打开计划操作清单。",
