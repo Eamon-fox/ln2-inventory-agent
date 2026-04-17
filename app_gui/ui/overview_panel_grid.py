@@ -435,6 +435,9 @@ def _build_operation_marker_map(plan_items):
 
 def _set_plan_store_ref(self, plan_store):
     self._plan_store_ref = plan_store
+    draft_store = getattr(self, "_draft_store", None)
+    if draft_store is not None:
+        draft_store.set_plan_store(plan_store)
     self._on_plan_store_changed()
 
 

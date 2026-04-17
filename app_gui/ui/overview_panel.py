@@ -11,6 +11,7 @@ from app_gui.ui import overview_panel_cell_button as _ov_cell_button
 from app_gui.ui import overview_panel_ui as _ov_ui
 from app_gui.ui import overview_panel_refresh as _ov_refresh
 from app_gui.ui import overview_panel_runtime as _ov_runtime
+from app_gui.ui.table_entry_draft_store import TableEntryDraftStore
 
 # Module map for maintainers:
 # - _ov_ui: widget tree setup and static UI wiring.
@@ -49,6 +50,7 @@ class OverviewPanel(QWidget):
     # Use object to preserve non-string dict keys (Qt map coercion can drop int keys).
     data_loaded = Signal(object)
     plan_items_requested = Signal(list)
+    plan_item_removal_requested = Signal(list)
     # Statistics update for status bar
     stats_changed = Signal(dict)  # {"total": n, "occupied": n, "empty": n, "rate": pct}
     hover_stats_changed = Signal(str)  # Formatted string for hovered cell
@@ -83,6 +85,7 @@ class OverviewPanel(QWidget):
         self._table_column_types = {}
         self._table_row_records = []
         self._table_draft_by_slot = {}
+        self._draft_store = TableEntryDraftStore(parent=self)
         self._table_version = 0
         self._table_sort_by = "location"
         self._table_sort_order = "asc"
@@ -137,6 +140,7 @@ class OverviewPanel(QWidget):
     _emit_takeout_prefill_background = _ov_table._emit_takeout_prefill_background
     _emit_add_prefill_background = _ov_table._emit_add_prefill_background
     _emit_add_prefill = _ov_table._emit_add_prefill
+    _on_table_context_menu = _ov_table._on_table_context_menu
 
     _repaint_all_cells = _ov_grid._repaint_all_cells
     _update_box_titles = _ov_grid._update_box_titles

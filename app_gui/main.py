@@ -558,6 +558,8 @@ class MainWindow(QMainWindow):
         # Overview -> Operations (Plan staging)
         self.overview_panel.plan_items_requested.connect(
             self.operations_panel.add_plan_items)
+        self.overview_panel.plan_item_removal_requested.connect(
+            self.operations_panel.remove_plan_items_by_payload)
 
         # Overview -> Operations (prefill)
         self.overview_panel.request_prefill.connect(self.operations_panel.set_prefill)

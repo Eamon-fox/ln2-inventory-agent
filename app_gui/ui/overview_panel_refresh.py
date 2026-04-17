@@ -198,6 +198,9 @@ def refresh(self):
     rows = int(layout.get("rows", 9))
     cols = int(layout.get("cols", 9))
     self._current_layout = layout
+    draft_store = getattr(self, "_draft_store", None)
+    if draft_store is not None:
+        draft_store.set_field_context(self._current_meta, self._current_records, layout)
     box_numbers = sorted([int(k) for k in box_stats], key=int)
     if not box_numbers:
         box_count = get_box_count(layout)

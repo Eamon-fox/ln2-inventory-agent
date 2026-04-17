@@ -27,8 +27,19 @@ from lib.validators import parse_date
 
 _TABLE_CONFIRM_COLUMN = "__confirm__"
 _TABLE_CONFIRM_MARK = "√"
+_TABLE_DRAFT_MARK = "+"
 _TABLE_RECORD_ROLE = Qt.UserRole + 100
 _TABLE_ROW_DATA_ROLE = Qt.UserRole + 101
+
+
+def _confirm_cell_display(slot_state, resolved_row):
+    """Return (display_value, raw_value) for the confirm column."""
+    if slot_state in ("staged", "staged_locked"):
+        return _TABLE_CONFIRM_MARK, True
+    if slot_state == "draft":
+        return _TABLE_DRAFT_MARK, False
+    # "empty" or unknown
+    return "", False
 
 
 class _SortableOverviewItem(QTableWidgetItem):
@@ -160,6 +171,9 @@ def _table_field_definitions(self):
 
 
 def _table_entry_columns(self):
+    draft_store = getattr(self, "_draft_store", None)
+    if draft_store is not None:
+        return draft_store.entry_columns()
     return {"stored_at", "frozen_at"} | set(_table_field_definitions(self))
 
 
@@ -215,6 +229,9 @@ def _blank_entry_values(self):
 
 
 def _normalize_entry_values(self, values):
+    draft_store = getattr(self, "_draft_store", None)
+    if draft_store is not None:
+        return draft_store.normalize_entry_values(values)
     normalized = _blank_entry_values(self)
     for column in normalized:
         normalized[column] = str((values or {}).get(column, "") or "").strip()
@@ -225,11 +242,17 @@ def _normalize_entry_values(self, values):
 
 
 def _entry_values_signature(self, values):
+    draft_store = getattr(self, "_draft_store", None)
+    if draft_store is not None:
+        return draft_store.entry_values_signature(values)
     normalized = _normalize_entry_values(self, values)
     return tuple((column, normalized[column]) for column in sorted(normalized))
 
 
 def _staged_add_slot_map(self):
+    draft_store = getattr(self, "_draft_store", None)
+    if draft_store is not None:
+        return draft_store.staged_slot_map()
     store = getattr(self, "_plan_store_ref", None)
     if store is None or not hasattr(store, "list_items"):
         return {}
@@ -279,6 +302,9 @@ def _staged_add_slot_map(self):
 
 
 def _staged_entry_values_for_slot(self, slot_key):
+    draft_store = getattr(self, "_draft_store", None)
+    if draft_store is not None:
+        return draft_store.staged_entry_values_for_slot(slot_key)
     if slot_key is None:
         return _blank_entry_values(self)
     staged = _staged_add_slot_map(self).get(tuple(slot_key))
@@ -299,6 +325,10 @@ def _row_search_text(columns, values):
 
 
 def _overlay_current_view_rows(self, rows, data_columns):
+    draft_store = getattr(self, "_draft_store", None)
+    if draft_store is not None:
+        return draft_store.resolve_rows(list(rows or []), data_columns)
+
     staged_map = _staged_add_slot_map(self)
     draft_map = dict(getattr(self, "_table_draft_by_slot", {}) or {})
     color_key = get_color_key(
@@ -394,6 +424,7 @@ def _query_current_table_rows(self, *, keyword, selected_box, selected_cell):
                 "values": dict(row_data.get("values") or {}),
                 "row_confirmed": bool(row_data.get("row_confirmed")),
                 "row_locked": bool(row_data.get("row_locked")),
+                "slot_state": str(row_data.get("slot_state") or ""),
             }
         )
 
@@ -681,6 +712,12 @@ def _snapshot_table_entry_values(self, row, *, row_data=None):
 
 
 def _row_with_entry_values(self, row_data, entry_values):
+    draft_store = getattr(self, "_draft_store", None)
+    if draft_store is not None:
+        enriched = dict(row_data or {})
+        enriched["_data_columns"] = list(getattr(self, "_table_data_columns", []) or [])
+        return draft_store.resolve_single_row(enriched, entry_values)
+
     next_row = dict(row_data or {})
     values = dict(next_row.get("values") or {})
     values.update(_normalize_entry_values(self, entry_values))
@@ -714,10 +751,11 @@ def _render_table_row(self, row_index, row_data, column_type_map):
             resolved_row["record"] = record
     self._table_row_records[row_index] = record
 
+    slot_state = str(resolved_row.get("slot_state") or "empty")
     for col_index, column in enumerate(list(getattr(self, "_table_columns", []) or [])):
         if column == _TABLE_CONFIRM_COLUMN:
-            display_value = _TABLE_CONFIRM_MARK if bool(resolved_row.get("row_confirmed")) else ""
-            raw_value = bool(resolved_row.get("row_confirmed"))
+            display_value, raw_value = _confirm_cell_display(slot_state, resolved_row)
+            raw_value = bool(raw_value)
         else:
             raw_value = values.get(column, "")
             display_value = _format_location_value(self, resolved_row, raw_value) if column == "location" else raw_value
@@ -757,6 +795,10 @@ def _render_table_row(self, row_index, row_data, column_type_map):
 
         if column == _TABLE_CONFIRM_COLUMN:
             item.setTextAlignment(int(Qt.AlignCenter))
+            if slot_state in ("staged", "staged_locked"):
+                item.setForeground(QBrush(QColor("#2e7d32")))  # green for confirmed
+            elif slot_state == "draft":
+                item.setForeground(QBrush(QColor("#9e9e9e")))  # gray for pending draft
         elif column == "id":
             with suppress(ValueError, TypeError):
                 item.setData(Qt.UserRole, int(raw_value))
@@ -928,13 +970,52 @@ def _confirm_table_entry_row(self, row):
     )
     self.plan_items_requested.emit([item])
 
+    draft_store = getattr(self, "_draft_store", None)
     staged = _staged_add_slot_map(self).get(slot_key)
-    if staged is not None:
-        self._table_draft_by_slot.pop(slot_key, None)
+    if draft_store is not None:
+        if staged is not None:
+            draft_store.clear_draft(slot_key)
+        else:
+            draft_store.set_draft(slot_key, snapshot)
     else:
-        self._table_draft_by_slot[slot_key] = dict(snapshot)
+        if staged is not None:
+            self._table_draft_by_slot.pop(slot_key, None)
+        else:
+            self._table_draft_by_slot[slot_key] = dict(snapshot)
 
     _refresh_current_table_view(self)
+    return True
+
+
+def _unconfirm_table_entry_row(self, row):
+    """Remove a staged single-slot add item when the user clicks the confirm column again."""
+    row_data = _table_row_data(self, row)
+    if str(row_data.get("row_kind") or "") != "empty_slot":
+        return False
+    if not row_data.get("row_confirmed"):
+        return False
+
+    slot_key = _table_row_slot_key(row_data)
+    if slot_key is None:
+        return False
+
+    staged = _staged_add_slot_map(self).get(slot_key)
+    if staged is None or not staged.get("editable"):
+        return False  # only single-slot (editable) items can be unconfirmed from table
+
+    box, position = slot_key
+    self.plan_item_removal_requested.emit([{
+        "action": "add",
+        "box": box,
+        "position": position,
+    }])
+
+    draft_store = getattr(self, "_draft_store", None)
+    if draft_store is not None:
+        draft_store.clear_draft(slot_key)
+    else:
+        self._table_draft_by_slot.pop(slot_key, None)
+
     return True
 
 
@@ -1050,6 +1131,15 @@ def on_table_cell_clicked(self, row, column):
     row_data = _table_row_data_from_item(item)
     column_name = str(item.data(Qt.UserRole + 45) or "")
     if column_name == _TABLE_CONFIRM_COLUMN:
+        # Staged + editable (single-slot) → toggle off (unconfirm)
+        if (
+            row_data.get("row_confirmed")
+            and not row_data.get("row_locked")
+            and str(row_data.get("row_kind") or "") == "empty_slot"
+        ):
+            if _unconfirm_table_entry_row(self, row):
+                return
+        # Otherwise try to confirm (draft → staged)
         if _confirm_table_entry_row(self, row):
             return
 
@@ -1082,15 +1172,19 @@ def _on_table_item_changed(self, item):
         return
 
     snapshot = _snapshot_table_entry_values(self, row, row_data=row_data)
-    staged_values = _staged_entry_values_for_slot(self, slot_key)
-    if _entry_values_signature(self, snapshot) == _entry_values_signature(self, staged_values):
-        self._table_draft_by_slot.pop(slot_key, None)
-    elif all(not str(value or "").strip() for value in snapshot.values()) and all(
-        not str(value or "").strip() for value in staged_values.values()
-    ):
-        self._table_draft_by_slot.pop(slot_key, None)
+    draft_store = getattr(self, "_draft_store", None)
+    if draft_store is not None:
+        draft_store.set_draft(slot_key, snapshot)
     else:
-        self._table_draft_by_slot[slot_key] = dict(snapshot)
+        staged_values = _staged_entry_values_for_slot(self, slot_key)
+        if _entry_values_signature(self, snapshot) == _entry_values_signature(self, staged_values):
+            self._table_draft_by_slot.pop(slot_key, None)
+        elif all(not str(value or "").strip() for value in snapshot.values()) and all(
+            not str(value or "").strip() for value in staged_values.values()
+        ):
+            self._table_draft_by_slot.pop(slot_key, None)
+        else:
+            self._table_draft_by_slot[slot_key] = dict(snapshot)
 
     next_row = _row_with_entry_values(self, row_data, snapshot)
     _set_cached_row_data(self, next_row)
@@ -1102,4 +1196,32 @@ def _on_plan_store_changed(self):
         return
     if bool(getattr(self, "_table_include_inactive", False)):
         return
+    draft_store = getattr(self, "_draft_store", None)
+    if draft_store is not None:
+        draft_store.reconcile_with_staged()
     _refresh_current_table_view(self)
+
+
+def _on_table_context_menu(self, pos):
+    """Show context menu for table rows with draft-discard option."""
+    from PySide6.QtWidgets import QMenu
+
+    item = self.ov_table.itemAt(pos)
+    if item is None:
+        return
+
+    row_data = _table_row_data_from_item(item)
+    if str(row_data.get("row_kind") or "") != "empty_slot":
+        return
+
+    slot_key = _table_row_slot_key(row_data)
+    draft_store = getattr(self, "_draft_store", None)
+    if draft_store is None or slot_key is None or not draft_store.has_draft(slot_key):
+        return
+
+    menu = QMenu(self)
+    discard_action = menu.addAction(t("overview.discardDraft", default="Discard changes"))
+    chosen = menu.exec_(self.ov_table.viewport().mapToGlobal(pos))
+    if chosen is discard_action:
+        draft_store.clear_draft(slot_key)
+        _refresh_current_table_view(self)
