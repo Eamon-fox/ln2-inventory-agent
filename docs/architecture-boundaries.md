@@ -38,32 +38,16 @@
 
 ### 当前 OperationsPanel 稳定公共方法
 
-以下方法继续视为跨模块稳定入口，新增、删除或重命名都属于架构级变更：
+OperationsPanel / OverviewPanel / AIPanel 的跨模块稳定公共方法清单以
+`docs/modules/10-界面展示层.md` 为准，本文件不再维护独立副本以避免第二真相源漂移。
 
-- `apply_meta_update`
-- `set_migration_mode_enabled`
-- `update_records_cache`
-- `set_prefill`
-- `set_prefill_background`
-- `set_add_prefill`
-- `set_add_prefill_background`
-- `add_plan_items`
-- `execute_plan`
-- `clear_plan`
-- `reset_for_dataset_switch`
-- `on_export_inventory_csv`
-- `emit_external_operation_event`
-- `print_plan`
-- `print_last_executed`
-- `on_undo_last`
-- `remove_selected_plan_items`
-- `on_plan_table_context_menu`
+### OperationsPanel 内部协作面
 
-### 当前已移除的私有别名约束
+`OperationsPanel` 自身由 `app_gui/ui/operations_panel_*.py` 一组兄弟模块拆分实现。
+以下下划线前缀名字是这组兄弟模块之间的内部协作 helper，允许被同一 OperationsPanel 包
+内的兄弟模块以及 `tests/integration/gui/` 下的 GUI 集成测试消费：
 
-以下私有桥接别名保持移除状态，不得在测试或跨模块调用中重新引入：
-
-- `_lookup_record`
+- `_lookup_record`（定义：`operations_panel_context.py`）
 - `_refresh_takeout_record_context`
 - `_refresh_move_record_context`
 - `_rebuild_custom_add_fields`
@@ -71,6 +55,10 @@
 - `_get_selected_plan_rows`
 - `_enable_undo`
 - `_build_print_grid_state`
+
+它们不属于跨模块稳定入口：`app_gui/application/`、`agent/`、`lib/` 等外部模块不得直接
+依赖这些名字。若未来决定彻底收敛这部分 helper，请先一并更新所有兄弟模块与测试的调用
+点，再把本节改回硬性禁止。
 
 ## 使用方式
 

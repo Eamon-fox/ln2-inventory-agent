@@ -30,3 +30,10 @@ Path convention:
 
 This sandbox is mainly used for the “migration” task. However, if you’re not in migration mode, you can still use it to store some temporary intermediate scripts or files. But regardless of the mode, please clean up this space promptly after you’re done.
 
+---
+
+本目录仅保留运行时活代码 `path_context.py`（被 `app_gui/migration_workspace.py` 及
+`tests/integration/migration/test_path_context.py` 引用）与工作区占位目录
+`inputs/` / `normalized/` / `output/`。历史一次性 ad-hoc 数据迁移脚本已于
+2026-04-18 统一清理，详见 `docs/reviews/2026-04-18-code-elegance.md`。
+

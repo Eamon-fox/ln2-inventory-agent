@@ -220,14 +220,3 @@ WEBSITE_HOST=ecs WEBSITE_DIR=/var/www/snowfox.bio ./scripts/sync-website.sh
 
 不要手工分别维护 GitHub Release、`latest.json.release_notes` 和网站最新版说明。
 
-## 旧脚本状态
-
-### `sync_website_version.py`
-
-旧版网站模板注入脚本。当前下载页已经改成运行时读取网站服务器本地的 `/latest.json`，不再依赖这个脚本更新 HTML 片段。
-
-### `update_history_versions.py`
-
-旧版历史版本列表生成脚本。当前下载页历史版本来自 OSS 上的 `CHANGELOG.md` 运行时解析，不再依赖这个脚本预生成列表。
-
-这两个 Python 脚本暂时保留，但不再是正式发版流程的一部分。
