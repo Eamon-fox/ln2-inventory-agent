@@ -18,7 +18,7 @@ from app_gui.application.manage_boxes_flow import ManageBoxesFlow as _ManageBoxe
 from app_gui.gui_config import DEFAULT_MAX_STEPS, save_gui_config
 from app_gui.i18n import t, tr
 from app_gui.ui.dialogs.manage_boxes_dialog import ManageBoxesDialog
-from app_gui.version import resolve_platform_release_info
+from app_gui.version import current_release_platform, resolve_platform_release_info
 from lib.inventory_paths import assert_allowed_inventory_yaml_path
 from lib.yaml_ops import load_yaml
 
@@ -164,11 +164,33 @@ class StartupFlow:
         except Exception as exc:
             print("[VersionCheck] Dialog failed: %s" % exc)
 
+    def _confirm_macos_update(self) -> bool:
+        """Warn the user that the unsigned macOS update cannot auto-relaunch.
+
+        Returns True when the user clicks Continue, False on Cancel.
+        """
+        box = self._build_message_box(
+            title=tr("main.macosUpdatePreInstallTitle"),
+            text=tr("main.macosUpdatePreInstallMessage"),
+            icon=QMessageBox.Warning,
+        )
+        continue_btn = box.addButton(
+            tr("main.macosUpdatePreInstallContinue"),
+            QMessageBox.AcceptRole,
+        )
+        box.addButton(tr("common.cancel"), QMessageBox.RejectRole)
+        box.setDefaultButton(continue_btn)
+        box.exec()
+        return box.clickedButton() is continue_btn
+
     def start_automatic_update(self, latest_tag, release_notes, download_url=""):
         """Run automatic update with progress dialog."""
         release_info = resolve_platform_release_info({"download_url": download_url})
         package_url = str(release_info.get("download_url", "")).strip()
         target_url = package_url or self._release_url
+        platform_key = str(release_info.get("platform_key") or current_release_platform())
+        is_macos = platform_key == "macos"
+
         if not bool(release_info.get("auto_update")):
             try:
                 from PySide6.QtCore import QUrl
@@ -177,16 +199,23 @@ class StartupFlow:
                 if not target_url:
                     raise RuntimeError(tr("main.updateManualNoUrl"))
                 QDesktopServices.openUrl(QUrl(target_url))
+                if is_macos:
+                    manual_message = tr("main.updateManualMessageMacos")
+                else:
+                    manual_message = t(
+                        "main.updateManualMessage",
+                        platform=str(release_info.get("platform_name", "")),
+                    )
                 self._show_status_box(
                     tr("main.updateManualTitle"),
-                    t(
-                        "main.updateManualMessage",
-                        platform=str(release_info.get("platform_name", "macOS")),
-                    ),
+                    manual_message,
                     QMessageBox.Information,
                 )
             except Exception as exc:
                 self._show_status_box(tr("main.updateFailed"), str(exc), QMessageBox.Warning)
+            return
+
+        if is_macos and not self._confirm_macos_update():
             return
 
         if not package_url:
@@ -226,9 +255,18 @@ class StartupFlow:
         def _on_complete(success, message):
             progress.close()
             if success:
-                self._show_status_box(tr("main.updateComplete"), message, QMessageBox.Information)
-                app = QApplication.instance()
-                QTimer.singleShot(300, app.quit)
+                if is_macos:
+                    self._show_status_box(
+                        tr("main.updateComplete"),
+                        tr("main.macosUpdatePostInstallMessage"),
+                        QMessageBox.Information,
+                    )
+                else:
+                    self._show_status_box(
+                        tr("main.updateComplete"), message, QMessageBox.Information
+                    )
+                    app = QApplication.instance()
+                    QTimer.singleShot(300, app.quit)
             else:
                 self._show_status_box(
                     tr("main.updateFailed"),

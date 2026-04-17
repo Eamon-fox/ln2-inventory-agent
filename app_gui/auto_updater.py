@@ -169,24 +169,17 @@ class AutoUpdater:
         if self.on_progress:
             self.on_progress(100, "Preparing macOS installer...")
 
-        current_pid = os.getpid()
         script_path = os.path.join(self.temp_dir, "snowfox_update.sh")
-        app_path = "/Applications/SnowFox.app"
 
         installer_quoted = shlex.quote(installer_path)
-        app_quoted = shlex.quote(app_path)
         temp_dir_quoted = shlex.quote(str(self.temp_dir))
+        # Unsigned macOS builds trip Gatekeeper on first launch, so do not
+        # attempt to relaunch here — the caller surfaces a dialog telling the
+        # user to approve the app in System Settings and launch it manually.
         script_content = (
             "#!/bin/bash\n"
-            "set -e\n"
-            f"while kill -0 {current_pid} 2>/dev/null; do\n"
-            "  sleep 1\n"
-            "done\n"
-            "sleep 1\n"
-            f"open -W {installer_quoted}\n"
-            f"if [ -d {app_quoted} ]; then\n"
-            f"  open -a {app_quoted}\n"
-            "fi\n"
+            f"open {installer_quoted}\n"
+            "sleep 2\n"
             f"rm -rf {temp_dir_quoted}\n"
         )
 
@@ -205,10 +198,7 @@ class AutoUpdater:
         self.temp_dir = None
 
         if self.on_complete:
-            self.on_complete(
-                True,
-                "Installer is ready. SnowFox will quit and open the macOS installer.",
-            )
+            self.on_complete(True, "Installer opened.")
 
     def cleanup(self):
         """Clean up temporary files."""

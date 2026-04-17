@@ -163,11 +163,15 @@ class TestInstallAndRestart(unittest.TestCase):
         script_path = os.path.join(self.temp_dir, "snowfox_update.sh")
         self.assertTrue(os.path.isfile(script_path))
         content = open(script_path, encoding="utf-8").read()
-        self.assertIn("open -W", content)
+        self.assertIn("open ", content)
         self.assertIn(pkg_path, content)
-        self.assertIn("/Applications/SnowFox.app", content)
+        # Unsigned macOS builds trip Gatekeeper on first launch, so the
+        # script must NOT attempt to auto-relaunch the app. The caller
+        # surfaces a dialog telling the user to approve and launch it
+        # manually. See docs/modules/11-界面应用层.md "macOS 更新 UX 契约".
+        self.assertNotIn("/Applications/SnowFox.app", content)
         self.assertEqual(len(self.complete_calls), 1)
-        self.assertIn("macOS installer", self.complete_calls[0][1])
+        self.assertIn("Installer", self.complete_calls[0][1])
 
         mock_popen.assert_called_once()
         kwargs = mock_popen.call_args.kwargs
