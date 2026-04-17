@@ -171,15 +171,17 @@ class AutoUpdater:
 
         script_path = os.path.join(self.temp_dir, "snowfox_update.sh")
 
+        current_pid = os.getpid()
         installer_quoted = shlex.quote(installer_path)
         temp_dir_quoted = shlex.quote(str(self.temp_dir))
-        # Unsigned macOS builds trip Gatekeeper on first launch, so do not
-        # attempt to relaunch here — the caller surfaces a dialog telling the
-        # user to approve the app in System Settings and launch it manually.
+        app_path = "/Applications/SnowFox.app"
         script_content = (
             "#!/bin/bash\n"
-            f"open {installer_quoted}\n"
-            "sleep 2\n"
+            f"while kill -0 {current_pid} 2>/dev/null; do sleep 0.5; done\n"
+            "sleep 1\n"
+            f"open -W {installer_quoted}\n"
+            f"open -a {shlex.quote(app_path)}\n"
+            "sleep 1\n"
             f"rm -rf {temp_dir_quoted}\n"
         )
 

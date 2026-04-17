@@ -158,18 +158,20 @@ class TestInstallAndRestart(unittest.TestCase):
             f.write(b"fake-pkg")
 
         with patch("app_gui.auto_updater.sys.platform", "darwin"):
-            self.updater.install_and_restart(pkg_path)
+            with patch("app_gui.auto_updater.os.getpid", return_value=54321):
+                self.updater.install_and_restart(pkg_path)
 
         script_path = os.path.join(self.temp_dir, "snowfox_update.sh")
         self.assertTrue(os.path.isfile(script_path))
         content = open(script_path, encoding="utf-8").read()
-        self.assertIn("open ", content)
+        # See docs/modules/11-界面应用层.md "macOS 更新 UX 契约":
+        # script must (1) wait for old PID to exit, (2) block on installer,
+        # (3) relaunch /Applications/SnowFox.app, (4) clean temp dir.
+        self.assertIn("kill -0 54321", content)
+        self.assertIn("open -W", content)
         self.assertIn(pkg_path, content)
-        # Unsigned macOS builds trip Gatekeeper on first launch, so the
-        # script must NOT attempt to auto-relaunch the app. The caller
-        # surfaces a dialog telling the user to approve and launch it
-        # manually. See docs/modules/11-界面应用层.md "macOS 更新 UX 契约".
-        self.assertNotIn("/Applications/SnowFox.app", content)
+        self.assertIn("/Applications/SnowFox.app", content)
+        self.assertIn(self.temp_dir, content)
         self.assertEqual(len(self.complete_calls), 1)
         self.assertIn("Installer", self.complete_calls[0][1])
 

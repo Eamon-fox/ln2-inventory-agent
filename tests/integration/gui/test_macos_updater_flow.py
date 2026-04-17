@@ -1,15 +1,15 @@
-"""Lock tests for the macOS-specific updater UX (issue #30 part 1).
+"""Lock tests for the macOS-specific updater UX.
 
-Because SnowFox on macOS ships unsigned, the updater cannot silently
-relaunch the new app — users must approve it in System Settings and
-launch it manually. These tests pin the UX contract that calls out
-those manual steps:
+macOS distribution uses .pkg + Installer.app to /Applications. Because
+Installer.app-installed payloads don't carry com.apple.quarantine,
+auto-relaunch of /Applications/SnowFox.app is safe. These tests pin the
+UX contract (see docs/modules/11-界面应用层.md "macOS 更新 UX 契约"):
 
 - pre-install confirm dialog is shown before auto-update starts on macOS
 - cancelling the confirm aborts the flow before any downloader runs
 - manual-download path shows the macOS-specific message
-- post-install on macOS uses the macOS-specific message and does not
-  auto-quit (user needs to quit manually after approving in Settings)
+- post-install on macOS uses the macOS-specific message and auto-quits
+  the old process (installer handles relaunch)
 """
 
 from __future__ import annotations
@@ -145,13 +145,59 @@ def test_start_automatic_update_macos_manual_path_uses_macos_message():
     assert "Privacy & Security" in body or "隐私与安全性" in body
 
 
-def test_macos_post_install_message_does_not_auto_quit(monkeypatch):
-    """The macOS post-install dialog leaves the old process running so the
-    user can finish what they're doing; auto-quit only fires on other OSes."""
-    from app_gui.i18n import tr
+def test_macos_post_install_message_promises_auto_quit_and_relaunch():
+    """The macOS post-install message must tell the user the old window
+    will close itself and the new version will launch automatically."""
+    from app_gui.i18n import set_language, tr
 
-    # Contract-check via string presence: the macOS post-install message
-    # must reference the Privacy & Security / 隐私与安全性 step.
-    msg = tr("main.macosUpdatePostInstallMessage")
-    assert msg  # key is wired up
-    assert ("Privacy & Security" in msg) or ("隐私与安全性" in msg)
+    set_language("en")
+    msg_en = tr("main.macosUpdatePostInstallMessage")
+    assert msg_en
+    assert "automatically" in msg_en.lower()
+
+    set_language("zh-CN")
+    msg_zh = tr("main.macosUpdatePostInstallMessage")
+    assert msg_zh
+    assert "自动" in msg_zh
+
+    set_language("en")
+
+
+def test_macos_post_install_auto_quits():
+    """On macOS auto-update success, _on_complete must schedule app.quit()
+    via QTimer.singleShot, mirroring the Windows branch. See the macOS
+    update UX contract in docs/modules/11-界面应用层.md."""
+    flow = _make_flow()
+    flow._show_status_box = MagicMock()
+
+    release_info = {
+        "platform_key": "macos",
+        "platform_name": "macOS",
+        "download_url": "https://example.invalid/SnowFox-1.1.0.pkg",
+        "auto_update": True,
+    }
+
+    flow._confirm_macos_update = MagicMock(return_value=True)
+
+    with patch(
+        "app_gui.main_window_flows.resolve_platform_release_info",
+        return_value=release_info,
+    ), patch("app_gui.auto_updater.AutoUpdater") as mock_updater_cls, patch(
+        "app_gui.main_window_flows.QTimer"
+    ) as mock_qtimer:
+        mock_updater_cls.return_value.start_update = MagicMock()
+        flow.start_automatic_update(
+            "1.1.0", "notes", "https://example.invalid/pkg"
+        )
+
+        # AutoUpdater(...) was called with on_complete=<bridge.sig_complete.emit>.
+        # Invoking it synchronously emits the signal, which triggers the
+        # connected _on_complete slot under the current thread.
+        on_complete_emit = mock_updater_cls.call_args.kwargs["on_complete"]
+        on_complete_emit(True, "Installer opened.")
+
+        QApplication.instance().processEvents()
+
+        mock_qtimer.singleShot.assert_called_once()
+        args, _ = mock_qtimer.singleShot.call_args
+        assert args[0] == 300

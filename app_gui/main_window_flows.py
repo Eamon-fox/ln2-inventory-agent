@@ -92,7 +92,7 @@ class StartupFlow:
                 last_notified = window.gui_config.get("last_notified_release", "0.0.0")
                 if not self._is_version_newer(latest_tag, last_notified):
                     return
-                body = str(data.get("release_notes", ""))[:200]
+                body = str(data.get("release_notes", ""))
                 release_info = resolve_platform_release_info(data)
                 download_url = str(release_info.get("download_url", ""))
                 QMetaObject.invokeMethod(
@@ -111,18 +111,39 @@ class StartupFlow:
     def show_update_dialog(self, latest_tag, release_notes, download_url=""):
         """Show update notification dialog in main thread."""
         try:
-            title = tr("main.newReleaseTitle")
-            message = t(
-                "main.newReleaseMessage",
-                version=latest_tag,
-                notes=release_notes or tr("main.releaseNotesDefault"),
+            from PySide6.QtWidgets import (
+                QHBoxLayout,
+                QLabel,
+                QPushButton,
+                QTextBrowser,
+                QVBoxLayout,
             )
 
-            msg_box = self._build_message_box(
-                title=title,
-                text=message,
-                icon=QMessageBox.Information,
-            )
+            title = tr("main.newReleaseTitle")
+            headline = t("main.newReleaseHeadline", version=latest_tag)
+            notes_text = release_notes or tr("main.releaseNotesDefault")
+            backup_warning = tr("main.newReleaseBackupWarning")
+
+            dialog = QDialog(self._window)
+            dialog.setWindowTitle(title)
+            dialog.resize(560, 460)
+
+            layout = QVBoxLayout(dialog)
+
+            headline_label = QLabel(headline, dialog)
+            headline_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+            headline_label.setWordWrap(True)
+            layout.addWidget(headline_label)
+
+            notes_view = QTextBrowser(dialog)
+            notes_view.setPlainText(notes_text)
+            notes_view.setOpenExternalLinks(True)
+            notes_view.setMinimumHeight(220)
+            layout.addWidget(notes_view, 1)
+
+            warning_label = QLabel(backup_warning, dialog)
+            warning_label.setWordWrap(True)
+            layout.addWidget(warning_label)
 
             release_info = resolve_platform_release_info({"download_url": download_url})
             update_label = (
@@ -131,36 +152,48 @@ class StartupFlow:
                 else tr("main.newReleaseDownload")
             )
 
-            update_btn = msg_box.addButton(update_label, QMessageBox.ActionRole)
-            copy_btn = msg_box.addButton(tr("main.newReleaseCopy"), QMessageBox.ActionRole)
-            open_btn = msg_box.addButton(tr("main.newReleaseOpen"), QMessageBox.ActionRole)
-            msg_box.addButton(tr("main.newReleaseLater"), QMessageBox.RejectRole)
-
-            msg_box.setDefaultButton(update_btn)
+            button_row = QHBoxLayout()
+            button_row.addStretch(1)
+            update_btn = QPushButton(update_label, dialog)
+            copy_btn = QPushButton(tr("main.newReleaseCopy"), dialog)
+            open_btn = QPushButton(tr("main.newReleaseOpen"), dialog)
+            later_btn = QPushButton(tr("main.newReleaseLater"), dialog)
+            update_btn.setDefault(True)
+            update_btn.setAutoDefault(True)
+            button_row.addWidget(update_btn)
+            button_row.addWidget(copy_btn)
+            button_row.addWidget(open_btn)
+            button_row.addWidget(later_btn)
+            layout.addLayout(button_row)
 
             def _mark_notified_once():
                 self._persist_gui_config_once("last_notified_release", latest_tag)
 
-            def _handle_button(clicked):
-                if clicked == update_btn:
-                    self.start_automatic_update(latest_tag, release_notes, download_url)
-                elif clicked == copy_btn:
-                    try:
-                        QApplication.clipboard().setText(self._release_url)
-                    except Exception as exc:
-                        print("[VersionCheck] Copy to clipboard failed: %s" % exc)
-                elif clicked == open_btn:
-                    try:
-                        from PySide6.QtCore import QUrl
-                        from PySide6.QtGui import QDesktopServices
+            def _on_update():
+                dialog.accept()
+                self.start_automatic_update(latest_tag, release_notes, download_url)
 
-                        QDesktopServices.openUrl(QUrl(self._release_url))
-                    except Exception as exc:
-                        print("[VersionCheck] Open URL failed: %s" % exc)
+            def _on_copy():
+                try:
+                    QApplication.clipboard().setText(self._release_url)
+                except Exception as exc:
+                    print("[VersionCheck] Copy to clipboard failed: %s" % exc)
 
-            msg_box.buttonClicked.connect(_handle_button)
-            msg_box.finished.connect(lambda _result: _mark_notified_once())
-            self._show_nonblocking_dialog(msg_box)
+            def _on_open():
+                try:
+                    from PySide6.QtCore import QUrl
+                    from PySide6.QtGui import QDesktopServices
+
+                    QDesktopServices.openUrl(QUrl(self._release_url))
+                except Exception as exc:
+                    print("[VersionCheck] Open URL failed: %s" % exc)
+
+            update_btn.clicked.connect(_on_update)
+            copy_btn.clicked.connect(_on_copy)
+            open_btn.clicked.connect(_on_open)
+            later_btn.clicked.connect(dialog.reject)
+            dialog.finished.connect(lambda _result: _mark_notified_once())
+            self._show_nonblocking_dialog(dialog)
         except Exception as exc:
             print("[VersionCheck] Dialog failed: %s" % exc)
 
@@ -265,8 +298,8 @@ class StartupFlow:
                     self._show_status_box(
                         tr("main.updateComplete"), message, QMessageBox.Information
                     )
-                    app = QApplication.instance()
-                    QTimer.singleShot(300, app.quit)
+                app = QApplication.instance()
+                QTimer.singleShot(300, app.quit)
             else:
                 self._show_status_box(
                     tr("main.updateFailed"),
