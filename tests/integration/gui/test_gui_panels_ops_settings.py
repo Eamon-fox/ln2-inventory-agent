@@ -626,6 +626,72 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         ]
         self.assertEqual(1, len(blocked_entries))
 
+    def test_custom_fields_dialog_rejects_accept_when_key_has_space(self):
+        """Lock issue #32: keys containing spaces must trigger an error dialog
+        instead of being silently dropped on save.
+        """
+        from unittest.mock import patch
+
+        from app_gui.i18n import get_language, set_language
+        from app_gui.ui.dialogs import custom_fields_dialog as cf_module
+        from app_gui.ui.dialogs.custom_fields_dialog import CustomFieldsDialog
+
+        previous_language = get_language()
+        set_language("en")
+        self.addCleanup(lambda: set_language(previous_language))
+
+        dialog = CustomFieldsDialog(
+            custom_fields=[{"key": "short_name", "label": "Short Name", "type": "str"}],
+        )
+        self.addCleanup(dialog.deleteLater)
+
+        accepted = {"count": 0}
+        orig_accept = dialog.accept
+        dialog.accept = lambda: accepted.__setitem__("count", accepted["count"] + 1)
+        self.addCleanup(lambda: setattr(dialog, "accept", orig_accept))
+
+        target_entry = next(
+            entry for entry in dialog._field_rows
+            if entry["key"].text().strip() == "short_name"
+        )
+        target_entry["key"].setText("project name")
+
+        captured = {"shown": 0, "text": ""}
+
+        def _fake_warning(parent, title, text):
+            captured["shown"] += 1
+            captured["text"] = text
+
+        with patch.object(cf_module.QMessageBox, "warning", side_effect=_fake_warning):
+            dialog._on_accept_requested()
+
+        self.assertEqual(1, captured["shown"])
+        self.assertIn("project name", captured["text"])
+        self.assertEqual(0, accepted["count"])
+
+    def test_custom_fields_dialog_accepts_when_all_keys_valid(self):
+        """Lock issue #32 complement: a clean save still accepts without warning."""
+        from unittest.mock import patch
+
+        from app_gui.ui.dialogs import custom_fields_dialog as cf_module
+        from app_gui.ui.dialogs.custom_fields_dialog import CustomFieldsDialog
+
+        dialog = CustomFieldsDialog(
+            custom_fields=[{"key": "short_name", "label": "Short Name", "type": "str"}],
+        )
+        self.addCleanup(dialog.deleteLater)
+
+        accepted = {"count": 0}
+        orig_accept = dialog.accept
+        dialog.accept = lambda: accepted.__setitem__("count", accepted["count"] + 1)
+        self.addCleanup(lambda: setattr(dialog, "accept", orig_accept))
+
+        with patch.object(cf_module.QMessageBox, "warning") as mock_warn:
+            dialog._on_accept_requested()
+
+        self.assertEqual(0, mock_warn.call_count)
+        self.assertEqual(1, accepted["count"])
+
     def test_settings_dialog_api_key_unlock_and_relock(self):
         from app_gui.main import SettingsDialog, PROVIDER_DEFAULTS
 

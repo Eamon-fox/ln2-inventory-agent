@@ -193,12 +193,36 @@ class CustomFieldsDialog(QDialog):
 
         buttons = QDialogButtonBox()
         ok_btn = QPushButton(tr("common.ok"))
-        ok_btn.clicked.connect(self.accept)
+        ok_btn.clicked.connect(self._on_accept_requested)
         buttons.addButton(ok_btn, QDialogButtonBox.AcceptRole)
         cancel_btn = QPushButton(tr("common.cancel"))
         cancel_btn.clicked.connect(self.reject)
         buttons.addButton(cancel_btn, QDialogButtonBox.RejectRole)
         root.addWidget(buttons)
+
+    def _on_accept_requested(self):
+        invalid = []
+        for entry in self._field_rows:
+            raw_key = entry["key"].text().strip()
+            if not raw_key:
+                continue
+            if not raw_key.isidentifier():
+                invalid.append(raw_key)
+        if invalid:
+            QMessageBox.warning(
+                self,
+                tr("main.cfKeyInvalidTitle", default="Invalid field key"),
+                tr(
+                    "main.cfKeyInvalidMessage",
+                    default=(
+                        "Field keys must be letters, digits, and underscores only, "
+                        "and cannot start with a digit. The following keys are invalid: {keys}"
+                    ),
+                    keys=", ".join(f'"{k}"' for k in invalid),
+                ),
+            )
+            return
+        self.accept()
 
     def _refresh_display_key_combo(self, current_dk=None):
         combo = self._display_key_combo
