@@ -16,6 +16,7 @@ Tests for:
 import sys
 import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -61,13 +62,18 @@ class RecentFrozenTests(ManagedPathTestCase):
 
     def test_recent_frozen_with_days_parameter(self):
         """Test recent_frozen with days parameter."""
+        today = date.today()
+        recent_dates = [
+            (today - timedelta(days=offset)).isoformat()
+            for offset in (5, 20, 45)
+        ]
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
                 make_data([
-                    make_record(1, frozen_at="2026-01-01", position=1),
-                    make_record(2, frozen_at="2026-01-15", position=2),
-                    make_record(3, frozen_at="2026-01-30", position=3),
+                    make_record(1, frozen_at=recent_dates[0], position=1),
+                    make_record(2, frozen_at=recent_dates[1], position=2),
+                    make_record(3, frozen_at=recent_dates[2], position=3),
                 ]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
