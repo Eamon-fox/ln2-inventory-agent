@@ -1402,6 +1402,13 @@ class OverviewTableViewTests(ManagedPathTestCase):
             self._cleanup(tmpdir)
 
     def test_render_table_rows_uses_set_row_count_batch_path(self):
+        """Lock the incremental-render contract:
+
+        - `_render_table_rows` never uses per-row `insertRow`.
+        - First render (shape change) calls `setRowCount(len(rows))` exactly once.
+        - Subsequent render with identical rows+shape skips `setRowCount` so the
+          table is not torn down and rebuilt on each refresh.
+        """
         records = [
             {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
             {"id": 2, "cell_line": "HeLa", "short_name": "B", "box": 1, "position": 2, "frozen_at": "2025-01-01"},
@@ -1423,6 +1430,9 @@ class OverviewTableViewTests(ManagedPathTestCase):
                 set_row_count_calls.append(count)
                 return original_set_row_count(panel.ov_table, count)
 
+            panel._table_row_signatures = []
+            panel._table_render_shape_key = None
+
             with patch.object(
                 table_cls,
                 "insertRow",
@@ -1435,9 +1445,70 @@ class OverviewTableViewTests(ManagedPathTestCase):
                 side_effect=_tracked_set_row_count,
             ):
                 panel._render_table_rows(rows)
+                first_call_count = list(set_row_count_calls)
+                panel._render_table_rows(rows)
+                second_call_count = list(set_row_count_calls)
 
-            self.assertEqual([len(rows)], set_row_count_calls)
+            self.assertEqual([len(rows)], first_call_count)
+            self.assertEqual(first_call_count, second_call_count)
             self.assertEqual(len(rows), panel.ov_table.rowCount())
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_render_table_rows_only_rewrites_changed_rows(self):
+        """Incremental render contract: when one row's payload changes, only
+        that row's cells are re-emitted via `setItem`; untouched rows keep
+        their existing QTableWidgetItem instances.
+        """
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+            {"id": 2, "cell_line": "HeLa", "short_name": "B", "box": 1, "position": 2, "frozen_at": "2025-01-01"},
+            {"id": 3, "cell_line": "HEK", "short_name": "C", "box": 1, "position": 3, "frozen_at": "2025-01-01"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            baseline_rows = list(panel._table_rows)
+            panel._render_table_rows(baseline_rows)
+
+            row_to_change = None
+            for idx, row in enumerate(baseline_rows):
+                if row.get("row_kind") != "empty_slot":
+                    row_to_change = idx
+                    break
+            self.assertIsNotNone(row_to_change)
+
+            items_before = [
+                panel.ov_table.item(r, 0) for r in range(panel.ov_table.rowCount())
+            ]
+
+            displayed_columns = [
+                c for c in list(panel._table_columns or [])
+                if c and c not in ("location", "id", "__confirm__")
+            ]
+            self.assertTrue(displayed_columns)
+            target_col = displayed_columns[0]
+
+            mutated_rows = [dict(r) for r in baseline_rows]
+            mutated_values = dict(mutated_rows[row_to_change].get("values") or {})
+            mutated_values[target_col] = "changed_value_xyz"
+            mutated_rows[row_to_change]["values"] = mutated_values
+
+            panel._render_table_rows(mutated_rows)
+
+            items_after = [
+                panel.ov_table.item(r, 0) for r in range(panel.ov_table.rowCount())
+            ]
+            for r in range(len(items_before)):
+                if r == row_to_change:
+                    self.assertIsNot(items_before[r], items_after[r])
+                else:
+                    self.assertIs(items_before[r], items_after[r])
         finally:
             self._cleanup(tmpdir)
 

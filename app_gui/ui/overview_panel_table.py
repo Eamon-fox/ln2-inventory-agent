@@ -452,6 +452,8 @@ def _set_table_columns(self, headers, *, header_labels=None):
 
     self.ov_table.setRowCount(0)
     self.ov_table.setColumnCount(len(raw_columns))
+    self._table_row_signatures = []
+    self._table_render_shape_key = None
     self._table_header_labels = dict(resolved_labels)
     for idx, col_name in enumerate(raw_columns):
         header_item = QTableWidgetItem(str(resolved_labels.get(col_name, col_name)))
@@ -769,23 +771,64 @@ def _render_table_row(self, row_index, row_data, column_type_map):
         self.ov_table.setItem(row_index, col_index, item)
 
 
+def _row_render_signature(row_data, columns):
+    values = row_data.get("values") or {}
+    record = row_data.get("record")
+    record_id = record.get("id") if isinstance(record, dict) else row_data.get("record_id")
+    return (
+        str(row_data.get("row_kind") or ""),
+        _safe_int(row_data.get("box")),
+        _safe_int(row_data.get("position")),
+        _safe_int(record_id),
+        str(row_data.get("color_value") or ""),
+        bool(row_data.get("row_confirmed")),
+        bool(row_data.get("row_locked")),
+        tuple(("" if values.get(col) is None else str(values.get(col))) for col in columns),
+    )
+
+
 def _render_table_rows(self, rows):
     rows_list = list(rows or [])
+    columns = list(getattr(self, "_table_columns", []) or [])
     column_type_map = _column_type_map(self)
+    shape_key = (tuple(columns), tuple(sorted(column_type_map.items())))
+    prev_shape_key = getattr(self, "_table_render_shape_key", None)
+    prev_signatures = list(getattr(self, "_table_row_signatures", []) or [])
+    new_signatures = [_row_render_signature(row, columns) for row in rows_list]
+
+    need_full_rebuild = (
+        prev_shape_key != shape_key
+        or self.ov_table.rowCount() != len(rows_list)
+        or len(prev_signatures) != len(rows_list)
+    )
+
     self.ov_table.setSortingEnabled(False)
     updates_enabled = bool(self.ov_table.updatesEnabled())
     self.ov_table.setUpdatesEnabled(False)
     self._ignore_table_item_change = True
 
     try:
-        self.ov_table.setRowCount(len(rows_list))
-        self._table_row_records = [None] * len(rows_list)
-        for row_index, row_data in enumerate(rows_list):
-            _render_table_row(self, row_index, row_data, column_type_map)
+        if need_full_rebuild:
+            self.ov_table.setRowCount(len(rows_list))
+            self._table_row_records = [None] * len(rows_list)
+            for row_index, row_data in enumerate(rows_list):
+                _render_table_row(self, row_index, row_data, column_type_map)
+        else:
+            if len(self._table_row_records) < len(rows_list):
+                self._table_row_records.extend(
+                    [None] * (len(rows_list) - len(self._table_row_records))
+                )
+            for row_index, (sig, row_data) in enumerate(zip(new_signatures, rows_list)):
+                if prev_signatures[row_index] == sig:
+                    continue
+                _render_table_row(self, row_index, row_data, column_type_map)
     finally:
         self._ignore_table_item_change = False
         self.ov_table.setUpdatesEnabled(updates_enabled)
         self.ov_table.setSortingEnabled(True)
+
+    self._table_row_signatures = new_signatures
+    self._table_render_shape_key = shape_key
 
 
 def _refresh_table_entry_row_visual(self, row, *, row_data=None):
@@ -804,6 +847,12 @@ def _refresh_table_entry_row_visual(self, row, *, row_data=None):
     finally:
         self._ignore_table_item_change = False
         self.ov_table.setSortingEnabled(sorting_enabled)
+
+    signatures = list(getattr(self, "_table_row_signatures", []) or [])
+    if 0 <= row < len(signatures):
+        columns = list(getattr(self, "_table_columns", []) or [])
+        signatures[row] = _row_render_signature(current_row, columns)
+        self._table_row_signatures = signatures
 
     if 0 <= selected_row < self.ov_table.rowCount():
         target = self.ov_table.item(selected_row, current_column) or _table_first_row_item(self, selected_row)
