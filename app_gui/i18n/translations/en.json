@@ -131,6 +131,8 @@
     "cfStructuralStorageEventsLabel": "Storage Events",
     "cfKeyInvalidTitle": "Invalid field key",
     "cfKeyInvalidMessage": "Field keys must be letters, digits, and underscores only, and cannot start with a digit. The following keys are invalid: {keys}",
+    "singleInstanceTitle": "SnowFox is already running",
+    "singleInstanceMessage": "Another SnowFox window is already open on this computer. Please switch to that window instead of starting a new one.",
     "cfKeyPh": "e.g. passage_number",
     "cfLabelPh": "e.g. Passage #",
     "cfDefaultPh": "Optional",

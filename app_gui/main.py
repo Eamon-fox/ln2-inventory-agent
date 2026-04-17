@@ -18,6 +18,7 @@ else:
     if ROOT not in sys.path:
         sys.path.insert(0, ROOT)
 
+from app_gui.single_instance import SingleInstanceLock
 from app_gui.tool_bridge import GuiToolBridge
 from app_gui.agent_session import AgentSessionService
 from app_gui.application import (
@@ -1225,7 +1226,17 @@ def main():
 
     app = QApplication(sys.argv)
 
+    instance_lock = SingleInstanceLock()
+    if not instance_lock.acquire():
+        QMessageBox.information(
+            None,
+            tr("main.singleInstanceTitle"),
+            tr("main.singleInstanceMessage"),
+        )
+        return 0
+
     if not _bootstrap_data_root(app, gui_config):
+        instance_lock.release()
         return 0
 
     # Set application icon (taskbar, window title bar, etc.)
@@ -1253,7 +1264,11 @@ def main():
 
     window = MainWindow()
     window.show()
-    sys.exit(app.exec())
+    try:
+        exit_code = app.exec()
+    finally:
+        instance_lock.release()
+    sys.exit(exit_code)
 
 if __name__ == "__main__":
     main()
