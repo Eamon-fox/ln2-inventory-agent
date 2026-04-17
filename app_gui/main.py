@@ -3,7 +3,7 @@
 import os
 import sys
 from contextlib import suppress
-from PySide6.QtCore import Qt, QSettings, Slot, QTimer, QSize
+from PySide6.QtCore import Qt, QSettings, Slot, QTimer, QSize, QSignalBlocker
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
@@ -807,19 +807,18 @@ class MainWindow(QMainWindow):
         current_yaml = _normalize_inventory_yaml_path(selected_yaml or self.current_yaml_path)
         items, selected_idx = build_dataset_combo_items(rows, current_yaml)
 
-        combo.blockSignals(True)
-        combo.clear()
-        for name, yaml_path in items:
-            combo.addItem(name, yaml_path)
+        with QSignalBlocker(combo):
+            combo.clear()
+            for name, yaml_path in items:
+                combo.addItem(name, yaml_path)
 
-        combo.setEnabled(bool(items))
-        tooltip_text = ""
-        if items:
-            combo.setCurrentIndex(selected_idx)
-            selected_path = combo.currentData()
-            tooltip_text = str(selected_path or "")
-        combo.setToolTip(tooltip_text)
-        combo.blockSignals(False)
+            combo.setEnabled(bool(items))
+            tooltip_text = ""
+            if items:
+                combo.setCurrentIndex(selected_idx)
+                selected_path = combo.currentData()
+                tooltip_text = str(selected_path or "")
+            combo.setToolTip(tooltip_text)
 
     def _current_data_root(self) -> str:
         return normalize_data_root(self.gui_config.get("data_root"))

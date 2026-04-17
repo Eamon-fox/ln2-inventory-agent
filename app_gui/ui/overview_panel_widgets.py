@@ -1,6 +1,6 @@
 """Reusable widget classes for OverviewPanel."""
 
-from PySide6.QtCore import QRect, Qt, Signal
+from PySide6.QtCore import QRect, Qt, QSignalBlocker, Signal
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QApplication,
@@ -405,14 +405,13 @@ class _ColumnFilterDialog(QDialog):
         all_checked = all(cb.isChecked() for cb in visible_checkboxes)
         any_checked = any(cb.isChecked() for cb in visible_checkboxes)
 
-        self.select_all_cb.blockSignals(True)
-        if all_checked:
-            self.select_all_cb.setCheckState(Qt.Checked)
-        elif any_checked:
-            self.select_all_cb.setCheckState(Qt.PartiallyChecked)
-        else:
-            self.select_all_cb.setCheckState(Qt.Unchecked)
-        self.select_all_cb.blockSignals(False)
+        with QSignalBlocker(self.select_all_cb):
+            if all_checked:
+                self.select_all_cb.setCheckState(Qt.Checked)
+            elif any_checked:
+                self.select_all_cb.setCheckState(Qt.PartiallyChecked)
+            else:
+                self.select_all_cb.setCheckState(Qt.Unchecked)
 
     def _on_clear(self):
         """Clear the filter."""

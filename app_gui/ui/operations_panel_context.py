@@ -2,6 +2,8 @@
 
 from contextlib import suppress
 
+from PySide6.QtCore import QSignalBlocker
+
 from app_gui.i18n import tr
 from lib.schema_aliases import get_storage_events, get_stored_at
 
@@ -277,19 +279,16 @@ def _refresh_takeout_record_context(self):
                 allow_empty=True,
             )
             if rec_box is not None:
-                self.t_from_box.blockSignals(True)
-                self.t_from_box.setValue(int(rec_box))
-                self.t_from_box.blockSignals(False)
+                with QSignalBlocker(self.t_from_box):
+                    self.t_from_box.setValue(int(rec_box))
             if rec_pos is not None:
-                self.t_from_position.blockSignals(True)
-                self.t_from_position.setText(self._position_to_display(rec_pos))
-                self.t_from_position.blockSignals(False)
+                with QSignalBlocker(self.t_from_position):
+                    self.t_from_position.setText(self._position_to_display(rec_pos))
 
     # Update internal ID
     if record_id:
-        self.t_id.blockSignals(True)
-        self.t_id.setValue(record_id)
-        self.t_id.blockSignals(False)
+        with QSignalBlocker(self.t_id):
+            self.t_id.setValue(record_id)
 
     source_text = "-"
     if self.t_prefill_source:
@@ -335,12 +334,11 @@ def _refresh_takeout_record_context(self):
     )
 
     # Set single position (hidden combo, kept for compat)
-    self.t_position.blockSignals(True)
-    self.t_position.clear()
-    if position is not None:
-        self.t_position.addItem(self._position_to_display(position), position)
-        self.t_position.setCurrentIndex(0)
-    self.t_position.blockSignals(False)
+    with QSignalBlocker(self.t_position):
+        self.t_position.clear()
+        if position is not None:
+            self.t_position.addItem(self._position_to_display(position), position)
+            self.t_position.setCurrentIndex(0)
 
     _set_last_event_summary_label(self, self.t_ctx_events, get_storage_events(record))
 
@@ -370,9 +368,8 @@ def _refresh_move_record_context(self):
 
     # Update internal ID
     if record_id:
-        self.m_id.blockSignals(True)
-        self.m_id.setValue(record_id)
-        self.m_id.blockSignals(False)
+        with QSignalBlocker(self.m_id):
+            self.m_id.setValue(record_id)
 
     if not record:
         self.m_ctx_status.setText(tr("operations.recordNotFound"))
@@ -400,9 +397,8 @@ def _refresh_move_record_context(self):
         allow_empty=True,
     )
     if box_num is not None:
-        self.m_to_box.blockSignals(True)
-        self.m_to_box.setValue(int(box_num))
-        self.m_to_box.blockSignals(False)
+        with QSignalBlocker(self.m_to_box):
+            self.m_to_box.setValue(int(box_num))
 
     _populate_record_context_labels(
         self,

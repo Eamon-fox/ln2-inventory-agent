@@ -1,6 +1,6 @@
 """Runtime behavior helpers for OverviewPanel."""
 
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QEvent, Qt, QSignalBlocker
 from PySide6.QtWidgets import QWidget
 
 from app_gui.i18n import tr
@@ -168,8 +168,7 @@ def _remember_secondary_toggle_state(self, previous_mode):
 
 
 def _sync_secondary_toggle_for_view_mode(self, mode):
-    self.ov_filter_secondary_toggle.blockSignals(True)
-    try:
+    with QSignalBlocker(self.ov_filter_secondary_toggle):
         if mode == "table":
             self.ov_filter_secondary_toggle.setText(tr("overview.showTakenOut"))
             self.ov_filter_secondary_toggle.setChecked(bool(self._table_include_inactive))
@@ -177,8 +176,6 @@ def _sync_secondary_toggle_for_view_mode(self, mode):
             self.ov_filter_secondary_toggle.setText(tr("overview.showEmpty"))
             self.ov_filter_secondary_toggle.setChecked(bool(self._grid_include_empty_slots))
         self.ov_filter_secondary_toggle.setToolTip("")
-    finally:
-        self.ov_filter_secondary_toggle.blockSignals(False)
 
 
 def _set_grid_mode_aux_visibility(self, is_grid_mode):

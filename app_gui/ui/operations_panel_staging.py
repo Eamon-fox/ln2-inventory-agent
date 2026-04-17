@@ -1,5 +1,7 @@
 """Staging helpers for OperationsPanel single/batch record actions."""
 
+from PySide6.QtCore import QSignalBlocker
+
 from app_gui.i18n import tr
 from lib.plan_item_factory import (
     build_add_plan_item,
@@ -97,9 +99,8 @@ def on_record_move(self):
                     continue
                 if rec_box == int(from_box) and rec_pos == int(from_pos):
                     record = rec
-                    self.m_id.blockSignals(True)
-                    self.m_id.setValue(int(rid))
-                    self.m_id.blockSignals(False)
+                    with QSignalBlocker(self.m_id):
+                        self.m_id.setValue(int(rid))
                     break
 
     if not record:

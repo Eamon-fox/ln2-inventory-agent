@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+from PySide6.QtCore import QSignalBlocker
 from PySide6.QtWidgets import QDialog
 
 from app_gui.error_localizer import localize_error_payload
@@ -20,26 +21,24 @@ def _refresh_filter_options(self, records, box_numbers):
     prev_box = self.ov_filter_box.currentData()
     prev_cell = self.ov_filter_cell.currentData()
 
-    self.ov_filter_box.blockSignals(True)
-    self.ov_filter_box.clear()
-    self.ov_filter_box.addItem(tr("overview.allBoxes"), None)
-    for box_num in box_numbers:
-        self.ov_filter_box.addItem(t("overview.boxLabel", box=box_num), box_num)
-    index = self.ov_filter_box.findData(prev_box)
-    self.ov_filter_box.setCurrentIndex(index if index >= 0 else 0)
-    self.ov_filter_box.blockSignals(False)
+    with QSignalBlocker(self.ov_filter_box):
+        self.ov_filter_box.clear()
+        self.ov_filter_box.addItem(tr("overview.allBoxes"), None)
+        for box_num in box_numbers:
+            self.ov_filter_box.addItem(t("overview.boxLabel", box=box_num), box_num)
+        index = self.ov_filter_box.findData(prev_box)
+        self.ov_filter_box.setCurrentIndex(index if index >= 0 else 0)
 
     meta = getattr(self, "_current_meta", {})
     ck = get_color_key(meta, inventory=records)
     values = sorted({str(rec.get(ck)) for rec in records if rec.get(ck)})
-    self.ov_filter_cell.blockSignals(True)
-    self.ov_filter_cell.clear()
-    self.ov_filter_cell.addItem(tr("overview.allCells"), None)
-    for val in values:
-        self.ov_filter_cell.addItem(val, val)
-    index = self.ov_filter_cell.findData(prev_cell)
-    self.ov_filter_cell.setCurrentIndex(index if index >= 0 else 0)
-    self.ov_filter_cell.blockSignals(False)
+    with QSignalBlocker(self.ov_filter_cell):
+        self.ov_filter_cell.clear()
+        self.ov_filter_cell.addItem(tr("overview.allCells"), None)
+        for val in values:
+            self.ov_filter_cell.addItem(val, val)
+        index = self.ov_filter_cell.findData(prev_cell)
+        self.ov_filter_cell.setCurrentIndex(index if index >= 0 else 0)
 
 
 def _apply_filters(self):
@@ -232,14 +231,13 @@ def on_clear_filters(self):
     self.ov_filter_keyword.clear()
     self.ov_filter_box.setCurrentIndex(0)
     self.ov_filter_cell.setCurrentIndex(0)
-    self.ov_filter_secondary_toggle.blockSignals(True)
-    if self._overview_view_mode == "table":
-        self._table_include_inactive = False
-        self.ov_filter_secondary_toggle.setChecked(False)
-    else:
-        self._grid_include_empty_slots = True
-        self.ov_filter_secondary_toggle.setChecked(True)
-    self.ov_filter_secondary_toggle.blockSignals(False)
+    with QSignalBlocker(self.ov_filter_secondary_toggle):
+        if self._overview_view_mode == "table":
+            self._table_include_inactive = False
+            self.ov_filter_secondary_toggle.setChecked(False)
+        else:
+            self._grid_include_empty_slots = True
+            self.ov_filter_secondary_toggle.setChecked(True)
     if self.ov_filter_toggle_btn.isChecked():
         self.ov_filter_toggle_btn.setChecked(False)
 

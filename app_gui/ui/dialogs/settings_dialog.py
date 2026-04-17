@@ -3,7 +3,7 @@
 import os
 import sys
 
-from PySide6.QtCore import Qt, Slot, QSize, QTimer
+from PySide6.QtCore import Qt, Slot, QSize, QTimer, QSignalBlocker
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -608,22 +608,21 @@ class SettingsDialog(QDialog):
             selected_yaml=selected_yaml or self.yaml_edit.text().strip(),
         )
 
-        combo.blockSignals(True)
-        combo.clear()
-        for name, yaml_path in items:
-            combo.addItem(name, yaml_path)
+        with QSignalBlocker(combo):
+            combo.clear()
+            for name, yaml_path in items:
+                combo.addItem(name, yaml_path)
 
-        combo.setEnabled(bool(items))
-        if self.dataset_rename_btn is not None:
-            self.dataset_rename_btn.setEnabled(bool(items) and callable(self._on_rename_dataset))
-        if self.dataset_delete_btn is not None:
-            self.dataset_delete_btn.setEnabled(bool(items) and callable(self._on_delete_dataset))
-        if items:
-            combo.setCurrentIndex(selected_idx)
-            selected_path = combo.currentData()
-            if selected_path:
-                self.yaml_edit.setText(self._normalize_yaml_path(selected_path))
-        combo.blockSignals(False)
+            combo.setEnabled(bool(items))
+            if self.dataset_rename_btn is not None:
+                self.dataset_rename_btn.setEnabled(bool(items) and callable(self._on_rename_dataset))
+            if self.dataset_delete_btn is not None:
+                self.dataset_delete_btn.setEnabled(bool(items) and callable(self._on_delete_dataset))
+            if items:
+                combo.setCurrentIndex(selected_idx)
+                selected_path = combo.currentData()
+                if selected_path:
+                    self.yaml_edit.setText(self._normalize_yaml_path(selected_path))
 
     def _on_dataset_switch_changed(self):
         if self.dataset_switch_combo is None:
@@ -1228,19 +1227,18 @@ class SettingsDialog(QDialog):
         models, default_model = self._provider_models(provider)
         target_model = str(selected_model or "").strip() or default_model
 
-        self.ai_model_edit.blockSignals(True)
-        self.ai_model_edit.clear()
-        for model in models:
-            self.ai_model_edit.addItem(model, model)
-        if target_model and self.ai_model_edit.findText(target_model) < 0:
-            self.ai_model_edit.addItem(target_model, target_model)
-        idx = self.ai_model_edit.findText(target_model)
-        if idx >= 0:
-            self.ai_model_edit.setCurrentIndex(idx)
-        elif target_model:
-            self.ai_model_edit.setEditText(target_model)
-        self.ai_model_edit.setPlaceholderText(default_model)
-        self.ai_model_edit.blockSignals(False)
+        with QSignalBlocker(self.ai_model_edit):
+            self.ai_model_edit.clear()
+            for model in models:
+                self.ai_model_edit.addItem(model, model)
+            if target_model and self.ai_model_edit.findText(target_model) < 0:
+                self.ai_model_edit.addItem(target_model, target_model)
+            idx = self.ai_model_edit.findText(target_model)
+            if idx >= 0:
+                self.ai_model_edit.setCurrentIndex(idx)
+            elif target_model:
+                self.ai_model_edit.setEditText(target_model)
+            self.ai_model_edit.setPlaceholderText(default_model)
 
     def _build_locked_api_key_row(self, initial_value):
         row_widget = QWidget()

@@ -1,7 +1,7 @@
 import os
 import sys
 
-from PySide6.QtCore import Qt, Signal, Slot, QDate, QSortFilterProxyModel, QEvent
+from PySide6.QtCore import Qt, Signal, Slot, QDate, QSortFilterProxyModel, QEvent, QSignalBlocker
 from PySide6.QtGui import QDesktopServices, QValidator, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -324,15 +324,12 @@ class OperationsPanel(QWidget):
 
     def _reset_add_form_to_defaults(self):
         self._ensure_today_defaults()
-        self.a_box.blockSignals(True)
-        self.a_box.setValue(max(1, int(self.a_box.minimum())))
-        self.a_box.blockSignals(False)
-        self.a_positions.blockSignals(True)
-        self.a_positions.clear()
-        self.a_positions.blockSignals(False)
-        self.a_date.blockSignals(True)
-        self.a_date.setDate(QDate.currentDate())
-        self.a_date.blockSignals(False)
+        with QSignalBlocker(self.a_box):
+            self.a_box.setValue(max(1, int(self.a_box.minimum())))
+        with QSignalBlocker(self.a_positions):
+            self.a_positions.clear()
+        with QSignalBlocker(self.a_date):
+            self.a_date.setDate(QDate.currentDate())
 
         for field_def in list(getattr(self, "_current_custom_fields", []) or []):
             if not isinstance(field_def, dict):
@@ -350,45 +347,41 @@ class OperationsPanel(QWidget):
             return
         if isinstance(widget, QComboBox):
             text = "" if value is None else str(value)
-            widget.blockSignals(True)
-            if text:
-                widget.setCurrentText(text)
-            elif widget.findText("", Qt.MatchFixedString) >= 0:
-                widget.setCurrentText("")
-            elif widget.count() > 0:
-                widget.setCurrentIndex(0)
-            else:
-                widget.setEditText("")
-            widget.blockSignals(False)
+            with QSignalBlocker(widget):
+                if text:
+                    widget.setCurrentText(text)
+                elif widget.findText("", Qt.MatchFixedString) >= 0:
+                    widget.setCurrentText("")
+                elif widget.count() > 0:
+                    widget.setCurrentIndex(0)
+                else:
+                    widget.setEditText("")
             return
         if isinstance(widget, QDateEdit):
             text = str(value or "").strip()
             parsed = QDate.fromString(text, "yyyy-MM-dd") if text else QDate()
-            widget.blockSignals(True)
-            widget.setDate(parsed if parsed.isValid() else QDate.currentDate())
-            widget.blockSignals(False)
+            with QSignalBlocker(widget):
+                widget.setDate(parsed if parsed.isValid() else QDate.currentDate())
             return
         if isinstance(widget, QSpinBox):
-            widget.blockSignals(True)
-            if value in (None, ""):
-                widget.setValue(0)
-            else:
-                try:
-                    widget.setValue(int(value))
-                except (TypeError, ValueError):
+            with QSignalBlocker(widget):
+                if value in (None, ""):
                     widget.setValue(0)
-            widget.blockSignals(False)
+                else:
+                    try:
+                        widget.setValue(int(value))
+                    except (TypeError, ValueError):
+                        widget.setValue(0)
             return
         if isinstance(widget, QDoubleSpinBox):
-            widget.blockSignals(True)
-            if value in (None, ""):
-                widget.setValue(0.0)
-            else:
-                try:
-                    widget.setValue(float(value))
-                except (TypeError, ValueError):
+            with QSignalBlocker(widget):
+                if value in (None, ""):
                     widget.setValue(0.0)
-            widget.blockSignals(False)
+                else:
+                    try:
+                        widget.setValue(float(value))
+                    except (TypeError, ValueError):
+                        widget.setValue(0.0)
             return
         _ops_forms._write_text_widget_value(widget, "" if value is None else value)
 
@@ -404,20 +397,17 @@ class OperationsPanel(QWidget):
         fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
         stored_at = str(get_input_stored_at(payload, default="") or "").strip()
 
-        self.a_box.blockSignals(True)
-        self.a_box.setValue(int(box))
-        self.a_box.blockSignals(False)
+        with QSignalBlocker(self.a_box):
+            self.a_box.setValue(int(box))
 
-        self.a_positions.blockSignals(True)
-        self.a_positions.setText(self._positions_to_display_text(list(positions)))
-        self.a_positions.blockSignals(False)
+        with QSignalBlocker(self.a_positions):
+            self.a_positions.setText(self._positions_to_display_text(list(positions)))
 
         if stored_at:
             parsed_date = QDate.fromString(stored_at, "yyyy-MM-dd")
             if parsed_date.isValid():
-                self.a_date.blockSignals(True)
-                self.a_date.setDate(parsed_date)
-                self.a_date.blockSignals(False)
+                with QSignalBlocker(self.a_date):
+                    self.a_date.setDate(parsed_date)
 
         for field_def in list(getattr(self, "_current_custom_fields", []) or []):
             if not isinstance(field_def, dict):
@@ -790,9 +780,8 @@ class OperationsPanel(QWidget):
 
         idx = self.op_mode_combo.findData(target)
         if idx >= 0 and idx != self.op_mode_combo.currentIndex():
-            self.op_mode_combo.blockSignals(True)
-            self.op_mode_combo.setCurrentIndex(idx)
-            self.op_mode_combo.blockSignals(False)
+            with QSignalBlocker(self.op_mode_combo):
+                self.op_mode_combo.setCurrentIndex(idx)
 
     def on_mode_changed(self, _index=None):
         self.set_mode(self.op_mode_combo.currentData())
@@ -994,55 +983,52 @@ class OperationsPanel(QWidget):
             hint_lines = self._cell_line_hint_lines() if fkey == "cell_line" else []
             prev = combo.currentText()
 
-            combo.blockSignals(True)
+            with QSignalBlocker(combo):
+                display_options = []
+                if not frequired:
+                    display_options.append("")
+                display_options.extend(options)
 
-            display_options = []
-            if not frequired:
-                display_options.append("")
-            display_options.extend(options)
+                combo_model = self._build_choice_display_model(
+                    display_options,
+                    hint_lines=hint_lines,
+                    parent=combo,
+                )
+                combo.setModel(combo_model)
+                combo.setEditable(True)
+                combo.setInsertPolicy(QComboBox.NoInsert)
+                combo_row_count = combo_model.rowCount()
+                combo.setMaxVisibleItems(max(1, combo_row_count))
+                try:
+                    view = combo.view()
+                    if view is not None:
+                        view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                        view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                        popup_height = self._popup_height_for_rows(view, combo_row_count)
+                        if popup_height > 0:
+                            view.setMinimumHeight(popup_height)
+                            view.setMaximumHeight(popup_height)
+                except Exception:
+                    pass
 
-            combo_model = self._build_choice_display_model(
-                display_options,
-                hint_lines=hint_lines,
-                parent=combo,
-            )
-            combo.setModel(combo_model)
-            combo.setEditable(True)
-            combo.setInsertPolicy(QComboBox.NoInsert)
-            combo_row_count = combo_model.rowCount()
-            combo.setMaxVisibleItems(max(1, combo_row_count))
-            try:
-                view = combo.view()
-                if view is not None:
-                    view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-                    view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-                    popup_height = self._popup_height_for_rows(view, combo_row_count)
-                    if popup_height > 0:
-                        view.setMinimumHeight(popup_height)
-                        view.setMaximumHeight(popup_height)
-            except Exception:
-                pass
+                target_index = -1
+                if prev:
+                    idx = combo.findText(prev, Qt.MatchFixedString)
+                    if idx >= 0:
+                        model_item = combo_model.item(idx, 0)
+                        if model_item is not None and not bool(model_item.data(_CHOICE_HINT_ROLE)):
+                            target_index = idx
 
-            target_index = -1
-            if prev:
-                idx = combo.findText(prev, Qt.MatchFixedString)
-                if idx >= 0:
-                    model_item = combo_model.item(idx, 0)
-                    if model_item is not None and not bool(model_item.data(_CHOICE_HINT_ROLE)):
-                        target_index = idx
-
-            if target_index < 0 and options:
-                if frequired:
+                if target_index < 0 and options:
+                    if frequired:
+                        target_index = 0
+                    else:
+                        target_index = 1 if combo.count() > 1 else 0
+                elif target_index < 0 and combo.count() > 0:
                     target_index = 0
-                else:
-                    target_index = 1 if combo.count() > 1 else 0
-            elif target_index < 0 and combo.count() > 0:
-                target_index = 0
 
-            if target_index >= 0:
-                combo.setCurrentIndex(target_index)
-
-            combo.blockSignals(False)
+                if target_index >= 0:
+                    combo.setCurrentIndex(target_index)
             combo_line = combo.lineEdit()
             if combo_line is not None:
                 self._configure_choice_line_edit(
@@ -1366,9 +1352,8 @@ class OperationsPanel(QWidget):
 
         # If record_id is provided directly, set it
         if "record_id" in payload:
-            self.t_id.blockSignals(True)
-            self.t_id.setValue(int(payload["record_id"]))
-            self.t_id.blockSignals(False)
+            with QSignalBlocker(self.t_id):
+                self.t_id.setValue(int(payload["record_id"]))
 
         # Fill source box + position (will auto-lookup record ID if not provided)
         if "box" in payload:
