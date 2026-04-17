@@ -1,10 +1,12 @@
 """
 YAML file operations for LN2 inventory
 """
+import hashlib
 import json
 import os
 import shutil
 import sys
+import time
 import uuid
 from contextlib import suppress
 from datetime import datetime
@@ -499,11 +501,77 @@ def list_yaml_backups(yaml_path=YAML_PATH, limit=None):
     return backups
 
 
-def create_yaml_backup(yaml_path=YAML_PATH, keep=BACKUP_KEEP_COUNT, instance_id_override=None):
+_BACKUP_THROTTLE_ENV = "LN2_BACKUP_THROTTLE_SECONDS"
+_BACKUP_THROTTLE_DEFAULT_SEC = 30
+_BACKUP_STATE_FILENAME = ".last_backup.json"
+
+
+def _backup_throttle_seconds():
+    """Read the backup throttle window (seconds). 0/negative disables throttling."""
+    raw = os.environ.get(_BACKUP_THROTTLE_ENV)
+    if raw is None:
+        return _BACKUP_THROTTLE_DEFAULT_SEC
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return _BACKUP_THROTTLE_DEFAULT_SEC
+
+
+def _file_sha256(path):
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 16), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return None
+
+
+def _read_backup_state(state_path):
+    try:
+        with open(state_path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        if isinstance(payload, dict):
+            return payload
+    except (OSError, ValueError):
+        pass
+    return {}
+
+
+def _write_backup_state(state_path, payload):
+    """Atomic write so a crash mid-update can't corrupt the state file."""
+    tmp_path = f"{state_path}.tmp-{os.getpid()}-{uuid.uuid4().hex[:6]}"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+        os.replace(tmp_path, state_path)
+    except OSError:
+        with suppress(OSError):
+            os.remove(tmp_path)
+
+
+def create_yaml_backup(
+    yaml_path=YAML_PATH,
+    keep=BACKUP_KEEP_COUNT,
+    instance_id_override=None,
+    *,
+    throttle_seconds=None,
+    force=False,
+):
     """Create timestamped backup for current YAML file.
 
+    The backup is skipped when either
+      - the content hash matches the previous backup's hash, or
+      - the previous backup happened within ``throttle_seconds`` ago.
+    Set ``force=True`` or ``throttle_seconds=0`` to bypass throttling.
+    The per-directory state lives in ``.last_backup.json`` and records
+    ``{"hash": <sha256>, "path": <backup_path>, "mtime": <epoch>}``.
+
     Returns:
-        str|None: backup path if source exists, else None
+        str|None: backup path if a new backup was written, otherwise the
+        most recent existing backup path (when throttled but we still want
+        the caller to have a valid restore point) or None if no source.
     """
     src = _abs_path(yaml_path)
     src = assert_allowed_inventory_yaml_path(src)
@@ -512,6 +580,37 @@ def create_yaml_backup(yaml_path=YAML_PATH, keep=BACKUP_KEEP_COUNT, instance_id_
 
     backup_dir = _backup_dir(src, instance_id_override=instance_id_override)
     os.makedirs(backup_dir, exist_ok=True)
+
+    window = _backup_throttle_seconds() if throttle_seconds is None else max(
+        0, int(throttle_seconds)
+    )
+    state_path = os.path.join(backup_dir, _BACKUP_STATE_FILENAME)
+    state = {} if force else _read_backup_state(state_path)
+
+    src_hash = _file_sha256(src) if not force else None
+    now = time.time()
+    last_hash = str(state.get("hash") or "") if state else ""
+    last_mtime = state.get("mtime") if state else None
+    last_path = state.get("path") if state else None
+
+    if (
+        not force
+        and src_hash
+        and last_hash == src_hash
+        and isinstance(last_path, str)
+        and os.path.exists(last_path)
+    ):
+        return last_path
+
+    if (
+        not force
+        and window > 0
+        and isinstance(last_mtime, (int, float))
+        and (now - float(last_mtime)) < window
+        and isinstance(last_path, str)
+        and os.path.exists(last_path)
+    ):
+        return last_path
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     base = os.path.basename(src)
@@ -523,6 +622,11 @@ def create_yaml_backup(yaml_path=YAML_PATH, keep=BACKUP_KEEP_COUNT, instance_id_
         i += 1
 
     shutil.copy2(src, backup_path)
+
+    _write_backup_state(
+        state_path,
+        {"hash": src_hash or _file_sha256(backup_path) or "", "path": backup_path, "mtime": now},
+    )
 
     if keep is not None and keep > 0:
         old_backups = list_yaml_backups(src)

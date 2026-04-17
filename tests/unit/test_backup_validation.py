@@ -151,10 +151,13 @@ class TestListAlternativeBackups(ManagedPathTestCase):
             _write_yaml(yaml_path, _valid_data())
             write_yaml(_valid_data(), path=str(yaml_path))
 
-            b1 = create_yaml_backup(str(yaml_path))
+            # force=True produces two distinct backups; the throttle-based
+            # default would short-circuit the second call.
+            b1 = create_yaml_backup(str(yaml_path), force=True)
             self.assertIsNotNone(b1)
-            b2 = create_yaml_backup(str(yaml_path))
+            b2 = create_yaml_backup(str(yaml_path), force=True)
             self.assertIsNotNone(b2)
+            self.assertNotEqual(b1, b2)
 
             alternatives = list_alternative_backups(str(yaml_path), exclude_path=b1)
 

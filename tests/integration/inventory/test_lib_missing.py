@@ -98,8 +98,10 @@ class YamlOpsBackupTests(ManagedPathTestCase):
             fixed_now = datetime(2026, 1, 1, 12, 0, 0)
             with patch("lib.yaml_ops.datetime") as mock_datetime:
                 mock_datetime.now.return_value = fixed_now
-                result1 = create_yaml_backup(str(yaml_path), keep=0)
-                result2 = create_yaml_backup(str(yaml_path), keep=0)
+                # force=True bypasses hash/time throttling so we can probe
+                # the timestamp-collision naming path.
+                result1 = create_yaml_backup(str(yaml_path), keep=0, force=True)
+                result2 = create_yaml_backup(str(yaml_path), keep=0, force=True)
 
             self.assertIsNotNone(result1)
             self.assertIsNotNone(result2)
@@ -111,8 +113,11 @@ class YamlOpsBackupTests(ManagedPathTestCase):
             yaml_path = Path(td) / "inventory.yaml"
             yaml_path.write_text("data")
 
-            result1 = create_yaml_backup(str(yaml_path), keep=0)
-            result2 = create_yaml_backup(str(yaml_path), keep=0)
+            # force=True bypasses hash-skip so both calls actually emit a
+            # new backup file; the retention contract only matters when
+            # multiple distinct backups exist.
+            result1 = create_yaml_backup(str(yaml_path), keep=0, force=True)
+            result2 = create_yaml_backup(str(yaml_path), keep=0, force=True)
 
             # Both backups should still exist
             self.assertTrue(Path(result1).exists())
