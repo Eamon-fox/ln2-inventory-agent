@@ -19,6 +19,12 @@ OVERVIEW_UI_FILE = ROOT / "app_gui" / "ui" / "overview_panel_ui.py"
 OVERVIEW_FILTERS_FILE = ROOT / "app_gui" / "ui" / "overview_panel_filters.py"
 DIALOG_FILES = [
     ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog.py",
+    ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_about_section.py",
+    ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_ai_section.py",
+    ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_custom_fields.py",
+    ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_dataset_section.py",
+    ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_formatters.py",
+    ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_local_api_section.py",
     ROOT / "app_gui" / "ui" / "dialogs" / "new_dataset_dialog.py",
     ROOT / "app_gui" / "ui" / "dialogs" / "custom_fields_dialog.py",
 ]
@@ -139,7 +145,10 @@ def test_main_wires_dataset_lifecycle_use_case_into_startup_and_dataset_flow():
 def test_settings_new_dataset_switches_immediately():
     text = _combined_source_text()
 
-    assert "self._on_create_new_dataset(update_window=True)" in text
+    assert (
+        "self._on_create_new_dataset(update_window=True)" in text
+        or "dialog._on_create_new_dataset(update_window=True)" in text
+    )
 
 
 def test_settings_dialog_wires_dataset_rename_callback():
@@ -220,7 +229,11 @@ def test_app_version_constant_exists_and_about_uses_it():
 
     assert re.search(r'APP_VERSION\b.*=\s*"[\d.]+"', text)
     assert 'APP_RELEASE_URL: str = "https://snowfox.bio/download.html"' in text
-    assert re.search(r'v\{APP_VERSION\}', text) or re.search(r'v\{self\._app_version\}', text)
+    assert (
+        re.search(r'v\{APP_VERSION\}', text)
+        or re.search(r'v\{self\._app_version\}', text)
+        or re.search(r'v\{dialog\._app_version\}', text)
+    )
     assert "APP_RELEASE_URL" in text
     assert "_check_release_notice_once" in text
     assert "_is_version_newer" in text or "is_version_newer" in text

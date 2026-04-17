@@ -281,6 +281,8 @@ def setup_ui(self):
     self.ov_table.setItemDelegate(_ov_widgets._OverviewTableTintDelegate(self.ov_table))
     self.ov_table.cellClicked.connect(self.on_table_cell_clicked)
     self.ov_table.itemChanged.connect(self._on_table_item_changed)
+    self.ov_table.setContextMenuPolicy(Qt.CustomContextMenu)
+    self.ov_table.customContextMenuRequested.connect(self._on_table_context_menu)
 
     # Replace horizontal header with filterable header
     self.ov_table_header = _ov_widgets._FilterableHeaderView(Qt.Horizontal, self.ov_table)

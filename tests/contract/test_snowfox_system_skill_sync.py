@@ -19,6 +19,25 @@ ARCH_DOC = ROOT / "docs" / "01-系统架构总览.md"
 MODULE_MAP_DOC = ROOT / "docs" / "02-模块地图.md"
 CHOKEPOINT_DOC = ROOT / "docs" / "03-共享瓶颈点.md"
 SETTINGS_DIALOG = ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog.py"
+SETTINGS_DIALOG_SECTION_FILES = [
+    SETTINGS_DIALOG,
+    ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_about_section.py",
+    ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_ai_section.py",
+    ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_custom_fields.py",
+    ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_dataset_section.py",
+    ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_formatters.py",
+    ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_local_api_section.py",
+]
+
+
+def _combined_settings_dialog_source() -> str:
+    parts = []
+    for path in SETTINGS_DIALOG_SECTION_FILES:
+        if path.exists():
+            parts.append(path.read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
+
 MANAGE_BOXES_DIALOG = ROOT / "app_gui" / "ui" / "dialogs" / "manage_boxes_dialog.py"
 INDEXING_WRITE_IMPL = ROOT / "lib" / "tool_api_impl" / "write_set_box_layout_indexing.py"
 REPO_SOURCES_DOC = ROOT / "agent_skills" / "snowfox-system" / "maintainers" / "repo_sources.md"
@@ -196,7 +215,7 @@ class SnowfoxSystemSkillSyncTests(unittest.TestCase):
         self.assertIn("write scope is `migrate/` only", self.capability_boundaries)
 
     def test_user_workflows_track_settings_sections(self):
-        source = SETTINGS_DIALOG.read_text(encoding="utf-8")
+        source = _combined_settings_dialog_source()
         settings_catalog = dict((self.runtime_capabilities or {}).get("settings") or {})
         for section_id, section in settings_catalog.items():
             section = dict(section or {})
@@ -212,7 +231,7 @@ class SnowfoxSystemSkillSyncTests(unittest.TestCase):
         self.assertIn("Settings > Manage Fields", self.user_workflows)
 
     def test_user_workflows_mentions_manage_boxes_indexing_path(self):
-        settings_source = SETTINGS_DIALOG.read_text(encoding="utf-8")
+        settings_source = _combined_settings_dialog_source()
         manage_boxes_source = MANAGE_BOXES_DIALOG.read_text(encoding="utf-8")
 
         self.assertIn("Settings > Data > Manage Boxes", self.user_workflows)
@@ -264,7 +283,7 @@ class SnowfoxSystemSkillSyncTests(unittest.TestCase):
         self.assertIn("remain integers", str(indexing_catalog.get("inventory_position_rule") or ""))
 
     def test_runtime_capability_catalog_tracks_settings_data_actions(self):
-        source = SETTINGS_DIALOG.read_text(encoding="utf-8")
+        source = _combined_settings_dialog_source()
         data_settings = dict((((self.runtime_capabilities or {}).get("settings") or {}).get("data") or {}))
         actions = list(data_settings.get("actions") or [])
         ui_markers = dict(data_settings.get("ui_markers") or {})
@@ -275,7 +294,7 @@ class SnowfoxSystemSkillSyncTests(unittest.TestCase):
                 self.assertIn(marker, source)
 
     def test_runtime_capability_catalog_tracks_settings_ai_local_api_and_preferences(self):
-        source = SETTINGS_DIALOG.read_text(encoding="utf-8")
+        source = _combined_settings_dialog_source()
         settings_catalog = dict((self.runtime_capabilities or {}).get("settings") or {})
         for section_id in ("ai", "local_api", "preferences", "about"):
             with self.subTest(section=section_id):

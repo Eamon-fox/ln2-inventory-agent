@@ -1933,7 +1933,7 @@ class OverviewTableViewTests(ManagedPathTestCase):
             self._app.processEvents()
             row = self._table_find_row(panel, row_kind="empty_slot", box=1, position=2)
             self.assertFalse(self._table_row_confirmed(panel, row))
-            self.assertEqual("", panel.ov_table.item(row, confirm_col).text())
+            self.assertEqual("+", panel.ov_table.item(row, confirm_col).text())
 
             panel.ov_table.item(row, cell_line_col).setText("K562")
             self._app.processEvents()
@@ -1994,5 +1994,162 @@ class OverviewTableViewTests(ManagedPathTestCase):
                 [{"box": 1, "position": 2, "positions": [2, 3]}],
                 emitted,
             )
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_table_unconfirm_staged_single_slot_emits_removal_signal(self):
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+        ]
+        meta_extra = {
+            "color_key": "cell_line",
+            "custom_fields": [
+                {"key": "cell_line", "label": "Cell Line", "type": "str", "required": True},
+            ],
+        }
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra=meta_extra)
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+            from lib.plan_item_factory import build_add_plan_item
+            from lib.plan_store import PlanStore
+
+            store = PlanStore()
+            store.add(
+                [
+                    build_add_plan_item(
+                        box=1,
+                        positions=[2],
+                        stored_at="2026-02-10",
+                        fields={"cell_line": "K562"},
+                        source="tests",
+                    )
+                ]
+            )
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.bind_plan_store(store)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            row = self._table_find_row(panel, row_kind="empty_slot", box=1, position=2)
+            confirm_col = self._table_column_index(panel, "__confirm__")
+
+            # Verify initial staged state
+            self.assertTrue(self._table_row_confirmed(panel, row))
+            self.assertFalse(self._table_row_locked(panel, row))
+            self.assertEqual("\u221a", panel.ov_table.item(row, confirm_col).text())
+
+            # Click confirm column to unconfirm
+            removal_emitted = []
+            panel.plan_item_removal_requested.connect(lambda payloads: removal_emitted.extend(payloads))
+            panel.on_table_cell_clicked(row, confirm_col)
+
+            # Should emit removal signal
+            self.assertEqual(1, len(removal_emitted))
+            self.assertEqual("add", removal_emitted[0]["action"])
+            self.assertEqual(1, removal_emitted[0]["box"])
+            self.assertEqual(2, removal_emitted[0]["position"])
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_table_confirm_column_visual_states(self):
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+        ]
+        meta_extra = {
+            "color_key": "cell_line",
+            "custom_fields": [
+                {"key": "cell_line", "label": "Cell Line", "type": "str", "required": True},
+            ],
+        }
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra=meta_extra)
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+            from lib.plan_item_factory import build_add_plan_item
+            from lib.plan_store import PlanStore
+
+            store = PlanStore()
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.bind_plan_store(store)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            confirm_col = self._table_column_index(panel, "__confirm__")
+
+            # Empty slot with no draft or staged: confirm cell is empty
+            empty_row = self._table_find_row(panel, row_kind="empty_slot", box=1, position=2)
+            self.assertEqual("", panel.ov_table.item(empty_row, confirm_col).text())
+
+            # Edit the slot to create a draft: confirm cell shows "+"
+            cell_line_col = self._table_column_index(panel, "cell_line")
+            frozen_col = self._table_column_index(panel, "frozen_at")
+            panel.ov_table.item(empty_row, frozen_col).setText("2026-02-10")
+            self._app.processEvents()
+            empty_row = self._table_find_row(panel, row_kind="empty_slot", box=1, position=2)
+            panel.ov_table.item(empty_row, cell_line_col).setText("HeLa")
+            self._app.processEvents()
+            empty_row = self._table_find_row(panel, row_kind="empty_slot", box=1, position=2)
+            self.assertEqual("+", panel.ov_table.item(empty_row, confirm_col).text())
+
+            # Stage the item with matching values: confirm cell shows checkmark
+            store.add(
+                [
+                    build_add_plan_item(
+                        box=1,
+                        positions=[2],
+                        stored_at="2026-02-10",
+                        fields={"cell_line": "HeLa"},
+                        source="tests",
+                    )
+                ]
+            )
+            panel.refresh_plan_store_view()
+            self._app.processEvents()
+            staged_row = self._table_find_row(panel, row_kind="empty_slot", box=1, position=2)
+            self.assertEqual("\u221a", panel.ov_table.item(staged_row, confirm_col).text())
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_table_escape_key_discards_draft(self):
+        records = [
+            {"id": 1, "cell_line": "K562", "short_name": "A", "box": 1, "position": 1, "frozen_at": "2025-01-01"},
+        ]
+        meta_extra = {
+            "color_key": "cell_line",
+            "custom_fields": [
+                {"key": "cell_line", "label": "Cell Line", "type": "str", "required": True},
+            ],
+        }
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra=meta_extra)
+        try:
+            from PySide6.QtCore import QEvent
+            from PySide6.QtGui import QKeyEvent
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            confirm_col = self._table_column_index(panel, "__confirm__")
+            cell_line_col = self._table_column_index(panel, "cell_line")
+            row = self._table_find_row(panel, row_kind="empty_slot", box=1, position=2)
+
+            # Create a draft
+            panel.ov_table.item(row, cell_line_col).setText("HeLa")
+            self._app.processEvents()
+            row = self._table_find_row(panel, row_kind="empty_slot", box=1, position=2)
+            self.assertEqual("+", panel.ov_table.item(row, confirm_col).text())
+            self.assertTrue(panel._draft_store.has_draft((1, 2)))
+
+            # Simulate Escape key on the table
+            panel.ov_table.setCurrentItem(panel.ov_table.item(row, cell_line_col))
+            escape_event = QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier)
+            panel.eventFilter(panel.ov_table, escape_event)
+            self._app.processEvents()
+
+            # Draft should be cleared
+            self.assertFalse(panel._draft_store.has_draft((1, 2)))
+            row = self._table_find_row(panel, row_kind="empty_slot", box=1, position=2)
+            self.assertEqual("", panel.ov_table.item(row, confirm_col).text())
         finally:
             self._cleanup(tmpdir)

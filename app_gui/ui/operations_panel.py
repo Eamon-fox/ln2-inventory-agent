@@ -1539,6 +1539,15 @@ class OperationsPanel(QWidget):
     def remove_selected_plan_items(self):
         return _ops_plan_toolbar.remove_selected_plan_items(self)
 
+    @Slot(list)
+    def remove_plan_items_by_payload(self, payloads):
+        """Remove plan items matching the given payload descriptors.
+
+        Each payload dict should contain ``action``, ``box``, ``position``.
+        Uses :meth:`PlanStore.remove_by_key` under the hood.
+        """
+        return _ops_plan_store.remove_plan_items_by_payload(self, payloads)
+
     def on_plan_table_context_menu(self, pos):
         return _ops_plan_toolbar.on_plan_table_context_menu(self, pos)
 

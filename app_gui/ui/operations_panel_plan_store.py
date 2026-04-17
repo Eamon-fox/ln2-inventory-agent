@@ -382,3 +382,35 @@ def _update_execute_button_state(self):
         )
     else:
         self.plan_exec_btn.setText(_tr("operations.executeAll"))
+
+
+def remove_plan_items_by_payload(self, payloads):
+    """Remove plan items matching payload descriptors.
+
+    Each payload should be a dict with ``action``, ``box``, ``position``.
+    Delegates to :meth:`PlanStore.remove_by_key`.
+    """
+    store = getattr(self, "_plan_store", None)
+    if store is None:
+        return 0
+    total_removed = 0
+    for descriptor in list(payloads or []):
+        if not isinstance(descriptor, dict):
+            continue
+        action = str(descriptor.get("action") or "").strip().lower()
+        box = descriptor.get("box")
+        position = descriptor.get("position")
+        if not action or position is None:
+            continue
+        try:
+            box = int(box) if box is not None else None
+            position = int(position)
+        except (TypeError, ValueError):
+            continue
+        total_removed += store.remove_by_key(
+            action=action,
+            record_id=None,
+            position=position,
+            box=box,
+        )
+    return total_removed

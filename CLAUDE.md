@@ -1,96 +1,81 @@
-# CLAUDE.md
+# Coding Agent 工作入口
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+本文档是本仓库面向 coding agent 的统一入口。目标不是介绍产品，而是约束改动边界、提高并行开发效率、降低架构漂移风险。
 
-## Environment Setup
+## 必读顺序
 
-```bash
-source .venv/bin/activate
-```
+接手任何任务时，先按下面顺序读取：
 
-All commands (python, pytest, etc.) must run inside the repository-local `.venv`. Do not use system python.
+1. `docs/00-约束模型.md`
+2. `docs/01-系统架构总览.md`
+3. `docs/02-模块地图.md`
+4. `docs/03-共享瓶颈点.md`
 
-## Build & Run
+完成模块归类后，再补读对应模块文档：
 
-```bash
-# Install (single dependency)
-python -m pip install pyyaml
+- `docs/modules/10-界面展示层.md`
+- `docs/modules/11-界面应用层.md`
+- `docs/modules/12-智能体运行时.md`
+- `docs/modules/13-库存核心.md`
+- `docs/modules/14-导入迁移.md`
+- `docs/modules/15-发布与安装.md`
 
-# GUI (requires PySide6)
-python -m pip install PySide6
-python app_gui/main.py
+如果任务已经确定属于某类改动，再补读对应执行手册：
 
-# AI Agent (requires DEEPSEEK_API_KEY)
-python app_gui/main.py
+- GUI 改动：`docs/runbooks/20-修改GUI前必读.md`
+- Agent 改动：`docs/runbooks/21-修改Agent前必读.md`
+- 库存核心改动：`docs/runbooks/22-修改库存核心前必读.md`
+- 导入迁移改动：`docs/runbooks/23-修改导入迁移前必读.md`
+- 跨模块改动：`docs/runbooks/24-跨模块变更流程.md`
+- 发布与安装改动 / 正式发版：`docs/runbooks/25-发布版本手册.md`
 
-# Windows packaging
-pyinstaller ln2_inventory.spec
+如果任务涉及具体命令、测试或运行环境，再补读：
 
-# Windows installer (Inno Setup)
-iscc installer/windows/LN2InventoryAgent.iss
-```
+1. `CLAUDE.md`
+2. `tests/RUNBOOK.md`
 
-## Testing
+## 如何理解文档强度
 
-```bash
-# All tests
-python -m pytest tests/
+1. 只有机器可读契约块中的规则，默认算硬约束。
+2. `docs/modules/*.md` 和 `docs/runbooks/*.md` 默认按软约束理解。
+3. 软约束可以偏离，但必须不违反硬约束，并在交付说明中说明原因。
 
-# Single test file
-python -m pytest tests/test_tool_api.py -v
+## 开工规则
 
-# Single test
-python -m pytest tests/test_tool_api.py::TestToolAddEntry::test_basic_add -v
+1. 先判断任务属于哪个模块切片，再开始改代码。
+2. 单模块任务，优先只改该模块拥有的路径。
+3. 一旦触及共享瓶颈点，任务自动升级为跨模块任务。
+4. 触碰硬约束时，先更新文档契约，再改代码。
+5. 若一个需求无法明确归属到单模块，先拆任务，不要直接并行硬做。
 
-# GUI tests (need PySide6)
-python -m pytest tests/integration/gui -v
-```
+## 模块归类速查
 
-No mocking framework required — tests use real YAML in temp directories.
+- 改 Qt 组件、面板布局、表格渲染、对话框交互：`gui_presentation`
+- 改 GUI 流程编排、事件总线、计划执行、主窗口协作：`gui_application`
+- 改 ReAct 循环、工具调度、LLM 调用、tool hooks：`agent_runtime`
+- 改 Tool API、库存规则、校验、YAML I/O、工具注册：`inventory_core`
+- 改导入流程、迁移策略、迁移模板、导入验收：`migration_import`
+- 改安装、打包、发布脚本、版本文件：`release_packaging`
 
-## Architecture
+详细 ownership、稳定入口和测试责任见 `docs/02-模块地图.md`。
 
-Four-layer design with a single unified API (`lib/tool_api.py`) shared by all three frontends:
+## 并行规则
 
-```
-GUI (app_gui/)  ─┼──▶  lib/tool_api.py  ──▶  lib/{yaml_ops,validators,operations,thaw_parser}
-Agent (agent/)  ─┘           │                              │
-                             ▼                              ▼
-                      Standard result:               lib/config.py
-                      {ok, result, error_code, message}
-```
+1. 默认按模块切片并行，不按“文件夹看起来差不多”并行。
+2. 共享瓶颈点默认串行修改，不允许多个 agent 同时改同一个瓶颈文件。
+3. 若必须并行，采用“一个 agent 改共享入口，其余 agent 改各自模块内部实现”的拆法。
+4. i18n、注册表、统一桥接层、主窗口装配层都视为高冲突区域，合并顺序排在最后。
 
-### Key modules
+## 明确禁止
 
-- **`lib/tool_api.py`** — unified tool functions (add, takeout, move, query, search, stats, recommend, rollback, etc.). Every write goes through validate → backup → write → audit.
-- **`lib/config.py`** — Runtime configuration with priority: built-in defaults → `LN2_CONFIG_FILE` env JSON → PyInstaller frozen detection. Exports `YAML_PATH`, `BOX_RANGE`, `POSITION_RANGE`, etc.
-- **`lib/yaml_ops.py`** — YAML I/O with atomic backup-before-write and JSONL audit logging.
-- **`lib/validators.py`** — Date/box/position validation, position-conflict and duplicate-ID checks.
-- **`lib/takeout_parser.py`** — Chinese/English action normalization (取出/takeout, 复苏/thaw, 扔掉/discard, 移动/move).
-- **`agent/react_agent.py`** — ReAct loop: LLM call → tool dispatch (parallel via ThreadPoolExecutor) → observation → repeat until max_steps or direct answer.
-- **`agent/tool_runner.py`** — Dispatches named tool calls to `tool_api`, with plan-stashing for write operations (human approval required in GUI).
-- **`app_gui/tool_bridge.py`** — Adapter stamping GUI metadata (actor_id) onto tool_api calls.
-- **`app_gui/ui/ai_panel.py`** — Chat widget with streaming markdown re-rendering and tool progress display.
-- **`app_gui/ui/overview_panel.py`** — 9x9 grid visualization per box, multi-select for batch operations.
-- **`app_gui/ui/operations_panel.py`** — Forms for add/thaw/move, plan staging/execution/undo, export (CSV/HTML).
+1. 不要让展示层直接承载库存写入规则。
+2. 不要让 agent 运行时复制一套独立业务规则。
+3. 不要把跨模块协作逻辑塞回单个 UI 组件。
+4. 不要在发布与安装模块里承载业务逻辑。
+5. 不要绕过统一入口直接改底层 YAML 数据。
 
-### Data model
+## 交付要求
 
-Single YAML file (`ln2_inventory.yaml`): `inventory[]` records with structural fields `id`, `box`, `position`, `stored_at`, `storage_events[]`, plus schema-declared custom fields (for example `cell_line`, `short_name`, `note`) and `meta.box_layout`. Legacy aliases like `frozen_at` / `thaw_events` may still be accepted on read, but canonical persisted/output names are `stored_at` / `storage_events`. Default grid is 9x9 (positions 1-81) across boxes 1-5.
-
-### GUI panel communication (Qt signals)
-
-- OverviewPanel → OperationsPanel: `plan_items_requested`, `request_prefill`, `data_loaded`
-- OperationsPanel → OverviewPanel: `operation_completed`
-- AIPanel → OperationsPanel: `plan_items_staged`, `operation_completed`
-
-### i18n
-
-Translation files at `app_gui/i18n/translations/{en,zh-CN}.json`. Use `tr("key.subkey")` throughout GUI code.
-
-## Configuration
-
-- **Runtime config**: `LN2_CONFIG_FILE` env var → JSON (see `references/ln2_config.sample.json`)
-- **GUI config**: `~/.ln2agent/config.yaml` (yaml_path, actor_id, api_key, language, theme, ai settings)
-- **Audit log**: `ln2_inventory_audit.jsonl` (JSONL with action/timestamp/actor_id/session_id/trace_id)
-- **Backups**: `ln2_inventory_backups/` (timestamped, auto-rotated)
+1. 说明本次改动归属哪个模块，是否触及共享瓶颈点。
+2. 若改动了边界、稳定入口或依赖方向，同步更新架构文档。
+3. 跑完本模块要求的最小测试集，再补充跨模块风险说明。

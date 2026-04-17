@@ -221,7 +221,48 @@ def eventFilter(self, obj, event):
 
     if self._handle_grid_runtime_event(obj, event):
         return True
+
+    if _handle_table_escape_key(self, obj, event):
+        return True
+
     return QWidget.eventFilter(self, obj, event)
+
+
+def _handle_table_escape_key(self, obj, event):
+    """Discard inline-entry draft when Escape is pressed in table view."""
+    if event.type() != QEvent.KeyPress:
+        return False
+    if event.key() != Qt.Key_Escape:
+        return False
+    if getattr(self, "_overview_view_mode", "grid") != "table":
+        return False
+
+    ov_table = getattr(self, "ov_table", None)
+    if ov_table is None or obj is not ov_table:
+        return False
+
+    draft_store = getattr(self, "_draft_store", None)
+    if draft_store is None:
+        return False
+
+    from app_gui.ui import overview_panel_table as _ov_table
+
+    current_item = ov_table.currentItem()
+    if current_item is None:
+        return False
+
+    row_data = _ov_table._table_row_data_from_item(current_item)
+    if str(row_data.get("row_kind") or "") != "empty_slot":
+        return False
+
+    slot_key = _ov_table._table_row_slot_key(row_data)
+    if slot_key is None or not draft_store.has_draft(slot_key):
+        return False
+
+    draft_store.clear_draft(slot_key)
+    row = current_item.row()
+    _ov_table._refresh_current_table_view(self)
+    return True
 
 
 def _emit_export_inventory_csv_request(self, checked=False):
