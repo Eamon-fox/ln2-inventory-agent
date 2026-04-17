@@ -294,6 +294,7 @@ def _build_cell_render_signature(self, box_num, position, record):
     marker = marker_map.get((box_num, position)) if isinstance(marker_map, dict) else None
     marker_type = str((marker or {}).get("type") or "").strip().lower()
     move_id = (marker or {}).get("move_id")
+    marker_preview = str((marker or {}).get("preview_label") or "")
     selected = bool(_is_cell_selected(self, box_num, position))
     active_selected = bool(_is_active_selected_cell(self, box_num, position))
     selection_edges = tuple(_selection_edge_mask(self, box_num, position))
@@ -319,6 +320,7 @@ def _build_cell_render_signature(self, box_num, position, record):
         selection_edges,
         marker_type,
         move_id,
+        marker_preview,
         record_signature,
     )
 
@@ -384,9 +386,10 @@ def _format_box_group_tooltip(box_num, layout):
     return f"{title} | {tag_text}"
 
 
-def _build_operation_marker_map(plan_items):
+def _build_operation_marker_map(plan_items, *, display_key=None):
     marker_map = {}
     move_counter = 1
+    display_key_name = str(display_key or "").strip()
     for item in list(plan_items or []):
         if not isinstance(item, dict):
             continue
@@ -406,8 +409,16 @@ def _build_operation_marker_map(plan_items):
                     add_positions.append(normalized_pos)
             if not add_positions:
                 add_positions = [pos]
+            preview_label = ""
+            if display_key_name:
+                fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
+                raw_value = fields.get(display_key_name) if isinstance(fields, dict) else None
+                preview_label = str(raw_value).strip() if raw_value is not None else ""
             for add_pos in add_positions:
-                marker_map[(box, add_pos)] = {"type": "add"}
+                marker = {"type": "add"}
+                if preview_label:
+                    marker["preview_label"] = preview_label
+                marker_map[(box, add_pos)] = marker
             continue
 
         if action == "takeout":
@@ -439,7 +450,12 @@ def _set_plan_store_ref(self, plan_store):
 
 
 def _set_plan_markers_from_items(self, plan_items):
-    self._operation_markers = _build_operation_marker_map(plan_items)
+    from lib.custom_fields import get_display_key
+
+    meta = getattr(self, "_current_meta", {}) or {}
+    inventory = getattr(self, "_current_records", []) or []
+    display_key = str(get_display_key(meta, inventory=inventory) or "")
+    self._operation_markers = _build_operation_marker_map(plan_items, display_key=display_key)
     if self.overview_cells:
         self._repaint_all_cells()
 
@@ -672,8 +688,16 @@ def _paint_cell(self, button, box_num, position, record):
         button.setProperty("color_key_value", ck_val)
         button.set_record_id(int(record.get("id", 0)))
     else:
-        _set_button_font_size(button, fs_empty)
-        button.setProperty("display_label_full", display_pos)
+        marker_map = getattr(self, "_operation_markers", {}) or {}
+        marker_for_empty = marker_map.get((box_num, position)) if isinstance(marker_map, dict) else None
+        pending_preview = ""
+        if isinstance(marker_for_empty, dict) and str(marker_for_empty.get("type") or "").strip().lower() == "add":
+            pending_preview = str(marker_for_empty.get("preview_label") or "").strip()
+
+        _set_button_font_size(button, fs_occ if pending_preview else fs_empty)
+        display_label = pending_preview if pending_preview else display_pos
+        button.setProperty("display_label_full", display_label)
+        button.setProperty("position_label", display_pos)
         button.setProperty("is_empty", True)
         _update_cell_label_visibility(self, button)
         button.setToolTip(
@@ -685,10 +709,16 @@ def _paint_cell(self, button, box_num, position, record):
         )
         base_style = cell_empty_style(is_selected)
         button.setStyleSheet(base_style)
-        button.setProperty(
-            "search_text",
-            f"empty box {box_num} position {position} {display_pos}".lower(),
-        )
+        search_parts = [
+            "empty",
+            f"box {box_num}",
+            f"position {position}",
+            display_pos,
+        ]
+        if pending_preview:
+            search_parts.append(pending_preview)
+        button.setProperty("search_text", " ".join(search_parts).lower())
+        button.setProperty("display_key_value", pending_preview)
         button.setProperty("color_key_value", "")
         button.set_record_id(None)
 

@@ -82,6 +82,7 @@ def extract_grid_state_for_print(overview_panel):
         "cols": cols,
         "boxes": boxes_data,
         "theme": "dark",
+        "display_key": str(display_key or ""),
     }
 
 
@@ -98,6 +99,7 @@ def apply_operation_markers_to_grid(grid_state, plan_items):
     markers = {}
     active_boxes = set()
     move_counter = 1
+    display_key = str(grid_state.get("display_key") or "").strip()
 
     def _normalize_box(raw):
         try:
@@ -127,8 +129,16 @@ def apply_operation_markers_to_grid(grid_state, plan_items):
                     add_positions.append(normalized_pos)
             if not add_positions:
                 add_positions = [position]
+            preview_label = ""
+            if display_key:
+                fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
+                raw_value = fields.get(display_key) if isinstance(fields, dict) else None
+                preview_label = str(raw_value).strip() if raw_value is not None else ""
             for add_pos in add_positions:
-                markers[(box, add_pos)] = {"type": "add"}
+                marker = {"type": "add"}
+                if preview_label:
+                    marker["preview_label"] = preview_label
+                markers[(box, add_pos)] = marker
 
         elif action == "takeout" and box and position:
             markers[(box, position)] = {"type": "takeout"}
@@ -156,6 +166,8 @@ def apply_operation_markers_to_grid(grid_state, plan_items):
                 cell["operation_marker"] = marker["type"]
                 if "move_id" in marker:
                     cell["move_id"] = marker["move_id"]
+                if "preview_label" in marker:
+                    cell["preview_label"] = marker["preview_label"]
 
     # Preserve explicit filter intent for render_grid_html:
     # empty list means "show no boxes" (e.g., rollback-only plan).
@@ -259,7 +271,12 @@ def render_grid_html(grid_state):
                 attrs.append(f'style="border-left: 2px solid {accent};"')
             else:
                 classes.append("cell-empty")
-                content = cell["display_pos"]
+                preview_label = str(cell.get("preview_label") or "").strip()
+                if preview_label and cell.get("operation_marker") == "add":
+                    classes.append("cell-add-preview")
+                    content = preview_label
+                else:
+                    content = cell["display_pos"]
 
             marker = cell.get("operation_marker")
             if marker:
@@ -703,6 +720,14 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
             font-size: var(--cell-empty-font-size, 6px);
             white-space: nowrap;
             -webkit-line-clamp: unset;
+        }}
+
+        .cell-empty.cell-add-preview {{
+            color: #166534;
+            font-size: var(--cell-font-size, 8px);
+            font-weight: 600;
+            white-space: normal;
+            -webkit-line-clamp: 2;
         }}
 
         .cell[data-operation="add"]::after {{

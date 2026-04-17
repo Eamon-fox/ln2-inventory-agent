@@ -569,6 +569,85 @@ class RenderOperationSheetWithGridTests(unittest.TestCase):
         box3_cells = out.get("boxes", [])[2].get("cells", [])
         self.assertEqual("edit", box3_cells[0].get("operation_marker"))
 
+    def test_apply_operation_markers_attaches_preview_label_for_add(self):
+        """Pending add ops must preview display_key value on empty cells (print view)."""
+        grid_state = {
+            "rows": 1,
+            "cols": 2,
+            "display_key": "short_name",
+            "boxes": [
+                {
+                    "box_number": 1,
+                    "box_label": "1",
+                    "cells": [
+                        {"box": 1, "position": 1, "display_pos": "1", "is_occupied": False},
+                        {"box": 1, "position": 2, "display_pos": "2", "is_occupied": False},
+                    ],
+                }
+            ],
+        }
+        items = [
+            _add_item(
+                box=1,
+                position=1,
+                payload={"positions": [1, 2], "fields": {"short_name": "clone-A"}},
+            )
+        ]
+        out = apply_operation_markers_to_grid(grid_state, items)
+        cells = out["boxes"][0]["cells"]
+        self.assertEqual("clone-A", cells[0].get("preview_label"))
+        self.assertEqual("clone-A", cells[1].get("preview_label"))
+
+    def test_apply_operation_markers_no_preview_when_display_key_missing(self):
+        """Without grid_state['display_key'], no preview label is attached."""
+        grid_state = {
+            "rows": 1,
+            "cols": 1,
+            "boxes": [
+                {
+                    "box_number": 1,
+                    "box_label": "1",
+                    "cells": [
+                        {"box": 1, "position": 1, "display_pos": "1", "is_occupied": False},
+                    ],
+                }
+            ],
+        }
+        items = [
+            _add_item(
+                box=1,
+                position=1,
+                payload={"positions": [1], "fields": {"short_name": "clone-A"}},
+            )
+        ]
+        out = apply_operation_markers_to_grid(grid_state, items)
+        cell = out["boxes"][0]["cells"][0]
+        self.assertEqual("add", cell.get("operation_marker"))
+        self.assertNotIn("preview_label", cell)
+
+    def test_render_grid_html_shows_preview_label_on_add_cell(self):
+        """Empty cells with pending add preview render the display_key value, not position."""
+        grid_state = {
+            "rows": 1,
+            "cols": 1,
+            "display_key": "short_name",
+            "active_boxes": [1],
+            "boxes": [
+                {
+                    "box_number": 1,
+                    "box_label": "1",
+                    "cells": [
+                        {"box": 1, "position": 1, "display_pos": "99", "is_occupied": False},
+                    ],
+                }
+            ],
+        }
+        items = [_add_item(box=1, position=1, payload={"positions": [1], "fields": {"short_name": "myclone"}})]
+        state_with_markers = apply_operation_markers_to_grid(grid_state, items)
+        html = render_grid_html(state_with_markers)
+        self.assertIn("myclone", html)
+        self.assertIn("cell-add-preview", html)
+
     def test_apply_operation_markers_marks_all_add_payload_positions(self):
         grid_state = {
             "rows": 1,
