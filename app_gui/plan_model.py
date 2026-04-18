@@ -335,9 +335,12 @@ def render_grid_html(grid_state):
     if not boxes_html:
         return ""
 
+    from app_gui.i18n import tr as _tr
+
+    grid_title = escape(_tr("print.gridSectionTitle", default="Visual Guide - Box Layout"))
     return f"""
     <div class="grid-section print-grid-section">
-        <h2>Visual Guide - Tank Layout</h2>
+        <h2>{grid_title}</h2>
         <div class="grid-container print-grid-container">
             {"".join(boxes_html)}
         </div>
@@ -532,7 +535,7 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
 <html>
 <head>
     <meta charset="utf-8">
-    <title>LN2 Operation Preview & Guide - {today}</title>
+    <title>{escape(_tr("print.title", default="Cryo Operation Preview & Guide"))} - {today}</title>
     <style>
         * {{ box-sizing: border-box; }}
         html, body {{
@@ -583,12 +586,39 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
         }}
 
         .header-brand {{
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 2px;
+            text-align: right;
+            white-space: nowrap;
+        }}
+
+        .header-brand .brand-line {{
+            display: flex;
+            gap: 8px;
+            align-items: baseline;
+        }}
+
+        .header-brand .brand-name {{
             font-size: {FONT_SIZE_SM}px;
             font-weight: 700;
+            color: #1f2937;
+            letter-spacing: 0.05em;
+        }}
+
+        .header-brand .brand-link {{
+            font-size: {FONT_SIZE_SM}px;
+            font-weight: 600;
+            color: #2563eb;
+            text-decoration: underline;
+        }}
+
+        .header-brand .brand-tagline {{
+            font-size: {FONT_SIZE_XS}px;
             color: #64748b;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            white-space: nowrap;
+            font-weight: 400;
+            font-style: italic;
         }}
 
         .header-meta {{
@@ -968,7 +998,12 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
                 margin-bottom: 6mm;
             }}
 
-            .header-brand {{
+            .header-brand .brand-name,
+            .header-brand .brand-link {{
+                font-size: {FONT_SIZE_XS}px;
+            }}
+
+            .header-brand .brand-tagline {{
                 font-size: {FONT_SIZE_XS}px;
             }}
 
@@ -990,34 +1025,40 @@ def render_operation_sheet_with_grid(items, grid_state=None, table_rows=None):
     <div class="sheet-page">
     <div class="header">
         <div class="header-title-row">
-            <h1>LN2 Operation Preview & Guide</h1>
-            <span class="header-brand">SNOWFOX</span>
+            <h1>{escape(_tr("print.title", default="Cryo Operation Preview & Guide"))}</h1>
+            <div class="header-brand">
+                <div class="brand-line">
+                    <span class="brand-name">SnowFox</span>
+                    <a class="brand-link" href="https://snowfox.bio">https://snowfox.bio</a>
+                </div>
+                <div class="brand-tagline">{escape(_tr("print.brandTagline", default="Intelligent sample inventory for biology labs."))}</div>
+            </div>
         </div>
         <div class="header-meta">
-            <span>Date: <strong>{today}</strong></span>
-            <span>Total: <strong>{total_count} operations</strong></span>
+            <span>{escape(_tr("print.headerDateLabel", default="Date:"))} <strong>{today}</strong></span>
+            <span>{escape(_tr("print.headerTotalLabel", default="Total:"))} <strong>{escape(_tr("print.headerTotalOperations", count=total_count, default=f"{total_count} operations"))}</strong></span>
         </div>
     </div>
 
     {grid_html}
 
     <div class="summary">
-        <div class="summary-item" style="background: #fef3c7;">Takeout: {action_counts.get("takeout", 0)}</div>
-        <div class="summary-item" style="background: #dbeafe;">Move: {action_counts.get("move", 0)}</div>
-        <div class="summary-item" style="background: #ede9fe;">Add: {action_counts.get("add", 0)}</div>
-        <div class="summary-item" style="background: #cffafe;">Edit: {action_counts.get("edit", 0)}</div>
-        <div class="summary-item" style="background: #f3f4f6;">Rollback: {action_counts.get("rollback", 0)}</div>
+        <div class="summary-item" style="background: #fef3c7;">{escape(_tr("print.summaryTakeout", count=action_counts.get("takeout", 0), default=f"Takeout: {action_counts.get('takeout', 0)}"))}</div>
+        <div class="summary-item" style="background: #dbeafe;">{escape(_tr("print.summaryMove", count=action_counts.get("move", 0), default=f"Move: {action_counts.get('move', 0)}"))}</div>
+        <div class="summary-item" style="background: #ede9fe;">{escape(_tr("print.summaryAdd", count=action_counts.get("add", 0), default=f"Add: {action_counts.get('add', 0)}"))}</div>
+        <div class="summary-item" style="background: #cffafe;">{escape(_tr("print.summaryEdit", count=action_counts.get("edit", 0), default=f"Edit: {action_counts.get('edit', 0)}"))}</div>
+        <div class="summary-item" style="background: #f3f4f6;">{escape(_tr("print.summaryRollback", count=action_counts.get("rollback", 0), default=f"Rollback: {action_counts.get('rollback', 0)}"))}</div>
     </div>
 
     {table_html}
 
     <div class="footer">
         <div class="footer-row">
-            <span>Completed by: <span class="sign-box"></span></span>
-            <span>Verified by: <span class="sign-box"></span></span>
+            <span>{escape(_tr("print.footerCompletedBy", default="Completed by:"))} <span class="sign-box"></span></span>
+            <span>{escape(_tr("print.footerVerifiedBy", default="Verified by:"))} <span class="sign-box"></span></span>
         </div>
         <div class="footer-row">
-            <span>Notes: <span class="sign-box" style="width: 400px;"></span></span>
+            <span>{escape(_tr("print.footerNotes", default="Notes:"))} <span class="sign-box" style="width: 400px;"></span></span>
         </div>
     </div>
     </div>

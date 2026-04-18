@@ -4,6 +4,7 @@ from collections import defaultdict
 from datetime import date
 from typing import Optional
 
+from app_gui.i18n import tr as _tr
 from app_gui.ui.theme import (
     FONT_SIZE_MONO,
     FONT_SIZE_XS,
@@ -74,11 +75,31 @@ def _pos_to_coord(pos, cols=9):
 def _get_action_display(action):
     """Get display info for action type."""
     action_map = {
-        "takeout": ("TAKEOUT", _sheet_color("sheet-action-takeout", "#f59e0b"), "Take out from tank"),
-        "move": ("MOVE", _sheet_color("sheet-action-move", "#3b82f6"), "Relocate sample"),
-        "add": ("ADD", _sheet_color("sheet-action-add", "#8b5cf6"), "Add new sample"),
-        "edit": ("EDIT", _sheet_color("sheet-action-edit", "#06b6d4"), "Edit record fields"),
-        "rollback": ("ROLLBACK", _sheet_color("sheet-action-rollback", "#6b7280"), "Restore from backup"),
+        "takeout": (
+            _tr("print.actionTakeout", default="TAKEOUT"),
+            _sheet_color("sheet-action-takeout", "#f59e0b"),
+            _tr("print.actionTakeoutDesc", default="Take out from storage"),
+        ),
+        "move": (
+            _tr("print.actionMove", default="MOVE"),
+            _sheet_color("sheet-action-move", "#3b82f6"),
+            _tr("print.actionMoveDesc", default="Relocate sample"),
+        ),
+        "add": (
+            _tr("print.actionAdd", default="ADD"),
+            _sheet_color("sheet-action-add", "#8b5cf6"),
+            _tr("print.actionAddDesc", default="Add new sample"),
+        ),
+        "edit": (
+            _tr("print.actionEdit", default="EDIT"),
+            _sheet_color("sheet-action-edit", "#06b6d4"),
+            _tr("print.actionEditDesc", default="Edit record fields"),
+        ),
+        "rollback": (
+            _tr("print.actionRollback", default="ROLLBACK"),
+            _sheet_color("sheet-action-rollback", "#6b7280"),
+            _tr("print.actionRollbackDesc", default="Restore from backup"),
+        ),
     }
     return action_map.get(
         str(action).lower(),
@@ -116,10 +137,12 @@ def _extract_sample_info(item):
 def render_operation_sheet(items):
     """Generate a user-friendly printable HTML operation sheet."""
     if not items:
-        empty_html = """<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>LN2 Operation Sheet</title>
-<style>body { font-family: Arial, sans-serif; margin: 40px; color: #666; }</style>
-</head><body><p>No operations to display.</p></body></html>"""
+        empty_title = _tr("print.fallbackTitle", default="Cryo Operation Sheet")
+        empty_msg = _tr("print.emptyMessage", default="No operations to display.")
+        empty_html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>{empty_title}</title>
+<style>body {{ font-family: Arial, sans-serif; margin: 40px; color: #666; }}</style>
+</head><body><p>{empty_msg}</p></body></html>"""
         return _apply_sheet_theme_tokens(empty_html)
 
     today = date.today().isoformat()
@@ -150,7 +173,7 @@ def render_operation_sheet(items):
             if action == "move" and to_pos:
                 if to_box and to_box != box:
                     pos_display = f"Box{box}:{_pos_to_coord(pos)} &rarr; Box{to_box}:{_pos_to_coord(to_pos)}"
-                    warning = '<span class="warning">[CROSS-BOX]</span>'
+                    warning = f'<span class="warning">{_tr("print.crossBoxWarning", default="[CROSS-BOX]")}</span>'
                 else:
                     pos_display = f"Box{box}:{_pos_to_coord(pos)} &rarr; {_pos_to_coord(to_pos)}"
                     warning = ""
@@ -167,6 +190,8 @@ def render_operation_sheet(items):
             _fields = _payload.get("fields") or {}
             note = _fields.get("note", "") or ""
             
+            id_display = rid if rid else _tr("print.sampleIdNew", default="NEW")
+            sample_id_text = _tr("print.sampleIdLabel", id=id_display, default=f"ID: {id_display}")
             action_rows.append(f"""
             <tr class="op-row">
                 <td class="op-num">{op_counter}</td>
@@ -174,32 +199,33 @@ def render_operation_sheet(items):
                 <td class="pos-cell">{pos_display} {warning}</td>
                 <td class="sample-cell">
                     <div class="sample-name">{sample_label}</div>
-                    <div class="sample-meta">ID: {rid if rid else 'NEW'}</div>
+                    <div class="sample-meta">{sample_id_text}</div>
                 </td>
                 <td class="note-cell">{note}</td>
                 <td class="confirm-cell">
-                    <div class="confirm-line">Time: _______</div>
-                    <div class="confirm-line">Init: _______</div>
+                    <div class="confirm-line">{_tr("print.confirmTime", default="Time: _______")}</div>
+                    <div class="confirm-line">{_tr("print.confirmInit", default="Init: _______")}</div>
                 </td>
             </tr>""")
             op_counter += 1
         
+        action_count_label = _tr("print.actionCount", count=len(action_items), default=f"{len(action_items)} operations")
         sections.append(f"""
         <div class="action-section" style="border-left: 4px solid {action_color};">
             <div class="action-header">
                 <span class="action-name" style="background-color: {action_color};">{action_name}</span>
-                <span class="action-count">{len(action_items)} operations</span>
+                <span class="action-count">{action_count_label}</span>
                 <span class="action-desc">{action_desc}</span>
             </div>
             <table class="op-table">
                 <thead>
                     <tr>
-                        <th class="col-num">#</th>
-                        <th class="col-chk">Done</th>
-                        <th class="col-pos">Location</th>
-                        <th class="col-sample">Sample</th>
-                        <th class="col-note">Notes</th>
-                        <th class="col-confirm">Confirmation</th>
+                        <th class="col-num">{_tr("print.colNum", default="#")}</th>
+                        <th class="col-chk">{_tr("print.colDone", default="Done")}</th>
+                        <th class="col-pos">{_tr("print.colLocation", default="Location")}</th>
+                        <th class="col-sample">{_tr("print.colSample", default="Sample")}</th>
+                        <th class="col-note">{_tr("print.colNotes", default="Notes")}</th>
+                        <th class="col-confirm">{_tr("print.colConfirmation", default="Confirmation")}</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -220,7 +246,7 @@ def render_operation_sheet(items):
 <html>
 <head>
     <meta charset="utf-8">
-    <title>LN2 Operation Sheet - {today}</title>
+    <title>{_tr("print.fallbackTitle", default="Cryo Operation Sheet")} - {today}</title>
     <style>
         * {{ box-sizing: border-box; }}
         body {{
@@ -237,19 +263,63 @@ def render_operation_sheet(items):
             padding-bottom: 15px;
             margin-bottom: 20px;
         }}
-        
+
+        .header-title-row {{
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 5px;
+        }}
+
         .header h1 {{
             margin: 0 0 5px 0;
             font-size: {FONT_SIZE_XXL}px;
         }}
-        
+
+        .header-brand {{
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 2px;
+            text-align: right;
+            white-space: nowrap;
+        }}
+
+        .header-brand .brand-line {{
+            display: flex;
+            gap: 8px;
+            align-items: baseline;
+        }}
+
+        .header-brand .brand-name {{
+            font-size: {FONT_SIZE_SM}px;
+            font-weight: 700;
+            color: #1f2937;
+            letter-spacing: 0.05em;
+        }}
+
+        .header-brand .brand-link {{
+            font-size: {FONT_SIZE_SM}px;
+            font-weight: 600;
+            color: #2563eb;
+            text-decoration: underline;
+        }}
+
+        .header-brand .brand-tagline {{
+            font-size: {FONT_SIZE_XS}px;
+            color: #64748b;
+            font-weight: 400;
+            font-style: italic;
+        }}
+
         .header-meta {{
             display: flex;
             gap: 30px;
             color: #6b7280;
             font-size: {FONT_SIZE_XS}px;
         }}
-        
+
         .header-meta span {{
             display: flex;
             align-items: center;
@@ -466,30 +536,39 @@ def render_operation_sheet(items):
 </head>
 <body>
     <div class="header">
-        <h1>LN2 Tank Operation Sheet</h1>
+        <div class="header-title-row">
+            <h1>{_tr("print.fallbackTitle", default="Cryo Operation Sheet")}</h1>
+            <div class="header-brand">
+                <div class="brand-line">
+                    <span class="brand-name">SnowFox</span>
+                    <a class="brand-link" href="https://snowfox.bio">https://snowfox.bio</a>
+                </div>
+                <div class="brand-tagline">{_tr("print.brandTagline", default="Intelligent sample inventory for biology labs.")}</div>
+            </div>
+        </div>
         <div class="header-meta">
-            <span>Date: <strong>{today}</strong></span>
-            <span>Total: <strong>{len(items)} operations</strong></span>
+            <span>{_tr("print.headerDateLabel", default="Date:")} <strong>{today}</strong></span>
+            <span>{_tr("print.headerTotalLabel", default="Total:")} <strong>{_tr("print.headerTotalOperations", count=len(items), default=f"{len(items)} operations")}</strong></span>
         </div>
     </div>
-    
+
     <div class="summary">
-        <div class="summary-item" style="background: #fef3c7;">Takeout: {takeout_count}</div>
-        <div class="summary-item" style="background: #dbeafe;">Move: {move_count}</div>
-        <div class="summary-item" style="background: #ede9fe;">Add: {add_count}</div>
-        <div class="summary-item" style="background: #cffafe;">Edit: {edit_count}</div>
-        <div class="summary-item" style="background: #f3f4f6;">Rollback: {rollback_count}</div>
+        <div class="summary-item" style="background: #fef3c7;">{_tr("print.summaryTakeout", count=takeout_count, default=f"Takeout: {takeout_count}")}</div>
+        <div class="summary-item" style="background: #dbeafe;">{_tr("print.summaryMove", count=move_count, default=f"Move: {move_count}")}</div>
+        <div class="summary-item" style="background: #ede9fe;">{_tr("print.summaryAdd", count=add_count, default=f"Add: {add_count}")}</div>
+        <div class="summary-item" style="background: #cffafe;">{_tr("print.summaryEdit", count=edit_count, default=f"Edit: {edit_count}")}</div>
+        <div class="summary-item" style="background: #f3f4f6;">{_tr("print.summaryRollback", count=rollback_count, default=f"Rollback: {rollback_count}")}</div>
     </div>
-    
+
     {sections_html}
-    
+
     <div class="footer">
         <div class="footer-row">
-            <span>Completed by: <span class="sign-box"></span></span>
-            <span>Verified by: <span class="sign-box"></span></span>
+            <span>{_tr("print.footerCompletedBy", default="Completed by:")} <span class="sign-box"></span></span>
+            <span>{_tr("print.footerVerifiedBy", default="Verified by:")} <span class="sign-box"></span></span>
         </div>
         <div class="footer-row">
-            <span>Notes: <span class="sign-box" style="width: 400px;"></span></span>
+            <span>{_tr("print.footerNotes", default="Notes:")} <span class="sign-box" style="width: 400px;"></span></span>
         </div>
     </div>
 </body>

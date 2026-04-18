@@ -380,7 +380,11 @@ class RenderOperationSheetWithGridTests(unittest.TestCase):
         html = render_operation_sheet_with_grid([_move_item()], _grid_state_with_markers())
         self.assertNotIn('class="print-page-header"', html)
         self.assertIn('class="header-title-row"', html)
-        self.assertIn('class="header-brand">SNOWFOX</span>', html)
+        self.assertIn('class="header-brand"', html)
+        self.assertIn('class="brand-name">SnowFox</span>', html)
+        self.assertIn('href="https://snowfox.bio"', html)
+        self.assertIn('https://snowfox.bio</a>', html)
+        self.assertIn('class="brand-tagline">', html)
         self.assertNotIn("data:image/svg+xml;base64", html)
 
     def test_print_css_keeps_original_header_visible(self):
