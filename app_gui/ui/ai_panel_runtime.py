@@ -474,17 +474,17 @@ def set_busy(self, busy):
     indicator = getattr(self, "_activity_indicator", None)
     if busy:
         # Show stop button state - use default icon color (no color param)
-        self.ai_run_btn.setText(tr("ai.stop"))
         self.ai_run_btn.setIcon(get_icon(Icons.SQUARE))
+        self.ai_run_btn.setToolTip(tr("ai.stop"))
         self.ai_run_btn.setProperty("variant", None)
         self.ai_run_btn.style().unpolish(self.ai_run_btn)
         self.ai_run_btn.style().polish(self.ai_run_btn)
         if indicator is not None:
-            indicator.start(tr("ai.activityThinking"))
+            indicator.start()
     else:
         # Show run button state - white icon for primary variant
-        self.ai_run_btn.setText(tr("ai.runAgent"))
         self.ai_run_btn.setIcon(get_icon(Icons.PLAY, color="#ffffff"))
+        self.ai_run_btn.setToolTip(tr("ai.runAgent"))
         self.ai_run_btn.setProperty("variant", "primary")
         self.ai_run_btn.style().unpolish(self.ai_run_btn)
         self.ai_run_btn.style().polish(self.ai_run_btn)

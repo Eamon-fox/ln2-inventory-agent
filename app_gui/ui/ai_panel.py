@@ -230,32 +230,37 @@ class AIPanel(QWidget):
         self.ai_model_switch_btn.setIcon(get_icon(Icons.CHEVRON_DOWN))
         self.ai_model_switch_btn.setIconSize(QSize(14, 14))
         self.ai_model_switch_btn.setObjectName("aiModelSwitchBtn")
-        self.ai_model_switch_btn.setFixedSize(18, 18)
+        self.ai_model_switch_btn.setFixedSize(20, 20)
         self.ai_model_switch_btn.setProperty("variant", "ghost")
         self.ai_model_switch_btn.setToolTip(tr("settings.aiModel"))
         self.ai_model_switch_btn.clicked.connect(self._open_model_switch_menu)
         status_row_layout.addWidget(self.ai_model_switch_btn)
 
+        status_row_layout.addStretch(1)
+
         self._activity_indicator = ActivityIndicator(parent=status_row, compact=True)
-        status_row_layout.addWidget(self._activity_indicator, 1)
+        status_row_layout.addWidget(self._activity_indicator)
 
         action_bar.addWidget(status_row, 1)
 
-        ai_new_chat_btn = QPushButton(tr("ai.newChat"))
+        ai_new_chat_btn = QPushButton()
+        ai_new_chat_btn.setObjectName("aiNewChatActionBtn")
         ai_new_chat_btn.setIcon(get_icon(Icons.X))
         ai_new_chat_btn.setIconSize(QSize(16, 16))
-        ai_new_chat_btn.setMinimumWidth(60)
+        ai_new_chat_btn.setToolTip(tr("ai.newChat"))
+        ai_new_chat_btn.setFixedSize(28, 28)
         ai_new_chat_btn.setProperty("variant", "ghost")
         ai_new_chat_btn.clicked.connect(self.on_new_chat)
         action_bar.addWidget(ai_new_chat_btn)
 
-        self.ai_run_btn = QPushButton(tr("ai.runAgent"))
+        self.ai_run_btn = QPushButton()
         self.ai_run_btn.setObjectName("aiRunActionBtn")
         self.ai_run_btn.setIcon(get_icon(Icons.PLAY, color="#ffffff"))  # White icon for primary variant
         self.ai_run_btn.setIconSize(QSize(16, 16))
+        self.ai_run_btn.setToolTip(tr("ai.runAgent"))
         self.ai_run_btn.setProperty("variant", "primary")
         self.ai_run_btn.setProperty("migrationAttention", False)
-        self.ai_run_btn.setMinimumWidth(60)
+        self.ai_run_btn.setFixedSize(28, 28)
         self.ai_run_btn.clicked.connect(self._on_run_stop_toggle)
         action_bar.addWidget(self.ai_run_btn)
 

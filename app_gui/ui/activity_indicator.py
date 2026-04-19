@@ -113,7 +113,7 @@ class ActivityIndicator(QWidget):
         self._tool_name: str = ""
         self._running: bool = False
         self._compact: bool = bool(compact)
-        self._base_status_text: str = tr("ai.activityThinking")
+        self._base_status_text: str = ""
         self._full_status_text: str = self._base_status_text
         self.setObjectName("activityIndicator")
 
@@ -157,7 +157,7 @@ class ActivityIndicator(QWidget):
         self._start_time = time.monotonic()
         self._tool_name = ""
         self._running = True
-        self._base_status_text = str(status_text or tr("ai.activityThinking"))
+        self._base_status_text = str(status_text or "")
         self._set_status_text(self._base_status_text)
         self._elapsed_label.setText(_format_elapsed(0))
         self._dot.start()
@@ -206,8 +206,10 @@ class ActivityIndicator(QWidget):
         if not text:
             self._status_label.clear()
             self._status_label.setToolTip("")
+            self._status_label.setVisible(False)
             return
 
+        self._status_label.setVisible(True)
         available = int(self._status_label.width())
         if available <= 0:
             display_text = text

@@ -633,7 +633,6 @@
     "migrationModeBanner": "Migration in progress. Manual actions on the current dataset are locked.",
     "migrationModeEnteredStatus": "Migration mode enabled. Manual write operations are locked.",
     "migrationModeExitedStatus": "Migration mode ended. Manual write operations are unlocked.",
-    "activityThinking": "Thinking...",
     "activityRunningTool": "Running {tool}..."
   },
   "common": {

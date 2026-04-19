@@ -626,7 +626,6 @@
     "migrationModeBanner": "迁移进行中：当前数据集的手动操作已锁定。",
     "migrationModeEnteredStatus": "已进入迁移模式，手动写操作已锁定。",
     "migrationModeExitedStatus": "已退出迁移模式，手动写操作已恢复。",
-    "activityThinking": "思考中...",
     "activityRunningTool": "正在执行 {tool}..."
   },
   "common": {

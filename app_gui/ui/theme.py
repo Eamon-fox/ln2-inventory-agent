@@ -827,8 +827,36 @@ def _get_common_qss():
         QPushButton[variant="warning"] {{ background-color: var(--btn-warning); color: #ffffff; font-weight: bold; border: 1px solid var(--btn-warning-border); }}
         QPushButton[variant="warning"]:hover {{ background-color: var(--btn-warning-hover); }}
         QPushButton[variant="warning"]:pressed {{ background-color: var(--btn-warning-border); }}
+        QPushButton#aiRunActionBtn {{
+            border: none;
+            border-radius: var(--radius-sm);
+            padding: 0;
+            background-color: var(--accent);
+        }}
+        QPushButton#aiRunActionBtn:hover {{
+            background-color: var(--accent-hover);
+        }}
+        QPushButton#aiRunActionBtn:disabled {{
+            background-color: var(--background-strong);
+            border: none;
+        }}
+        QPushButton#aiNewChatActionBtn {{
+            border: none;
+            border-radius: var(--radius-sm);
+            padding: 0;
+            background-color: transparent;
+            color: var(--text-muted);
+        }}
+        QPushButton#aiNewChatActionBtn:hover {{
+            background-color: var(--background-raised);
+            color: var(--text-strong);
+        }}
+        QPushButton#aiNewChatActionBtn:focus {{
+            border: none;
+            outline: none;
+        }}
         QPushButton#aiRunActionBtn[migrationAttention="true"] {{
-            border: 2px solid var(--status-warning);
+            border: none;
             background-color: var(--btn-warning);
             color: #ffffff;
             font-weight: {FONT_WEIGHT_BOLD};
@@ -843,20 +871,20 @@ def _get_common_qss():
         QTextEdit#exportTaskSourcePreview[state="empty"] {{ color: var(--text-muted); }}
         QTextEdit#exportTaskSourcePreview[state="filled"] {{ color: var(--text-strong); }}
         QPushButton#aiModelSwitchBtn {{
-            min-width: 18px;
-            max-width: 18px;
-            min-height: 18px;
-            max-height: 18px;
+            min-width: 20px;
+            max-width: 20px;
+            min-height: 20px;
+            max-height: 20px;
             padding: 0;
             border: none;
-            border-radius: 0;
+            border-radius: var(--radius-sm);
             background-color: transparent;
             color: var(--text-strong);
             font-size: {FONT_SIZE_SM}px;
             font-weight: {FONT_WEIGHT_MEDIUM};
         }}
         QPushButton#aiModelSwitchBtn:hover {{
-            background-color: transparent;
+            background-color: var(--background-raised);
             color: var(--accent);
         }}
         QPushButton#aiModelSwitchBtn:focus {{
