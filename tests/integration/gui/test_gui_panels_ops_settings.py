@@ -662,7 +662,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             captured["shown"] += 1
             captured["text"] = text
 
-        with patch.object(cf_module.QMessageBox, "warning", side_effect=_fake_warning):
+        with patch.object(cf_module, "show_warning_message", side_effect=lambda parent, *, title, text, informative_text="", detailed_text=None: _fake_warning(parent, title, text)):
             dialog._on_accept_requested()
 
         self.assertEqual(1, captured["shown"])
@@ -686,7 +686,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         dialog.accept = lambda: accepted.__setitem__("count", accepted["count"] + 1)
         self.addCleanup(lambda: setattr(dialog, "accept", orig_accept))
 
-        with patch.object(cf_module.QMessageBox, "warning") as mock_warn:
+        with patch.object(cf_module, "show_warning_message") as mock_warn:
             dialog._on_accept_requested()
 
         self.assertEqual(0, mock_warn.call_count)
@@ -906,11 +906,11 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         )
 
         try:
-            with patch.object(QMessageBox, "warning") as warning_mock:
+            with patch("app_gui.ui.dialogs.settings_dialog.show_warning_message") as warning_mock:
                 dialog._open_custom_fields_editor()
 
             warning_mock.assert_called_once()
-            self.assertIn("meta.box_fields", warning_mock.call_args.args[2])
+            self.assertIn("meta.box_fields", warning_mock.call_args.kwargs["text"])
             dialog_cls.assert_not_called()
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
@@ -978,7 +978,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             custom_fields_dialog_cls=_FakeDialog,
         )
 
-        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock:
+        with patch("app_gui.ui.dialogs.settings_dialog.show_warning_message") as warn_mock:
             dialog._open_custom_fields_editor()
 
         warn_mock.assert_not_called()
@@ -1056,7 +1056,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             custom_fields_dialog_cls=_FakeCustomFieldsDialog,
         )
 
-        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock:
+        with patch("app_gui.ui.dialogs.settings_dialog.show_warning_message") as warn_mock:
             dialog._open_custom_fields_editor()
 
         # Meta-only validation: removing an option should NOT be blocked
@@ -1119,7 +1119,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             custom_fields_dialog_cls=_FakeDialog,
         )
 
-        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock:
+        with patch("app_gui.ui.dialogs.settings_dialog.show_warning_message") as warn_mock:
             dialog._open_custom_fields_editor()
 
         warn_mock.assert_not_called()
@@ -1174,7 +1174,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             custom_fields_dialog_cls=_FakeDialog,
         )
 
-        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock:
+        with patch("app_gui.ui.dialogs.settings_dialog.show_warning_message") as warn_mock:
             dialog._open_custom_fields_editor()
 
         warn_mock.assert_not_called()
@@ -1230,7 +1230,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             custom_fields_dialog_cls=_FakeDialog,
         )
 
-        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock:
+        with patch("app_gui.ui.dialogs.settings_dialog.show_warning_message") as warn_mock:
             dialog._open_custom_fields_editor()
 
         warn_mock.assert_not_called()
@@ -1287,7 +1287,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             custom_fields_dialog_cls=_FakeDialog,
         )
 
-        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock:
+        with patch("app_gui.ui.dialogs.settings_dialog.show_warning_message") as warn_mock:
             dialog._open_custom_fields_editor()
 
         warn_mock.assert_called_once()
@@ -1351,11 +1351,11 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             custom_fields_dialog_cls=_FakeDialog,
         )
 
-        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock:
+        with patch("app_gui.ui.dialogs.settings_dialog.show_warning_message") as warn_mock:
             dialog._open_custom_fields_editor()
 
         warn_mock.assert_called_once()
-        self.assertIn("Field rename conflict detected", str(warn_mock.call_args[0][2]))
+        self.assertIn("Field rename conflict detected", str(warn_mock.call_args.kwargs["text"]))
         on_data_changed.assert_not_called()
 
         saved = load_yaml(yaml_path) or {}
@@ -1415,7 +1415,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             custom_fields_dialog_cls=_FakeDialog,
         )
 
-        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock, patch.object(
+        with patch("app_gui.ui.dialogs.settings_dialog.show_warning_message") as warn_mock, patch.object(
             dialog,
             "_format_removed_field_preview_summary",
             side_effect=AssertionError("remove-data preview should not run"),
@@ -1423,7 +1423,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             dialog._open_custom_fields_editor()
 
         warn_mock.assert_called_once()
-        self.assertIn("Field rename blocked", str(warn_mock.call_args[0][2]))
+        self.assertIn("Field rename blocked", str(warn_mock.call_args.kwargs["text"]))
         on_data_changed.assert_not_called()
 
         saved = load_yaml(yaml_path) or {}
@@ -1485,7 +1485,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             custom_fields_dialog_cls=_FakeDialog,
         )
 
-        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock:
+        with patch("app_gui.ui.dialogs.settings_dialog.show_warning_message") as warn_mock:
             dialog._open_custom_fields_editor()
 
         warn_mock.assert_not_called()
@@ -1550,7 +1550,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             custom_fields_dialog_cls=_FakeDialog,
         )
 
-        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock:
+        with patch("app_gui.ui.dialogs.settings_dialog.show_warning_message") as warn_mock:
             dialog._open_custom_fields_editor()
 
         warn_mock.assert_not_called()
@@ -1621,7 +1621,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             custom_fields_dialog_cls=_FakeDialog,
         )
 
-        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock:
+        with patch("app_gui.ui.dialogs.settings_dialog.show_warning_message") as warn_mock:
             dialog._open_custom_fields_editor()
 
         warn_mock.assert_not_called()
@@ -1671,7 +1671,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         # Simulate user changing the path to the bad file
         dialog.yaml_edit.setText(bad_path)
 
-        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock, \
+        with patch("app_gui.ui.dialogs.settings_dialog.show_warning_message") as warn_mock, \
              patch("app_gui.ui.dialogs.settings_dialog.QDialog.accept") as accept_mock:
             dialog.accept()
 
@@ -1703,7 +1703,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         yaml_path = self.ensure_dataset_yaml("accept-path-unchanged", payload=payload)
         dialog = SettingsDialog(config={"yaml_path": yaml_path})
 
-        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock, \
+        with patch("app_gui.ui.dialogs.settings_dialog.show_warning_message") as warn_mock, \
              patch("app_gui.ui.dialogs.settings_dialog.QDialog.accept") as accept_mock:
             dialog.accept()
 
@@ -1733,13 +1733,13 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         yaml_path = self.ensure_dataset_yaml("accept-meta-err-same-path", payload=payload)
         dialog = SettingsDialog(config={"yaml_path": yaml_path})
 
-        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock, \
+        with patch("app_gui.ui.dialogs.settings_dialog.show_warning_message") as warn_mock, \
              patch("app_gui.ui.dialogs.settings_dialog.QDialog.accept") as accept_mock:
             dialog.accept()
 
         warn_mock.assert_called_once()
         accept_mock.assert_not_called()
-        warning_text = str(warn_mock.call_args[0][2])
+        warning_text = str(warn_mock.call_args.kwargs["text"])
         self.assertIn("undeclared_xyz", warning_text)
         from app_gui.main import SettingsDialog
 
@@ -1769,14 +1769,14 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         yaml_path = self.ensure_dataset_yaml("settings-invalid-color-key", payload=payload)
         dialog = SettingsDialog(config={"yaml_path": yaml_path})
 
-        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock, patch(
+        with patch("app_gui.ui.dialogs.settings_dialog.show_warning_message") as warn_mock, patch(
             "app_gui.ui.dialogs.settings_dialog.QDialog.accept"
         ) as accept_mock:
             dialog.accept()
 
         warn_mock.assert_called_once()
         accept_mock.assert_not_called()
-        warning_text = str(warn_mock.call_args[0][2])
+        warning_text = str(warn_mock.call_args.kwargs["text"])
         self.assertIn("meta.color_key", warning_text)
 
     def test_settings_dialog_accept_blocks_undeclared_record_fields_and_reports_names(self):
@@ -1809,14 +1809,14 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         yaml_path = self.ensure_dataset_yaml("settings-undeclared-record-fields", payload=payload)
         dialog = SettingsDialog(config={"yaml_path": yaml_path})
 
-        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock, patch(
+        with patch("app_gui.ui.dialogs.settings_dialog.show_warning_message") as warn_mock, patch(
             "app_gui.ui.dialogs.settings_dialog.QDialog.accept"
         ) as accept_mock:
             dialog.accept()
 
         warn_mock.assert_called_once()
         accept_mock.assert_not_called()
-        warning_text = str(warn_mock.call_args[0][2])
+        warning_text = str(warn_mock.call_args.kwargs["text"])
         self.assertIn("Unsupported inventory field(s)", warning_text)
         self.assertIn("short_name", warning_text)
         self.assertIn("plasmid_name", warning_text)
@@ -1854,7 +1854,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         yaml_path = self.ensure_dataset_yaml("settings-valid-color-key", payload=payload)
         dialog = SettingsDialog(config={"yaml_path": yaml_path})
 
-        with patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock, patch(
+        with patch("app_gui.ui.dialogs.settings_dialog.show_warning_message") as warn_mock, patch(
             "app_gui.ui.dialogs.settings_dialog.QDialog.accept"
         ) as accept_mock:
             dialog.accept()
@@ -1910,7 +1910,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         with patch(
             "app_gui.ui.dialogs.settings_dialog.QInputDialog.getText",
             return_value=("renamed-by-settings", True),
-        ), patch("app_gui.ui.dialogs.settings_dialog.QMessageBox.warning") as warn_mock:
+        ), patch("app_gui.ui.dialogs.settings_dialog.show_warning_message") as warn_mock:
             dialog._emit_rename_dataset_request()
 
         warn_mock.assert_called_once()
@@ -1948,7 +1948,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         with patch.object(dialog, "_confirm_delete_dataset_initial", return_value=True), patch.object(
             dialog, "_confirm_phrase_dialog", return_value=True
         ), patch.object(dialog, "_confirm_delete_dataset_final", return_value=True), patch(
-            "app_gui.ui.dialogs.settings_dialog.QMessageBox.warning"
+            "app_gui.ui.dialogs.settings_dialog.show_warning_message"
         ) as warn_mock:
             dialog._emit_delete_dataset_request()
 
@@ -2925,7 +2925,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         self.assertIn("10", action_text)  # ID should be in the text
         # Column 1 now shows identity-first location text
         pos_text = panel.plan_table.item(0, 1).text()
-        self.assertEqual("Box 1 Position 5", pos_text)
+        self.assertEqual("Box 1·5", pos_text)
 
         # Badge should show count
         idx = panel.op_mode_combo.findData("plan")
@@ -2957,7 +2957,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
 
         self.assertEqual(1, panel.plan_table.rowCount())
         pos_text = panel.plan_table.item(0, 1).text()
-        self.assertEqual("Box 1 Position 5 -> Box 2 Position 8", pos_text)
+        self.assertEqual("Box 1·5 → Box 2·8", pos_text)
 
     def test_add_plan_items_target_text_includes_box_tag_when_available(self):
         panel = self._new_operations_panel()
@@ -2989,7 +2989,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         panel.add_plan_items(items)
 
         self.assertEqual(
-            "Box 1 (virus stock) Position 5 -> Box 2 (backup shelf) Position 8",
+            "Box 1 (virus stock)·5 → Box 2 (backup shelf)·8",
             panel.plan_table.item(0, 1).text(),
         )
 
@@ -3016,7 +3016,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
 
         self.assertEqual(1, panel.plan_table.rowCount())
         pos_text = panel.plan_table.item(0, 1).text()
-        self.assertEqual("Box 1 Position 5 -> Box 1 Position 8", pos_text)
+        self.assertEqual("Box 1·5 → Box 1·8", pos_text)
 
     def test_add_plan_items_validates_and_rejects_invalid(self):
         panel = self._new_operations_panel()

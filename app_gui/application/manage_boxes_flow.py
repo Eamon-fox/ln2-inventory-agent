@@ -10,6 +10,12 @@ from PySide6.QtWidgets import QDialog, QMessageBox
 
 from app_gui.i18n import t, tr
 from app_gui.system_notice import build_system_notice
+from app_gui.ui.dialogs.common import (
+    ask_confirmation,
+    create_message_box,
+    show_info_message,
+    show_warning_message,
+)
 from app_gui.ui.dialogs.manage_boxes_dialog import ManageBoxesDialog
 from lib.yaml_ops import load_yaml
 
@@ -49,17 +55,19 @@ class ManageBoxesFlow:
         )
 
     def _show_info(self, message, title=None):
-        QMessageBox.information(
+        show_info_message(
             self._window,
-            str(title or tr("common.info")),
-            str(message or ""),
+            title=str(title or tr("common.info")),
+            text=str(message or ""),
+            message_box_cls=QMessageBox,
         )
 
     def _show_warning(self, message, title=None):
-        QMessageBox.warning(
+        show_warning_message(
             self._window,
-            str(title or tr("common.info")),
-            str(message or ""),
+            title=str(title or tr("common.info")),
+            text=str(message or ""),
+            message_box_cls=QMessageBox,
         )
 
     def _show_nonblocking_dialog(self, dialog):
@@ -212,10 +220,13 @@ class ManageBoxesFlow:
             )
             message += "\n" + t("main.boxAiSuggestedMode", mode=mode_label)
 
-        dlg = QMessageBox(window)
-        dlg.setWindowTitle(tr("main.manageBoxes"))
-        dlg.setIcon(QMessageBox.Warning)
-        dlg.setText(message)
+        dlg = create_message_box(
+            window,
+            title=tr("main.manageBoxes"),
+            text=message,
+            icon=QMessageBox.Warning,
+            message_box_cls=QMessageBox,
+        )
         keep_btn = dlg.addButton(tr("main.boxDeleteKeepGaps"), QMessageBox.AcceptRole)
         renumber_btn = dlg.addButton(tr("main.boxDeleteRenumber"), QMessageBox.ActionRole)
         dlg.addButton(QMessageBox.Cancel)
@@ -329,13 +340,16 @@ class ManageBoxesFlow:
         def _show_add_confirm():
             preview = initial_preflight.get("preview") or {}
             add_count = len(list(preview.get("added_boxes") or [])) or prepared["payload"].get("count")
-            box = QMessageBox(self._window)
-            box.setWindowTitle(tr("main.manageBoxes"))
-            box.setText(t("main.boxConfirmAdd", count=add_count))
-            box.setIcon(QMessageBox.Question)
-            yes_btn = box.addButton(QMessageBox.Yes)
-            box.addButton(QMessageBox.Cancel)
-            box.setDefaultButton(yes_btn)
+            box = create_message_box(
+                self._window,
+                title=tr("main.manageBoxes"),
+                text=t("main.boxConfirmAdd", count=add_count),
+                icon=QMessageBox.Question,
+                standard_buttons=QMessageBox.Yes | QMessageBox.Cancel,
+                default_button=QMessageBox.Yes,
+                message_box_cls=QMessageBox,
+            )
+            yes_btn = box.button(QMessageBox.Yes)
 
             def _on_finished(_result):
                 if result_state["done"]:
@@ -361,19 +375,20 @@ class ManageBoxesFlow:
                 if chosen_mode == "keep_gaps"
                 else tr("main.boxDeleteRenumber")
             )
-            box = QMessageBox(self._window)
-            box.setWindowTitle(tr("main.manageBoxes"))
-            box.setText(
-                t(
+            box = create_message_box(
+                self._window,
+                title=tr("main.manageBoxes"),
+                text=t(
                     "main.boxConfirmRemove",
                     box=prepared["payload"]["box"],
                     mode=mode_label,
-                )
+                ),
+                icon=QMessageBox.Warning,
+                standard_buttons=QMessageBox.Yes | QMessageBox.Cancel,
+                default_button=QMessageBox.Yes,
+                message_box_cls=QMessageBox,
             )
-            box.setIcon(QMessageBox.Warning)
-            yes_btn = box.addButton(QMessageBox.Yes)
-            box.addButton(QMessageBox.Cancel)
-            box.setDefaultButton(yes_btn)
+            yes_btn = box.button(QMessageBox.Yes)
 
             def _on_finished(_result):
                 if result_state["done"]:
@@ -397,10 +412,13 @@ class ManageBoxesFlow:
 
             message = t("main.boxRemoveMiddlePrompt", box=target_box)
 
-            box = QMessageBox(self._window)
-            box.setWindowTitle(tr("main.manageBoxes"))
-            box.setIcon(QMessageBox.Warning)
-            box.setText(message)
+            box = create_message_box(
+                self._window,
+                title=tr("main.manageBoxes"),
+                text=message,
+                icon=QMessageBox.Warning,
+                message_box_cls=QMessageBox,
+            )
             keep_btn = box.addButton(tr("main.boxDeleteKeepGaps"), QMessageBox.AcceptRole)
             renumber_btn = box.addButton(tr("main.boxDeleteRenumber"), QMessageBox.ActionRole)
             box.addButton(QMessageBox.Cancel)
@@ -445,11 +463,13 @@ class ManageBoxesFlow:
 
     @staticmethod
     def _confirm_action(window, title, message):
-        reply = QMessageBox.question(
+        return ask_confirmation(
             window,
-            title,
-            message,
-            QMessageBox.Yes | QMessageBox.Cancel,
-            QMessageBox.Cancel,
+            title=title,
+            text=message,
+            icon=QMessageBox.Question,
+            standard_buttons=QMessageBox.Yes | QMessageBox.Cancel,
+            accept_button=QMessageBox.Yes,
+            default_button=QMessageBox.Cancel,
+            message_box_cls=QMessageBox,
         )
-        return reply == QMessageBox.Yes

@@ -414,7 +414,7 @@ def test_manage_boxes_flow_add_request_executes_and_emits_notice():
         )
         flow = ManageBoxesFlow(window)
 
-        with patch("app_gui.main_window_flows.QMessageBox.question", return_value=QMessageBox.Yes):
+        with patch("app_gui.application.manage_boxes_flow.ask_confirmation", return_value=True):
             result = flow.handle_request(
                 {"operation": "add", "count": 2},
                 from_ai=False,
@@ -685,7 +685,7 @@ def test_manage_boxes_flow_remove_invalid_box_fails_before_confirm():
         )
         flow = ManageBoxesFlow(window)
 
-        with patch("app_gui.main_window_flows.QMessageBox.question") as confirm_mock:
+        with patch("app_gui.application.manage_boxes_flow.ask_confirmation") as confirm_mock:
             result = flow.handle_request(
                 {"operation": "remove", "box": 99},
                 from_ai=True,
@@ -939,7 +939,7 @@ def test_window_state_flow_close_event_busy_and_persist():
     busy_event = SimpleNamespace(ignore=MagicMock())
     busy_window = SimpleNamespace(ai_panel=_FakeAIPanelState(ai_run_inflight=True))
     busy_flow = WindowStateFlow(busy_window)
-    with patch("app_gui.main_window_flows.QMessageBox.warning") as warn_mock:
+    with patch("app_gui.main_window_flows.show_warning_message") as warn_mock:
         ok = busy_flow.handle_close_event(busy_event)
     assert ok is False
     busy_event.ignore.assert_called_once()

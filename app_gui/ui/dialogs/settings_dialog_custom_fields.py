@@ -6,16 +6,26 @@ from PySide6.QtWidgets import QDialog, QMessageBox
 
 from app_gui.error_localizer import localize_error
 from app_gui.i18n import t, tr
+from app_gui.ui.dialogs.common import create_message_box, show_warning_message
 from app_gui.ui.dialogs.settings_dialog_formatters import (
     format_removed_field_preview_details,
     format_removed_field_preview_summary,
 )
 
 
-def open_custom_fields_editor(dialog, *, destructive_button_cls) -> None:
+def open_custom_fields_editor(
+    dialog,
+    *,
+    destructive_button_cls,
+    warning_func=show_warning_message,
+) -> None:
     yaml_path = dialog.yaml_edit.text().strip()
     if not yaml_path or not os.path.isfile(yaml_path):
-        QMessageBox.warning(dialog, tr("common.info"), t("main.fileNotFound", path=yaml_path))
+        warning_func(
+            dialog,
+            title=tr("common.info"),
+            text=t("main.fileNotFound", path=yaml_path),
+        )
         return
 
     load_result = dialog._custom_fields_use_case.load_editor_state(yaml_path=yaml_path)
@@ -23,10 +33,10 @@ def open_custom_fields_editor(dialog, *, destructive_button_cls) -> None:
     meta = editor_state.meta
     unsupported_issue = load_result.unsupported_issue
     if unsupported_issue:
-        QMessageBox.warning(
+        warning_func(
             dialog,
-            tr("main.customFieldsTitle"),
-            localize_error(
+            title=tr("main.customFieldsTitle"),
+            text=localize_error(
                 unsupported_issue.get("error_code"),
                 unsupported_issue.get("message"),
                 details=unsupported_issue.get("details"),
@@ -65,10 +75,10 @@ def open_custom_fields_editor(dialog, *, destructive_button_cls) -> None:
         detail_text = "\n".join(sample_lines)
         if hidden_count > 0:
             detail_text += f"\n... and {hidden_count} more blocked rename(s)"
-        QMessageBox.warning(
+        warning_func(
             dialog,
-            tr("main.customFieldsTitle"),
-            (
+            title=tr("main.customFieldsTitle"),
+            text=(
                 "Field rename blocked. Fixed/system field names cannot be used as "
                 f"rename targets.\n\n{detail_text}\n\nPlease choose a different custom field key."
             ),
@@ -86,10 +96,10 @@ def open_custom_fields_editor(dialog, *, destructive_button_cls) -> None:
         detail_text = "\n".join(sample_lines)
         if hidden_count > 0:
             detail_text += f"\n... and {hidden_count} more conflict(s)"
-        QMessageBox.warning(
+        warning_func(
             dialog,
-            tr("main.customFieldsTitle"),
-            (
+            title=tr("main.customFieldsTitle"),
+            text=(
                 "Field rename conflict detected. "
                 f"The target field already contains different values.\n\n{detail_text}\n\n"
                 "Please resolve conflicts in data before renaming."
@@ -101,23 +111,23 @@ def open_custom_fields_editor(dialog, *, destructive_button_cls) -> None:
     if draft.removed_field_previews:
         box_layout = meta.get("box_layout") if isinstance(meta.get("box_layout"), dict) else None
         names = ", ".join(preview.field_key for preview in draft.removed_field_previews)
-        msg = QMessageBox(dialog)
-        msg.setIcon(QMessageBox.Warning)
-        msg.setWindowTitle(tr("main.customFieldsTitle"))
-        msg.setText(t("main.cfRemoveDataPrompt", fields=names))
-        msg.setInformativeText(
-            format_removed_field_preview_summary(
+        detailed_text = None
+        if any(preview.hidden_count for preview in draft.removed_field_previews):
+            detailed_text = format_removed_field_preview_details(
                 draft.removed_field_previews,
                 layout=box_layout,
             )
+        msg = create_message_box(
+            dialog,
+            title=tr("main.customFieldsTitle"),
+            text=t("main.cfRemoveDataPrompt", fields=names),
+            informative_text=format_removed_field_preview_summary(
+                draft.removed_field_previews,
+                layout=box_layout,
+            ),
+            detailed_text=detailed_text,
+            icon=QMessageBox.Warning,
         )
-        if any(preview.hidden_count for preview in draft.removed_field_previews):
-            msg.setDetailedText(
-                format_removed_field_preview_details(
-                    draft.removed_field_previews,
-                    layout=box_layout,
-                )
-            )
         btn_clean = destructive_button_cls(tr("main.cfRemoveDataClean"), msg)
         btn_cancel = destructive_button_cls(tr("common.cancel"), msg)
         msg.addButton(btn_clean, QMessageBox.DestructiveRole)
@@ -153,10 +163,10 @@ def open_custom_fields_editor(dialog, *, destructive_button_cls) -> None:
         return
 
     if not commit_result.ok:
-        QMessageBox.warning(
+        warning_func(
             dialog,
-            tr("main.customFieldsTitle"),
-            str(commit_result.message or "Failed to save custom fields."),
+            title=tr("main.customFieldsTitle"),
+            text=str(commit_result.message or "Failed to save custom fields."),
         )
         return
 

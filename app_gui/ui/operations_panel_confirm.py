@@ -5,6 +5,8 @@ from datetime import datetime
 
 from PySide6.QtWidgets import QMessageBox
 
+from app_gui.ui.dialogs.common import ask_yes_no
+
 
 def _ops_tr(key, **kwargs):
     """Resolve translations through operations_panel module for monkeypatch compatibility."""
@@ -14,16 +16,15 @@ def _ops_tr(key, **kwargs):
 
 
 def _confirm_warning_dialog(self, *, title, text, informative_text, detailed_text=None):
-    msg = QMessageBox(self)
-    msg.setIcon(QMessageBox.Warning)
-    msg.setWindowTitle(title)
-    msg.setText(text)
-    msg.setInformativeText(informative_text)
-    if detailed_text:
-        msg.setDetailedText(detailed_text)
-    msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-    msg.setDefaultButton(QMessageBox.No)
-    return msg.exec() == QMessageBox.Yes
+    return ask_yes_no(
+        self,
+        title=title,
+        text=text,
+        informative_text=informative_text,
+        detailed_text=detailed_text,
+        icon=QMessageBox.Warning,
+        default_button=QMessageBox.No,
+    )
 
 
 def _confirm_execute(self, title, details):

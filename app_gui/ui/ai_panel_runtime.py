@@ -321,15 +321,19 @@ def _handle_max_steps_ask(self, event_data):
     """System prompt when max_steps is reached, asks user to continue or stop."""
     from PySide6.QtWidgets import QMessageBox
 
+    from app_gui.ui.dialogs.common import create_message_box
+
     steps = event_data.get("steps", 0)
 
     if self.ai_streaming_active:
         self._end_stream_chat()
 
-    box = QMessageBox(self)
-    box.setWindowTitle(tr("ai.maxStepsTitle"))
-    box.setText(tr("ai.maxStepsMessage").format(steps=steps))
-    box.setIcon(QMessageBox.Question)
+    box = create_message_box(
+        self,
+        title=tr("ai.maxStepsTitle"),
+        text=tr("ai.maxStepsMessage").format(steps=steps),
+        icon=QMessageBox.Question,
+    )
     continue_btn = box.addButton(QMessageBox.Yes)
     stop_btn = box.addButton(QMessageBox.No)
     box.setDefaultButton(continue_btn)
@@ -361,22 +365,21 @@ def _show_question_dialog(self, question_text, options, *, worker=None, trace_id
         QComboBox,
         QDialog,
         QDialogButtonBox,
-        QLabel,
         QLineEdit,
         QVBoxLayout,
     )
 
+    from app_gui.ui.dialogs.common import configure_dialog, create_wrapping_label
     from app_gui.ui.utils import md_to_html
 
-    dialog = QDialog(self)
+    dialog = configure_dialog(QDialog(self))
     dialog.setWindowTitle(tr("ai.questionTitle"))
-    dialog.setMinimumWidth(400)
     layout = QVBoxLayout(dialog)
 
-    label = QLabel()
-    label.setTextFormat(Qt.RichText)
-    label.setText(md_to_html(str(question_text or "")))
-    label.setWordWrap(True)
+    label = create_wrapping_label(
+        md_to_html(str(question_text or "")),
+        rich_text=True,
+    )
     layout.addWidget(label)
 
     combo = QComboBox()
@@ -388,7 +391,7 @@ def _show_question_dialog(self, question_text, options, *, worker=None, trace_id
     input_edit.setVisible(False)
     layout.addWidget(input_edit)
 
-    error_label = QLabel("")
+    error_label = create_wrapping_label("")
     error_label.setStyleSheet("color: #d9534f;")
     error_label.setVisible(False)
     layout.addWidget(error_label)

@@ -27,6 +27,7 @@ from app_gui.application.settings_dialog_submission import SettingsDialogSubmiss
 from app_gui.application.settings_dataset_use_case import SettingsDatasetUseCase
 from app_gui.application.settings_validation_use_case import SettingsValidationUseCase
 from app_gui.i18n import t, tr
+from app_gui.ui.dialogs.common import show_warning_message
 from app_gui.ui.dialogs import settings_dialog_about_section as _about_section
 from app_gui.ui.dialogs import settings_dialog_ai_section as _ai_section
 from app_gui.ui.dialogs import settings_dialog_custom_fields as _custom_fields
@@ -337,7 +338,11 @@ class SettingsDialog(QDialog):
             message += "\n\n" + report_text
         if include_dataset_hint:
             message += "\n\n" + tr("main.datasetYamlValidationHint")
-        QMessageBox.warning(self, tr("main.importValidatedTitle"), message)
+        show_warning_message(
+            self,
+            title=tr("main.importValidatedTitle"),
+            text=message,
+        )
 
     def accept(self):
         """Block saving settings when selected dataset YAML fails validation.
@@ -379,7 +384,7 @@ class SettingsDialog(QDialog):
         _dataset_section.emit_rename_dataset_request(
             self,
             qinputdialog_cls=QInputDialog,
-            message_box_cls=QMessageBox,
+            warning_func=show_warning_message,
         )
 
     def _confirm_phrase_dialog(self, *, title, prompt_text, phrase, strip_input=False):
@@ -399,7 +404,7 @@ class SettingsDialog(QDialog):
     def _emit_delete_dataset_request(self):
         _dataset_section.emit_delete_dataset_request(
             self,
-            message_box_cls=QMessageBox,
+            warning_func=show_warning_message,
         )
 
     def _confirm_delete_dataset_initial(self, dataset_name):
@@ -448,6 +453,7 @@ class SettingsDialog(QDialog):
         _custom_fields.open_custom_fields_editor(
             self,
             destructive_button_cls=_ProgrammaticClickButton,
+            warning_func=show_warning_message,
         )
 
     def _open_manage_boxes(self):

@@ -18,6 +18,7 @@ from app_gui.application.ai_provider_catalog import (
 from app_gui.gui_config import AI_HISTORY_LIMIT, AI_OPERATION_EVENT_POOL_LIMIT, MAX_AGENT_STEPS
 from app_gui.ui.theme import FONT_SIZE_XS, FONT_SIZE_SM, MONO_FONT_CSS_FAMILY, resolve_theme_token
 from app_gui.ui.icons import get_icon, Icons
+from app_gui.ui.dialogs.common import ask_yes_no
 from app_gui.system_notice import build_system_notice, coerce_system_notice
 from app_gui.i18n import tr
 from app_gui.ui import ai_panel_notice as _ai_notice
@@ -614,17 +615,13 @@ class AIPanel(QWidget):
         self.ai_stream_thought_buffer = ""
 
     def on_new_chat(self):
-        from PySide6.QtWidgets import QMessageBox
-
         if self.ai_history or self.ai_chat.toPlainText().strip():
-            reply = QMessageBox.question(
+            confirmed = ask_yes_no(
                 self,
-                tr("ai.newChat"),
-                tr("ai.newChatConfirm"),
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
+                title=tr("ai.newChat"),
+                text=tr("ai.newChatConfirm"),
             )
-            if reply != QMessageBox.Yes:
+            if not confirmed:
                 return
 
         self.ai_chat.clear()

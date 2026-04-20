@@ -80,6 +80,7 @@ from app_gui.ui.dialogs import (
     NewDatasetDialog,
     CustomFieldsDialog,
 )
+from app_gui.ui.dialogs.common import create_message_box, show_info_message, show_warning_message
 from app_gui.ui.icons import get_icon, Icons, set_icon_color
 from app_gui.system_notice import build_system_notice
 from app_gui.main_window_flows import (
@@ -209,29 +210,26 @@ def _bootstrap_data_root(app, gui_config: dict) -> bool:
     initial_dir = legacy_root if has_any_legacy_data() else os.path.expanduser("~")
 
     if has_any_legacy_data():
-        intro = QMessageBox()
-        intro.setWindowTitle(tr("main.dataRootSetupTitle"))
-        intro.setIcon(QMessageBox.Information)
-        intro.setText(tr("main.dataRootSetupLegacyText"))
-        intro.setInformativeText(tr("main.dataRootSetupLegacyDetail"))
-        choose_btn = intro.addButton(tr("main.dataRootChooseAction"), QMessageBox.AcceptRole)
-        intro.addButton(tr("common.cancel"), QMessageBox.RejectRole)
-        intro.setDefaultButton(choose_btn)
-        intro.exec()
-        if intro.clickedButton() != choose_btn:
-            return False
+        intro_text = tr("main.dataRootSetupLegacyText")
+        intro_detail = tr("main.dataRootSetupLegacyDetail")
     else:
-        intro = QMessageBox()
-        intro.setWindowTitle(tr("main.dataRootSetupTitle"))
-        intro.setIcon(QMessageBox.Information)
-        intro.setText(tr("main.dataRootSetupText"))
-        intro.setInformativeText(tr("main.dataRootSetupDetail"))
-        choose_btn = intro.addButton(tr("main.dataRootChooseAction"), QMessageBox.AcceptRole)
-        intro.addButton(tr("common.cancel"), QMessageBox.RejectRole)
-        intro.setDefaultButton(choose_btn)
-        intro.exec()
-        if intro.clickedButton() != choose_btn:
-            return False
+        intro_text = tr("main.dataRootSetupText")
+        intro_detail = tr("main.dataRootSetupDetail")
+
+    intro = create_message_box(
+        None,
+        title=tr("main.dataRootSetupTitle"),
+        text=intro_text,
+        informative_text=intro_detail,
+        icon=QMessageBox.Information,
+        message_box_cls=QMessageBox,
+    )
+    choose_btn = intro.addButton(tr("main.dataRootChooseAction"), QMessageBox.AcceptRole)
+    intro.addButton(tr("common.cancel"), QMessageBox.RejectRole)
+    intro.setDefaultButton(choose_btn)
+    intro.exec()
+    if intro.clickedButton() != choose_btn:
+        return False
 
     selected_root = _choose_data_root(
         None,
@@ -251,10 +249,11 @@ def _bootstrap_data_root(app, gui_config: dict) -> bool:
         else:
             result = use_case.initialize_root(target_root=selected_root)
     except Exception as exc:
-        QMessageBox.warning(
+        show_warning_message(
             None,
-            tr("main.dataRootSetupTitle"),
-            t("main.dataRootSetupFailed", error=str(exc)),
+            title=tr("main.dataRootSetupTitle"),
+            text=t("main.dataRootSetupFailed", error=str(exc)),
+            message_box_cls=QMessageBox,
         )
         return False
 
@@ -767,10 +766,13 @@ class MainWindow(QMainWindow):
         if bool(cfg.get("migration_mode_notice_suppressed", False)):
             return
 
-        msg_box = QMessageBox(self)
-        msg_box.setWindowTitle(tr("main.migrationModeDialogTitle"))
-        msg_box.setText(tr("main.migrationModeDialogText"))
-        msg_box.setIcon(QMessageBox.Information)
+        msg_box = create_message_box(
+            self,
+            title=tr("main.migrationModeDialogTitle"),
+            text=tr("main.migrationModeDialogText"),
+            icon=QMessageBox.Information,
+            message_box_cls=QMessageBox,
+        )
 
         dont_show_cb = QCheckBox(tr("main.doNotShowAgain"), msg_box)
         msg_box.setCheckBox(dont_show_cb)
@@ -843,10 +845,11 @@ class MainWindow(QMainWindow):
                 current_yaml_path=self.current_yaml_path,
             )
         except Exception as exc:
-            QMessageBox.warning(
+            show_warning_message(
                 self,
-                tr("settings.changeDataRoot"),
-                t("settings.changeDataRootFailed", error=str(exc)),
+                title=tr("settings.changeDataRoot"),
+                text=t("settings.changeDataRootFailed", error=str(exc)),
+                message_box_cls=QMessageBox,
             )
             return {}
 
@@ -989,10 +992,11 @@ class MainWindow(QMainWindow):
             return result.stage
         if result.error_code == "user_cancelled":
             return ""
-        QMessageBox.warning(
+        show_warning_message(
             self,
-            tr("main.importExistingDataTitle"),
-            result.message or tr("main.importValidatedFailed"),
+            title=tr("main.importExistingDataTitle"),
+            text=result.message or tr("main.importValidatedFailed"),
+            message_box_cls=QMessageBox,
         )
         failed_text = result.message or tr("main.importValidatedFailed")
         self.statusBar().showMessage(failed_text, 6000)
@@ -1230,10 +1234,11 @@ def main():
 
     instance_lock = SingleInstanceLock()
     if not instance_lock.acquire():
-        QMessageBox.information(
+        show_info_message(
             None,
-            tr("main.singleInstanceTitle"),
-            tr("main.singleInstanceMessage"),
+            title=tr("main.singleInstanceTitle"),
+            text=tr("main.singleInstanceMessage"),
+            message_box_cls=QMessageBox,
         )
         return 0
 

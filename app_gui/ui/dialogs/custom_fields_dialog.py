@@ -19,6 +19,12 @@ from PySide6.QtWidgets import (
 )
 
 from app_gui.i18n import t, tr
+from app_gui.ui.dialogs.common import (
+    ask_confirmation,
+    configure_dialog,
+    create_wrapping_label,
+    show_warning_message,
+)
 from app_gui.ui.icons import Icons, get_icon
 from lib.schema_aliases import CANONICAL_STORAGE_EVENTS_KEY, CANONICAL_STORED_AT_KEY
 
@@ -60,8 +66,8 @@ class CustomFieldsDialog(QDialog):
         color_key=None,
     ):
         super().__init__(parent)
+        configure_dialog(self, min_width=620)
         self.setWindowTitle(tr("main.customFieldsTitle"))
-        self.setMinimumWidth(620)
         self.setMinimumHeight(400)
 
         root = QVBoxLayout(self)
@@ -209,10 +215,10 @@ class CustomFieldsDialog(QDialog):
             if not raw_key.isidentifier():
                 invalid.append(raw_key)
         if invalid:
-            QMessageBox.warning(
+            show_warning_message(
                 self,
-                tr("main.cfKeyInvalidTitle", default="Invalid field key"),
-                tr(
+                title=tr("main.cfKeyInvalidTitle", default="Invalid field key"),
+                text=tr(
                     "main.cfKeyInvalidMessage",
                     default=(
                         "Field keys must be letters, digits, and underscores only, "
@@ -421,14 +427,12 @@ class CustomFieldsDialog(QDialog):
         """Open a small dialog to edit options for a field."""
         if entry.get("_is_system_note"):
             return
-        dlg = QDialog(self)
+        dlg = configure_dialog(QDialog(self), min_width=360)
         field_key = entry["key"].text().strip() or "?"
         dlg.setWindowTitle(t("main.cfFieldOptionsTitle", field=field_key))
-        dlg.setMinimumWidth(300)
         layout = QVBoxLayout(dlg)
 
-        hint = QLabel(tr("main.cfFieldOptionsHint"))
-        hint.setWordWrap(True)
+        hint = create_wrapping_label(tr("main.cfFieldOptionsHint"))
         hint.setProperty("role", "dialogHint")
         layout.addWidget(hint)
 
@@ -460,14 +464,15 @@ class CustomFieldsDialog(QDialog):
         if entry.get("_is_system_note"):
             return
         key_name = entry["key"].text().strip() or "?"
-        reply = QMessageBox.question(
+        confirmed = ask_confirmation(
             self,
-            tr("main.customFieldsTitle"),
-            t("main.cfRemoveConfirm", field=key_name),
-            QMessageBox.Yes | QMessageBox.Cancel,
-            QMessageBox.Cancel,
+            title=tr("main.customFieldsTitle"),
+            text=t("main.cfRemoveConfirm", field=key_name),
+            standard_buttons=QMessageBox.Yes | QMessageBox.Cancel,
+            accept_button=QMessageBox.Yes,
+            default_button=QMessageBox.Cancel,
         )
-        if reply != QMessageBox.Yes:
+        if not confirmed:
             return
         self._field_rows.remove(entry)
         entry["widget"].setParent(None)

@@ -8,12 +8,14 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
 from app_gui.i18n import tr
+from app_gui.ui.dialogs.common import create_message_box, show_info_message, show_warning_message
 
 
 def build_preferences_group(dialog, *, combo_box_cls) -> QGroupBox:
@@ -127,9 +129,12 @@ def handle_check_update_result(dialog, latest_tag, info, download_url) -> None:
     dialog._check_update_btn.setText(tr("settings.checkUpdate"))
     if not latest_tag:
         from app_gui.i18n import t
-        from PySide6.QtWidgets import QMessageBox
 
-        QMessageBox.warning(dialog, tr("settings.checkUpdate"), t("settings.checkUpdateFailed", error=info))
+        show_warning_message(
+            dialog,
+            title=tr("settings.checkUpdate"),
+            text=t("settings.checkUpdateFailed", error=info),
+        )
         return
     if dialog._is_version_newer(latest_tag, dialog._app_version):
         release_info = dialog._resolve_platform_release_info({"download_url": download_url})
@@ -138,13 +143,18 @@ def handle_check_update_result(dialog, latest_tag, info, download_url) -> None:
             if bool(release_info.get("auto_update"))
             else tr("main.newReleaseDownload")
         )
-        from app_gui.i18n import t
-        from PySide6.QtWidgets import QMessageBox
+        release_notes = str(info or "").strip()
+        if not release_notes:
+            release_notes = tr("main.releaseNotesDefault")
 
-        box = QMessageBox(dialog)
-        box.setWindowTitle(tr("settings.checkUpdate"))
-        box.setText(t("settings.newVersionAvailable", version=latest_tag, notes=info))
-        box.setIcon(QMessageBox.Information)
+        box = create_message_box(
+            dialog,
+            title=tr("settings.checkUpdate"),
+            text=tr("main.newReleaseHeadline", version=latest_tag),
+            informative_text=tr("main.newReleaseBackupWarning"),
+            detailed_text=release_notes,
+            icon=QMessageBox.Information,
+        )
         update_btn = box.addButton(update_label, QMessageBox.AcceptRole)
         box.addButton(tr("main.newReleaseLater"), QMessageBox.RejectRole)
         box.exec()
@@ -155,9 +165,11 @@ def handle_check_update_result(dialog, latest_tag, info, download_url) -> None:
                 main_window._startup_flow.start_automatic_update(latest_tag, info, download_url)
         return
 
-    from PySide6.QtWidgets import QMessageBox
-
-    QMessageBox.information(dialog, tr("settings.checkUpdate"), tr("settings.alreadyLatest"))
+    show_info_message(
+        dialog,
+        title=tr("settings.checkUpdate"),
+        text=tr("settings.alreadyLatest"),
+    )
 
 
 def build_about_group(dialog) -> QGroupBox:

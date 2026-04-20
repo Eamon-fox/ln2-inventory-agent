@@ -9,12 +9,16 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 from typing import Optional
 
 from lib.app_storage import get_user_config_dir
 
 
 _LOCK_FILENAME = "instance.lock"
+_WINDOWS_LOCK_OFFSET = 0x10000
+_PROCESS_LOCK_GUARD = threading.Lock()
+_PROCESS_LOCK_PATHS: set[str] = set()
 
 
 def default_lock_path() -> str:
@@ -34,6 +38,7 @@ class SingleInstanceLock:
         self._lock_path = lock_path or default_lock_path()
         self._fh = None
         self._acquired = False
+        self._registry_key = self._normalize_lock_path(self._lock_path)
 
     @property
     def lock_path(self) -> str:
@@ -49,9 +54,16 @@ class SingleInstanceLock:
 
         os.makedirs(os.path.dirname(self._lock_path), exist_ok=True)
 
+        with _PROCESS_LOCK_GUARD:
+            if self._registry_key in _PROCESS_LOCK_PATHS:
+                return False
+            _PROCESS_LOCK_PATHS.add(self._registry_key)
+
         try:
             fh = open(self._lock_path, "a+")
         except OSError:
+            with _PROCESS_LOCK_GUARD:
+                _PROCESS_LOCK_PATHS.discard(self._registry_key)
             return False
 
         if os.name == "nt":
@@ -64,10 +76,10 @@ class SingleInstanceLock:
                 fh.close()
             except OSError:
                 pass
+            with _PROCESS_LOCK_GUARD:
+                _PROCESS_LOCK_PATHS.discard(self._registry_key)
             return False
 
-        self._fh = fh
-        self._acquired = True
         try:
             fh.seek(0)
             fh.truncate()
@@ -75,6 +87,8 @@ class SingleInstanceLock:
             fh.flush()
         except OSError:
             pass
+        self._fh = fh
+        self._acquired = True
         return True
 
     def release(self) -> None:
@@ -96,6 +110,8 @@ class SingleInstanceLock:
 
         self._fh = None
         self._acquired = False
+        with _PROCESS_LOCK_GUARD:
+            _PROCESS_LOCK_PATHS.discard(self._registry_key)
 
     def __enter__(self) -> "SingleInstanceLock":
         self.acquire()
@@ -125,6 +141,7 @@ class SingleInstanceLock:
         import msvcrt
 
         try:
+            fh.seek(_WINDOWS_LOCK_OFFSET)
             msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
             return True
         except OSError:
@@ -135,10 +152,14 @@ class SingleInstanceLock:
         import msvcrt
 
         try:
-            fh.seek(0)
+            fh.seek(_WINDOWS_LOCK_OFFSET)
             msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
         except OSError:
             pass
+
+    @staticmethod
+    def _normalize_lock_path(lock_path: str) -> str:
+        return os.path.normcase(os.path.abspath(str(lock_path or "")))
 
 
 __all__ = ["SingleInstanceLock", "default_lock_path"]

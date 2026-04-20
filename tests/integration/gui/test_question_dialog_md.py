@@ -77,6 +77,25 @@ class TestQuestionDialogMarkdown(ManagedPathTestCase):
         dialog.reject()
         self._app.processEvents()
 
+    def test_question_dialog_uses_readable_min_width_and_wrapping_label(self):
+        panel = self._new_ai_panel()
+        options = ["Yes", "No", "\u5176\u4ed6\uff1a\u8bf7\u8f93\u5165"]
+
+        dialog = panel._show_question_dialog("A very long question " * 8, options)
+        self._app.processEvents()
+
+        rich_labels = [
+            label
+            for label in dialog.findChildren(QLabel)
+            if label.textFormat() == Qt.RichText
+        ]
+        self.assertGreaterEqual(dialog.minimumWidth(), 560)
+        self.assertTrue(rich_labels)
+        self.assertTrue(rich_labels[0].wordWrap())
+
+        dialog.reject()
+        self._app.processEvents()
+
 
 if __name__ == "__main__":
     unittest.main()

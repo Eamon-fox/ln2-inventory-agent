@@ -30,7 +30,7 @@ class TestNewChatButtonIntegration(GuiPanelsBaseCase):
         self.assertTrue(len(panel.ai_operation_events) > 0)
         self.assertTrue(len(panel.ai_chat.toPlainText().strip()) > 0)
 
-        with patch.object(QMessageBox, "question", return_value=QMessageBox.Yes):
+        with patch("app_gui.ui.ai_panel.ask_yes_no", return_value=True):
             panel.on_new_chat()
 
         # Both UI and context should be cleared
@@ -47,7 +47,7 @@ class TestNewChatButtonIntegration(GuiPanelsBaseCase):
         panel._append_history("user", "hello")
         original_history = list(panel.ai_history)
 
-        with patch.object(QMessageBox, "question", return_value=QMessageBox.No):
+        with patch("app_gui.ui.ai_panel.ask_yes_no", return_value=False):
             panel.on_new_chat()
 
         self.assertEqual(panel.ai_history, original_history)
@@ -57,21 +57,17 @@ class TestNewChatButtonIntegration(GuiPanelsBaseCase):
         """No confirmation dialog when chat is already empty."""
         panel = self._new_ai_panel()
 
-        with patch.object(QMessageBox, "question") as mock_q:
+        with patch("app_gui.ui.ai_panel.ask_yes_no") as mock_q:
             panel.on_new_chat()
             mock_q.assert_not_called()
 
-    def test_new_chat_button_exists_with_correct_label(self):
-        """The new chat button should exist with the correct i18n label."""
+    def test_new_chat_button_exists_with_correct_tooltip(self):
+        """The new chat action should exist even when rendered as icon-only."""
         panel = self._new_ai_panel()
 
-        # Find the button by its connected slot
         from PySide6.QtWidgets import QPushButton
 
-        new_chat_btn = None
-        for child in panel.findChildren(QPushButton):
-            if child.text() == tr("ai.newChat"):
-                new_chat_btn = child
-                break
+        new_chat_btn = panel.findChild(QPushButton, "aiNewChatActionBtn")
 
         self.assertIsNotNone(new_chat_btn, "New Chat button should exist")
+        self.assertEqual(tr("ai.newChat"), new_chat_btn.toolTip())

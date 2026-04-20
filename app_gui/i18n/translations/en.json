@@ -850,9 +850,9 @@
       "workdirMustBeRepoRelative": "workdir must be repository-relative (absolute paths are not allowed)."
     },
     "itemDesc": {
-      "default": "{action} {label} @ Box {box}:{pos}{target}",
-      "moveTarget": " -> {to_pos}",
-      "moveTargetWithBox": " -> Box {to_box}:{to_pos}",
+      "default": "{action} {label} | Box {box}:{pos}{target}",
+      "moveTarget": " → {to_pos}",
+      "moveTargetWithBox": " → Box {to_box}:{to_pos}",
       "rollbackLatest": "rollback latest-backup",
       "rollbackWithPath": "rollback {name} ({backup_path})"
     },

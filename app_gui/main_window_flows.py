@@ -17,6 +17,13 @@ from app_gui.application.ai_provider_catalog import (
 from app_gui.application.manage_boxes_flow import ManageBoxesFlow as _ManageBoxesFlowImpl
 from app_gui.gui_config import DEFAULT_MAX_STEPS, save_gui_config
 from app_gui.i18n import t, tr
+from app_gui.ui.dialogs.common import (
+    configure_dialog,
+    create_message_box,
+    create_wrapping_label,
+    show_info_message,
+    show_warning_message,
+)
 from app_gui.ui.dialogs.manage_boxes_dialog import ManageBoxesDialog
 from app_gui.version import current_release_platform, resolve_platform_release_info
 from lib.inventory_paths import assert_allowed_inventory_yaml_path
@@ -52,11 +59,12 @@ class StartupFlow:
         self._start_import_journey = start_import_journey
 
     def _build_message_box(self, *, title, text, icon):
-        box = QMessageBox(self._window)
-        box.setWindowTitle(str(title or ""))
-        box.setText(str(text or ""))
-        box.setIcon(icon)
-        return box
+        return create_message_box(
+            self._window,
+            title=str(title or ""),
+            text=str(text or ""),
+            icon=icon,
+        )
 
     def _show_status_box(self, title, text, icon):
         self._build_message_box(title=title, text=text, icon=icon).exec()
@@ -113,7 +121,6 @@ class StartupFlow:
         try:
             from PySide6.QtWidgets import (
                 QHBoxLayout,
-                QLabel,
                 QPushButton,
                 QTextBrowser,
                 QVBoxLayout,
@@ -126,13 +133,14 @@ class StartupFlow:
 
             dialog = QDialog(self._window)
             dialog.setWindowTitle(title)
+            configure_dialog(dialog, min_width=560)
             dialog.resize(560, 460)
 
             layout = QVBoxLayout(dialog)
 
-            headline_label = QLabel(headline, dialog)
+            headline_label = create_wrapping_label(headline)
+            headline_label.setParent(dialog)
             headline_label.setStyleSheet("font-weight: bold; font-size: 14px;")
-            headline_label.setWordWrap(True)
             layout.addWidget(headline_label)
 
             notes_view = QTextBrowser(dialog)
@@ -141,8 +149,8 @@ class StartupFlow:
             notes_view.setMinimumHeight(220)
             layout.addWidget(notes_view, 1)
 
-            warning_label = QLabel(backup_warning, dialog)
-            warning_label.setWordWrap(True)
+            warning_label = create_wrapping_label(backup_warning)
+            warning_label.setParent(dialog)
             layout.addWidget(warning_label)
 
             release_info = resolve_platform_release_info({"download_url": download_url})
@@ -455,10 +463,10 @@ class WindowStateFlow:
     def handle_close_event(self, event):
         window = self._window
         if window.ai_panel.has_running_task():
-            QMessageBox.warning(
+            show_warning_message(
                 window,
-                tr("main.aiBusyTitle"),
-                tr("main.aiBusyMessage"),
+                title=tr("main.aiBusyTitle"),
+                text=tr("main.aiBusyMessage"),
             )
             event.ignore()
             return False
@@ -502,10 +510,10 @@ class SettingsFlow:
         new_scale = _submission_value(values, "ui_scale", 1.0)
         if new_scale != window.gui_config.get("ui_scale"):
             window.gui_config["ui_scale"] = new_scale
-            QMessageBox.information(
+            show_info_message(
                 window,
-                tr("common.info"),
-                tr("main.scaleChangedManualRestart"),
+                title=tr("common.info"),
+                text=tr("main.scaleChangedManualRestart"),
             )
 
         window.gui_config["ai"] = {
@@ -580,9 +588,12 @@ class SettingsFlow:
 
     def ask_restart(self, message):
         window = self._window
-        box = QMessageBox(window)
-        box.setWindowTitle(tr("common.info"))
-        box.setText(message)
+        box = create_message_box(
+            window,
+            title=tr("common.info"),
+            text=message,
+            icon=QMessageBox.Information,
+        )
         btn_restart = box.addButton(tr("main.restartNow"), QMessageBox.AcceptRole)
         box.addButton(tr("main.restartLater"), QMessageBox.RejectRole)
         box.exec()

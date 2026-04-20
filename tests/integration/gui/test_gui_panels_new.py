@@ -432,6 +432,70 @@ class PlanTableColumnsTests(unittest.TestCase):
         self.assertNotIn("batch-x", cell_text)
         self.assertNotIn("Box", cell_text)
 
+    def test_plan_table_target_uses_compact_location_for_takeout(self):
+        panel = self._new_operations_panel()
+
+        panel.add_plan_items(
+            [
+                {
+                    "action": "takeout",
+                    "record_id": 10,
+                    "box": 3,
+                    "position": 7,
+                    "payload": {
+                        "record_id": 10,
+                        "position": 7,
+                        "date_str": "2025-02-19",
+                    },
+                }
+            ]
+        )
+
+        headers = [
+            panel.plan_table.horizontalHeaderItem(i).text()
+            for i in range(panel.plan_table.columnCount())
+        ]
+        target_col = headers.index(tr("operations.colPosition"))
+        target_text = panel.plan_table.item(0, target_col).text()
+
+        self.assertIn("3·7", target_text)
+        self.assertNotIn("Position", target_text)
+
+    def test_plan_table_target_uses_compact_arrow_for_cross_box_move(self):
+        panel = self._new_operations_panel()
+
+        panel.add_plan_items(
+            [
+                {
+                    "action": "move",
+                    "record_id": 9,
+                    "box": 1,
+                    "position": 5,
+                    "to_box": 2,
+                    "to_position": 8,
+                    "payload": {
+                        "record_id": 9,
+                        "position": 5,
+                        "to_box": 2,
+                        "to_position": 8,
+                        "date_str": "2025-02-19",
+                    },
+                }
+            ]
+        )
+
+        headers = [
+            panel.plan_table.horizontalHeaderItem(i).text()
+            for i in range(panel.plan_table.columnCount())
+        ]
+        target_col = headers.index(tr("operations.colPosition"))
+        target_text = panel.plan_table.item(0, target_col).text()
+
+        self.assertIn("1·5", target_text)
+        self.assertIn("2·8", target_text)
+        self.assertIn("→", target_text)
+        self.assertNotIn("Position", target_text)
+
     def test_plan_table_row_uses_contrasting_foreground_for_dark_tint(self):
         from unittest.mock import patch
 

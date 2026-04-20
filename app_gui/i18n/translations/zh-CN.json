@@ -767,8 +767,8 @@
     "atomicReject": "原子拒绝",
     "appliedChanges": "已应用变更",
     "changesReverted": "已回滚变更",
-    "statusOk": "状态: OK",
-    "statusBlocked": "状态: 已阻塞",
+    "statusOk": "状态：OK",
+    "statusBlocked": "状态：已阻塞",
     "errorDetails": "错误详情"
   },
   "agentToolRunner": {
@@ -843,9 +843,9 @@
       "workdirMustBeRepoRelative": "workdir must be repository-relative (absolute paths are not allowed)."
     },
     "itemDesc": {
-      "default": "{action} {label} @ 盒子 {box}:{pos}{target}",
-      "moveTarget": "-> {to_pos}",
-      "moveTargetWithBox": "-> 框 {to_box}:{to_pos}",
+      "default": "{action}｜{label}｜盒 {box}·{pos}{target}",
+      "moveTarget": " → {to_pos}",
+      "moveTargetWithBox": " → 盒 {to_box}·{to_pos}",
       "rollbackLatest": "回滚最新备份",
       "rollbackWithPath": "回滚 {name} ({backup_path})"
     },

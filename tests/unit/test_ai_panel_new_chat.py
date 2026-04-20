@@ -20,7 +20,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 try:
-    from PySide6.QtWidgets import QApplication, QMessageBox
+    from PySide6.QtWidgets import QApplication
     from app_gui.ui.ai_panel import AIPanel
 
     PYSIDE_AVAILABLE = True
@@ -43,8 +43,7 @@ class TestOnNewChatContextReset(unittest.TestCase):
             {"role": "user", "content": "hello"},
             {"role": "assistant", "content": "hi"},
         ]
-        # Bypass confirmation dialog by having empty state appear non-empty
-        with patch.object(QMessageBox, "question", return_value=QMessageBox.Yes):
+        with patch("app_gui.ui.ai_panel.ask_yes_no", return_value=True):
             panel.on_new_chat()
         self.assertEqual(panel.ai_history, [])
 
@@ -52,7 +51,7 @@ class TestOnNewChatContextReset(unittest.TestCase):
         panel = self._make_panel()
         panel.ai_operation_events = [{"type": "plan_staged", "data": {}}]
         panel.ai_history = [{"role": "user", "content": "x"}]
-        with patch.object(QMessageBox, "question", return_value=QMessageBox.Yes):
+        with patch("app_gui.ui.ai_panel.ask_yes_no", return_value=True):
             panel.on_new_chat()
         self.assertEqual(panel.ai_operation_events, [])
 
@@ -60,7 +59,7 @@ class TestOnNewChatContextReset(unittest.TestCase):
         panel = self._make_panel()
         panel.ai_history = [{"role": "user", "content": "x"}]
         panel.ai_summary_state = {"checkpoint_id": "checkpoint-1", "summary_text": "summary"}
-        with patch.object(QMessageBox, "question", return_value=QMessageBox.Yes):
+        with patch("app_gui.ui.ai_panel.ask_yes_no", return_value=True):
             panel.on_new_chat()
         self.assertIsNone(panel.ai_summary_state)
 
@@ -70,7 +69,7 @@ class TestOnNewChatContextReset(unittest.TestCase):
         panel.ai_streaming_active = True
         panel.ai_stream_buffer = "partial content"
         panel.ai_active_trace_id = "trace-123"
-        with patch.object(QMessageBox, "question", return_value=QMessageBox.Yes):
+        with patch("app_gui.ui.ai_panel.ask_yes_no", return_value=True):
             panel.on_new_chat()
         self.assertFalse(panel.ai_streaming_active)
         self.assertEqual(panel.ai_stream_buffer, "")
@@ -82,7 +81,7 @@ class TestOnNewChatContextReset(unittest.TestCase):
             {"role": "user", "content": "hello"},
         ]
         original_history = list(panel.ai_history)
-        with patch.object(QMessageBox, "question", return_value=QMessageBox.No):
+        with patch("app_gui.ui.ai_panel.ask_yes_no", return_value=False):
             panel.on_new_chat()
         self.assertEqual(panel.ai_history, original_history)
 
@@ -91,7 +90,7 @@ class TestOnNewChatContextReset(unittest.TestCase):
         panel.ai_history = []
         panel.ai_chat.clear()
         # Should not show dialog, just execute
-        with patch.object(QMessageBox, "question") as mock_q:
+        with patch("app_gui.ui.ai_panel.ask_yes_no") as mock_q:
             panel.on_new_chat()
             mock_q.assert_not_called()
         self.assertEqual(panel.ai_history, [])

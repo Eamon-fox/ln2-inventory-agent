@@ -18,13 +18,13 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QHeaderView,
-    QLabel,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
 )
 
 from app_gui.i18n import tr
+from app_gui.ui.dialogs.common import configure_dialog, create_wrapping_label
 
 
 _COLUMN_KEYS = ("record_id", "location", "field", "value", "rule", "expected")
@@ -69,6 +69,7 @@ class ValidationErrorDialog(QDialog):
         super().__init__(parent)
         self._details = _coerce_details(errors_detail)
 
+        configure_dialog(self, min_width=720)
         self.setWindowTitle(tr("operations.validationError.title"))
         self.setMinimumSize(720, 420)
 
@@ -78,8 +79,7 @@ class ValidationErrorDialog(QDialog):
             "operations.validationError.summary",
             count=len(self._details),
         )
-        summary_label = QLabel(summary_text)
-        summary_label.setWordWrap(True)
+        summary_label = create_wrapping_label(summary_text)
         layout.addWidget(summary_label)
 
         self.table = QTableWidget(len(self._details), len(_COLUMN_KEYS))

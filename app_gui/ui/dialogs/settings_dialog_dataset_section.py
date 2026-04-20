@@ -14,6 +14,12 @@ from PySide6.QtWidgets import (
 )
 
 from app_gui.i18n import t, tr
+from app_gui.ui.dialogs.common import (
+    configure_dialog,
+    create_message_box,
+    create_wrapping_label,
+    show_warning_message,
+)
 from app_gui.ui.icons import Icons, get_icon
 
 
@@ -157,7 +163,12 @@ def emit_change_data_root_request(dialog) -> None:
     )
 
 
-def emit_rename_dataset_request(dialog, *, qinputdialog_cls, message_box_cls=QMessageBox) -> None:
+def emit_rename_dataset_request(
+    dialog,
+    *,
+    qinputdialog_cls,
+    warning_func=show_warning_message,
+) -> None:
     if not callable(dialog._on_rename_dataset):
         return
 
@@ -180,10 +191,10 @@ def emit_rename_dataset_request(dialog, *, qinputdialog_cls, message_box_cls=QMe
     try:
         new_path = dialog._on_rename_dataset(current_yaml, str(new_name or ""))
     except Exception as exc:
-        message_box_cls.warning(
+        warning_func(
             dialog,
-            tr("settings.renameDataset"),
-            t("settings.renameDatasetFailed", error=str(exc)),
+            title=tr("settings.renameDataset"),
+            text=t("settings.renameDatasetFailed", error=str(exc)),
         )
         return
 
@@ -207,10 +218,14 @@ def confirm_phrase_dialog(
 ):
     confirm_dlg = dialog_cls(dialog)
     confirm_dlg.setWindowTitle(title)
+    configure_dialog(confirm_dlg)
     confirm_layout = QVBoxLayout(confirm_dlg)
 
-    confirm_label = label_cls(prompt_text)
-    confirm_label.setWordWrap(True)
+    if label_cls is QLabel:
+        confirm_label = create_wrapping_label(prompt_text)
+    else:
+        confirm_label = label_cls(prompt_text)
+        confirm_label.setWordWrap(True)
     confirm_layout.addWidget(confirm_label)
 
     confirm_input = line_edit_cls()
@@ -239,7 +254,11 @@ def confirm_phrase_dialog(
     return _matches(confirm_input.text())
 
 
-def emit_delete_dataset_request(dialog, *, message_box_cls=QMessageBox) -> None:
+def emit_delete_dataset_request(
+    dialog,
+    *,
+    warning_func=show_warning_message,
+) -> None:
     if not callable(dialog._on_delete_dataset):
         return
 
@@ -270,10 +289,10 @@ def emit_delete_dataset_request(dialog, *, message_box_cls=QMessageBox) -> None:
     try:
         new_path = dialog._on_delete_dataset(current_yaml)
     except Exception as exc:
-        message_box_cls.warning(
+        warning_func(
             dialog,
-            tr("settings.deleteDataset"),
-            t("settings.deleteDatasetFailed", error=str(exc)),
+            title=tr("settings.deleteDataset"),
+            text=t("settings.deleteDatasetFailed", error=str(exc)),
         )
         return
 
@@ -283,31 +302,37 @@ def emit_delete_dataset_request(dialog, *, message_box_cls=QMessageBox) -> None:
 
 
 def confirm_delete_dataset_initial(dialog, dataset_name, *, message_box_cls=QMessageBox):
-    first_confirm = message_box_cls(dialog)
-    first_confirm.setIcon(message_box_cls.Warning)
-    first_confirm.setWindowTitle(tr("settings.deleteDataset"))
-    first_confirm.setText(t("settings.deleteDatasetPrompt", name=dataset_name))
-    first_confirm.setInformativeText(tr("settings.deleteDatasetPromptDetail"))
+    first_confirm = create_message_box(
+        dialog,
+        title=tr("settings.deleteDataset"),
+        text=t("settings.deleteDatasetPrompt", name=dataset_name),
+        informative_text=tr("settings.deleteDatasetPromptDetail"),
+        icon=message_box_cls.Warning,
+        message_box_cls=message_box_cls,
+    )
     delete_btn = first_confirm.addButton(
         tr("settings.deleteDatasetAction"),
         message_box_cls.DestructiveRole,
     )
-    first_confirm.addButton(tr("common.cancel"), message_box_cls.RejectRole)
-    first_confirm.setDefaultButton(first_confirm.button(message_box_cls.Cancel))
+    cancel_btn = first_confirm.addButton(tr("common.cancel"), message_box_cls.RejectRole)
+    first_confirm.setDefaultButton(cancel_btn)
     first_confirm.exec()
     return first_confirm.clickedButton() == delete_btn
 
 
 def confirm_delete_dataset_final(dialog, dataset_name, *, message_box_cls=QMessageBox):
-    final_confirm = message_box_cls(dialog)
-    final_confirm.setIcon(message_box_cls.Critical)
-    final_confirm.setWindowTitle(tr("settings.deleteDataset"))
-    final_confirm.setText(t("settings.deleteDatasetFinalPrompt", name=dataset_name))
+    final_confirm = create_message_box(
+        dialog,
+        title=tr("settings.deleteDataset"),
+        text=t("settings.deleteDatasetFinalPrompt", name=dataset_name),
+        icon=message_box_cls.Critical,
+        message_box_cls=message_box_cls,
+    )
     final_delete_btn = final_confirm.addButton(
         tr("settings.deleteDatasetAction"),
         message_box_cls.DestructiveRole,
     )
-    final_confirm.addButton(tr("common.cancel"), message_box_cls.RejectRole)
-    final_confirm.setDefaultButton(final_confirm.button(message_box_cls.Cancel))
+    cancel_btn = final_confirm.addButton(tr("common.cancel"), message_box_cls.RejectRole)
+    final_confirm.setDefaultButton(cancel_btn)
     final_confirm.exec()
     return final_confirm.clickedButton() == final_delete_btn
