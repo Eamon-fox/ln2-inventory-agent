@@ -843,11 +843,13 @@
       "workdirMustBeRepoRelative": "workdir must be repository-relative (absolute paths are not allowed)."
     },
     "itemDesc": {
-      "default": "{action}｜{label}｜盒 {box}·{pos}{target}",
+      "default": "{action}｜ID {label}｜盒 {box}·{pos}{target}",
+      "defaultNoLabel": "{action}｜盒 {box}·{pos}{target}",
+      "add": "{action}｜盒 {box}｜位置 {positions}",
       "moveTarget": " → {to_pos}",
       "moveTargetWithBox": " → 盒 {to_box}·{to_pos}",
-      "rollbackLatest": "回滚最新备份",
-      "rollbackWithPath": "回滚 {name} ({backup_path})"
+      "rollbackLatest": "{action}｜最新备份",
+      "rollbackWithPath": "{action}｜{name}"
     },
     "manageBoxes": {
       "awaitingUserConfirmation": "等待用户在 GUI 中确认。"

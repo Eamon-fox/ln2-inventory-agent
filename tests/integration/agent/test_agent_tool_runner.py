@@ -2411,7 +2411,7 @@ class AgentToolRunnerTests(ManagedPathTestCase):
             source="ai",
         )
         desc = runner._item_desc(item)
-        self.assertIn("5,6,7", desc)
+        self.assertIn("Positions [5, 6, 7]", desc)
 
     def test_staged_plan_remove_requires_index(self):
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)

@@ -850,11 +850,13 @@
       "workdirMustBeRepoRelative": "workdir must be repository-relative (absolute paths are not allowed)."
     },
     "itemDesc": {
-      "default": "{action} {label} | Box {box}:{pos}{target}",
+      "default": "{action} | ID {label} | Box {box}:{pos}{target}",
+      "defaultNoLabel": "{action} | Box {box}:{pos}{target}",
+      "add": "{action} | Box {box} | Positions {positions}",
       "moveTarget": " → {to_pos}",
       "moveTargetWithBox": " → Box {to_box}:{to_pos}",
-      "rollbackLatest": "rollback latest-backup",
-      "rollbackWithPath": "rollback {name} ({backup_path})"
+      "rollbackLatest": "{action} | latest backup",
+      "rollbackWithPath": "{action} | {name}"
     },
     "manageBoxes": {
       "awaitingUserConfirmation": "Awaiting user confirmation in GUI."

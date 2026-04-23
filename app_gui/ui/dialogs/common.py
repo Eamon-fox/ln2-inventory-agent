@@ -31,6 +31,26 @@ def configure_message_box(
     find_children = getattr(box, "findChildren", None)
     if callable(find_children):
         for label in find_children(QLabel):
+            label_text = ""
+            text_getter = getattr(label, "text", None)
+            if callable(text_getter):
+                try:
+                    label_text = str(text_getter() or "")
+                except Exception:
+                    label_text = ""
+
+            pixmap = None
+            pixmap_getter = getattr(label, "pixmap", None)
+            if callable(pixmap_getter):
+                try:
+                    pixmap = pixmap_getter()
+                except Exception:
+                    pixmap = None
+            has_pixmap = bool(pixmap is not None and not getattr(pixmap, "isNull", lambda: False)())
+
+            if has_pixmap or not label_text.strip():
+                continue
+
             label.setWordWrap(True)
             label.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.LinksAccessibleByMouse)
             if int(text_width) > 0:

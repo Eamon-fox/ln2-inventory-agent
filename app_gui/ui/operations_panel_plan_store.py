@@ -4,6 +4,7 @@ import os
 
 from app_gui.error_localizer import localize_error_payload
 from app_gui.plan_executor import preflight_plan
+from app_gui.ui.plan_item_desc import build_localized_plan_item_desc
 from lib.plan_gate import validate_stage_request
 
 
@@ -24,67 +25,7 @@ def _plan_item_key(self, item):
 
 
 def _build_notice_plan_item_desc(self, item):
-    from app_gui.ui import operations_panel as _ops_panel
-
-    action = str(item.get("action", "") or "")
-    action_norm = action.lower()
-    if action_norm == "add":
-        box = item.get("box", "?")
-        positions = item.get("positions")
-        if positions is None:
-            payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
-            positions = payload.get("positions") if isinstance(payload.get("positions"), list) else []
-        pos_text = self._positions_to_display_text(positions or [])
-        return _tr("operations.noticeDescAdd", box=box, positions=pos_text)
-
-    if action_norm == "rollback":
-        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
-        source_event = payload.get("source_event") if isinstance(payload.get("source_event"), dict) else None
-        if source_event and source_event.get("trace_id"):
-            return _tr(
-                "operations.noticeDescRollbackTrace",
-                trace_id=str(source_event.get("trace_id")),
-                action=str(source_event.get("action") or "-"),
-            )
-        backup_path = payload.get("backup_path")
-        if backup_path:
-            return _tr("operations.noticeDescRollbackPath", path=os.path.basename(str(backup_path)))
-        return _tr("operations.noticeDescRollback")
-
-    rid = item.get("record_id")
-    rid_text = str(rid) if rid not in (None, "") else "?"
-    box = item.get("box", "?")
-    pos = self._position_to_display(item.get("position", "?"))
-    to_pos = item.get("to_position")
-    to_box = item.get("to_box")
-    action_label = _ops_panel._localized_action(action or action_norm)
-    if to_pos is not None:
-        to_pos_text = self._position_to_display(to_pos)
-        if to_box in (None, ""):
-            return _tr(
-                "operations.noticeDescRecordTargetNoBox",
-                action=action_label,
-                rid=rid_text,
-                box=box,
-                pos=pos,
-                to_pos=to_pos_text,
-            )
-        return _tr(
-            "operations.noticeDescRecordTarget",
-            action=action_label,
-            rid=rid_text,
-            box=box,
-            pos=pos,
-            to_box=to_box,
-            to_pos=to_pos_text,
-        )
-    return _tr(
-        "operations.noticeDescRecord",
-        action=action_label,
-        rid=rid_text,
-        box=box,
-        pos=pos,
-    )
+    return build_localized_plan_item_desc(self, item)
 
 
 def _collect_notice_action_counts_and_sample(self, items, max_sample=8):

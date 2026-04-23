@@ -13,6 +13,7 @@ from lib.tool_api import (
 from lib.tool_registry import TOOL_CONTRACTS, WRITE_TOOLS
 from lib import tool_api_parsers as _tool_parsers
 from lib.inventory_paths import assert_allowed_inventory_yaml_path
+from lib.plan_item_desc import build_plan_item_desc
 from lib.yaml_ops import load_yaml
 from . import tool_runner_handlers as _runner_handlers
 from . import tool_runner_staging as _runner_staging
@@ -411,61 +412,11 @@ class AgentToolRunner:
         return 0, None
 
     def _item_desc(self, item):
-        action = str(item.get("action") or "?")
-        if action == "rollback":
-            payload = item.get("payload") or {}
-            backup_path = str(payload.get("backup_path") or "").strip()
-            if backup_path:
-                name = os.path.basename(backup_path)
-                return self._msg(
-                    "itemDesc.rollbackWithPath",
-                    "rollback {name} ({backup_path})",
-                    name=name,
-                    backup_path=backup_path,
-                )
-            return self._msg(
-                "itemDesc.rollbackLatest",
-                "rollback latest-backup",
-            )
-
-        label = str(item.get("label") or item.get("record_id") or "-")
-        box = item.get("box", "?")
-        pos = item.get("position", "?")
-        if action == "add":
-            positions = item.get("positions")
-            if not isinstance(positions, (list, tuple, set)):
-                payload = item.get("payload")
-                positions = payload.get("positions") if isinstance(payload, dict) else None
-            if isinstance(positions, (list, tuple, set)):
-                normalized_positions = [value for value in list(positions) if value not in (None, "")]
-                if normalized_positions:
-                    pos = ",".join(str(value) for value in normalized_positions)
-        target = ""
-        if action == "move":
-            to_box = item.get("to_box")
-            to_pos = item.get("to_position")
-            if to_pos is not None:
-                if to_box is not None:
-                    target = self._msg(
-                        "itemDesc.moveTargetWithBox",
-                        " -> Box {to_box}:{to_pos}",
-                        to_box=to_box,
-                        to_pos=to_pos,
-                    )
-                else:
-                    target = self._msg(
-                        "itemDesc.moveTarget",
-                        " -> {to_pos}",
-                        to_pos=to_pos,
-                    )
-        return self._msg(
-            "itemDesc.default",
-            "{action} {label} @ Box {box}:{pos}{target}",
-            action=action,
-            label=label,
-            box=box,
-            pos=pos,
-            target=target,
+        action = str((item or {}).get("action") or "?")
+        return build_plan_item_desc(
+            item,
+            action_label=action,
+            msg_func=self._msg,
         )
 
     _stage_to_plan = _runner_staging._stage_to_plan

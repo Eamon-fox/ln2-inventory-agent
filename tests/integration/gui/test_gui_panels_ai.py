@@ -1227,7 +1227,7 @@ class OperationEventFeedTests(ManagedPathTestCase):
             "text": "Applied: 1/1 operations.",
             "data": {
                 "stats": {"total": 1, "applied": 1, "failed": 0, "blocked": 0, "remaining": 0},
-                "sample": ["OK: takeout 18 @ Box 1:18 | cell_line=U2OS, short_name=U2OS_backup_stock"],
+                "sample": ["OK: Takeout | ID 18 | Box 1:18 | cell_line=U2OS, short_name=U2OS_backup_stock"],
                 "report": {
                     "backup_path": "/tmp/demo.bak",
                     "items": [{"ok": True, "item": {"action": "takeout", "record_id": 18, "box": 1, "position": 18}}],
@@ -1238,7 +1238,7 @@ class OperationEventFeedTests(ManagedPathTestCase):
         self.assertTrue(panel.ai_collapsible_blocks)
         details_text = str(panel.ai_collapsible_blocks[-1].get("content", ""))
         self.assertIn("Operations (1)", details_text)
-        self.assertIn("takeout 18", details_text.lower())
+        self.assertIn("takeout | id 18", details_text.lower())
         self.assertNotIn('"report"', details_text)
 
     def test_ai_panel_system_notice_hides_all_details_in_collapsed_preview(self):
@@ -1282,11 +1282,11 @@ class OperationEventFeedTests(ManagedPathTestCase):
             "level": "info",
             "text": "Added 1 item(s) to plan.",
             "timestamp": "2026-02-21T23:02:16.978201",
-            "details": "takeout 23 @ Box 3:22",
+            "details": "Takeout | ID 23 | Box 3:22",
             "data": {
                 "added_count": 1,
                 "total_count": 1,
-                "sample": ["takeout 23 @ Box 3:22"],
+                "sample": ["Takeout | ID 23 | Box 3:22"],
             },
         }
 
@@ -1304,16 +1304,16 @@ class OperationEventFeedTests(ManagedPathTestCase):
             "code": "plan.stage.accepted",
             "level": "info",
             "text": "Added 1 item(s) to plan.",
-            "details": "takeout 23 @ Box 3:22 | source=form",
+            "details": "Takeout | ID 23 | Box 3:22 | source=form",
             "data": {
                 "added_count": 1,
                 "total_count": 1,
-                "sample": ["takeout 23 @ Box 3:22"],
+                "sample": ["Takeout | ID 23 | Box 3:22"],
             },
         }
 
         details_text = panel._format_system_notice_details(event)
-        self.assertIn("Details: takeout 23 @ Box 3:22 | source=form", details_text)
+        self.assertIn("Details: Takeout | ID 23 | Box 3:22 | source=form", details_text)
 
     def test_ai_panel_notice_keeps_details_for_non_dedupe_codes(self):
         """Non-whitelisted notice codes must keep Details even when text repeats operations."""
@@ -1352,11 +1352,11 @@ class OperationEventFeedTests(ManagedPathTestCase):
             "code": "plan.stage.accepted",
             "level": "info",
             "text": "Added 1 item(s) to plan.",
-            "details": "takeout 23 @ Box 3:22",
+            "details": "Takeout | ID 23 | Box 3:22",
             "data": {
                 "added_count": 1,
                 "total_count": 1,
-                "sample": ["takeout 23 @ Box 3:22"],
+                "sample": ["Takeout | ID 23 | Box 3:22"],
             },
         }
 

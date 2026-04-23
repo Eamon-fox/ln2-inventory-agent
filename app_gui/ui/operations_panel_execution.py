@@ -8,6 +8,7 @@ from app_gui.bridge_write_runner import execute_bridge_rollback
 from app_gui.i18n import tr
 from app_gui.error_localizer import localize_error_payload
 from app_gui.system_notice import build_system_notice, coerce_system_notice
+from app_gui.ui.plan_item_desc import build_localized_plan_item_desc
 from lib.position_fmt import format_box_position_display
 
 
@@ -192,8 +193,6 @@ def _build_execute_confirmation_lines(self, plan_items, yaml_path):
     lines = []
     for item in plan_items:
         action = item.get("action", "?")
-        label = item.get("label", "?")
-        pos = item.get("position", "?")
         if str(action).lower() == "rollback":
             payload = item.get("payload") or {}
             lines.extend(
@@ -207,15 +206,7 @@ def _build_execute_confirmation_lines(self, plan_items, yaml_path):
             )
             continue
 
-        line = f"  {action}: {label} @ {_format_box_position(self, item.get('box', '?'), pos)}"
-        to_pos = item.get("to_position")
-        to_box = item.get("to_box")
-        if to_pos:
-            if to_box:
-                line += f" \u2192 {_format_box_position(self, to_box, to_pos)}"
-            else:
-                line += f" \u2192 {_format_box_position(self, item.get('box', '?'), to_pos)}"
-        lines.append(line)
+        lines.append(f"  {build_localized_plan_item_desc(self, item)}")
     return lines
 
 def _confirm_execute_plan(self, plan_items, summary_lines):
