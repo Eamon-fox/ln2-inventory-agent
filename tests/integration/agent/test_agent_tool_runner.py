@@ -99,8 +99,9 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         self.assertIn("add_entry", names)
         self.assertIn("takeout", names)
         self.assertIn("move", names)
-        self.assertIn("bash", names)
-        self.assertIn("powershell", names)
+        self.assertIn("shell", names)
+        self.assertNotIn("bash", names)
+        self.assertNotIn("powershell", names)
         self.assertIn("use_skill", names)
         self.assertIn("fs_list", names)
         self.assertIn("fs_read", names)
@@ -658,40 +659,40 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         self.assertTrue(response.get("_hint"))
         self.assertIn("available tools", response.get("_hint", "").lower())
 
-    def test_bash_requires_non_empty_command(self):
+    def test_shell_requires_non_empty_command(self):
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
-        response = runner.run("bash", {"command": "   ", "description": "run command"})
+        response = runner.run("shell", {"command": "   ", "description": "run command"})
 
         self.assertFalse(response["ok"])
         self.assertEqual("invalid_tool_input", response["error_code"])
         self.assertIn("command", str(response.get("message") or ""))
 
-    def test_bash_requires_non_empty_description(self):
+    def test_shell_requires_non_empty_description(self):
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
-        response = runner.run("bash", {"command": "echo hi", "description": "   "})
+        response = runner.run("shell", {"command": "echo hi", "description": "   "})
 
         self.assertFalse(response["ok"])
         self.assertEqual("invalid_tool_input", response["error_code"])
         self.assertIn("description", str(response.get("message") or ""))
 
-    def test_bash_executes_command_and_returns_raw_output(self):
+    def test_shell_executes_command_and_returns_raw_output(self):
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         marker = "snowfox_terminal_ok"
         response = runner.run(
-            "bash",
+            "shell",
             {"command": f"echo {marker}", "description": "echo marker output"},
         )
 
         self.assertTrue(response["ok"])
         self.assertEqual(0, response.get("exit_code"))
         self.assertIn(marker, str(response.get("raw_output") or ""))
-        self.assertIn("Shell engine: bash.", str(response.get("_hint") or ""))
-        self.assertIn("Current working directory: repo root", str(response.get("_hint") or ""))
+        self.assertIn("cwd:", str(response.get("_hint") or ""))
+        self.assertIn("cwd: repo root", str(response.get("_hint") or ""))
 
-    def test_bash_accepts_explicit_repo_relative_workdir(self):
+    def test_shell_accepts_explicit_repo_relative_workdir(self):
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         response = runner.run(
-            "bash",
+            "shell",
             {
                 "command": "pwd",
                 "description": "print cwd",
@@ -700,26 +701,73 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         )
 
         self.assertTrue(response["ok"])
-        self.assertIn("Current working directory: migrate/output", str(response.get("_hint") or ""))
+        self.assertIn("cwd: migrate/output", str(response.get("_hint") or ""))
 
-    def test_bash_schema_exposes_expected_fields(self):
+    def test_shell_persists_current_workdir_between_calls(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        migrate_dir = self._repo_root() / "migrate"
+        migrate_dir.mkdir(parents=True, exist_ok=True)
+
+        first = runner.run(
+            "shell",
+            {"command": "cd migrate", "description": "enter migrate directory"},
+        )
+        second = runner.run(
+            "shell",
+            {"command": "pwd", "description": "print current directory"},
+        )
+
+        self.assertTrue(first["ok"])
+        self.assertEqual("migrate", first.get("current_workdir"))
+        self.assertTrue(second["ok"])
+        self.assertEqual("migrate", second.get("current_workdir"))
+        self.assertIn("cwd: migrate", str(second.get("_hint") or ""))
+
+    def test_shell_rejects_cd_outside_repo_and_keeps_previous_workdir(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        migrate_dir = self._repo_root() / "migrate"
+        migrate_dir.mkdir(parents=True, exist_ok=True)
+        ok = runner.run("shell", {"command": "cd migrate", "description": "enter migrate directory"})
+        denied = runner.run("shell", {"command": "cd .. && cd ..", "description": "leave repository"})
+
+        self.assertTrue(ok["ok"])
+        self.assertFalse(denied["ok"])
+        self.assertEqual("workdir_out_of_scope", denied.get("error_code"))
+        self.assertEqual("migrate", runner._shell_state.current_workdir)
+
+    def test_shell_nonzero_exit_still_updates_current_workdir(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        migrate_dir = self._repo_root() / "migrate"
+        migrate_dir.mkdir(parents=True, exist_ok=True)
+
+        response = runner.run(
+            "shell",
+            {"command": "cd migrate; exit 7", "description": "fail after changing directory"},
+        )
+
+        self.assertFalse(response["ok"])
+        self.assertEqual("terminal_nonzero_exit", response.get("error_code"))
+        self.assertEqual("migrate", response.get("current_workdir"))
+        self.assertEqual("migrate", runner._shell_state.current_workdir)
+
+    def test_shell_schema_exposes_expected_fields(self):
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         schemas = runner.tool_schemas()
         terminal_schema = next(
             (
                 item
                 for item in schemas
-                if item.get("function", {}).get("name") == "bash"
+                if item.get("function", {}).get("name") == "shell"
             ),
             None,
         )
         if not isinstance(terminal_schema, dict):
-            self.fail("bash schema should exist")
+            self.fail("shell schema should exist")
 
         params = terminal_schema.get("function", {}).get("parameters", {})
         self.assertEqual(["command", "description"], params.get("required", []))
         self.assertEqual(
-            {"command", "description", "timeout", "workdir"},
+            {"command", "description", "timeout", "workdir", "engine"},
             set((params.get("properties") or {}).keys()),
         )
         self.assertEqual(False, params.get("additionalProperties"))
@@ -739,32 +787,10 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         self.assertEqual(1, load_inventory.call_count)
         self.assertEqual(1, load_layout.call_count)
 
-    def test_powershell_schema_exposes_expected_fields(self):
-        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
-        schemas = runner.tool_schemas()
-        powershell_schema = next(
-            (
-                item
-                for item in schemas
-                if item.get("function", {}).get("name") == "powershell"
-            ),
-            None,
-        )
-        if not isinstance(powershell_schema, dict):
-            self.fail("powershell schema should exist")
-
-        params = powershell_schema.get("function", {}).get("parameters", {})
-        self.assertEqual(["command", "description"], params.get("required", []))
-        self.assertEqual(
-            {"command", "description", "timeout", "workdir"},
-            set((params.get("properties") or {}).keys()),
-        )
-        self.assertEqual(False, params.get("additionalProperties"))
-
-    def test_bash_rejects_workdir_outside_scope(self):
+    def test_shell_rejects_workdir_outside_scope(self):
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         response = runner.run(
-            "bash",
+            "shell",
             {
                 "command": "echo should_not_run",
                 "description": "verify repository boundary",
@@ -774,23 +800,10 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         self.assertFalse(response["ok"])
         self.assertEqual("path.escape_detected", response.get("error_code"))
 
-    def test_powershell_rejects_workdir_outside_scope(self):
+    def test_shell_timeout_is_milliseconds(self):
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         response = runner.run(
-            "powershell",
-            {
-                "command": "Write-Output should_not_run",
-                "description": "verify repository boundary",
-                "workdir": "../outside",
-            },
-        )
-        self.assertFalse(response["ok"])
-        self.assertEqual("path.escape_detected", response.get("error_code"))
-
-    def test_bash_timeout_is_milliseconds(self):
-        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
-        response = runner.run(
-            "bash",
+            "shell",
             {
                 "command": f'"{sys.executable}" -c "import time; time.sleep(0.5)"',
                 "description": "timeout behavior check",
@@ -800,17 +813,17 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         self.assertFalse(response["ok"])
         self.assertEqual("terminal_timeout", response.get("error_code"))
 
-    def test_bash_unicode_output_does_not_crash_file_ops_service(self):
+    def test_shell_unicode_output_does_not_crash_file_ops_service(self):
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         response = runner.run(
-            "bash",
+            "shell",
             {
                 "command": "python -c \"print('\\\\u03f5')\"",
                 "description": "emit unicode output",
             },
         )
-        if response.get("error_code") == "bash_unavailable":
-            self.skipTest("bash unavailable in current runtime")
+        if response.get("error_code") == "shell_unavailable":
+            self.skipTest("shell unavailable in current runtime")
         self.assertNotEqual("file_ops_service_failed", response.get("error_code"))
         self.assertNotEqual("file_ops_invalid_response", response.get("error_code"))
 

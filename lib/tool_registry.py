@@ -515,8 +515,8 @@ _TOOL_DESCRIPTOR_LIST = (
         },
     ),
     _tool(
-        "bash",
-        "Run a bash command in Linux/WSL environments. Do not use it for Windows-only paths such as D:\\...",
+        "shell",
+        "Run one non-interactive shell command. Defaults to the session current directory; use repo-relative paths.",
         {
             "type": "object",
             "properties": {
@@ -534,35 +534,12 @@ _TOOL_DESCRIPTOR_LIST = (
                 },
                 "workdir": {
                     "type": "string",
-                    "description": "Optional repository-relative working directory under repo root (defaults to repo root).",
+                    "description": "Optional repo-relative directory. Defaults to session current_workdir.",
                 },
-            },
-            "required": ["command", "description"],
-            "additionalProperties": False,
-        },
-        is_migration=True,
-    ),
-    _tool(
-        "powershell",
-        "Run a PowerShell command in Windows environments. Prefer this tool when the repository path is on Windows.",
-        {
-            "type": "object",
-            "properties": {
-                "command": {
+                "engine": {
                     "type": "string",
-                    "description": "Terminal command text to execute exactly as provided.",
-                },
-                "description": {
-                    "type": "string",
-                    "description": "Clear and concise command purpose (recommended 5-10 words).",
-                },
-                "timeout": {
-                    "type": "number",
-                    "description": "Optional timeout in milliseconds.",
-                },
-                "workdir": {
-                    "type": "string",
-                    "description": "Optional repository-relative working directory under repo root (defaults to repo root).",
+                    "enum": ["auto", "bash", "powershell"],
+                    "description": "Shell engine. Defaults to auto.",
                 },
             },
             "required": ["command", "description"],

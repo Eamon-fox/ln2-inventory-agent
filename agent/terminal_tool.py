@@ -2,14 +2,18 @@
 
 import os
 from pathlib import Path
+import platform
+import shlex
 import shutil
 import subprocess
+import tempfile
 
 
 DEFAULT_TERMINAL_TIMEOUT_SECONDS = 120
 SHELL_ENGINE_BASH = "bash"
 SHELL_ENGINE_POWERSHELL = "powershell"
-SUPPORTED_SHELL_ENGINES = {SHELL_ENGINE_BASH, SHELL_ENGINE_POWERSHELL}
+SHELL_ENGINE_AUTO = "auto"
+SUPPORTED_SHELL_ENGINES = {SHELL_ENGINE_AUTO, SHELL_ENGINE_BASH, SHELL_ENGINE_POWERSHELL}
 
 
 def default_terminal_cwd():
@@ -55,18 +59,54 @@ def _normalize_terminal_output(value):
     return text.lstrip("\ufeff")
 
 
+def _resolve_auto_engine():
+    is_windows = platform.system().lower().startswith("win")
+    has_powershell = shutil.which("powershell") or shutil.which("powershell.exe")
+    if is_windows and has_powershell:
+        return SHELL_ENGINE_POWERSHELL
+    if shutil.which("bash"):
+        return SHELL_ENGINE_BASH
+    if has_powershell:
+        return SHELL_ENGINE_POWERSHELL
+    return SHELL_ENGINE_BASH
+
+
+def _append_cwd_capture(command_text, engine, cwd_file):
+    if not cwd_file:
+        return command_text
+    if engine == SHELL_ENGINE_POWERSHELL:
+        escaped = str(cwd_file).replace("'", "''")
+        return (
+            "try {\n"
+            f"{command_text}\n"
+            "} finally {\n"
+            f"  $pwd.Path | Set-Content -LiteralPath '{escaped}' -Encoding UTF8\n"
+            "}\n"
+            "if ($global:LASTEXITCODE -ne $null) { exit $global:LASTEXITCODE }"
+        )
+    escaped = shlex.quote(str(cwd_file))
+    return (
+        f"SNOWFOX_CWD_CAPTURE={escaped}\n"
+        "export SNOWFOX_CWD_CAPTURE\n"
+        "trap 'printf \"%s\\n\" \"$PWD\" > \"$SNOWFOX_CWD_CAPTURE\"' EXIT\n"
+        f"{command_text}"
+    )
+
+
 def _resolve_shell_argv(engine, command_text):
-    normalized_engine = str(engine or SHELL_ENGINE_BASH).strip().lower()
+    normalized_engine = str(engine or SHELL_ENGINE_AUTO).strip().lower()
+    if normalized_engine == SHELL_ENGINE_AUTO:
+        normalized_engine = _resolve_auto_engine()
     if normalized_engine == SHELL_ENGINE_BASH:
         bash_path = shutil.which("bash")
         if not bash_path:
-            return None, "bash_unavailable", "bash executable is not available in current runtime."
-        return [bash_path, "-lc", command_text], "", ""
+            return None, "shell_unavailable", "No supported shell is available in current runtime.", normalized_engine
+        return [bash_path, "-lc", command_text], "", "", normalized_engine
 
     if normalized_engine == SHELL_ENGINE_POWERSHELL:
         pwsh_path = shutil.which("powershell") or shutil.which("powershell.exe")
         if not pwsh_path:
-            return None, "powershell_unavailable", "powershell executable is not available in current runtime."
+            return None, "shell_unavailable", "No supported shell is available in current runtime.", normalized_engine
         return [
             pwsh_path,
             "-NoProfile",
@@ -75,21 +115,22 @@ def _resolve_shell_argv(engine, command_text):
             "Bypass",
             "-Command",
             command_text,
-        ], "", ""
+        ], "", "", normalized_engine
 
-    return None, "invalid_tool_input", "engine must be one of: bash, powershell."
+    return None, "invalid_tool_input", "engine must be one of: auto, bash, powershell.", normalized_engine
 
 
 def run_terminal_command(
     command,
     timeout_seconds=DEFAULT_TERMINAL_TIMEOUT_SECONDS,
     cwd=None,
-    engine=SHELL_ENGINE_BASH,
+    engine=SHELL_ENGINE_AUTO,
     extra_env=None,
+    capture_cwd=False,
 ):
     """Execute one terminal command and return raw combined terminal output."""
     command_text = str(command or "")
-    engine_name = str(engine or SHELL_ENGINE_BASH).strip().lower()
+    engine_name = str(engine or SHELL_ENGINE_AUTO).strip().lower()
     effective_cwd = _resolve_effective_cwd(cwd)
     if not command_text.strip():
         return {
@@ -100,10 +141,26 @@ def run_terminal_command(
             "raw_output": "",
             "effective_cwd": effective_cwd,
             "engine": engine_name,
+            "final_cwd": "",
         }
 
-    argv, error_code, error_message = _resolve_shell_argv(engine_name, command_text)
+    cwd_capture_path = ""
+    if capture_cwd:
+        fd, cwd_capture_path = tempfile.mkstemp(prefix="snowfox-shell-cwd-", text=True)
+        os.close(fd)
+
+    resolved_engine = engine_name
+    if engine_name == SHELL_ENGINE_AUTO:
+        resolved_engine = _resolve_auto_engine()
+    exec_command_text = _append_cwd_capture(command_text, resolved_engine, cwd_capture_path)
+
+    argv, error_code, error_message, resolved_engine = _resolve_shell_argv(engine_name, exec_command_text)
     if not argv:
+        if cwd_capture_path:
+            try:
+                os.unlink(cwd_capture_path)
+            except OSError:
+                pass
         return {
             "ok": False,
             "error_code": error_code or "terminal_exec_failed",
@@ -111,7 +168,8 @@ def run_terminal_command(
             "exit_code": -1,
             "raw_output": "",
             "effective_cwd": effective_cwd,
-            "engine": engine_name,
+            "engine": resolved_engine,
+            "final_cwd": "",
         }
 
     try:
@@ -128,6 +186,11 @@ def run_terminal_command(
             env=_child_process_env(extra_env=extra_env),
         )
     except Exception as exc:
+        if cwd_capture_path:
+            try:
+                os.unlink(cwd_capture_path)
+            except OSError:
+                pass
         return {
             "ok": False,
             "error_code": "terminal_exec_failed",
@@ -135,7 +198,8 @@ def run_terminal_command(
             "exit_code": -1,
             "raw_output": "",
             "effective_cwd": effective_cwd,
-            "engine": engine_name,
+            "engine": resolved_engine,
+            "final_cwd": "",
         }
 
     try:
@@ -145,6 +209,11 @@ def run_terminal_command(
         process.kill()
         raw_output, _ = process.communicate()
         normalized_output = _normalize_terminal_output(raw_output)
+        if cwd_capture_path:
+            try:
+                os.unlink(cwd_capture_path)
+            except OSError:
+                pass
         return {
             "ok": False,
             "error_code": "terminal_timeout",
@@ -152,10 +221,16 @@ def run_terminal_command(
             "exit_code": -1,
             "raw_output": normalized_output,
             "effective_cwd": effective_cwd,
-            "engine": engine_name,
+            "engine": resolved_engine,
+            "final_cwd": "",
         }
     except Exception as exc:
         process.kill()
+        if cwd_capture_path:
+            try:
+                os.unlink(cwd_capture_path)
+            except OSError:
+                pass
         return {
             "ok": False,
             "error_code": "terminal_exec_failed",
@@ -163,8 +238,22 @@ def run_terminal_command(
             "exit_code": -1,
             "raw_output": "",
             "effective_cwd": effective_cwd,
-            "engine": engine_name,
+            "engine": resolved_engine,
+            "final_cwd": "",
         }
+
+    final_cwd = ""
+    if cwd_capture_path:
+        try:
+            final_cwd = _normalize_terminal_output(
+                Path(cwd_capture_path).read_text(encoding="utf-8", errors="replace")
+            ).strip()
+        except Exception:
+            final_cwd = ""
+        try:
+            os.unlink(cwd_capture_path)
+        except OSError:
+            pass
 
     exit_code = int(process.returncode if process.returncode is not None else -1)
     if exit_code != 0:
@@ -175,7 +264,8 @@ def run_terminal_command(
             "exit_code": exit_code,
             "raw_output": normalized_output,
             "effective_cwd": effective_cwd,
-            "engine": engine_name,
+            "engine": resolved_engine,
+            "final_cwd": final_cwd,
         }
 
     return {
@@ -183,5 +273,6 @@ def run_terminal_command(
         "exit_code": exit_code,
         "raw_output": normalized_output,
         "effective_cwd": effective_cwd,
-        "engine": engine_name,
+        "engine": resolved_engine,
+        "final_cwd": final_cwd,
     }

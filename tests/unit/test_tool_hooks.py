@@ -24,9 +24,9 @@ class ToolHookManagerTests(ManagedPathTestCase):
             "trace_id": "trace-demo",
         }
 
-    def test_bash_before_hook_leaves_default_workdir_unset(self):
+    def test_shell_before_hook_leaves_default_workdir_unset(self):
         hook_result = self.manager.run_before(
-            "bash",
+            "shell",
             {"command": "pwd", "description": "print cwd"},
             self.context,
         )
@@ -38,9 +38,9 @@ class ToolHookManagerTests(ManagedPathTestCase):
 
         self.assertIsNone(patched.get("workdir"))
 
-    def test_bash_before_hook_preserves_explicit_repo_relative_workdir(self):
+    def test_shell_before_hook_preserves_explicit_repo_relative_workdir(self):
         hook_result = self.manager.run_before(
-            "bash",
+            "shell",
             {"command": "pwd", "description": "print cwd", "workdir": "output"},
             self.context,
         )

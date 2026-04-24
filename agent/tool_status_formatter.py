@@ -33,14 +33,7 @@ def _truncate_status(text, max_length=MAX_STATUS_TEXT_LENGTH):
     return clean[: limit - 3].rstrip() + "..."
 
 
-def _format_bash(tool_name, args):
-    desc = _clean_text(args.get("description"))
-    if desc:
-        return desc
-    return _running_fallback(tool_name)
-
-
-def _format_powershell(tool_name, args):
+def _format_shell(tool_name, args):
     desc = _clean_text(args.get("description"))
     if desc:
         return desc

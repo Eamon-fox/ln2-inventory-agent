@@ -9,27 +9,29 @@ def test_handle_shell_defaults_to_repo_root_and_injects_migration_env(monkeypatc
     migrate_root.mkdir(parents=True, exist_ok=True)
     captured = {}
 
-    def fake_run_terminal_command(command, timeout_seconds, cwd, engine, extra_env=None):
+    def fake_run_terminal_command(command, timeout_seconds, cwd, engine, extra_env=None, capture_cwd=False):
         captured["command"] = command
         captured["timeout_seconds"] = timeout_seconds
         captured["cwd"] = cwd
         captured["engine"] = engine
         captured["extra_env"] = dict(extra_env or {})
+        captured["capture_cwd"] = capture_cwd
         return {
             "ok": True,
             "exit_code": 0,
             "raw_output": "ok",
             "effective_cwd": cwd,
             "engine": engine,
+            "final_cwd": cwd,
         }
 
     monkeypatch.setattr(file_ops_service, "run_terminal_command", fake_run_terminal_command)
 
     response = file_ops_service.handle_request(
         {
-            "tool": "powershell",
+            "tool": "shell",
             "args": {
-                "command": "Write-Output ok",
+                "command": "echo ok",
                 "description": "emit ok",
             },
             "repo_root": str(repo_root),
@@ -39,7 +41,9 @@ def test_handle_shell_defaults_to_repo_root_and_injects_migration_env(monkeypatc
 
     assert response["ok"] is True
     assert captured["cwd"] == str(repo_root.resolve())
-    assert captured["engine"] == "powershell"
+    assert captured["engine"] == "auto"
+    assert captured["capture_cwd"] is True
+    assert response["current_workdir"] == "."
     assert captured["extra_env"] == {
         "LN2_REPO_ROOT": str(repo_root.resolve()),
         "LN2_MIGRATE_ROOT": str(migrate_root.resolve()),

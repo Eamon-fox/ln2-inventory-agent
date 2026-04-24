@@ -469,16 +469,17 @@ def _after_shell(tool_name, _payload, result, context):
         or result.get("effective_cwd")
         or ""
     ).strip()
-    display_path = _repo_relative_display(resolved_path, repo_root=repo_root) or "."
+    display_path = str(result.get("current_workdir") or "").strip()
+    if not display_path:
+        display_path = _repo_relative_display(resolved_path, repo_root=repo_root) or "."
     if display_path == ".":
         display_path = "repo root"
     migrate_root = str(context.get("migrate_root") or "").strip()
     write_root = _repo_relative_display(migrate_root, repo_root=repo_root) or "migrate"
     return {
         "_hint": (
-            f"Shell engine: {tool_name}. "
-            f"Current working directory: {display_path}. "
-            f"Writable workspace root: {write_root}."
+            f"cwd: {display_path}. "
+            f"write root: {write_root}."
         )
     }
 

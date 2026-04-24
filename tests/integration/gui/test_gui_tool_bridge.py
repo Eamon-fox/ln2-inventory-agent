@@ -363,8 +363,19 @@ inventory:
             kwargs = runner_cls.call_args.kwargs
             self.assertEqual(str(path), kwargs.get("yaml_path"))
             self.assertIs(tr, kwargs.get("tr_func"))
+            self.assertIs(service._shell_state, kwargs.get("shell_state"))
             self.assertNotIn("allowed_tools", kwargs)
             self.assertNotIn("expose_inventory_context", kwargs)
+
+    def test_agent_session_reset_shell_state_restores_repo_root(self):
+        from app_gui.agent_session import AgentSessionService
+
+        service = AgentSessionService()
+        service._shell_state.current_workdir = "migrate"
+
+        service.reset_shell_state()
+
+        self.assertEqual(".", service._shell_state.current_workdir)
 
     def test_add_entry_routes_registry_write_through_shared_adapter(self):
         with _managed_data_root("ln2_bridge_") as install_dir:

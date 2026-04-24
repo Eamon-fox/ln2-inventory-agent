@@ -149,6 +149,47 @@ class _StreamingToolThenAnswerLLM:
         yield {"type": "answer", "text": "done"}
 
 
+
+class _TwoTurnDeepSeekContractLLM:
+    def __init__(self):
+        self.calls = 0
+        self.messages_per_call = []
+
+    def stream_chat(self, messages, tools=None, temperature=0.0):
+        _ = tools
+        _ = temperature
+        self.calls += 1
+        self.messages_per_call.append(list(messages or []))
+        if self.calls == 1:
+            yield {"type": "thought", "text": "turn1 tool reasoning"}
+            yield {
+                "type": "tool_call",
+                "tool_call": {
+                    "id": "call_t1",
+                    "name": "search_records",
+                    "arguments": {"query": "K562"},
+                },
+            }
+            return
+        if self.calls == 2:
+            yield {"type": "thought", "text": "turn1 final reasoning"}
+            yield {"type": "answer", "text": "turn1 answer"}
+            return
+        if self.calls == 3:
+            yield {"type": "thought", "text": "turn2 question reasoning"}
+            yield {
+                "type": "tool_call",
+                "tool_call": {
+                    "id": "call_t2_question",
+                    "name": "question",
+                    "arguments": {"question": "Need detail?", "options": ["yes", "no"]},
+                },
+            }
+            return
+        yield {"type": "thought", "text": "turn2 final reasoning"}
+        yield {"type": "answer", "text": "turn2 answer"}
+
+
 class _StreamingErrorThenAnswerLLM:
     def __init__(self):
         self.calls = 0
@@ -176,7 +217,50 @@ class _StreamingAlwaysErrorLLM:
         yield {"type": "error", "error": "persistent stream error"}
 
 
+class _CaptureMessagesLLM:
+    def __init__(self):
+        self.messages = None
+
+    def chat(self, messages, tools=None, temperature=0.0, **kwargs):
+        _ = tools
+        _ = temperature
+        _ = kwargs
+        self.messages = list(messages or [])
+        return {"role": "assistant", "content": "ok", "tool_calls": []}
+
+
 class ReactAgentTests(ManagedPathTestCase):
+    def test_normalize_history_preserves_empty_reasoning_for_tool_assistant(self):
+        llm = _CaptureMessagesLLM()
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=1)
+        history = [
+            {"role": "user", "content": "查 K562"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_search",
+                        "type": "function",
+                        "function": {"name": "search_records", "arguments": '{"query":"K562"}'},
+                    }
+                ],
+                "reasoning_content": "",
+            },
+            {"role": "tool", "tool_call_id": "call_search", "content": '{"ok":true}'},
+        ]
+
+        agent.run("继续", conversation_history=history)
+
+        assistant = next(
+            item
+            for item in llm.messages
+            if item.get("role") == "assistant" and item.get("tool_calls")
+        )
+        self.assertIn("reasoning_content", assistant)
+        self.assertEqual("", assistant.get("reasoning_content"))
+
     def test_react_agent_calls_tool_then_finishes(self):
         with tempfile.TemporaryDirectory(prefix="ln2_react_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
@@ -886,6 +970,48 @@ class ReactAgentTests(ManagedPathTestCase):
         self.assertEqual("llm_stream_failed", observation.get("error_code"))
         self.assertEqual("persistent stream error", observation.get("message"))
 
+    def test_deepseek_reasoning_content_survives_second_user_turn_second_react_step(self):
+        # Regression: DeepSeek thinking mode requires every assistant response's
+        # reasoning_content to be sent back across user turns and across sub-turns
+        # inside the next ReAct loop, not only on assistant messages with tool_calls.
+        llm = _TwoTurnDeepSeekContractLLM()
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=4)
+        turn1_events = []
+
+        first = agent.run("查 K562", on_event=lambda e: turn1_events.append(dict(e)))
+        self.assertTrue(first["ok"])
+
+        stream_end = next(e for e in turn1_events if e.get("event") == "stream_end")
+        history = stream_end["data"]["messages"]
+        turn2_events = []
+
+        def _on_turn2_event(evt):
+            payload = dict(evt or {})
+            turn2_events.append(payload)
+            if payload.get("type") == "question":
+                runner._set_answer("yes")
+
+        second = agent.run("继续查", conversation_history=history, on_event=_on_turn2_event)
+
+        self.assertTrue(second["ok"])
+        self.assertGreaterEqual(len(llm.messages_per_call), 4)
+        second_turn_second_request = llm.messages_per_call[3]
+        assistant_messages = [
+            item for item in second_turn_second_request
+            if item.get("role") == "assistant"
+        ]
+        reasoning_values = [item.get("reasoning_content") for item in assistant_messages]
+        self.assertIn("turn1 tool reasoning", reasoning_values)
+        self.assertIn("turn1 final reasoning", reasoning_values)
+        self.assertIn("turn2 question reasoning", reasoning_values)
+
+        turn1_final = next(
+            item for item in history
+            if item.get("role") == "assistant" and item.get("content") == "turn1 answer"
+        )
+        self.assertEqual("turn1 final reasoning", turn1_final.get("reasoning_content"))
+
     def test_react_agent_keeps_reasoning_content_in_tool_assistant_message(self):
         llm = _StreamingToolThenAnswerLLM()
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
@@ -1038,11 +1164,10 @@ class ReactAgentTests(ManagedPathTestCase):
         fileops_migrate_root = str((Path(fileops_repo_root) / "migrate").resolve(strict=False))
         self.assertIn("Directory context:", content)
         self.assertIn(f"- repo_root: {fileops_repo_root}", content)
-        self.assertIn("- read scope: entire repo (repo-relative paths resolve from repo_root)", content)
+        self.assertIn("- current_workdir: .", content)
+        self.assertIn("- read scope: entire repo", content)
         self.assertIn(f"- write scope: migrate/ only ({fileops_migrate_root})", content)
-        self.assertIn("- shell default cwd: repo root", content)
-        self.assertIn("- shell workdir uses repo-relative paths too", content)
-        self.assertIn("- all tool paths must be repo-relative (no absolute paths)", content)
+        self.assertIn("- path format: repo-relative, never absolute", content)
 
     def test_system_prompt_includes_directory_context_in_migration_context(self):
         llm = _CapturePromptLLM()
@@ -1058,11 +1183,10 @@ class ReactAgentTests(ManagedPathTestCase):
         self.assertIn(f"Current inventory (yaml_path): {yaml_path}", content)
         self.assertIn("Directory context:", content)
         self.assertIn("- repo_root:", content)
-        self.assertIn("- read scope: entire repo (repo-relative paths resolve from repo_root)", content)
+        self.assertIn("- current_workdir: .", content)
+        self.assertIn("- read scope: entire repo", content)
         self.assertIn("- write scope: migrate/ only (", content)
-        self.assertIn("- shell default cwd: repo root", content)
-        self.assertIn("- shell workdir uses repo-relative paths too", content)
-        self.assertIn("- all tool paths must be repo-relative (no absolute paths)", content)
+        self.assertIn("- path format: repo-relative, never absolute", content)
 
     def test_system_prompt_prefers_fs_copy_over_fs_write_for_whole_file_materialization(self):
         llm = _CapturePromptLLM()
@@ -1074,8 +1198,9 @@ class ReactAgentTests(ManagedPathTestCase):
         system_msg = llm.last_messages[0]
         self.assertEqual("system", system_msg["role"])
         content = str(system_msg.get("content") or "")
-        self.assertIn("prefer `fs_copy` over re-emitting the file content through `fs_write`", content)
-        self.assertIn("`fs_write` only for small text artifacts", content)
+        self.assertIn("use `fs_edit` for targeted edits", content)
+        self.assertIn("`fs_copy` for whole-file copies", content)
+        self.assertIn("`fs_write` only for small new text files", content)
 
     def test_run_start_emits_fileops_roots_from_managed_inventory_path(self):
         llm = _CapturePromptLLM()
@@ -1113,8 +1238,9 @@ class ReactAgentTests(ManagedPathTestCase):
         self.assertIn("use_skill", tool_names)
         self.assertIn("fs_read", tool_names)
         self.assertIn("fs_copy", tool_names)
-        self.assertIn("bash", tool_names)
-        self.assertIn("powershell", tool_names)
+        self.assertIn("shell", tool_names)
+        self.assertNotIn("bash", tool_names)
+        self.assertNotIn("powershell", tool_names)
         self.assertIn("import_migration_output", tool_names)
         self.assertIn("search_records", tool_names)
 

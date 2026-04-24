@@ -11,12 +11,23 @@ def _run_file_tool(self, tool_name, payload):
     )
 
 
-def _run_bash(self, payload, _trace_id=None):
-    return _run_file_tool(self, "bash", payload)
-
-
-def _run_powershell(self, payload, _trace_id=None):
-    return _run_file_tool(self, "powershell", payload)
+def _run_shell(self, payload, _trace_id=None):
+    args = dict(payload or {})
+    try:
+        args["workdir"] = self._shell_state.resolve_workdir(
+            self._tool_hook_context(_trace_id).get("repo_root"),
+            args.get("workdir"),
+        )
+    except Exception:
+        args["workdir"] = args.get("workdir") or "."
+    response = _run_file_tool(self, "shell", args)
+    if (
+        isinstance(response, dict)
+        and response.get("error_code") != "workdir_out_of_scope"
+        and response.get("current_workdir")
+    ):
+        self._shell_state.current_workdir = str(response.get("current_workdir") or ".")
+    return response
 
 
 def _run_fs_list(self, payload, _trace_id=None):

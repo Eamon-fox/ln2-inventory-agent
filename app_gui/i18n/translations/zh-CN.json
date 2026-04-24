@@ -599,6 +599,13 @@
     "questionAsking": "Agent 正在向您提问...",
     "maxStepsTitle": "继续运行？",
     "maxStepsMessage": "Agent 已执行 {steps} 步但未完成。是否继续运行？",
+    "actionCopy": "复制",
+    "actionCopied": "已复制",
+    "actionCopiedInline": "✓ 已复制",
+    "actionCopyFailed": "复制失败",
+    "actionRetry": "重试",
+    "actionTryAgain": "换个回答",
+    "streamThinking": "思考中",
     "systemNotice": {
       "operationsHeader": "操作 ({count})：",
       "andMore": "... 另有 {count} 条",
@@ -818,8 +825,10 @@
       "pathOutsideScope": "Path is outside repository scope. Use repository-relative paths only.",
       "writeNotAllowed": "Write operations are allowed only under migrate/.",
       "fileOpsServiceFailed": "File operation service failed. Retry once; if it persists, inspect service/runtime configuration.",
-      "bashUnavailable": "`bash` is unavailable in current runtime. Use `powershell` tool or install bash.",
-      "powershellUnavailable": "`powershell` is unavailable in current runtime. Use `bash` tool or install PowerShell."
+      "shellTimeout": "Shell timed out. Run a shorter non-interactive command.",
+      "shellNonzeroExit": "Read raw_output, fix the command, retry.",
+      "shellUnavailable": "No supported shell is available.",
+      "workdirOutOfScope": "Stay inside the repository."
     },
     "input": {
       "allHistoryOnlyForSummary": "all_history 仅在 view=summary 时有效",

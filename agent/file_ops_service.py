@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import shutil
 import sys
 
@@ -15,6 +16,7 @@ from .file_ops_policy import (
 )
 from .terminal_tool import DEFAULT_TERMINAL_TIMEOUT_SECONDS, run_terminal_command
 from .tool_runtime_paths import build_migration_path_env
+from .shell_session import repo_relative_workdir
 
 
 def _as_bool(value, default=False):
@@ -281,7 +283,7 @@ def _parse_timeout_ms(timeout_value):
     return timeout_ms
 
 
-def _handle_shell(args, *, repo_root, migrate_root, engine):
+def _handle_shell(args, *, repo_root, migrate_root):
     command = args.get("command")
     if not isinstance(command, str) or not command.strip():
         return _error_payload("invalid_tool_input", "command must be a non-empty string.", repo_root=repo_root)
@@ -295,6 +297,10 @@ def _handle_shell(args, *, repo_root, migrate_root, engine):
     except FileOpsPolicyError as exc:
         return _error_payload(exc.code, exc.message, repo_root=repo_root)
 
+    engine = str(args.get("engine") or "auto").strip().lower()
+    if engine not in {"auto", "bash", "powershell"}:
+        return _error_payload("invalid_tool_input", "engine must be one of: auto, bash, powershell.", repo_root=repo_root)
+
     workdir = resolve_shell_workdir(repo_root, migrate_root, args.get("workdir"))
     workdir.mkdir(parents=True, exist_ok=True)
 
@@ -304,6 +310,7 @@ def _handle_shell(args, *, repo_root, migrate_root, engine):
         cwd=str(workdir),
         engine=engine,
         extra_env=build_migration_path_env(repo_root, migrate_root),
+        capture_cwd=True,
     )
     if not isinstance(response, dict):
         return _error_payload("terminal_exec_failed", "Terminal execution returned invalid payload.", repo_root=repo_root)
@@ -311,15 +318,25 @@ def _handle_shell(args, *, repo_root, migrate_root, engine):
     enriched = dict(response)
     enriched["effective_root"] = str(repo_root)
     enriched["resolved_path"] = str(workdir)
+    final_cwd = str(enriched.get("final_cwd") or "").strip()
+    if final_cwd:
+        try:
+            enriched["current_workdir"] = repo_relative_workdir(repo_root, Path(final_cwd))
+        except ValueError:
+            enriched.update(
+                {
+                    "ok": False,
+                    "error_code": "workdir_out_of_scope",
+                    "message": "Shell ended outside repository scope.",
+                    "exit_code": int(enriched.get("exit_code") if enriched.get("exit_code") is not None else -1),
+                }
+            )
+    if "current_workdir" not in enriched:
+        try:
+            enriched["current_workdir"] = repo_relative_workdir(repo_root, workdir)
+        except ValueError:
+            enriched["current_workdir"] = "."
     return enriched
-
-
-def _handle_bash(args, *, repo_root, migrate_root):
-    return _handle_shell(args, repo_root=repo_root, migrate_root=migrate_root, engine="bash")
-
-
-def _handle_powershell(args, *, repo_root, migrate_root):
-    return _handle_shell(args, repo_root=repo_root, migrate_root=migrate_root, engine="powershell")
 
 
 def handle_request(request):
@@ -350,8 +367,7 @@ def handle_request(request):
         "fs_write": _handle_fs_write,
         "fs_copy": _handle_fs_copy,
         "fs_edit": _handle_fs_edit,
-        "bash": _handle_bash,
-        "powershell": _handle_powershell,
+        "shell": _handle_shell,
     }
     handler = handlers.get(tool_name)
     if not callable(handler):

@@ -80,7 +80,7 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
         )
         self.assertEqual(MIGRATION_TOOL_NAMES, expected)
         # Verify known members
-        for name in ("question", "use_skill", "bash", "powershell", "fs_list", "fs_read",
+        for name in ("question", "use_skill", "shell", "fs_list", "fs_read",
                       "fs_write", "fs_copy", "fs_edit", "validate",
                       "import_migration_output"):
             self.assertIn(name, MIGRATION_TOOL_NAMES)
@@ -186,27 +186,19 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
         self.assertIn("to_position", move_entry_props)
         self.assertIn("to_box", move_entry_props)
 
-    def test_bash_contract_requires_command_and_description(self):
-        self.assertIn("bash", TOOL_CONTRACTS)
-        params = TOOL_CONTRACTS["bash"]["parameters"]
+    def test_shell_contract_requires_command_and_description(self):
+        self.assertIn("shell", TOOL_CONTRACTS)
+        self.assertNotIn("bash", TOOL_CONTRACTS)
+        self.assertNotIn("powershell", TOOL_CONTRACTS)
+        params = TOOL_CONTRACTS["shell"]["parameters"]
         self.assertEqual(["command", "description"], params.get("required"))
         self.assertEqual(
-            {"command", "description", "timeout", "workdir"},
+            {"command", "description", "timeout", "workdir", "engine"},
             set((params.get("properties") or {}).keys()),
         )
+        self.assertEqual(["auto", "bash", "powershell"], params["properties"]["engine"].get("enum"))
         self.assertEqual(False, params.get("additionalProperties"))
-        self.assertNotIn("bash", WRITE_TOOLS)
-
-    def test_powershell_contract_requires_command_and_description(self):
-        self.assertIn("powershell", TOOL_CONTRACTS)
-        params = TOOL_CONTRACTS["powershell"]["parameters"]
-        self.assertEqual(["command", "description"], params.get("required"))
-        self.assertEqual(
-            {"command", "description", "timeout", "workdir"},
-            set((params.get("properties") or {}).keys()),
-        )
-        self.assertEqual(False, params.get("additionalProperties"))
-        self.assertNotIn("powershell", WRITE_TOOLS)
+        self.assertNotIn("shell", WRITE_TOOLS)
 
     def test_environment_tool_contracts_exist_with_expected_required_fields(self):
         required_by_tool = {
@@ -222,7 +214,7 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
             self.assertEqual(False, params.get("additionalProperties"))
 
     def test_environment_tools_are_not_inventory_write_tools(self):
-        for tool_name in ("fs_list", "fs_read", "fs_write", "fs_edit", "bash", "powershell"):
+        for tool_name in ("fs_list", "fs_read", "fs_write", "fs_edit", "shell"):
             self.assertNotIn(tool_name, WRITE_TOOLS)
 
     def test_use_skill_contract_shape(self):

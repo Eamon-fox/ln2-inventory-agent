@@ -176,26 +176,26 @@ def _hint_for_error(self, tool_name, payload):
 
     if error_code == "terminal_timeout":
         return self._msg(
-            "hint.terminalTimeout",
-            "Terminal command timed out. Simplify the command or run a shorter non-interactive step first.",
+            "hint.shellTimeout",
+            "Shell timed out. Run a shorter non-interactive command.",
         )
 
     if error_code in {"terminal_exec_failed", "terminal_nonzero_exit"}:
         return self._msg(
-            "hint.terminalExecFailed",
-            "Check `raw_output` for terminal details, fix the command, then retry.",
+            "hint.shellNonzeroExit",
+            "Read raw_output, fix the command, retry.",
         )
 
-    if error_code == "bash_unavailable":
+    if error_code == "shell_unavailable":
         return self._msg(
-            "hint.bashUnavailable",
-            "`bash` is unavailable in current runtime. Use `powershell` tool or install bash.",
+            "hint.shellUnavailable",
+            "No supported shell is available.",
         )
 
-    if error_code == "powershell_unavailable":
+    if error_code == "workdir_out_of_scope":
         return self._msg(
-            "hint.powershellUnavailable",
-            "`powershell` is unavailable in current runtime. Use `bash` tool or install PowerShell.",
+            "hint.workdirOutOfScope",
+            "Stay inside the repository.",
         )
 
     if error_code in {"path_outside_scope", "path.escape_detected", "path.scope_read_denied"}:

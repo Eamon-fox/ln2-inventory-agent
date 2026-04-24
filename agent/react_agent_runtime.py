@@ -307,6 +307,9 @@ def _collect_model_response(self, messages, tool_schemas, trace_id, step, on_eve
             if not isinstance(fallback_response, dict):
                 yield {"type": "error", "error": "LLM client returned non-dict response payload."}
                 return
+            reasoning = str(fallback_response.get("reasoning_content") or "")
+            if reasoning:
+                yield {"type": "thought", "text": reasoning}
             content = str(fallback_response.get("content") or "")
             if content:
                 yield {"type": "answer", "text": content}
@@ -448,6 +451,8 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
     fileops_context = build_tool_hook_context(yaml_path, trace_id=trace_id)
     fileops_repo_root = str(fileops_context.get("repo_root") or "").strip()
     fileops_migrate_root = str(fileops_context.get("migrate_root") or "").strip()
+    shell_state = getattr(self._tools, "_shell_state", None)
+    current_workdir = str(getattr(shell_state, "current_workdir", ".") or ".").strip() or "."
     system_sections = [
         self.SYSTEM_PROMPT,
         f"Current inventory (yaml_path): {yaml_path or '(unknown)'}",
@@ -456,11 +461,10 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
         system_sections.append(
             "Directory context:\n"
             f"- repo_root: {fileops_repo_root}\n"
-            "- read scope: entire repo (repo-relative paths resolve from repo_root)\n"
+            f"- current_workdir: {current_workdir}\n"
+            "- read scope: entire repo\n"
             f"- write scope: migrate/ only ({fileops_migrate_root})\n"
-            "- shell default cwd: repo root\n"
-            "- shell workdir uses repo-relative paths too\n"
-            "- all tool paths must be repo-relative (no absolute paths)"
+            "- path format: repo-relative, never absolute"
         )
     skills_prompt = build_skill_catalog_prompt()
     if skills_prompt:
@@ -887,6 +891,7 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
                 {
                     "role": "assistant",
                     "content": "".join(current_answer_buf),
+                    "reasoning_content": str(model_response.get("thought") or ""),
                 }
             )
 

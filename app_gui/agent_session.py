@@ -10,6 +10,7 @@ from agent.llm_client import (
     PROVIDER_DEFAULTS,
 )
 from agent.react_agent import ReactAgent
+from agent.shell_session import ShellSessionState
 from agent.tool_runner import AgentToolRunner
 from app_gui.gui_config import DEFAULT_MAX_STEPS, MAX_AGENT_STEPS
 from app_gui.i18n import tr
@@ -33,6 +34,10 @@ class AgentSessionService:
     def __init__(self, session_id=None):
         self._session_id = session_id
         self._api_keys = {}
+        self._shell_state = ShellSessionState()
+
+    def reset_shell_state(self):
+        self._shell_state.reset()
 
     def set_api_keys(self, api_keys):
         """Set per-provider API keys for LLM clients."""
@@ -118,6 +123,7 @@ class AgentSessionService:
                 plan_store=plan_store,
                 preflight_fn=preflight_plan,
                 tr_func=tr,
+                shell_state=self._shell_state,
             )
             if callable(_expose_runner):
                 _expose_runner(runner)

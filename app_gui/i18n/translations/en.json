@@ -606,6 +606,13 @@
     "questionAsking": "Agent is asking you a question...",
     "maxStepsTitle": "Continue Agent?",
     "maxStepsMessage": "Agent has reached {steps} steps without a final answer. Continue running?",
+    "actionCopy": "Copy",
+    "actionCopied": "Copied",
+    "actionCopiedInline": "✓ Copied",
+    "actionCopyFailed": "Copy failed",
+    "actionRetry": "Retry",
+    "actionTryAgain": "Try again",
+    "streamThinking": "Thinking",
     "systemNotice": {
       "operationsHeader": "Operations ({count}):",
       "andMore": "... and {count} more",
@@ -825,8 +832,10 @@
       "pathOutsideScope": "Path is outside repository scope. Use repository-relative paths only.",
       "writeNotAllowed": "Write operations are allowed only under migrate/.",
       "fileOpsServiceFailed": "File operation service failed. Retry once; if it persists, inspect service/runtime configuration.",
-      "bashUnavailable": "`bash` is unavailable in current runtime. Use `powershell` tool or install bash.",
-      "powershellUnavailable": "`powershell` is unavailable in current runtime. Use `bash` tool or install PowerShell."
+      "shellTimeout": "Shell timed out. Run a shorter non-interactive command.",
+      "shellNonzeroExit": "Read raw_output, fix the command, retry.",
+      "shellUnavailable": "No supported shell is available.",
+      "workdirOutOfScope": "Stay inside the repository."
     },
     "input": {
       "allHistoryOnlyForSummary": "all_history is only valid when view=summary",

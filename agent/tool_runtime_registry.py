@@ -88,14 +88,9 @@ _TOOL_RUNTIME_OVERRIDES: dict[str, ToolRuntimeOverride] = {
     "import_migration_output": ToolRuntimeOverride(
         after_hook=_hooks._after_import_migration_output,
     ),
-    "bash": ToolRuntimeOverride(
+    "shell": ToolRuntimeOverride(
         input_guard=_validation._guard_shell_workdir,
-        status_formatter=_status._format_bash,
-        after_hook=_hooks._after_shell,
-    ),
-    "powershell": ToolRuntimeOverride(
-        input_guard=_validation._guard_shell_workdir,
-        status_formatter=_status._format_powershell,
+        status_formatter=_status._format_shell,
         after_hook=_hooks._after_shell,
     ),
     "fs_list": ToolRuntimeOverride(

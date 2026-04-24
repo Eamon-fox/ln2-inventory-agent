@@ -84,17 +84,17 @@ class TerminalToolTests(unittest.TestCase):
         self.assertFalse(response["ok"])
         self.assertEqual("invalid_tool_input", response.get("error_code"))
 
-    def test_bash_unavailable_returns_specific_error(self):
+    def test_shell_unavailable_returns_specific_error(self):
         with patch("agent.terminal_tool.shutil.which", return_value=None):
             response = run_terminal_command("echo hi", timeout_seconds=5, engine="bash")
         self.assertFalse(response["ok"])
-        self.assertEqual("bash_unavailable", response.get("error_code"))
+        self.assertEqual("shell_unavailable", response.get("error_code"))
 
-    def test_powershell_unavailable_returns_specific_error(self):
-        with patch("agent.terminal_tool.shutil.which", return_value=None):
-            response = run_terminal_command("Write-Output hi", timeout_seconds=5, engine="powershell")
-        self.assertFalse(response["ok"])
-        self.assertEqual("powershell_unavailable", response.get("error_code"))
+    def test_capture_cwd_reports_final_directory(self):
+        self._skip_if_bash_missing()
+        response = run_terminal_command("cd migrate", timeout_seconds=10, engine="bash", capture_cwd=True)
+        self.assertTrue(response["ok"])
+        self.assertTrue(str(response.get("final_cwd") or "").endswith("migrate"))
 
     def test_normalize_terminal_output_removes_nul_padding(self):
         raw = "w\x00s\x00l\x00:\x00 \x00o\x00k\x00\n\x00"

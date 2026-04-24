@@ -1,13 +1,12 @@
 """Thin dispatch-handler facade for AgentToolRunner."""
 
 from .tool_runner_handlers_fileops import (
-    _run_bash,
     _run_fs_copy,
     _run_fs_edit,
     _run_fs_list,
     _run_fs_read,
     _run_fs_write,
-    _run_powershell,
+    _run_shell,
 )
 from .tool_runner_handlers_migration import (
     _build_import_target_path,
@@ -53,7 +52,6 @@ __all__ = [
     "_migration_output_yaml_path",
     "_parse_batch_flat_entries",
     "_run_add_entry",
-    "_run_bash",
     "_run_edit_entry",
     "_run_filter_records",
     "_run_fs_copy",
@@ -68,7 +66,7 @@ __all__ = [
     "_run_list_empty_positions",
     "_run_manage_boxes",
     "_run_move",
-    "_run_powershell",
+    "_run_shell",
     "_run_query_takeout_events",
     "_run_recent_frozen",
     "_run_recent_stored",

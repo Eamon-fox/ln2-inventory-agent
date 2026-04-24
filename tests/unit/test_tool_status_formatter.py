@@ -25,20 +25,20 @@ class ToolStatusFormatterTests(ManagedPathTestCase):
         super().setUp()
         self.runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
 
-    def test_bash_prefers_description(self):
+    def test_shell_prefers_description(self):
         status = self.runner.format_tool_status(
-            "bash",
+            "shell",
             {"description": "Import xlsx into YAML", "command": "python migrate.py"},
         )
         self.assertEqual("Import xlsx into YAML", status)
 
-    def test_bash_falls_back_when_description_missing(self):
-        status = self.runner.format_tool_status("bash", {"command": "echo test"})
-        self.assertEqual("Running bash...", status)
+    def test_shell_falls_back_when_description_missing(self):
+        status = self.runner.format_tool_status("shell", {"command": "echo test"})
+        self.assertEqual("Running shell...", status)
 
-    def test_powershell_prefers_description(self):
+    def test_shell_accepts_engine_description(self):
         status = self.runner.format_tool_status(
-            "powershell",
+            "shell",
             {"description": "Run migration validation", "command": "Write-Output ok"},
         )
         self.assertEqual("Run migration validation", status)
@@ -60,7 +60,7 @@ class ToolStatusFormatterTests(ManagedPathTestCase):
         self.assertEqual("Running made_up_tool...", status)
 
     def test_status_text_is_truncated_to_limit(self):
-        status = self.runner.format_tool_status("bash", {"description": "x" * 200})
+        status = self.runner.format_tool_status("shell", {"description": "x" * 200})
         self.assertLessEqual(len(status), MAX_STATUS_TEXT_LENGTH)
         self.assertTrue(status.endswith("..."))
 

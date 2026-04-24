@@ -23,6 +23,7 @@ from . import tool_hooks as _tool_hooks
 from . import tool_runtime_registry as _tool_runtime_registry
 from . import tool_runtime_paths as _tool_runtime_paths
 from . import tool_status_formatter as _tool_status_formatter
+from .shell_session import ShellSessionState
 
 
 def _default_tr(key, default=None, **kwargs):
@@ -68,12 +69,14 @@ class AgentToolRunner:
         plan_store=None,
         preflight_fn=None,
         tr_func=None,
+        shell_state=None,
     ):
         self._yaml_path = assert_allowed_inventory_yaml_path(yaml_path, must_exist=True)
         self._session_id = session_id
         self._plan_store = plan_store
         self._preflight_fn = preflight_fn
         self._tr = tr_func if callable(tr_func) else _default_tr
+        self._shell_state = shell_state if isinstance(shell_state, ShellSessionState) else ShellSessionState()
         self._runtime_specs_cache = None
         self._hook_manager = _tool_hooks.build_default_tool_hook_manager(self._runtime_specs())
         # Question tool synchronization
@@ -461,8 +464,7 @@ class AgentToolRunner:
     _run_recommend_positions = _runner_handlers._run_recommend_positions
     _run_generate_stats = _runner_handlers._run_generate_stats
     _run_get_raw_entries = _runner_handlers._run_get_raw_entries
-    _run_bash = _runner_handlers._run_bash
-    _run_powershell = _runner_handlers._run_powershell
+    _run_shell = _runner_handlers._run_shell
     _run_fs_list = _runner_handlers._run_fs_list
     _run_fs_read = _runner_handlers._run_fs_read
     _run_fs_write = _runner_handlers._run_fs_write
