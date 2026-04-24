@@ -20,6 +20,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agent.llm_client import (
+    LLMClient,
     PROVIDER_DEFAULTS,
     DeepSeekLLMClient,
     MiniMaxLLMClient,
@@ -53,7 +54,34 @@ def _decode_request_body(req):
     return json.loads(raw_body.decode("utf-8"))
 
 
+
+
+class _StaticChatClient(LLMClient):
+    def chat(self, messages, tools=None, temperature=0.0, stop_event=None):
+        _ = messages
+        _ = tools
+        _ = temperature
+        _ = stop_event
+        return {
+            "role": "assistant",
+            "reasoning_content": "fallback reasoning",
+            "content": "fallback answer",
+            "tool_calls": [],
+        }
+
 class LlmContentNormalizationTests(unittest.TestCase):
+    def test_base_stream_chat_yields_reasoning_content_before_answer(self):
+        client = _StaticChatClient()
+
+        events = list(client.stream_chat(messages=[{"role": "user", "content": "hi"}]))
+
+        self.assertEqual(
+            ["thought", "answer"],
+            [event.get("type") for event in events],
+        )
+        self.assertEqual("fallback reasoning", events[0].get("text"))
+        self.assertEqual("fallback answer", events[1].get("text"))
+
     def test_normalize_content_handles_nested_blocks(self):
         payload = [
             {"type": "text", "text": "Hello"},
@@ -63,12 +91,12 @@ class LlmContentNormalizationTests(unittest.TestCase):
         text = DeepSeekLLMClient._normalize_content(payload)
         self.assertEqual("Hello world", text)
 
-    def test_extract_content_from_choice_uses_reasoning_fallback(self):
+    def test_extract_content_from_choice_does_not_use_reasoning_as_answer(self):
         choice = {"message": {}}
         message = {"content": None, "reasoning_content": "fallback text"}
 
         text = DeepSeekLLMClient._extract_content_from_choice(choice, message)
-        self.assertEqual("fallback text", text)
+        self.assertEqual("", text)
 
 
 class DeepSeekClientParseTests(unittest.TestCase):
@@ -95,6 +123,40 @@ class DeepSeekClientParseTests(unittest.TestCase):
         self.assertNotIn("reasoning_effort", body)
         self.assertEqual({"type": "disabled"}, body.get("thinking"))
         self.assertEqual(0.0, body.get("temperature"))
+
+
+    def test_build_request_preserves_tool_call_reasoning_content(self):
+        # Regression: DeepSeek rejects follow-up requests in thinking mode when a
+        # previous assistant tool-call message is replayed without reasoning_content.
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}, clear=False):
+            client = DeepSeekLLMClient(model="deepseek-v4-flash")
+
+        messages = [
+            {"role": "user", "content": "查 K562"},
+            {
+                "role": "assistant",
+                "content": "",
+                "reasoning_content": "I need to search inventory before answering.",
+                "tool_calls": [
+                    {
+                        "id": "call_search",
+                        "type": "function",
+                        "function": {
+                            "name": "search_records",
+                            "arguments": '{"query":"K562"}',
+                        },
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_search", "content": '{"ok":true}'},
+            {"role": "user", "content": "继续"},
+        ]
+
+        body = _decode_request_body(client._build_request(messages=messages, tools=[{"type": "function"}]))
+
+        assistant = body["messages"][1]
+        self.assertEqual("I need to search inventory before answering.", assistant.get("reasoning_content"))
+        self.assertEqual("call_search", assistant["tool_calls"][0]["id"])
 
     def test_stream_chat_yields_incremental_answer_and_tool_call(self):
         with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}, clear=False):
@@ -429,6 +491,22 @@ class MiniMaxClientParseTests(unittest.TestCase):
         self.assertEqual(1, len(tool_calls))
         self.assertEqual("reserve_box", tool_calls[0]["name"])
         self.assertEqual({"box": "B2"}, tool_calls[0]["arguments"])
+
+    def test_openai_compatible_chat_preserves_reasoning_content(self):
+        client = DeepSeekLLMClient(api_key="test-key")
+        lines = [
+            f"data: {json.dumps({'choices': [{'delta': {'reasoning_content': 'think '}}]})}",
+            f"data: {json.dumps({'choices': [{'delta': {'reasoning_content': 'more'}}]})}",
+            f"data: {json.dumps({'choices': [{'delta': {'content': 'answer'}}]})}",
+            "data: [DONE]",
+        ]
+
+        with patch("agent.llm_client.urlrequest.urlopen", return_value=_FakeUrlopenResponse(lines)):
+            response = client.chat(messages=[{"role": "user", "content": "hi"}])
+
+        self.assertEqual("answer", response.get("content"))
+        self.assertEqual("think more", response.get("reasoning_content"))
+
 
 
 if __name__ == "__main__":

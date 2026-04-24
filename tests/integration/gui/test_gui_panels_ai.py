@@ -88,7 +88,7 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
         self.assertEqual("glm-5", panel.ai_model.text())
         self.assertEqual("glm-5", panel.ai_model_id_label.text())
 
-    def test_ai_panel_thought_chunk_renders_inline_with_answer_stream(self):
+    def test_ai_panel_thought_chunk_is_visible_only_while_active(self):
         panel = self._new_ai_panel()
         panel.ai_stream_render_interval_sec = 0.0
 
@@ -101,6 +101,13 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
                 "meta": {"channel": "thought"},
             }
         )
+
+        thinking_text = panel.ai_chat.toPlainText()
+        self.assertIn("model thought", thinking_text)
+        self.assertIn("Thinking", panel.ai_chat.toPlainText())
+        self.assertTrue(panel.ai_stream_has_thought)
+        self.assertTrue(panel.ai_stream_thought_active)
+
         panel.on_progress(
             {
                 "event": "chunk",
@@ -110,12 +117,64 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
             }
         )
 
-        rendered = panel.ai_chat.toPlainText()
-        self.assertIn("model thought", rendered)
-        self.assertIn("final answer", rendered)
-        self.assertIn("\n", rendered)
-        self.assertTrue(panel.ai_stream_has_thought)
-        self.assertNotIn("toggle_thought", panel.ai_chat.toHtml())
+        answered_text = panel.ai_chat.toPlainText()
+        self.assertNotIn("model thought", answered_text)
+        self.assertIn(" final answer", answered_text)
+        self.assertNotIn("snowfox-ai-thought", panel.ai_chat.toHtml())
+        self.assertFalse(panel.ai_stream_has_thought)
+        self.assertFalse(panel.ai_stream_thought_active)
+
+    def test_ai_panel_tool_line_does_not_inherit_thought_background(self):
+        # Regression: Qt rich-text backgrounds from the transient thought block once
+        # leaked into the following tool/status and answer lines, making normal chat
+        # rows look highlighted even after reasoning was hidden.
+        panel = self._new_ai_panel()
+        panel.ai_stream_render_interval_sec = 0.0
+
+        panel.on_progress({"event": "run_start", "trace_id": "trace-style"})
+        panel.on_progress(
+            {
+                "event": "chunk",
+                "trace_id": "trace-style",
+                "data": "temporary thought",
+                "meta": {"channel": "thought"},
+            }
+        )
+        panel.on_progress(
+            {
+                "event": "tool_start",
+                "trace_id": "trace-style",
+                "data": {"name": "search_records"},
+                "status_text": "Search inventory: K562",
+            }
+        )
+        panel.on_progress(
+            {
+                "event": "chunk",
+                "trace_id": "trace-style",
+                "data": "final answer",
+                "meta": {"channel": "answer"},
+            }
+        )
+
+        html = panel.ai_chat.toHtml()
+        tool_index = html.find("Search inventory: K562")
+        answer_index = html.find("final answer")
+        self.assertGreaterEqual(tool_index, 0)
+        self.assertGreaterEqual(answer_index, 0)
+        self.assertEqual(-1, html.rfind("temporary thought", 0, tool_index))
+        self.assertEqual(-1, html.rfind("background", tool_index, answer_index))
+
+    def test_ai_panel_answer_stream_without_thought_has_no_thought_panel(self):
+        panel = self._new_ai_panel()
+        panel.ai_stream_render_interval_sec = 0.0
+
+        panel.on_progress({"event": "run_start", "trace_id": "trace-answer-only"})
+        panel.on_progress({"event": "chunk", "trace_id": "trace-answer-only", "data": "answer only"})
+
+        self.assertIn("answer only", panel.ai_chat.toPlainText())
+        self.assertNotIn("snowfox-ai-thought", panel.ai_chat.toHtml())
+        self.assertFalse(panel.ai_stream_has_thought)
 
     def test_ai_panel_append_chat_prefers_insert_markdown_when_available(self):
         panel = self._new_ai_panel()
@@ -169,8 +228,9 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
         ]
         self.assertEqual(1, chunk_calls.count("hello"))
 
-    def test_ai_panel_finished_renders_markdown_for_thought_and_answer(self):
+    def test_ai_panel_finished_drops_transient_thought_and_keeps_answer_markdown(self):
         panel = self._new_ai_panel()
+        panel.ai_stream_render_interval_sec = 0.0
 
         panel.on_progress({"event": "run_start", "trace_id": "trace-md-thought"})
         panel.on_progress(
@@ -192,10 +252,75 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
         panel.on_finished({"ok": True, "result": {"final": "**final**", "trace_id": "trace-md-thought"}})
 
         rendered_text = panel.ai_chat.toPlainText()
-        self.assertIn("plan", rendered_text)
+        self.assertNotIn("plan", rendered_text)
         self.assertIn("final", rendered_text)
         self.assertNotIn("**plan**", rendered_text)
         self.assertNotIn("**final**", rendered_text)
+        self.assertFalse(panel.ai_stream_has_thought)
+        self.assertFalse(panel.ai_stream_thought_active)
+
+    def test_ai_panel_copy_after_transient_thought_updates_action_area_only(self):
+        panel = self._new_ai_panel()
+        panel.ai_stream_render_interval_sec = 0.0
+        panel.ai_prompt.setPlainText("hi")
+        panel.start_worker = MagicMock()
+
+        panel.on_run_ai_agent()
+        panel.on_progress({"event": "run_start", "trace_id": "trace-copy-after-thought"})
+        panel.on_progress(
+            {
+                "event": "chunk",
+                "trace_id": "trace-copy-after-thought",
+                "data": "reasoning text",
+                "meta": {"channel": "thought"},
+            }
+        )
+        panel.on_progress(
+            {
+                "event": "chunk",
+                "trace_id": "trace-copy-after-thought",
+                "data": "answer text",
+                "meta": {"channel": "answer"},
+            }
+        )
+        panel.on_finished({"ok": True, "result": {"final": "answer text", "trace_id": "trace-copy-after-thought"}})
+        turn_id = panel.ai_turns[-1]["turn_id"]
+
+        with patch.object(panel.status_message, "emit"):
+            panel._handle_ai_action_anchor(f"ai_action:copy:{turn_id}")
+
+        text = panel.ai_chat.toPlainText()
+        self.assertNotIn("reasoning text", text)
+        self.assertEqual(1, text.count("Try again"))
+        self.assertEqual(1, text.count("Copied"))
+        self.assertLess(text.index("answer text"), text.index("Copied"))
+
+    def test_ai_panel_tool_start_stops_active_thought_timer(self):
+        panel = self._new_ai_panel()
+        panel.ai_stream_render_interval_sec = 0.0
+
+        panel.on_progress({"event": "run_start", "trace_id": "trace-thought-tool"})
+        panel.on_progress(
+            {
+                "event": "chunk",
+                "trace_id": "trace-thought-tool",
+                "data": "thinking before tool",
+                "meta": {"channel": "thought"},
+            }
+        )
+        self.assertTrue(panel.ai_stream_thought_active)
+
+        panel.on_progress(
+            {
+                "event": "tool_start",
+                "trace_id": "trace-thought-tool",
+                "data": {"name": "filter_records"},
+            }
+        )
+
+        self.assertFalse(panel.ai_streaming_active)
+        self.assertFalse(panel.ai_stream_thought_active)
+        self.assertNotIn("thinking before tool", panel.ai_chat.toPlainText())
 
     def test_ai_panel_shows_tool_progress_in_chat(self):
         panel = self._new_ai_panel()
@@ -233,12 +358,12 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
             {
                 "event": "tool_end",
                 "trace_id": "trace-tool-brief",
-                "data": {"name": "bash"},
+                "data": {"name": "shell"},
                 "observation": {
                     "ok": False,
                     "error_code": "terminal_nonzero_exit",
                     "message": "exit code 1",
-                    "_hint": "Use powershell on Windows",
+                    "_hint": "cwd: repo root. write root: migrate.",
                     "resolved_path": "D:/repo/file.txt",
                     "effective_root": "D:/repo",
                     "raw_output": "verbose details",
@@ -697,6 +822,7 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
                                     },
                                 }
                             ],
+                            "reasoning_content": "tool reasoning",
                             "timestamp": 2.0,
                         },
                         {
@@ -705,7 +831,12 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
                             "content": '{"ok":true}',
                             "timestamp": 3.0,
                         },
-                        {"role": "assistant", "content": "done", "timestamp": 4.0},
+                        {
+                            "role": "assistant",
+                            "content": "done",
+                            "reasoning_content": "final reasoning",
+                            "timestamp": 4.0,
+                        },
                     ],
                     "summary_state": {
                         "checkpoint_id": "checkpoint-1",
@@ -718,6 +849,8 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
         self.assertEqual(4, len(panel.ai_history))
         self.assertEqual("tool", panel.ai_history[2].get("role"))
         self.assertEqual("call_1", panel.ai_history[2].get("tool_call_id"))
+        self.assertEqual("tool reasoning", panel.ai_history[1].get("reasoning_content"))
+        self.assertEqual("final reasoning", panel.ai_history[3].get("reasoning_content"))
         self.assertEqual("checkpoint-1", (panel.ai_summary_state or {}).get("checkpoint_id"))
 
         panel.on_finished({"ok": True, "result": {"final": "done", "trace_id": "trace-stream-end"}})
@@ -791,6 +924,87 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
             "MiniMax request failed: EOF occurred in violation of protocol",
             panel.ai_history[-1]["content"],
         )
+
+    def test_ai_panel_success_turn_exposes_retry_action_and_reuses_query(self):
+        panel = self._new_ai_panel()
+        panel.ai_prompt.setPlainText("hello")
+        panel.start_worker = MagicMock()
+
+        panel.on_run_ai_agent()
+        panel.on_progress({"event": "run_start", "trace_id": "trace-retry"})
+        panel.on_progress(
+            {
+                "event": "stream_end",
+                "trace_id": "trace-retry",
+                "data": {
+                    "messages": [
+                        {"role": "user", "content": "hello", "timestamp": 10.0},
+                        {"role": "assistant", "content": "answer", "timestamp": 11.0},
+                    ],
+                    "last_user_ts": 10.0,
+                },
+            }
+        )
+        panel.on_finished({"ok": True, "result": {"final": "answer", "trace_id": "trace-retry"}})
+
+        turn_id = panel.ai_turns[-1]["turn_id"]
+        self.assertIn("ai_action:retry", panel.ai_chat.toHtml())
+        self.assertIn("ai_action:copy", panel.ai_chat.toHtml())
+        self.assertEqual(10.0, panel.ai_turns[-1].get("user_ts"))
+
+        with patch.object(panel.status_message, "emit") as status_emit:
+            panel._handle_ai_action_anchor(f"ai_action:copy:{turn_id}")
+        status_emit.assert_called_once_with("Copied", 2000)
+        self.assertIn("Copied", panel.ai_chat.toPlainText())
+
+        panel.start_worker.reset_mock()
+        self.assertTrue(panel._retry_turn(turn_id))
+
+        self.assertEqual("hello", panel.ai_prompt.toPlainText())
+        self.assertEqual([], panel.ai_history)
+        panel.start_worker.assert_called_once_with("hello")
+
+        panel.on_progress({"event": "run_start", "trace_id": "trace-retry-again"})
+        self.assertEqual([{"role": "user", "content": "hello"}], panel.ai_history)
+
+    def test_ai_panel_error_turn_exposes_retry_without_copy(self):
+        panel = self._new_ai_panel()
+        panel.ai_prompt.setPlainText("fail please")
+        panel.start_worker = MagicMock()
+
+        panel.on_run_ai_agent()
+        panel.on_progress({"event": "run_start", "trace_id": "trace-error-retry"})
+        panel.on_finished(
+            {
+                "ok": False,
+                "result": {
+                    "final": "Agent failed: LLM stream error.",
+                    "error_code": "llm_transport_error",
+                    "message": "Connection refused",
+                    "trace_id": "trace-error-retry",
+                },
+            }
+        )
+
+        html = panel.ai_chat.toHtml()
+        self.assertIn("ai_action:retry", html)
+        self.assertNotIn("ai_action:copy", html)
+
+    def test_ai_panel_retry_ignored_while_inflight_and_new_chat_clears_turns(self):
+        panel = self._new_ai_panel()
+        panel.ai_prompt.setPlainText("hello")
+        panel.start_worker = MagicMock()
+
+        panel.on_run_ai_agent()
+        turn_id = panel.ai_turns[-1]["turn_id"]
+        panel.ai_run_inflight = True
+        self.assertFalse(panel._retry_turn(turn_id))
+        panel.start_worker.assert_called_once_with("hello")
+
+        with patch("app_gui.ui.ai_panel.ask_yes_no", return_value=True):
+            panel.on_new_chat()
+        self.assertEqual([], panel.ai_turns)
+        self.assertIsNone(panel._active_turn_id)
 
     def test_ai_panel_stop_blocks_late_progress_updates(self):
         panel = self._new_ai_panel()

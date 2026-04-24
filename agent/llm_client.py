@@ -68,6 +68,10 @@ class LLMClient(ABC):
             yield {"type": "error", "error": "Invalid model response payload"}
             return
 
+        reasoning = str(response.get("reasoning_content") or "")
+        if reasoning:
+            yield {"type": "thought", "text": reasoning}
+
         content = str(response.get("content") or "")
         if content:
             yield {"type": "answer", "text": content}
@@ -176,14 +180,7 @@ class OpenAICompatibleClient(LLMClient, ABC):
 
     @classmethod
     def _extract_content_from_choice(cls, choice, message):
-        content = cls._extract_choice_text(choice, message)
-        if content:
-            return content
-
-        reasoning = cls._normalize_content(message.get("reasoning_content"))
-        if reasoning:
-            return reasoning
-        return ""
+        return cls._extract_choice_text(choice, message)
 
     @classmethod
     def _extract_reasoning_from_choice(cls, choice, message):
@@ -560,6 +557,7 @@ class OpenAICompatibleClient(LLMClient, ABC):
 
     def chat(self, messages, tools=None, temperature=0.0, stop_event=None):
         content_parts = []
+        thought_parts = []
         tool_calls = []
 
         for event in self.stream_chat(messages, tools=tools, temperature=temperature, stop_event=stop_event):
@@ -573,6 +571,10 @@ class OpenAICompatibleClient(LLMClient, ABC):
                 text = str(event.get("text") or "")
                 if text:
                     content_parts.append(text)
+            elif event_type == "thought":
+                text = str(event.get("text") or "")
+                if text:
+                    thought_parts.append(text)
             elif event_type == "tool_call":
                 tool_call = event.get("tool_call")
                 if isinstance(tool_call, dict):
@@ -580,11 +582,15 @@ class OpenAICompatibleClient(LLMClient, ABC):
             elif event_type == "error":
                 raise RuntimeError(str(event.get("error") or f"{self.PROVIDER_NAME} stream failed"))
 
-        return {
+        response = {
             "role": "assistant",
             "content": "".join(content_parts).strip(),
             "tool_calls": tool_calls,
         }
+        reasoning_content = "".join(thought_parts).strip()
+        if reasoning_content:
+            response["reasoning_content"] = reasoning_content
+        return response
 
 
 class DeepSeekLLMClient(OpenAICompatibleClient):
@@ -633,7 +639,7 @@ class DeepSeekLLMClient(OpenAICompatibleClient):
 
         content = self._normalize_content(delta.get("content"))
         if not content:
-            content = self._extract_content_from_choice(choice, message)
+            content = self._extract_choice_text(choice, message)
         if content:
             yield {"type": "answer", "text": content}
 

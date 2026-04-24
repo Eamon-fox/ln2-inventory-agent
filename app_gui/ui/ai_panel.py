@@ -4,8 +4,9 @@ import time
 import re
 import random
 from PySide6.QtCore import Qt, Signal, QEvent, QSize, QTimer
-from PySide6.QtGui import QTextCursor, QTextBlockFormat, QPalette, QMouseEvent, QActionGroup
+from PySide6.QtGui import QTextCursor, QTextBlockFormat, QTextCharFormat, QPalette, QMouseEvent, QActionGroup
 from PySide6.QtWidgets import (
+    QApplication,
     QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLineEdit, QLabel, QMenu,
     QTextEdit, QSpinBox, QCheckBox
@@ -122,6 +123,9 @@ class AIPanel(QWidget):
         self.ai_run_thread = None
         self.ai_run_worker = None
         self.ai_active_trace_id = None
+        self.ai_turns = []
+        self._active_turn_id = None
+        self._retry_existing_turn_id = None
         self._history_snapshot_from_stream_end = False
         self.ai_streaming_active = False
         self.ai_stream_buffer = ""
@@ -132,6 +136,10 @@ class AIPanel(QWidget):
         self.ai_stream_last_render_len = 0
         # Render markdown stream every 50ms, plus one forced final pass.
         self.ai_stream_render_interval_sec = 0.05
+        self.ai_stream_thought_active = False
+        self.ai_stream_thought_start_ts = None
+        self.ai_stream_thought_elapsed_sec = 0.0
+        self._stream_thought_timer = None
         self.ai_last_role = None
         self.ai_stream_has_thought = False
         self.ai_collapsible_blocks = []
@@ -409,6 +417,8 @@ class AIPanel(QWidget):
             return False
         if anchor.startswith("toggle_details_"):
             self._toggle_collapsible_block(anchor)
+        elif anchor.startswith("ai_action:"):
+            self._handle_ai_action_anchor(anchor)
         else:
             return False
         return True
@@ -611,8 +621,52 @@ class AIPanel(QWidget):
         self.status_message.emit(tr("ai.migrationModeExitedStatus"), 4000)
 
     def _reset_stream_thought_state(self):
+        self._stop_stream_thought_timer()
         self.ai_stream_has_thought = False
         self.ai_stream_thought_buffer = ""
+        self.ai_stream_thought_active = False
+        self.ai_stream_thought_start_ts = None
+        self.ai_stream_thought_elapsed_sec = 0.0
+
+    def _stream_thought_elapsed_text(self):
+        elapsed = float(self.ai_stream_thought_elapsed_sec or 0.0)
+        if self.ai_stream_thought_active and self.ai_stream_thought_start_ts is not None:
+            elapsed += max(0.0, time.monotonic() - float(self.ai_stream_thought_start_ts or 0.0))
+        return f"{elapsed:.1f}s"
+
+    def _ensure_stream_thought_timer(self):
+        timer = getattr(self, "_stream_thought_timer", None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(False)
+            timer.timeout.connect(self._tick_stream_thought_timer)
+            self._stream_thought_timer = timer
+        return timer
+
+    def _start_stream_thought_timer(self):
+        if self.ai_stream_thought_active:
+            return
+        self.ai_stream_thought_active = True
+        self.ai_stream_thought_start_ts = time.monotonic()
+        self._ensure_stream_thought_timer().start(100)
+
+    def _pause_stream_thought_timer(self):
+        if self.ai_stream_thought_active and self.ai_stream_thought_start_ts is not None:
+            self.ai_stream_thought_elapsed_sec += max(0.0, time.monotonic() - float(self.ai_stream_thought_start_ts or 0.0))
+        self.ai_stream_thought_active = False
+        self.ai_stream_thought_start_ts = None
+        self._stop_stream_thought_timer()
+
+    def _stop_stream_thought_timer(self):
+        timer = getattr(self, "_stream_thought_timer", None)
+        if timer is not None:
+            timer.stop()
+
+    def _tick_stream_thought_timer(self):
+        if not self.ai_streaming_active or not self.ai_stream_has_thought:
+            self._stop_stream_thought_timer()
+            return
+        self._rerender_stream_with_thought_markdown_in_place(force=True)
 
     def on_new_chat(self):
         if self.ai_history or self.ai_chat.toPlainText().strip():
@@ -627,6 +681,9 @@ class AIPanel(QWidget):
         self.ai_chat.clear()
         self.ai_history = []
         self.ai_summary_state = None
+        self.ai_turns = []
+        self._active_turn_id = None
+        self._retry_existing_turn_id = None
         self.ai_operation_events = []
         self.ai_collapsible_blocks = []
         self.ai_active_trace_id = None
@@ -639,6 +696,8 @@ class AIPanel(QWidget):
         self.ai_stream_last_render_len = 0
         self.ai_auto_follow_enabled = True
         self.ai_unseen_message_count = 0
+        if self.agent_session and hasattr(self.agent_session, "reset_shell_state"):
+            self.agent_session.reset_shell_state()
         self._reset_stream_thought_state()
         self._refresh_new_message_button()
         self.status_message.emit(tr("ai.newChatDone"), 2000)
@@ -815,12 +874,49 @@ class AIPanel(QWidget):
             self.ai_chat_write_in_progress = previous_lock
             self._restore_view_anchor(anchor, marks_new=marks_new, force_follow=force_follow)
 
+    def _clean_chat_block_format(self):
+        block_format = QTextBlockFormat()
+        block_format.setObjectIndex(-1)
+        return block_format
+
+    def _clean_chat_char_format(self):
+        return QTextCharFormat()
+
+    def _reset_chat_cursor_format(self, cursor=None, *, reset_block=False):
+        if cursor is None and hasattr(self.ai_chat, "textCursor"):
+            cursor = self.ai_chat.textCursor()
+        if cursor is None:
+            return cursor
+        try:
+            char_format = self._clean_chat_char_format()
+            cursor.setCharFormat(char_format)
+            if reset_block:
+                cursor.setBlockFormat(self._clean_chat_block_format())
+            if hasattr(self.ai_chat, "setCurrentCharFormat"):
+                self.ai_chat.setCurrentCharFormat(char_format)
+        except Exception:
+            pass
+        return cursor
+
     def _move_chat_cursor_to_end(self):
         if not hasattr(self.ai_chat, "textCursor") or not hasattr(self.ai_chat, "setTextCursor"):
             return
         cursor = self.ai_chat.textCursor()
         cursor.movePosition(QTextCursor.End)
+        self._reset_chat_cursor_format(cursor)
         self.ai_chat.setTextCursor(cursor)
+
+    def _append_chat_html(self, html):
+        self._move_chat_cursor_to_end()
+        if hasattr(self.ai_chat, "textCursor") and hasattr(self.ai_chat, "setTextCursor"):
+            cursor = self.ai_chat.textCursor()
+            self._reset_chat_cursor_format(cursor, reset_block=True)
+            cursor.insertHtml(str(html or ""))
+            cursor.insertBlock(self._clean_chat_block_format(), self._clean_chat_char_format())
+            self._reset_chat_cursor_format(cursor, reset_block=True)
+            self.ai_chat.setTextCursor(cursor)
+            return
+        self.ai_chat.append(str(html or ""))
 
     def _document_end_position(self):
         if hasattr(self.ai_chat, "document"):
@@ -887,11 +983,202 @@ class AIPanel(QWidget):
             _is_dark = is_dark if is_dark is not None else _is_dark_mode(self)
             header_html = self._build_header_html(role, is_dark=_is_dark)
             body_html = _md_to_html(str(text or ""), _is_dark)
-            self._move_chat_cursor_to_end()
-            self.ai_chat.append(header_html)
-            self.ai_chat.append(body_html)
+            self._append_chat_html(header_html)
+            self._append_chat_html(body_html)
 
         self._run_chat_write(_writer, marks_new=True)
+
+    def _new_turn_id(self):
+        return f"turn_{int(time.time() * 1000)}_{random.randint(1000, 9999)}"
+
+    def _find_turn(self, turn_id):
+        target = str(turn_id or "")
+        for turn in self.ai_turns:
+            if isinstance(turn, dict) and str(turn.get("turn_id") or "") == target:
+                return turn
+        return None
+
+    def _active_turn(self):
+        return self._find_turn(self._active_turn_id)
+
+    def _begin_user_turn(self, query, *, reuse_turn_id=None, append_user=True):
+        turn_id = str(reuse_turn_id or self._new_turn_id())
+        turn = self._find_turn(turn_id)
+        if turn is None:
+            turn = {
+                "turn_id": turn_id,
+                "query": str(query or ""),
+                "status": "running",
+                "user_ts": None,
+                "history_start": len(self.ai_history),
+                "chat_start": self._document_end_position(),
+                "retry_start": None,
+                "answer_text": "",
+            }
+            self.ai_turns.append(turn)
+        else:
+            turn.update(
+                {
+                    "query": str(query or turn.get("query") or ""),
+                    "status": "running",
+                    "history_start": len(self.ai_history),
+                    "answer_text": "",
+                }
+            )
+        self._active_turn_id = turn_id
+        if append_user:
+            self._append_chat("You", query)
+            turn["retry_start"] = self._document_end_position()
+        elif turn.get("retry_start") is None:
+            turn["retry_start"] = self._document_end_position()
+        return turn
+
+    def _mark_active_turn_done(self, *, status, answer_text="", user_ts=None):
+        turn = self._active_turn()
+        if turn is None:
+            return None
+        turn["status"] = str(status or "complete")
+        if answer_text:
+            turn["answer_text"] = str(answer_text)
+        if isinstance(user_ts, (int, float)):
+            turn["user_ts"] = float(user_ts)
+        return turn
+
+    def _render_turn_actions(self, turn):
+        if not isinstance(turn, dict):
+            return ""
+        turn_id = turn.get("turn_id")
+        escaped_turn = self._escape_html_text(turn_id)
+        links = []
+        if bool(turn.get("actions_include_copy")):
+            copy_label = tr("ai.actionCopiedInline") if turn.get("copy_copied") else tr("ai.actionCopy")
+            links.append(f'<a href="ai_action:copy:{escaped_turn}">{self._escape_html_text(copy_label)}</a>')
+        retry_label = str(turn.get("actions_retry_label") or tr("ai.actionRetry"))
+        links.append(f'<a href="ai_action:retry:{escaped_turn}">{self._escape_html_text(retry_label)}</a>')
+        return '<div style="margin-top: 4px; font-size: 11px; opacity: 0.75;">' + " · ".join(links) + "</div>"
+
+    def _shift_turn_action_ranges(self, *, after_end, delta):
+        if not delta:
+            return
+        for turn in self.ai_turns or []:
+            if not isinstance(turn, dict):
+                continue
+            start = turn.get("actions_start")
+            end = turn.get("actions_end")
+            if start is not None and int(start) >= int(after_end):
+                turn["actions_start"] = int(start) + int(delta)
+            if end is not None and int(end) >= int(after_end):
+                turn["actions_end"] = int(end) + int(delta)
+
+    def _append_turn_actions(self, turn_id, *, include_copy=True, retry_label="Retry"):
+        turn = self._find_turn(turn_id)
+        if turn is None:
+            return
+        turn["actions_include_copy"] = bool(include_copy)
+        turn["actions_retry_label"] = str(retry_label or tr("ai.actionRetry"))
+        turn["copy_copied"] = False
+        html = self._render_turn_actions(turn)
+
+        def _writer():
+            self._move_chat_cursor_to_end()
+            start = self._document_end_position()
+            self.ai_chat.append(html)
+            turn["actions_start"] = start
+            turn["actions_end"] = self._document_end_position()
+
+        self._run_chat_write(_writer, marks_new=False)
+
+    def _replace_turn_actions(self, turn):
+        if not isinstance(turn, dict):
+            return False
+        start = turn.get("actions_start")
+        end = turn.get("actions_end")
+        if start is None or end is None or not hasattr(self.ai_chat, "textCursor"):
+            return False
+        html = self._render_turn_actions(turn)
+        success = {"ok": False}
+
+        def _writer():
+            try:
+                cursor = self.ai_chat.textCursor()
+                cursor.setPosition(int(start))
+                cursor.setPosition(int(end), QTextCursor.KeepAnchor)
+                cursor.removeSelectedText()
+                cursor.insertHtml(html)
+                turn["actions_end"] = cursor.position()
+                self.ai_chat.setTextCursor(cursor)
+                success["ok"] = True
+            except Exception:
+                success["ok"] = False
+
+        self._run_chat_write(_writer, marks_new=False)
+        return bool(success["ok"])
+
+    def _handle_ai_action_anchor(self, anchor):
+        parts = str(anchor or "").split(":", 2)
+        if len(parts) != 3:
+            return
+        _prefix, action, turn_id = parts
+        if action == "copy":
+            turn = self._find_turn(turn_id)
+            if self._copy_turn_answer(turn_id):
+                if turn is not None:
+                    turn["copy_copied"] = True
+                    self._replace_turn_actions(turn)
+                self.status_message.emit(tr("ai.actionCopied"), 2000)
+            else:
+                self.status_message.emit(tr("ai.actionCopyFailed"), 3000)
+        elif action == "retry":
+            self._retry_turn(turn_id)
+
+    def _copy_turn_answer(self, turn_id):
+        turn = self._find_turn(turn_id)
+        text = str((turn or {}).get("answer_text") or "").strip()
+        if not text:
+            return False
+        app = QApplication.instance()
+        if app is None:
+            return False
+        try:
+            app.clipboard().setText(text)
+            return True
+        except Exception:
+            return False
+
+    def _remove_chat_after(self, start_pos):
+        if start_pos is None or not hasattr(self.ai_chat, "textCursor"):
+            return False
+        try:
+            cursor = self.ai_chat.textCursor()
+            cursor.setPosition(int(start_pos))
+            cursor.setPosition(self._document_end_position(), QTextCursor.KeepAnchor)
+            cursor.removeSelectedText()
+            self.ai_chat.setTextCursor(cursor)
+            return True
+        except Exception:
+            return False
+
+    def _retry_turn(self, turn_id):
+        if self.ai_run_inflight:
+            return False
+        turn = self._find_turn(turn_id)
+        if turn is None:
+            return False
+        query = str(turn.get("query") or "").strip()
+        if not query:
+            return False
+        self._remove_chat_after(turn.get("retry_start"))
+        self.ai_history = self.ai_history[: max(0, int(turn.get("history_start") or 0))]
+        for index, item in enumerate(list(self.ai_turns)):
+            if isinstance(item, dict) and str(item.get("turn_id") or "") == str(turn_id):
+                self.ai_turns = self.ai_turns[: index + 1]
+                break
+        self.ai_summary_state = None
+        self._history_snapshot_from_stream_end = False
+        self._retry_existing_turn_id = str(turn_id)
+        self.ai_prompt.setPlainText(query)
+        self.on_run_ai_agent()
+        return True
 
     def _should_use_compact(self):
         """Check if tool messages should be compact (attached to previous message)."""
@@ -909,12 +1196,11 @@ class AIPanel(QWidget):
             def _writer():
                 self._ensure_chat_block_context()
                 header_html = self._build_header_html(role, compact=True, is_dark=is_dark)
-                self._move_chat_cursor_to_end()
                 # Compact: single line, inline formatting only (no block elements)
                 body = str(text or "")
                 body = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', body)
                 body = re.sub(r'`([^`]+)`', r'\1', body)
-                self.ai_chat.append(header_html + body)
+                self._append_chat_html(header_html + body)
 
             self._run_chat_write(_writer, marks_new=True)
             return
@@ -928,6 +1214,9 @@ class AIPanel(QWidget):
         self.ai_stream_buffer = ""
         self.ai_stream_thought_buffer = ""
         self.ai_stream_has_thought = False
+        self.ai_stream_thought_active = False
+        self.ai_stream_thought_start_ts = None
+        self.ai_stream_thought_elapsed_sec = 0.0
         self.ai_stream_start_pos = None
         self.ai_last_stream_block = None
         self.ai_stream_last_render_ts = 0.0
@@ -951,26 +1240,27 @@ class AIPanel(QWidget):
         if stream_channel not in {"answer", "thought"}:
             stream_channel = "answer"
 
-        is_first_answer_after_thought = (
-            stream_channel == "answer"
-            and self.ai_stream_has_thought
-            and not self.ai_stream_buffer
-        )
-
         if not self.ai_streaming_active:
             self._begin_stream_chat("Agent")
 
         if stream_channel == "thought":
+            first_thought = not self.ai_stream_has_thought
             self.ai_stream_has_thought = True
             self.ai_stream_thought_buffer += chunk
+            if first_thought or not self.ai_stream_thought_active:
+                self._start_stream_thought_timer()
         else:
+            if self.ai_stream_has_thought:
+                self._reset_stream_thought_state()
             self.ai_stream_buffer += chunk
 
         # Fallback for minimal chat stubs without cursor APIs (unit tests).
         if not hasattr(self.ai_chat, "textCursor"):
-            if is_first_answer_after_thought:
+            if stream_channel == "thought":
+                self.ai_chat.insertPlainText(tr("ai.streamThinking"))
                 self.ai_chat.insertPlainText("\n")
-            self.ai_chat.insertPlainText(chunk)
+            else:
+                self.ai_chat.insertPlainText(chunk)
             return
 
         self._rerender_stream_with_thought_markdown_in_place(force=False)
@@ -978,6 +1268,7 @@ class AIPanel(QWidget):
     def _end_stream_chat(self):
         if not self.ai_streaming_active:
             return
+        self._reset_stream_thought_state()
 
         def _writer():
             self._rerender_stream_with_thought_markdown_in_place(force=True)
@@ -1030,10 +1321,6 @@ class AIPanel(QWidget):
         return bool(success["ok"])
 
     def _rerender_stream_with_thought_markdown_in_place(self, force=False):
-        if not self.ai_streaming_active:
-            return False
-        if self.ai_stream_start_pos is None:
-            return False
         if not hasattr(self.ai_chat, "textCursor"):
             return False
 
@@ -1042,44 +1329,69 @@ class AIPanel(QWidget):
         if not force and interval > 0.0 and (now - float(self.ai_stream_last_render_ts or 0.0)) < interval:
             return False
 
-        end_pos = self._document_end_position()
-        block = {
-            "start": self.ai_stream_start_pos,
-            "end": end_pos,
-            "text": self.ai_stream_buffer,
-        }
+        if self.ai_streaming_active:
+            if self.ai_stream_start_pos is None:
+                return False
+            end_pos = self._document_end_position()
+            block = {
+                "start": self.ai_stream_start_pos,
+                "end": end_pos,
+                "text": self.ai_stream_buffer,
+            }
+        else:
+            block = self.ai_last_stream_block or {}
+            end_pos = block.get("end")
+            if block.get("start") is None or end_pos is None:
+                return False
 
+        answer_text = str((self.ai_stream_buffer if self.ai_streaming_active else block.get("text")) or "")
         is_dark = _is_dark_mode(self)
-        answer_html = _md_to_html(str(self.ai_stream_buffer or ""), is_dark)
+        answer_html = _md_to_html(answer_text, is_dark)
 
         combined_html = ""
-        muted_color = _get_role_color("muted", is_dark)
-        if self.ai_stream_has_thought and self.ai_stream_thought_buffer:
-            thought_html = _md_to_html(str(self.ai_stream_thought_buffer or ""), is_dark)
-            combined_html += f'<div style="color: {muted_color};">{thought_html}</div>'
+        if self.ai_stream_thought_active and self.ai_stream_thought_buffer:
+            combined_html += self._render_stream_thought_panel(is_dark=is_dark)
         if answer_html:
             if combined_html:
-                combined_html += "<br/>"
-            combined_html += answer_html
+                combined_html += '<div style="height: 4px;"></div>'
+            combined_html += f'<div class="snowfox-ai-answer">{answer_html}</div>'
 
+        old_end = block.get("end", end_pos)
         if not combined_html:
-            return False
+            ok = self._replace_stream_block_with_html(block, "")
+            if ok:
+                new_end = block.get("end", old_end)
+                if old_end is not None and new_end is not None:
+                    delta = int(new_end) - int(old_end)
+                    self._shift_turn_action_ranges(after_end=int(old_end), delta=delta)
+            return bool(ok)
 
         ok = self._replace_stream_block_with_html(block, combined_html)
         if not ok:
             return False
 
         self.ai_stream_last_render_ts = now
-        self.ai_stream_last_render_len = len(self.ai_stream_buffer) + len(self.ai_stream_thought_buffer)
+        self.ai_stream_last_render_len = len(answer_text) + len(self.ai_stream_thought_buffer)
 
         new_end = block.get("end", end_pos)
-        self.ai_last_stream_block = {
-            "start": self.ai_stream_start_pos,
-            "end": new_end,
-            "text": self.ai_stream_buffer,
-        }
+        if old_end is not None and new_end is not None:
+            delta = int(new_end) - int(old_end)
+            self._shift_turn_action_ranges(after_end=int(old_end), delta=delta)
+        block["end"] = new_end
+        block["text"] = answer_text
+        if block is self.ai_last_stream_block:
+            self.ai_last_stream_block = block
         return True
 
+    def _render_stream_thought_panel(self, *, is_dark=True):
+        muted_color = _get_role_color("muted", is_dark)
+        elapsed = self._escape_html_text(self._stream_thought_elapsed_text())
+        thought_text = self._escape_html_text(str(self.ai_stream_thought_buffer or ""))
+        return (
+            f'<p class="snowfox-ai-thought" style="margin: 2px 0; color: {muted_color}; font-size: {FONT_SIZE_XS}px;">'
+            f'Thinking {elapsed}<br/>{thought_text}'
+            f'</p>'
+        )
     def _insert_markdown_with_cursor(self, cursor, html_text):
         """Insert pre-rendered HTML at cursor position (used by streaming rerender)."""
         html_text = str(html_text or "")
@@ -1088,7 +1400,9 @@ class AIPanel(QWidget):
 
         if hasattr(self.ai_chat, "textCursor"):
             cursor = self.ai_chat.textCursor()
+            self._reset_chat_cursor_format(cursor, reset_block=True)
             cursor.insertHtml(html_text)
+            self._reset_chat_cursor_format(cursor, reset_block=True)
             if hasattr(self.ai_chat, "setTextCursor"):
                 self.ai_chat.setTextCursor(cursor)
             return
@@ -1233,7 +1547,9 @@ class AIPanel(QWidget):
                 return
             cursor = self.ai_chat.textCursor()
             start = cursor.position()
+            self._reset_chat_cursor_format(cursor, reset_block=True)
             cursor.insertHtml(collapsed_html)
+            self._reset_chat_cursor_format(cursor, reset_block=True)
             end = cursor.position()
 
             self.ai_collapsible_blocks.append({
@@ -1351,7 +1667,9 @@ class AIPanel(QWidget):
                 cursor.setPosition(int(start))
                 cursor.setPosition(int(end), QTextCursor.KeepAnchor)
                 cursor.removeSelectedText()
+                self._reset_chat_cursor_format(cursor, reset_block=True)
                 cursor.insertHtml(new_html)
+                self._reset_chat_cursor_format(cursor, reset_block=True)
                 new_end = cursor.position()
                 delta = new_end - end
                 block["end"] = new_end

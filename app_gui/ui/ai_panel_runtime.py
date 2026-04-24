@@ -51,7 +51,13 @@ def on_run_ai_agent(self):
         self.status_message.emit(tr("ai.enterPrompt"), 2000)
         return
 
-    self._append_chat("You", prompt)
+    retry_turn_id = getattr(self, "_retry_existing_turn_id", None)
+    self._begin_user_turn(
+        prompt,
+        reuse_turn_id=retry_turn_id,
+        append_user=not bool(retry_turn_id),
+    )
+    self._retry_existing_turn_id = None
     self._current_user_prompt = prompt
     # Record prompt history for Up/Down key recall.
     if not self._prompt_history or self._prompt_history[-1] != prompt:
@@ -716,6 +722,9 @@ def _handle_progress_stream_end(self, event):
     raw_messages = data.get("messages")
     summary_state = data.get("summary_state")
     self.ai_summary_state = summary_state if isinstance(summary_state, dict) else None
+    last_user_ts = data.get("last_user_ts")
+    if isinstance(last_user_ts, (int, float)):
+        self._mark_active_turn_done(status="stream_end", user_ts=float(last_user_ts))
     if not isinstance(raw_messages, list):
         return
 
@@ -746,10 +755,11 @@ def _handle_progress_stream_end(self, event):
             entry = {**entry, "timestamp": float(ts)}
 
         if role == "assistant":
+            has_tool_calls = isinstance(tool_calls, list) and len(tool_calls) > 0
             if isinstance(tool_calls, list):
                 entry = {**entry, "tool_calls": list(tool_calls)}
             reasoning = str(item.get("reasoning_content") or "")
-            if reasoning:
+            if reasoning or has_tool_calls:
                 entry = {**entry, "reasoning_content": reasoning}
         elif role == "tool":
             tool_call_id = str(item.get("tool_call_id") or "").strip()
@@ -913,12 +923,25 @@ def on_finished(self, response):
         # Could not rewrite in-place (e.g. limited chat stub); avoid duplicate append.
         pass
 
+    turn = self._mark_active_turn_done(
+        status="error" if rendered_error_notice else "complete",
+        answer_text=final_text,
+    )
+    if turn is not None:
+        self._append_turn_actions(
+            turn.get("turn_id"),
+            include_copy=not rendered_error_notice,
+            retry_label=tr("ai.actionRetry") if rendered_error_notice else tr("ai.actionTryAgain"),
+        )
+
     self.ai_stream_buffer = ""
     self.ai_stream_start_pos = None
-    self.ai_last_stream_block = None
     self.ai_stream_last_render_ts = 0.0
     self.ai_stream_last_render_len = 0
-    self._reset_stream_thought_state()
+    self._pause_stream_thought_timer()
+    if not had_thought_stream:
+        self._reset_stream_thought_state()
+        self.ai_last_stream_block = None
     if not stream_end_snapshot_applied:
         self._append_history("assistant", final_text)
 
