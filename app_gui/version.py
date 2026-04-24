@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from typing import Mapping
 
-APP_VERSION: str = "1.3.11"
+APP_VERSION: str = "1.3.12"
 APP_RELEASE_URL: str = "https://snowfox.bio/download.html"
 UPDATE_CHECK_URL: str = "https://snowfox-release.oss-cn-beijing.aliyuncs.com/latest.json"
 
