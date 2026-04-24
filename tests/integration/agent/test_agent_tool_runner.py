@@ -724,6 +724,21 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         )
         self.assertEqual(False, params.get("additionalProperties"))
 
+    def test_tool_schemas_reuses_yaml_context_for_all_tools(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+
+        with patch.object(runner, "_load_meta", wraps=runner._load_meta) as load_meta, patch.object(
+            runner,
+            "_load_inventory",
+            wraps=runner._load_inventory,
+        ) as load_inventory, patch.object(runner, "_load_layout", wraps=runner._load_layout) as load_layout:
+            schemas = runner.tool_schemas()
+
+        self.assertGreater(len(schemas), 1)
+        self.assertEqual(1, load_meta.call_count)
+        self.assertEqual(1, load_inventory.call_count)
+        self.assertEqual(1, load_layout.call_count)
+
     def test_powershell_schema_exposes_expected_fields(self):
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         schemas = runner.tool_schemas()

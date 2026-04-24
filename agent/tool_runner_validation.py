@@ -311,16 +311,25 @@ def _normalize_search_mode(self, value):
         )
 
 
-def _tool_input_schema(self, tool_name, *, include_hidden=False):
+def _build_tool_schema_context(self):
+    return {
+        "meta": self._load_meta() if hasattr(self, "_load_meta") else {},
+        "inventory": self._load_inventory() if hasattr(self, "_load_inventory") else [],
+        "layout": self._load_layout() if hasattr(self, "_load_layout") else {},
+    }
+
+
+def _tool_input_schema(self, tool_name, *, include_hidden=False, schema_context=None):
     contract = _tool_contracts().get(tool_name)
     if not isinstance(contract, dict):
         return {}
     base_schema = deepcopy(contract.get("parameters") or {})
     if not include_hidden:
         base_schema = _filter_schema_for_llm(base_schema)
-    meta = self._load_meta() if hasattr(self, "_load_meta") else {}
-    inventory = self._load_inventory() if hasattr(self, "_load_inventory") else []
-    layout = self._load_layout() if hasattr(self, "_load_layout") else {}
+    context = schema_context if isinstance(schema_context, dict) else _build_tool_schema_context(self)
+    meta = context.get("meta") if isinstance(context.get("meta"), dict) else {}
+    inventory = context.get("inventory") if isinstance(context.get("inventory"), list) else []
+    layout = context.get("layout") if isinstance(context.get("layout"), dict) else {}
     runtime_spec = self._runtime_spec(tool_name) if hasattr(self, "_runtime_spec") else None
     array_fields = tuple(getattr(runtime_spec, "layout_array_fields", ()) or ())
     schema = _apply_layout_position_rules(base_schema, layout, array_fields=array_fields)
@@ -346,6 +355,7 @@ def _tool_input_field_sets(self, tool_name):
 def tool_schemas(self):
     """OpenAI-compatible function tool schemas for native tool calling."""
     schemas = []
+    schema_context = _build_tool_schema_context(self)
 
     tool_names = self.list_tools() if hasattr(self, "list_tools") else list(_tool_contracts().keys())
     for name in tool_names:
@@ -364,7 +374,7 @@ def tool_schemas(self):
                         f"toolContracts.{name}.description",
                         desc_default,
                     ),
-                    "parameters": _tool_input_schema(self, name),
+                    "parameters": _tool_input_schema(self, name, schema_context=schema_context),
                 },
             }
         )

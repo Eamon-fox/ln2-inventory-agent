@@ -255,6 +255,7 @@ class AgentToolRunner:
         return list(TOOL_CONTRACTS.keys())
 
     tool_schemas = _runner_validation.tool_schemas
+    _build_tool_schema_context = _runner_validation._build_tool_schema_context
     _tool_input_schema = _runner_validation._tool_input_schema
     _tool_input_field_sets = _runner_validation._tool_input_field_sets
     _sanitize_tool_input_payload = staticmethod(_runner_validation._sanitize_tool_input_payload)
