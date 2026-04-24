@@ -338,18 +338,7 @@ def _execute_batch_add(
 
     reports: List[Dict[str, object]] = []
     if isinstance(response, dict) and response.get("ok"):
-        for item in items:
-            if id(item) in pre_blocked:
-                reports.append(
-                    _reports._make_error_item(
-                        item,
-                        "validation_failed",
-                        pre_blocked[id(item)],
-                    )
-                )
-            else:
-                reports.append(_reports._make_ok_item(item, response))
-        return not pre_blocked, reports
+        return _reports._fanout_with_preblocked_items(items, pre_blocked, response)
 
     _, batch_reports = _reports._fanout_batch_response(
         valid_items,
@@ -361,13 +350,7 @@ def _execute_batch_add(
     batch_iter = iter(batch_reports)
     for item in items:
         if id(item) in pre_blocked:
-            reports.append(
-                _reports._make_error_item(
-                    item,
-                    "validation_failed",
-                    pre_blocked[id(item)],
-                )
-            )
+            reports.append(_reports._make_preblocked_item_report(item, pre_blocked[id(item)]))
         else:
             reports.append(next(batch_iter))
 
@@ -411,38 +394,14 @@ def _preflight_batch_add(
             auto_backup=False,
         )
         if batch_response.get("ok"):
-            reports: List[Dict[str, object]] = []
-            for item in items:
-                if id(item) in pre_blocked:
-                    error_code = "validation_failed"
-                    if "conflict" in pre_blocked[id(item)].lower():
-                        error_code = "position_conflict"
-                    reports.append(
-                        _reports._make_error_item(
-                            item,
-                            error_code,
-                            pre_blocked[id(item)],
-                        )
-                    )
-                    continue
-                reports.append(_reports._make_ok_item(item, batch_response))
-            return not pre_blocked, reports
+            return _reports._fanout_with_preblocked_items(items, pre_blocked, batch_response)
 
     reports: List[Dict[str, object]] = []
     all_ok = True
 
     for item, tool_payload in zip(items, tool_payloads):
         if id(item) in pre_blocked:
-            error_code = "validation_failed"
-            if "conflict" in pre_blocked[id(item)].lower():
-                error_code = "position_conflict"
-            reports.append(
-                _reports._make_error_item(
-                    item,
-                    error_code,
-                    pre_blocked[id(item)],
-                )
-            )
+            reports.append(_reports._make_preblocked_item_report(item, pre_blocked[id(item)]))
             all_ok = False
             continue
 

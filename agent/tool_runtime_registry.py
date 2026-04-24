@@ -9,7 +9,7 @@ from lib.tool_registry import TOOL_CONTRACTS, iter_agent_dispatch_descriptors
 
 from . import tool_hooks as _hooks
 from . import tool_runner_guidance as _guidance
-from . import tool_runner_handlers as _handlers
+from . import tool_runner_handlers_write as _write_handlers
 from . import tool_runner_validation as _validation
 from . import tool_status_formatter as _status
 
@@ -48,7 +48,7 @@ class ToolRuntimeOverride:
 
 
 def _guard_stage_rollback(runner, payload):
-    return _handlers._validate_rollback_backup_candidate(
+    return _write_handlers._validate_rollback_backup_candidate(
         runner._yaml_path,
         payload.get("backup_path"),
     )

@@ -16,13 +16,14 @@ def __getattr__(name):
         from .dispatch import MainThreadDispatcher
 
         return MainThreadDispatcher
-    if name in {"LocalOpenApiController", "LocalOpenApiService"}:
-        from .service import LocalOpenApiController, LocalOpenApiService
+    if name == "LocalOpenApiController":
+        from .service import LocalOpenApiController
 
-        return {
-            "LocalOpenApiController": LocalOpenApiController,
-            "LocalOpenApiService": LocalOpenApiService,
-        }[name]
+        return LocalOpenApiController
+    if name == "LocalOpenApiService":
+        from .http_service import LocalOpenApiService
+
+        return LocalOpenApiService
     raise AttributeError(name)
 
 __all__ = [

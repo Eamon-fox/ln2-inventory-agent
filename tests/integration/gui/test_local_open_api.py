@@ -15,7 +15,8 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app_gui.application.open_api.service import LocalOpenApiController, LocalOpenApiService
+from app_gui.application.open_api.http_service import LocalOpenApiService
+from app_gui.application.open_api.service import LocalOpenApiController
 from app_gui.tool_bridge import GuiToolBridge
 from lib.inventory_paths import assert_allowed_inventory_yaml_path
 from lib.plan_item_factory import build_add_plan_item, build_rollback_plan_item

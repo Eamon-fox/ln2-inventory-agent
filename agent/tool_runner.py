@@ -15,7 +15,11 @@ from lib import tool_api_parsers as _tool_parsers
 from lib.inventory_paths import assert_allowed_inventory_yaml_path
 from lib.plan_item_desc import build_plan_item_desc
 from lib.yaml_ops import load_yaml
-from . import tool_runner_handlers as _runner_handlers
+from . import tool_runner_handlers_fileops as _runner_fileops
+from . import tool_runner_handlers_migration as _runner_migration
+from . import tool_runner_handlers_plan as _runner_plan
+from . import tool_runner_handlers_read as _runner_read
+from . import tool_runner_handlers_write as _runner_write
 from . import tool_runner_staging as _runner_staging
 from . import tool_runner_validation as _runner_validation
 from . import tool_runner_guidance as _runner_guidance
@@ -452,32 +456,32 @@ class AgentToolRunner:
             },
         )
 
-    _run_manage_boxes = _runner_handlers._run_manage_boxes
-    _run_use_skill = _runner_handlers._run_use_skill
-    _run_list_empty_positions = _runner_handlers._run_list_empty_positions
-    _run_search_records = _runner_handlers._run_search_records
-    _run_filter_records = _runner_handlers._run_filter_records
-    _run_recent_stored = _runner_handlers._run_recent_stored
-    _run_recent_frozen = _runner_handlers._run_recent_frozen
-    _run_query_takeout_events = _runner_handlers._run_query_takeout_events
-    _run_list_audit_timeline = _runner_handlers._run_list_audit_timeline
-    _run_recommend_positions = _runner_handlers._run_recommend_positions
-    _run_generate_stats = _runner_handlers._run_generate_stats
-    _run_get_raw_entries = _runner_handlers._run_get_raw_entries
-    _run_shell = _runner_handlers._run_shell
-    _run_fs_list = _runner_handlers._run_fs_list
-    _run_fs_read = _runner_handlers._run_fs_read
-    _run_fs_write = _runner_handlers._run_fs_write
-    _run_fs_copy = _runner_handlers._run_fs_copy
-    _run_fs_edit = _runner_handlers._run_fs_edit
-    _run_validate = _runner_handlers._run_validate
-    _run_import_migration_output = _runner_handlers._run_import_migration_output
-    _run_edit_entry = _runner_handlers._run_edit_entry
-    _run_add_entry = _runner_handlers._run_add_entry
-    _run_takeout = _runner_handlers._run_takeout
-    _run_move = _runner_handlers._run_move
-    _run_rollback = _runner_handlers._run_rollback
-    _run_staged_plan = _runner_handlers._run_staged_plan
+    _run_manage_boxes = _runner_write._run_manage_boxes
+    _run_use_skill = _runner_migration._run_use_skill
+    _run_list_empty_positions = _runner_read._run_list_empty_positions
+    _run_search_records = _runner_read._run_search_records
+    _run_filter_records = _runner_read._run_filter_records
+    _run_recent_stored = _runner_read._run_recent_stored
+    _run_recent_frozen = _runner_read._run_recent_frozen
+    _run_query_takeout_events = _runner_read._run_query_takeout_events
+    _run_list_audit_timeline = _runner_read._run_list_audit_timeline
+    _run_recommend_positions = _runner_read._run_recommend_positions
+    _run_generate_stats = _runner_read._run_generate_stats
+    _run_get_raw_entries = _runner_read._run_get_raw_entries
+    _run_shell = _runner_fileops._run_shell
+    _run_fs_list = _runner_fileops._run_fs_list
+    _run_fs_read = _runner_fileops._run_fs_read
+    _run_fs_write = _runner_fileops._run_fs_write
+    _run_fs_copy = _runner_fileops._run_fs_copy
+    _run_fs_edit = _runner_fileops._run_fs_edit
+    _run_validate = _runner_migration._run_validate
+    _run_import_migration_output = _runner_migration._run_import_migration_output
+    _run_edit_entry = _runner_write._run_edit_entry
+    _run_add_entry = _runner_write._run_add_entry
+    _run_takeout = _runner_write._run_takeout
+    _run_move = _runner_write._run_move
+    _run_rollback = _runner_write._run_rollback
+    _run_staged_plan = _runner_plan._run_staged_plan
 
     def _dispatch_handlers(self):
         return {

@@ -317,6 +317,28 @@ def batch_ok_reports(
     return True, [make_ok_item(item, response) for item in items]
 
 
+def make_preblocked_item_report(item: Dict[str, object], message: str) -> Dict[str, object]:
+    error_code = "validation_failed"
+    if "conflict" in str(message or "").lower():
+        error_code = "position_conflict"
+    return make_error_item(item, error_code, str(message or "Validation failed"))
+
+
+def fanout_with_preblocked_items(
+    items: List[Dict[str, object]],
+    pre_blocked: Dict[int, str],
+    success_response: Dict[str, object],
+) -> Tuple[bool, List[Dict[str, object]]]:
+    reports: List[Dict[str, object]] = []
+    for item in items:
+        message = pre_blocked.get(id(item))
+        if message is not None:
+            reports.append(make_preblocked_item_report(item, message))
+            continue
+        reports.append(make_ok_item(item, success_response))
+    return not pre_blocked, reports
+
+
 _make_error_item = make_error_item
 _make_ok_item = make_ok_item
 _resolve_error_from_response = resolve_error_from_response
@@ -334,3 +356,5 @@ _consume_batch_successes = consume_batch_successes
 _first_success_backup_path = first_success_backup_path
 _append_and_consume_item_report = append_and_consume_item_report
 _batch_ok_reports = batch_ok_reports
+_make_preblocked_item_report = make_preblocked_item_report
+_fanout_with_preblocked_items = fanout_with_preblocked_items
