@@ -10,6 +10,7 @@ from agent.agent_defaults import AGENT_HISTORY_MAX_TURNS, DEFAULT_MAX_STEPS
 from app_gui.application.ai_provider_catalog import (
     DEFAULT_AI_PROVIDER,
     default_ai_model,
+    normalize_ai_model,
     normalize_ai_provider,
 )
 from app_gui.application.open_api.contracts import LOCAL_OPEN_API_DEFAULT_PORT
@@ -97,8 +98,7 @@ def load_gui_config(path=None):
         except Exception:
             port = LOCAL_OPEN_API_DEFAULT_PORT
         cfg["open_api"]["port"] = port if port > 0 else LOCAL_OPEN_API_DEFAULT_PORT
-        if not str(cfg.get("ai", {}).get("model") or "").strip():
-            cfg["ai"]["model"] = default_ai_model(provider)
+        cfg["ai"]["model"] = normalize_ai_model(provider, cfg.get("ai", {}).get("model"))
         cfg["ai"]["thinking_enabled"] = bool(cfg.get("ai", {}).get("thinking_enabled", True))
         if not cfg.get("ai", {}).get("custom_prompt"):
             cfg["ai"]["custom_prompt"] = _load_default_prompt()

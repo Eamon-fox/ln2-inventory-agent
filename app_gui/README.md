@@ -53,7 +53,7 @@ python app_gui/main.py
 Config paths and defaults:
 
 - GUI settings: user config directory (`config.yaml`)
-- AI default model: `deepseek-v4-pro`
+- AI default model: `deepseek-v4-flash`
 - Missing key hint: GUI chat shows where to set `DEEPSEEK_API_KEY` or auth file
 - Active inventory datasets: `<data-root>/inventories/<dataset>/inventory.yaml`
 - Migration workspace: `<data-root>/migrate/`

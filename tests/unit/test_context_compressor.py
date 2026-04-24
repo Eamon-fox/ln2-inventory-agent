@@ -209,8 +209,8 @@ class TestCompressHistory(unittest.TestCase):
         self.assertEqual(parsed["items"][0]["id"], 1)
         self.assertEqual(parsed["items"][0]["cell_line"], "HeLa")
 
-    def test_reasoning_stripped_from_old_assistant(self):
-        """Old assistant messages with tool_calls should drop reasoning_content."""
+    def test_reasoning_preserved_for_old_tool_call_assistant(self):
+        """Old assistant messages with tool_calls must keep reasoning_content."""
         msgs = [
             {"role": "assistant", "content": "", "tool_calls": [
                 {"id": "c1", "type": "function", "function": {"name": "add_entry", "arguments": "{}"}}
@@ -221,7 +221,7 @@ class TestCompressHistory(unittest.TestCase):
         ]
         result = compress_history(msgs, recent_window=1)
         old_assistant = result[0]
-        self.assertNotIn("reasoning_content", old_assistant)
+        self.assertEqual("I should add this entry...", old_assistant.get("reasoning_content"))
 
     def test_long_user_message_truncated(self):
         long_content = "x" * 1000
@@ -310,8 +310,8 @@ class TestBulkOperationScenario(unittest.TestCase):
             if original["role"] == "tool":
                 self.assertEqual(original["content"], compressed["content"])
 
-    def test_100_adds_reasoning_stripped_from_old(self):
-        """Old assistant messages should not have reasoning_content."""
+    def test_100_adds_reasoning_preserved_for_old_tool_calls(self):
+        """Old assistant tool-call messages should keep reasoning_content."""
         all_msgs = []
         for i in range(1, 101):
             all_msgs.extend(self._make_add_cycle(i))
@@ -321,7 +321,7 @@ class TestBulkOperationScenario(unittest.TestCase):
         # Check an old assistant message (index 1 = first assistant tool-call msg).
         old_assistant = result[1]
         self.assertEqual(old_assistant["role"], "assistant")
-        self.assertNotIn("reasoning_content", old_assistant)
+        self.assertIn("reasoning_content", old_assistant)
 
 
 class TestNormalizeHistoryIntegration(unittest.TestCase):

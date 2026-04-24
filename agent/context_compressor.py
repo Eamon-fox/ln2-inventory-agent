@@ -171,10 +171,7 @@ def compress_history(messages: list[dict], recent_window: int) -> list[dict]:
             has_tool_calls = isinstance(tool_calls, list) and len(tool_calls) > 0
 
             if has_tool_calls:
-                # Keep the assistant tool-call message but strip reasoning.
-                entry = dict(msg)
-                entry.pop("reasoning_content", None)
-                compressed.append(entry)
+                compressed.append(dict(msg))
             else:
                 # Plain assistant text — truncate if long.
                 content = str(msg.get("content") or "")
