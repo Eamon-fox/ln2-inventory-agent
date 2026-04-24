@@ -17,6 +17,7 @@ If a request is already known to be unsupported, say so directly. Do not keep pr
 - `rollback` must use an explicit `backup_path` selected from audit timeline entries.
 - During migration, operate inside `migrate/` and validate `migrate/output/ln2_inventory.yaml` before import.
 - Agent file tools can read the repo broadly, but their write scope is `migrate/` only.
+- Agent command execution uses the single `shell` tool; `current_workdir` is session-scoped, `workdir` must be repo-relative, and commands must not leave repository scope.
 
 ## Tool-Limit Examples
 

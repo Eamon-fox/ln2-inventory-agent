@@ -28,5 +28,6 @@ Follow this skill when the user is asking about SnowFox itself rather than askin
 - Treat the bundled references in this skill as the runtime authority for SnowFox system behavior.
 - Do not invent product features, GUI flows, or write paths that are not documented.
 - Do not present GUI-only actions as Agent capabilities.
+- Do not present internal bash/powershell engines as Agent-visible tools; command execution is the single `shell` tool.
 - Do not keep retrying tools after a known product boundary has already been hit.
 - If bundled references are still insufficient, say the capability is unknown or unsupported instead of assuming.

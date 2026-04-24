@@ -136,3 +136,6 @@ agent_boundaries:
     - local_api_cannot_execute_write_tools
     - local_api_cannot_expose_agent_runtime
     - migrate_write_scope_only_for_agent_file_tools
+    - agent_shell_tool_is_single_entry
+    - agent_shell_workdir_is_session_scoped
+    - agent_shell_workdir_must_stay_repo_relative
