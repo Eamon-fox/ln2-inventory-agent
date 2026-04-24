@@ -30,7 +30,7 @@ from app_gui.application import (
     MigrationModeUseCase,
     PlanExecutionUseCase,
 )
-from app_gui.application.ai_provider_catalog import AI_PROVIDER_DEFAULTS
+from app_gui.application.ai_provider_catalog import AI_PROVIDER_DEFAULTS, DEFAULT_AI_PROVIDER, default_ai_model
 from app_gui.application.manage_boxes_flow import ManageBoxesFlow
 from app_gui.application.open_api import (
     LOCAL_OPEN_API_DEFAULT_PORT,
@@ -297,7 +297,8 @@ class MainWindow(QMainWindow):
             migrated_model = self.settings.value("ai/model", "", type=str)
             migrated_steps = self.settings.value("ai/max_steps", DEFAULT_MAX_STEPS, type=int)
             self.gui_config["ai"] = {
-                "model": migrated_model or "deepseek-chat",
+                "provider": DEFAULT_AI_PROVIDER,
+                "model": migrated_model or default_ai_model(DEFAULT_AI_PROVIDER),
                 "max_steps": migrated_steps,
                 "thinking_enabled": True,
             }

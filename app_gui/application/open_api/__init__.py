@@ -9,8 +9,21 @@ from .contracts import (
     LOCAL_OPEN_API_STAGE_ALLOWED_ACTIONS,
     LOCAL_OPEN_API_VALIDATION_MODES,
 )
-from .dispatch import MainThreadDispatcher
-from .service import LocalOpenApiController, LocalOpenApiService
+
+
+def __getattr__(name):
+    if name == "MainThreadDispatcher":
+        from .dispatch import MainThreadDispatcher
+
+        return MainThreadDispatcher
+    if name in {"LocalOpenApiController", "LocalOpenApiService"}:
+        from .service import LocalOpenApiController, LocalOpenApiService
+
+        return {
+            "LocalOpenApiController": LocalOpenApiController,
+            "LocalOpenApiService": LocalOpenApiService,
+        }[name]
+    raise AttributeError(name)
 
 __all__ = [
     "LOCAL_OPEN_API_DEFAULT_PORT",

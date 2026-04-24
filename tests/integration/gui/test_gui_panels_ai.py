@@ -25,11 +25,11 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
         panel = self._new_ai_panel()
 
         panel.ai_provider.setText("deepseek")
-        panel.ai_model.setText("deepseek-chat")
+        panel.ai_model.setText("deepseek-v4-pro")
         panel._refresh_model_badge()
 
-        self.assertEqual("deepseek-chat", panel.ai_model_id_label.text())
-        self.assertEqual("deepseek:deepseek-chat", panel.ai_model_id_label.toolTip())
+        self.assertEqual("deepseek-v4-pro", panel.ai_model_id_label.text())
+        self.assertEqual("deepseek:deepseek-v4-pro", panel.ai_model_id_label.toolTip())
 
     def test_ai_panel_model_switch_button_uses_dropdown_icon(self):
         panel = self._new_ai_panel()
@@ -65,7 +65,7 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
     def test_ai_panel_model_switch_menu_updates_provider_and_model(self):
         panel = self._new_ai_panel()
         panel.ai_provider.setText("deepseek")
-        panel.ai_model.setText("deepseek-chat")
+        panel.ai_model.setText("deepseek-v4-pro")
 
         with patch("app_gui.ui.ai_panel.QMenu") as menu_cls:
             fake_menu = menu_cls.return_value
@@ -1128,7 +1128,7 @@ class OperationEventFeedTests(ManagedPathTestCase):
 
         panel.apply_runtime_settings(
             provider="deepseek",
-            model="deepseek-chat",
+            model="deepseek-v4-pro",
             max_steps=11,
             thinking_enabled=False,
             custom_prompt="stay concise",
@@ -1137,7 +1137,7 @@ class OperationEventFeedTests(ManagedPathTestCase):
         snapshot = panel.runtime_settings_snapshot()
 
         self.assertEqual("deepseek", snapshot["provider"])
-        self.assertEqual("deepseek-chat", snapshot["model"])
+        self.assertEqual("deepseek-v4-pro", snapshot["model"])
         self.assertEqual(11, snapshot["max_steps"])
         self.assertFalse(snapshot["thinking_enabled"])
         self.assertEqual("stay concise", snapshot["custom_prompt"])

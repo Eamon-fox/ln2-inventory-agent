@@ -45,7 +45,7 @@ class GuiConfigTests(unittest.TestCase):
 
         self.assertIsNone(cfg["data_root"])
         self.assertEqual("deepseek", cfg["ai"]["provider"])
-        self.assertEqual("deepseek-chat", cfg["ai"]["model"])
+        self.assertEqual("deepseek-v4-pro", cfg["ai"]["model"])
         self.assertEqual(DEFAULT_MAX_STEPS, cfg["ai"]["max_steps"])
         self.assertTrue(cfg["ai"]["thinking_enabled"])
         self.assertEqual(False, cfg["open_api"]["enabled"])
@@ -63,7 +63,7 @@ ai:
             )
             cfg = load_gui_config(path=str(config_path))
 
-        self.assertEqual("deepseek-chat", cfg["ai"]["model"])
+        self.assertEqual("deepseek-v4-pro", cfg["ai"]["model"])
         self.assertEqual(DEFAULT_MAX_STEPS, cfg["ai"]["max_steps"])
         self.assertTrue(cfg["ai"]["thinking_enabled"])
 
@@ -74,7 +74,7 @@ ai:
                 "data_root": "/tmp/snowfox-data",
                 "yaml_path": "/tmp/inventory.yaml",
                 "ai": {
-                    "model": "deepseek-chat",
+                    "model": "deepseek-v4-pro",
                     "max_steps": 12,
                 },
             }
@@ -82,7 +82,7 @@ ai:
             cfg = load_gui_config(path=str(config_path))
 
         self.assertEqual(os.path.abspath("/tmp/snowfox-data"), cfg["data_root"])
-        self.assertEqual("deepseek-chat", cfg["ai"]["model"])
+        self.assertEqual("deepseek-v4-pro", cfg["ai"]["model"])
         self.assertEqual(12, cfg["ai"]["max_steps"])
         self.assertTrue(cfg["ai"]["thinking_enabled"])
 
@@ -114,7 +114,7 @@ ai:
             config_path = Path(temp_dir) / "config.yaml"
             config_path.write_text(
                 """ai:
-  model: deepseek-chat
+  model: deepseek-v4-pro
   mock: true
   max_steps: 5
 """,
@@ -122,7 +122,7 @@ ai:
             )
             cfg = load_gui_config(path=str(config_path))
 
-        self.assertEqual("deepseek-chat", cfg["ai"]["model"])
+        self.assertEqual("deepseek-v4-pro", cfg["ai"]["model"])
         self.assertEqual(5, cfg["ai"]["max_steps"])
         self.assertTrue(cfg["ai"]["thinking_enabled"])
         self.assertNotIn("mock", cfg["ai"])
@@ -132,7 +132,7 @@ ai:
             config_path = Path(temp_dir) / "config.yaml"
             source = {
                 "ai": {
-                    "model": "deepseek-chat",
+                    "model": "deepseek-v4-pro",
                     "max_steps": 8,
                     "thinking_enabled": False,
                 },
@@ -179,7 +179,7 @@ class ApiKeysConfigTests(unittest.TestCase):
                     "zhipu": "glm-zhipu-456",
                 },
                 "ai": {
-                    "model": "deepseek-chat",
+                    "model": "deepseek-v4-pro",
                     "max_steps": 8,
                 },
             }
@@ -204,7 +204,7 @@ class CustomPromptConfigTests(unittest.TestCase):
             config_path = Path(temp_dir) / "config.yaml"
             source = {
                 "ai": {
-                    "model": "deepseek-chat",
+                    "model": "deepseek-v4-pro",
                     "custom_prompt": "请用中文回答",
                 },
             }
@@ -219,7 +219,7 @@ class CustomPromptConfigTests(unittest.TestCase):
             config_path = Path(temp_dir) / "config.yaml"
             config_path.write_text(
                 """ai:
-  model: deepseek-chat
+  model: deepseek-v4-pro
   max_steps: 5
 """,
                 encoding="utf-8",
@@ -237,7 +237,7 @@ class CustomPromptConfigTests(unittest.TestCase):
             config_path = Path(temp_dir) / "config.yaml"
             source = {
                 "ai": {
-                    "model": "deepseek-chat",
+                    "model": "deepseek-v4-pro",
                     "custom_prompt": "my own instructions",
                 },
             }
@@ -258,7 +258,7 @@ class CustomPromptConfigTests(unittest.TestCase):
             initial = {
                 "yaml_path": "/tmp/demo.yaml",
                 "ai": {
-                    "model": "deepseek-chat",
+                    "model": "deepseek-v4-pro",
                     "max_steps": 12,
                     "thinking_enabled": True,
                     "custom_prompt": "请用中文回答",
@@ -287,7 +287,7 @@ class CustomPromptConfigTests(unittest.TestCase):
             config_path = Path(temp_dir) / "config.yaml"
             initial = {
                 "ai": {
-                    "model": "deepseek-chat",
+                    "model": "deepseek-v4-pro",
                     "custom_prompt": "my instructions",
                 },
             }

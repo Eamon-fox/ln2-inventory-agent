@@ -11,8 +11,8 @@ from urllib import request as urlrequest
 
 PROVIDER_DEFAULTS = {
     "deepseek": {
-        "model": "deepseek-chat",
-        "models": ["deepseek-chat"],
+        "model": "deepseek-v4-pro",
+        "models": ["deepseek-v4-pro", "deepseek-v4-flash"],
         "env_key": "DEEPSEEK_API_KEY",
         "display_name": "DeepSeek",
         "base_url": "https://api.deepseek.com",
@@ -592,7 +592,7 @@ class DeepSeekLLMClient(OpenAICompatibleClient):
 
     PROVIDER_NAME = "DeepSeek"
     MODEL_ENV_VAR = "DEEPSEEK_MODEL"
-    DEFAULT_MODEL = "deepseek-chat"
+    DEFAULT_MODEL = "deepseek-v4-pro"
     BASE_URL_ENV_VAR = "DEEPSEEK_BASE_URL"
     DEFAULT_BASE_URL = "https://api.deepseek.com"
     API_KEY_ENV_VARS = ("DEEPSEEK_API_KEY",)
@@ -608,10 +608,13 @@ class DeepSeekLLMClient(OpenAICompatibleClient):
             "model": self._model,
             "messages": messages,
             "stream": True,
-            "temperature": temperature,
         }
         if self._thinking_enabled:
             payload["thinking"] = {"type": "enabled"}
+            payload["reasoning_effort"] = "max"
+        else:
+            payload["thinking"] = {"type": "disabled"}
+            payload["temperature"] = temperature
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"

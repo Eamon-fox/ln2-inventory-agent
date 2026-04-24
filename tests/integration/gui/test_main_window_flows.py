@@ -258,7 +258,7 @@ def test_settings_flow_apply_and_finalize_updates_runtime_state():
         open_api_enabled=True,
         open_api_port=40123,
         ai_provider="deepseek",
-        ai_model="deepseek-chat",
+        ai_model="deepseek-v4-pro",
         ai_max_steps=9,
         ai_thinking_enabled=False,
         ai_custom_prompt="use concise style",
@@ -272,7 +272,7 @@ def test_settings_flow_apply_and_finalize_updates_runtime_state():
     assert window.gui_config["open_api"] == {"enabled": True, "port": 40123}
     assert window.gui_config["yaml_path"] == window.current_yaml_path
     assert window.ai_panel.ai_provider.value == "deepseek"
-    assert window.ai_panel.ai_model.value == "deepseek-chat"
+    assert window.ai_panel.ai_model.value == "deepseek-v4-pro"
     assert window.ai_panel.ai_steps.current == 9
     assert window.ai_panel.ai_thinking_enabled.value is False
     assert window.ai_panel.ai_custom_prompt == "use concise style"
@@ -879,7 +879,7 @@ def test_window_state_flow_restore_and_label_and_stats():
         gui_config={
             "ai": {
                 "provider": "deepseek",
-                "model": "deepseek-chat",
+                "model": "deepseek-v4-pro",
                 "max_steps": 7,
                 "thinking_enabled": False,
                 "custom_prompt": "abc",
@@ -900,7 +900,7 @@ def test_window_state_flow_restore_and_label_and_stats():
 
     window.restoreGeometry.assert_called_once_with(b"geometry")
     assert window.ai_panel.ai_provider.value == "deepseek"
-    assert window.ai_panel.ai_model.value == "deepseek-chat"
+    assert window.ai_panel.ai_model.value == "deepseek-v4-pro"
     assert window.ai_panel.ai_steps.current == 7
     assert window.ai_panel.ai_thinking_enabled.value is False
     assert window.ai_panel.ai_custom_prompt == "abc"
@@ -954,7 +954,7 @@ def test_window_state_flow_close_event_busy_and_persist():
         current_yaml_path="D:/tmp/current.yaml",
     )
     window.ai_panel.ai_provider.setText("deepseek")
-    window.ai_panel.ai_model.setText("deepseek-chat")
+    window.ai_panel.ai_model.setText("deepseek-v4-pro")
     window.ai_panel.ai_steps.setValue(11)
     window.ai_panel.ai_thinking_enabled.setChecked(True)
     window.ai_panel.ai_custom_prompt = "prompt text"
@@ -967,7 +967,7 @@ def test_window_state_flow_close_event_busy_and_persist():
     window.settings.setValue.assert_called_once_with("ui/geometry", b"geo")
     assert window.gui_config["yaml_path"] == "D:/tmp/current.yaml"
     assert window.gui_config["ai"]["provider"] == "deepseek"
-    assert window.gui_config["ai"]["model"] == "deepseek-chat"
+    assert window.gui_config["ai"]["model"] == "deepseek-v4-pro"
     assert window.gui_config["ai"]["max_steps"] == 11
     assert window.gui_config["ai"]["thinking_enabled"] is True
     assert window.gui_config["ai"]["custom_prompt"] == "prompt text"
