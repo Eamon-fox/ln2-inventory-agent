@@ -519,7 +519,7 @@ def tool_list_audit_timeline(
         start_date=start_date,
         end_date=end_date,
     )
-    return _format_tool_response_positions(response, yaml_path=yaml_path)
+    return _format_tool_response_positions(response, layout={})
 _find_consecutive_slots = _support._find_consecutive_slots
 _find_same_row_slots = _support._find_same_row_slots
 

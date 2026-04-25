@@ -30,6 +30,7 @@ _TABLE_CONFIRM_MARK = "√"
 _TABLE_DRAFT_MARK = "+"
 _TABLE_RECORD_ROLE = Qt.UserRole + 100
 _TABLE_ROW_DATA_ROLE = Qt.UserRole + 101
+_TABLE_RENDER_ROW_LIMIT = 500
 
 
 def _confirm_cell_display(slot_state, resolved_row):
@@ -100,6 +101,17 @@ def _safe_number(value):
     with suppress(TypeError, ValueError):
         return float(text)
     return None
+
+
+def _table_render_limit(self):
+    raw_limit = getattr(self, "_table_render_row_limit", _TABLE_RENDER_ROW_LIMIT)
+    if raw_limit in (None, ""):
+        return None
+    with suppress(TypeError, ValueError):
+        limit = int(raw_limit)
+        if limit > 0:
+            return limit
+    return _TABLE_RENDER_ROW_LIMIT
 
 
 def _text_sort_key(value):
@@ -404,9 +416,10 @@ def _query_current_table_rows(self, *, keyword, selected_box, selected_cell):
         sort_order=str(getattr(self, "_table_sort_order", "asc") or "asc"),
         column_types=column_types,
     )
+    render_limit = _table_render_limit(self)
     paged_rows, normalized_limit, normalized_offset = paginate_overview_table_rows(
         sorted_rows,
-        limit=None,
+        limit=render_limit,
         offset=0,
     )
 
@@ -428,6 +441,10 @@ def _query_current_table_rows(self, *, keyword, selected_box, selected_cell):
             }
         )
 
+    total_count = len(sorted_rows)
+    display_count = len(display_rows)
+    has_more = normalized_limit is not None and (normalized_offset + display_count) < total_count
+
     return {
         "ok": True,
         "result": {
@@ -435,12 +452,12 @@ def _query_current_table_rows(self, *, keyword, selected_box, selected_cell):
             "column_types": column_types,
             "rows": display_rows,
             "color_key": projection.get("color_key"),
-            "total_count": len(sorted_rows),
-            "display_count": len(display_rows),
+            "total_count": total_count,
+            "display_count": display_count,
             "matched_boxes": matched_boxes,
             "limit": normalized_limit,
             "offset": normalized_offset,
-            "has_more": False,
+            "has_more": has_more,
             "applied_filters": {
                 "keyword": str(keyword or "").strip(),
                 "box": selected_box,
@@ -539,7 +556,7 @@ def _table_query_payload(self, *, keyword, selected_box, selected_cell):
         "column_filters": dict(getattr(self, "_column_filters", {}) or {}),
         "sort_by": str(getattr(self, "_table_sort_by", "location") or "location"),
         "sort_order": str(getattr(self, "_table_sort_order", "asc") or "asc"),
-        "limit": None,
+        "limit": _table_render_limit(self),
         "offset": 0,
     }
 

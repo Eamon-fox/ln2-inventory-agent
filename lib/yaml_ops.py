@@ -687,6 +687,59 @@ def read_audit_events(yaml_path=YAML_PATH, limit=None):
     return events
 
 
+def _iter_jsonl_lines_reverse(path, chunk_size=64 * 1024):
+    """Yield non-empty JSONL lines from the end of a file without loading it all."""
+    if not os.path.exists(path):
+        return
+
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            position = handle.tell()
+            pending = b""
+
+            while position > 0:
+                read_size = min(int(chunk_size), position)
+                position -= read_size
+                handle.seek(position)
+                pending = handle.read(read_size) + pending
+                lines = pending.split(b"\n")
+                pending = lines[0]
+                for raw_line in reversed(lines[1:]):
+                    raw_line = raw_line.strip()
+                    if raw_line:
+                        yield raw_line.decode("utf-8", errors="replace")
+
+            pending = pending.strip()
+            if pending:
+                yield pending.decode("utf-8", errors="replace")
+    except Exception:
+        return
+
+
+def iter_audit_events_reverse(yaml_path=YAML_PATH):
+    """Yield audit events newest-first from the active schema path."""
+    yaml_abs = _abs_path(yaml_path)
+    yaml_abs = assert_allowed_inventory_yaml_path(yaml_abs)
+    path = get_audit_log_path(yaml_abs)
+    if not os.path.exists(path):
+        return
+
+    for line in _iter_jsonl_lines_reverse(path):
+        try:
+            event = json.loads(line)
+        except Exception:
+            continue
+        event_yaml = event.get("yaml_path") if isinstance(event, dict) else None
+        if isinstance(event_yaml, str) and event_yaml.strip():
+            try:
+                if _abs_path(event_yaml) != yaml_abs:
+                    continue
+            except Exception:
+                continue
+        yield event
+
+
 def compute_occupancy(records):
     """
     Compute occupied positions from inventory records.
@@ -817,7 +870,8 @@ def coerce_audit_seq(value):
         return None
     return seq
 
-def _next_audit_seq(log_path):
+
+def _next_audit_seq_full_scan(log_path):
     if not os.path.exists(log_path):
         return 1
 
@@ -833,14 +887,38 @@ def _next_audit_seq(log_path):
                     row = json.loads(text)
                 except Exception:
                     continue
+                if not isinstance(row, dict):
+                    continue
                 valid_count += 1
-                seq = coerce_audit_seq((row or {}).get("audit_seq"))
+                seq = coerce_audit_seq(row.get("audit_seq"))
                 if seq and seq > max_seq:
                     max_seq = seq
     except Exception:
         return 1
 
     return max(max_seq, valid_count) + 1
+
+
+def _next_audit_seq(log_path):
+    if not os.path.exists(log_path):
+        return 1
+
+    valid_event_without_seq_seen = False
+    for line in _iter_jsonl_lines_reverse(log_path):
+        try:
+            row = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(row, dict):
+            continue
+        seq = coerce_audit_seq(row.get("audit_seq"))
+        if seq is not None:
+            if valid_event_without_seq_seen:
+                return _next_audit_seq_full_scan(log_path)
+            return seq + 1
+        valid_event_without_seq_seen = True
+
+    return _next_audit_seq_full_scan(log_path)
 
 
 def _append_audit_event(yaml_path, event):

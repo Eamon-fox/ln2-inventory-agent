@@ -644,6 +644,39 @@ class OverviewTableViewTests(ManagedPathTestCase):
         finally:
             self._cleanup(tmpdir)
 
+    def test_table_view_limits_large_layout_render_rows(self):
+        layout = {
+            "rows": 10,
+            "cols": 10,
+            "box_count": 8,
+            "box_numbers": list(range(1, 9)),
+        }
+        yaml_path, tmpdir = self._seed_yaml([], meta_extra={"box_layout": layout})
+        panel = None
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            self.assertEqual(500, len(panel._table_rows))
+            self.assertEqual(500, panel.ov_table.rowCount())
+            self.assertEqual(500, self._table_row_count(panel, row_kind="empty_slot"))
+
+            response = panel._query_table_rows(keyword="", selected_box=None, selected_cell=None)
+            self.assertTrue(response["ok"])
+            result = response["result"]
+            self.assertEqual(800, result["total_count"])
+            self.assertEqual(500, result["display_count"])
+            self.assertEqual(500, result["limit"])
+            self.assertEqual(0, result["offset"])
+            self.assertTrue(result["has_more"])
+        finally:
+            if panel is not None:
+                panel.hide()
+            self._cleanup(tmpdir)
+
     def test_table_view_refresh_updates_custom_field_header_label_without_column_key_change(self):
         records = [
             {

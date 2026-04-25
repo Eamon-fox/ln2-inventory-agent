@@ -166,6 +166,49 @@ class YamlOpsSafetyTests(unittest.TestCase):
             seqs = [int(row.get("audit_seq")) for row in rows]
             self.assertEqual([1, 2, 3], seqs)
 
+    def test_audit_seq_append_uses_tail_for_large_logs(self):
+        with managed_inventory_root("ln2_audit_seq_tail_"):
+            yaml_path = _managed_yaml("seq-tail")
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+                auto_backup=False,
+            )
+
+            audit_path = Path(get_audit_log_path(str(yaml_path)))
+            rows = []
+            for seq in range(1, 10001):
+                rows.append(
+                    {
+                        "audit_seq": seq,
+                        "action": "touch",
+                        "source": "fixture",
+                        "status": "success",
+                        "timestamp": "2026-04-25T00:00:00",
+                        "yaml_path": str(yaml_path),
+                    }
+                )
+            audit_path.write_text(
+                "".join(f"{json.dumps(row, ensure_ascii=False, sort_keys=True)}\n" for row in rows),
+                encoding="utf-8",
+            )
+
+            with patch(
+                "lib.yaml_ops._next_audit_seq_full_scan",
+                side_effect=AssertionError("audit append should not scan the full log"),
+            ):
+                write_yaml(
+                    make_data([make_record(1, box=1, position=2)]),
+                    path=str(yaml_path),
+                    audit_meta={"action": "hot_append", "source": "tests"},
+                    auto_backup=False,
+                )
+
+            events = read_audit_events(str(yaml_path))
+            self.assertEqual(10001, int(events[-1].get("audit_seq")))
+            self.assertEqual("hot_append", events[-1].get("action"))
+
     def test_write_yaml_creates_backup_and_audit(self):
         with managed_inventory_root("ln2_safety_"):
             yaml_path = _managed_yaml("write-safety")

@@ -26,8 +26,8 @@ from ..validators import normalize_date_arg, parse_date, validate_box, validate_
 from ..yaml_ops import (
     coerce_audit_seq,
     compute_occupancy,
+    iter_audit_events_reverse,
     load_yaml,
-    read_audit_events,
 )
 from .. import tool_api_support as api
 
@@ -771,6 +771,31 @@ def _normalize_timeline_filter_date(name, value):
     return text, None
 
 
+def _normalize_audit_timeline_row(row):
+    if not isinstance(row, dict):
+        return None, None
+    normalized = dict(row or {})
+    if not str(normalized.get("status") or "").strip():
+        normalized["status"] = "success"
+    seq = coerce_audit_seq(normalized.get("audit_seq"))
+    if seq is not None:
+        normalized["audit_seq"] = seq
+    return normalized, seq
+
+
+def _audit_timeline_row_matches(row, *, action_norm="", status_norm="", start_norm=None, end_norm=None):
+    ts_date = str(row.get("timestamp") or "")[:10]
+    if start_norm and (not ts_date or ts_date < start_norm):
+        return False
+    if end_norm and (not ts_date or ts_date > end_norm):
+        return False
+    if action_norm and str(row.get("action") or "") != action_norm:
+        return False
+    if status_norm and str(row.get("status") or "") != status_norm:
+        return False
+    return True
+
+
 def tool_list_audit_timeline(
     yaml_path,
     limit=50,
@@ -835,13 +860,58 @@ def tool_list_audit_timeline(
     if status_norm.lower() == "all":
         status_norm = ""
 
-    data, failure = _load_supported_data(yaml_path)
-    if failure:
-        return failure
-
     yaml_abs = os.path.abspath(str(yaml_path or ""))
+    has_filter = bool(action_norm or status_norm or start_norm or end_norm)
     try:
-        audit_rows = list(read_audit_events(yaml_abs))
+        if not has_filter and limit_val is not None:
+            items = []
+            seen = 0
+            latest_seq = None
+            target_count = offset_val + limit_val
+            exhausted = True
+            for raw_row in iter_audit_events_reverse(yaml_abs):
+                normalized, seq = _normalize_audit_timeline_row(raw_row)
+                if normalized is None:
+                    continue
+                if latest_seq is None and seq is not None:
+                    latest_seq = seq
+                if seen >= offset_val and len(items) < limit_val:
+                    items.append(normalized)
+                seen += 1
+                if seen >= target_count and latest_seq is not None:
+                    exhausted = False
+                    break
+
+            total = seen if exhausted else max(int(latest_seq or 0), seen)
+            return {
+                "ok": True,
+                "result": {
+                    "items": items,
+                    "total": total,
+                    "limit": limit_val,
+                    "offset": offset_val,
+                },
+            }
+
+        filtered = []
+        previous_seq = None
+        needs_sort = False
+        for raw_row in iter_audit_events_reverse(yaml_abs):
+            normalized, seq = _normalize_audit_timeline_row(raw_row)
+            if normalized is None:
+                continue
+            if seq is not None and previous_seq is not None and seq > previous_seq:
+                needs_sort = True
+            if seq is not None:
+                previous_seq = seq
+            if _audit_timeline_row_matches(
+                normalized,
+                action_norm=action_norm,
+                status_norm=status_norm,
+                start_norm=start_norm,
+                end_norm=end_norm,
+            ):
+                filtered.append(normalized)
     except Exception as exc:
         return {
             "ok": False,
@@ -849,37 +919,8 @@ def tool_list_audit_timeline(
             "message": f"Failed to load audit timeline: {exc}",
         }
 
-    timeline_rows = []
-    for index, row in enumerate(audit_rows, start=1):
-        if not isinstance(row, dict):
-            continue
-        normalized = dict(row)
-        if not str(normalized.get("status") or "").strip():
-            normalized["status"] = "success"
-        seq = coerce_audit_seq(normalized.get("audit_seq"))
-        if seq is not None:
-            normalized["audit_seq"] = seq
-        normalized["_audit_sort_seq"] = seq if seq is not None else index
-        timeline_rows.append(normalized)
-
-    # Sort newest first by audit sequence.
-    timeline_rows.sort(key=lambda ev: int(ev.get("_audit_sort_seq", 0)), reverse=True)
-
-    filtered = []
-    for row in timeline_rows:
-        ts_date = str(row.get("timestamp") or "")[:10]
-        if start_norm and (not ts_date or ts_date < start_norm):
-            continue
-        if end_norm and (not ts_date or ts_date > end_norm):
-            continue
-        if action_norm and str(row.get("action") or "") != action_norm:
-            continue
-        if status_norm and str(row.get("status") or "") != status_norm:
-            continue
-        normalized = dict(row)
-        normalized.pop("_audit_sort_seq", None)
-        filtered.append(normalized)
-
+    if needs_sort:
+        filtered.sort(key=lambda ev: int(coerce_audit_seq(ev.get("audit_seq")) or 0), reverse=True)
     total = len(filtered)
     if limit_val is None:
         items = filtered[offset_val:]

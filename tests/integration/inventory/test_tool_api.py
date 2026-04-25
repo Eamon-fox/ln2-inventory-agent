@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
@@ -1918,6 +1919,53 @@ class ToolApiTests(ManagedPathTestCase):
             self.assertGreaterEqual(len(all_result["items"]), 55)
             all_seqs = [int(it.get("audit_seq")) for it in all_result["items"]]
             self.assertEqual(all_seqs, sorted(all_seqs, reverse=True))
+
+    def test_tool_list_audit_timeline_streams_page_without_inventory_load(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_audit_timeline_stream_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([make_record(1, box=1, position=1)]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+                auto_backup=False,
+            )
+
+            audit_path = Path(get_audit_log_path(str(yaml_path)))
+            rows = []
+            for seq in range(1, 10001):
+                rows.append(
+                    {
+                        "audit_seq": seq,
+                        "action": "touch",
+                        "source": "fixture",
+                        "status": "success",
+                        "timestamp": "2026-04-25T00:00:00",
+                        "yaml_path": str(yaml_path),
+                    }
+                )
+            audit_path.write_text(
+                "".join(f"{json.dumps(row, ensure_ascii=False, sort_keys=True)}\n" for row in rows),
+                encoding="utf-8",
+            )
+
+            with patch(
+                "lib.tool_api_impl.read_ops._load_supported_data",
+                side_effect=AssertionError("audit timeline should not load inventory YAML"),
+            ), patch(
+                "lib.tool_api_support.load_yaml",
+                side_effect=AssertionError("audit timeline wrapper should not load inventory YAML"),
+            ):
+                response = tool_list_audit_timeline(str(yaml_path), limit=5)
+
+            self.assertTrue(response["ok"])
+            result = response["result"]
+            self.assertEqual(5, result["limit"])
+            self.assertEqual(5, len(result["items"]))
+            self.assertEqual(10000, result["total"])
+            self.assertEqual(
+                [10000, 9999, 9998, 9997, 9996],
+                [int(row.get("audit_seq")) for row in result["items"]],
+            )
 
     def test_tool_list_audit_timeline_supports_action_filter(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_audit_timeline_filter_") as temp_dir:
