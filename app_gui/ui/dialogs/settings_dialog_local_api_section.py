@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
-    QLabel,
     QPlainTextEdit,
     QPushButton,
     QWidget,
@@ -17,6 +16,7 @@ from PySide6.QtWidgets import (
 from app_gui.application.open_api.contracts import LOCAL_OPEN_API_DEFAULT_PORT
 from app_gui.application.open_api.skill_template import render_local_api_skill_template
 from app_gui.i18n import get_language, tr
+from app_gui.ui.dialogs.settings_dialog_info import info_label
 
 
 def build_local_api_group(dialog, *, spin_box_cls, plain_text_edit_cls) -> QGroupBox:
@@ -26,7 +26,10 @@ def build_local_api_group(dialog, *, spin_box_cls, plain_text_edit_cls) -> QGrou
     open_api_cfg = dialog._config.get("open_api", {})
     dialog.open_api_enabled = dialog._checkbox_cls()
     dialog.open_api_enabled.setChecked(bool(open_api_cfg.get("enabled", False)))
-    local_api_layout.addRow(tr("settings.localApiEnabled"), dialog.open_api_enabled)
+    local_api_layout.addRow(
+        info_label(tr("settings.localApiEnabled"), tr("settings.localApiHint")),
+        dialog.open_api_enabled,
+    )
 
     dialog.open_api_port = spin_box_cls()
     dialog.open_api_port.setRange(1024, 65535)
@@ -39,11 +42,6 @@ def build_local_api_group(dialog, *, spin_box_cls, plain_text_edit_cls) -> QGrou
     dialog.open_api_port.setValue(open_api_port)
     local_api_layout.addRow(tr("settings.localApiPort"), dialog.open_api_port)
 
-    local_api_hint = QLabel(tr("settings.localApiHint"))
-    local_api_hint.setProperty("role", "settingsHint")
-    local_api_hint.setWordWrap(True)
-    local_api_layout.addRow("", local_api_hint)
-
     local_api_skill_row = QWidget()
     local_api_skill_row_layout = QHBoxLayout(local_api_skill_row)
     local_api_skill_row_layout.setContentsMargins(0, 0, 0, 0)
@@ -52,7 +50,10 @@ def build_local_api_group(dialog, *, spin_box_cls, plain_text_edit_cls) -> QGrou
     dialog.local_api_skill_template_edit = plain_text_edit_cls()
     dialog.local_api_skill_template_edit.setObjectName("localApiSkillTemplateEdit")
     dialog.local_api_skill_template_edit.setReadOnly(True)
+    dialog.local_api_skill_template_edit.setMinimumHeight(120)
     dialog.local_api_skill_template_edit.setMaximumHeight(160)
+    dialog.local_api_skill_template_edit.setFocusPolicy(Qt.WheelFocus)
+    dialog.local_api_skill_template_edit.verticalScrollBar().setSingleStep(18)
     dialog.local_api_skill_template_edit.setLineWrapMode(QPlainTextEdit.NoWrap)
     local_api_skill_row_layout.addWidget(dialog.local_api_skill_template_edit, 1)
 
@@ -61,12 +62,10 @@ def build_local_api_group(dialog, *, spin_box_cls, plain_text_edit_cls) -> QGrou
     dialog.local_api_skill_copy_btn.clicked.connect(dialog._copy_local_api_skill_template)
     local_api_skill_row_layout.addWidget(dialog.local_api_skill_copy_btn, 0, Qt.AlignTop)
 
-    local_api_layout.addRow(tr("settings.localApiSkillTemplate"), local_api_skill_row)
-
-    local_api_skill_hint = QLabel(tr("settings.localApiSkillTemplateHint"))
-    local_api_skill_hint.setProperty("role", "settingsHint")
-    local_api_skill_hint.setWordWrap(True)
-    local_api_layout.addRow("", local_api_skill_hint)
+    local_api_layout.addRow(
+        info_label(tr("settings.localApiSkillTemplate"), tr("settings.localApiSkillTemplateHint")),
+        local_api_skill_row,
+    )
     return local_api_group
 
 

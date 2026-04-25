@@ -20,6 +20,7 @@ from .dataset_lifecycle_use_case import (
     ManagedDatasetGateway,
 )
 from .event_bus import EventBus
+from .feedback_reporter import post_feedback
 from .settings_dialog_submission import SettingsDialogSubmission
 from .settings_dataset_use_case import SettingsDatasetUseCase
 from .settings_validation_use_case import SettingsValidationUseCase
@@ -51,6 +52,7 @@ __all__ = [
     "DatasetSwitchResult",
     "DatasetUseCase",
     "EventBus",
+    "post_feedback",
     "MigrationModeUseCase",
     "PlanExecutionUseCase",
     "SettingsDialogSubmission",

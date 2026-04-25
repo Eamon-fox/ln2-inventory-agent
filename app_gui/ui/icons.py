@@ -72,6 +72,8 @@ def get_icon(name: str, size: int = 24, color: str = None) -> QIcon:
 class Icons:
     """Lucide icon name constants."""
     PLUS = "plus"
+    HELP_CIRCLE = "circle-help"
+    COPY = "copy"
     SETTINGS = "settings"
     FILE_TEXT = "file-text"
     REFRESH_CW = "refresh-cw"

@@ -503,6 +503,67 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         self.assertTrue(api_edit.isReadOnly())
         self.assertEqual(QLineEdit.Password, api_edit.echoMode())
 
+    def test_help_dialog_feedback_support_controls_are_available(self):
+        from app_gui.main import HelpDialog
+        from app_gui.i18n import tr
+
+        dialog = HelpDialog()
+        self.addCleanup(dialog.deleteLater)
+
+        self.assertEqual(tr("settings.feedbackPlaceholder"), dialog.feedback_edit.placeholderText())
+        self.assertEqual(tr("settings.feedbackSubmit"), dialog.feedback_submit_btn.text())
+        self.assertEqual("", dialog.feedback_email_copy_btn.text())
+        self.assertEqual("", dialog.feedback_qq_copy_btn.text())
+        self.assertEqual(tr("settings.feedbackCopyEmailTooltip"), dialog.feedback_email_copy_btn.toolTip())
+        self.assertEqual(tr("settings.feedbackCopyQQTooltip"), dialog.feedback_qq_copy_btn.toolTip())
+
+        dialog._copy_feedback_email()
+        self.assertEqual("fym22@mails.tsinghua.edu.cn", QApplication.clipboard().text())
+        self.assertEqual(tr("settings.feedbackEmailCopied"), dialog.feedback_status_label.text())
+        self.assertEqual(tr("settings.feedbackCopiedTooltip"), dialog.feedback_email_copy_btn.toolTip())
+
+        dialog._copy_feedback_qq_group()
+        self.assertEqual("471436975", QApplication.clipboard().text())
+        self.assertEqual(tr("settings.feedbackQQCopied"), dialog.feedback_status_label.text())
+        self.assertEqual(tr("settings.feedbackCopiedTooltip"), dialog.feedback_qq_copy_btn.toolTip())
+
+        dialog.feedback_edit.setPlainText("")
+        dialog._submit_feedback()
+        self.assertEqual(tr("settings.feedbackEmpty"), dialog.feedback_status_label.text())
+
+    def test_settings_dialog_excludes_help_feedback_controls(self):
+        from app_gui.main import SettingsDialog
+
+        dialog = SettingsDialog(config={})
+        self.addCleanup(dialog.deleteLater)
+
+        self.assertFalse(hasattr(dialog, "feedback_edit"))
+        self.assertFalse(hasattr(dialog, "feedback_submit_btn"))
+        self.assertFalse(hasattr(dialog, "_check_update_btn"))
+
+    def test_settings_dialog_long_hints_are_inline_info_tooltips(self):
+        from app_gui.main import SettingsDialog
+        from app_gui.i18n import tr
+        from PySide6.QtWidgets import QLabel
+
+        dialog = SettingsDialog(config={})
+        self.addCleanup(dialog.deleteLater)
+
+        info_labels = dialog.findChildren(QLabel, "settingsInlineInfoLabel")
+        tooltip_sources = [label.accessibleName() for label in info_labels]
+        label_texts = [label.text() for label in dialog.findChildren(QLabel)]
+
+        self.assertNotIn(tr("settings.inventoryFileLockedHint"), label_texts)
+        self.assertNotIn(tr("settings.dataRootHint"), label_texts)
+        self.assertNotIn(tr("settings.localApiHint"), label_texts)
+        self.assertTrue(info_labels)
+        self.assertTrue(all(label.text() == "i" for label in info_labels))
+        self.assertIn(tr("settings.inventoryFileLockedHint"), tooltip_sources)
+        self.assertIn(tr("settings.dataRootHint"), tooltip_sources)
+        self.assertIn(tr("settings.localApiHint"), tooltip_sources)
+        self.assertIn(tr("settings.localApiSkillTemplateHint"), tooltip_sources)
+        self.assertIn(tr("settings.customPromptHint"), tooltip_sources)
+
     def test_custom_fields_dialog_structural_fields_use_canonical_names(self):
         from app_gui.ui.dialogs.custom_fields_dialog import CustomFieldsDialog
 
@@ -771,7 +832,10 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         self.assertIsNotNone(template_edit)
         self.assertIsNotNone(copy_button)
         self.assertTrue(template_edit.isReadOnly())
+        self.assertGreaterEqual(template_edit.minimumHeight(), 120)
         self.assertEqual(160, template_edit.maximumHeight())
+        self.assertEqual(Qt.WheelFocus, template_edit.focusPolicy())
+        self.assertGreaterEqual(template_edit.verticalScrollBar().singleStep(), 18)
         self.assertIn("name: snowfox-local-api", template_edit.toPlainText())
         self.assertIn("`case_sensitive`", template_edit.toPlainText())
         self.assertIn("`summary_only`", template_edit.toPlainText())

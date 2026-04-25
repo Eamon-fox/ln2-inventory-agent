@@ -23,8 +23,11 @@ DIALOG_FILES = [
     ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_ai_section.py",
     ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_custom_fields.py",
     ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_dataset_section.py",
+    ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_feedback_section.py",
     ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_formatters.py",
+    ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_info.py",
     ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_local_api_section.py",
+    ROOT / "app_gui" / "ui" / "dialogs" / "help_dialog.py",
     ROOT / "app_gui" / "ui" / "dialogs" / "new_dataset_dialog.py",
     ROOT / "app_gui" / "ui" / "dialogs" / "custom_fields_dialog.py",
 ]
@@ -66,6 +69,7 @@ def test_main_keeps_settings_entry_and_missing_file_hint():
     text = _source_text()
 
     assert re.search(r"settings_btn.clicked.connect", text)
+    assert re.search(r"help_btn.clicked.connect", text)
     assert "main.fileNotFound" in text
 
 
@@ -84,13 +88,16 @@ def test_main_home_top_bar_actions_are_icon_only_with_tooltips():
     assert "new_dataset_btn = QPushButton(tr(\"main.new\"))" not in text
     assert 'new_dataset_btn.setToolTip(tr("main.new"))' in text
 
-    assert "import_dataset_btn = QPushButton()" in text
-    assert "import_dataset_btn = QPushButton(tr(\"main.importExistingDataTitle\"))" not in text
-    assert 'import_dataset_btn.setToolTip(tr("main.importExistingDataTitle"))' in text
+    assert "import_dataset_btn = QPushButton()" not in text
+    assert 'import_dataset_btn.setToolTip(tr("main.importExistingDataTitle"))' not in text
 
     assert "audit_log_btn = QPushButton()" in text
     assert "audit_log_btn = QPushButton(tr(\"main.auditLog\"))" not in text
     assert 'audit_log_btn.setToolTip(tr("main.auditLog"))' in text
+
+    assert "help_btn = QPushButton()" in text
+    assert "help_btn = QPushButton(tr(\"main.help\"))" not in text
+    assert 'help_btn.setToolTip(tr("main.help"))' in text
 
     assert "settings_btn = QPushButton()" in text
     assert "settings_btn = QPushButton(tr(\"main.settings\"))" not in text

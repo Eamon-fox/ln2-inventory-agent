@@ -5,6 +5,7 @@ Use this reference when the user asks "where do I click", "how do I enable X", o
 ## Main Settings Entry
 
 - The main window toolbar gear button opens Settings.
+- The main window help button opens Help for feedback, support, about, and update checks.
 
 ## Settings > Data
 
@@ -49,6 +50,25 @@ Important boundary:
 If the user wants to add, remove, rename, reorder, or change custom field definitions, direct them here.
 
 The Agent must not pretend it can perform field management itself.
+
+## Help > Feedback & Support
+
+Use this section for:
+
+- copying the SnowFox QQ group number
+- viewing the QQ group QR code
+- submitting a short feedback message to the SnowFox website endpoint
+- finding the support email
+
+Do not ask users to paste inventory data, API keys, or managed YAML content into feedback.
+
+## Help > About
+
+Use this section for:
+
+- checking the SnowFox version
+- opening the download page
+- checking for updates
 
 ## Box/Layout Management
 

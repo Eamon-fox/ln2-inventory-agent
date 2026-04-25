@@ -23,6 +23,8 @@ Use this map only to keep the bundled skill references synchronized during devel
 - `app_gui/main.py`
 - `app_gui/main_window_flows.py`
 - `app_gui/ui/dialogs/settings_dialog.py`
+- `app_gui/ui/dialogs/help_dialog.py`
+- `app_gui/ui/dialogs/settings_dialog_feedback_section.py`
 - `app_gui/application/open_api/service.py`
 
 ## Agent Rules

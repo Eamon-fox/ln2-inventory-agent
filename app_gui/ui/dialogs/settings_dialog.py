@@ -95,6 +95,13 @@ class _NoWheelPlainTextEdit(QPlainTextEdit):
         event.ignore()
 
 
+class _ScrollablePlainTextEdit(QPlainTextEdit):
+    """Read-only template viewer that keeps wheel scrolling local."""
+
+    def wheelEvent(self, event):
+        super().wheelEvent(event)
+
+
 class _NoPasteLineEdit(QLineEdit):
     """QLineEdit that blocks paste paths for destructive confirmations."""
 
@@ -170,7 +177,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(tr("settings.title"))
         self.setMinimumWidth(750)
-        self.setMinimumHeight(750)
+        self.setMinimumHeight(650)
         self._config = config or {}
         self._on_create_new_dataset = on_create_new_dataset
         self._on_rename_dataset = on_rename_dataset
@@ -236,7 +243,7 @@ class SettingsDialog(QDialog):
             _local_api_section.build_local_api_group(
                 self,
                 spin_box_cls=_NoWheelSpinBox,
-                plain_text_edit_cls=_NoWheelPlainTextEdit,
+                plain_text_edit_cls=_ScrollablePlainTextEdit,
             )
         )
         content_layout.addWidget(
@@ -245,7 +252,6 @@ class SettingsDialog(QDialog):
                 combo_box_cls=_NoWheelComboBox,
             )
         )
-        content_layout.addWidget(_about_section.build_about_group(self))
 
         content_layout.addStretch()
 
@@ -420,13 +426,6 @@ class SettingsDialog(QDialog):
             dataset_name,
             message_box_cls=QMessageBox,
         )
-
-    def _on_check_update(self):
-        _about_section.start_check_update(self)
-
-    @Slot(str, str, str)
-    def _on_check_update_result(self, latest_tag, info, download_url):
-        _about_section.handle_check_update_result(self, latest_tag, info, download_url)
 
     @staticmethod
     def _format_removed_field_preview_value(value, *, max_length=80):

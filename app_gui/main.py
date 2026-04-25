@@ -77,6 +77,7 @@ from app_gui.ui.operations_panel import OperationsPanel
 from app_gui.ui.ai_panel import AIPanel
 from app_gui.ui.dialogs import (
     SettingsDialog,
+    HelpDialog,
     NewDatasetDialog,
     CustomFieldsDialog,
 )
@@ -465,16 +466,6 @@ class MainWindow(QMainWindow):
         new_dataset_btn.clicked.connect(self.on_create_new_dataset)
         top.addWidget(new_dataset_btn)
 
-        import_dataset_btn = QPushButton()
-        import_dataset_btn.setObjectName("mainToolbarIconBtn")
-        import_dataset_btn.setIcon(get_icon(Icons.FOLDER_OPEN))
-        import_dataset_btn.setIconSize(QSize(16, 16))
-        import_dataset_btn.setFixedSize(28, 28)
-        import_dataset_btn.setToolTip(tr("main.importExistingDataTitle"))
-        import_dataset_btn.setAccessibleName(tr("main.importExistingDataTitle"))
-        import_dataset_btn.clicked.connect(self.on_import_existing_data)
-        top.addWidget(import_dataset_btn)
-
         audit_log_btn = QPushButton()
         audit_log_btn.setObjectName("mainToolbarIconBtn")
         audit_log_btn.setIcon(get_icon(Icons.FILE_TEXT))
@@ -484,6 +475,16 @@ class MainWindow(QMainWindow):
         audit_log_btn.setAccessibleName(tr("main.auditLog"))
         audit_log_btn.clicked.connect(self.on_open_audit_log)
         top.addWidget(audit_log_btn)
+
+        help_btn = QPushButton()
+        help_btn.setObjectName("mainToolbarIconBtn")
+        help_btn.setIcon(get_icon(Icons.HELP_CIRCLE))
+        help_btn.setIconSize(QSize(16, 16))
+        help_btn.setFixedSize(28, 28)
+        help_btn.setToolTip(tr("main.help"))
+        help_btn.setAccessibleName(tr("main.help"))
+        help_btn.clicked.connect(self.on_open_help)
+        top.addWidget(help_btn)
 
         settings_btn = QPushButton()
         settings_btn.setObjectName("mainToolbarIconBtn")
@@ -936,6 +937,16 @@ class MainWindow(QMainWindow):
         self._settings_flow.apply_dialog_values(submission)
         self._settings_flow.finalize_after_settings()
         self._refresh_home_dataset_choices(selected_yaml=self.current_yaml_path)
+
+    def on_open_help(self):
+        dialog = HelpDialog(
+            self,
+            app_version=APP_VERSION,
+            app_release_url=APP_RELEASE_URL,
+            github_api_latest=UPDATE_CHECK_URL,
+            root_dir=ROOT,
+        )
+        dialog.exec()
 
     def _on_settings_data_changed(self, *, yaml_path=None, meta=None):
         self._settings_flow.handle_data_changed(yaml_path=yaml_path, meta=meta)

@@ -18,6 +18,7 @@ from app_gui.application.ai_provider_catalog import (
 )
 from app_gui.gui_config import DEFAULT_MAX_STEPS, MAX_AGENT_STEPS
 from app_gui.i18n import tr
+from app_gui.ui.dialogs.settings_dialog_info import info_label
 
 
 def build_ai_group(dialog, *, combo_box_cls, spin_box_cls, text_edit_cls) -> QGroupBox:
@@ -84,12 +85,10 @@ def build_ai_group(dialog, *, combo_box_cls, spin_box_cls, text_edit_cls) -> QGr
     dialog.ai_custom_prompt.setPlaceholderText(tr("settings.customPromptPlaceholder"))
     dialog.ai_custom_prompt.setPlainText(ai_advanced.get("custom_prompt", ""))
     dialog.ai_custom_prompt.setMaximumHeight(100)
-    ai_layout.addRow(tr("settings.customPrompt"), dialog.ai_custom_prompt)
-
-    custom_prompt_hint = QLabel(tr("settings.customPromptHint"))
-    custom_prompt_hint.setProperty("role", "settingsHint")
-    custom_prompt_hint.setWordWrap(True)
-    ai_layout.addRow("", custom_prompt_hint)
+    ai_layout.addRow(
+        info_label(tr("settings.customPrompt"), tr("settings.customPromptHint")),
+        dialog.ai_custom_prompt,
+    )
 
     return ai_group
 

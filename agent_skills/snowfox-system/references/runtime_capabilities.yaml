@@ -59,13 +59,20 @@ settings:
       change_language: 'tr("settings.language")'
       change_theme: 'tr("settings.theme")'
       change_ui_scale: 'tr("settings.uiScale")'
-  about:
-    path: "Settings > About"
-    section_ui_marker: 'QGroupBox(tr("settings.about"))'
-    actions:
-      - check_for_updates
-    ui_markers:
-      check_for_updates: 'QPushButton(tr("settings.checkUpdate"))'
+
+help:
+  path: "Help"
+  section_ui_marker: 'self.setWindowTitle(tr("help.title"))'
+  actions:
+    - copy_support_email
+    - copy_qq_group
+    - submit_feedback
+    - check_for_updates
+  ui_markers:
+    copy_support_email: 'feedbackEmailCopyButton'
+    copy_qq_group: 'feedbackQqCopyButton'
+    submit_feedback: 'QPushButton(tr("settings.feedbackSubmit"))'
+    check_for_updates: 'QPushButton(tr("settings.checkUpdate"))'
 
 manage_boxes:
   entry_path: "Settings > Data > Manage Boxes"

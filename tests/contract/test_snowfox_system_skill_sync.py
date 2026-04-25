@@ -26,13 +26,27 @@ SETTINGS_DIALOG_SECTION_FILES = [
     ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_custom_fields.py",
     ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_dataset_section.py",
     ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_formatters.py",
+    ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_info.py",
     ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_local_api_section.py",
+]
+HELP_DIALOG_SECTION_FILES = [
+    ROOT / "app_gui" / "ui" / "dialogs" / "help_dialog.py",
+    ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_about_section.py",
+    ROOT / "app_gui" / "ui" / "dialogs" / "settings_dialog_feedback_section.py",
 ]
 
 
 def _combined_settings_dialog_source() -> str:
     parts = []
     for path in SETTINGS_DIALOG_SECTION_FILES:
+        if path.exists():
+            parts.append(path.read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
+
+def _combined_help_dialog_source() -> str:
+    parts = []
+    for path in HELP_DIALOG_SECTION_FILES:
         if path.exists():
             parts.append(path.read_text(encoding="utf-8"))
     return "\n".join(parts)
@@ -82,6 +96,7 @@ class SnowfoxSystemSkillSyncTests(unittest.TestCase):
     def test_runtime_capability_catalog_exists_and_is_structured(self):
         catalog = dict(self.runtime_capabilities or {})
         self.assertIn("settings", catalog)
+        self.assertIn("help", catalog)
         self.assertIn("manage_boxes", catalog)
         self.assertIn("position_indexing", catalog)
         self.assertIn("local_open_api", catalog)
@@ -230,6 +245,15 @@ class SnowfoxSystemSkillSyncTests(unittest.TestCase):
 
         self.assertIn("Settings > Manage Fields", self.user_workflows)
 
+    def test_user_workflows_track_help_sections(self):
+        source = _combined_help_dialog_source()
+        help_catalog = dict((self.runtime_capabilities or {}).get("help") or {})
+
+        self.assertIn("Help", str(help_catalog.get("path") or ""))
+        self.assertIn(str(help_catalog.get("section_ui_marker") or ""), source)
+        self.assertIn("Help > Feedback & Support", self.user_workflows)
+        self.assertIn("Help > About", self.user_workflows)
+
     def test_user_workflows_mentions_manage_boxes_indexing_path(self):
         settings_source = _combined_settings_dialog_source()
         manage_boxes_source = MANAGE_BOXES_DIALOG.read_text(encoding="utf-8")
@@ -296,7 +320,7 @@ class SnowfoxSystemSkillSyncTests(unittest.TestCase):
     def test_runtime_capability_catalog_tracks_settings_ai_local_api_and_preferences(self):
         source = _combined_settings_dialog_source()
         settings_catalog = dict((self.runtime_capabilities or {}).get("settings") or {})
-        for section_id in ("ai", "local_api", "preferences", "about"):
+        for section_id in ("ai", "local_api", "preferences"):
             with self.subTest(section=section_id):
                 section = dict(settings_catalog.get(section_id) or {})
                 actions = list(section.get("actions") or [])
@@ -305,6 +329,16 @@ class SnowfoxSystemSkillSyncTests(unittest.TestCase):
                 for action_id, marker in ui_markers.items():
                     with self.subTest(action=action_id):
                         self.assertIn(marker, source)
+
+    def test_runtime_capability_catalog_tracks_help_surface(self):
+        source = _combined_help_dialog_source()
+        help_catalog = dict((self.runtime_capabilities or {}).get("help") or {})
+        actions = list(help_catalog.get("actions") or [])
+        ui_markers = dict(help_catalog.get("ui_markers") or {})
+        self.assertEqual(actions, list(ui_markers.keys()))
+        for action_id, marker in ui_markers.items():
+            with self.subTest(action=action_id):
+                self.assertIn(marker, source)
 
     def test_runtime_capability_catalog_tracks_local_open_api_surface(self):
         catalog = dict((self.runtime_capabilities or {}).get("local_open_api") or {})
@@ -338,6 +372,9 @@ class SnowfoxSystemSkillSyncTests(unittest.TestCase):
                 "local_api_cannot_execute_write_tools",
                 "local_api_cannot_expose_agent_runtime",
                 "migrate_write_scope_only_for_agent_file_tools",
+                "agent_shell_tool_is_single_entry",
+                "agent_shell_workdir_is_session_scoped",
+                "agent_shell_workdir_must_stay_repo_relative",
             ],
             rules,
         )

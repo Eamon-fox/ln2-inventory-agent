@@ -20,6 +20,7 @@ from app_gui.ui.dialogs.common import (
     create_wrapping_label,
     show_warning_message,
 )
+from app_gui.ui.dialogs.settings_dialog_info import info_label
 from app_gui.ui.icons import Icons, get_icon
 
 
@@ -40,7 +41,10 @@ def build_dataset_group(dialog) -> QGroupBox:
     dialog.yaml_new_btn.clicked.connect(dialog._emit_create_new_dataset_request)
     yaml_row.addWidget(dialog.yaml_edit, 1)
     yaml_row.addWidget(dialog.yaml_new_btn)
-    data_layout.addRow(tr("settings.inventoryFile"), yaml_row)
+    data_layout.addRow(
+        info_label(tr("settings.inventoryFile"), tr("settings.inventoryFileLockedHint")),
+        yaml_row,
+    )
 
     data_root_row = QHBoxLayout()
     dialog.data_root_edit = QLineEdit(dialog._config.get("data_root", ""))
@@ -50,7 +54,10 @@ def build_dataset_group(dialog) -> QGroupBox:
     dialog.data_root_change_btn.setEnabled(callable(dialog._on_change_data_root))
     data_root_row.addWidget(dialog.data_root_edit, 1)
     data_root_row.addWidget(dialog.data_root_change_btn)
-    data_layout.addRow(tr("settings.dataRoot"), data_root_row)
+    data_layout.addRow(
+        info_label(tr("settings.dataRoot"), tr("settings.dataRootHint")),
+        data_root_row,
+    )
 
     dialog.dataset_switch_combo = None
     dialog.dataset_rename_btn = None
@@ -69,16 +76,6 @@ def build_dataset_group(dialog) -> QGroupBox:
     switch_row.addWidget(dialog.dataset_delete_btn)
     data_layout.addRow(tr("settings.datasetSwitch"), switch_row)
     dialog._refresh_dataset_choices(selected_yaml=dialog.yaml_edit.text().strip())
-
-    lock_hint = QLabel(tr("settings.inventoryFileLockedHint"))
-    lock_hint.setProperty("role", "settingsHint")
-    lock_hint.setWordWrap(True)
-    data_layout.addRow("", lock_hint)
-
-    data_root_hint = QLabel(tr("settings.dataRootHint"))
-    data_root_hint.setProperty("role", "settingsHint")
-    data_root_hint.setWordWrap(True)
-    data_layout.addRow("", data_root_hint)
 
     tool_row = QHBoxLayout()
     cf_btn = QPushButton(tr("main.manageCustomFields"))
