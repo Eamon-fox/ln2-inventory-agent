@@ -145,6 +145,67 @@ def test_start_automatic_update_macos_manual_path_uses_macos_message():
     assert "Privacy & Security" in body or "隐私与安全性" in body
 
 
+def test_start_automatic_update_reports_default_source_before_downloader_starts():
+    flow = _make_flow()
+
+    release_info = {
+        "platform_key": "windows",
+        "platform_name": "Windows",
+        "download_url": "https://oss.example.invalid/SnowFox-Setup-1.1.0.exe",
+        "auto_update": True,
+    }
+
+    with patch(
+        "app_gui.main_window_flows.resolve_platform_release_info",
+        return_value=release_info,
+    ), patch(
+        "app_gui.main_window_flows.report_update_get"
+    ) as mock_report, patch(
+        "app_gui.auto_updater.AutoUpdater"
+    ) as mock_updater_cls:
+        mock_updater_cls.return_value.start_update = MagicMock(
+            side_effect=lambda: mock_report.assert_called_once_with(
+                "v1.1.0",
+                "auto_update_start",
+            )
+        )
+
+        flow.start_automatic_update(
+            "v1.1.0",
+            "notes",
+            "https://oss.example.invalid/SnowFox-Setup-1.1.0.exe",
+        )
+
+    assert mock_updater_cls.call_args.kwargs["download_url"] == release_info["download_url"]
+
+
+def test_start_automatic_update_reports_manual_source_when_requested():
+    flow = _make_flow()
+
+    release_info = {
+        "platform_key": "windows",
+        "platform_name": "Windows",
+        "download_url": "https://oss.example.invalid/SnowFox-Setup-1.1.0.exe",
+        "auto_update": True,
+    }
+
+    with patch(
+        "app_gui.main_window_flows.resolve_platform_release_info",
+        return_value=release_info,
+    ), patch(
+        "app_gui.main_window_flows.report_update_get"
+    ) as mock_report, patch("app_gui.auto_updater.AutoUpdater") as mock_updater_cls:
+        mock_updater_cls.return_value.start_update = MagicMock()
+        flow.start_automatic_update(
+            "1.1.0",
+            "notes",
+            "https://oss.example.invalid/SnowFox-Setup-1.1.0.exe",
+            source="manual_update_start",
+        )
+
+    mock_report.assert_called_once_with("1.1.0", "manual_update_start")
+
+
 def test_macos_post_install_message_promises_auto_quit_and_relaunch():
     """The macOS post-install message must tell the user the old window
     will close itself and the new version will launch automatically."""

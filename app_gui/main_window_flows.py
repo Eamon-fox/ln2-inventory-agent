@@ -15,6 +15,7 @@ from app_gui.application.ai_provider_catalog import (
     normalize_ai_provider,
 )
 from app_gui.application.manage_boxes_flow import ManageBoxesFlow as _ManageBoxesFlowImpl
+from app_gui.application.update_stats import report_update_get
 from app_gui.gui_config import DEFAULT_MAX_STEPS, save_gui_config
 from app_gui.i18n import t, tr
 from app_gui.ui.dialogs.common import (
@@ -224,7 +225,13 @@ class StartupFlow:
         box.exec()
         return box.clickedButton() is continue_btn
 
-    def start_automatic_update(self, latest_tag, release_notes, download_url=""):
+    def start_automatic_update(
+        self,
+        latest_tag,
+        release_notes,
+        download_url="",
+        source="auto_update_start",
+    ):
         """Run automatic update with progress dialog."""
         release_info = resolve_platform_release_info({"download_url": download_url})
         package_url = str(release_info.get("download_url", "")).strip()
@@ -266,6 +273,8 @@ class StartupFlow:
                 QMessageBox.Warning,
             )
             return
+
+        report_update_get(latest_tag, source)
 
         from PySide6.QtCore import Qt, QObject, Signal
         from PySide6.QtWidgets import QApplication, QProgressDialog

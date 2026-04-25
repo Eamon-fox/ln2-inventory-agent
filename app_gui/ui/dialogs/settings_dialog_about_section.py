@@ -162,7 +162,12 @@ def handle_check_update_result(dialog, latest_tag, info, download_url) -> None:
             main_window = dialog.parent()
             if hasattr(main_window, "_startup_flow"):
                 dialog.close()
-                main_window._startup_flow.start_automatic_update(latest_tag, info, download_url)
+                main_window._startup_flow.start_automatic_update(
+                    latest_tag,
+                    info,
+                    download_url,
+                    source="manual_update_start",
+                )
         return
 
     show_info_message(
