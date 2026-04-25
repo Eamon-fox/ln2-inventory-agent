@@ -22,7 +22,9 @@ from app_gui.single_instance import SingleInstanceLock
 from app_gui.tool_bridge import GuiToolBridge
 from app_gui.agent_session import AgentSessionService
 from app_gui.application import (
+    apply_qt_scale_environment,
     BoxLayoutMutationUseCase,
+    coerce_ui_scale,
     DataRootUseCase,
     DatasetLifecycleUseCase,
     DatasetUseCase,
@@ -102,13 +104,7 @@ _SETTINGS_EXPORTS = (PROVIDER_DEFAULTS,)
 
 def _coerce_ui_scale(value, default=1.0) -> float:
     """Parse UI scale as positive float with a safe fallback."""
-    try:
-        parsed = float(value)
-    except Exception:
-        return float(default)
-    if parsed <= 0:
-        return float(default)
-    return parsed
+    return coerce_ui_scale(value, default=default)
 
 
 def _detect_primary_screen_pixels_windows():
@@ -1231,12 +1227,8 @@ def main():
     )
     gui_config["ui_scale"] = ui_scale
 
-    # Set scale factor BEFORE creating QApplication (Qt 6 method)
-    if ui_scale != 1.0:
-        os.environ["QT_SCALE_FACTOR"] = str(ui_scale)
-        # Also set Qt 6 specific environment variables
-        os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
-        os.environ["QT_SCALE_FACTOR_ROUNDING_POLICY"] = "PassThrough"
+    # Set scale factor BEFORE creating QApplication (Qt 6 method).
+    apply_qt_scale_environment(ui_scale)
 
     # Enable high DPI scaling for Qt 6
     from PySide6.QtCore import Qt
@@ -1282,6 +1274,7 @@ def main():
         apply_dark_theme(app)
 
     window = MainWindow()
+    window._release_single_instance_lock = instance_lock.release
     window.show()
     try:
         exit_code = app.exec()

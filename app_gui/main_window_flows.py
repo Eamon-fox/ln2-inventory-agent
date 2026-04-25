@@ -16,13 +16,13 @@ from app_gui.application.ai_provider_catalog import (
 )
 from app_gui.application.manage_boxes_flow import ManageBoxesFlow as _ManageBoxesFlowImpl
 from app_gui.application.update_stats import report_update_get
+from app_gui.application.ui_scale_env import build_qt_scale_environment
 from app_gui.gui_config import DEFAULT_MAX_STEPS, save_gui_config
 from app_gui.i18n import t, tr
 from app_gui.ui.dialogs.common import (
     configure_dialog,
     create_message_box,
     create_wrapping_label,
-    show_info_message,
     show_warning_message,
 )
 from app_gui.ui.dialogs.manage_boxes_dialog import ManageBoxesDialog
@@ -519,11 +519,7 @@ class SettingsFlow:
         new_scale = _submission_value(values, "ui_scale", 1.0)
         if new_scale != window.gui_config.get("ui_scale"):
             window.gui_config["ui_scale"] = new_scale
-            show_info_message(
-                window,
-                title=tr("common.info"),
-                text=tr("main.scaleChangedManualRestart"),
-            )
+            self.ask_restart(tr("main.scaleChangedRestart"))
 
         window.gui_config["ai"] = {
             "provider": normalize_ai_provider(_submission_value(values, "ai_provider")),
@@ -612,12 +608,16 @@ class SettingsFlow:
     def restart_app(self):
         window = self._window
         save_gui_config(window.gui_config)
+        restart_env = build_qt_scale_environment(window.gui_config.get("ui_scale", 1.0))
+        release_lock = getattr(window, "_release_single_instance_lock", None)
+        if callable(release_lock):
+            release_lock()
 
         def delayed_restart():
             if getattr(sys, "frozen", False):
-                subprocess.Popen([sys.executable] + sys.argv[1:])
+                subprocess.Popen([sys.executable] + sys.argv[1:], env=restart_env)
             else:
-                subprocess.Popen([sys.executable] + sys.argv)
+                subprocess.Popen([sys.executable] + sys.argv, env=restart_env)
 
         QTimer.singleShot(100, delayed_restart)
         QTimer.singleShot(150, QApplication.quit)

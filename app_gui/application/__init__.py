@@ -24,6 +24,11 @@ from .feedback_reporter import post_feedback
 from .settings_dialog_submission import SettingsDialogSubmission
 from .settings_dataset_use_case import SettingsDatasetUseCase
 from .settings_validation_use_case import SettingsValidationUseCase
+from .ui_scale_env import (
+    apply_qt_scale_environment,
+    build_qt_scale_environment,
+    coerce_ui_scale,
+)
 from .use_cases import (
     PlanRunResult,
     PlanRunUseCase,
@@ -58,4 +63,7 @@ __all__ = [
     "SettingsDialogSubmission",
     "SettingsDatasetUseCase",
     "SettingsValidationUseCase",
+    "apply_qt_scale_environment",
+    "build_qt_scale_environment",
+    "coerce_ui_scale",
 ]

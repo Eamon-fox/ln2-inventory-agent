@@ -111,7 +111,7 @@
     "fileCreated": "已新建数据集：{path}",
     "languageChangedRestart": "语言已更改，是否立即重启生效？",
     "themeChangedRestart": "主题已更改，是否立即重启生效？",
-    "scaleChangedManualRestart": "界面缩放已更改。请手动关闭并重新启动应用以生效。",
+    "scaleChangedRestart": "界面缩放已更改，是否立即重启生效？",
     "localApiStarted": "本地 API 已监听 127.0.0.1:{port}。",
     "localApiStopped": "本地 API 已停止。",
     "localApiStartFailed": "启动本地 API 失败：{error}",

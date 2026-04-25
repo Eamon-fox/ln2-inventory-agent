@@ -285,6 +285,64 @@ def test_settings_flow_apply_and_finalize_updates_runtime_state():
     save_mock.assert_called_once_with(window.gui_config)
 
 
+def test_settings_flow_ui_scale_change_requests_restart():
+    window, _status_message = _build_settings_window("/tmp/missing-inventory.yaml")
+    flow = SettingsFlow(window, normalize_yaml_path=lambda x: str(x or "").strip())
+    values = SimpleNamespace(
+        api_keys={},
+        language="zh-CN",
+        theme="dark",
+        ui_scale=1.25,
+        open_api_enabled=False,
+        open_api_port=37666,
+        ai_provider="deepseek",
+        ai_model="deepseek-v4-flash",
+        ai_max_steps=8,
+        ai_thinking_enabled=True,
+        ai_custom_prompt="",
+    )
+
+    with (
+        patch("app_gui.main_window_flows.tr", side_effect=lambda key, **_kwargs: key) as tr_mock,
+        patch.object(flow, "ask_restart") as restart_mock,
+    ):
+        flow.apply_dialog_values(values)
+
+    assert window.gui_config["ui_scale"] == 1.25
+    tr_mock.assert_any_call("main.scaleChangedRestart")
+    restart_mock.assert_called_once_with("main.scaleChangedRestart")
+
+
+def test_restart_app_releases_lock_before_starting_new_process_with_scale_env():
+    window, _status_message = _build_settings_window("/tmp/missing-inventory.yaml")
+    window.gui_config["ui_scale"] = 1.25
+    events = []
+    window._release_single_instance_lock = MagicMock(side_effect=lambda: events.append("release"))
+    flow = SettingsFlow(window, normalize_yaml_path=lambda x: str(x or "").strip())
+
+    def _run_timer(_delay, callback):
+        callback()
+
+    def _record_popen(_args, **kwargs):
+        events.append(("popen", kwargs.get("env")))
+        return MagicMock()
+
+    with (
+        patch("app_gui.main_window_flows.save_gui_config"),
+        patch("app_gui.main_window_flows.QTimer.singleShot", side_effect=_run_timer),
+        patch("app_gui.main_window_flows.subprocess.Popen", side_effect=_record_popen),
+        patch("app_gui.main_window_flows.QApplication.quit", side_effect=lambda: events.append("quit")),
+    ):
+        flow.restart_app()
+
+    assert events[0] == "release"
+    assert events[1][0] == "popen"
+    assert events[1][1]["QT_SCALE_FACTOR"] == "1.25"
+    assert events[1][1]["QT_ENABLE_HIGHDPI_SCALING"] == "1"
+    assert events[1][1]["QT_SCALE_FACTOR_ROUNDING_POLICY"] == "PassThrough"
+    assert events[2] == "quit"
+
+
 def test_settings_flow_data_change_ignores_other_dataset():
     window, _status_message = _build_settings_window("D:/tmp/current.yaml")
     flow = SettingsFlow(window, normalize_yaml_path=lambda x: os.path.abspath(str(x or "")))

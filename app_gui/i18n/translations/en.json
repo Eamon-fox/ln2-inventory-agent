@@ -111,7 +111,7 @@
     "fileCreated": "Created new dataset: {path}",
     "languageChangedRestart": "Language changed. Restart now to apply?",
     "themeChangedRestart": "Theme changed. Restart now to apply?",
-    "scaleChangedManualRestart": "UI scale changed. Please manually close and restart the application to apply.",
+    "scaleChangedRestart": "UI scale changed. Restart now to apply?",
     "localApiStarted": "Local API listening on 127.0.0.1:{port}.",
     "localApiStopped": "Local API stopped.",
     "localApiStartFailed": "Failed to start local API: {error}",
