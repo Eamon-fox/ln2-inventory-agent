@@ -4,6 +4,7 @@ from contextlib import suppress
 
 from PySide6.QtCore import QDate, QSize, Qt
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QDateEdit,
     QDoubleSpinBox,
@@ -77,6 +78,13 @@ def _setup_table(self, table, headers, sortable=True):
         mode = QHeaderView.Stretch if idx == len(headers) - 1 else QHeaderView.ResizeToContents
         header.setSectionResizeMode(idx, mode)
     table.setSortingEnabled(bool(sortable))
+
+
+def _configure_precise_table_scroll(table, *, vertical_step=12, horizontal_step=16):
+    table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+    table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+    table.verticalScrollBar().setSingleStep(int(vertical_step))
+    table.horizontalScrollBar().setSingleStep(int(horizontal_step))
 
 def _make_readonly_field(self):
     label = QLabel("-")
@@ -726,6 +734,7 @@ def _build_plan_tab(self):
     self.plan_table = QTableWidget()
     self.plan_table.setObjectName("operationsPlanTable")
     self.plan_table.setMouseTracking(True)
+    _configure_precise_table_scroll(self.plan_table)
     _setup_table(
         self,
         self.plan_table,

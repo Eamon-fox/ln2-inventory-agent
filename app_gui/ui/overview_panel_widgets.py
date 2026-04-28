@@ -155,6 +155,9 @@ class _FilterableHeaderView(QHeaderView):
     """Custom header view with filter icons in each column."""
 
     filterClicked = Signal(int, str)  # column_index, column_name
+    _FILTER_ICON_SIZE = 14
+    _FILTER_ICON_MARGIN = 6
+    _RESIZE_GRIP_MARGIN = 6
 
     def __init__(self, orientation, parent=None):
         super().__init__(orientation, parent)
@@ -162,6 +165,36 @@ class _FilterableHeaderView(QHeaderView):
         self._hover_section = -1
         self.setMouseTracking(True)
         self.setSectionsClickable(True)
+
+    def _filter_icon_rect(self, logical_index):
+        section_left = self.sectionViewportPosition(logical_index)
+        section_width = self.sectionSize(logical_index)
+        if logical_index < 0 or section_left < 0 or section_width <= 0:
+            return QRect()
+
+        section_right = section_left + section_width - 1
+        icon_x = section_right - self._FILTER_ICON_SIZE - self._FILTER_ICON_MARGIN
+        icon_y = self.height() // 2 - self._FILTER_ICON_SIZE // 2
+        return QRect(icon_x, icon_y, self._FILTER_ICON_SIZE, self._FILTER_ICON_SIZE)
+
+    def _is_resize_handle_pos(self, pos, logical_index):
+        section_left = self.sectionViewportPosition(logical_index)
+        section_width = self.sectionSize(logical_index)
+        if logical_index < 0 or section_left < 0 or section_width <= 0:
+            return False
+
+        section_right = section_left + section_width - 1
+        x = pos.x()
+        return (
+            abs(x - section_left) <= self._RESIZE_GRIP_MARGIN
+            or abs(x - section_right) <= self._RESIZE_GRIP_MARGIN
+        )
+
+    def _event_pos(self, event):
+        position = getattr(event, "position", None)
+        if callable(position):
+            return position().toPoint()
+        return event.pos()
 
     def set_column_filtered(self, column_index, filtered):
         """Mark a column as filtered or not filtered."""
@@ -179,12 +212,9 @@ class _FilterableHeaderView(QHeaderView):
         if str(column_name or "") == "__confirm__":
             return
 
-        # Draw filter icon on the right side of the header
-        icon_size = 14
-        icon_margin = 6
-        icon_x = rect.right() - icon_size - icon_margin
-        icon_y = rect.center().y() - icon_size // 2
-        icon_rect = QRect(icon_x, icon_y, icon_size, icon_size)
+        # Draw filter icon on the right side of the header, leaving the
+        # section edge to Qt's native resize handle.
+        icon_rect = self._filter_icon_rect(logicalIndex)
 
         # Determine icon color based on filter state
         is_filtered = logicalIndex in self._filtered_columns
@@ -198,12 +228,13 @@ class _FilterableHeaderView(QHeaderView):
             icon_color = resolve_theme_token("text-muted", fallback="#9ca3af")
 
         # Draw filter icon
-        icon = get_icon(Icons.FILTER, size=icon_size, color=icon_color)
+        icon = get_icon(Icons.FILTER, size=self._FILTER_ICON_SIZE, color=icon_color)
         icon.paint(painter, icon_rect)
 
     def mouseMoveEvent(self, event):
         """Track hover state for visual feedback."""
-        logical_index = self.logicalIndexAt(event.pos())
+        event_pos = self._event_pos(event)
+        logical_index = self.logicalIndexAt(event_pos)
         if logical_index != self._hover_section:
             self._hover_section = logical_index
             self.viewport().update()
@@ -219,19 +250,19 @@ class _FilterableHeaderView(QHeaderView):
     def mousePressEvent(self, event):
         """Handle clicks on filter icons."""
         if event.button() == Qt.LeftButton:
-            logical_index = self.logicalIndexAt(event.pos())
+            event_pos = self._event_pos(event)
+            logical_index = self.logicalIndexAt(event_pos)
             if logical_index >= 0:
                 column_name = self.model().headerData(logical_index, Qt.Horizontal, Qt.UserRole)
                 if str(column_name or "") == "__confirm__":
                     return
-                # Check if click is on the filter icon area
-                section_rect = self.sectionViewportPosition(logical_index)
-                section_width = self.sectionSize(logical_index)
-                icon_size = 14
-                icon_margin = 6
-                icon_x_start = section_rect + section_width - icon_size - icon_margin * 2
+                if self._is_resize_handle_pos(event_pos, logical_index):
+                    super().mousePressEvent(event)
+                    return
 
-                if event.pos().x() >= icon_x_start:
+                # Only the painted filter icon opens the column filter; the
+                # surrounding header area keeps sort/resize interactions.
+                if self._filter_icon_rect(logical_index).contains(event_pos):
                     # Click on filter icon
                     column_name = self.model().headerData(logical_index, Qt.Horizontal, Qt.UserRole)
                     if column_name in (None, ""):

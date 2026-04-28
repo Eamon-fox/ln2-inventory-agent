@@ -580,6 +580,39 @@ class OverviewTableViewTests(ManagedPathTestCase):
         QTest.mouseClick(header.viewport(), Qt.LeftButton, Qt.NoModifier, click_point)
         QTest.qWait(20)
 
+    def test_filterable_header_click_target_excludes_resize_handle(self):
+        from PySide6.QtWidgets import QTableWidget, QTableWidgetItem
+        from app_gui.ui.overview_panel_widgets import _FilterableHeaderView
+
+        table = QTableWidget(1, 1)
+        header = _FilterableHeaderView(Qt.Horizontal, table)
+        table.setHorizontalHeader(header)
+        table.setColumnWidth(0, 140)
+        header_item = QTableWidgetItem("Cell Line")
+        header_item.setData(Qt.UserRole, "cell_line")
+        table.setHorizontalHeaderItem(0, header_item)
+        table.show()
+        self._app.processEvents()
+
+        emitted = []
+        header.filterClicked.connect(lambda column, name: emitted.append((column, name)))
+
+        section_left = header.sectionViewportPosition(0)
+        section_right = section_left + header.sectionSize(0) - 1
+        resize_point = QPointF(section_right - 1, max(6, header.height() / 2)).toPoint()
+        QTest.mouseClick(header.viewport(), Qt.LeftButton, Qt.NoModifier, resize_point)
+        self.assertEqual([], emitted)
+
+        QTest.mouseClick(
+            header.viewport(),
+            Qt.LeftButton,
+            Qt.NoModifier,
+            header._filter_icon_rect(0).center(),
+        )
+        self.assertEqual([(0, "cell_line")], emitted)
+
+        table.deleteLater()
+
     def test_table_view_uses_export_columns(self):
         records = [
             {

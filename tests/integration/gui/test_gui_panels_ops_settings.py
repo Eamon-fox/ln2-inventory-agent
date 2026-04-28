@@ -2366,6 +2366,16 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         self.assertFalse(panel.plan_print_btn.isEnabled())
         self.assertFalse(panel.plan_clear_btn.isEnabled())
 
+    def test_plan_table_scroll_uses_precise_pixel_steps(self):
+        from PySide6.QtWidgets import QAbstractItemView
+
+        panel = self._new_operations_panel()
+
+        self.assertEqual(QAbstractItemView.ScrollPerPixel, panel.plan_table.verticalScrollMode())
+        self.assertEqual(QAbstractItemView.ScrollPerPixel, panel.plan_table.horizontalScrollMode())
+        self.assertLessEqual(panel.plan_table.verticalScrollBar().singleStep(), 12)
+        self.assertLessEqual(panel.plan_table.horizontalScrollBar().singleStep(), 16)
+
     def test_plan_table_context_menu_remove_deletes_clicked_row(self):
         panel = self._new_operations_panel()
         panel.add_plan_items([
