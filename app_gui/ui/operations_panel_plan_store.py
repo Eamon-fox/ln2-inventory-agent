@@ -6,6 +6,12 @@ from app_gui.error_localizer import localize_error_payload
 from app_gui.plan_executor import preflight_plan
 from app_gui.ui.plan_item_desc import build_localized_plan_item_desc
 from lib.plan_gate import validate_stage_request
+from lib.plan_store import (
+    PLAN_VALIDATION_STATUS_INVALID,
+    PLAN_VALIDATION_STATUS_PENDING,
+    PLAN_VALIDATION_STATUS_VALIDATING,
+    PlanStore,
+)
 
 
 def _tr(key, **kwargs):
@@ -309,9 +315,37 @@ def _update_execute_button_state(self):
         self.plan_exec_btn.setEnabled(False)
         self.plan_exec_btn.setText(_tr("operations.executeAll"))
         return
+    if bool(getattr(self, "_plan_execution_running", False)):
+        self.plan_exec_btn.setEnabled(False)
+        self.plan_exec_btn.setText(
+            _tr("operations.planExecuting", default="Executing...")
+        )
+        return
 
     if not self._plan_store.count():
         self.plan_exec_btn.setEnabled(False)
+        return
+
+    plan_items = self._plan_store.list_items()
+    transient_statuses = [
+        PlanStore.validation_status(item)
+        for item in plan_items
+    ]
+    if any(
+        status in {PLAN_VALIDATION_STATUS_PENDING, PLAN_VALIDATION_STATUS_VALIDATING}
+        for status in transient_statuses
+    ):
+        self.plan_exec_btn.setEnabled(False)
+        self.plan_exec_btn.setText(
+            _tr("operations.executePlanValidating", default="Validating...")
+        )
+        return
+    invalid_count = sum(1 for status in transient_statuses if status == PLAN_VALIDATION_STATUS_INVALID)
+    if invalid_count:
+        self.plan_exec_btn.setEnabled(False)
+        self.plan_exec_btn.setText(
+            _tr("operations.executePlanBlocked", count=invalid_count)
+        )
         return
 
     has_blocked = any(v.get("blocked") for v in self._plan_validation_by_key.values())

@@ -186,6 +186,28 @@ class TestPlanStoreClearReplace(unittest.TestCase):
         ids = [it["record_id"] for it in store.list_items()]
         self.assertEqual([10, 20], ids)
 
+    def test_update_validation_statuses(self):
+        calls = []
+        store = PlanStore(on_change=lambda: calls.append(1))
+        store.add([_item(record_id=1), _item(record_id=2)])
+
+        changed = store.update_validation_statuses(
+            {
+                ("takeout", 1, 1, 5): {
+                    "status": "invalid",
+                    "error_code": "record_not_found",
+                    "message": "missing",
+                    "trace_id": "trace-1",
+                }
+            }
+        )
+
+        self.assertEqual(1, changed)
+        items = store.list_items()
+        self.assertEqual("invalid", PlanStore.validation_status(items[0]))
+        self.assertEqual("record_not_found", PlanStore.validation_state(items[0])["error_code"])
+        self.assertEqual({}, PlanStore.validation_state(items[1]))
+
     def test_has_rollback(self):
         store = PlanStore()
         self.assertFalse(store.has_rollback())

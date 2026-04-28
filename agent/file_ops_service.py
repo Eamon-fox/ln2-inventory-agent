@@ -283,6 +283,118 @@ def _parse_timeout_ms(timeout_value):
     return timeout_ms
 
 
+def _split_shell_sequence(command):
+    """Split a simple shell command sequence on top-level ; and && tokens."""
+    text = str(command or "")
+    parts = []
+    token = []
+    quote = ""
+    escaped = False
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if escaped:
+            token.append(ch)
+            escaped = False
+            i += 1
+            continue
+        if ch == "\\" and quote:
+            token.append(ch)
+            escaped = True
+            i += 1
+            continue
+        if ch in {"'", '"'}:
+            if quote == ch:
+                quote = ""
+            elif not quote:
+                quote = ch
+            token.append(ch)
+            i += 1
+            continue
+        if not quote and ch == ";":
+            part = "".join(token).strip()
+            if part:
+                parts.append(part)
+            token = []
+            i += 1
+            continue
+        if not quote and text[i : i + 2] == "&&":
+            part = "".join(token).strip()
+            if part:
+                parts.append(part)
+            token = []
+            i += 2
+            continue
+        token.append(ch)
+        i += 1
+    part = "".join(token).strip()
+    if part:
+        parts.append(part)
+    return parts
+
+
+def _strip_shell_quotes(value):
+    text = str(value or "").strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
+        return text[1:-1]
+    return text
+
+
+def _extract_cd_target(statement):
+    """Return target path for simple cwd-changing shell statements."""
+    text = str(statement or "").strip()
+    if not text:
+        return None
+    parts = text.split(None, 1)
+    command = parts[0].strip().lower()
+    if command not in {"cd", "chdir", "set-location", "sl"}:
+        return None
+    remainder = parts[1].strip() if len(parts) > 1 else ""
+    if not remainder:
+        return "."
+    if remainder.lower().startswith("-literalpath "):
+        remainder = remainder.split(None, 1)[1].strip()
+    elif remainder.lower().startswith("-path "):
+        remainder = remainder.split(None, 1)[1].strip()
+    return _strip_shell_quotes(remainder)
+
+
+def _resolve_cd_target(current_workdir, target):
+    raw = str(target or ".").strip()
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        return candidate.resolve(strict=False)
+    return (Path(current_workdir) / candidate).resolve(strict=False)
+
+
+def _preflight_shell_workdir_policy(command, *, repo_root, workdir):
+    """Reject simple cd chains that would leave the repository before exec."""
+    current = Path(workdir).resolve(strict=False)
+    for statement in _split_shell_sequence(command):
+        target = _extract_cd_target(statement)
+        if target is None:
+            continue
+        current = _resolve_cd_target(current, target)
+        try:
+            current.relative_to(Path(repo_root).resolve(strict=False))
+        except ValueError:
+            try:
+                current_workdir = repo_relative_workdir(repo_root, workdir)
+            except ValueError:
+                current_workdir = "."
+            return _error_payload(
+                "workdir_out_of_scope",
+                "Shell command would leave repository scope.",
+                repo_root=repo_root,
+                resolved_path=workdir,
+                extra={
+                    "current_workdir": current_workdir,
+                    "exit_code": -1,
+                },
+            )
+    return None
+
+
 def _handle_shell(args, *, repo_root, migrate_root):
     command = args.get("command")
     if not isinstance(command, str) or not command.strip():
@@ -303,6 +415,9 @@ def _handle_shell(args, *, repo_root, migrate_root):
 
     workdir = resolve_shell_workdir(repo_root, migrate_root, args.get("workdir"))
     workdir.mkdir(parents=True, exist_ok=True)
+    policy_issue = _preflight_shell_workdir_policy(command, repo_root=repo_root, workdir=workdir)
+    if policy_issue:
+        return policy_issue
 
     response = run_terminal_command(
         command,

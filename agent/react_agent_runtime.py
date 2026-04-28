@@ -7,6 +7,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from lib.builtin_skills import build_skill_catalog_prompt
+from lib.tool_registry import WRITE_TOOLS
+from lib.yaml_ops import clear_read_snapshot, read_snapshot_context
 
 from .context_checkpoint import build_resume_messages, checkpoint_context, normalize_summary_state
 from .tool_status_formatter import format_tool_status
@@ -27,6 +29,7 @@ def _emit_stream_end(self, on_event, messages, *, status, trace_id, summary_stat
     payload["data"] = data
     payload["trace_id"] = trace_id
     self._emit_event(on_event, payload)
+    clear_read_snapshot(trace_id)
 
 
 def _build_main_messages(system_content, raw_messages, summary_state=None):
@@ -89,7 +92,11 @@ def _run_tool_call(self, call, tool_names, trace_id, stop_event=None):
             "_hint": "Choose action from available tools.",
         }
     else:
-        observation = self._tools.run(action, action_input, trace_id=trace_id)
+        if action in WRITE_TOOLS:
+            observation = self._tools.run(action, action_input, trace_id=trace_id)
+        else:
+            with read_snapshot_context(trace_id):
+                observation = self._tools.run(action, action_input, trace_id=trace_id)
 
     # Handle question tool: emit event to GUI, block until user answers
     if (

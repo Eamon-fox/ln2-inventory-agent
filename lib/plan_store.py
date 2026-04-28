@@ -8,6 +8,27 @@ import threading
 from copy import deepcopy
 
 
+PLAN_VALIDATION_KEY = "validation"
+PLAN_VALIDATION_STATUS_PENDING = "pending"
+PLAN_VALIDATION_STATUS_VALIDATING = "validating"
+PLAN_VALIDATION_STATUS_VALID = "valid"
+PLAN_VALIDATION_STATUS_INVALID = "invalid"
+PLAN_VALIDATION_STATUSES = frozenset(
+    {
+        PLAN_VALIDATION_STATUS_PENDING,
+        PLAN_VALIDATION_STATUS_VALIDATING,
+        PLAN_VALIDATION_STATUS_VALID,
+        PLAN_VALIDATION_STATUS_INVALID,
+    }
+)
+_LEGACY_VALIDATION_KEYS = (
+    "_validation_status",
+    "_validation_error_code",
+    "_validation_message",
+    "_validation_trace_id",
+)
+
+
 class PlanStore:
     """Holds staged plan items with thread-safe access.
 
@@ -78,6 +99,84 @@ class PlanStore:
             return merged
         return incoming
 
+    @staticmethod
+    def build_validation_state(
+        *,
+        status=None,
+        error_code=None,
+        message=None,
+        trace_id=None,
+    ):
+        """Return a normalized transient validation-state payload."""
+        state = {}
+        status_text = str(status or "").strip().lower()
+        if status_text:
+            state["status"] = status_text
+        error_code_text = str(error_code or "").strip()
+        message_text = str(message or "").strip()
+        trace_id_text = str(trace_id or "").strip()
+        if error_code_text:
+            state["error_code"] = error_code_text
+        if message_text:
+            state["message"] = message_text
+        if trace_id_text:
+            state["trace_id"] = trace_id_text
+        return state
+
+    @staticmethod
+    def validation_state(item):
+        """Return a copy of a plan item's validation state."""
+        if not isinstance(item, dict):
+            return {}
+        payload = item.get(PLAN_VALIDATION_KEY)
+        if isinstance(payload, dict):
+            return {
+                key: value
+                for key, value in payload.items()
+                if key in {"status", "error_code", "message", "trace_id"}
+                and value not in (None, "")
+            }
+        legacy = PlanStore.build_validation_state(
+            status=item.get("_validation_status"),
+            error_code=item.get("_validation_error_code"),
+            message=item.get("_validation_message"),
+            trace_id=item.get("_validation_trace_id"),
+        )
+        return legacy
+
+    @staticmethod
+    def validation_status(item):
+        return str(PlanStore.validation_state(item).get("status") or "").strip().lower()
+
+    @staticmethod
+    def apply_validation_state(
+        item,
+        *,
+        status=None,
+        error_code=None,
+        message=None,
+        trace_id=None,
+    ):
+        """Mutate *item* to carry explicit validation state."""
+        state = PlanStore.build_validation_state(
+            status=status,
+            error_code=error_code,
+            message=message,
+            trace_id=trace_id,
+        )
+        for key in _LEGACY_VALIDATION_KEYS:
+            item.pop(key, None)
+        if state:
+            item[PLAN_VALIDATION_KEY] = state
+        else:
+            item.pop(PLAN_VALIDATION_KEY, None)
+        return item
+
+    @staticmethod
+    def with_validation_state(item, **kwargs):
+        copy = dict(item or {})
+        return PlanStore.apply_validation_state(copy, **kwargs)
+
     # ---- Read ----
 
     def list_items(self):
@@ -121,6 +220,34 @@ class PlanStore:
                 added += 1
         self._notify()
         return added
+
+    def update_validation_statuses(self, updates):
+        """Update transient validation status for staged items by item key.
+
+        ``updates`` maps ``PlanStore.item_key(item)`` to a dict containing
+        ``status`` and optional ``error_code`` / ``message`` / ``trace_id``.
+        Returns the number of rows changed.
+        """
+        with self._lock:
+            changed = 0
+            for item in self._items:
+                update = (updates or {}).get(self.item_key(item))
+                if not isinstance(update, dict):
+                    continue
+                before = self.validation_state(item)
+                self.apply_validation_state(
+                    item,
+                    status=update.get("status"),
+                    error_code=update.get("error_code"),
+                    message=update.get("message"),
+                    trace_id=update.get("trace_id"),
+                )
+                after = self.validation_state(item)
+                if before != after:
+                    changed += 1
+        if changed:
+            self._notify()
+        return changed
 
     def remove_by_index(self, index):
         """Remove item at *index*. Returns the removed item or ``None``."""

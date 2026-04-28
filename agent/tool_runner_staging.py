@@ -1,10 +1,22 @@
 """Plan staging helpers for AgentToolRunner."""
 
+import threading
 from typing import List
 
+from lib.diagnostics import span
 from lib.plan_gate import validate_stage_request
 from lib.plan_item_factory import PlanItem, build_add_plan_item, build_edit_plan_item, build_record_plan_item, build_rollback_plan_item
+from lib.plan_store import (
+    PLAN_VALIDATION_STATUS_INVALID,
+    PLAN_VALIDATION_STATUS_PENDING,
+    PLAN_VALIDATION_STATUS_VALID,
+    PLAN_VALIDATION_STATUS_VALIDATING,
+    PlanStore,
+)
 from lib.tool_registry import WRITE_TOOLS
+
+
+_STAGE_PREFLIGHT_DEBOUNCE_SECONDS = 0.075
 
 
 def _stage_to_plan(self, tool_name, payload, trace_id=None):
@@ -47,6 +59,9 @@ def _stage_to_plan_impl(self, tool_name, payload, trace_id=None):
                 "message": str(exc),
             },
         )
+
+    if trace_id and self._plan_store is not None and callable(self._preflight_fn):
+        return _stage_to_plan_deferred_validation(self, tool_name, items, trace_id)
 
     gate = validate_stage_request(
         existing_items=self._plan_store.list_items() if self._plan_store else [],
@@ -114,6 +129,207 @@ def _stage_to_plan_impl(self, tool_name, payload, trace_id=None):
             "already_staged_count": already_staged_count,
         },
     }
+
+
+def _stage_to_plan_deferred_validation(self, tool_name, items, trace_id):
+    """Stage immediately, then debounce future-plan preflight in background.
+
+    This path is used for agent runs, where a single trace can emit many
+    write tool calls in a short burst. Direct runner calls without trace_id
+    retain the historical immediate-preflight behavior used by tests and GUI
+    helper flows.
+    """
+    gate = validate_stage_request(
+        existing_items=self._plan_store.list_items() if self._plan_store else [],
+        incoming_items=items,
+        yaml_path=self._yaml_path,
+        bridge=None,
+        run_preflight=False,
+        preflight_fn=self._preflight_fn,
+    )
+    if gate.get("blocked"):
+        return self._build_stage_blocked_response(tool_name, gate)
+
+    staged = []
+    for item in list(gate.get("accepted_items") or []):
+        staged_item = dict(item)
+        PlanStore.apply_validation_state(
+            staged_item,
+            status=PLAN_VALIDATION_STATUS_PENDING,
+            trace_id=trace_id,
+        )
+        staged.append(staged_item)
+
+    noop_items = list(gate.get("noop_items") or [])
+    already_staged_count = len(noop_items)
+    if not self._plan_store:
+        return self._with_hint(
+            tool_name,
+            {
+                "ok": False,
+                "error_code": "no_plan_store",
+                "message": self._msg(
+                    "stage.planStoreNotAvailable",
+                    "Plan store not available.",
+                ),
+                "staged": False,
+                "result": {"staged_count": 0, "blocked_count": 0, "already_staged_count": 0},
+            },
+        )
+
+    if staged:
+        self._plan_store.add(staged)
+        _schedule_deferred_stage_preflight(self, trace_id)
+
+    summary_items = staged if staged else noop_items
+    summary = [self._item_desc(item) for item in summary_items]
+    summary_text = "; ".join(summary)
+    if staged and already_staged_count:
+        message = self._msg(
+            "stage.stagedForHumanApprovalWithAlready",
+            "Staged {count} operation(s) for human approval in Plan tab: {summary}; {already} already staged.",
+            count=len(staged),
+            summary=summary_text,
+            already=already_staged_count,
+        )
+    elif staged:
+        message = self._msg(
+            "stage.stagedForHumanApproval",
+            "Staged {count} operation(s) for human approval in Plan tab: {summary}",
+            count=len(staged),
+            summary=summary_text,
+        )
+    else:
+        message = self._msg(
+            "stage.alreadyStagedInPlan",
+            "These operations are already staged in Plan tab: {summary}",
+            summary=summary_text,
+        )
+
+    return {
+        "ok": True,
+        "staged": bool(staged),
+        "message": message,
+        "validation_status": "pending" if staged else "unchanged",
+        "result": {
+            "staged_count": len(staged),
+            "already_staged_count": already_staged_count,
+            "pending_validation": bool(staged),
+        },
+    }
+
+
+def _ensure_stage_validation_state(self):
+    lock = getattr(self, "_stage_validation_lock", None)
+    if lock is None:
+        lock = threading.Lock()
+        self._stage_validation_lock = lock
+        self._stage_validation_timer = None
+        self._stage_validation_generation = 0
+    return lock
+
+
+def _schedule_deferred_stage_preflight(self, trace_id):
+    lock = _ensure_stage_validation_state(self)
+    with lock:
+        self._stage_validation_generation += 1
+        generation = self._stage_validation_generation
+        old_timer = getattr(self, "_stage_validation_timer", None)
+        if old_timer is not None:
+            try:
+                old_timer.cancel()
+            except Exception:
+                pass
+
+        timer = threading.Timer(
+            _STAGE_PREFLIGHT_DEBOUNCE_SECONDS,
+            _run_deferred_stage_preflight,
+            args=(self, str(trace_id or ""), generation),
+        )
+        timer.daemon = True
+        self._stage_validation_timer = timer
+        timer.start()
+
+
+def _run_deferred_stage_preflight(self, trace_id, generation):
+    lock = _ensure_stage_validation_state(self)
+    with lock:
+        if generation != getattr(self, "_stage_validation_generation", 0):
+            return
+
+    store = getattr(self, "_plan_store", None)
+    preflight_fn = getattr(self, "_preflight_fn", None)
+    if store is None or not callable(preflight_fn):
+        return
+
+    items = store.list_items()
+    if not items:
+        return
+
+    keys = [store.item_key(item) for item in items]
+    store.update_validation_statuses(
+        {
+            key: {
+                "status": PLAN_VALIDATION_STATUS_VALIDATING,
+                "trace_id": trace_id,
+            }
+            for key in keys
+        }
+    )
+
+    try:
+        with span(
+            "plan.preflight",
+            source="agent_stage_debounce",
+            trace_id=trace_id,
+            batch_size=len(items),
+        ):
+            report = preflight_fn(self._yaml_path, items, None)
+    except Exception as exc:
+        report = {
+            "ok": False,
+            "blocked": True,
+            "items": [
+                {
+                    "item": item,
+                    "blocked": True,
+                    "error_code": "plan_preflight_failed",
+                    "message": f"Preflight exception: {exc}",
+                }
+                for item in items
+            ],
+        }
+
+    with lock:
+        if generation != getattr(self, "_stage_validation_generation", 0):
+            return
+
+    blocked_by_key = {}
+    if isinstance(report, dict):
+        for report_item in report.get("items") or []:
+            if not isinstance(report_item, dict) or not report_item.get("blocked"):
+                continue
+            item = report_item.get("item")
+            if not isinstance(item, dict):
+                continue
+            blocked_by_key[store.item_key(item)] = {
+                "status": PLAN_VALIDATION_STATUS_INVALID,
+                "error_code": report_item.get("error_code") or "plan_preflight_failed",
+                "message": report_item.get("message") or "Preflight validation failed",
+                "trace_id": trace_id,
+            }
+
+    updates = {}
+    for item in store.list_items():
+        key = store.item_key(item)
+        if key in blocked_by_key:
+            updates[key] = blocked_by_key[key]
+        else:
+            updates[key] = {
+                "status": PLAN_VALIDATION_STATUS_VALID,
+                "trace_id": trace_id,
+            }
+    store.update_validation_statuses(updates)
 
 def _build_staged_plan_items(self, tool_name, payload, layout) -> List[PlanItem]:
     runtime_specs = self._runtime_specs() if hasattr(self, "_runtime_specs") else {}

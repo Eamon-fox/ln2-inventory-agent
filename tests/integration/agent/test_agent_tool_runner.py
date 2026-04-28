@@ -735,6 +735,20 @@ class AgentToolRunnerTests(ManagedPathTestCase):
         self.assertEqual("workdir_out_of_scope", denied.get("error_code"))
         self.assertEqual("migrate", runner._shell_state.current_workdir)
 
+    def test_shell_allows_cd_chain_inside_repo(self):
+        runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
+        output_dir = self._repo_root() / "migrate" / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        response = runner.run(
+            "shell",
+            {"command": "cd migrate; cd output", "description": "enter output directory"},
+        )
+
+        self.assertTrue(response["ok"], response)
+        self.assertEqual("migrate/output", response.get("current_workdir"))
+        self.assertEqual("migrate/output", runner._shell_state.current_workdir)
+
     def test_shell_nonzero_exit_still_updates_current_workdir(self):
         runner = AgentToolRunner(yaml_path=self.fake_yaml_path)
         migrate_dir = self._repo_root() / "migrate"

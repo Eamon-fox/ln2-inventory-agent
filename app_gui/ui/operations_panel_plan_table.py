@@ -22,6 +22,12 @@ from lib.position_fmt import (
     format_box_position_compact,
     format_box_positions_display,
 )
+from lib.plan_store import (
+    PLAN_VALIDATION_STATUS_INVALID,
+    PLAN_VALIDATION_STATUS_PENDING,
+    PLAN_VALIDATION_STATUS_VALIDATING,
+    PlanStore,
+)
 from lib.schema_aliases import get_input_stored_at
 
 PLAN_ROW_TINT_ROLE = int(Qt.UserRole) + 201
@@ -352,6 +358,24 @@ def _build_plan_changes(self, action_norm, item, payload, custom_fields):
 def _build_plan_status(self, item):
     from app_gui.ui import operations_panel_plan_store as _ops_plan_store
 
+    validation_state = PlanStore.validation_state(item)
+    transient_status = str(validation_state.get("status") or "").strip().lower()
+    if transient_status in {PLAN_VALIDATION_STATUS_PENDING, PLAN_VALIDATION_STATUS_VALIDATING}:
+        if transient_status == PLAN_VALIDATION_STATUS_VALIDATING:
+            return (
+                _tr("operations.planStatusValidating", default="Validating"),
+                _tr("operations.planStatusValidatingDetail", default="Batch validation is running."),
+            )
+        return (
+            _tr("operations.planStatusPending", default="Pending"),
+            _tr("operations.planStatusPendingDetail", default="Waiting for batch validation."),
+        )
+    if transient_status == PLAN_VALIDATION_STATUS_INVALID:
+        return (
+            _tr("operations.planStatusBlocked", default="Blocked"),
+            str(validation_state.get("message") or validation_state.get("error_code") or ""),
+        )
+
     validation = self._plan_validation_by_key.get(_ops_plan_store._plan_item_key(self, item)) or {}
     if validation.get("blocked"):
         return _tr("operations.planStatusBlocked"), localize_error_payload(validation)
@@ -374,7 +398,7 @@ def _build_plan_row_semantics(self, item, custom_fields=None):
     from app_gui.ui import operations_panel_plan_store as _ops_plan_store
 
     validation = self._plan_validation_by_key.get(_ops_plan_store._plan_item_key(self, item)) or {}
-    status_blocked = bool(validation.get("blocked"))
+    status_blocked = bool(validation.get("blocked")) or PlanStore.validation_status(item) == PLAN_VALIDATION_STATUS_INVALID
 
     return {
         "action_norm": action_norm,
@@ -393,6 +417,7 @@ def _refresh_plan_table(self):
     from lib.custom_fields import get_color_key
     from app_gui.ui import operations_panel_forms as _ops_forms
     from app_gui.ui import operations_panel_plan_toolbar as _ops_plan_toolbar
+    from lib.diagnostics import span
 
     if not hasattr(self, "_plan_table_tint_delegate"):
         self._plan_table_tint_delegate = _PlanTableTintDelegate(self.plan_table)
@@ -413,65 +438,104 @@ def _refresh_plan_table(self):
         _tr("operations.colStatus"),
     ]
 
-    _ops_forms._setup_table(
-        self,
-        self.plan_table,
-        headers,
-        sortable=False,
+    header_signature = tuple(str(header) for header in headers)
+    needs_setup = (
+        getattr(self, "_plan_table_headers_signature", None) != header_signature
+        or self.plan_table.columnCount() != len(headers)
     )
+    if needs_setup:
+        _ops_forms._setup_table(
+            self,
+            self.plan_table,
+            headers,
+            sortable=False,
+        )
+        self._plan_table_headers_signature = header_signature
+        self._plan_table_row_signatures = {}
 
     header = self.plan_table.horizontalHeader()
     header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
     plan_items = self._plan_store.list_items()
-    for row, item in enumerate(plan_items):
-        self.plan_table.insertRow(row)
-        row_model = _build_plan_row_semantics(self, item, custom_fields=custom_fields)
+    old_row_count = self.plan_table.rowCount()
+    changed_rows = 0
 
-        action_item = QTableWidgetItem(str(row_model.get("action", "")))
-        self.plan_table.setItem(row, 0, action_item)
+    def _set_cell(row, col, text, tooltip="", tint=""):
+        existing = self.plan_table.item(row, col)
+        if existing is None:
+            existing = QTableWidgetItem(str(text))
+            self.plan_table.setItem(row, col, existing)
+        elif existing.text() != str(text):
+            existing.setText(str(text))
+        existing.setToolTip(str(tooltip or ""))
+        if tint:
+            existing.setData(PLAN_ROW_TINT_ROLE, tint)
+        else:
+            existing.setData(PLAN_ROW_TINT_ROLE, None)
 
-        target_item = QTableWidgetItem(str(row_model.get("target", "")))
-        self.plan_table.setItem(row, 1, target_item)
+    with span("ui.plan_refresh", batch_size=len(plan_items)):
+        self.plan_table.setUpdatesEnabled(False)
+        try:
+            if old_row_count != len(plan_items):
+                self.plan_table.setRowCount(len(plan_items))
+                changed_rows += abs(old_row_count - len(plan_items))
 
-        date_item = QTableWidgetItem(str(row_model.get("date", "")))
-        self.plan_table.setItem(row, 2, date_item)
+            row_signatures = getattr(self, "_plan_table_row_signatures", None)
+            if not isinstance(row_signatures, dict):
+                row_signatures = {}
+                self._plan_table_row_signatures = row_signatures
 
-        changes_summary = str(row_model.get("changes", ""))
-        changes_detail = str(row_model.get("changes_detail", ""))
-        changes_item = QTableWidgetItem(changes_summary)
-        if changes_detail and changes_detail != changes_summary:
-            changes_item.setToolTip(changes_detail)
-        self.plan_table.setItem(row, 3, changes_item)
+            next_signatures = {}
+            for row, item in enumerate(plan_items):
+                row_model = _build_plan_row_semantics(self, item, custom_fields=custom_fields)
 
-        status_text = str(row_model.get("status", ""))
-        status_detail = str(row_model.get("status_detail", ""))
-        status_item = QTableWidgetItem(status_text)
-        if status_detail:
-            status_item.setToolTip(status_detail)
-        self.plan_table.setItem(row, 4, status_item)
+                record_id = item.get("record_id")
+                record = self.records_cache.get(record_id) if record_id else None
+                payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+                payload_fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
 
-        record_id = item.get("record_id")
-        record = self.records_cache.get(record_id) if record_id else None
-        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
-        payload_fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
+                color_value = ""
+                if isinstance(record, dict):
+                    color_value = str(record.get(color_key) or "")
+                elif isinstance(payload_fields, dict):
+                    color_value = str(payload_fields.get(color_key) or "")
 
-        color_value = ""
-        if isinstance(record, dict):
-            color_value = str(record.get(color_key) or "")
-        elif isinstance(payload_fields, dict):
-            color_value = str(payload_fields.get(color_key) or "")
+                should_tint_row = bool(record is not None) or bool(color_value)
+                row_color = cell_color(color_value if color_value else None) if should_tint_row else ""
 
-        should_tint_row = bool(record is not None) or bool(color_value)
-        if should_tint_row:
-            row_color = cell_color(color_value if color_value else None)
-            for col in range(self.plan_table.columnCount()):
-                cell_item = self.plan_table.item(row, col)
-                if cell_item:
-                    cell_item.setData(PLAN_ROW_TINT_ROLE, row_color)
+                values = (
+                    str(row_model.get("action", "")),
+                    str(row_model.get("target", "")),
+                    str(row_model.get("date", "")),
+                    str(row_model.get("changes", "")),
+                    str(row_model.get("status", "")),
+                )
+                tooltips = (
+                    "",
+                    "",
+                    "",
+                    str(row_model.get("changes_detail", "")) if row_model.get("changes_detail") != row_model.get("changes") else "",
+                    str(row_model.get("status_detail", "")),
+                )
+                signature = values + tooltips + (str(row_color),)
+                next_signatures[row] = signature
+                if row_signatures.get(row) == signature:
+                    continue
 
-    for col in range(self.plan_table.columnCount()):
-        self.plan_table.resizeColumnToContents(col)
+                _set_cell(row, 0, values[0], tint=row_color)
+                _set_cell(row, 1, values[1], tint=row_color)
+                _set_cell(row, 2, values[2], tint=row_color)
+                _set_cell(row, 3, values[3], tooltip=tooltips[3], tint=row_color)
+                _set_cell(row, 4, values[4], tooltip=tooltips[4], tint=row_color)
+                changed_rows += 1
+
+            self._plan_table_row_signatures = next_signatures
+        finally:
+            self.plan_table.setUpdatesEnabled(True)
+
+    if needs_setup or changed_rows:
+        for col in range(self.plan_table.columnCount()):
+            self.plan_table.resizeColumnToContents(col)
     header.setSectionResizeMode(QHeaderView.Interactive)
 
     _ops_plan_toolbar._refresh_plan_toolbar_state(self)

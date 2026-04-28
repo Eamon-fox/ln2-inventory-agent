@@ -10,6 +10,7 @@ from lib.tool_api import (
     build_actor_context,
     tool_get_raw_entries,
 )
+from lib.diagnostics import span
 from lib.tool_registry import TOOL_CONTRACTS, WRITE_TOOLS
 from lib import tool_api_parsers as _tool_parsers
 from lib.inventory_paths import assert_allowed_inventory_yaml_path
@@ -528,13 +529,23 @@ class AgentToolRunner:
 
         # Intercept write operations when plan_store is set.
         if tool_name in WRITE_TOOLS and self._plan_store is not None:
-            response = self._stage_to_plan(tool_name, payload, trace_id)
+            with span(
+                "tool.stage",
+                action=tool_name,
+                trace_id=trace_id,
+                batch_size=len(payload.get("entries") or payload.get("positions") or [payload])
+                if isinstance(payload, dict)
+                else 1,
+            ):
+                response = self._stage_to_plan(tool_name, payload, trace_id)
             after_hook = self._hook_manager.run_after(tool_name, payload, response, hook_context)
             return _tool_hooks.merge_hook_result(response, after_hook)
 
         handler = self._dispatch_handlers().get(tool_name)
         if callable(handler):
-            response = handler(payload, trace_id)
+            span_name = "tool.write" if tool_name in WRITE_TOOLS else "tool.read"
+            with span(span_name, action=tool_name, trace_id=trace_id):
+                response = handler(payload, trace_id)
             after_hook = self._hook_manager.run_after(tool_name, payload, response, hook_context)
             return _tool_hooks.merge_hook_result(response, after_hook)
         return self._unknown_tool_response(tool_name)
