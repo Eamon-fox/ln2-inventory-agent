@@ -510,6 +510,7 @@ class MainWindow(QMainWindow):
             self.plan_store,
             overview_panel=self.overview_panel
         )
+        self.operations_panel._execute_plan_in_worker = True
         self.ai_panel = AIPanel(
             self.bridge,
             lambda: self.current_yaml_path,

@@ -1,7 +1,7 @@
 import os
 import sys
 
-from PySide6.QtCore import Qt, Signal, Slot, QDate, QSortFilterProxyModel, QEvent, QSignalBlocker
+from PySide6.QtCore import Qt, Signal, Slot, QDate, QSortFilterProxyModel, QEvent, QSignalBlocker, QTimer
 from PySide6.QtGui import QDesktopServices, QValidator, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -1502,7 +1502,18 @@ class OperationsPanel(QWidget):
     # implementation lives in extracted helper modules.
     @Slot()
     def refresh_plan_store_view(self):
-        self._on_store_changed()
+        if not bool(getattr(self, "_coalesce_plan_store_refresh", False)):
+            self._on_store_changed()
+            return
+        if getattr(self, "_plan_store_refresh_pending", False):
+            return
+        self._plan_store_refresh_pending = True
+
+        def _flush():
+            self._plan_store_refresh_pending = False
+            self._on_store_changed()
+
+        QTimer.singleShot(50, _flush)
 
     def add_plan_items(self, items):
         return _ops_plan_store.add_plan_items(self, items)

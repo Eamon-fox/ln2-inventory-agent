@@ -1,5 +1,7 @@
 """Cell widget used by OverviewPanel grid mode."""
 
+import time
+
 from PySide6.QtCore import QEasingCurve, QMimeData, QPropertyAnimation, QRect, Qt, Signal, QTimer
 from PySide6.QtGui import QColor, QDrag, QFontMetrics, QPainter, QPalette, QPen, QTextLayout, QTextOption
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QStyle, QStyleOptionButton
@@ -13,6 +15,7 @@ _CELL_TEXT_MODE_WRAPPED = "wrapped"
 _SELECTION_EDGE_ORDER = ("top", "right", "bottom", "left")
 OVERVIEW_CELL_DRAG_MIN_HOLD_MS = 250
 OVERVIEW_CELL_DRAG_MIN_DISTANCE_PX = 20
+_DRAG_HOLD_SETTLE_MS = 10
 
 
 def overview_cell_drag_hold_delay_ms(app=None):
@@ -119,6 +122,7 @@ class CellButton(QPushButton):
         self.setAcceptDrops(True)
         self._drag_start_pos = None
         self._drag_hold_armed = False
+        self._drag_hold_armed_at = None
         self._drag_hold_timer = QTimer(self)
         self._drag_hold_timer.setSingleShot(True)
         self._drag_hold_timer.timeout.connect(self._arm_drag_hold)
@@ -168,11 +172,13 @@ class CellButton(QPushButton):
         if self._drag_start_pos is None or self.record_id is None:
             return
         self._drag_hold_armed = True
+        self._drag_hold_armed_at = time.monotonic()
 
     def _clear_drag_state(self):
         self._drag_hold_timer.stop()
         self._drag_start_pos = None
         self._drag_hold_armed = False
+        self._drag_hold_armed_at = None
 
     def _scaled_rect(self):
         if not self._base_rect.isValid() or self._base_rect.width() <= 0 or self._base_rect.height() <= 0:
@@ -622,6 +628,11 @@ class CellButton(QPushButton):
             return
 
         if not self._drag_hold_armed:
+            super().mouseMoveEvent(event)
+            return
+
+        armed_at = self._drag_hold_armed_at
+        if armed_at is not None and (time.monotonic() - armed_at) * 1000.0 < _DRAG_HOLD_SETTLE_MS:
             super().mouseMoveEvent(event)
             return
 

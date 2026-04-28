@@ -931,7 +931,11 @@ def on_finished(self, response):
         self._append_turn_actions(
             turn.get("turn_id"),
             include_copy=not rendered_error_notice,
-            retry_label=tr("ai.actionRetry") if rendered_error_notice else tr("ai.actionTryAgain"),
+            retry_label=(
+                tr("ai.actionRetry", default="Retry")
+                if rendered_error_notice
+                else tr("ai.actionTryAgain", default="Try again")
+            ),
         )
 
     self.ai_stream_buffer = ""

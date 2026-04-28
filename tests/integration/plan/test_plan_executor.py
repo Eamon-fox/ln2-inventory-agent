@@ -872,18 +872,16 @@ class EditPlanTests(ManagedPathTestCase):
             self.assertEqual(1, result["stats"]["blocked"])
             self.assertFalse(bridge.edit_entry.called)
 
-    def test_execute_edit_calls_bridge(self):
+    def test_execute_edit_updates_record_without_gui_bridge_edit_call(self):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
-                make_data([make_record(1, box=1, position=5)]),
+                make_data([make_record(1, box=1, position=5, note="old note")]),
                 path=str(yaml_path),
                 audit_meta={"action": "seed", "source": "tests"},
             )
 
             bridge = MagicMock()
-            bridge.edit_entry.return_value = {"ok": True, "backup_path": str(Path(td) / "backup.bak")}
-
             result = run_plan(
                 str(yaml_path),
                 [make_edit_item(record_id=1, box=1, position=5, fields={"note": "new note"})],
@@ -893,14 +891,9 @@ class EditPlanTests(ManagedPathTestCase):
 
             self.assertTrue(result["ok"])
             self.assertEqual(1, result["stats"]["ok"])
-            bridge.edit_entry.assert_called_once()
-            kwargs = bridge.edit_entry.call_args.kwargs
-            self.assertEqual(str(yaml_path), kwargs.get("yaml_path"))
-            self.assertEqual(1, kwargs.get("record_id"))
-            self.assertEqual("execute", kwargs.get("execution_mode"))
-            self.assertTrue(str(kwargs.get("request_backup_path") or "").strip())
-            self.assertNotIn("auto_backup", kwargs)
-            self.assertNotIn("dry_run", kwargs)
+            self.assertFalse(bridge.edit_entry.called)
+            current = load_yaml(str(yaml_path))
+            self.assertEqual("new note", current["inventory"][0]["note"])
 
     def test_execute_edit_failure_marks_blocked(self):
         with tempfile.TemporaryDirectory() as td:
@@ -941,7 +934,6 @@ class EditPlanTests(ManagedPathTestCase):
             )
 
             bridge = MagicMock()
-            bridge.edit_entry.return_value = {"ok": True}
             bridge.takeout.return_value = {"ok": True}
 
             items = [
@@ -952,10 +944,11 @@ class EditPlanTests(ManagedPathTestCase):
 
             self.assertTrue(result["ok"])
             self.assertEqual(2, result["stats"]["ok"])
-            bridge.edit_entry.assert_called_once()
+            current = load_yaml(str(yaml_path))
+            self.assertEqual("edited", current["inventory"][0]["note"])
             bridge.takeout.assert_called_once()
 
-    def test_multiple_edits_execute_independently(self):
+    def test_multiple_edits_execute_atomically(self):
         with tempfile.TemporaryDirectory() as td:
             yaml_path = Path(td) / "inventory.yaml"
             write_yaml(
@@ -968,11 +961,6 @@ class EditPlanTests(ManagedPathTestCase):
             )
 
             bridge = MagicMock()
-            # First edit succeeds, second fails
-            bridge.edit_entry.side_effect = [
-                {"ok": True},
-                {"ok": False, "error_code": "invalid_field", "message": "Bad field"},
-            ]
 
             items = [
                 make_edit_item(record_id=1, box=1, position=5),
@@ -981,9 +969,10 @@ class EditPlanTests(ManagedPathTestCase):
             result = run_plan(str(yaml_path), items, bridge=bridge, mode="execute")
 
             self.assertFalse(result["ok"])
-            self.assertEqual(1, result["stats"]["ok"])
-            self.assertEqual(1, result["stats"]["blocked"])
-            self.assertEqual(2, bridge.edit_entry.call_count)
+            self.assertEqual(0, result["stats"]["ok"])
+            self.assertEqual(2, result["stats"]["blocked"])
+            self.assertEqual("batch_validation_failed", result["items"][0]["error_code"])
+            self.assertEqual("forbidden_fields", result["items"][1]["error_code"])
 
 
 class EditPreflightExecuteConsistencyTests(ManagedPathTestCase):

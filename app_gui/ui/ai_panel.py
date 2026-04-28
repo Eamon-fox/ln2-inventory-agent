@@ -89,6 +89,31 @@ def _md_to_html(text, is_dark=True):
     """Convert markdown text to HTML for QTextEdit.append()."""
     return md_to_html(text)
 
+
+def _preserve_leading_spaces_html(text, html):
+    leading_count = len(str(text or "")) - len(str(text or "").lstrip(" "))
+    if leading_count <= 0 or not html:
+        return html
+    prefix = "&nbsp;" * leading_count
+    return re.sub(r"(<(?:p|div)\b[^>]*>)", r"\1" + prefix, str(html), count=1)
+
+
+class _PatchableSignalProxy:
+    """Small wrapper so tests can patch ``emit`` on PySide signal instances."""
+
+    def __init__(self, signal):
+        self._signal = signal
+
+    def connect(self, *args, **kwargs):
+        return self._signal.connect(*args, **kwargs)
+
+    def disconnect(self, *args, **kwargs):
+        return self._signal.disconnect(*args, **kwargs)
+
+    def emit(self, *args):
+        return self._signal.emit(*args)
+
+
 class AIPanel(QWidget):
     operation_completed = Signal(bool)
     status_message = Signal(str, int) # msg, timeout
@@ -104,6 +129,7 @@ class AIPanel(QWidget):
         agent_session=None,
     ):
         super().__init__()
+        self.status_message = _PatchableSignalProxy(self.status_message)
         self.bridge = bridge
         self.agent_session = agent_session
         self.yaml_path_getter = yaml_path_getter
@@ -1051,9 +1077,13 @@ class AIPanel(QWidget):
         escaped_turn = self._escape_html_text(turn_id)
         links = []
         if bool(turn.get("actions_include_copy")):
-            copy_label = tr("ai.actionCopiedInline") if turn.get("copy_copied") else tr("ai.actionCopy")
+            copy_label = (
+                tr("ai.actionCopiedInline", default="Copied")
+                if turn.get("copy_copied")
+                else tr("ai.actionCopy", default="Copy")
+            )
             links.append(f'<a href="ai_action:copy:{escaped_turn}">{self._escape_html_text(copy_label)}</a>')
-        retry_label = str(turn.get("actions_retry_label") or tr("ai.actionRetry"))
+        retry_label = str(turn.get("actions_retry_label") or tr("ai.actionRetry", default="Retry"))
         links.append(f'<a href="ai_action:retry:{escaped_turn}">{self._escape_html_text(retry_label)}</a>')
         return '<div style="margin-top: 4px; font-size: 11px; opacity: 0.75;">' + " · ".join(links) + "</div>"
 
@@ -1075,7 +1105,7 @@ class AIPanel(QWidget):
         if turn is None:
             return
         turn["actions_include_copy"] = bool(include_copy)
-        turn["actions_retry_label"] = str(retry_label or tr("ai.actionRetry"))
+        turn["actions_retry_label"] = str(retry_label or tr("ai.actionRetry", default="Retry"))
         turn["copy_copied"] = False
         html = self._render_turn_actions(turn)
 
@@ -1125,9 +1155,9 @@ class AIPanel(QWidget):
                 if turn is not None:
                     turn["copy_copied"] = True
                     self._replace_turn_actions(turn)
-                self.status_message.emit(tr("ai.actionCopied"), 2000)
+                self.status_message.emit(tr("ai.actionCopied", default="Copied"), 2000)
             else:
-                self.status_message.emit(tr("ai.actionCopyFailed"), 3000)
+                self.status_message.emit(tr("ai.actionCopyFailed", default="Copy failed"), 3000)
         elif action == "retry":
             self._retry_turn(turn_id)
 
@@ -1178,6 +1208,8 @@ class AIPanel(QWidget):
         self._retry_existing_turn_id = str(turn_id)
         self.ai_prompt.setPlainText(query)
         self.on_run_ai_agent()
+        if not self.ai_prompt.toPlainText().strip():
+            self.ai_prompt.setPlainText(query)
         return True
 
     def _should_use_compact(self):
@@ -1347,6 +1379,7 @@ class AIPanel(QWidget):
         answer_text = str((self.ai_stream_buffer if self.ai_streaming_active else block.get("text")) or "")
         is_dark = _is_dark_mode(self)
         answer_html = _md_to_html(answer_text, is_dark)
+        answer_html = _preserve_leading_spaces_html(answer_text, answer_html)
 
         combined_html = ""
         if self.ai_stream_thought_active and self.ai_stream_thought_buffer:

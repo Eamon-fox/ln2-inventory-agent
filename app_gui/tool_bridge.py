@@ -5,6 +5,7 @@ from copy import deepcopy
 from app_gui.i18n import tr
 from lib.inventory_paths import assert_allowed_inventory_yaml_path
 from lib import tool_api_write_adapter as _write_adapter
+from lib.yaml_ops import clear_read_snapshot, current_read_snapshot_id, read_snapshot_context
 from lib.tool_registry import (
     GUI_BRIDGE_READ,
     GUI_BRIDGE_WRITE,
@@ -102,10 +103,21 @@ class GuiToolBridge:
         tool_fn = self._registry_tool_callable(bridge_spec.tool_api_attr)
         call_kwargs = dict(payload or {})
         call_kwargs.update(deepcopy(dict(bridge_spec.fixed_kwargs or {})))
-        return tool_fn(
-            yaml_path=yaml_path,
-            **call_kwargs,
-        )
+        if current_read_snapshot_id():
+            return tool_fn(
+                yaml_path=yaml_path,
+                **call_kwargs,
+            )
+
+        snapshot_id = f"gui-read-{id(self)}"
+        try:
+            with read_snapshot_context(snapshot_id):
+                return tool_fn(
+                    yaml_path=yaml_path,
+                    **call_kwargs,
+                )
+        finally:
+            clear_read_snapshot(snapshot_id)
 
     def _call_registry_write_tool(self, *, yaml_path, descriptor, bridge_spec, payload):
         try:

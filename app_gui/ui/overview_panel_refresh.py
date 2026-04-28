@@ -9,7 +9,9 @@ from PySide6.QtCore import QTimer
 from app_gui.error_localizer import localize_error_payload
 from app_gui.i18n import t, tr
 from app_gui.ui.utils import build_color_palette
+from lib.diagnostics import new_trace_id, span
 from lib.position_fmt import display_to_box, display_to_pos, get_box_count
+from lib.yaml_ops import clear_read_snapshot, read_snapshot_context
 
 
 def _reset_after_load_failure(self):
@@ -118,6 +120,16 @@ def _update_box_live_labels(self, box_numbers, box_stats, rows, cols):
 
 
 def refresh(self):
+    trace_id = new_trace_id("gui-refresh")
+    try:
+        with read_snapshot_context(trace_id):
+            with span("ui.overview_refresh", trace_id=trace_id, source="refresh"):
+                return _refresh_impl(self)
+    finally:
+        clear_read_snapshot(trace_id)
+
+
+def _refresh_impl(self):
     yaml_path = self.yaml_path_getter()
     self.ov_status.setText(tr("overview.statusLoading"))
     if not yaml_path or not os.path.isfile(yaml_path):

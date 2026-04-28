@@ -396,6 +396,9 @@ class WindowStateFlow:
         window = self._window
         ops = window.operations_panel
         overview = getattr(window, "overview_panel", None)
+        setattr(ops, "_coalesce_plan_store_refresh", True)
+        if overview is not None:
+            setattr(overview, "_coalesce_plan_store_refresh", True)
         if overview is not None and hasattr(overview, "bind_plan_store"):
             with suppress(Exception):
                 overview.bind_plan_store(window.plan_store)

@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Tuple
 
 from app_gui.bridge_write_runner import execute_bridge_write as _execute_bridge_write
 from lib import tool_api_write_adapter as _write_adapter
+from lib.diagnostics import span
 from lib.schema_aliases import coalesce_stored_at_value
 
 from . import plan_executor_layout as _layout
@@ -416,3 +417,48 @@ def _preflight_batch_add(
             all_ok = False
 
     return all_ok, reports
+
+
+def _execute_batch_edit(
+    yaml_path: str,
+    items: List[Dict[str, object]],
+    bridge: object,
+    mode: str,
+    request_backup_path: Optional[str] = None,
+) -> Tuple[bool, List[Dict[str, object]]]:
+    """Execute edit operations as a single batch."""
+    if not items:
+        return True, []
+
+    entries: List[Dict[str, object]] = []
+    for item in items:
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+        entries.append(
+            {
+                "record_id": payload.get("record_id", item.get("record_id")),
+                "fields": payload.get("fields") if isinstance(payload.get("fields"), dict) else {},
+                "box": item.get("box"),
+                "position": item.get("position"),
+            }
+        )
+
+    actor_context = getattr(bridge, "_ctx", lambda: None)() or {}
+    source = "plan_executor.preflight" if mode == "preflight" else "plan_executor.execute"
+    with span("plan.execute.batch", action="edit", mode=mode, batch_size=len(items)):
+        response = _write_adapter.batch_edit_entries(
+            yaml_path=yaml_path,
+            entries=entries,
+            execution_mode="execute",
+            actor_context=actor_context,
+            source=source,
+            auto_backup=False if mode == "preflight" else True,
+            request_backup_path=request_backup_path if mode != "preflight" else None,
+            backup_event_source=source,
+        )
+
+    return _reports._fanout_batch_response(
+        items,
+        response,
+        fallback_error_code="edit_batch_failed",
+        fallback_message="Batch edit failed",
+    )

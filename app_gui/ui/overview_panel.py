@@ -143,6 +143,7 @@ class OverviewPanel(QWidget):
     _on_table_context_menu = _ov_table._on_table_context_menu
 
     _repaint_all_cells = _ov_grid._repaint_all_cells
+    _repaint_cells = _ov_grid._repaint_cells
     _update_box_titles = _ov_grid._update_box_titles
     _warm_hover_animation = _ov_grid._warm_hover_animation
     _rebuild_boxes = _ov_grid._rebuild_boxes
@@ -174,7 +175,18 @@ class OverviewPanel(QWidget):
 
     @Slot()
     def refresh_plan_store_view(self):
-        self._on_plan_store_changed()
+        if not bool(getattr(self, "_coalesce_plan_store_refresh", False)):
+            self._on_plan_store_changed()
+            return
+        if getattr(self, "_plan_store_refresh_pending", False):
+            return
+        self._plan_store_refresh_pending = True
+
+        def _flush():
+            self._plan_store_refresh_pending = False
+            self._on_plan_store_changed()
+
+        QTimer.singleShot(50, _flush)
 
 
     _set_zoom = _ov_zoom._set_zoom

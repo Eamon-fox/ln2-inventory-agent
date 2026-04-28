@@ -18,6 +18,8 @@ from app_gui import plan_executor_layout as _plan_layout
 from app_gui import plan_executor_phases as _plan_phases
 from app_gui import plan_executor_reports as _plan_reports
 from lib import tool_api_write_adapter as _write_adapter
+from lib.bulk_operations import get_write_capability
+from lib.diagnostics import span
 from lib.yaml_ops import load_yaml
 
 def preflight_plan(
@@ -73,13 +75,14 @@ def preflight_plan(
         _preflight_cache[cache_key] = deepcopy(data)
 
         try:
-            result = run_plan(
-                yaml_path=tmp_path,
-                items=items,
-                bridge=bridge,
-                date_str=date_str,
-                mode="preflight",
-            )
+            with span("plan.preflight", yaml_path=yaml_path, batch_size=len(items)):
+                result = run_plan(
+                    yaml_path=tmp_path,
+                    items=items,
+                    bridge=bridge,
+                    date_str=date_str,
+                    mode="preflight",
+                )
             return result
         finally:
             _preflight_cache.pop(cache_key, None)
@@ -227,47 +230,41 @@ def run_plan(
         reports,
         remaining,
         phase_items=adds,
-        run_batch=lambda: _execute_batch_add(
-            yaml_path=yaml_path,
-            items=adds,
-            bridge=bridge,
-            mode=mode,
-            request_backup_path=request_backup_path,
+        run_batch=lambda: _run_bulk_plan_phase(
+            "add",
+            adds,
+            mode,
+            lambda: _execute_batch_add(
+                yaml_path=yaml_path,
+                items=adds,
+                bridge=bridge,
+                mode=mode,
+                request_backup_path=request_backup_path,
+            ),
         ),
         last_backup=last_backup,
     )
 
-    # Phase 1.5: edit operations (each edit is independent)
+    # Phase 1.5: edit operations
     edits = _items_with_action(remaining, "edit")
-    for item in edits:
-        payload = dict(item.get("payload") or {})
-        response = _run_mode_call(
+    last_backup = _apply_batch_phase_reports(
+        reports,
+        remaining,
+        phase_items=edits,
+        run_batch=lambda: _run_bulk_plan_phase(
+            "edit",
+            edits,
             mode,
-            run_preflight=lambda: _run_preflight_tool(
+            lambda: _execute_batch_edit(
+                yaml_path=yaml_path,
+                items=edits,
                 bridge=bridge,
-                yaml_path=yaml_path,
-                tool_name="edit_entry",
-                record_id=payload.get("record_id"),
-                fields=payload.get("fields", {}),
-            ),
-            run_execute=lambda: _execute_bridge_write(
-                bridge.edit_entry,
-                yaml_path=yaml_path,
-                record_id=payload.get("record_id"),
-                fields=payload.get("fields", {}),
+                mode=mode,
                 request_backup_path=request_backup_path,
             ),
-        )
-
-        last_backup = _append_and_consume_item_report(
-            reports,
-            remaining,
-            item=item,
-            response=response,
-            fallback_error_code="edit_failed",
-            fallback_message="Edit failed",
-            last_backup=last_backup,
-        )
+        ),
+        last_backup=last_backup,
+    )
 
     # Phase 2: move operations (execute as a single batch)
     moves = _items_with_action(remaining, "move")
@@ -275,13 +272,18 @@ def run_plan(
         reports,
         remaining,
         phase_items=moves,
-        run_batch=lambda: _execute_move(
-            yaml_path=yaml_path,
-            items=moves,
-            bridge=bridge,
-            date_str=effective_date,
-            mode=mode,
-            request_backup_path=request_backup_path,
+        run_batch=lambda: _run_bulk_plan_phase(
+            "move",
+            moves,
+            mode,
+            lambda: _execute_move(
+                yaml_path=yaml_path,
+                items=moves,
+                bridge=bridge,
+                date_str=effective_date,
+                mode=mode,
+                request_backup_path=request_backup_path,
+            ),
         ),
         last_backup=last_backup,
     )
@@ -292,14 +294,19 @@ def run_plan(
         reports,
         remaining,
         phase_items=out_items,
-        run_batch=lambda: _execute_takeout(
-            yaml_path=yaml_path,
-            items=out_items,
-            action_name="Takeout",
-            bridge=bridge,
-            date_str=effective_date,
-            mode=mode,
-            request_backup_path=request_backup_path,
+        run_batch=lambda: _run_bulk_plan_phase(
+            "takeout",
+            out_items,
+            mode,
+            lambda: _execute_takeout(
+                yaml_path=yaml_path,
+                items=out_items,
+                action_name="Takeout",
+                bridge=bridge,
+                date_str=effective_date,
+                mode=mode,
+                request_backup_path=request_backup_path,
+            ),
         ),
         last_backup=last_backup,
     )
@@ -330,6 +337,19 @@ def run_plan(
         "backup_path": undo_backup,
         "remaining_items": remaining,
     }
+
+
+def _run_bulk_plan_phase(action: str, phase_items: List[Dict[str, object]], mode: str, fn):
+    capability = get_write_capability(action)
+    tool_name = capability.tool_name if capability is not None else action
+    with span(
+        "plan.execute",
+        action=action,
+        tool_name=tool_name,
+        mode=mode,
+        batch_size=len(phase_items or []),
+    ):
+        return fn()
 
 _source_yaml_cache = _plan_cache._source_yaml_cache
 clear_write_through_cache = _plan_cache.clear_write_through_cache
@@ -375,4 +395,5 @@ _run_move = _plan_actions._run_move
 _execute_move = _plan_actions._execute_move
 _execute_takeout = _plan_actions._execute_takeout
 _execute_batch_add = _plan_actions._execute_batch_add
+_execute_batch_edit = _plan_actions._execute_batch_edit
 

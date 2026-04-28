@@ -3,6 +3,8 @@
 import os
 from datetime import datetime
 
+from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
+
 from app_gui.application import PlanRunUseCase
 from app_gui.bridge_write_runner import execute_bridge_rollback
 from app_gui.i18n import tr
@@ -59,6 +61,103 @@ def _resolve_plan_run_use_case(panel):
     return PlanRunUseCase()
 
 
+class _PlanExecutionWorker(QObject):
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, *, run_use_case, yaml_path, plan_items, bridge):
+        super().__init__()
+        self._run_use_case = run_use_case
+        self._yaml_path = yaml_path
+        self._plan_items = list(plan_items or [])
+        self._bridge = bridge
+
+    @Slot()
+    def run(self):
+        try:
+            run_result = self._run_use_case.execute(
+                yaml_path=self._yaml_path,
+                plan_items=self._plan_items,
+                bridge=self._bridge,
+                mode="execute",
+            )
+            self.finished.emit(
+                {
+                    "report": run_result.report,
+                    "results": list(run_result.results or []),
+                }
+            )
+        except Exception as exc:
+            self.failed.emit(str(exc))
+        finally:
+            from app_gui.plan_executor import clear_write_through_cache
+
+            clear_write_through_cache()
+
+
+class _PlanExecutionResultReceiver(QObject):
+    def __init__(self, *, panel, thread, worker, original_plan, yaml_path):
+        super().__init__(panel)
+        self._panel = panel
+        self._thread = thread
+        self._worker = worker
+        self._original_plan = list(original_plan or [])
+        self._yaml_path = yaml_path
+        self._handled = False
+
+    def _begin_result_handling(self):
+        if self._handled:
+            return False
+        self._handled = True
+        self._panel._plan_execution_running = False
+        return True
+
+    @Slot(object)
+    def on_finished(self, payload):
+        if not self._begin_result_handling():
+            return
+        report = payload.get("report") if isinstance(payload, dict) else {}
+        results = payload.get("results") if isinstance(payload, dict) else []
+        _finish_execute_plan(
+            self._panel,
+            report=report if isinstance(report, dict) else {},
+            results=list(results or []),
+            original_plan=self._original_plan,
+            yaml_path=self._yaml_path,
+        )
+
+    @Slot(str)
+    def on_failed(self, message):
+        if not self._begin_result_handling():
+            return
+        from app_gui.ui import operations_panel_forms as _ops_forms
+        from app_gui.ui import operations_panel_plan_toolbar as _ops_plan_toolbar
+
+        text = str(message or "Plan execution failed")
+        _ops_forms._set_plan_feedback(self._panel, text, level="error")
+        _publish_system_notice(
+            self._panel,
+            code="plan.execute.worker_failed",
+            text=text,
+            level="error",
+            timeout=5000,
+        )
+        _ops_plan_toolbar._refresh_after_plan_items_changed(self._panel)
+
+    @Slot()
+    def on_thread_finished(self):
+        panel = self._panel
+        if getattr(panel, "_plan_execution_thread", None) is self._thread:
+            panel._plan_execution_thread = None
+        if getattr(panel, "_plan_execution_worker", None) is self._worker:
+            panel._plan_execution_worker = None
+        if getattr(panel, "_plan_execution_receiver", None) is self:
+            panel._plan_execution_receiver = None
+        self._thread = None
+        self._worker = None
+        self.deleteLater()
+
+
 def _summarize_execution(panel, report, rollback_info):
     use_case = _resolve_plan_run_use_case(panel)
     summarize_fn = getattr(use_case, "summarize", None)
@@ -105,6 +204,15 @@ def execute_plan(self):
         return
 
     original_plan = list(plan_items)
+    if bool(getattr(self, "_execute_plan_in_worker", False)):
+        _start_execute_plan_worker(
+            self,
+            yaml_path=yaml_path,
+            plan_items=plan_items,
+            original_plan=original_plan,
+        )
+        return
+
     try:
         run_use_case = _resolve_plan_run_use_case(self)
         run_result = run_use_case.execute(
@@ -113,79 +221,132 @@ def execute_plan(self):
             bridge=self.bridge,
             mode="execute",
         )
-        report = run_result.report
-        results = list(run_result.results or [])
-        _, rollback_info, fail_count = _finalize_plan_store_after_execution(
+        _finish_execute_plan(
             self,
-            report=report,
-            results=results,
+            report=run_result.report,
+            results=list(run_result.results or []),
             original_plan=original_plan,
             yaml_path=yaml_path,
-        )
-
-        from app_gui.ui import operations_panel_plan_store as _ops_plan_store
-
-        _ops_plan_store._run_plan_preflight(self, trigger="post_execute")
-        _ops_plan_toolbar._refresh_after_plan_items_changed(self)
-        execution_stats = _summarize_execution(self, report, rollback_info)
-        _show_plan_result(
-            self,
-            results,
-            report=report,
-            rollback_info=rollback_info,
-            execution_stats=execution_stats,
-        )
-
-        executed_items = [r[1] for r in results if r[0] == "OK"]
-        if execution_stats.get("rollback_ok"):
-            executed_items = []
-        self._last_executed_plan = list(executed_items)
-        self._last_executed_print_snapshot = _ops_actions._capture_last_executed_print_snapshot(
-            self,
-            executed_items,
-        )
-
-        if report.get("ok") and any(r[0] == "OK" for r in results):
-            self.operation_completed.emit(True)
-        elif fail_count:
-            self.operation_completed.emit(False)
-
-        last_backup = report.get("backup_path")
-        undo_eligible_items = [it for it in executed_items if _is_undo_eligible_item(it)]
-        if last_backup and undo_eligible_items:
-            self._last_operation_backup = last_backup
-            _ops_actions._enable_undo(self, timeout_sec=30)
-        else:
-            _ops_actions._disable_undo(self, clear_last_executed=not bool(executed_items))
-
-        summary_text = _build_execution_summary_text(self, execution_stats)
-        notice_level = "success"
-        if execution_stats.get("fail_count", 0) > 0:
-            notice_level = _execution_failure_level(execution_stats)
-        base_stats = report.get("stats") if isinstance(report.get("stats"), dict) else {}
-        stats_payload = dict(base_stats) if isinstance(base_stats, dict) else {}
-        stats_payload["applied"] = execution_stats.get("applied_count", 0)
-        stats_payload["failed"] = execution_stats.get("fail_count", 0)
-        stats_payload["rolled_back"] = bool(execution_stats.get("rollback_ok"))
-        result_sample = _build_execution_result_sample(self, results)
-        _publish_system_notice(
-            self,
-            code="plan.execute.result",
-            text=summary_text,
-            level=notice_level,
-            timeout=5000,
-            details=summary_text,
-            data={
-                "ok": bool(report.get("ok")),
-                "stats": stats_payload,
-                "report": report,
-                "rollback": rollback_info,
-                "sample": result_sample,
-            },
         )
     finally:
         from app_gui.plan_executor import clear_write_through_cache
         clear_write_through_cache()
+
+
+def _start_execute_plan_worker(self, *, yaml_path, plan_items, original_plan):
+    from app_gui.ui import operations_panel_forms as _ops_forms
+
+    if bool(getattr(self, "_plan_execution_running", False)):
+        return
+
+    self._plan_execution_running = True
+    self.plan_exec_btn.setEnabled(False)
+    self.plan_exec_btn.setText(tr("operations.planExecuting", default="Executing..."))
+    _ops_forms._set_plan_feedback(self, tr("operations.planExecuting", default="Executing..."), level="info")
+
+    thread = QThread(self)
+    worker = _PlanExecutionWorker(
+        run_use_case=_resolve_plan_run_use_case(self),
+        yaml_path=yaml_path,
+        plan_items=plan_items,
+        bridge=self.bridge,
+    )
+    worker.moveToThread(thread)
+    receiver = _PlanExecutionResultReceiver(
+        panel=self,
+        thread=thread,
+        worker=worker,
+        original_plan=original_plan,
+        yaml_path=yaml_path,
+    )
+    self._plan_execution_thread = thread
+    self._plan_execution_worker = worker
+    self._plan_execution_receiver = receiver
+
+    thread.started.connect(worker.run)
+    worker.finished.connect(receiver.on_finished, Qt.ConnectionType.QueuedConnection)
+    worker.failed.connect(receiver.on_failed, Qt.ConnectionType.QueuedConnection)
+    worker.finished.connect(worker.deleteLater)
+    worker.failed.connect(worker.deleteLater)
+    worker.finished.connect(thread.quit)
+    worker.failed.connect(thread.quit)
+    thread.finished.connect(receiver.on_thread_finished, Qt.ConnectionType.QueuedConnection)
+    thread.finished.connect(thread.deleteLater)
+    thread.start()
+
+
+def _finish_execute_plan(self, *, report, results, original_plan, yaml_path):
+    from app_gui.ui import operations_panel_actions as _ops_actions
+    from app_gui.ui import operations_panel_plan_toolbar as _ops_plan_toolbar
+
+    _, rollback_info, fail_count = _finalize_plan_store_after_execution(
+        self,
+        report=report,
+        results=results,
+        original_plan=original_plan,
+        yaml_path=yaml_path,
+    )
+
+    from app_gui.ui import operations_panel_plan_store as _ops_plan_store
+
+    _ops_plan_store._run_plan_preflight(self, trigger="post_execute")
+    _ops_plan_toolbar._refresh_after_plan_items_changed(self)
+    execution_stats = _summarize_execution(self, report, rollback_info)
+    _show_plan_result(
+        self,
+        results,
+        report=report,
+        rollback_info=rollback_info,
+        execution_stats=execution_stats,
+    )
+
+    executed_items = [r[1] for r in results if r[0] == "OK"]
+    if execution_stats.get("rollback_ok"):
+        executed_items = []
+    self._last_executed_plan = list(executed_items)
+    self._last_executed_print_snapshot = _ops_actions._capture_last_executed_print_snapshot(
+        self,
+        executed_items,
+    )
+
+    if report.get("ok") and any(r[0] == "OK" for r in results):
+        self.operation_completed.emit(True)
+    elif fail_count:
+        self.operation_completed.emit(False)
+
+    last_backup = report.get("backup_path")
+    undo_eligible_items = [it for it in executed_items if _is_undo_eligible_item(it)]
+    if last_backup and undo_eligible_items:
+        self._last_operation_backup = last_backup
+        _ops_actions._enable_undo(self, timeout_sec=30)
+    else:
+        _ops_actions._disable_undo(self, clear_last_executed=not bool(executed_items))
+
+    summary_text = _build_execution_summary_text(self, execution_stats)
+    notice_level = "success"
+    if execution_stats.get("fail_count", 0) > 0:
+        notice_level = _execution_failure_level(execution_stats)
+    base_stats = report.get("stats") if isinstance(report.get("stats"), dict) else {}
+    stats_payload = dict(base_stats) if isinstance(base_stats, dict) else {}
+    stats_payload["applied"] = execution_stats.get("applied_count", 0)
+    stats_payload["failed"] = execution_stats.get("fail_count", 0)
+    stats_payload["rolled_back"] = bool(execution_stats.get("rollback_ok"))
+    result_sample = _build_execution_result_sample(self, results)
+    _publish_system_notice(
+        self,
+        code="plan.execute.result",
+        text=summary_text,
+        level=notice_level,
+        timeout=5000,
+        details=summary_text,
+        data={
+            "ok": bool(report.get("ok")),
+            "stats": stats_payload,
+            "report": report,
+            "rollback": rollback_info,
+            "sample": result_sample,
+        },
+    )
 
 def _build_execute_confirmation_lines(self, plan_items, yaml_path):
     from app_gui.ui import operations_panel_confirm as _ops_confirm

@@ -454,13 +454,24 @@ def _set_plan_store_ref(self, plan_store):
 
 def _set_plan_markers_from_items(self, plan_items):
     from lib.custom_fields import get_display_key
+    from lib.diagnostics import span
 
     meta = getattr(self, "_current_meta", {}) or {}
     inventory = getattr(self, "_current_records", []) or []
     display_key = str(get_display_key(meta, inventory=inventory) or "")
-    self._operation_markers = _build_operation_marker_map(plan_items, display_key=display_key)
-    if self.overview_cells:
-        self._repaint_all_cells()
+    old_markers = getattr(self, "_operation_markers", {}) or {}
+    if not isinstance(old_markers, dict):
+        old_markers = {}
+    new_markers = _build_operation_marker_map(plan_items, display_key=display_key)
+    changed_keys = {
+        key
+        for key in set(old_markers) | set(new_markers)
+        if old_markers.get(key) != new_markers.get(key)
+    }
+    self._operation_markers = new_markers
+    if self.overview_cells and changed_keys:
+        with span("ui.overview_refresh", changed_cells=len(changed_keys), marker_count=len(new_markers)):
+            self._repaint_cells(changed_keys)
 
 
 def _on_plan_store_changed(self):
@@ -506,6 +517,41 @@ def _repaint_all_cells(self):
         if signatures.get((box_num, position)) == sig:
             continue
         self._paint_cell(button, box_num, position, record)
+
+
+def _repaint_cells(self, keys):
+    """Repaint only the requested cell keys using cached data."""
+    record_map = {}
+    cached_map = getattr(self, "overview_pos_map", None)
+    if isinstance(cached_map, dict) and cached_map:
+        record_map = cached_map
+    else:
+        records = getattr(self, "_current_records", [])
+        for rec in records:
+            if not isinstance(rec, dict):
+                continue
+            box = _normalize_positive_int(rec.get("box"))
+            pos = _normalize_positive_int(rec.get("position"))
+            if box is not None and pos is not None:
+                record_map[(box, pos)] = rec
+
+    signatures = getattr(self, "_cell_render_signatures", None)
+    if not isinstance(signatures, dict):
+        signatures = {}
+        self._cell_render_signatures = signatures
+
+    for raw_key in set(keys or []):
+        key = _normalize_cell_key(raw_key)
+        if key is None:
+            continue
+        button = self.overview_cells.get(key)
+        if button is None:
+            continue
+        record = record_map.get(key)
+        sig = _build_cell_render_signature(self, key[0], key[1], record)
+        if signatures.get(key) == sig:
+            continue
+        self._paint_cell(button, key[0], key[1], record)
 
 
 def _update_box_titles(self, box_numbers):
