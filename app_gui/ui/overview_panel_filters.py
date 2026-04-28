@@ -210,8 +210,9 @@ def _apply_filters_table(self, keyword, selected_box, selected_cell):
         )
     ]
 
-    if self._column_filters:
-        active_filters = len(self._column_filters)
+    active_column_filters = self._active_table_column_filters()
+    if active_column_filters:
+        active_filters = len(active_column_filters)
         status_parts.append(tr("overview.activeFilters").format(count=active_filters))
 
     self.ov_status.setText(" | ".join(status_parts))

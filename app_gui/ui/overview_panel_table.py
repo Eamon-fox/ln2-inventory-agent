@@ -77,6 +77,7 @@ _OVERVIEW_TABLE_COLUMN_LABEL_KEYS = {
     "thaw_events": "operations.colStorageEvents",
     "storage_events": "operations.colStorageEvents",
 }
+_TABLE_HISTORY_EVENT_COLUMNS = frozenset({"thaw_events", "storage_events"})
 
 
 def _safe_int(value):
@@ -326,10 +327,28 @@ def _staged_entry_values_for_slot(self, slot_key):
 
 
 def _display_table_columns(self, data_columns):
-    columns = [str(column or "") for column in list(data_columns or [])]
+    columns = _visible_table_data_columns(self, data_columns)
     if not bool(getattr(self, "_table_include_inactive", False)):
         columns.append(_TABLE_CONFIRM_COLUMN)
     return columns
+
+
+def _visible_table_data_columns(self, data_columns):
+    columns = [str(column or "") for column in list(data_columns or [])]
+    if bool(getattr(self, "_table_include_inactive", False)):
+        return columns
+    return [column for column in columns if column not in _TABLE_HISTORY_EVENT_COLUMNS]
+
+
+def _active_table_column_filters(self):
+    filters = dict(getattr(self, "_column_filters", {}) or {})
+    if bool(getattr(self, "_table_include_inactive", False)):
+        return filters
+    return {
+        column: filter_config
+        for column, filter_config in filters.items()
+        if str(column or "") not in _TABLE_HISTORY_EVENT_COLUMNS
+    }
 
 
 def _row_search_text(columns, values):
@@ -386,7 +405,7 @@ def _query_current_table_rows(self, *, keyword, selected_box, selected_cell):
         layout=getattr(self, "_current_layout", {}) or {},
         include_empty_slots=True,
     )
-    data_columns = list(projection.get("columns") or [])
+    data_columns = _visible_table_data_columns(self, projection.get("columns") or [])
     normalized_sort_by = str(getattr(self, "_table_sort_by", "location") or "location")
     if normalized_sort_by not in {str(column) for column in data_columns}:
         normalized_sort_by = "location" if "location" in data_columns else (data_columns[0] if data_columns else "location")
@@ -394,7 +413,7 @@ def _query_current_table_rows(self, *, keyword, selected_box, selected_cell):
 
     normalized_column_filters = normalize_overview_table_column_filters(
         data_columns,
-        dict(getattr(self, "_column_filters", {}) or {}),
+        _active_table_column_filters(self),
     )
     current_rows = _overlay_current_view_rows(self, projection.get("rows") or [], data_columns)
     filtered_rows, matched_boxes = filter_overview_table_rows(
@@ -553,7 +572,7 @@ def _table_query_payload(self, *, keyword, selected_box, selected_cell):
         "box": selected_box,
         "color_value": selected_cell,
         "include_inactive": bool(getattr(self, "_table_include_inactive", False)),
-        "column_filters": dict(getattr(self, "_column_filters", {}) or {}),
+        "column_filters": _active_table_column_filters(self),
         "sort_by": str(getattr(self, "_table_sort_by", "location") or "location"),
         "sort_order": str(getattr(self, "_table_sort_order", "asc") or "asc"),
         "limit": _table_render_limit(self),

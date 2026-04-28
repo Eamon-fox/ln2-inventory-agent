@@ -128,6 +128,7 @@ class OverviewPanel(QWidget):
 
     _resolve_table_header_labels = _ov_table._resolve_table_header_labels
     _display_table_columns = _ov_table._display_table_columns
+    _active_table_column_filters = _ov_table._active_table_column_filters
     _set_table_columns = _ov_table._set_table_columns
     _table_query_payload = _ov_table._table_query_payload
     _query_table_rows = _ov_table._query_table_rows

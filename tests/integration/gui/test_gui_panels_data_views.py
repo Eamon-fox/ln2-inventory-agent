@@ -763,9 +763,13 @@ class OverviewTableViewTests(ManagedPathTestCase):
 
             headers = self._table_header_texts(panel)
             self.assertIn("Deposited Date", headers)
-            self.assertIn("Storage Events", headers)
+            self.assertNotIn("Storage Events", headers)
             self.assertNotIn("frozen_at", headers)
             self.assertNotIn("thaw_events", headers)
+
+            panel.ov_filter_secondary_toggle.setChecked(True)
+            headers = self._table_header_texts(panel)
+            self.assertIn("Storage Events", headers)
         finally:
             self._cleanup(tmpdir)
 
@@ -795,9 +799,13 @@ class OverviewTableViewTests(ManagedPathTestCase):
 
             headers = self._table_header_texts(panel)
             self.assertIn("存入日期", headers)
-            self.assertIn("存储事件", headers)
+            self.assertNotIn("存储事件", headers)
             self.assertNotIn("frozen_at", headers)
             self.assertNotIn("thaw_events", headers)
+
+            panel.ov_filter_secondary_toggle.setChecked(True)
+            headers = self._table_header_texts(panel)
+            self.assertIn("存储事件", headers)
         finally:
             self._cleanup(tmpdir)
 
@@ -825,6 +833,7 @@ class OverviewTableViewTests(ManagedPathTestCase):
             panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
             panel.refresh()
             self._switch_to_table(panel)
+            panel.ov_filter_secondary_toggle.setChecked(True)
 
             headers = self._table_header_texts(panel)
             storage_events_col = headers.index("Storage Events")
@@ -960,6 +969,43 @@ class OverviewTableViewTests(ManagedPathTestCase):
             cell_idx = panel.ov_filter_cell.findData("K562")
             self.assertGreaterEqual(cell_idx, 0)
             panel.ov_filter_cell.setCurrentIndex(cell_idx)
+            self.assertEqual(1, panel.ov_table.rowCount())
+            self.assertEqual("1", panel.ov_table.item(0, 0).text())
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_table_current_view_does_not_keyword_match_hidden_history_events(self):
+        records = [
+            {
+                "id": 1,
+                "cell_line": "K562",
+                "short_name": "clone-A",
+                "box": 1,
+                "position": 1,
+                "frozen_at": "2025-01-01",
+                "thaw_events": [
+                    {
+                        "date": "2025-01-02",
+                        "action": "move",
+                        "positions": [2],
+                        "from_position": 2,
+                        "to_position": 1,
+                    }
+                ],
+            },
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+
+            panel.ov_filter_keyword.setText("move")
+            self.assertEqual(0, panel.ov_table.rowCount())
+
+            panel.ov_filter_secondary_toggle.setChecked(True)
             self.assertEqual(1, panel.ov_table.rowCount())
             self.assertEqual("1", panel.ov_table.item(0, 0).text())
         finally:
@@ -1802,11 +1848,14 @@ class OverviewTableViewTests(ManagedPathTestCase):
                 "__confirm__",
                 panel.ov_table.horizontalHeaderItem(self._table_column_index(panel, "__confirm__")).data(Qt.UserRole),
             )
+            with self.assertRaises(ValueError):
+                self._table_column_index(panel, "thaw_events")
 
             panel.ov_filter_secondary_toggle.setChecked(True)
             self.assertEqual(2, panel.ov_table.rowCount())
             self.assertEqual(1, self._table_row_count(panel, row_kind="active"))
             self.assertEqual(1, self._table_row_count(panel, row_kind="taken_out"))
+            self.assertGreaterEqual(self._table_column_index(panel, "thaw_events"), 0)
             with self.assertRaises(ValueError):
                 self._table_column_index(panel, "__confirm__")
 
