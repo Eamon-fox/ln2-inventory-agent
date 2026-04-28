@@ -1,14 +1,17 @@
 """
 YAML file operations for LN2 inventory
 """
+import contextvars
 import hashlib
 import json
 import os
 import shutil
 import sys
+import threading
 import time
 import uuid
-from contextlib import suppress
+from contextlib import contextmanager, suppress
+from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
@@ -42,6 +45,68 @@ _preflight_cache: dict = {}
 # Same key scheme as _preflight_cache.
 # Reads serve from cache; writes go to disk AND update cache.
 _write_through_cache: dict = {}
+
+# Read snapshot cache for batch read cycles.  A caller can wrap a group of
+# read-only tool calls in ``read_snapshot_context(trace_id)``; all threads that
+# enter with the same snapshot id share one loaded YAML document per path.
+_read_snapshot_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "snowfox_read_snapshot_id",
+    default=None,
+)
+_read_snapshot_caches: dict[str, dict[str, Any]] = {}
+_read_snapshot_lock = threading.Lock()
+
+
+def _yaml_cache_key(path):
+    return os.path.normcase(os.path.normpath(_abs_path(path)))
+
+
+@contextmanager
+def read_snapshot_context(snapshot_id=None):
+    """Share read-only YAML loads within a batch read cycle."""
+
+    sid = str(snapshot_id or "").strip() or f"snapshot-{uuid.uuid4().hex}"
+    token = _read_snapshot_id.set(sid)
+    try:
+        yield sid
+    finally:
+        _read_snapshot_id.reset(token)
+
+
+def clear_read_snapshot(snapshot_id=None):
+    sid = str(snapshot_id or "").strip()
+    if not sid:
+        sid = _read_snapshot_id.get()
+    if not sid:
+        return
+    with _read_snapshot_lock:
+        _read_snapshot_caches.pop(sid, None)
+
+
+def current_read_snapshot_id():
+    """Return the active read snapshot id, if any."""
+
+    return _read_snapshot_id.get()
+
+
+def _get_read_snapshot(cache_key):
+    sid = _read_snapshot_id.get()
+    if not sid:
+        return None, False
+    with _read_snapshot_lock:
+        cache = _read_snapshot_caches.get(sid) or {}
+        if cache_key not in cache:
+            return None, False
+        return deepcopy(cache[cache_key]), True
+
+
+def _put_read_snapshot(cache_key, data):
+    sid = _read_snapshot_id.get()
+    if not sid:
+        return
+    with _read_snapshot_lock:
+        cache = _read_snapshot_caches.setdefault(sid, {})
+        cache[cache_key] = deepcopy(data)
 
 _COMMON_CJK_CHARS = set(
     "\u7684\u4e00\u662f\u5728\u4e0d\u4e86\u6709\u548c\u4eba\u8fd9\u4e2d\u5927\u4e0a\u4e2a\u56fd"
@@ -344,15 +409,51 @@ def load_yaml(path=YAML_PATH):
     # Preflight cache: serve from memory if path is cached
     cache_key = os.path.normcase(os.path.normpath(abs_path))
     if cache_key in _preflight_cache:
-        from copy import deepcopy
+        try:
+            from .diagnostics import log_event
+
+            log_event("yaml.load", yaml_path=abs_path, source="preflight_cache")
+        except Exception:
+            pass
         return deepcopy(_preflight_cache[cache_key])
     if cache_key in _write_through_cache:
-        from copy import deepcopy
+        try:
+            from .diagnostics import log_event
+
+            log_event("yaml.load", yaml_path=abs_path, source="write_through_cache")
+        except Exception:
+            pass
         return deepcopy(_write_through_cache[cache_key])
-    with open(abs_path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
-    data = _repair_mojibake_values(data)
-    data = expand_document_structural_aliases(data)
+
+    cached, hit = _get_read_snapshot(cache_key)
+    if hit:
+        try:
+            from .diagnostics import log_event
+
+            log_event("yaml.load", yaml_path=abs_path, source="read_snapshot_cache")
+        except Exception:
+            pass
+        return cached
+
+    try:
+        from .diagnostics import span
+    except Exception:
+        span = None
+
+    if span is None:
+        with open(abs_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        data = _repair_mojibake_values(data)
+        data = expand_document_structural_aliases(data)
+        _put_read_snapshot(cache_key, data)
+        return data
+
+    with span("yaml.load", yaml_path=abs_path, source="disk"):
+        with open(abs_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        data = _repair_mojibake_values(data)
+        data = expand_document_structural_aliases(data)
+    _put_read_snapshot(cache_key, data)
     return data
 
 
@@ -1075,8 +1176,19 @@ def write_yaml(
     # Preflight cache: store in memory instead of writing to disk
     cache_key = os.path.normcase(os.path.normpath(yaml_abs))
     if cache_key in _preflight_cache:
-        from copy import deepcopy
         _preflight_cache[cache_key] = deepcopy(data)
+        try:
+            from .diagnostics import log_event
+
+            log_event(
+                "yaml.write",
+                yaml_path=yaml_abs,
+                source="preflight_cache",
+                auto_backup=bool(auto_backup),
+                validation_scope=validation_scope,
+            )
+        except Exception:
+            pass
         return None
     _ensure_inventory_integrity(
         data,
@@ -1123,12 +1235,27 @@ def write_yaml(
         except Exception as exc:
             print(f"warning: failed to create backup: {exc}", file=sys.stderr)
 
-    with open(yaml_abs, "w", encoding="utf-8") as f:
-        yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False, width=120)
+    try:
+        from .diagnostics import span
+    except Exception:
+        span = None
+
+    if span is None:
+        with open(yaml_abs, "w", encoding="utf-8") as f:
+            yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False, width=120)
+    else:
+        with span(
+            "yaml.write",
+            yaml_path=yaml_abs,
+            source="disk",
+            auto_backup=bool(auto_backup),
+            validation_scope=validation_scope,
+        ):
+            with open(yaml_abs, "w", encoding="utf-8") as f:
+                yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False, width=120)
 
     # Update write-through cache if active
     if cache_key in _write_through_cache:
-        from copy import deepcopy
         _write_through_cache[cache_key] = deepcopy(data)
 
     warnings = []

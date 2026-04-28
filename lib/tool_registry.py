@@ -811,7 +811,28 @@ _TOOL_DESCRIPTOR_LIST = (
         },
         public_contract=False,
         agent_enabled=False,
+        plan_action="add",
         write_api_attr="tool_batch_add_entries",
+    ),
+    _tool(
+        "batch_edit_entries",
+        "Internal helper that batches multiple edit_entry payloads into one write cycle.",
+        {
+            "type": "object",
+            "properties": {
+                "entries": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {"type": "object"},
+                },
+            },
+            "required": ["entries"],
+            "additionalProperties": False,
+        },
+        public_contract=False,
+        agent_enabled=False,
+        plan_action="edit",
+        write_api_attr="tool_batch_edit_entries",
     ),
     _tool(
         "rollback",

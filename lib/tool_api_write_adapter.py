@@ -538,3 +538,45 @@ def batch_add_entries(
         request_backup_path=resolved_backup or request_backup_path,
         payload=payload,
     )
+
+
+def batch_edit_entries(
+    *,
+    yaml_path: str,
+    entries: List[Dict[str, Any]],
+    execution_mode: Optional[str] = None,
+    actor_context: Optional[Dict[str, Any]] = None,
+    source: str = "tool_api",
+    auto_backup: bool = True,
+    request_backup_path: Optional[str] = None,
+    backup_event_source: Optional[str] = None,
+    default_execute: bool = False,
+) -> Dict[str, Any]:
+    _, resolved_backup = prepare_write_tool_kwargs(
+        yaml_path=yaml_path,
+        dry_run=False,
+        execution_mode=execution_mode,
+        request_backup_path=request_backup_path,
+        backup_event_source=backup_event_source or source,
+        default_execute=default_execute,
+    )
+    payload: Dict[str, Any] = {
+        "entries": entries,
+        "auto_backup": False if resolved_backup else auto_backup,
+    }
+    if execution_mode is not None:
+        payload["execution_mode"] = execution_mode
+    elif default_execute:
+        payload["execution_mode"] = "execute"
+    if resolved_backup:
+        payload["request_backup_path"] = resolved_backup
+    elif request_backup_path:
+        payload["request_backup_path"] = request_backup_path
+    return _invoke_with_backup(
+        "batch_edit_entries",
+        yaml_path=yaml_path,
+        actor_context=actor_context,
+        source=source,
+        request_backup_path=resolved_backup or request_backup_path,
+        payload=payload,
+    )

@@ -170,6 +170,15 @@ class ToolApiWriteAdapterTests(unittest.TestCase):
 
         self.assertIs(tool_fn, resolved)
 
+    def test_resolve_tool_uses_registry_for_internal_batch_edit_helper(self):
+        tool_fn = MagicMock()
+        fake_tool_api = type("FakeToolApi", (), {"tool_batch_edit_entries": tool_fn})()
+
+        with patch("lib.tool_api_write_adapter._load_tool_api", return_value=fake_tool_api):
+            resolved = adapter._resolve_tool("batch_edit_entries")
+
+        self.assertIs(tool_fn, resolved)
+
     def test_batch_add_entries_reuses_resolved_request_backup(self):
         tool_fn = MagicMock(return_value={"ok": True})
         with patch(
@@ -195,6 +204,36 @@ class ToolApiWriteAdapterTests(unittest.TestCase):
             actor_context={"session_id": "sess-2"},
             source="plan_executor.execute",
             entries=[{"box": 1, "positions": ["A1"], "stored_at": "2026-01-01", "fields": {}}],
+            auto_backup=False,
+            execution_mode="execute",
+            request_backup_path="/tmp/request.bak",
+        )
+
+    def test_batch_edit_entries_reuses_resolved_request_backup(self):
+        tool_fn = MagicMock(return_value={"ok": True})
+        with patch(
+            "lib.tool_api_write_adapter.resolve_request_backup_path",
+            return_value="/tmp/request.bak",
+        ), patch("lib.tool_api_write_adapter._resolve_tool", return_value=tool_fn), patch(
+            "lib.tool_api_write_adapter._resolve_actor_context",
+            return_value={"session_id": "sess-3"},
+        ):
+            response = adapter.batch_edit_entries(
+                yaml_path="inventory.yaml",
+                entries=[{"record_id": 7, "fields": {"note": "ok"}}],
+                execution_mode="execute",
+                actor_context={"session_id": "sess-3"},
+                source="plan_executor.execute",
+                request_backup_path="manual/request.bak",
+            )
+
+        self.assertTrue(response["ok"])
+        self.assertEqual("/tmp/request.bak", response["backup_path"])
+        tool_fn.assert_called_once_with(
+            yaml_path="inventory.yaml",
+            actor_context={"session_id": "sess-3"},
+            source="plan_executor.execute",
+            entries=[{"record_id": 7, "fields": {"note": "ok"}}],
             auto_backup=False,
             execution_mode="execute",
             request_backup_path="/tmp/request.bak",

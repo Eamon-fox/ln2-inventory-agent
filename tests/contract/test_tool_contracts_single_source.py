@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 from agent import tool_runner
 from agent.tool_runtime_registry import build_tool_runtime_specs, expected_runtime_tool_names
 from app_gui.tool_bridge import GuiToolBridge
+from lib.bulk_operations import iter_write_capabilities
 from lib.tool_registry import (
     MIGRATION_TOOL_NAMES,
     TOOL_CONTRACTS,
@@ -49,6 +50,7 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
             "set_box_tag",
             "set_box_layout_indexing",
             "batch_add_entries",
+            "batch_edit_entries",
         }
         for name in hidden_names:
             with self.subTest(tool=name):
@@ -139,6 +141,7 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
             "move",
             "rollback",
             "batch_add_entries",
+            "batch_edit_entries",
             "set_box_tag",
             "set_box_layout_indexing",
             "manage_boxes",
@@ -149,6 +152,18 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
                 write_api_attr = str(descriptor.write_api_attr or "").strip()
                 self.assertTrue(write_api_attr, f"{name} missing explicit write_api_attr")
                 self.assertTrue(callable(resolve_tool_api_callable(write_api_attr)))
+
+    def test_bulk_write_capabilities_derive_from_registry_descriptors(self):
+        capabilities = {cap.action: cap for cap in iter_write_capabilities()}
+        self.assertEqual({"add", "edit", "takeout", "move", "rollback"}, set(capabilities))
+        self.assertEqual("batch_add_entries", capabilities["add"].tool_name)
+        self.assertEqual("batch_edit_entries", capabilities["edit"].tool_name)
+        for action, capability in capabilities.items():
+            with self.subTest(action=action):
+                descriptor = get_tool_descriptor(capability.tool_name)
+                self.assertIsNotNone(descriptor)
+                self.assertEqual(action, descriptor.plan_action)
+                self.assertEqual(descriptor.write_api_attr, capability.write_api_attr)
 
     def test_runtime_specs_cover_all_dispatch_descriptors(self):
         runner = object.__new__(tool_runner.AgentToolRunner)
