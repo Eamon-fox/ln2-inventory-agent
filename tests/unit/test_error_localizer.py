@@ -74,7 +74,7 @@ class TestErrorLocalizer(unittest.TestCase):
         }
         text = localize_error_payload(payload)
         self.assertEqual(
-            "Row 1, record ID 161: target slot Box 3 Position 32 is occupied by record #226.",
+            "Target slot Box 3 Position 32 is already occupied.",
             text,
         )
 
@@ -86,7 +86,7 @@ class TestErrorLocalizer(unittest.TestCase):
         }
         text = localize_error_payload(payload)
         self.assertEqual(
-            "第 1 行，记录 ID 161：目标位置（盒 3，位置 32）已被记录 #226 占用。",
+            "目标位置（盒 3，位置 32）已被占用。",
             text,
         )
 
@@ -101,7 +101,7 @@ class TestErrorLocalizer(unittest.TestCase):
         }
         text = localize_error_payload(payload)
         self.assertEqual(
-            "Row 1, record ID 161: target slot Box 3 Position 32 is occupied by record #226.",
+            "Target slot Box 3 Position 32 is already occupied.",
             text,
         )
 

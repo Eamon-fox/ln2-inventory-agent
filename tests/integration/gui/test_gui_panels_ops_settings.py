@@ -2582,7 +2582,7 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
         self.assertFalse(panel.plan_feedback_label.isHidden())
         self.assertEqual("blocked detail", panel.plan_feedback_label.text())
         self.assertEqual("blocked detail", panel.plan_feedback_label.toolTip())
-        self.assertEqual("statusWarning", panel.plan_feedback_label.property("role"))
+        self.assertEqual("", panel.plan_feedback_label.property("role"))
         self.assertEqual("", panel.plan_feedback_label.objectName())
         self.assertIs(panel._top_status_slot, panel.plan_feedback_label.parent())
         self.assertTrue(panel.t_ctx_status.isHidden())

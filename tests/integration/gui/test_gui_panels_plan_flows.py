@@ -1315,7 +1315,10 @@ class PlanPreflightGuardTests(ManagedPathTestCase):
             self.assertEqual(0, len(panel.plan_items))
             self.assertFalse(panel.plan_feedback_label.isHidden())
             feedback = panel.plan_feedback_label.text()
-            self.assertIn("target slot Box 1 Position 10 is occupied by record #2", feedback)
+            self.assertIn("Target slot Box 1 Position 10 is already occupied.", feedback)
+            self.assertFalse(feedback.strip().startswith("- "))
+            self.assertNotIn("record ID", feedback)
+            self.assertNotIn("record #", feedback)
             self.assertNotEqual("- Validation failed.", feedback.strip())
         finally:
             self._cleanup_yaml(tmpdir)

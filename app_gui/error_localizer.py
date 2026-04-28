@@ -212,37 +212,37 @@ def _localize_validation_detail(message: str) -> str:
         (
             _MOVE_TARGET_OCCUPIED_RE,
             "errors.detail.moveTargetOccupied",
-            "Row {row}, record ID {record_id}: target slot Box {box} Position {position} is occupied by record #{occupant_id}.",
+            "Target slot Box {box} Position {position} is already occupied.",
         ),
         (
             _MOVE_TARGET_ALREADY_MOVED_RE,
             "errors.detail.moveTargetAlreadyMoved",
-            "Row {row}, record ID {record_id}: target position {position} has already been moved in this request.",
+            "Target position {position} has already been moved in this request.",
         ),
         (
             _MOVE_TARGET_SAME_RECORD_RE,
             "errors.detail.moveTargetSameRecord",
-            "Row {row}, record ID {record_id}: target position {position} already belongs to this record.",
+            "Target position {position} already belongs to this record.",
         ),
         (
             _MOVE_TARGET_SAME_POSITION_RE,
             "errors.detail.moveTargetSamePosition",
-            "Row {row}, record ID {record_id}: source and target positions must differ for move.",
+            "Source and target positions must differ for move.",
         ),
         (
             _MOVE_SOURCE_MISMATCH_RE,
             "errors.detail.moveSourceMismatch",
-            "Row {row}, record ID {record_id}: source position {source_position} does not match current position {current_position}.",
+            "Source position {source_position} does not match the current position {current_position}.",
         ),
         (
             _MOVE_RECORD_NOT_FOUND_RE,
             "errors.detail.moveRecordNotFound",
-            "Row {row}, record ID {record_id}: record not found.",
+            "The selected record was not found.",
         ),
         (
             _MOVE_RECORD_INACTIVE_RE,
             "errors.detail.moveRecordInactive",
-            "Row {row}, record ID {record_id}: record has no active position.",
+            "The selected record has no active position.",
         ),
     ]
     for pattern, key, default in patterns:
@@ -268,7 +268,7 @@ def _format_error_list(errors: Any) -> str:
         return ""
     if len(lines) == 1:
         return lines[0]
-    return "\n".join(f"- {line}" for line in lines[:5])
+    return "\n".join(lines[:5])
 
 
 def _specific_payload_message(payload: Dict[str, Any], code: str) -> str:

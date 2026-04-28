@@ -812,14 +812,14 @@ def _set_plan_feedback(self, text="", level="info"):
     if label is None:
         return
     # Keep the level argument for existing callers; this top-row feedback
-    # intentionally uses the same visual style as context status text.
+    # intentionally uses the default label style instead of severity colors.
     message = str(text or "").strip()
     if not message:
         label.clear()
         label.setToolTip("")
         label.setVisible(False)
         return
-    label.setProperty("role", "statusWarning")
+    label.setProperty("role", "")
     label.style().unpolish(label)
     label.style().polish(label)
     label.setText(message)

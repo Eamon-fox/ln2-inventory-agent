@@ -737,13 +737,13 @@
       "write_requires_execute_mode": "仅允许在执行计划时写入。"
     },
     "detail": {
-      "moveRecordInactive": "第 {row} 行，记录 ID {record_id}：该记录没有当前占用位置。",
-      "moveRecordNotFound": "第 {row} 行，记录 ID {record_id}：未找到该记录。",
-      "moveSourceMismatch": "第 {row} 行，记录 ID {record_id}：来源位置 {source_position} 与当前实际位置 {current_position} 不一致。",
-      "moveTargetAlreadyMoved": "第 {row} 行，记录 ID {record_id}：目标位置 {position} 已在本次请求中被移动过。",
-      "moveTargetOccupied": "第 {row} 行，记录 ID {record_id}：目标位置（盒 {box}，位置 {position}）已被记录 #{occupant_id} 占用。",
-      "moveTargetSamePosition": "第 {row} 行，记录 ID {record_id}：移动的来源位置和目标位置不能相同。",
-      "moveTargetSameRecord": "第 {row} 行，记录 ID {record_id}：目标位置 {position} 已属于该记录。"
+      "moveRecordInactive": "所选记录没有当前占用位置。",
+      "moveRecordNotFound": "未找到所选记录。",
+      "moveSourceMismatch": "来源位置 {source_position} 与当前实际位置 {current_position} 不一致。",
+      "moveTargetAlreadyMoved": "目标位置 {position} 已在本次请求中被移动过。",
+      "moveTargetOccupied": "目标位置（盒 {box}，位置 {position}）已被占用。",
+      "moveTargetSamePosition": "移动的来源位置和目标位置不能相同。",
+      "moveTargetSameRecord": "目标位置 {position} 已属于所选记录。"
     },
     "qtFontFaceFromHdcFailed": "字体渲染警告：无法通过 DirectWrite 加载「{family}」（DPI {dpi}），已自动回退到兼容字体。"
   },

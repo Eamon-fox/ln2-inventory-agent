@@ -177,7 +177,7 @@ def add_plan_items(self, items):
         else:
             user_text = _tr("operations.planRejected", error=first)
         preview = blocked_messages[:3]
-        feedback = "\n".join(f"- {msg}" for msg in preview)
+        feedback = "\n".join(preview)
         if len(blocked_messages) > 3:
             feedback += f"\n... +{len(blocked_messages) - 3}"
         _ops_forms._set_plan_feedback(self, feedback, level="error")

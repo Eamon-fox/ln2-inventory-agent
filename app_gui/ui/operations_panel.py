@@ -488,7 +488,6 @@ class OperationsPanel(QWidget):
         status_layout.setSpacing(6)
 
         self.plan_feedback_label = QLabel("")
-        self.plan_feedback_label.setProperty("role", "statusWarning")
         self.plan_feedback_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.plan_feedback_label.setWordWrap(True)
         self.plan_feedback_label.setVisible(False)

@@ -744,13 +744,13 @@
       "write_requires_execute_mode": "Writes are only allowed during plan execution."
     },
     "detail": {
-      "moveRecordInactive": "Row {row}, record ID {record_id}: record has no active position.",
-      "moveRecordNotFound": "Row {row}, record ID {record_id}: record not found.",
-      "moveSourceMismatch": "Row {row}, record ID {record_id}: source position {source_position} does not match current position {current_position}.",
-      "moveTargetAlreadyMoved": "Row {row}, record ID {record_id}: target position {position} has already been moved in this request.",
-      "moveTargetOccupied": "Row {row}, record ID {record_id}: target slot Box {box} Position {position} is occupied by record #{occupant_id}.",
-      "moveTargetSamePosition": "Row {row}, record ID {record_id}: source and target positions must differ for move.",
-      "moveTargetSameRecord": "Row {row}, record ID {record_id}: target position {position} already belongs to this record."
+      "moveRecordInactive": "The selected record has no active position.",
+      "moveRecordNotFound": "The selected record was not found.",
+      "moveSourceMismatch": "Source position {source_position} does not match the current position {current_position}.",
+      "moveTargetAlreadyMoved": "Target position {position} has already been moved in this request.",
+      "moveTargetOccupied": "Target slot Box {box} Position {position} is already occupied.",
+      "moveTargetSamePosition": "Source and target positions must differ for move.",
+      "moveTargetSameRecord": "Target position {position} already belongs to this record."
     },
     "qtFontFaceFromHdcFailed": "Font rendering warning: failed to load \"{family}\" via DirectWrite (DPI {dpi}). The app will use a fallback font."
   },
