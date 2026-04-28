@@ -1188,6 +1188,7 @@ class ReactAgentTests(ManagedPathTestCase):
         self.assertEqual("system", system_msg["role"])
         content = str(system_msg.get("content") or "")
         self.assertIn("use `search_records` for direct lookup", content)
+        self.assertIn("`search_records` defaults to `status=active`", content)
         self.assertIn("use `filter_records` when the user is thinking in Overview-table terms", content)
         self.assertIn('"find record 235" => `search_records`', content)
         self.assertIn('"show genomic DNA in box 3 sorted by stored_at" => `filter_records`', content)

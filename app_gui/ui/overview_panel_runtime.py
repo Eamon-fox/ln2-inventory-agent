@@ -171,11 +171,12 @@ def _sync_secondary_toggle_for_view_mode(self, mode):
     with QSignalBlocker(self.ov_filter_secondary_toggle):
         if mode == "table":
             self.ov_filter_secondary_toggle.setText(tr("overview.showTakenOut"))
+            self.ov_filter_secondary_toggle.setToolTip(tr("overview.showTakenOutTooltip"))
             self.ov_filter_secondary_toggle.setChecked(bool(self._table_include_inactive))
         else:
             self.ov_filter_secondary_toggle.setText(tr("overview.showEmpty"))
+            self.ov_filter_secondary_toggle.setToolTip("")
             self.ov_filter_secondary_toggle.setChecked(bool(self._grid_include_empty_slots))
-        self.ov_filter_secondary_toggle.setToolTip("")
 
 
 def _set_grid_mode_aux_visibility(self, is_grid_mode):

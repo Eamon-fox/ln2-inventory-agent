@@ -55,7 +55,7 @@ def _run_search_records(self, payload, _trace_id=None):
             box=self._optional_int(payload, "box"),
             position=position,
             record_id=self._optional_int(payload, "record_id"),
-            status=payload.get("status"),
+            status=payload.get("status") or "active",
             sort_by=payload.get("sort_by"),
             sort_order=payload.get("sort_order"),
         ),

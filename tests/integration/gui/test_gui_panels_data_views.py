@@ -1762,11 +1762,13 @@ class OverviewTableViewTests(ManagedPathTestCase):
             self._switch_to_table(panel)
             self.assertTrue(panel.ov_filter_secondary_toggle.isEnabled())
             self.assertEqual(tr("overview.showTakenOut"), panel.ov_filter_secondary_toggle.text())
+            self.assertEqual(tr("overview.showTakenOutTooltip"), panel.ov_filter_secondary_toggle.toolTip())
             self.assertFalse(panel.ov_filter_secondary_toggle.isChecked())
 
             self._switch_to_grid(panel)
             self.assertTrue(panel.ov_filter_secondary_toggle.isEnabled())
             self.assertEqual(tr("overview.showEmpty"), panel.ov_filter_secondary_toggle.text())
+            self.assertEqual("", panel.ov_filter_secondary_toggle.toolTip())
             self.assertTrue(panel.ov_filter_secondary_toggle.isChecked())
         finally:
             self._cleanup(tmpdir)

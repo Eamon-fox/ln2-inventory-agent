@@ -1286,7 +1286,7 @@ class AgentToolRunnerTests(ManagedPathTestCase):
             self.assertEqual(3, response["result"]["records"][0]["id"])
             self.assertEqual("2:15", response["result"]["applied_filters"]["query_shortcut"])
 
-    def test_search_records_default_includes_active_and_inactive_records(self):
+    def test_search_records_default_returns_active_records(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_search_active_default_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -1319,12 +1319,17 @@ class AgentToolRunnerTests(ManagedPathTestCase):
             response = runner.run("search_records", {"query": "K562"})
 
             self.assertTrue(response["ok"])
-            self.assertEqual(2, response["result"]["total_count"])
-            self.assertEqual([2, 1], [item.get("id") for item in response["result"]["records"]])
-            self.assertEqual("all", response["result"]["applied_filters"]["status"])
+            self.assertEqual(1, response["result"]["total_count"])
+            self.assertEqual([1], [item.get("id") for item in response["result"]["records"]])
+            self.assertEqual("active", response["result"]["applied_filters"]["status"])
             self.assertEqual("stored_at", response["result"]["applied_filters"]["sort_by"])
             self.assertEqual("desc", response["result"]["applied_filters"]["sort_order"])
             self.assertEqual("last", response["result"]["applied_filters"]["sort_nulls"])
+
+            all_records = runner.run("search_records", {"query": "K562", "status": "all"})
+            self.assertTrue(all_records["ok"])
+            self.assertEqual([2, 1], [item.get("id") for item in all_records["result"]["records"]])
+            self.assertEqual("all", all_records["result"]["applied_filters"]["status"])
 
             active_only = runner.run("search_records", {"query": "K562", "status": "active"})
             self.assertTrue(active_only["ok"])
