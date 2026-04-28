@@ -811,6 +811,8 @@ def _set_plan_feedback(self, text="", level="info"):
     label = getattr(self, "plan_feedback_label", None)
     if label is None:
         return
+    # Keep the level argument for existing callers; this top-row feedback
+    # intentionally uses the same visual style as context status text.
     message = str(text or "").strip()
     if not message:
         label.clear()
