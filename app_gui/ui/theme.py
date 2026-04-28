@@ -715,10 +715,6 @@ def _get_common_qss():
         QTextBrowser#operationsResultSummary {{ color: var(--text-strong); border: none; background: transparent; }}
         QWidget#operationsResultActions {{ background: transparent; }}
         QWidget#operationsResultActions QPushButton {{ min-height: 28px; }}
-        QLabel#operationsPlanFeedback {{ border: 1px solid var(--border-weak); border-radius: var(--radius-sm); padding: 8px 10px; }}
-        QLabel#operationsPlanFeedback[level="info"] {{ color: var(--text-muted); background: var(--background-inset); }}
-        QLabel#operationsPlanFeedback[level="warning"] {{ color: var(--status-warning); background: var(--status-warning-bg); }}
-        QLabel#operationsPlanFeedback[level="error"] {{ color: var(--status-error); background: var(--status-error-bg); }}
         QLabel#aiMigrationModeBanner, QLabel#operationsMigrationModeBanner {{
             color: var(--status-warning);
             background: var(--status-warning-bg);

@@ -2,6 +2,7 @@
 
 from tests.integration.gui._gui_panels_shared import *  # noqa: F401,F403
 from lib.plan_store import PlanStore
+from PySide6.QtWidgets import QSizePolicy
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is required for GUI panel tests")
 class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
@@ -2541,6 +2542,51 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
             panel.t_ctx_source.text(),
         )
 
+    def _form_label_for_context_status(self, panel, mode):
+        tab = panel.op_stack.widget(panel.op_mode_indexes[mode])
+        status_label = panel.t_ctx_status if mode == "takeout" else panel.m_ctx_status
+        root_layout = tab.layout()
+        for index in range(root_layout.count()):
+            item = root_layout.itemAt(index)
+            child_layout = item.layout()
+            if child_layout is None or not hasattr(child_layout, "labelForField"):
+                continue
+            label = child_layout.labelForField(status_label)
+            if label is not None:
+                return label
+        return None
+
+    def test_operations_panel_context_status_is_not_a_form_field_row(self):
+        panel = self._new_operations_panel()
+
+        self.assertIsNone(self._form_label_for_context_status(panel, "takeout"))
+        self.assertIsNone(self._form_label_for_context_status(panel, "move"))
+        self.assertIs(panel._top_status_slot, panel.plan_feedback_label.parent())
+        self.assertIs(panel._top_status_slot, panel.t_ctx_status.parent())
+        self.assertIs(panel._top_status_slot, panel.m_ctx_status.parent())
+        self.assertTrue(panel.t_ctx_status.isHidden())
+        self.assertTrue(panel.m_ctx_status.isHidden())
+        self.assertTrue(panel.t_ctx_status.alignment() & Qt.AlignRight)
+        self.assertTrue(panel.m_ctx_status.alignment() & Qt.AlignRight)
+        self.assertEqual(QSizePolicy.Fixed, panel.op_mode_combo.sizePolicy().horizontalPolicy())
+
+    def test_operations_panel_plan_feedback_shares_top_status_slot(self):
+        panel = self._new_operations_panel()
+        panel.t_ctx_status.setText(tr("operations.recordNotFound"))
+        panel.t_ctx_status.setVisible(True)
+
+        from app_gui.ui import operations_panel_forms as _ops_forms
+
+        _ops_forms._set_plan_feedback(panel, "blocked detail", level="error")
+
+        self.assertFalse(panel.plan_feedback_label.isHidden())
+        self.assertEqual("blocked detail", panel.plan_feedback_label.text())
+        self.assertEqual("blocked detail", panel.plan_feedback_label.toolTip())
+        self.assertEqual("statusWarning", panel.plan_feedback_label.property("role"))
+        self.assertEqual("", panel.plan_feedback_label.objectName())
+        self.assertIs(panel._top_status_slot, panel.plan_feedback_label.parent())
+        self.assertTrue(panel.t_ctx_status.isHidden())
+
     def test_operations_panel_prefill_context_shows_status_when_record_missing(self):
         panel = self._new_operations_panel()
 
@@ -2548,6 +2594,71 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
 
         self.assertFalse(panel.t_ctx_status.isHidden())
         self.assertEqual(tr("operations.recordNotFound"), panel.t_ctx_status.text())
+
+    def test_operations_panel_takeout_source_miss_clears_stale_record_id(self):
+        panel = self._new_operations_panel()
+        panel.update_records_cache(
+            {
+                5: {
+                    "id": 5,
+                    "parent_cell_line": "K562",
+                    "short_name": "K562_RTCB_dTAG_clone12",
+                    "box": 1,
+                    "position": 30,
+                    "frozen_at": "2026-02-10",
+                }
+            }
+        )
+        panel.set_prefill({"box": 1, "position": 30, "record_id": 5})
+        self.assertEqual(5, panel.t_id.value())
+
+        panel.t_from_position.setText("31")
+        from app_gui.ui import operations_panel_context as _ops_context
+
+        _ops_context._refresh_takeout_record_context(panel)
+
+        self.assertEqual(0, panel.t_id.value())
+        self.assertFalse(panel.t_ctx_status.isHidden())
+        self.assertEqual(tr("operations.recordNotFound"), panel.t_ctx_status.text())
+
+    def test_operations_panel_move_context_shows_status_when_record_missing(self):
+        panel = self._new_operations_panel()
+
+        panel.m_from_box.setValue(1)
+        panel.m_from_position.setText("30")
+        from app_gui.ui import operations_panel_context as _ops_context
+
+        _ops_context._refresh_move_record_context(panel)
+
+        self.assertFalse(panel.m_ctx_status.isHidden())
+        self.assertEqual(tr("operations.recordNotFound"), panel.m_ctx_status.text())
+
+    def test_operations_panel_move_source_miss_clears_stale_record_id(self):
+        panel = self._new_operations_panel()
+        panel.update_records_cache(
+            {
+                7: {
+                    "id": 7,
+                    "parent_cell_line": "K562",
+                    "short_name": "K562_move",
+                    "box": 2,
+                    "position": 15,
+                }
+            }
+        )
+        panel.m_from_box.setValue(2)
+        panel.m_from_position.setText("15")
+        from app_gui.ui import operations_panel_context as _ops_context
+
+        _ops_context._refresh_move_record_context(panel)
+        self.assertEqual(7, panel.m_id.value())
+
+        panel.m_from_position.setText("16")
+        _ops_context._refresh_move_record_context(panel)
+
+        self.assertEqual(0, panel.m_id.value())
+        self.assertFalse(panel.m_ctx_status.isHidden())
+        self.assertEqual(tr("operations.recordNotFound"), panel.m_ctx_status.text())
 
     def test_operations_panel_readonly_context_fields_reset_cursor_to_start(self):
         panel = self._new_operations_panel()

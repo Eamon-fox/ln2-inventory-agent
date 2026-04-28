@@ -433,7 +433,7 @@ def _build_takeout_tab(self):
 
     # Hidden internal record ID (auto-filled from box:position lookup)
     self.t_id = QSpinBox()
-    self.t_id.setRange(1, 999999)
+    self.t_id.setRange(0, 999999)
     self.t_id.setVisible(False)
     # Connect signal to refresh context when ID is changed (for reverse lookup)
     self.t_id.valueChanged.connect(lambda *_args: _ops_context._refresh_takeout_record_context(self))
@@ -493,12 +493,6 @@ def _build_takeout_tab(self):
     self.t_date.setDate(QDate.currentDate())
 
     form.addRow(tr("operations.date"), self.t_date)
-
-    # Status
-    self.t_ctx_status = QLabel(tr("operations.noPrefill"))
-    self.t_ctx_status.setWordWrap(True)
-    self.t_ctx_status.setVisible(False)
-    form.addRow(tr("overview.ctxStatus"), self.t_ctx_status)
 
     # Kept for compatibility
     self.t_ctx_id = self.t_id
@@ -583,7 +577,7 @@ def _build_move_tab(self):
 
     # Hidden internal record ID (auto-filled from box:position lookup)
     self.m_id = QSpinBox()
-    self.m_id.setRange(1, 999999)
+    self.m_id.setRange(0, 999999)
     self.m_id.setVisible(False)
 
     _m_rid = lambda: self.m_id.value()
@@ -636,12 +630,6 @@ def _build_move_tab(self):
     self.m_date.setDate(QDate.currentDate())
 
     form.addRow(tr("operations.date"), self.m_date)
-
-    # Status
-    self.m_ctx_status = QLabel(tr("operations.noPrefill"))
-    self.m_ctx_status.setWordWrap(True)
-    self.m_ctx_status.setVisible(False)
-    form.addRow(tr("overview.ctxStatus"), self.m_ctx_status)
 
     # Kept for compatibility
     self.m_ctx_id = self.m_id
@@ -826,11 +814,16 @@ def _set_plan_feedback(self, text="", level="info"):
     message = str(text or "").strip()
     if not message:
         label.clear()
+        label.setToolTip("")
         label.setVisible(False)
         return
-    level_value = level if level in {"error", "warning", "info"} else "info"
-    label.setProperty("level", level_value)
+    label.setProperty("role", "statusWarning")
     label.style().unpolish(label)
     label.style().polish(label)
     label.setText(message)
+    label.setToolTip(message)
     label.setVisible(True)
+    for attr in ("t_ctx_status", "m_ctx_status"):
+        context_label = getattr(self, attr, None)
+        if context_label is not None:
+            context_label.setVisible(False)

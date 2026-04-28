@@ -395,7 +395,7 @@
     "noPrefill": "No prefill yet.",
     "recordLoaded": "Record loaded - form auto-filled.",
     "recordContextLoaded": "Record context loaded.",
-    "recordNotFound": "Record not found in cache.",
+    "recordNotFound": "Record not found.",
     "positionRequired": "Position is required. Please select a record with a valid position.",
     "posOk": "OK - position in record",
     "posWarning": "WARNING - position NOT in record",
@@ -742,6 +742,15 @@
       "validation_failed": "Validation failed.",
       "write_failed": "Failed to write YAML file.",
       "write_requires_execute_mode": "Writes are only allowed during plan execution."
+    },
+    "detail": {
+      "moveRecordInactive": "Row {row}, record ID {record_id}: record has no active position.",
+      "moveRecordNotFound": "Row {row}, record ID {record_id}: record not found.",
+      "moveSourceMismatch": "Row {row}, record ID {record_id}: source position {source_position} does not match current position {current_position}.",
+      "moveTargetAlreadyMoved": "Row {row}, record ID {record_id}: target position {position} has already been moved in this request.",
+      "moveTargetOccupied": "Row {row}, record ID {record_id}: target slot Box {box} Position {position} is occupied by record #{occupant_id}.",
+      "moveTargetSamePosition": "Row {row}, record ID {record_id}: source and target positions must differ for move.",
+      "moveTargetSameRecord": "Row {row}, record ID {record_id}: target position {position} already belongs to this record."
     },
     "qtFontFaceFromHdcFailed": "Font rendering warning: failed to load \"{family}\" via DirectWrite (DPI {dpi}). The app will use a fallback font."
   },

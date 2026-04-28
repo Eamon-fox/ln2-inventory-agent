@@ -1298,6 +1298,28 @@ class PlanPreflightGuardTests(ManagedPathTestCase):
         finally:
             self._cleanup_yaml(tmpdir)
 
+    def test_preflight_blocked_feedback_shows_specific_move_error(self):
+        """A blocked move should show the occupied-target reason, not only a generic validation label."""
+        records = [
+            {"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "position": 5, "frozen_at": "2025-01-01"},
+            {"id": 2, "parent_cell_line": "K562", "short_name": "B", "box": 1, "position": 10, "frozen_at": "2025-01-01"},
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records)
+
+        try:
+            bridge = _FakeOperationsBridge()
+            panel = OperationsPanel(bridge=bridge, yaml_path_getter=lambda: yaml_path)
+
+            panel.add_plan_items([_make_move_item(record_id=1, position=5, to_position=10)])
+
+            self.assertEqual(0, len(panel.plan_items))
+            self.assertFalse(panel.plan_feedback_label.isHidden())
+            feedback = panel.plan_feedback_label.text()
+            self.assertIn("target slot Box 1 Position 10 is occupied by record #2", feedback)
+            self.assertNotEqual("- Validation failed.", feedback.strip())
+        finally:
+            self._cleanup_yaml(tmpdir)
+
     def test_execute_button_disabled_when_blocked(self):
         """Execute button should be disabled when plan has blocked items."""
         records = [{"id": 1, "parent_cell_line": "K562", "short_name": "A", "box": 1, "position": 5, "frozen_at": "2025-01-01"}]

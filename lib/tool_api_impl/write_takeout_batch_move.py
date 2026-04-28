@@ -93,25 +93,16 @@ def _resolve_destination_or_error(
             "dest_after": None,
         }, None
 
-    if cross_box:
-        dest_record = records[dest_idx]
-        return None, (
-            f"Row {row_idx} ID {record_id}: target box {target_box} position {to_pos} "
-            f"is occupied by record #{dest_record.get('id')}"
-        )
-
     if dest_idx in touched_indices:
         return None, (
             f"Row {row_idx} ID {record_id}: target position {to_pos} has already been moved in this request"
         )
 
     dest_record = records[dest_idx]
-    return {
-        "dest_idx": dest_idx,
-        "dest_record": dest_record,
-        "dest_before": simulated_position.get(dest_idx),
-        "dest_after": from_pos,
-    }, None
+    return None, (
+        f"Row {row_idx} ID {record_id}: target box {target_box} position {to_pos} "
+        f"is occupied by record #{dest_record.get('id')}"
+    )
 
 
 def _apply_move_to_simulation(

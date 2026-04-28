@@ -66,6 +66,45 @@ class TestErrorLocalizer(unittest.TestCase):
         text = localize_error_payload({}, fallback="")
         self.assertEqual("", text)
 
+    def test_validation_failed_prefers_specific_message(self):
+        set_language("en")
+        payload = {
+            "error_code": "validation_failed",
+            "message": "Row 1 ID 161: target box 3 position 32 is occupied by record #226",
+        }
+        text = localize_error_payload(payload)
+        self.assertEqual(
+            "Row 1, record ID 161: target slot Box 3 Position 32 is occupied by record #226.",
+            text,
+        )
+
+    def test_validation_failed_localizes_specific_message_in_chinese(self):
+        set_language("zh-CN")
+        payload = {
+            "error_code": "validation_failed",
+            "message": "Row 1 ID 161: target box 3 position 32 is occupied by record #226",
+        }
+        text = localize_error_payload(payload)
+        self.assertEqual(
+            "第 1 行，记录 ID 161：目标位置（盒 3，位置 32）已被记录 #226 占用。",
+            text,
+        )
+
+    def test_validation_failed_prefers_errors_over_generic_message(self):
+        set_language("en")
+        payload = {
+            "error_code": "validation_failed",
+            "message": "Takeout/move parameter validation failed",
+            "errors": [
+                "Row 1 ID 161: target box 3 position 32 is occupied by record #226",
+            ],
+        }
+        text = localize_error_payload(payload)
+        self.assertEqual(
+            "Row 1, record ID 161: target slot Box 3 Position 32 is occupied by record #226.",
+            text,
+        )
+
     def test_qt_directwrite_font_warning_is_humanized_in_english(self):
         set_language("en")
         payload = {

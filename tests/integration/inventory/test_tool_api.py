@@ -502,8 +502,8 @@ class ToolApiTests(ManagedPathTestCase):
             self.assertEqual(3, events[-1].get("to_position"))
             self.assertNotIn("note", events[-1])
 
-    def test_tool_record_takeout_move_swaps_with_occupied_position(self):
-        with tempfile.TemporaryDirectory(prefix="ln2_tool_move_swap_single_") as temp_dir:
+    def test_tool_record_takeout_move_rejects_occupied_same_box_target(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_move_occupied_single_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
                 make_data(
@@ -523,19 +523,15 @@ class ToolApiTests(ManagedPathTestCase):
                 date_str="2026-02-10",
             )
 
-            self.assertTrue(result["ok"])
-            self.assertEqual(2, result["preview"].get("swap_with_record_id"))
+            self.assertFalse(result["ok"])
+            self.assertEqual("validation_failed", result["error_code"])
+            self.assertTrue(any("is occupied by record #2" in err for err in result.get("errors", [])))
 
             current = load_yaml(str(yaml_path))
-            self.assertEqual(2, current["inventory"][0]["position"])
-            self.assertEqual(1, current["inventory"][1]["position"])
-
-            source_events = current["inventory"][0].get("thaw_events") or []
-            swap_events = current["inventory"][1].get("thaw_events") or []
-            self.assertEqual(1, len(source_events))
-            self.assertEqual(1, len(swap_events))
-            self.assertEqual(2, source_events[-1].get("to_position"))
-            self.assertEqual(1, swap_events[-1].get("to_position"))
+            self.assertEqual(1, current["inventory"][0]["position"])
+            self.assertEqual(2, current["inventory"][1]["position"])
+            self.assertEqual([], current["inventory"][0].get("thaw_events") or [])
+            self.assertEqual([], current["inventory"][1].get("thaw_events") or [])
 
     def test_tool_record_takeout_move_requires_to_position(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_move_require_to_") as temp_dir:
@@ -553,7 +549,7 @@ class ToolApiTests(ManagedPathTestCase):
                     date_str="2026-02-10",
                 )
 
-    def test_tool_batch_takeout_move_updates_positions_and_swaps(self):
+    def test_tool_batch_takeout_move_updates_positions_to_empty_targets(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_move_batch_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
             write_yaml(
@@ -570,8 +566,8 @@ class ToolApiTests(ManagedPathTestCase):
             result = tool_batch_move(
                 yaml_path=str(yaml_path),
                 entries=[
-                    move_entry(1, 1, 1, 1, 2),
-                    move_entry(3, 1, 3, 1, 4),
+                    move_entry(1, 1, 1, 1, 4),
+                    move_entry(3, 1, 3, 1, 5),
                 ],
                 date_str="2026-02-10",
             )
@@ -579,15 +575,15 @@ class ToolApiTests(ManagedPathTestCase):
             self.assertTrue(result["ok"])
             self.assertEqual("move", result["preview"]["action_en"])
             self.assertEqual(2, result["result"]["count"])
-            self.assertEqual([1, 2, 3], result["result"]["affected_record_ids"])
+            self.assertEqual([1, 3], result["result"]["affected_record_ids"])
 
             current = load_yaml(str(yaml_path))
-            self.assertEqual(2, current["inventory"][0]["position"])
-            self.assertEqual(1, current["inventory"][1]["position"])
-            self.assertEqual(4, current["inventory"][2]["position"])
+            self.assertEqual(4, current["inventory"][0]["position"])
+            self.assertEqual(2, current["inventory"][1]["position"])
+            self.assertEqual(5, current["inventory"][2]["position"])
 
             self.assertEqual(1, len(current["inventory"][0].get("thaw_events") or []))
-            self.assertEqual(1, len(current["inventory"][1].get("thaw_events") or []))
+            self.assertEqual(0, len(current["inventory"][1].get("thaw_events") or []))
             self.assertEqual(1, len(current["inventory"][2].get("thaw_events") or []))
 
     def test_tool_batch_takeout_move_rejects_non_move_entry_shape(self):

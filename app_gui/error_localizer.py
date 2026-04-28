@@ -21,6 +21,39 @@ _QT_FONT_FACE_FROM_HDC_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+_MOVE_TARGET_OCCUPIED_RE = re.compile(
+    r"Row\s+(?P<row>\d+)\s+ID\s+(?P<record_id>\d+):\s+target\s+box\s+"
+    r"(?P<box>\d+)\s+position\s+(?P<position>\d+)\s+is\s+occupied\s+by\s+record\s+#(?P<occupant_id>\d+)",
+    re.IGNORECASE,
+)
+_MOVE_TARGET_ALREADY_MOVED_RE = re.compile(
+    r"Row\s+(?P<row>\d+)\s+ID\s+(?P<record_id>\d+):\s+target\s+position\s+"
+    r"(?P<position>\d+)\s+has\s+already\s+been\s+moved\s+in\s+this\s+request",
+    re.IGNORECASE,
+)
+_MOVE_TARGET_SAME_RECORD_RE = re.compile(
+    r"Row\s+(?P<row>\d+)\s+ID\s+(?P<record_id>\d+):\s+target\s+position\s+"
+    r"(?P<position>\d+)\s+already\s+belongs\s+to\s+this\s+record",
+    re.IGNORECASE,
+)
+_MOVE_TARGET_SAME_POSITION_RE = re.compile(
+    r"Row\s+(?P<row>\d+)\s+ID\s+(?P<record_id>\d+):\s+source\s+and\s+target\s+positions\s+must\s+differ\s+for\s+move",
+    re.IGNORECASE,
+)
+_MOVE_SOURCE_MISMATCH_RE = re.compile(
+    r"Row\s+(?P<row>\d+)\s+ID\s+(?P<record_id>\d+):\s+source\s+position\s+"
+    r"(?P<source_position>\d+)\s+does\s+not\s+match\s+current\s+(?P<current_position>\d+)",
+    re.IGNORECASE,
+)
+_MOVE_RECORD_NOT_FOUND_RE = re.compile(
+    r"Row\s+(?P<row>\d+)\s+ID\s+(?P<record_id>\d+):\s+record\s+not\s+found",
+    re.IGNORECASE,
+)
+_MOVE_RECORD_INACTIVE_RE = re.compile(
+    r"Row\s+(?P<row>\d+)\s+ID\s+(?P<record_id>\d+):\s+record\s+has\s+no\s+active\s+position",
+    re.IGNORECASE,
+)
+
 
 _ERROR_DEFAULTS_EN = {
     "backup_create_failed": "Failed to create backup before write.",
@@ -102,6 +135,31 @@ _ERROR_DEFAULTS_EN = {
 }
 
 
+_DETAIL_FIRST_ERROR_CODES = frozenset(
+    {
+        "batch_validation_failed",
+        "integrity_validation_failed",
+        "plan_preflight_failed",
+        "plan_validation_failed",
+        "position_conflict",
+        "validation_failed",
+    }
+)
+
+_GENERIC_ERROR_MESSAGES = frozenset(
+    {
+        "batch operation parameter validation failed",
+        "plan preflight failed",
+        "plan validation failed",
+        "takeout/move parameter validation failed",
+        "validation failed",
+        "validation failed.",
+        "write blocked: integrity validation failed",
+        "write blocked: integrity validation failed.",
+    }
+)
+
+
 def _sanitize_legacy_mojibake(text: str) -> str:
     clean = str(text or "")
     if not clean:
@@ -136,6 +194,93 @@ def _localize_known_runtime_warning(text: str) -> str:
 def _humanize_error_code(error_code: str) -> str:
     text = str(error_code or "").strip().replace("_", " ")
     return text.capitalize() if text else ""
+
+
+def _is_generic_error_message(message: str) -> bool:
+    text = str(message or "").strip().lower()
+    if not text:
+        return True
+    return text in _GENERIC_ERROR_MESSAGES
+
+
+def _localize_validation_detail(message: str) -> str:
+    text = _sanitize_legacy_mojibake(str(message or "").strip())
+    if not text:
+        return ""
+
+    patterns = [
+        (
+            _MOVE_TARGET_OCCUPIED_RE,
+            "errors.detail.moveTargetOccupied",
+            "Row {row}, record ID {record_id}: target slot Box {box} Position {position} is occupied by record #{occupant_id}.",
+        ),
+        (
+            _MOVE_TARGET_ALREADY_MOVED_RE,
+            "errors.detail.moveTargetAlreadyMoved",
+            "Row {row}, record ID {record_id}: target position {position} has already been moved in this request.",
+        ),
+        (
+            _MOVE_TARGET_SAME_RECORD_RE,
+            "errors.detail.moveTargetSameRecord",
+            "Row {row}, record ID {record_id}: target position {position} already belongs to this record.",
+        ),
+        (
+            _MOVE_TARGET_SAME_POSITION_RE,
+            "errors.detail.moveTargetSamePosition",
+            "Row {row}, record ID {record_id}: source and target positions must differ for move.",
+        ),
+        (
+            _MOVE_SOURCE_MISMATCH_RE,
+            "errors.detail.moveSourceMismatch",
+            "Row {row}, record ID {record_id}: source position {source_position} does not match current position {current_position}.",
+        ),
+        (
+            _MOVE_RECORD_NOT_FOUND_RE,
+            "errors.detail.moveRecordNotFound",
+            "Row {row}, record ID {record_id}: record not found.",
+        ),
+        (
+            _MOVE_RECORD_INACTIVE_RE,
+            "errors.detail.moveRecordInactive",
+            "Row {row}, record ID {record_id}: record has no active position.",
+        ),
+    ]
+    for pattern, key, default in patterns:
+        match = pattern.fullmatch(text)
+        if not match:
+            continue
+        return tr(key, default=default, **match.groupdict())
+    return _localize_known_runtime_warning(text)
+
+
+def _format_error_list(errors: Any) -> str:
+    if not isinstance(errors, list):
+        return ""
+    lines = []
+    for raw in errors:
+        if isinstance(raw, dict):
+            text = str(raw.get("message") or raw.get("error_code") or "").strip()
+        else:
+            text = str(raw or "").strip()
+        if text:
+            lines.append(_localize_validation_detail(text))
+    if not lines:
+        return ""
+    if len(lines) == 1:
+        return lines[0]
+    return "\n".join(f"- {line}" for line in lines[:5])
+
+
+def _specific_payload_message(payload: Dict[str, Any], code: str) -> str:
+    raw_message = _localize_validation_detail(str(payload.get("message") or "").strip())
+    detail_message = _format_error_list(payload.get("errors"))
+
+    if code in _DETAIL_FIRST_ERROR_CODES:
+        if detail_message:
+            return detail_message
+        if raw_message and not _is_generic_error_message(raw_message):
+            return raw_message
+    return ""
 
 
 def _coerce_format_kwargs(details: Any) -> Dict[str, Any]:
@@ -190,8 +335,12 @@ def localize_error_payload(payload: Any, fallback: Optional[str] = None) -> str:
     has_error = bool(str(payload.get("error_code") or "").strip()) or bool(str(payload.get("message") or "").strip())
     if not has_error and fallback is not None:
         return str(fallback)
+    code = str(payload.get("error_code") or "").strip()
+    specific_message = _specific_payload_message(payload, code)
+    if specific_message:
+        return specific_message
     return localize_error(
-        payload.get("error_code"),
+        code,
         message=payload.get("message"),
         details=payload.get("details"),
         fallback=fallback,

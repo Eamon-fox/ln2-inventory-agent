@@ -7,7 +7,8 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QLineEdit, QComboBox, QCompleter,
     QStackedWidget, QFileDialog, QMenu,
-    QDateEdit, QSpinBox, QDoubleSpinBox, QTextBrowser
+    QDateEdit, QSpinBox, QDoubleSpinBox, QTextBrowser,
+    QSizePolicy,
 )
 from app_gui.ui.theme import (
     get_theme_color,
@@ -448,7 +449,6 @@ class OperationsPanel(QWidget):
         self._migration_mode_banner.setVisible(False)
         layout.addWidget(self._migration_mode_banner)
         layout.addWidget(self._build_operation_stack(), 2)
-        layout.addLayout(self._build_feedback_row())
         # Plan Queue is always visible to reduce context switching.
         self.plan_panel = _ops_forms._build_plan_tab(self)
         layout.addWidget(self.plan_panel, 3)
@@ -468,6 +468,7 @@ class OperationsPanel(QWidget):
 
         self.op_mode_combo = QComboBox()
         self.op_mode_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.op_mode_combo.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         modes = [
             ("takeout", tr("overview.takeout")),
             ("move", tr("operations.move")),
@@ -478,7 +479,35 @@ class OperationsPanel(QWidget):
         self.op_mode_combo.currentIndexChanged.connect(self.on_mode_changed)
 
         mode_row.addWidget(self.op_mode_combo)
-        mode_row.addStretch()
+
+        status_slot = QWidget()
+        status_slot.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        status_layout = QHBoxLayout(status_slot)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        self._top_status_slot = status_slot
+        status_layout.setSpacing(6)
+
+        self.plan_feedback_label = QLabel("")
+        self.plan_feedback_label.setProperty("role", "statusWarning")
+        self.plan_feedback_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.plan_feedback_label.setWordWrap(True)
+        self.plan_feedback_label.setVisible(False)
+        self.plan_feedback_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        status_layout.addWidget(self.plan_feedback_label, 1)
+
+        self.t_ctx_status = QLabel(tr("operations.noPrefill"))
+        self.t_ctx_status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.t_ctx_status.setWordWrap(False)
+        self.t_ctx_status.setVisible(False)
+        status_layout.addWidget(self.t_ctx_status)
+
+        self.m_ctx_status = QLabel(tr("operations.noPrefill"))
+        self.m_ctx_status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.m_ctx_status.setWordWrap(False)
+        self.m_ctx_status.setVisible(False)
+        status_layout.addWidget(self.m_ctx_status)
+
+        mode_row.addWidget(status_slot, 1)
         return mode_row
 
     def _build_operation_stack(self):
@@ -606,19 +635,6 @@ class OperationsPanel(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._update_migration_lock_overlay_geometry()
-
-    def _build_feedback_row(self):
-        # Inline feedback near operation forms (more visible than status bar).
-        self.plan_feedback_label = QLabel("")
-        self.plan_feedback_label.setObjectName("operationsPlanFeedback")
-        self.plan_feedback_label.setProperty("level", "info")
-        self.plan_feedback_label.setWordWrap(True)
-        self.plan_feedback_label.setVisible(False)
-
-        feedback_row = QHBoxLayout()
-        feedback_row.setContentsMargins(9, 0, 9, 0)
-        feedback_row.addWidget(self.plan_feedback_label)
-        return feedback_row
 
     def _build_result_row(self):
         self.result_card = QWidget()
@@ -807,6 +823,10 @@ class OperationsPanel(QWidget):
         target = mode if mode in self.op_mode_indexes else "takeout"
         self.op_stack.setCurrentIndex(self.op_mode_indexes[target])
         self.current_operation_mode = target
+        if target != "takeout" and hasattr(self, "t_ctx_status"):
+            self.t_ctx_status.setVisible(False)
+        if target != "move" and hasattr(self, "m_ctx_status"):
+            self.m_ctx_status.setVisible(False)
 
         idx = self.op_mode_combo.findData(target)
         if idx >= 0 and idx != self.op_mode_combo.currentIndex():

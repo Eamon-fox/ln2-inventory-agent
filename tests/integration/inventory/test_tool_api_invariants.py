@@ -715,8 +715,8 @@ class CrossBoxMoveTests(ManagedPathTestCase):
             )
             self.assertFalse(result["ok"])
 
-    def test_record_takeout_move_same_box_swap_still_works(self):
-        """Same-box swap should still work after adding to_box support."""
+    def test_record_takeout_move_same_box_rejects_occupied_target(self):
+        """Same-box move to an occupied position should be rejected."""
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [
                 make_record(1, box=1, position=1),
@@ -729,10 +729,12 @@ class CrossBoxMoveTests(ManagedPathTestCase):
                 to_slot=slot(1, 2),
                 date_str="2026-02-10",
             )
-            self.assertTrue(result["ok"])
+            self.assertFalse(result["ok"])
+            self.assertEqual("validation_failed", result["error_code"])
+            self.assertTrue(any("is occupied by record #2" in err for err in result.get("errors", [])))
             data = load_yaml(yp)
-            self.assertEqual(2, data["inventory"][0]["position"])
-            self.assertEqual(1, data["inventory"][1]["position"])
+            self.assertEqual(1, data["inventory"][0]["position"])
+            self.assertEqual(2, data["inventory"][1]["position"])
 
     def test_batch_move_cross_box_multiple_records(self):
         """Batch cross-box move using 4-tuple entries."""

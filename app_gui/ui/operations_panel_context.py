@@ -255,6 +255,10 @@ def _refresh_takeout_record_context(self):
     record_id = None
 
     # First try lookup by box + position
+    source_payload = self.t_prefill_source if isinstance(self.t_prefill_source, dict) else {}
+    record_id_only_prefill = bool(source_payload.get("record_id")) and source_payload.get("box") in (None, "")
+    has_explicit_source_slot = from_box > 0 and from_pos is not None and not record_id_only_prefill
+    has_lookup_input = from_pos is not None or self.t_id.value() > 0
     if from_box > 0 and from_pos is not None:
         for rid, rec in self.records_cache.items():
             if _record_matches_slot(rec, from_box, from_pos):
@@ -263,7 +267,7 @@ def _refresh_takeout_record_context(self):
                 break
 
     # If not found and ID is set, try reverse lookup by ID
-    if not record and self.t_id.value() > 0:
+    if not record and not has_explicit_source_slot and self.t_id.value() > 0:
         record_id = self.t_id.value()
         record = self.records_cache.get(record_id)
         if record:
@@ -289,6 +293,9 @@ def _refresh_takeout_record_context(self):
     if record_id:
         with QSignalBlocker(self.t_id):
             self.t_id.setValue(record_id)
+    elif has_explicit_source_slot:
+        with QSignalBlocker(self.t_id):
+            self.t_id.setValue(0)
 
     source_text = "-"
     if self.t_prefill_source:
@@ -303,6 +310,20 @@ def _refresh_takeout_record_context(self):
     self.t_ctx_source.setText(source_text)
 
     if not record:
+        if not has_lookup_input:
+            self.t_ctx_status.setVisible(False)
+            _clear_context_label_groups(
+                [
+                    self.t_ctx_box,
+                    self.t_ctx_position,
+                    self.t_ctx_frozen,
+                    self.t_ctx_note,
+                    self.t_ctx_cell_line,
+                    self.t_ctx_events,
+                ],
+                self._takeout_ctx_widgets,
+            )
+            return
         self.t_ctx_status.setText(tr("operations.recordNotFound"))
         self.t_ctx_status.setProperty("role", "statusWarning")
         self.t_ctx_status.setVisible(True)
@@ -355,6 +376,7 @@ def _refresh_move_record_context(self):
     # Lookup record by box + position
     from_box = self.m_from_box.value()
     from_pos = self._parse_position_text(self.m_from_position.text(), allow_empty=True)
+    has_lookup_input = from_pos is not None or self.m_id.value() > 0
 
     # Find record at this position
     record = None
@@ -370,8 +392,25 @@ def _refresh_move_record_context(self):
     if record_id:
         with QSignalBlocker(self.m_id):
             self.m_id.setValue(record_id)
+    elif from_pos is not None:
+        with QSignalBlocker(self.m_id):
+            self.m_id.setValue(0)
 
     if not record:
+        if not has_lookup_input:
+            self.m_ctx_status.setVisible(False)
+            _clear_context_label_groups(
+                [
+                    self.m_ctx_box,
+                    self.m_ctx_position,
+                    self.m_ctx_frozen,
+                    self.m_ctx_note,
+                    self.m_ctx_cell_line,
+                    self.m_ctx_events,
+                ],
+                self._move_ctx_widgets,
+            )
+            return
         self.m_ctx_status.setText(tr("operations.recordNotFound"))
         self.m_ctx_status.setProperty("role", "statusWarning")
         self.m_ctx_status.setVisible(True)

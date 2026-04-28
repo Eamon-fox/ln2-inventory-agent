@@ -61,20 +61,22 @@ def tr(key: str, default: Optional[str] = None, **kwargs) -> str:
     if default is None:
         default = key
 
+    def _format_text(text: str) -> str:
+        if kwargs:
+            try:
+                return str(text).format(**kwargs)
+            except (KeyError, ValueError):
+                return str(text)
+        return str(text)
+
     parts = key.split(".")
     value = _TRANSLATIONS
     for part in parts:
         if not isinstance(value, dict):
-            return default
+            return _format_text(default)
         value = value.get(part)
     text = default if value is None or isinstance(value, dict) else str(value)
-
-    if kwargs:
-        try:
-            return text.format(**kwargs)
-        except (KeyError, ValueError):
-            return text
-    return text
+    return _format_text(text)
 
 
 def t(key: str, **kwargs) -> str:
