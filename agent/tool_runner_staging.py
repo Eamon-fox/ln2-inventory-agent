@@ -16,7 +16,7 @@ from lib.plan_store import (
 from lib.tool_registry import WRITE_TOOLS
 
 
-_STAGE_PREFLIGHT_DEBOUNCE_SECONDS = 0.075
+_STAGE_PREFLIGHT_DEBOUNCE_SECONDS = 2.0
 
 
 def _stage_to_plan(self, tool_name, payload, trace_id=None):
@@ -226,6 +226,9 @@ def _ensure_stage_validation_state(self):
         self._stage_validation_lock = lock
         self._stage_validation_timer = None
         self._stage_validation_generation = 0
+        self._stage_validation_running = False
+        self._stage_validation_reschedule_requested = False
+        self._stage_validation_trace_id = ""
     return lock
 
 
@@ -234,21 +237,28 @@ def _schedule_deferred_stage_preflight(self, trace_id):
     with lock:
         self._stage_validation_generation += 1
         generation = self._stage_validation_generation
+        self._stage_validation_trace_id = str(trace_id or "")
+        if getattr(self, "_stage_validation_running", False):
+            self._stage_validation_reschedule_requested = True
+            return
         old_timer = getattr(self, "_stage_validation_timer", None)
         if old_timer is not None:
             try:
                 old_timer.cancel()
             except Exception:
                 pass
+        _start_stage_validation_timer(self, str(trace_id or ""), generation)
 
-        timer = threading.Timer(
-            _STAGE_PREFLIGHT_DEBOUNCE_SECONDS,
-            _run_deferred_stage_preflight,
-            args=(self, str(trace_id or ""), generation),
-        )
-        timer.daemon = True
-        self._stage_validation_timer = timer
-        timer.start()
+
+def _start_stage_validation_timer(self, trace_id, generation):
+    timer = threading.Timer(
+        _STAGE_PREFLIGHT_DEBOUNCE_SECONDS,
+        _run_deferred_stage_preflight,
+        args=(self, str(trace_id or ""), generation),
+    )
+    timer.daemon = True
+    self._stage_validation_timer = timer
+    timer.start()
 
 
 def _run_deferred_stage_preflight(self, trace_id, generation):
@@ -256,80 +266,98 @@ def _run_deferred_stage_preflight(self, trace_id, generation):
     with lock:
         if generation != getattr(self, "_stage_validation_generation", 0):
             return
-
-    store = getattr(self, "_plan_store", None)
-    preflight_fn = getattr(self, "_preflight_fn", None)
-    if store is None or not callable(preflight_fn):
-        return
-
-    items = store.list_items()
-    if not items:
-        return
-
-    keys = [store.item_key(item) for item in items]
-    store.update_validation_statuses(
-        {
-            key: {
-                "status": PLAN_VALIDATION_STATUS_VALIDATING,
-                "trace_id": trace_id,
-            }
-            for key in keys
-        }
-    )
+        if getattr(self, "_stage_validation_running", False):
+            self._stage_validation_reschedule_requested = True
+            return
+        self._stage_validation_running = True
+        self._stage_validation_timer = None
 
     try:
-        with span(
-            "plan.preflight",
-            source="agent_stage_debounce",
-            trace_id=trace_id,
-            batch_size=len(items),
-        ):
-            report = preflight_fn(self._yaml_path, items, None)
-    except Exception as exc:
-        report = {
-            "ok": False,
-            "blocked": True,
-            "items": [
-                {
-                    "item": item,
-                    "blocked": True,
-                    "error_code": "plan_preflight_failed",
-                    "message": f"Preflight exception: {exc}",
-                }
-                for item in items
-            ],
-        }
-
-    with lock:
-        if generation != getattr(self, "_stage_validation_generation", 0):
+        store = getattr(self, "_plan_store", None)
+        preflight_fn = getattr(self, "_preflight_fn", None)
+        if store is None or not callable(preflight_fn):
             return
 
-    blocked_by_key = {}
-    if isinstance(report, dict):
-        for report_item in report.get("items") or []:
-            if not isinstance(report_item, dict) or not report_item.get("blocked"):
-                continue
-            item = report_item.get("item")
-            if not isinstance(item, dict):
-                continue
-            blocked_by_key[store.item_key(item)] = {
-                "status": PLAN_VALIDATION_STATUS_INVALID,
-                "error_code": report_item.get("error_code") or "plan_preflight_failed",
-                "message": report_item.get("message") or "Preflight validation failed",
-                "trace_id": trace_id,
+        items = store.list_items()
+        if not items:
+            return
+
+        keys = [store.item_key(item) for item in items]
+        store.update_validation_statuses(
+            {
+                key: {
+                    "status": PLAN_VALIDATION_STATUS_VALIDATING,
+                    "trace_id": trace_id,
+                }
+                for key in keys
+            }
+        )
+
+        try:
+            with span(
+                "plan.preflight",
+                source="agent_stage_debounce",
+                trace_id=trace_id,
+                batch_size=len(items),
+            ):
+                report = preflight_fn(self._yaml_path, items, None)
+        except Exception as exc:
+            report = {
+                "ok": False,
+                "blocked": True,
+                "items": [
+                    {
+                        "item": item,
+                        "blocked": True,
+                        "error_code": "plan_preflight_failed",
+                        "message": f"Preflight exception: {exc}",
+                    }
+                    for item in items
+                ],
             }
 
-    updates = {}
-    for item in store.list_items():
-        key = store.item_key(item)
-        if key in blocked_by_key:
-            updates[key] = blocked_by_key[key]
-        else:
-            updates[key] = {
-                "status": PLAN_VALIDATION_STATUS_VALID,
-                "trace_id": trace_id,
-            }
-    store.update_validation_statuses(updates)
+        with lock:
+            if generation != getattr(self, "_stage_validation_generation", 0):
+                return
+
+        blocked_by_key = {}
+        if isinstance(report, dict):
+            for report_item in report.get("items") or []:
+                if not isinstance(report_item, dict) or not report_item.get("blocked"):
+                    continue
+                item = report_item.get("item")
+                if not isinstance(item, dict):
+                    continue
+                blocked_by_key[store.item_key(item)] = {
+                    "status": PLAN_VALIDATION_STATUS_INVALID,
+                    "error_code": report_item.get("error_code") or "plan_preflight_failed",
+                    "message": report_item.get("message") or "Preflight validation failed",
+                    "trace_id": trace_id,
+                }
+
+        updates = {}
+        for item in store.list_items():
+            key = store.item_key(item)
+            if key in blocked_by_key:
+                updates[key] = blocked_by_key[key]
+            else:
+                updates[key] = {
+                    "status": PLAN_VALIDATION_STATUS_VALID,
+                    "trace_id": trace_id,
+                }
+        store.update_validation_statuses(updates)
+    finally:
+        with lock:
+            current_generation = getattr(self, "_stage_validation_generation", 0)
+            current_trace_id = getattr(self, "_stage_validation_trace_id", trace_id)
+            should_reschedule = (
+                getattr(self, "_stage_validation_reschedule_requested", False)
+                or generation != current_generation
+            )
+            self._stage_validation_running = False
+            self._stage_validation_reschedule_requested = False
+            if should_reschedule and current_generation:
+                _start_stage_validation_timer(self, current_trace_id, current_generation)
 
 def _build_staged_plan_items(self, tool_name, payload, layout) -> List[PlanItem]:
     runtime_specs = self._runtime_specs() if hasattr(self, "_runtime_specs") else {}

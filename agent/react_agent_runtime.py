@@ -93,7 +93,11 @@ def _run_tool_call(self, call, tool_names, trace_id, stop_event=None):
         }
     else:
         if action in WRITE_TOOLS:
-            observation = self._tools.run(action, action_input, trace_id=trace_id)
+            if getattr(self._tools, "_plan_store", None) is not None:
+                with read_snapshot_context(trace_id):
+                    observation = self._tools.run(action, action_input, trace_id=trace_id)
+            else:
+                observation = self._tools.run(action, action_input, trace_id=trace_id)
         else:
             with read_snapshot_context(trace_id):
                 observation = self._tools.run(action, action_input, trace_id=trace_id)
@@ -783,11 +787,10 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
                         break
                 continue
 
-            max_workers = max(1, len(normalized_tool_calls))
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [
-                    executor.submit(
-                        self._run_tool_call,
+            has_write_tools = any(call["name"] in WRITE_TOOLS for call in normalized_tool_calls)
+            if has_write_tools:
+                results = [
+                    self._run_tool_call(
                         call,
                         tool_names,
                         trace_id,
@@ -795,7 +798,20 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
                     )
                     for call in normalized_tool_calls
                 ]
-                results = [future.result() for future in futures]
+            else:
+                max_workers = max(1, len(normalized_tool_calls))
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = [
+                        executor.submit(
+                            self._run_tool_call,
+                            call,
+                            tool_names,
+                            trace_id,
+                            stop_event,
+                        )
+                        for call in normalized_tool_calls
+                    ]
+                    results = [future.result() for future in futures]
 
             for result in results:
                 action = result["action"]

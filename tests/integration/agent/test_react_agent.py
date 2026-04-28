@@ -229,6 +229,33 @@ class _CaptureMessagesLLM:
         return {"role": "assistant", "content": "ok", "tool_calls": []}
 
 
+class _RecordingToolRunner:
+    def __init__(self, tool_names, *, plan_store=None):
+        self._tool_names = list(tool_names)
+        self._plan_store = plan_store
+        self.calls = []
+        self.active = 0
+        self.max_active = 0
+        self._lock = threading.Lock()
+        self._release = threading.Event()
+
+    def list_tools(self):
+        return list(self._tool_names)
+
+    def tool_schemas(self):
+        return []
+
+    def run(self, tool_name, tool_input, trace_id=None):
+        with self._lock:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            self.calls.append((tool_name, dict(tool_input or {}), trace_id))
+        self._release.wait(timeout=0.02)
+        with self._lock:
+            self.active -= 1
+        return {"ok": True, "tool": tool_name}
+
+
 class ReactAgentTests(ManagedPathTestCase):
     def test_normalize_history_preserves_empty_reasoning_for_tool_assistant(self):
         llm = _CaptureMessagesLLM()
@@ -334,6 +361,41 @@ class ReactAgentTests(ManagedPathTestCase):
             self.assertIn("tool_end", event_names)
             self.assertIn("final", event_names)
             self.assertIn("stream_end", event_names)
+
+    def test_react_agent_serializes_parallel_write_tool_calls(self):
+        llm = _SequenceLLM(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "name": "edit_entry",
+                            "arguments": {"record_id": 1, "fields": {"note": "a"}},
+                        },
+                        {
+                            "id": "call_2",
+                            "name": "edit_entry",
+                            "arguments": {"record_id": 2, "fields": {"note": "b"}},
+                        },
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": "staged",
+                    "tool_calls": [],
+                },
+            ]
+        )
+        runner = _RecordingToolRunner(["edit_entry"], plan_store=object())
+        agent = ReactAgent(llm_client=llm, tool_runner=runner, max_steps=3)
+
+        result = agent.run("stage edits")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(["edit_entry", "edit_entry"], [call[0] for call in runner.calls])
+        self.assertEqual(1, runner.max_active)
 
     def test_react_agent_unknown_tool_observation_has_hint(self):
         llm = _SequenceLLM(

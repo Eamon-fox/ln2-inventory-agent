@@ -10,6 +10,8 @@ import ast
 import json
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from contextlib import suppress
 from pathlib import Path
@@ -2575,6 +2577,85 @@ class EditEntryToolRunnerTests(ManagedPathTestCase):
                 },
                 store.list_items()[0]["payload"]["fields"],
             )
+
+    def test_deferred_stage_preflight_serializes_while_running(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_edit_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        make_record(1, box=2, position=15),
+                        make_record(2, box=2, position=16),
+                    ]
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            from lib.plan_store import PlanStore
+
+            active = 0
+            max_active = 0
+            calls = []
+            lock = threading.Lock()
+            first_started = threading.Event()
+            release = threading.Event()
+
+            def preflight_fn(_yaml_path, items, _bridge):
+                nonlocal active, max_active
+                with lock:
+                    active += 1
+                    max_active = max(max_active, active)
+                    calls.append(len(items))
+                first_started.set()
+                release.wait(timeout=1)
+                with lock:
+                    active -= 1
+                return {
+                    "ok": True,
+                    "blocked": False,
+                    "items": [
+                        {"item": item, "ok": True, "blocked": False}
+                        for item in items
+                    ],
+                    "stats": {
+                        "total": len(items),
+                        "ok": len(items),
+                        "blocked": 0,
+                    },
+                }
+
+            store = PlanStore()
+            runner = AgentToolRunner(
+                yaml_path=str(yaml_path),
+                plan_store=store,
+                preflight_fn=preflight_fn,
+            )
+
+            with patch("agent.tool_runner_staging._STAGE_PREFLIGHT_DEBOUNCE_SECONDS", 0.01):
+                first = runner.run(
+                    "edit_entry",
+                    {"record_id": 1, "fields": {"cell_line": "HeLa"}},
+                    trace_id="trace-test",
+                )
+                self.assertTrue(first["ok"])
+                self.assertTrue(first_started.wait(timeout=1))
+
+                second = runner.run(
+                    "edit_entry",
+                    {"record_id": 2, "fields": {"cell_line": "NCCIT"}},
+                    trace_id="trace-test",
+                )
+                self.assertTrue(second["ok"])
+                release.set()
+
+                deadline = time.time() + 1
+                while time.time() < deadline and len(calls) < 2:
+                    time.sleep(0.01)
+
+            self.assertEqual(1, max_active)
+            self.assertGreaterEqual(len(calls), 2)
+            self.assertEqual(2, calls[-1])
 
     def test_edit_entry_missing_record_id(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_edit_") as temp_dir:
