@@ -576,14 +576,14 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
                 ("box", "Box"),
                 ("position", "Position"),
                 ("stored_at", "Deposited Date"),
-                ("storage_events", "Storage Events"),
+                ("storage_events", "History Events"),
             ],
             "zh-CN": [
                 ("id", "ID"),
                 ("box", "盒子"),
                 ("position", "位置"),
                 ("stored_at", "存入日期"),
-                ("storage_events", "存储事件"),
+                ("storage_events", "历史事件"),
             ],
         }
 

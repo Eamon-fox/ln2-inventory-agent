@@ -764,12 +764,13 @@ class OverviewTableViewTests(ManagedPathTestCase):
             headers = self._table_header_texts(panel)
             self.assertIn("Deposited Date", headers)
             self.assertNotIn("Storage Events", headers)
+            self.assertNotIn("History Events", headers)
             self.assertNotIn("frozen_at", headers)
             self.assertNotIn("thaw_events", headers)
 
             panel.ov_filter_secondary_toggle.setChecked(True)
             headers = self._table_header_texts(panel)
-            self.assertIn("Storage Events", headers)
+            self.assertIn("History Events", headers)
         finally:
             self._cleanup(tmpdir)
 
@@ -800,12 +801,13 @@ class OverviewTableViewTests(ManagedPathTestCase):
             headers = self._table_header_texts(panel)
             self.assertIn("存入日期", headers)
             self.assertNotIn("存储事件", headers)
+            self.assertNotIn("历史事件", headers)
             self.assertNotIn("frozen_at", headers)
             self.assertNotIn("thaw_events", headers)
 
             panel.ov_filter_secondary_toggle.setChecked(True)
             headers = self._table_header_texts(panel)
-            self.assertIn("存储事件", headers)
+            self.assertIn("历史事件", headers)
         finally:
             self._cleanup(tmpdir)
 
@@ -836,7 +838,7 @@ class OverviewTableViewTests(ManagedPathTestCase):
             panel.ov_filter_secondary_toggle.setChecked(True)
 
             headers = self._table_header_texts(panel)
-            storage_events_col = headers.index("Storage Events")
+            storage_events_col = headers.index("History Events")
             captured = {}
 
             class _FakeDialog:
@@ -859,11 +861,11 @@ class OverviewTableViewTests(ManagedPathTestCase):
             ) as apply_mock:
                 panel._on_column_filter_clicked(storage_events_col, headers[storage_events_col])
 
-            self.assertEqual("Storage Events", captured.get("column_name"))
+            self.assertEqual("History Events", captured.get("column_name"))
             self.assertEqual("text", captured.get("filter_type"))
             self.assertIsNone(captured.get("unique_values"))
             self.assertEqual({"type": "text", "text": "takeout"}, panel._column_filters.get("thaw_events"))
-            self.assertNotIn("Storage Events", panel._column_filters)
+            self.assertNotIn("History Events", panel._column_filters)
             apply_mock.assert_called_once()
         finally:
             self._cleanup(tmpdir)
