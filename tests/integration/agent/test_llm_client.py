@@ -334,23 +334,30 @@ class DeepSeekClientParseTests(unittest.TestCase):
 
 
 class ZhipuClientParseTests(unittest.TestCase):
+    def test_provider_defaults_include_glm_5_1_and_remove_glm_5(self):
+        zhipu_cfg = PROVIDER_DEFAULTS["zhipu"]
+
+        self.assertEqual("glm-5.1", zhipu_cfg["model"])
+        self.assertEqual(["glm-5.1", "glm-4.7"], zhipu_cfg["models"])
+        self.assertNotIn("glm-5", zhipu_cfg["models"])
+
     def test_build_request_disables_thinking_by_default(self):
         with patch.dict(os.environ, {"ZHIPUAI_API_KEY": "test-key"}, clear=False):
-            client = ZhipuLLMClient(model="glm-5")
+            client = ZhipuLLMClient(model="glm-5.1")
 
         body = _decode_request_body(client._build_request(messages=[{"role": "user", "content": "hi"}]))
         self.assertEqual({"type": "disabled"}, body.get("thinking"))
 
     def test_build_request_can_enable_thinking(self):
         with patch.dict(os.environ, {"ZHIPUAI_API_KEY": "test-key"}, clear=False):
-            client = ZhipuLLMClient(model="glm-5", thinking_enabled=True)
+            client = ZhipuLLMClient(model="glm-5.1", thinking_enabled=True)
 
         body = _decode_request_body(client._build_request(messages=[{"role": "user", "content": "hi"}]))
         self.assertEqual({"type": "enabled"}, body.get("thinking"))
 
     def test_build_request_uses_project_headers_without_cline_markers(self):
         with patch.dict(os.environ, {"ZHIPUAI_API_KEY": "test-key"}, clear=False):
-            client = ZhipuLLMClient(model="glm-5")
+            client = ZhipuLLMClient(model="glm-5.1")
 
         headers = {
             str(name or "").casefold(): str(value or "")
@@ -364,7 +371,7 @@ class ZhipuClientParseTests(unittest.TestCase):
 
     def test_stream_chat_yields_answer_thought_and_tool_call(self):
         with patch.dict(os.environ, {"ZHIPUAI_API_KEY": "test-key"}, clear=False):
-            client = ZhipuLLMClient(model="glm-5")
+            client = ZhipuLLMClient(model="glm-5.1")
 
         tool_chunk = {
             "choices": [
@@ -410,15 +417,10 @@ class MiniMaxClientParseTests(unittest.TestCase):
         minimax_cfg = PROVIDER_DEFAULTS["minimax"]
 
         self.assertEqual("MiniMax-M2.7", minimax_cfg["model"])
-        self.assertEqual(
-            [
-                "MiniMax-M2.7",
-                "MiniMax-M2.7-highspeed",
-                "MiniMax-M2.5-highspeed",
-                "MiniMax-M2.5",
-            ],
-            minimax_cfg["models"],
-        )
+        self.assertEqual(["MiniMax-M2.7"], minimax_cfg["models"])
+        self.assertNotIn("MiniMax-M2.7-highspeed", minimax_cfg["models"])
+        self.assertNotIn("MiniMax-M2.5-highspeed", minimax_cfg["models"])
+        self.assertNotIn("MiniMax-M2.5", minimax_cfg["models"])
 
     def test_build_request_uses_project_headers_without_cline_markers(self):
         with patch.dict(os.environ, {"MINIMAX_API_KEY": "test-key"}, clear=False):

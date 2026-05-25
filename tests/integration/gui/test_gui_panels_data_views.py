@@ -1009,6 +1009,58 @@ class OverviewTableViewTests(ManagedPathTestCase):
         finally:
             self._cleanup(tmpdir)
 
+    def test_table_keyword_filter_does_not_match_record_id(self):
+        records = [
+            {
+                "id": 907,
+                "cell_line": "K562",
+                "short_name": "clone-main",
+                "box": 1,
+                "position": 1,
+                "frozen_at": "2025-01-01",
+            },
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_table(panel)
+            self.assertEqual(1, self._table_row_count(panel, row_kind="active"))
+
+            panel.ov_filter_keyword.setText("907")
+            self.assertEqual(0, panel.ov_table.rowCount())
+        finally:
+            self._cleanup(tmpdir)
+
+    def test_grid_keyword_filter_does_not_match_record_id(self):
+        records = [
+            {
+                "id": 907,
+                "cell_line": "K562",
+                "short_name": "clone-main",
+                "box": 1,
+                "position": 1,
+                "frozen_at": "2025-01-01",
+            },
+        ]
+        yaml_path, tmpdir = self._seed_yaml(records, meta_extra={"color_key": "cell_line"})
+        try:
+            from app_gui.tool_bridge import GuiToolBridge
+
+            panel = OverviewPanel(bridge=GuiToolBridge(), yaml_path_getter=lambda: yaml_path)
+            panel.refresh()
+            self._switch_to_grid(panel)
+            button = panel.overview_cells.get((1, 1))
+            self.assertIsNotNone(button)
+            self.assertNotIn("907", str(button.property("search_text") or ""))
+
+            panel.ov_filter_keyword.setText("907")
+            self.assertTrue(button.isHidden())
+        finally:
+            self._cleanup(tmpdir)
+
     def test_table_current_view_does_not_keyword_match_hidden_history_events(self):
         records = [
             {

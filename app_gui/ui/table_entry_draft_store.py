@@ -21,6 +21,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from PySide6.QtCore import QObject, Signal
 
 from lib.custom_fields import get_color_key, get_effective_fields
+from lib.overview_table_query import build_overview_row_search_text
 from lib.schema_aliases import get_input_stored_at
 
 from app_gui.ui.table_entry_row_resolver import SlotState, resolve_entry_rows
@@ -300,9 +301,7 @@ class TableEntryDraftStore(QObject):
 
         raw_row["row_locked"] = row_locked
         raw_row["row_confirmed"] = row_confirmed
-        raw_row["search_text"] = " ".join(
-            str(raw_values.get(c, "")) for c in data_columns
-        ).lower()
+        raw_row["search_text"] = build_overview_row_search_text(data_columns, raw_values)
 
         if staged and not draft:
             raw_row["slot_state"] = (

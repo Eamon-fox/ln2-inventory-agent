@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 
 from app_gui.application.ai_provider_catalog import (
     AI_PROVIDER_DEFAULTS,
+    normalize_ai_model,
     normalize_ai_provider,
 )
 from app_gui.gui_config import DEFAULT_MAX_STEPS, MAX_AGENT_STEPS
@@ -64,7 +65,7 @@ def build_ai_group(dialog, *, combo_box_cls, spin_box_cls, text_edit_cls) -> QGr
     ai_layout.addRow(tr("settings.aiProvider"), dialog.ai_provider_combo)
 
     provider_cfg = AI_PROVIDER_DEFAULTS[current_provider]
-    default_model = ai_advanced.get("model") or provider_cfg["model"]
+    default_model = normalize_ai_model(current_provider, ai_advanced.get("model") or provider_cfg["model"])
     dialog.ai_model_edit = combo_box_cls()
     dialog.ai_model_edit.setEditable(True)
     dialog.ai_model_edit.setInsertPolicy(QComboBox.NoInsert)
@@ -114,8 +115,9 @@ def provider_models(provider):
 
 
 def refresh_model_options(dialog, provider, selected_model=None) -> None:
+    normalized_provider = normalize_ai_provider(provider)
     models, default_model = provider_models(provider)
-    target_model = str(selected_model or "").strip() or default_model
+    target_model = normalize_ai_model(normalized_provider, selected_model) or default_model
 
     with QSignalBlocker(dialog.ai_model_edit):
         dialog.ai_model_edit.clear()

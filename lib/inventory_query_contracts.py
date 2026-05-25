@@ -14,6 +14,7 @@ SEARCH_MODE_VALUES = ("fuzzy", "exact", "keywords")
 SEARCH_QUERY_DESCRIPTION = (
     "Optional search text (cell line, short name, notes, etc). "
     "Text normalizes spaces, hyphens, and underscores as equivalent separators; "
+    "record IDs are not part of text matching; use record_id for ID lookup. "
     "empty or '*' skips text filtering."
 )
 
@@ -105,6 +106,7 @@ def build_inventory_search_response_shape() -> dict[str, Any]:
             "records[] returns raw inventory record objects from the current dataset.",
             "Legacy alias keys may still appear in records[]; use dataset_schema.alias_map to interpret them.",
             "Search text treats space, hyphen, and underscore as equivalent separators.",
+            "Record identity is excluded from text matching; pass record_id for ID lookup.",
             "fuzzy = separator-normalized substring match; keywords = separator-normalized AND-token match; exact = separator-normalized scalar equality.",
         ],
         "result_fields": [

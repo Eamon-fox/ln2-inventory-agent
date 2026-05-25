@@ -906,16 +906,17 @@ class GuiPanelsOpsSettingsTests(GuiPanelsBaseCase):
     def test_settings_dialog_provider_switch_updates_model_dropdown_options(self):
         from app_gui.main import SettingsDialog
 
-        dialog = SettingsDialog(config={"ai": {"provider": "zhipu", "model": "glm-5"}})
+        dialog = SettingsDialog(config={"ai": {"provider": "zhipu", "model": "glm-5.1"}})
         options = [dialog.ai_model_edit.itemText(i) for i in range(dialog.ai_model_edit.count())]
 
-        self.assertIn("glm-5", options)
+        self.assertIn("glm-5.1", options)
         self.assertIn("glm-4.7", options)
+        self.assertNotIn("glm-5", options)
 
     def test_settings_dialog_uses_readable_zhipu_provider_label(self):
         from app_gui.main import SettingsDialog
 
-        dialog = SettingsDialog(config={"ai": {"provider": "zhipu", "model": "glm-5"}})
+        dialog = SettingsDialog(config={"ai": {"provider": "zhipu", "model": "glm-5.1"}})
 
         self.assertEqual("Zhipu AI (GLM)", dialog.ai_provider_combo.currentText())
 

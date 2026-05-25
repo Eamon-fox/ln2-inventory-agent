@@ -19,8 +19,8 @@ PROVIDER_DEFAULTS = {
         "help_url": "https://platform.deepseek.com",
     },
     "zhipu": {
-        "model": "glm-5",
-        "models": ["glm-5", "glm-4.7"],
+        "model": "glm-5.1",
+        "models": ["glm-5.1", "glm-4.7"],
         "env_key": "ZHIPUAI_API_KEY",
         "display_name": "Zhipu AI (GLM)",
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
@@ -28,12 +28,7 @@ PROVIDER_DEFAULTS = {
     },
     "minimax": {
         "model": "MiniMax-M2.7",
-        "models": [
-            "MiniMax-M2.7",
-            "MiniMax-M2.7-highspeed",
-            "MiniMax-M2.5-highspeed",
-            "MiniMax-M2.5",
-        ],
+        "models": ["MiniMax-M2.7"],
         "env_key": "MINIMAX_API_KEY",
         "display_name": "MiniMax",
         "base_url": "https://api.minimaxi.com/v1",
@@ -655,7 +650,7 @@ class ZhipuLLMClient(OpenAICompatibleClient):
 
     PROVIDER_NAME = "Zhipu"
     MODEL_ENV_VAR = "ZHIPU_MODEL"
-    DEFAULT_MODEL = "glm-5"
+    DEFAULT_MODEL = "glm-5.1"
     BASE_URL_ENV_VAR = "ZHIPU_BASE_URL"
     DEFAULT_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
     API_KEY_ENV_VARS = ("ZHIPUAI_API_KEY", "ZHIPU_API_KEY", "GLM_API_KEY")

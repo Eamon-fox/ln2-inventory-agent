@@ -1,17 +1,17 @@
 {
-  "version": "1.3.12",
-  "download_url": "https://snowfox-release.oss-cn-beijing.aliyuncs.com/SnowFox-Setup-1.3.12.exe",
+  "version": "1.3.13",
+  "download_url": "https://snowfox-release.oss-cn-beijing.aliyuncs.com/SnowFox-Setup-1.3.13.exe",
   "platforms": {
     "windows": {
-      "download_url": "https://snowfox-release.oss-cn-beijing.aliyuncs.com/SnowFox-Setup-1.3.12.exe",
-      "asset_name": "SnowFox-Setup-1.3.12.exe",
+      "download_url": "https://snowfox-release.oss-cn-beijing.aliyuncs.com/SnowFox-Setup-1.3.13.exe",
+      "asset_name": "SnowFox-Setup-1.3.13.exe",
       "auto_update": true
     },
     "macos": {
-      "download_url": "https://snowfox-release.oss-cn-beijing.aliyuncs.com/SnowFox-1.3.12-macOS.pkg",
-      "asset_name": "SnowFox-1.3.12-macOS.pkg",
+      "download_url": "https://snowfox-release.oss-cn-beijing.aliyuncs.com/SnowFox-1.3.13-macOS.pkg",
+      "asset_name": "SnowFox-1.3.13-macOS.pkg",
       "auto_update": true
     }
   },
-  "release_notes": "SnowFox 1.3.12 更新内容：\n新增\n- 更新了 DeepSeek V4 Flash 和 DeepSeek V4 Pro 的支持，默认 DeepSeek 模型切换到 V4 Flash，并保留 V4 Pro 作为高质量选项。\n- 新增 Agent shell 会话运行时与 SnowFox 系统技能边界说明，让文件和 shell 能力的使用范围更清晰。\n改进\n- 优化了首字响应时间：Agent 工具 schema 构造改为单次读取并复用库存上下文，避免每次请求前重复解析同一批 YAML。\n- 改善 AI 对话流式展示：思考内容改为临时展示并在回答或工具调用开始时自动隐藏，最终回答与 reasoning 分离。\n- AI 对话新增复制成功反馈、失败重试和“换个回答”入口，当前会话内可直接重跑上一轮请求。\n- 统一 shell 命令工具的运行时、状态文案与技能能力声明，减少工具实现之间的分叉。\n修复\n- 修复 DeepSeek 思考模式工具调用后没有完整回传 `reasoning_content` 导致的 HTTP 400 错误；现在跨用户轮次和 ReAct 子轮次都会保留必要上下文。\n- 修复 reasoning 被错误当作最终正文展示或写入历史的问题，避免前端出现重复思考内容。\n- 修复临时 thought 富文本背景污染后续工具行和回答行的问题。"
+  "release_notes": "SnowFox 1.3.13 更新内容：\n新增\n- 新增帮助与反馈入口，并补充更新下载统计上报，便于发布后观察安装包获取情况。\n- 新增批量操作核心诊断与 remediation 记录，帮助定位批量暂存、校验和执行链路的问题。\n改进\n- 重构本地 Open API 与 Agent handler 内部结构，读查询、暂存交接和工具调度职责更清晰。\n- 优化审计与 Overview 热路径性能，改善大数据集下的表格刷新、批量操作和 GUI 响应速度。\n- 改善操作面板状态反馈、移动校验反馈与表格交互精度，减少误触和无效操作造成的干扰。\n- 当前表格视图默认隐藏历史事件列，并将 `storage_events` 展示文案统一为 history events。\n- 默认文本搜索不再匹配内部 `record_id`；需要按 ID 精确查找时，应使用显式 `record_id` 或 ID 列筛选。\n- Zhipu GLM 默认模型切换为 `glm-5.1`，不再提供 `glm-5`；MiniMax 模型列表只保留 `MiniMax-M2.7`。\n修复\n- 修复 Agent 暂存竞争问题，减少多轮暂存、校验和 GUI handoff 状态互相覆盖。\n- 修复 UI 缩放设置的重启提示与生效反馈问题，让设置页状态更准确。\n- 稳定暂存计划校验与批量 GUI 响应，降低批量操作时的卡顿和误判。\n- 明确已取出记录范围，避免历史记录干扰当前库存视图和默认搜索结果。"
 }

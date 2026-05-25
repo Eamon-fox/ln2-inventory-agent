@@ -23,6 +23,7 @@ _KNOWN_COLUMN_TYPES = {
 }
 
 _VALID_FILTER_TYPES = frozenset({"list", "text", "number", "date"})
+SEARCH_TEXT_EXCLUDED_COLUMNS = frozenset({"id", "record_id"})
 
 
 def _safe_int(value):
@@ -87,7 +88,7 @@ def _projection_box_numbers(layout, records):
 def _empty_slot_row(columns, *, box, position, meta=None, inventory=None):
     values = {str(column): "" for column in list(columns or [])}
     values["location"] = format_box_position_compact(box, position, layout=meta.get("box_layout") if isinstance(meta, dict) else {})
-    search_text = " ".join(str(values.get(column, "")) for column in values).lower()
+    search_text = build_overview_row_search_text(values.keys(), values)
     return {
         "row_kind": "empty_slot",
         "record_id": None,
@@ -99,6 +100,15 @@ def _empty_slot_row(columns, *, box, position, meta=None, inventory=None):
         "values": values,
         "search_text": search_text,
     }
+
+
+def build_overview_row_search_text(columns, values):
+    """Build default Overview keyword text without internal record identity."""
+    return " ".join(
+        str((values or {}).get(column, ""))
+        for column in list(columns or [])
+        if str(column or "") not in SEARCH_TEXT_EXCLUDED_COLUMNS
+    ).lower()
 
 
 def build_overview_table_projection(records, *, meta=None, layout=None, include_empty_slots=False):
@@ -133,7 +143,7 @@ def build_overview_table_projection(records, *, meta=None, layout=None, include_
         elif color_key in values:
             color_value = str(values.get(color_key) or "")
 
-        search_text = " ".join(str(values.get(column, "")) for column in columns).lower()
+        search_text = build_overview_row_search_text(columns, values)
         rows.append(
             {
                 "row_kind": "active" if active else "taken_out",

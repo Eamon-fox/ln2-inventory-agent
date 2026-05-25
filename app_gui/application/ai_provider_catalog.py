@@ -14,6 +14,14 @@ OBSOLETE_AI_MODELS = {
         "deepseek-chat",
         "deepseek-reasoner",
     },
+    "zhipu": {
+        "glm-5",
+    },
+    "minimax": {
+        "MiniMax-M2.7-highspeed",
+        "MiniMax-M2.5-highspeed",
+        "MiniMax-M2.5",
+    },
 }
 
 

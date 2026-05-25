@@ -12,6 +12,7 @@ from app_gui.ui.theme import pick_contrasting_text_color
 from app_gui.ui.utils import cell_color
 from lib.custom_fields import coerce_value, get_color_key, get_effective_fields
 from lib.overview_table_query import (
+    build_overview_row_search_text,
     build_overview_table_projection,
     filter_overview_table_rows,
     normalize_overview_table_column_filters,
@@ -352,7 +353,7 @@ def _active_table_column_filters(self):
 
 
 def _row_search_text(columns, values):
-    return " ".join(str((values or {}).get(column, "")) for column in list(columns or [])).lower()
+    return build_overview_row_search_text(columns, values)
 
 
 def _overlay_current_view_rows(self, rows, data_columns):

@@ -316,10 +316,15 @@ def normalize_search_text(value, case_sensitive=False):
     return " ".join(text.split())
 
 
+_TEXT_SEARCH_EXCLUDED_RECORD_KEYS = frozenset({"id", "record_id"})
+
+
 def record_search_values(record, case_sensitive=False):
     """Return normalized scalar values from one record for exact-style matching."""
     values = []
-    for raw_value in (record or {}).values():
+    for raw_key, raw_value in (record or {}).items():
+        if str(raw_key or "") in _TEXT_SEARCH_EXCLUDED_RECORD_KEYS:
+            continue
         if raw_value is None:
             continue
         if isinstance(raw_value, (str, int, float, bool)):

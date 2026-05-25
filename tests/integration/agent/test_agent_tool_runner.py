@@ -1232,6 +1232,33 @@ class AgentToolRunnerTests(ManagedPathTestCase):
             self.assertEqual(2, response["result"]["records"][0]["id"])
             self.assertEqual("occupied", response["result"]["slot_lookup"]["status"])
 
+    def test_search_records_query_does_not_match_record_id_text(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_agent_search_no_rid_text_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data([
+                    {
+                        "id": 907,
+                        "parent_cell_line": "K562",
+                        "short_name": "clone-main",
+                        "box": 1,
+                        "position": 1,
+                        "frozen_at": "2026-02-10",
+                    },
+                ]),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            runner = AgentToolRunner(yaml_path=str(yaml_path))
+            by_query = runner.run("search_records", {"query": "907"})
+            by_id = runner.run("search_records", {"record_id": 907})
+
+            self.assertTrue(by_query["ok"])
+            self.assertEqual(0, by_query["result"]["total_count"])
+            self.assertTrue(by_id["ok"])
+            self.assertEqual([907], [item.get("id") for item in by_id["result"]["records"]])
+
     def test_search_records_supports_alphanumeric_slot_filters(self):
         with tempfile.TemporaryDirectory(prefix="ln2_agent_search_slot_alpha_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"

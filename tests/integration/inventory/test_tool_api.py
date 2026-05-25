@@ -1415,6 +1415,40 @@ class ToolApiTests(ManagedPathTestCase):
             self.assertEqual(1, response["result"]["total_count"])
             self.assertEqual(7, response["result"]["records"][0]["id"])
 
+    def test_tool_search_records_text_query_does_not_match_record_id(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_search_no_rid_text_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        {
+                            "id": 907,
+                            "parent_cell_line": "K562",
+                            "short_name": "clone-main",
+                            "box": 1,
+                            "position": 1,
+                            "frozen_at": "2026-02-10",
+                        },
+                    ]
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            for mode in ("fuzzy", "exact", "keywords"):
+                response = tool_search_records(
+                    yaml_path=str(yaml_path),
+                    query="907",
+                    mode=mode,
+                )
+
+                self.assertTrue(response["ok"])
+                self.assertEqual(0, response["result"]["total_count"], mode)
+
+            by_id = tool_search_records(yaml_path=str(yaml_path), record_id=907)
+            self.assertTrue(by_id["ok"])
+            self.assertEqual([907], [item["id"] for item in by_id["result"]["records"]])
+
     def test_tool_search_records_status_filters_active_and_inactive(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_search_active_default_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"
@@ -1782,6 +1816,39 @@ class ToolApiTests(ManagedPathTestCase):
             self.assertEqual(1, result["limit"])
             self.assertEqual(1, result["offset"])
             self.assertFalse(result["has_more"])
+
+    def test_tool_filter_records_keyword_does_not_match_id_column(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_filter_no_id_keyword_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            data = {
+                "meta": {"box_layout": {"rows": 9, "cols": 9}},
+                "inventory": [
+                    {
+                        "id": 907,
+                        "cell_line": "K562",
+                        "short_name": "clone-main",
+                        "box": 1,
+                        "position": 1,
+                        "frozen_at": "2026-02-10",
+                    },
+                ],
+            }
+            write_yaml(
+                data,
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            keyword = tool_filter_records(yaml_path=str(yaml_path), keyword="907")
+            self.assertTrue(keyword["ok"])
+            self.assertEqual(0, keyword["result"]["total_count"])
+
+            id_filter = tool_filter_records(
+                yaml_path=str(yaml_path),
+                column_filters={"id": {"type": "list", "values": ["907"]}},
+            )
+            self.assertTrue(id_filter["ok"])
+            self.assertEqual([907], [row.get("record_id") for row in id_filter["result"]["rows"]])
 
     def test_tool_filter_records_rejects_invalid_sort_and_filter_columns(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_filter_records_invalid_") as temp_dir:

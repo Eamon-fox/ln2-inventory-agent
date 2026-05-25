@@ -17,6 +17,8 @@ from __future__ import annotations
 import enum
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+from lib.overview_table_query import build_overview_row_search_text
+
 
 class SlotState(enum.Enum):
     EMPTY = "empty"
@@ -39,7 +41,7 @@ def _slot_key(row: dict) -> Optional[Tuple[int, int]]:
 
 
 def _row_search_text(columns: Sequence[str], values: dict) -> str:
-    return " ".join(str(values.get(c, "")) for c in columns).lower()
+    return build_overview_row_search_text(columns, values)
 
 
 # ── single-row resolver ─────────────────────────────────────────────

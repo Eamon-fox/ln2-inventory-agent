@@ -29,7 +29,7 @@ class _CheckpointAwareLLM:
     PROVIDER_NAME = "Zhipu"
 
     def __init__(self):
-        self._model = "glm-5"
+        self._model = "glm-5.1"
         self._context_window = 2_000
         self._main_output_reserve = 300
         self._summary_output_reserve = 300
@@ -92,7 +92,7 @@ class ContextCheckpointTests(ManagedPathTestCase):
         self.assertTrue(result["ok"])
         self.assertEqual("continued", result["final"])
         self.assertEqual("zhipu", (result.get("summary_state") or {}).get("provider"))
-        self.assertEqual("glm-5", (result.get("summary_state") or {}).get("model"))
+        self.assertEqual("glm-5.1", (result.get("summary_state") or {}).get("model"))
 
         summary_calls = [call for call in llm.calls if call["kind"] == "summary"]
         self.assertGreaterEqual(len(summary_calls), 1)
@@ -117,7 +117,7 @@ class ContextCheckpointTests(ManagedPathTestCase):
         if not isinstance(stream_end, dict):
             self.fail("stream_end event should be emitted")
         self.assertEqual(
-            "glm-5",
+            "glm-5.1",
             ((stream_end.get("data") or {}).get("summary_state") or {}).get("model"),
         )
 

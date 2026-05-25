@@ -81,6 +81,34 @@ ai:
 
         self.assertEqual("deepseek-v4-flash", cfg["ai"]["model"])
 
+    def test_load_gui_config_migrates_obsolete_zhipu_glm_5_model(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_gui_cfg_zhipu_legacy_") as temp_dir:
+            config_path = Path(temp_dir) / "config.yaml"
+            config_path.write_text(
+                """ai:
+  provider: zhipu
+  model: glm-5
+""",
+                encoding="utf-8",
+            )
+            cfg = load_gui_config(path=str(config_path))
+
+        self.assertEqual("glm-5.1", cfg["ai"]["model"])
+
+    def test_load_gui_config_migrates_removed_minimax_models(self):
+        with tempfile.TemporaryDirectory(prefix="ln2_gui_cfg_minimax_legacy_") as temp_dir:
+            config_path = Path(temp_dir) / "config.yaml"
+            config_path.write_text(
+                """ai:
+  provider: minimax
+  model: MiniMax-M2.7-highspeed
+""",
+                encoding="utf-8",
+            )
+            cfg = load_gui_config(path=str(config_path))
+
+        self.assertEqual("MiniMax-M2.7", cfg["ai"]["model"])
+
     def test_load_gui_config_keeps_custom_deepseek_model(self):
         with tempfile.TemporaryDirectory(prefix="ln2_gui_cfg_deepseek_custom_") as temp_dir:
             config_path = Path(temp_dir) / "config.yaml"

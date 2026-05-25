@@ -722,7 +722,6 @@ def _paint_cell(self, button, box_num, position, record):
         button.setStyleSheet(base_style)
         button.setProperty("cell_color", color)
         parts = [
-            str(record.get("id", "")),
             str(box_num),
             str(position),
             compact_location,
