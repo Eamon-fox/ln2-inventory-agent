@@ -309,7 +309,7 @@ def tool_search_records(
                 continue
 
             record_tokens = api.record_search_tokens(rec, case_sensitive=case_sensitive)
-            if keywords and all(kw in record_tokens for kw in keywords):
+            if api.keywords_match(record_tokens, keywords):
                 matches.append(rec)
     elif has_structured_filter or not normalized_query:
         matches = list(scoped_records)

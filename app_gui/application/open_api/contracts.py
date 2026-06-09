@@ -24,6 +24,141 @@ LOCAL_OPEN_API_SEARCH_MODES = tuple(
     or ("fuzzy", "exact")
 )
 
+# Self-describing per-action payload schema for ``POST /api/v1/gui/stage-plan``.
+# This MIRRORS the runtime validators in ``lib/plan_gate.py``
+# (``_validate_item_payload_schema``); keep the two in sync. A unit test asserts
+# that every key marked ``required`` here is actually enforced by plan_gate.
+LOCAL_OPEN_API_STAGE_PLAN_PAYLOAD_SCHEMA = {
+    "notes": [
+        "Each item has top-level routing keys (action/record_id/box/position/...) "
+        "plus an inner 'payload' object consumed by the GUI plan executor.",
+        "Structural keys that also exist at the item level "
+        "(record_id, box, position, positions, to_position, to_box) may be omitted "
+        "from payload; the API backfills them from the item. Caller-only data "
+        "(fields, stored_at, date_str) is never inferred and must be supplied.",
+        "Payload shapes intentionally differ per action: 'edit' wraps changes under "
+        "'fields'; 'takeout'/'move' use flat keys.",
+    ],
+    "actions": {
+        "add": {
+            "item_keys": {"action": "add", "box": "int>0", "position": "int>0"},
+            "payload": {
+                "box": {"type": "int>0", "required": False, "inherits": "item.box"},
+                "positions": {
+                    "type": "list[int>0]",
+                    "required": True,
+                    "default": "[item.position]",
+                    "note": "must include item.position",
+                },
+                "stored_at": {
+                    "type": "date-string YYYY-MM-DD",
+                    "required": True,
+                    "alias": "frozen_at",
+                },
+                "fields": {"type": "object", "required": True, "note": "may be empty"},
+            },
+            "example": {
+                "action": "add",
+                "box": 1,
+                "position": 2,
+                "source": "api",
+                "payload": {
+                    "positions": [2],
+                    "stored_at": "2024-01-02",
+                    "fields": {"short_name": "clone-a"},
+                },
+            },
+        },
+        "edit": {
+            "item_keys": {"action": "edit", "record_id": "int>0"},
+            "payload": {
+                "record_id": {
+                    "type": "int>0",
+                    "required": False,
+                    "inherits": "item.record_id",
+                },
+                "fields": {
+                    "type": "object",
+                    "required": True,
+                    "note": "non-empty; the fields to change",
+                },
+            },
+            "example": {
+                "action": "edit",
+                "record_id": 7,
+                "source": "api",
+                "payload": {"fields": {"note": "edited"}},
+            },
+        },
+        "takeout": {
+            "item_keys": {"action": "takeout", "record_id": "int>0", "position": "int>0"},
+            "payload": {
+                "record_id": {
+                    "type": "int>0",
+                    "required": False,
+                    "inherits": "item.record_id",
+                },
+                "position": {
+                    "type": "int>0",
+                    "required": False,
+                    "inherits": "item.position",
+                },
+                "date_str": {"type": "date-string YYYY-MM-DD", "required": True},
+            },
+            "example": {
+                "action": "takeout",
+                "record_id": 7,
+                "box": 1,
+                "position": 5,
+                "source": "api",
+                "payload": {"date_str": "2026-02-10"},
+            },
+        },
+        "move": {
+            "item_keys": {
+                "action": "move",
+                "record_id": "int>0",
+                "position": "int>0",
+                "to_position": "int>0",
+                "to_box": "int>0 (optional)",
+            },
+            "payload": {
+                "record_id": {
+                    "type": "int>0",
+                    "required": False,
+                    "inherits": "item.record_id",
+                },
+                "position": {
+                    "type": "int>0",
+                    "required": False,
+                    "inherits": "item.position",
+                },
+                "date_str": {"type": "date-string YYYY-MM-DD", "required": True},
+                "to_position": {
+                    "type": "int>0",
+                    "required": False,
+                    "inherits": "item.to_position",
+                    "note": "must differ from position when target box is unchanged",
+                },
+                "to_box": {
+                    "type": "int>0",
+                    "required": False,
+                    "inherits": "item.to_box",
+                },
+            },
+            "example": {
+                "action": "move",
+                "record_id": 7,
+                "box": 1,
+                "position": 5,
+                "to_position": 10,
+                "source": "api",
+                "payload": {"date_str": "2026-02-10"},
+            },
+        },
+    },
+}
+
 LOCAL_OPEN_API_ROUTE_SPECS = {
     ("GET", "/api/v1/capabilities"): {
         "handler": "_handle_capabilities",
@@ -207,9 +342,27 @@ LOCAL_OPEN_API_ROUTE_SPECS = {
                 "type": "array",
                 "required": True,
                 "accepted_values": sorted(LOCAL_OPEN_API_STAGE_ALLOWED_ACTIONS),
+                "item_payload_schema": "see result.stage_plan_schema in /capabilities",
+            },
+            {
+                "name": "mode",
+                "in": "body",
+                "type": "string",
+                "required": False,
+                "default": "merge",
+                "accepted_values": ["merge", "replace"],
+                "description": "merge (default) dedups into existing staged items; "
+                "replace discards all currently staged items first.",
             },
             {"name": "focus", "in": "body", "type": "boolean", "required": False},
         ],
+    },
+    ("POST", "/api/v1/gui/stage-plan/clear"): {
+        "handler": "_handle_clear_stage_plan",
+        "request_arg": "payload",
+        "effect": "gui_stage_only",
+        "summary": "Clear all currently staged GUI plan items without executing inventory writes.",
+        "params": [],
     },
 }
 

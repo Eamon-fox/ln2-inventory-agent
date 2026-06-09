@@ -443,6 +443,103 @@ class LocalOpenApiTests(ManagedPathTestCase):
         self.assertEqual("plan_action_not_allowed", payload["error_code"])
         self.assertEqual(["add", "edit", "move", "takeout"], payload["accepted_values"])
 
+    def test_capabilities_exposes_stage_plan_schema_and_client_hints(self):
+        status, payload = self.controller.handle_request("GET", "/api/v1/capabilities", {})
+        self.assertEqual(200, status)
+        result = payload["result"]
+
+        schema = result["stage_plan_schema"]
+        self.assertEqual({"add", "edit", "takeout", "move"}, set(schema["actions"].keys()))
+        # edit wraps changes under fields; takeout/move are flat — both documented.
+        self.assertIn("fields", schema["actions"]["edit"]["payload"])
+        self.assertIn("date_str", schema["actions"]["takeout"]["payload"])
+        self.assertNotIn("fields", schema["actions"]["takeout"]["payload"])
+
+        hints = result["client_hints"]
+        self.assertIn("utf-8", hints["encoding"].lower())
+        self.assertTrue(
+            any("Invoke-RestMethod" in example for example in hints["powershell_examples"])
+        )
+
+    def test_stage_plan_clear_route_empties_store(self):
+        item = build_add_plan_item(
+            box=1, positions=[2], stored_at="2024-01-02", fields={}, source="api-test"
+        )
+        status, _ = self.controller.handle_request(
+            "POST", "/api/v1/gui/stage-plan", {}, payload={"items": [item]}
+        )
+        self.assertEqual(200, status)
+        self.assertEqual(1, self.plan_store.count())
+
+        status, payload = self.controller.handle_request(
+            "POST", "/api/v1/gui/stage-plan/clear", {}, payload=None
+        )
+        self.assertEqual(200, status)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(1, payload["result"]["cleared_count"])
+        self.assertEqual(0, payload["result"]["total_count"])
+        self.assertEqual(0, self.plan_store.count())
+        self.assertEqual("gui_stage_only", payload["effect"])
+        self.assertFalse(payload["inventory_written"])
+
+    def test_stage_plan_replace_mode_discards_existing_items(self):
+        first = build_add_plan_item(
+            box=1, positions=[2], stored_at="2024-01-02", fields={}, source="api-test"
+        )
+        self.controller.handle_request(
+            "POST", "/api/v1/gui/stage-plan", {}, payload={"items": [first]}
+        )
+        self.assertEqual(1, self.plan_store.count())
+
+        second = build_add_plan_item(
+            box=1, positions=[3], stored_at="2024-01-02", fields={}, source="api-test"
+        )
+        status, payload = self.controller.handle_request(
+            "POST",
+            "/api/v1/gui/stage-plan",
+            {},
+            payload={"items": [second], "mode": "replace"},
+        )
+        self.assertEqual(200, status, payload)
+        self.assertTrue(payload["ok"], payload)
+        self.assertEqual("replace", payload["result"]["mode"])
+        self.assertEqual(1, self.plan_store.count())
+        remaining = self.plan_store.list_items()
+        self.assertEqual([3], remaining[0]["payload"]["positions"])
+
+    def test_stage_plan_rejects_invalid_mode(self):
+        item = build_add_plan_item(
+            box=1, positions=[2], stored_at="2024-01-02", fields={}, source="api-test"
+        )
+        status, payload = self.controller.handle_request(
+            "POST",
+            "/api/v1/gui/stage-plan",
+            {},
+            payload={"items": [item], "mode": "bogus"},
+        )
+        self.assertEqual(400, status)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("invalid_request", payload["error_code"])
+        self.assertEqual("mode", payload["field"])
+
+    def test_stage_plan_backfills_omitted_payload_keys(self):
+        # payload omits box and positions; they are inherited from the item level.
+        item = {
+            "action": "add",
+            "box": 1,
+            "position": 4,
+            "payload": {"stored_at": "2024-01-02", "fields": {}},
+        }
+        status, payload = self.controller.handle_request(
+            "POST", "/api/v1/gui/stage-plan", {}, payload={"items": [item]}
+        )
+        self.assertEqual(200, status, payload)
+        self.assertTrue(payload["ok"], payload)
+        self.assertEqual(1, payload["result"]["staged_count"])
+        staged = self.plan_store.list_items()[0]
+        self.assertEqual(1, staged["payload"]["box"])
+        self.assertEqual([4], staged["payload"]["positions"])
+
 
 if __name__ == "__main__":
     unittest.main()

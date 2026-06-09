@@ -350,6 +350,18 @@ def record_search_tokens(record, case_sensitive=False):
     return tokens
 
 
+def keywords_match(record_tokens, keywords):
+    """AND-match each keyword as a substring of at least one record token.
+
+    Keeps token boundaries (unlike whole-blob ``fuzzy``) while still matching
+    short or suffixed tokens, e.g. keyword ``sg`` matches record token ``sg2``
+    so a query like ``NT-sg`` -> ``[nt, sg]`` hits a ``NT-sg2`` field.
+    """
+    if not keywords:
+        return False
+    return all(any(kw in token for token in record_tokens) for kw in keywords)
+
+
 def parse_search_location_shortcut(query_text, layout):
     """Parse compact location query like ``2:15`` into (box, position)."""
     text = str(query_text or "").strip()
@@ -391,4 +403,5 @@ _record_search_blob = record_search_blob
 _normalize_search_text = normalize_search_text
 _record_search_values = record_search_values
 _record_search_tokens = record_search_tokens
+_keywords_match = keywords_match
 _parse_search_location_shortcut = parse_search_location_shortcut

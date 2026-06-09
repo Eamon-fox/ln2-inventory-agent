@@ -20,7 +20,9 @@ SEARCH_QUERY_DESCRIPTION = (
 
 SEARCH_MODE_DESCRIPTION = (
     "Search strategy over separator-normalized text: "
-    "fuzzy = substring match, keywords = AND-token match, "
+    "fuzzy = whole-text substring match, "
+    "keywords = AND-match where each token is a substring of some record token "
+    "(so 'sg' matches 'sg2'), "
     "exact = scalar equality against one normalized field value."
 )
 
