@@ -989,6 +989,47 @@ class ToolApiTests(ManagedPathTestCase):
             self.assertTrue(underscored["ok"])
             self.assertEqual([1], [item["id"] for item in underscored["result"]["records"]])
 
+    def test_tool_search_records_keywords_matches_suffixed_token(self):
+        # A short, hyphenated query (NT-sg -> [nt, sg]) should still match a
+        # record whose field carries an extra suffix (NT-sg2 -> tokens nt/sg2),
+        # matching what fuzzy already finds. Regression for keyword exact-token gap.
+        with tempfile.TemporaryDirectory(prefix="ln2_tool_search_kw_suffix_") as temp_dir:
+            yaml_path = Path(temp_dir) / "inventory.yaml"
+            write_yaml(
+                make_data(
+                    [
+                        {
+                            "id": 1,
+                            "parent_cell_line": "K562",
+                            "short_name": "NT-sg2",
+                            "box": 1,
+                            "position": 1,
+                            "frozen_at": "2025-01-01",
+                        },
+                        {
+                            "id": 2,
+                            "parent_cell_line": "K562",
+                            "short_name": "control",
+                            "box": 1,
+                            "position": 2,
+                            "frozen_at": "2025-01-01",
+                        },
+                    ]
+                ),
+                path=str(yaml_path),
+                audit_meta={"action": "seed", "source": "tests"},
+            )
+
+            keywords = tool_search_records(str(yaml_path), query="NT-sg", mode="keywords")
+            fuzzy = tool_search_records(str(yaml_path), query="NT-sg", mode="fuzzy")
+
+            self.assertTrue(keywords["ok"])
+            self.assertEqual([1], [item["id"] for item in keywords["result"]["records"]])
+            self.assertEqual(
+                [item["id"] for item in fuzzy["result"]["records"]],
+                [item["id"] for item in keywords["result"]["records"]],
+            )
+
     def test_tool_search_records_exact_matches_normalized_scalar_values_only(self):
         with tempfile.TemporaryDirectory(prefix="ln2_tool_search_exact_") as temp_dir:
             yaml_path = Path(temp_dir) / "inventory.yaml"

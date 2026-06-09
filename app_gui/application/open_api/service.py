@@ -29,9 +29,76 @@ from .contracts import (
     LOCAL_OPEN_API_ROUTE_ALLOWLIST,
     LOCAL_OPEN_API_ROUTE_SPECS,
     LOCAL_OPEN_API_STAGE_ALLOWED_ACTIONS,
+    LOCAL_OPEN_API_STAGE_PLAN_PAYLOAD_SCHEMA,
     LOCAL_OPEN_API_VALIDATION_MODES,
     iter_local_open_api_route_descriptions,
 )
+
+
+# Client-side guidance surfaced in /capabilities. The server already emits
+# UTF-8 with an explicit charset; mojibake and quoting friction are client
+# decoding/escaping issues (notably Windows PowerShell), so steer callers here.
+_LOCAL_OPEN_API_CLIENT_HINTS = {
+    "encoding": (
+        "All responses are 'application/json; charset=utf-8'. Decode response "
+        "bytes as UTF-8. On Windows PowerShell, Invoke-WebRequest/console may "
+        "mis-decode UTF-8 as the system codepage (e.g. GBK), turning Chinese "
+        "fields like box_tags into mojibake; prefer Invoke-RestMethod, which "
+        "parses JSON as UTF-8."
+    ),
+    "powershell_examples": [
+        "Invoke-RestMethod -Uri http://127.0.0.1:37666/api/v1/capabilities | "
+        "ConvertTo-Json -Depth 8",
+        "$body = @{ items = @(@{ action='edit'; record_id=7; "
+        "payload=@{ fields=@{ note='edited' } } }) } | ConvertTo-Json -Depth 8; "
+        "Invoke-RestMethod -Method Post "
+        "-Uri http://127.0.0.1:37666/api/v1/gui/stage-plan "
+        "-ContentType 'application/json; charset=utf-8' -Body $body",
+        "Invoke-RestMethod -Method Post "
+        "-Uri http://127.0.0.1:37666/api/v1/gui/stage-plan/clear",
+    ],
+    "curl_example": (
+        "Use curl.exe (not the PowerShell alias) and a here-string for JSON: "
+        "curl.exe -s -X POST http://127.0.0.1:37666/api/v1/gui/stage-plan "
+        "-H \"Content-Type: application/json; charset=utf-8\" "
+        "--data-binary '@body.json'"
+    ),
+}
+
+
+def _backfill_plan_payload(item):
+    """Inherit structural payload keys from the item level when omitted.
+
+    The GUI plan executor's contract duplicates routing keys
+    (record_id/box/position/positions/to_position/to_box) inside ``payload``.
+    Callers may now omit the duplicates; we copy them from the item so the
+    shared validators (which cross-check item == payload) still pass. Caller-only
+    data (fields/stored_at/date_str) is never invented.
+    """
+    if not isinstance(item, dict):
+        return item
+    payload = item.get("payload")
+    if not isinstance(payload, dict):
+        return item
+    action = str(item.get("action") or "").lower()
+
+    def _inherit(payload_key, item_key):
+        if payload.get(payload_key) in (None, "") and item.get(item_key) not in (None, ""):
+            payload[payload_key] = item.get(item_key)
+
+    if action == "add":
+        _inherit("box", "box")
+        if not payload.get("positions") and item.get("position") not in (None, ""):
+            payload["positions"] = [item.get("position")]
+    elif action == "edit":
+        _inherit("record_id", "record_id")
+    elif action in ("takeout", "move"):
+        _inherit("record_id", "record_id")
+        _inherit("position", "position")
+        if action == "move":
+            _inherit("to_position", "to_position")
+            _inherit("to_box", "to_box")
+    return item
 
 
 def _response_envelope(*, ok: bool, message: str = "", result=None, error_code=None, **extra):
@@ -333,8 +400,10 @@ class LocalOpenApiController:
                 },
                 "validation_modes": list(LOCAL_OPEN_API_VALIDATION_MODES),
                 "stage_allowed_actions": sorted(LOCAL_OPEN_API_STAGE_ALLOWED_ACTIONS),
+                "stage_plan_schema": copy.deepcopy(LOCAL_OPEN_API_STAGE_PLAN_PAYLOAD_SCHEMA),
                 "dataset_schema": dataset_schema,
                 "response_shapes": build_inventory_response_shapes_payload(),
+                "client_hints": copy.deepcopy(_LOCAL_OPEN_API_CLIENT_HINTS),
                 "routes": list(iter_local_open_api_route_descriptions(sort_routes=True)),
             },
         )
@@ -779,11 +848,24 @@ class LocalOpenApiController:
                 )
             item["action"] = action
             item.setdefault("source", "api")
+            _backfill_plan_payload(item)
             normalized_items.append(item)
 
+        mode = str(body.get("mode") or "merge").strip().lower()
+        if mode not in ("merge", "replace"):
+            return _error_response(
+                status_code=400,
+                error_code="invalid_request",
+                message="mode must be 'merge' or 'replace'.",
+                field="mode",
+                expected_type="string",
+                accepted_values=["merge", "replace"],
+            )
+
         yaml_path = self._current_yaml_path(must_exist=True)
+        existing_for_gate = [] if mode == "replace" else self._plan_store.list_items()
         gate = validate_stage_request(
-            existing_items=self._plan_store.list_items(),
+            existing_items=existing_for_gate,
             incoming_items=normalized_items,
             yaml_path=yaml_path,
             bridge=self._bridge,
@@ -804,7 +886,9 @@ class LocalOpenApiController:
 
         accepted = list(gate.get("accepted_items") or [])
         noop_items = list(gate.get("noop_items") or [])
-        if accepted:
+        if mode == "replace":
+            self._plan_store.replace_all(accepted)
+        elif accepted:
             self._plan_store.add(accepted)
 
         focus = _coerce_bool(body.get("focus"), default=True)
@@ -820,8 +904,9 @@ class LocalOpenApiController:
             executed=False,
             staged=True,
             inventory_written=False,
-            gui_changed=bool(accepted or noop_items or focus),
+            gui_changed=bool(accepted or noop_items or focus or mode == "replace"),
             result={
+                "mode": mode,
                 "staged_count": len(accepted),
                 "already_staged_count": len(noop_items),
                 "total_count": self._plan_store.count(),
@@ -829,6 +914,28 @@ class LocalOpenApiController:
                 "noop_items": noop_items,
                 "focused": focus,
                 "stats": gate.get("stats") if isinstance(gate.get("stats"), dict) else {},
+            },
+        )
+
+    def _handle_clear_stage_plan(self, payload):
+        if self._plan_store is None:
+            return 500, _response_envelope(
+                ok=False,
+                error_code="plan_store_unavailable",
+                message="Plan store is unavailable.",
+            )
+        cleared = self._plan_store.clear()
+        return 200, _response_envelope(
+            ok=True,
+            message="Cleared staged GUI plan",
+            effect="gui_stage_only",
+            executed=False,
+            staged=False,
+            inventory_written=False,
+            gui_changed=bool(cleared),
+            result={
+                "cleared_count": len(cleared),
+                "total_count": self._plan_store.count(),
             },
         )
 

@@ -122,6 +122,7 @@ local_open_api:
       - POST /api/v1/gui/prefill-add
       - POST /api/v1/gui/prefill-ai-prompt
       - POST /api/v1/gui/stage-plan
+      - POST /api/v1/gui/stage-plan/clear
   stage_allowed_actions:
     - add
     - edit

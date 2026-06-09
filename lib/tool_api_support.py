@@ -91,6 +91,7 @@ record_search_blob = _parsers.record_search_blob
 normalize_search_text = _parsers.normalize_search_text
 record_search_values = _parsers.record_search_values
 record_search_tokens = _parsers.record_search_tokens
+keywords_match = _parsers.keywords_match
 parse_search_location_shortcut = _parsers.parse_search_location_shortcut
 
 

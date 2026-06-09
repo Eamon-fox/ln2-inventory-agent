@@ -293,7 +293,8 @@ class ToolContractsSingleSourceTests(unittest.TestCase):
         self.assertIn("spaces, hyphens, and underscores", query_description)
         self.assertIn("empty or '*'", query_description)
         self.assertIn("separator-normalized text", mode_description)
-        self.assertIn("keywords = AND-token match", mode_description)
+        self.assertIn("keywords = AND-match", mode_description)
+        self.assertIn("substring of some record token", mode_description)
 
 
 class PlanItemTypeTests(unittest.TestCase):
