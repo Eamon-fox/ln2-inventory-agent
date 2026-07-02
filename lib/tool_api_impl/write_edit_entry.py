@@ -1,5 +1,6 @@
 """Edit-entry write-operation implementations for Tool API."""
 
+import sys
 from copy import deepcopy
 
 from ..yaml_ops import load_yaml, write_yaml
@@ -20,8 +21,10 @@ def _get_editable_fields(yaml_path, box=None):
         prepared = prepare_edit_document(data)
         if prepared.get("ok"):
             return editable_fields_for_data(prepared.get("data") or {})
-    except Exception:
-        pass
+    except Exception as exc:
+        # Best-effort discovery; fall back to the static editable set but leave
+        # a breadcrumb on stderr instead of failing silently.
+        print(f"warning: failed to resolve editable fields: {exc}", file=sys.stderr)
     return _EDITABLE_FIELDS
 
 
@@ -134,6 +137,7 @@ def tool_edit_entry(
             yaml_path,
             auto_backup=auto_backup,
             backup_path=request_backup_path,
+            before_data=data,
             audit_meta=api._build_audit_meta(
                 action=action,
                 source=source,

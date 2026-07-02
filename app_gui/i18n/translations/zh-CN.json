@@ -396,6 +396,7 @@
     "recordLoaded": "记录已加载 - 表单已自动填写。",
     "recordContextLoaded": "记录上下文已加载。",
     "recordNotFound": "未找到记录。",
+    "positionRequired": "必须提供位置。请选择一条具有有效位置的记录。",
     "posOk": "正常 - 位置在记录中",
     "posWarning": "警告 - 位置不在记录中",
     "posSameWarning": "警告 - 起始和目标相同",
@@ -488,6 +489,7 @@
     "planRollbackBackupMeta": "备份文件信息：修改时间 {mtime}，大小 {size}",
     "planRollbackBackupMissing": "确认时未找到备份文件：{path}",
     "planRollbackSourceEvent": "来源审计：{timestamp} | {action} | trace {trace_id}",
+    "planChangeRollbackCore": "[高风险] 回滚至 {target}",
     "noRollbackBackup": "本次执行未找到可回滚备份。",
     "bridgeNoRollback": "当前桥接器不支持回滚。",
     "rollbackException": "回滚异常：{error}",
@@ -915,6 +917,22 @@
     },
     "response": {
       "nonDict": "工具 `{tool_name}` 返回非字典响应。"
+    },
+    "runtime": {
+      "runStopped": "运行已被用户停止。",
+      "unknownToolHint": "请从可用工具中选择操作。",
+      "questionCancelled": "用户取消了本次提问。",
+      "answerEmpty": "用户回答为空。",
+      "answerMissingFreeText": "该问题缺少自由输入选项。",
+      "answerFreeTextMismatch": "用户回答与自由输入选项不匹配。",
+      "answerNotInOptions": "用户回答不在所提供的选项中。",
+      "userAnswered": "用户回答：{answer}",
+      "boxAdjustCancelled": "用户取消了盒子调整。",
+      "invalidConfirmationResult": "确认结果数据无效。",
+      "malformedToolCall": "模型返回的工具调用数据格式有误。",
+      "malformedToolCallHint": "工具调用需提供工具名与 JSON 对象参数。",
+      "questionNotAlone": "question 工具必须单独调用，不能与其他工具同时调用。",
+      "questionNotAloneHint": "请单独调用 question，拿到回答后再调用其他工具。"
     },
     "stage": {
       "allRejectedByValidation": "所有操作均被验证拒绝：{detail}",

@@ -8,6 +8,7 @@ from PySide6.QtCore import QTimer
 
 from app_gui.error_localizer import localize_error_payload
 from app_gui.i18n import tr
+from app_gui.ui.write_guards import guard_write_action
 
 
 def _print_items_with_grid(self, items_to_print, *, empty_message, opened_message, grid_state=None, table_rows=None):
@@ -149,12 +150,11 @@ def _print_operation_sheet_with_grid(self, items, grid_state, *, table_rows=None
     self.status_message.emit(opened_message, 2000, "info")
 
 
+@guard_write_action
 def clear_plan(self):
     from app_gui.ui import operations_panel_plan_store as _ops_plan_store
     from app_gui.ui import operations_panel_plan_toolbar as _ops_plan_toolbar
 
-    if bool(getattr(self, "_guard_write_action_by_migration_mode", lambda: False)()):
-        return
     cleared_items = self._plan_store.clear()
     _ops_plan_store._reset_plan_feedback_and_validation(self)
     _ops_plan_toolbar._refresh_after_plan_items_changed(self)
@@ -314,14 +314,13 @@ def _disable_undo(self, *, clear_last_executed=False):
     self._sync_result_actions()
 
 
+@guard_write_action
 def on_undo_last(self):
     from app_gui.ui import operations_panel_confirm as _ops_confirm
     from app_gui.ui import operations_panel_execution as _ops_exec
     from app_gui.ui import operations_panel_plan_toolbar as _ops_plan_toolbar
     from app_gui.ui import operations_panel_results as _ops_results
 
-    if bool(getattr(self, "_guard_write_action_by_migration_mode", lambda: False)()):
-        return
     if not self._last_operation_backup:
         _ops_exec._publish_system_notice(
             self,

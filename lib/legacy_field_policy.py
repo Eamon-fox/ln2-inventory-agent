@@ -519,6 +519,8 @@ def canonicalize_legacy_document(data: Dict[str, Any] | None) -> Dict[str, Any]:
         try:
             alias_changed_record_ids.append(int(record.get("id")))
         except Exception:
+            # Intentional silent skip: non-integer ids just opt out of the
+            # incremental-validation id set; cross-record rules still scan all.
             pass
 
     resolved = resolve_legacy_field_policy(

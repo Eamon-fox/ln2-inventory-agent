@@ -663,13 +663,27 @@ class ErrorPathTests(ManagedPathTestCase):
             self.assertFalse(result["ok"])
             self.assertEqual("forbidden_fields", result.get("error_code"))
 
-    def test_add_rejects_mixed_declared_and_undeclared_fields(self):
+    def test_add_rejects_removed_alias_before_forbidden_fields(self):
+        # ``parent_cell_line`` is a removed legacy alias, not merely an
+        # undeclared field, so the deprecated-alias guard fires first and wins
+        # over the generic forbidden-fields check. This locks that precedence.
         with tempfile.TemporaryDirectory() as td:
             yp = _seed(td, [])
             result = tool_add_entry(
                 yaml_path=yp,
                 box=1, positions=[1], frozen_at="2026-02-10",
                 fields={"parent_cell_line": "K562", "short_name": ""},
+            )
+            self.assertFalse(result["ok"])
+            self.assertEqual("deprecated_field_alias_removed", result.get("error_code"))
+
+    def test_add_rejects_mixed_declared_and_undeclared_fields(self):
+        with tempfile.TemporaryDirectory() as td:
+            yp = _seed(td, [])
+            result = tool_add_entry(
+                yaml_path=yp,
+                box=1, positions=[1], frozen_at="2026-02-10",
+                fields={"bogus_extra_field": "x", "short_name": ""},
             )
             self.assertFalse(result["ok"])
             self.assertEqual("forbidden_fields", result.get("error_code"))

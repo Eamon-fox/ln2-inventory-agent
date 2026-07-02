@@ -1,7 +1,7 @@
 ﻿import json
 import os
 from html import escape as _escape_html
-from PySide6.QtCore import Qt, QDate, QSize
+from PySide6.QtCore import Qt, QDate, QSize, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
@@ -386,6 +386,8 @@ class _AuditBackupTintDelegate(QStyledItemDelegate):
 
 class AuditLogDialog(QDialog):
     """Independent audit log viewer with filtering and rollback staging."""
+
+    rollback_plan_staged = Signal(list)
 
     def __init__(self, parent, yaml_path_getter, bridge, audit_view_use_case=None):
         super().__init__(parent)
@@ -776,10 +778,8 @@ class AuditLogDialog(QDialog):
             source_event=self._build_audit_source_event(event),
         )
 
-        # Notify parent to add plan item
-        if hasattr(self.parent(), 'operations_panel'):
-            self.parent().operations_panel.add_plan_items([item])
-            self.audit_info.setText(
-                tr("operations.auditRollbackStaged", backup=os.path.basename(str(backup_path)))
-            )
+        self.rollback_plan_staged.emit([item])
+        self.audit_info.setText(
+            tr("operations.auditRollbackStaged", backup=os.path.basename(str(backup_path)))
+        )
 

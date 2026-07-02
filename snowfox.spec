@@ -1,9 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for LN2 Inventory Agent GUI (onedir build).
+"""PyInstaller spec for SnowFox GUI (onedir build).
 
 Usage (on Windows with PySide6 + PyYAML installed):
     pip install pyinstaller
-    pyinstaller ln2_inventory.spec
+    pyinstaller snowfox.spec
 """
 
 import os

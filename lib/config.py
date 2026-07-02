@@ -176,6 +176,7 @@ def _as_range(name, value, fallback):
         if isinstance(value, (list, tuple)) and len(value) == 2:
             return int(value[0]), int(value[1])
     except Exception:
+        # Not silent: the shared _warn_bad_value call below logs the fallback.
         pass
     _warn_bad_value(name, value, fallback)
     return int(fallback[0]), int(fallback[1])

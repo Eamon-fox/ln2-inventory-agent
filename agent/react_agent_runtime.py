@@ -15,11 +15,38 @@ from .tool_status_formatter import format_tool_status
 from .tool_runtime_paths import build_tool_hook_context
 
 
+# Maximum time (seconds) to wait for the user to reply to a max-steps prompt
+# before treating the run as "do not continue".
+USER_REPLY_TIMEOUT_SECONDS = 300
+
+
 def _is_stop_requested(stop_event):
     try:
         return bool(stop_event is not None and stop_event.is_set())
     except Exception:
         return False
+
+
+def _runtime_msg(self, msg_key, default, **kwargs):
+    """Translate a runtime-loop message via the tool runner's translator.
+
+    Mirrors ``AgentToolRunner._msg`` (message_key + default) so the ReAct
+    loop no longer hard-codes English error text. Falls back to the formatted
+    default when no translator is available (e.g. lightweight test doubles).
+    """
+    runner = getattr(self, "_tools", None)
+    translate = getattr(runner, "_msg", None)
+    if callable(translate):
+        try:
+            return translate(msg_key, default, **kwargs)
+        except Exception:
+            pass
+    if kwargs:
+        try:
+            return str(default).format(**kwargs)
+        except Exception:
+            return str(default)
+    return str(default)
 
 
 def _emit_stream_end(self, on_event, messages, *, status, trace_id, summary_state=None):
@@ -82,14 +109,23 @@ def _run_tool_call(self, call, tool_names, trace_id, stop_event=None):
         observation = {
             "ok": False,
             "error_code": "run_stopped",
-            "message": "Run stopped by user.",
+            "message": _runtime_msg(self, "runtime.runStopped", "Run stopped by user."),
         }
     elif action not in tool_names:
         observation = {
             "ok": False,
             "error_code": "unknown_tool",
-            "message": f"Unknown tool: {action}",
-            "_hint": "Choose action from available tools.",
+            "message": _runtime_msg(
+                self,
+                "errors.unknownTool",
+                "Unknown tool: {tool_name}",
+                tool_name=action,
+            ),
+            "_hint": _runtime_msg(
+                self,
+                "runtime.unknownToolHint",
+                "Choose action from available tools.",
+            ),
         }
     else:
         if action in WRITE_TOOLS:
@@ -134,7 +170,9 @@ def _run_tool_call(self, call, tool_names, trace_id, stop_event=None):
             observation = {
                 "ok": False,
                 "error_code": "question_cancelled",
-                "message": "User cancelled the question.",
+                "message": _runtime_msg(
+                    self, "runtime.questionCancelled", "User cancelled the question."
+                ),
             }
         else:
             raw_answer = runner._pending_answer
@@ -168,26 +206,40 @@ def _run_tool_call(self, call, tool_names, trace_id, stop_event=None):
                 observation = {
                     "ok": False,
                     "error_code": "invalid_question_answer",
-                    "message": "User answer is empty.",
+                    "message": _runtime_msg(
+                        self, "runtime.answerEmpty", "User answer is empty."
+                    ),
                 }
             elif source == "other_text" and not other_option:
                 observation = {
                     "ok": False,
                     "error_code": "invalid_question_answer",
-                    "message": "Question is missing free-text option.",
+                    "message": _runtime_msg(
+                        self,
+                        "runtime.answerMissingFreeText",
+                        "Question is missing free-text option.",
+                    ),
                 }
             elif source == "other_text" and selected_option != other_option:
                 observation = {
                     "ok": False,
                     "error_code": "invalid_question_answer",
-                    "message": "User answer does not match free-text option.",
+                    "message": _runtime_msg(
+                        self,
+                        "runtime.answerFreeTextMismatch",
+                        "User answer does not match free-text option.",
+                    ),
                     "details": {"selected": selected_option},
                 }
             elif source == "option" and answer_text not in options:
                 observation = {
                     "ok": False,
                     "error_code": "invalid_question_answer",
-                    "message": "User answer is not one of provided options.",
+                    "message": _runtime_msg(
+                        self,
+                        "runtime.answerNotInOptions",
+                        "User answer is not one of provided options.",
+                    ),
                     "details": {"answer": answer_text},
                 }
             else:
@@ -204,7 +256,12 @@ def _run_tool_call(self, call, tool_names, trace_id, stop_event=None):
                     "selected_option": selected_option,
                     "other_text": other_text,
                     "index": selected_index,
-                    "message": f"User answered: {answer_text}",
+                    "message": _runtime_msg(
+                        self,
+                        "runtime.userAnswered",
+                        "User answered: {answer}",
+                        answer=answer_text,
+                    ),
                 }
 
     if (
@@ -233,7 +290,9 @@ def _run_tool_call(self, call, tool_names, trace_id, stop_event=None):
             observation = {
                 "ok": False,
                 "error_code": "user_cancelled",
-                "message": "User cancelled the box adjustment.",
+                "message": _runtime_msg(
+                    self, "runtime.boxAdjustCancelled", "User cancelled the box adjustment."
+                ),
             }
         else:
             result_payload = runner._pending_answer
@@ -243,7 +302,11 @@ def _run_tool_call(self, call, tool_names, trace_id, stop_event=None):
                 observation = {
                     "ok": False,
                     "error_code": "invalid_confirmation_result",
-                    "message": "Invalid confirmation result payload.",
+                    "message": _runtime_msg(
+                        self,
+                        "runtime.invalidConfirmationResult",
+                        "Invalid confirmation result payload.",
+                    ),
                 }
 
     return {
@@ -283,7 +346,7 @@ def _ask_user_continue(self, on_event, trace_id, stop_event=None):
     if _is_stop_requested(stop_event):
         return False
 
-    answered = runner._answer_event.wait(timeout=300)
+    answered = runner._answer_event.wait(timeout=USER_REPLY_TIMEOUT_SECONDS)
     return answered and not runner._answer_cancelled
 
 
@@ -667,8 +730,16 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
             observation = {
                 "ok": False,
                 "error_code": "invalid_tool_call",
-                "message": "Model returned malformed tool call payload.",
-                "_hint": "Provide tool name and JSON-object arguments in tool call.",
+                "message": _runtime_msg(
+                    self,
+                    "runtime.malformedToolCall",
+                    "Model returned malformed tool call payload.",
+                ),
+                "_hint": _runtime_msg(
+                    self,
+                    "runtime.malformedToolCallHint",
+                    "Provide tool name and JSON-object arguments in tool call.",
+                ),
             }
             self._emit_event(
                 on_event,
@@ -742,8 +813,16 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
                         question_observation = {
                             "ok": False,
                             "error_code": "question_not_alone",
-                            "message": "question tool must be called alone, not with other tools.",
-                            "_hint": "Call question separately, then use other tools after getting the answer.",
+                            "message": _runtime_msg(
+                                self,
+                                "runtime.questionNotAlone",
+                                "question tool must be called alone, not with other tools.",
+                            ),
+                            "_hint": _runtime_msg(
+                                self,
+                                "runtime.questionNotAloneHint",
+                                "Call question separately, then use other tools after getting the answer.",
+                            ),
                         }
                         raw_messages.append(
                             self._tool_message(

@@ -46,6 +46,20 @@ _TOOL_CONTRACTS = TOOL_CONTRACTS
 _WRITE_TOOLS = WRITE_TOOLS
 _QUESTION_OTHER_OPTION = "\u5176\u4ed6\uff1a\u8bf7\u8f93\u5165"
 
+
+class InventoryLoadError(Exception):
+    """Raised when the inventory YAML exists but cannot be parsed/read.
+
+    Carries ``code`` / ``message`` so it surfaces as a structured tool error
+    (the same shape ``_safe_call`` produces) instead of silently degrading to
+    an empty inventory, which would make the agent misjudge stored state.
+    """
+
+    def __init__(self, message, code="inventory_load_failed"):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
 class AgentToolRunner:
     """Executes named tools with normalized input payloads."""
 
@@ -201,27 +215,39 @@ class AgentToolRunner:
                         ids.add(int(raw))
         return sorted(ids)
 
-    def _load_layout(self):
+    def _load_document(self):
+        """Load the whole inventory document once.
+
+        - Missing file → treated as empty (acceptable, returns ``{}``).
+        - Parse/read failure → raises ``InventoryLoadError`` so the tool call
+          fails with a user-visible message instead of silently reporting an
+          empty inventory. Callers dispatch meta/layout/inventory from the
+          returned document to avoid re-reading the same file multiple times.
+        """
         try:
             data = load_yaml(self._yaml_path)
-        except Exception:
+        except FileNotFoundError:
             return {}
-        return (data or {}).get("meta", {}).get("box_layout", {})
+        except Exception as exc:
+            # Surface the parse/read failure the same untranslated way
+            # ``_safe_call`` surfaces tool-api exceptions, so the tool call fails
+            # loudly instead of silently degrading to an empty inventory.
+            raise InventoryLoadError(f"Failed to load inventory file: {exc}") from exc
+        return data if isinstance(data, dict) else {}
+
+    def _load_layout(self):
+        meta = self._load_document().get("meta", {})
+        if not isinstance(meta, dict):
+            return {}
+        layout = meta.get("box_layout", {})
+        return layout if isinstance(layout, dict) else {}
 
     def _load_meta(self):
-        try:
-            data = load_yaml(self._yaml_path)
-        except Exception:
-            return {}
-        meta = (data or {}).get("meta", {})
+        meta = self._load_document().get("meta", {})
         return meta if isinstance(meta, dict) else {}
 
     def _load_inventory(self):
-        try:
-            data = load_yaml(self._yaml_path)
-        except Exception:
-            return []
-        inventory = (data or {}).get("inventory", [])
+        inventory = self._load_document().get("inventory", [])
         return inventory if isinstance(inventory, list) else []
 
     def _parse_position(self, value, layout=None, field_name="position"):
@@ -440,7 +466,17 @@ class AgentToolRunner:
 
     def run(self, tool_name, tool_input, trace_id=None):
         payload = self._sanitize_tool_input_payload(tool_input)
-        return self._run_dispatch(tool_name, payload, trace_id)
+        try:
+            return self._run_dispatch(tool_name, payload, trace_id)
+        except InventoryLoadError as exc:
+            # Return the structured error directly. Do NOT route through
+            # _with_hint here: hint generation reloads the same (corrupt) YAML
+            # to build a schema and would re-raise the load failure.
+            return {
+                "ok": False,
+                "error_code": exc.code,
+                "message": exc.message,
+            }
 
     def _unknown_tool_response(self, tool_name):
         return self._with_hint(

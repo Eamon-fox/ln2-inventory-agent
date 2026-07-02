@@ -19,16 +19,16 @@ PROVIDER_DEFAULTS = {
         "help_url": "https://platform.deepseek.com",
     },
     "zhipu": {
-        "model": "glm-5.1",
-        "models": ["glm-5.1", "glm-4.7"],
+        "model": "glm-5.2",
+        "models": ["glm-5.2", "glm-4.7"],
         "env_key": "ZHIPUAI_API_KEY",
         "display_name": "Zhipu AI (GLM)",
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
         "help_url": "https://open.bigmodel.cn",
     },
     "minimax": {
-        "model": "MiniMax-M2.7",
-        "models": ["MiniMax-M2.7"],
+        "model": "MiniMax-M3",
+        "models": ["MiniMax-M3"],
         "env_key": "MINIMAX_API_KEY",
         "display_name": "MiniMax",
         "base_url": "https://api.minimaxi.com/v1",
@@ -37,6 +37,9 @@ PROVIDER_DEFAULTS = {
 }
 
 DEFAULT_PROVIDER = "deepseek"
+
+# Default HTTP timeout (seconds) for a streaming chat completion request.
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 180
 
 
 def _is_stop_requested(stop_event):
@@ -102,7 +105,7 @@ class OpenAICompatibleClient(LLMClient, ABC):
     STREAM_PREFIX = "data:"
     STREAM_DONE_TOKEN = "[DONE]"
 
-    def __init__(self, model=None, api_key=None, base_url=None, timeout=180, thinking_enabled=None):
+    def __init__(self, model=None, api_key=None, base_url=None, timeout=DEFAULT_REQUEST_TIMEOUT_SECONDS, thinking_enabled=None):
         self._model = (model or os.environ.get(self.MODEL_ENV_VAR) or self.DEFAULT_MODEL).strip()
         self._base_url = (base_url or os.environ.get(self.BASE_URL_ENV_VAR) or self.DEFAULT_BASE_URL).rstrip("/")
         self._timeout = int(timeout)
@@ -280,6 +283,8 @@ class OpenAICompatibleClient(LLMClient, ABC):
                     if isinstance(parsed, dict):
                         return parsed
                 except Exception:
+                    # Best-effort salvage of a JSON object embedded in noisy text;
+                    # if it still fails we fall back to returning the raw string.
                     pass
             return {"_raw_arguments": text}
 
@@ -345,6 +350,8 @@ class OpenAICompatibleClient(LLMClient, ABC):
         try:
             resp.close()
         except Exception:
+            # Intentional: closing the streamed response is a fire-and-forget
+            # stop signal; errors here (already closed/aborted) are irrelevant.
             pass
 
     def _build_request(self, messages, tools=None, temperature=0.0):
@@ -535,6 +542,9 @@ class OpenAICompatibleClient(LLMClient, ABC):
                             return
                         yield event
                 except Exception:
+                    # Non-SSE fallback: the body was not valid JSON, so there is
+                    # nothing to emit. Any real API error already surfaced via the
+                    # HTTP/URL error handlers below.
                     pass
 
             if pending_tool_calls:
@@ -650,7 +660,7 @@ class ZhipuLLMClient(OpenAICompatibleClient):
 
     PROVIDER_NAME = "Zhipu"
     MODEL_ENV_VAR = "ZHIPU_MODEL"
-    DEFAULT_MODEL = "glm-5.1"
+    DEFAULT_MODEL = "glm-5.2"
     BASE_URL_ENV_VAR = "ZHIPU_BASE_URL"
     DEFAULT_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
     API_KEY_ENV_VARS = ("ZHIPUAI_API_KEY", "ZHIPU_API_KEY", "GLM_API_KEY")
@@ -703,7 +713,7 @@ class MiniMaxLLMClient(OpenAICompatibleClient):
 
     PROVIDER_NAME = "MiniMax"
     MODEL_ENV_VAR = "MINIMAX_MODEL"
-    DEFAULT_MODEL = "MiniMax-M2.7"
+    DEFAULT_MODEL = "MiniMax-M3"
     BASE_URL_ENV_VAR = "MINIMAX_BASE_URL"
     DEFAULT_BASE_URL = "https://api.minimaxi.com/v1"
     API_KEY_ENV_VARS = ("MINIMAX_API_KEY",)

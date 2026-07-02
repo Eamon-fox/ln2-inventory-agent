@@ -10,6 +10,7 @@ from typing import Any
 from .csv_export import build_export_rows
 from .custom_fields import get_color_key
 from .position_fmt import display_to_pos, format_box_position_compact, get_box_numbers
+from .validation_primitives import safe_int as _safe_int
 from .validators import parse_date
 
 
@@ -24,13 +25,6 @@ _KNOWN_COLUMN_TYPES = {
 
 _VALID_FILTER_TYPES = frozenset({"list", "text", "number", "date"})
 SEARCH_TEXT_EXCLUDED_COLUMNS = frozenset({"id", "record_id"})
-
-
-def _safe_int(value):
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _safe_number(value):

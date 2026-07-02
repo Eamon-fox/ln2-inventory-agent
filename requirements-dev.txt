@@ -1,0 +1,5 @@
+# 开发/测试工具链（与 pyproject.toml 的 [project.optional-dependencies].dev 同源）。
+# 安装：python -m pip install -r requirements.txt -r requirements-dev.txt
+pytest==9.0.2
+ruff==0.15.20
+pre-commit==4.6.0

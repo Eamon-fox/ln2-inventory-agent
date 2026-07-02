@@ -44,6 +44,31 @@ class GuiPanelsOverviewTests(GuiPanelsBaseCase):
         self.assertTrue(lines[-1].endswith("..."))
         self.assertNotIn("...", lines[0])
 
+    def test_overview_panel_holds_behavioral_collaborators_and_delegates(self):
+        """Lock the collaborator composition and that delegation preserves the public surface."""
+        from app_gui.ui.overview_panel_zoom import OverviewZoomController
+        from app_gui.ui.overview_panel_runtime import OverviewRuntimeController
+        from app_gui.ui.overview_panel_refresh import OverviewRefreshController
+        from app_gui.ui.overview_panel_filters import OverviewFilterController
+        from app_gui.ui.overview_panel_interactions import OverviewInteractionController
+
+        panel = self._new_overview_panel()
+
+        # Panel composes one collaborator instance per behavioral concern.
+        self.assertIsInstance(panel._zoom, OverviewZoomController)
+        self.assertIsInstance(panel._runtime, OverviewRuntimeController)
+        self.assertIsInstance(panel._refresh, OverviewRefreshController)
+        self.assertIsInstance(panel._filters, OverviewFilterController)
+        self.assertIsInstance(panel._interactions, OverviewInteractionController)
+
+        # Delegating methods on the panel forward to the collaborator objects,
+        # so the stable public/internal method surface is unchanged.
+        panel._set_zoom(1.3)
+        self.assertAlmostEqual(1.3, panel._zoom_level)
+        # Zoom owns its animation state (not the panel).
+        self.assertFalse(hasattr(panel, "_zoom_animation"))
+        self.assertTrue(hasattr(panel._zoom, "_zoom_animation"))
+
     def test_overview_paint_cell_uses_wrapped_mode_for_display_field_values(self):
         panel = self._new_overview_panel()
         panel._rebuild_boxes(rows=1, cols=1, box_numbers=[1])
@@ -896,9 +921,18 @@ class GuiPanelsOverviewTests(GuiPanelsBaseCase):
             def exec(self, action):
                 return action
 
+        import time
+
+        # Phase 1: while the hold timer has not armed yet, a move must not
+        # start a drag. Use a very long hold delay so the timer deterministically
+        # cannot fire during processEvents (previously a 1ms delay raced under
+        # load and armed early, making this assertion flaky in the full suite).
         with (
             patch("app_gui.ui.overview_panel_cell_button.QDrag", FakeDrag),
-            patch("app_gui.ui.overview_panel_cell_button.overview_cell_drag_hold_delay_ms", return_value=1),
+            patch(
+                "app_gui.ui.overview_panel_cell_button.overview_cell_drag_hold_delay_ms",
+                return_value=10_000,
+            ),
         ):
             _send_widget_mouse_event(
                 button,
@@ -909,6 +943,7 @@ class GuiPanelsOverviewTests(GuiPanelsBaseCase):
                 buttons=Qt.LeftButton,
             )
             self._app.processEvents()
+            self.assertFalse(button._drag_hold_armed)
             _send_widget_mouse_event(
                 button,
                 QEvent.MouseMove,
@@ -919,8 +954,12 @@ class GuiPanelsOverviewTests(GuiPanelsBaseCase):
             self._app.processEvents()
         self.assertFalse(FakeDrag.called)
 
+        # Phase 2: once armed and past the settle window, a move beyond the
+        # distance threshold starts the drag. Drive the armed state directly
+        # instead of waiting on wall-clock timers to keep this deterministic.
+        button._drag_hold_armed = True
+        button._drag_hold_armed_at = time.monotonic() - 1.0
         with patch("app_gui.ui.overview_panel_cell_button.QDrag", FakeDrag):
-            QTest.qWait(20)
             _send_widget_mouse_event(
                 button,
                 QEvent.MouseMove,

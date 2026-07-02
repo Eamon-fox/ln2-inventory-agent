@@ -14,7 +14,7 @@ if not exist "migrate\output\.gitkeep" type nul > "migrate\output\.gitkeep"
 if /I "%1"=="--skip-pyinstaller" goto :build_installer
 
 echo [1/2] Building one-dir package with PyInstaller...
-%PYTHON% -m PyInstaller -y ln2_inventory.spec
+%PYTHON% -m PyInstaller -y snowfox.spec
 if errorlevel 1 goto :error
 
 :build_installer

@@ -5,6 +5,7 @@ import os
 from app_gui.error_localizer import localize_error_payload
 from app_gui.plan_executor import preflight_plan
 from app_gui.ui.plan_item_desc import build_localized_plan_item_desc
+from app_gui.ui.write_guards import guard_write_action
 from lib.plan_gate import validate_stage_request
 from lib.plan_store import (
     PLAN_VALIDATION_STATUS_INVALID,
@@ -133,14 +134,13 @@ def _is_rollback_replace_request(items):
     return action == "rollback"
 
 
+@guard_write_action
 def add_plan_items(self, items):
     """Validate and add items to the plan staging area atomically."""
     from app_gui.ui import operations_panel_forms as _ops_forms
     from app_gui.ui import operations_panel_plan_toolbar as _ops_plan_toolbar
     from app_gui.ui import operations_panel_execution as _ops_exec
 
-    if bool(getattr(self, "_guard_write_action_by_migration_mode", lambda: False)()):
-        return
     incoming = list(items or [])
     if not incoming:
         return

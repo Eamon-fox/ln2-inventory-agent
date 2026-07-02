@@ -3,7 +3,7 @@
 
 Usage (on macOS with PySide6 + dependencies installed):
     python3 -m pip install pyinstaller
-    pyinstaller ln2_inventory.mac.spec
+    pyinstaller snowfox.mac.spec
 """
 
 import os

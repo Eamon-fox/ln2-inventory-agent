@@ -67,6 +67,20 @@ def is_plain_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def safe_int(value: Any, default: Any = None) -> Any:
+    """Best-effort int coercion, returning *default* on failure.
+
+    Single source for the ``_safe_int`` helper that previously existed in both
+    ``csv_export`` and ``overview_table_query``. Callers that want a sentinel
+    for sorting pass an explicit ``default`` (e.g. ``10 ** 9``); callers that
+    want ``None`` on failure rely on the default.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 # ---------------------------------------------------------------------------
 # Date helpers
 # ---------------------------------------------------------------------------

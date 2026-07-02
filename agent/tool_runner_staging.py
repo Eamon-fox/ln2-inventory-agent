@@ -246,6 +246,8 @@ def _schedule_deferred_stage_preflight(self, trace_id):
             try:
                 old_timer.cancel()
             except Exception:
+                # Cancelling an already-fired/expired timer is harmless; we are
+                # about to schedule a fresh one that supersedes it either way.
                 pass
         _start_stage_validation_timer(self, str(trace_id or ""), generation)
 

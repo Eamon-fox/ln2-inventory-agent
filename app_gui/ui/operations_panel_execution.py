@@ -11,6 +11,7 @@ from app_gui.i18n import tr
 from app_gui.error_localizer import localize_error_payload
 from app_gui.system_notice import build_system_notice, coerce_system_notice
 from app_gui.ui.plan_item_desc import build_localized_plan_item_desc
+from app_gui.ui.write_guards import guard_write_action
 from lib.position_fmt import format_box_position_display
 
 
@@ -176,14 +177,13 @@ def _format_box_position(panel, box, position):
     )
 
 
+@guard_write_action
 def execute_plan(self):
     """Execute all staged plan items after user confirmation."""
     from app_gui.ui import operations_panel_actions as _ops_actions
     from app_gui.ui import operations_panel_forms as _ops_forms
     from app_gui.ui import operations_panel_plan_toolbar as _ops_plan_toolbar
 
-    if bool(getattr(self, "_guard_write_action_by_migration_mode", lambda: False)()):
-        return
     if not self._plan_store.count():
         msg = tr("operations.planNoItemsToExecute")
         _ops_forms._set_plan_feedback(self, msg, level="warning")

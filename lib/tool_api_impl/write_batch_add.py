@@ -218,6 +218,7 @@ def tool_batch_add_entries(
             auto_backup=auto_backup,
             backup_path=request_backup_path,
             audit_meta=first_audit,
+            before_data=data,
         )
     except Exception as exc:
         return api._failure_result(

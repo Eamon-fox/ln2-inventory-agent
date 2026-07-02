@@ -1,14 +1,23 @@
 """
-YAML file operations for LN2 inventory
+YAML file operations for LN2 inventory.
+
+This module is the stable facade for inventory YAML I/O. It owns the load/write
+core, caches, instance-identity guard, integrity validation, rollback and the
+runtime legacy-migration entry points. Cohesive sub-concerns have been split
+into sibling modules and are re-exported here so that every existing
+``from lib.yaml_ops import X`` import keeps working unchanged:
+
+- ``yaml_ops_paths``    -> path helpers (``_abs_path``, backup/audit dirs)
+- ``yaml_ops_mojibake`` -> 乱码 (mojibake) repair on load
+- ``yaml_ops_stats``    -> occupancy stats + capacity/size warnings
+- ``yaml_ops_audit``    -> audit log read/append + audit-seq numbering
+- ``yaml_ops_backup``   -> timestamped backup create/list/throttle/retention
 """
 import contextvars
-import hashlib
-import json
 import os
 import shutil
 import sys
 import threading
-import time
 import uuid
 from contextlib import contextmanager, suppress
 from copy import deepcopy
@@ -17,22 +26,49 @@ from typing import Any
 
 import yaml
 from .config import (
-    BACKUP_KEEP_COUNT,
-    BOX_EMPTY_WARNING_THRESHOLD,
-    TOTAL_EMPTY_WARNING_THRESHOLD,
     YAML_PATH,
-    YAML_SIZE_WARNING_MB,
 )
 from .inventory_paths import (
     assert_allowed_inventory_yaml_path,
 )
 from .legacy_field_policy import canonicalize_legacy_document
-from .position_fmt import get_box_numbers, get_total_slots
 from .schema_aliases import (
     canonicalize_inventory_document,
     expand_document_structural_aliases,
 )
 from .validators import format_validation_errors, validate_inventory
+
+# ── Re-exported sub-concern APIs (import paths must stay stable) ───────────
+from .yaml_ops_paths import (  # noqa: F401 - re-exported for stable import paths
+    _abs_path,
+    _normalize_path_for_guard,
+    get_instance_audit_path,
+    get_instance_backup_dir,
+)
+from .yaml_ops_mojibake import (  # noqa: F401 - re-exported for stable import paths
+    _repair_mojibake_values,
+)
+from .yaml_ops_stats import (  # noqa: F401 - re-exported for stable import paths
+    collect_inventory_stats,
+    compute_occupancy,
+    emit_capacity_warnings,
+    emit_yaml_size_warning,
+    get_capacity_warnings,
+    get_yaml_size_warning,
+)
+from .yaml_ops_audit import (  # noqa: F401 - re-exported for stable import paths
+    append_audit_event,
+    coerce_audit_seq,
+    get_audit_log_path,
+    get_audit_log_paths,
+    iter_audit_events_reverse,
+    read_audit_events,
+)
+from .yaml_ops_backup import (  # noqa: F401 - re-exported for stable import paths
+    create_yaml_backup,
+    list_alternative_backups,
+    list_yaml_backups,
+)
 
 # ── Preflight I/O cache (populated by plan_executor) ──────────────
 # key = normcase(normpath(abspath(path)))
@@ -40,6 +76,9 @@ from .validators import format_validation_errors, validate_inventory
 # When a path is present here, load_yaml returns deepcopy(cached),
 # and write_yaml updates the cache instead of writing to disk.
 _preflight_cache: dict = {}
+
+# Sentinel distinguishing "caller passed before_data=None" from "not provided".
+_UNSET = object()
 
 # ── Write-through cache (populated by plan_executor during execute) ───
 # Same key scheme as _preflight_cache.
@@ -55,6 +94,21 @@ _read_snapshot_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 )
 _read_snapshot_caches: dict[str, dict[str, Any]] = {}
 _read_snapshot_lock = threading.Lock()
+
+
+def _safe_log_event(event, **fields):
+    """Best-effort diagnostics logging that never breaks the caller.
+
+    Diagnostics are optional; import or emission failures must not abort YAML
+    load/write. Failures are surfaced on stderr (matching the stderr pattern
+    used elsewhere in this module) instead of being silently swallowed.
+    """
+    try:
+        from .diagnostics import log_event
+
+        log_event(event, **fields)
+    except Exception as exc:  # noqa: BLE001 - diagnostics must never be fatal
+        print(f"warning: diagnostics log_event({event!r}) failed: {exc}", file=sys.stderr)
 
 
 def _yaml_cache_key(path):
@@ -89,7 +143,7 @@ def current_read_snapshot_id():
     return _read_snapshot_id.get()
 
 
-def _get_read_snapshot(cache_key):
+def _get_read_snapshot(cache_key, *, readonly=False):
     sid = _read_snapshot_id.get()
     if not sid:
         return None, False
@@ -97,7 +151,8 @@ def _get_read_snapshot(cache_key):
         cache = _read_snapshot_caches.get(sid) or {}
         if cache_key not in cache:
             return None, False
-        return deepcopy(cache[cache_key]), True
+        cached = cache[cache_key]
+        return (cached if readonly else deepcopy(cached)), True
 
 
 def _put_read_snapshot(cache_key, data):
@@ -108,15 +163,6 @@ def _put_read_snapshot(cache_key, data):
         cache = _read_snapshot_caches.setdefault(sid, {})
         cache[cache_key] = deepcopy(data)
 
-_COMMON_CJK_CHARS = set(
-    "\u7684\u4e00\u662f\u5728\u4e0d\u4e86\u6709\u548c\u4eba\u8fd9\u4e2d\u5927\u4e0a\u4e2a\u56fd"
-    "\u6211\u4ee5\u8981\u4ed6\u65f6\u6765\u7528\u4eec\u5230\u4f5c\u5730\u4e8e\u51fa\u5c31\u5206\u5bf9"
-    "\u6210\u4f1a\u53ef\u4e3b\u53d1\u5e74\u52a8\u540c\u5de5\u4e5f\u80fd\u4e0b\u8fc7\u5b50\u8bf4\u4ea7"
-    "\u79cd\u9762\u800c\u65b9\u540e\u591a\u5b9a\u884c\u5b66\u6cd5\u6240\u6c11\u5f97\u7ecf"
-)
-
-_MOJIBAKE_SOURCE_ENCODINGS = ("gb18030", "gbk", "cp936")
-_MOJIBAKE_MARKER_CHARS = set("\u95c4\u7039\u951b\u9350\u93b4\u935a\u7ec9\u93bf\u7481\u9286\u93c4\u9225\u7f01\u9428\u5a13\u9359\u5bee\u6fb6\u6d63")
 
 _VALIDATION_SCOPES = {"full", "meta_only"}
 
@@ -148,17 +194,17 @@ def _ensure_inventory_integrity(data, prefix="Integrity validation failed", vali
 
 def resolve_instance_id(yaml_path, mode="read"):
     """Resolve or create unique instance ID for a YAML file.
-    
+
     The instance ID is stored in the YAML's meta.inventory_instance_id field.
     This allows tracking inventory identity even when files are moved/renamed.
-    
+
     Args:
         yaml_path: Path to the YAML file
         mode: "read" or "write". In write mode, creates ID if missing.
-    
+
     Returns:
         str: The instance ID (UUID format)
-    
+
     Raises:
         FileNotFoundError: If file doesn't exist in write mode
     """
@@ -167,31 +213,32 @@ def resolve_instance_id(yaml_path, mode="read"):
         yaml_abs,
         must_exist=(mode in {"read", "write"}),
     )
-    
+
     if mode == "read":
         if not os.path.exists(yaml_abs):
             raise FileNotFoundError(f"YAML not found: {yaml_abs}")
         try:
-            data = load_yaml(yaml_abs)
+            # readonly: only reads meta.inventory_instance_id, never mutates.
+            data = load_yaml(yaml_abs, readonly=True)
             instance_id = (data or {}).get("meta", {}).get("inventory_instance_id")
             if instance_id:
                 return instance_id
             return None
         except Exception:
             return None
-    
+
     elif mode == "write":
         if not os.path.exists(yaml_abs):
             raise FileNotFoundError(f"YAML not found: {yaml_abs}")
-        
+
         data = load_yaml(yaml_abs)
         if not isinstance(data, dict):
             data = {"meta": {}, "inventory": []}
-        
+
         meta = data.get("meta", {})
         if not isinstance(meta, dict):
             meta = {}
-        
+
         instance_id = meta.get("inventory_instance_id")
         if not instance_id:
             instance_id = str(uuid.uuid4())
@@ -200,44 +247,10 @@ def resolve_instance_id(yaml_path, mode="read"):
             with open(yaml_abs, "w", encoding="utf-8") as f:
                 canonical_data, _alias_errors = canonicalize_inventory_document(data)
                 yaml.safe_dump(canonical_data, f, allow_unicode=True, sort_keys=False, width=120)
-        
+
         return instance_id
-    
+
     raise ValueError(f"Invalid mode: {mode}. Use 'read' or 'write'.")
-
-
-def get_instance_backup_dir(yaml_path):
-    """Return the backup directory for a specific inventory instance.
-    
-    Returns:
-        str: Path like <dataset_dir>/backups
-    """
-    yaml_abs = _abs_path(yaml_path)
-    managed_yaml = assert_allowed_inventory_yaml_path(yaml_abs)
-    dataset_dir = os.path.dirname(managed_yaml)
-    return os.path.join(dataset_dir, "backups")
-
-
-def get_instance_audit_path(yaml_path):
-    """Return the audit log path for a specific inventory instance.
-    
-    Returns:
-        str: Path like <dataset_dir>/audit/events.jsonl
-    """
-    yaml_abs = _abs_path(yaml_path)
-    managed_yaml = assert_allowed_inventory_yaml_path(yaml_abs)
-    dataset_dir = os.path.dirname(managed_yaml)
-    return os.path.join(dataset_dir, "audit", "events.jsonl")
-
-
-def _abs_path(path):
-    """Return absolute filesystem path."""
-    return os.path.abspath(os.fspath(path if path is not None else YAML_PATH))
-
-
-def _normalize_path_for_guard(path):
-    """Normalize path for guard comparisons across case/slash variants."""
-    return os.path.normcase(os.path.normpath(_abs_path(path)))
 
 
 def _apply_instance_guard(meta, current_path):
@@ -296,143 +309,38 @@ def _apply_instance_guard(meta, current_path):
     return updated_meta, guard_info
 
 
-def _text_readability_score(text: str) -> float:
-    if not text:
-        return float("-inf")
+def load_yaml(path=YAML_PATH, *, readonly=False):
+    """Load YAML file and return data.
 
-    common = 0
-    cjk_basic = 0
-    cjk_rare = 0
-    private_use = 0
-    ascii_printable = 0
-    chinese_punct = 0
-    question_marks = 0
+    Args:
+        path: YAML file path.
+        readonly: When ``True``, cache-served results (preflight / write-through
+            / read-snapshot caches) return the *shared* in-memory document
+            instead of a fresh ``deepcopy``. This avoids copying the whole
+            document on hot read paths.
 
-    for ch in text:
-        code = ord(ch)
-        if 0x4E00 <= code <= 0x9FFF:
-            cjk_basic += 1
-            if ch in _COMMON_CJK_CHARS:
-                common += 1
-        elif 0x3400 <= code <= 0x4DBF or 0x20000 <= code <= 0x2FA1F:
-            cjk_rare += 1
-        elif 0xE000 <= code <= 0xF8FF:
-            private_use += 1
-        elif 0x20 <= code <= 0x7E:
-            ascii_printable += 1
-        elif ch in "，。！？：；、“”‘’（）《》【】—…":
-            chinese_punct += 1
-
-        if ch == "?":
-            question_marks += 1
-
-    return (
-        common * 3.0
-        + cjk_basic * 0.45
-        + ascii_printable * 0.12
-        + chinese_punct * 0.35
-        - cjk_rare * 1.9
-        - private_use * 2.4
-        - question_marks * 0.8
-    )
-
-
-def _marker_count(text: str) -> int:
-    return sum(1 for ch in (text or "") if ch in _MOJIBAKE_MARKER_CHARS)
-
-
-def _is_probable_mojibake_upgrade(source: str, candidate: str, source_score: float, candidate_score: float) -> bool:
-    src_markers = _marker_count(source)
-    if src_markers <= 0:
-        return False
-
-    cand_markers = _marker_count(candidate)
-    # Candidate should remove at least one suspicious marker and not make readability much worse.
-    if cand_markers >= src_markers:
-        return False
-    return candidate_score >= source_score - 0.6
-
-
-def _repair_mojibake_text(value: str) -> str:
-    text = str(value or "")
-    if not text:
-        return text
-    if len(text) < 4:
-        return text
-    if all(ord(ch) < 128 for ch in text):
-        return text
-
-    best = text
-    best_score = _text_readability_score(text)
-
-    for _ in range(2):
-        improved = False
-        for enc in _MOJIBAKE_SOURCE_ENCODINGS:
-            try:
-                raw = best.encode(enc)
-                candidate = raw.decode("utf-8")
-            except UnicodeError:
-                continue
-            if not candidate or candidate == best:
-                continue
-
-            candidate_score = _text_readability_score(candidate)
-            # Require a small margin to avoid rewriting already-good strings.
-            # For true UTF8->GBK mojibake, candidate existence is already a strong signal.
-            if (
-                candidate_score > best_score + 0.35
-                or _is_probable_mojibake_upgrade(best, candidate, best_score, candidate_score)
-            ):
-                best = candidate
-                best_score = candidate_score
-                improved = True
-
-        if not improved:
-            break
-
-    return best
-
-
-def _repair_mojibake_values(node: Any) -> Any:
-    if isinstance(node, dict):
-        return {key: _repair_mojibake_values(value) for key, value in node.items()}
-    if isinstance(node, list):
-        return [_repair_mojibake_values(value) for value in node]
-    if isinstance(node, str):
-        return _repair_mojibake_text(node)
-    return node
-
-
-def load_yaml(path=YAML_PATH):
-    """Load YAML file and return data."""
+            CONTRACT: callers passing ``readonly=True`` MUST treat the returned
+            object (and everything reachable from it) as immutable. Mutating a
+            readonly result corrupts the shared cache for every other reader.
+            Use the default (``readonly=False``) whenever the document will be
+            edited before writing. The freshly-parsed disk path always returns a
+            caller-owned object regardless of this flag.
+    """
     abs_path = _abs_path(path)
     # Preflight cache: serve from memory if path is cached
     cache_key = os.path.normcase(os.path.normpath(abs_path))
     if cache_key in _preflight_cache:
-        try:
-            from .diagnostics import log_event
-
-            log_event("yaml.load", yaml_path=abs_path, source="preflight_cache")
-        except Exception:
-            pass
-        return deepcopy(_preflight_cache[cache_key])
+        _safe_log_event("yaml.load", yaml_path=abs_path, source="preflight_cache")
+        cached = _preflight_cache[cache_key]
+        return cached if readonly else deepcopy(cached)
     if cache_key in _write_through_cache:
-        try:
-            from .diagnostics import log_event
+        _safe_log_event("yaml.load", yaml_path=abs_path, source="write_through_cache")
+        cached = _write_through_cache[cache_key]
+        return cached if readonly else deepcopy(cached)
 
-            log_event("yaml.load", yaml_path=abs_path, source="write_through_cache")
-        except Exception:
-            pass
-        return deepcopy(_write_through_cache[cache_key])
-
-    cached, hit = _get_read_snapshot(cache_key)
+    cached, hit = _get_read_snapshot(cache_key, readonly=readonly)
     if hit:
-        try:
-            from .diagnostics import log_event
-
-            log_event("yaml.load", yaml_path=abs_path, source="read_snapshot_cache")
-        except Exception:
-            pass
+        _safe_log_event("yaml.load", yaml_path=abs_path, source="read_snapshot_cache")
         return cached
 
     try:
@@ -575,532 +483,6 @@ def ensure_runtime_dataset_canonical(
     }
 
 
-def _backup_dir(yaml_path, instance_id_override=None):
-    """Return the dataset-local backup directory for a YAML file."""
-    _ = instance_id_override
-    return get_instance_backup_dir(yaml_path)
-
-
-def list_yaml_backups(yaml_path=YAML_PATH, limit=None):
-    """List backups for a YAML file, newest first.
-    
-    Searches in the dataset-local backup directory.
-    """
-    yaml_abs = _abs_path(yaml_path)
-    yaml_abs = assert_allowed_inventory_yaml_path(yaml_abs)
-    
-    backups = []
-    backup_dir = get_instance_backup_dir(yaml_abs)
-    if os.path.isdir(backup_dir):
-        for name in os.listdir(backup_dir):
-            if name.endswith(".bak"):
-                backups.append(os.path.join(backup_dir, name))
-
-    backups.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-    if limit is not None:
-        return backups[: max(0, int(limit))]
-    return backups
-
-
-_BACKUP_THROTTLE_ENV = "LN2_BACKUP_THROTTLE_SECONDS"
-_BACKUP_THROTTLE_DEFAULT_SEC = 30
-_BACKUP_STATE_FILENAME = ".last_backup.json"
-
-
-def _backup_throttle_seconds():
-    """Read the backup throttle window (seconds). 0/negative disables throttling."""
-    raw = os.environ.get(_BACKUP_THROTTLE_ENV)
-    if raw is None:
-        return _BACKUP_THROTTLE_DEFAULT_SEC
-    try:
-        return max(0, int(raw))
-    except (TypeError, ValueError):
-        return _BACKUP_THROTTLE_DEFAULT_SEC
-
-
-def _file_sha256(path):
-    try:
-        h = hashlib.sha256()
-        with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(1 << 16), b""):
-                h.update(chunk)
-        return h.hexdigest()
-    except OSError:
-        return None
-
-
-def _read_backup_state(state_path):
-    try:
-        with open(state_path, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-        if isinstance(payload, dict):
-            return payload
-    except (OSError, ValueError):
-        pass
-    return {}
-
-
-def _write_backup_state(state_path, payload):
-    """Atomic write so a crash mid-update can't corrupt the state file."""
-    tmp_path = f"{state_path}.tmp-{os.getpid()}-{uuid.uuid4().hex[:6]}"
-    try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False)
-        os.replace(tmp_path, state_path)
-    except OSError:
-        with suppress(OSError):
-            os.remove(tmp_path)
-
-
-def create_yaml_backup(
-    yaml_path=YAML_PATH,
-    keep=BACKUP_KEEP_COUNT,
-    instance_id_override=None,
-    *,
-    throttle_seconds=None,
-    force=False,
-):
-    """Create timestamped backup for current YAML file.
-
-    The backup is skipped when either
-      - the content hash matches the previous backup's hash, or
-      - the previous backup happened within ``throttle_seconds`` ago.
-    Set ``force=True`` or ``throttle_seconds=0`` to bypass throttling.
-    The per-directory state lives in ``.last_backup.json`` and records
-    ``{"hash": <sha256>, "path": <backup_path>, "mtime": <epoch>}``.
-
-    Returns:
-        str|None: backup path if a new backup was written, otherwise the
-        most recent existing backup path (when throttled but we still want
-        the caller to have a valid restore point) or None if no source.
-    """
-    src = _abs_path(yaml_path)
-    src = assert_allowed_inventory_yaml_path(src)
-    if not os.path.exists(src):
-        return None
-
-    backup_dir = _backup_dir(src, instance_id_override=instance_id_override)
-    os.makedirs(backup_dir, exist_ok=True)
-
-    window = _backup_throttle_seconds() if throttle_seconds is None else max(
-        0, int(throttle_seconds)
-    )
-    state_path = os.path.join(backup_dir, _BACKUP_STATE_FILENAME)
-    state = {} if force else _read_backup_state(state_path)
-
-    src_hash = _file_sha256(src) if not force else None
-    now = time.time()
-    last_hash = str(state.get("hash") or "") if state else ""
-    last_mtime = state.get("mtime") if state else None
-    last_path = state.get("path") if state else None
-
-    if (
-        not force
-        and src_hash
-        and last_hash == src_hash
-        and isinstance(last_path, str)
-        and os.path.exists(last_path)
-    ):
-        return last_path
-
-    if (
-        not force
-        and window > 0
-        and isinstance(last_mtime, (int, float))
-        and (now - float(last_mtime)) < window
-        and isinstance(last_path, str)
-        and os.path.exists(last_path)
-    ):
-        return last_path
-
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    base = os.path.basename(src)
-    backup_path = os.path.join(backup_dir, f"{base}.{stamp}.bak")
-
-    i = 1
-    while os.path.exists(backup_path):
-        backup_path = os.path.join(backup_dir, f"{base}.{stamp}.{i}.bak")
-        i += 1
-
-    shutil.copy2(src, backup_path)
-
-    _write_backup_state(
-        state_path,
-        {"hash": src_hash or _file_sha256(backup_path) or "", "path": backup_path, "mtime": now},
-    )
-
-    if keep is not None and keep > 0:
-        old_backups = list_yaml_backups(src)
-        for old in old_backups[keep:]:
-            with suppress(OSError):
-                os.remove(old)
-
-    return backup_path
-
-
-def _audit_log_path(yaml_path):
-    return get_audit_log_path(yaml_path)
-
-
-def get_audit_log_path(yaml_path=YAML_PATH):
-    """Return per-inventory audit log path in dataset-local audit directory."""
-    managed_yaml = assert_allowed_inventory_yaml_path(yaml_path)
-    return get_instance_audit_path(managed_yaml)
-
-
-def get_audit_log_paths(yaml_path=YAML_PATH):
-    """Return canonical audit log path list for the active schema."""
-    return [get_audit_log_path(yaml_path)]
-
-
-def read_audit_events(yaml_path=YAML_PATH, limit=None):
-    """Read audit events for a YAML file from the active schema path."""
-    yaml_abs = _abs_path(yaml_path)
-    yaml_abs = assert_allowed_inventory_yaml_path(yaml_abs)
-
-    events = []
-    path = get_audit_log_path(yaml_abs)
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        event = json.loads(line)
-                    except Exception:
-                        continue
-                    event_yaml = event.get("yaml_path")
-                    if isinstance(event_yaml, str) and event_yaml.strip():
-                        try:
-                            if _abs_path(event_yaml) != yaml_abs:
-                                continue
-                        except Exception:
-                            continue
-                    events.append(event)
-        except Exception:
-            pass
-
-    # Keep file append order so callers can reliably use events[-1] as latest.
-    if limit is not None:
-        return events[: max(0, int(limit))]
-    return events
-
-
-def _iter_jsonl_lines_reverse(path, chunk_size=64 * 1024):
-    """Yield non-empty JSONL lines from the end of a file without loading it all."""
-    if not os.path.exists(path):
-        return
-
-    try:
-        with open(path, "rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            position = handle.tell()
-            pending = b""
-
-            while position > 0:
-                read_size = min(int(chunk_size), position)
-                position -= read_size
-                handle.seek(position)
-                pending = handle.read(read_size) + pending
-                lines = pending.split(b"\n")
-                pending = lines[0]
-                for raw_line in reversed(lines[1:]):
-                    raw_line = raw_line.strip()
-                    if raw_line:
-                        yield raw_line.decode("utf-8", errors="replace")
-
-            pending = pending.strip()
-            if pending:
-                yield pending.decode("utf-8", errors="replace")
-    except Exception:
-        return
-
-
-def iter_audit_events_reverse(yaml_path=YAML_PATH):
-    """Yield audit events newest-first from the active schema path."""
-    yaml_abs = _abs_path(yaml_path)
-    yaml_abs = assert_allowed_inventory_yaml_path(yaml_abs)
-    path = get_audit_log_path(yaml_abs)
-    if not os.path.exists(path):
-        return
-
-    for line in _iter_jsonl_lines_reverse(path):
-        try:
-            event = json.loads(line)
-        except Exception:
-            continue
-        event_yaml = event.get("yaml_path") if isinstance(event, dict) else None
-        if isinstance(event_yaml, str) and event_yaml.strip():
-            try:
-                if _abs_path(event_yaml) != yaml_abs:
-                    continue
-            except Exception:
-                continue
-        yield event
-
-
-def compute_occupancy(records):
-    """
-    Compute occupied positions from inventory records.
-
-    Args:
-        records: List of inventory records
-
-    Returns:
-        Dict mapping box number (as string) to sorted list of occupied positions
-    """
-    occupied = {}
-    for rec in records:
-        box = rec.get("box")
-        if box is None:
-            continue
-        box = str(box)
-        occupied.setdefault(box, set())
-        position = rec.get("position")
-        if position is not None:
-            occupied[box].add(int(position))
-    return {k: sorted(v) for k, v in sorted(occupied.items(), key=lambda x: int(x[0]))}
-
-
-def collect_inventory_stats(data):
-    """Collect compact occupancy stats for warnings/audit."""
-    records = (data or {}).get("inventory", []) if isinstance(data, dict) else []
-    layout = (data or {}).get("meta", {}).get("box_layout", {})
-    per_box_total = get_total_slots(layout)
-    box_numbers = get_box_numbers(layout)
-    total_slots = per_box_total * len(box_numbers)
-
-    occupancy = compute_occupancy(records)
-    boxes = {}
-    total_occupied = 0
-
-    for box_num in box_numbers:
-        key = str(box_num)
-        occupied = len(occupancy.get(key, []))
-        empty = max(per_box_total - occupied, 0)
-        boxes[key] = {"occupied": occupied, "empty": empty, "total": per_box_total}
-        total_occupied += occupied
-
-    total_empty = max(total_slots - total_occupied, 0)
-
-    return {
-        "record_count": len(records),
-        "total_slots": total_slots,
-        "total_occupied": total_occupied,
-        "total_empty": total_empty,
-        "boxes": boxes,
-    }
-
-
-def get_capacity_warnings(
-    data,
-    total_empty_threshold=TOTAL_EMPTY_WARNING_THRESHOLD,
-    box_empty_threshold=BOX_EMPTY_WARNING_THRESHOLD,
-):
-    """Return capacity warning messages based on thresholds."""
-    stats = collect_inventory_stats(data)
-    warnings = []
-
-    total_empty = stats["total_empty"]
-    if total_empty <= int(total_empty_threshold):
-        warnings.append(
-            f"容量预警: 全罐仅剩 {total_empty} 个空位 (阈值 {total_empty_threshold})"
-        )
-
-    for box_key, box_stats in stats["boxes"].items():
-        box_empty = box_stats["empty"]
-        if box_empty <= int(box_empty_threshold):
-            warnings.append(
-                f"容量预警: 盒子 {box_key} 仅剩 {box_empty} 个空位 (阈值 {box_empty_threshold})"
-            )
-
-    return warnings
-
-
-def emit_capacity_warnings(
-    data,
-    total_empty_threshold=TOTAL_EMPTY_WARNING_THRESHOLD,
-    box_empty_threshold=BOX_EMPTY_WARNING_THRESHOLD,
-):
-    """Print capacity warnings and return warning strings."""
-    warnings = get_capacity_warnings(
-        data,
-        total_empty_threshold=total_empty_threshold,
-        box_empty_threshold=box_empty_threshold,
-    )
-    for msg in warnings:
-        print(f"[WARN] {msg}")
-    return warnings
-
-
-def get_yaml_size_warning(path=YAML_PATH, warn_mb=YAML_SIZE_WARNING_MB):
-    """Return file-size warning message if YAML grows too large."""
-    yaml_abs = _abs_path(path)
-    if not os.path.exists(yaml_abs):
-        return None
-
-    size_bytes = os.path.getsize(yaml_abs)
-    size_mb = size_bytes / (1024 * 1024)
-    threshold = float(warn_mb)
-
-    if size_mb < threshold:
-        return None
-
-    return (
-        f"文件体积预警: {os.path.basename(yaml_abs)} 当前 {size_mb:.2f} MB "
-        f"(阈值 {threshold:.1f} MB)，建议归档长期不活动记录"
-    )
-
-
-def emit_yaml_size_warning(path=YAML_PATH, warn_mb=YAML_SIZE_WARNING_MB):
-    """Print file-size warning and return warning string or None."""
-    warning = get_yaml_size_warning(path=path, warn_mb=warn_mb)
-    if warning:
-        print(f"⚠️  {warning}")
-    return warning
-
-
-def coerce_audit_seq(value):
-    try:
-        seq = int(value)
-    except Exception:
-        return None
-    if seq <= 0:
-        return None
-    return seq
-
-
-def _next_audit_seq_full_scan(log_path):
-    if not os.path.exists(log_path):
-        return 1
-
-    valid_count = 0
-    max_seq = 0
-    try:
-        with open(log_path, "r", encoding="utf-8") as f:
-            for line in f:
-                text = str(line or "").strip()
-                if not text:
-                    continue
-                try:
-                    row = json.loads(text)
-                except Exception:
-                    continue
-                if not isinstance(row, dict):
-                    continue
-                valid_count += 1
-                seq = coerce_audit_seq(row.get("audit_seq"))
-                if seq and seq > max_seq:
-                    max_seq = seq
-    except Exception:
-        return 1
-
-    return max(max_seq, valid_count) + 1
-
-
-def _next_audit_seq(log_path):
-    if not os.path.exists(log_path):
-        return 1
-
-    valid_event_without_seq_seen = False
-    for line in _iter_jsonl_lines_reverse(log_path):
-        try:
-            row = json.loads(line)
-        except Exception:
-            continue
-        if not isinstance(row, dict):
-            continue
-        seq = coerce_audit_seq(row.get("audit_seq"))
-        if seq is not None:
-            if valid_event_without_seq_seen:
-                return _next_audit_seq_full_scan(log_path)
-            return seq + 1
-        valid_event_without_seq_seen = True
-
-    return _next_audit_seq_full_scan(log_path)
-
-
-def _append_audit_event(yaml_path, event):
-    log_path = _audit_log_path(yaml_path)
-    os.makedirs(os.path.dirname(log_path), exist_ok=True)
-    payload = dict(event or {})
-    seq = coerce_audit_seq(payload.get("audit_seq"))
-    if seq is None:
-        seq = _next_audit_seq(log_path)
-    payload["audit_seq"] = seq
-    with open(log_path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(payload, ensure_ascii=False, sort_keys=True))
-        f.write("\n")
-    return log_path
-
-
-def _build_audit_event(
-    yaml_path,
-    before_data,
-    after_data,
-    backup_path,
-    warnings,
-    audit_meta,
-):
-    yaml_abs = _abs_path(yaml_path)
-
-    meta = dict(audit_meta or {})
-    details = meta.get("details")
-    after_meta = after_data.get("meta", {}) if isinstance(after_data, dict) else {}
-    before_meta = before_data.get("meta", {}) if isinstance(before_data, dict) else {}
-    inventory_instance_id = (
-        (after_meta.get("inventory_instance_id") if isinstance(after_meta, dict) else None)
-        or (before_meta.get("inventory_instance_id") if isinstance(before_meta, dict) else None)
-    )
-
-    session_id = meta.get("session_id") or f"session-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    trace_id = meta.get("trace_id") or f"trace-{uuid.uuid4().hex}"
-    tool_name = meta.get("tool_name")
-    tool_input = meta.get("tool_input")
-    status = meta.get("status") or "success"
-    error = meta.get("error")
-
-    event = {
-        "timestamp": datetime.now().isoformat(timespec="seconds"),
-        "action": meta.get("action", "write_yaml"),
-        "source": meta.get("source", "lib.yaml_ops.write_yaml"),
-        "session_id": session_id,
-        "trace_id": trace_id,
-        "inventory_instance_id": inventory_instance_id,
-        "tool_name": tool_name,
-        "tool_input": tool_input,
-        "status": status,
-        "error": error,
-        "yaml_path": yaml_abs,
-        "backup_path": backup_path,
-        "warnings": warnings or [],
-        "details": details,
-    }
-    return event
-
-
-def append_audit_event(
-    yaml_path,
-    before_data=None,
-    after_data=None,
-    backup_path=None,
-    warnings=None,
-    audit_meta=None,
-):
-    """Append one audit event and return the audit log path."""
-    event = _build_audit_event(
-        yaml_path=yaml_path,
-        before_data=before_data,
-        after_data=after_data,
-        backup_path=backup_path,
-        warnings=warnings,
-        audit_meta=audit_meta,
-    )
-    return _append_audit_event(yaml_path, event)
-
-
 def append_backup_event(
     yaml_path,
     backup_path,
@@ -1114,7 +496,8 @@ def append_backup_event(
 
     current_data = None
     try:
-        current_data = load_yaml(yaml_path)
+        # readonly: consumed only as audit before/after snapshot (meta reads).
+        current_data = load_yaml(yaml_path, readonly=True)
     except Exception:
         current_data = None
 
@@ -1144,6 +527,7 @@ def write_yaml(
     backup_path=None,
     audit_meta=None,
     validation_scope="full",
+    before_data=_UNSET,
 ):
     """Write data to YAML file.
 
@@ -1160,6 +544,13 @@ def write_yaml(
         validation_scope: ``"full"`` (default) validates full record invariants;
             ``"meta_only"`` validates metadata/schema and undeclared-field
             constraints while skipping per-record value checks.
+        before_data: Optional pre-write snapshot the caller already loaded.
+            When provided, ``write_yaml`` skips reloading the previous document
+            from disk. The snapshot is consumed read-only: only
+            ``meta.inventory_instance_id`` is read from it and it is forwarded to
+            the audit event (which likewise only reads meta), so passing an
+            already-normalized in-memory copy keeps backup/audit behavior
+            identical while avoiding a duplicate disk load.
     """
     yaml_abs = assert_allowed_inventory_yaml_path(_abs_path(path))
     canonical_data, alias_errors = canonicalize_inventory_document(data)
@@ -1177,18 +568,13 @@ def write_yaml(
     cache_key = os.path.normcase(os.path.normpath(yaml_abs))
     if cache_key in _preflight_cache:
         _preflight_cache[cache_key] = deepcopy(data)
-        try:
-            from .diagnostics import log_event
-
-            log_event(
-                "yaml.write",
-                yaml_path=yaml_abs,
-                source="preflight_cache",
-                auto_backup=bool(auto_backup),
-                validation_scope=validation_scope,
-            )
-        except Exception:
-            pass
+        _safe_log_event(
+            "yaml.write",
+            yaml_path=yaml_abs,
+            source="preflight_cache",
+            auto_backup=bool(auto_backup),
+            validation_scope=validation_scope,
+        )
         return None
     _ensure_inventory_integrity(
         data,
@@ -1197,13 +583,19 @@ def write_yaml(
     )
 
     existing_instance_id = None
-    before_data = None
-    if os.path.exists(yaml_abs):
-        try:
-            before_data = load_yaml(yaml_abs)
-            existing_instance_id = (before_data or {}).get("meta", {}).get("inventory_instance_id")
-        except Exception as exc:
-            print(f"warning: failed to load existing YAML before write: {exc}", file=sys.stderr)
+    if before_data is _UNSET:
+        before_data = None
+        if os.path.exists(yaml_abs):
+            try:
+                # readonly: only meta.inventory_instance_id + audit meta reads.
+                before_data = load_yaml(yaml_abs, readonly=True)
+            except Exception as exc:
+                print(f"warning: failed to load existing YAML before write: {exc}", file=sys.stderr)
+    existing_instance_id = (
+        (before_data or {}).get("meta", {}).get("inventory_instance_id")
+        if isinstance(before_data, dict)
+        else None
+    )
 
     if not isinstance(data, dict):
         data = {"meta": {}, "inventory": []}
@@ -1388,32 +780,6 @@ def validate_backup_file(backup_path: str) -> dict:
     return {"valid": True, "error": None, "error_code": None, "data": data}
 
 
-def list_alternative_backups(
-    yaml_path: str,
-    exclude_path: str = None,
-    limit: int = 5,
-) -> list:
-    """Return valid alternative backup paths, excluding a failed one.
-
-    Each entry is a dict with ``path`` and ``mtime`` keys, sorted newest first.
-    """
-    all_backups = list_yaml_backups(yaml_path)
-    exclude_norm = os.path.normcase(os.path.normpath(_abs_path(exclude_path))) if exclude_path else None
-
-    alternatives = []
-    for bp in all_backups:
-        if exclude_norm and os.path.normcase(os.path.normpath(bp)) == exclude_norm:
-            continue
-        try:
-            mtime = os.path.getmtime(bp)
-        except OSError:
-            continue
-        alternatives.append({"path": bp, "mtime": datetime.fromtimestamp(mtime).isoformat(timespec="seconds")})
-        if len(alternatives) >= limit:
-            break
-    return alternatives
-
-
 def rollback_yaml(
     path=YAML_PATH,
     backup_path=None,
@@ -1447,11 +813,10 @@ def rollback_yaml(
             error_msg += f" | Available alternatives: {', '.join(alt_names)}"
         raise RuntimeError(error_msg)
 
-    from copy import deepcopy
-
     backup_data = validation["data"]
 
-    before_data = load_yaml(yaml_abs)
+    # readonly: before_data is only consumed as an audit snapshot (meta reads).
+    before_data = load_yaml(yaml_abs, readonly=True)
 
     pre_rollback_snapshot = str(request_backup_path or "").strip() or None
     if pre_rollback_snapshot:

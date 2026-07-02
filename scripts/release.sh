@@ -6,6 +6,47 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 OSS_BASE_URL="https://snowfox-release.oss-cn-beijing.aliyuncs.com"
+OSS_BUCKET="${OSS_BUCKET:-snowfox-release}"
+OSS_UPLOAD_SCRIPT="${OSS_UPLOAD_SCRIPT:-$HOME/.agents/skills/aliyun-oss-upload/scripts/oss_upload.py}"
+
+usage() {
+    cat <<'EOF'
+用法: ./scripts/release.sh [--upload]
+
+选项:
+  --upload    自动执行 OSS 上传、发布后校验（scripts/verify_release.py）与网站同步。
+              也可通过环境变量 SNOWFOX_RELEASE_UPLOAD=1 开启。
+  -h, --help  显示本帮助。
+
+默认行为保持不变：只打印 OSS 上传与网站同步的手动命令提示。
+
+相关环境变量:
+  OSS_UPLOAD_SCRIPT  OSS 上传脚本路径
+                     (默认 ~/.agents/skills/aliyun-oss-upload/scripts/oss_upload.py)
+  OSS_BUCKET         发布桶名称 (默认 snowfox-release)
+EOF
+}
+
+AUTO_UPLOAD=false
+if [[ "${SNOWFOX_RELEASE_UPLOAD:-0}" == "1" ]]; then
+    AUTO_UPLOAD=true
+fi
+for arg in "$@"; do
+    case "$arg" in
+        --upload)
+            AUTO_UPLOAD=true
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "❌ 未知参数: $arg"
+            usage
+            exit 1
+            ;;
+    esac
+done
 
 echo "🦊 SnowFox 发布脚本"
 echo "=================="
@@ -39,8 +80,14 @@ echo "  4. 提醒你更新 CHANGELOG.md"
 echo "  5. 从 CHANGELOG 生成更新说明产物"
 echo "  6. 跑双平台版本一致性检查"
 echo "  7. 构建 / 确认 Windows 与 macOS 安装包"
-echo "  8. 上传 OSS（Windows / macOS / latest.json / CHANGELOG.md）"
-echo "  9. 在 OSS 上传完成后同步网站"
+if [[ "$AUTO_UPLOAD" == true ]]; then
+    echo "  8. 自动上传 OSS（Windows / macOS / latest.json / CHANGELOG.md）"
+    echo "  9. 发布后校验线上 latest.json（scripts/verify_release.py）"
+    echo " 10. 自动同步网站"
+else
+    echo "  8. 打印 OSS 上传命令提示（Windows / macOS / latest.json / CHANGELOG.md）"
+    echo "  9. 在 OSS 上传完成后校验线上 latest.json 并同步网站"
+fi
 echo ""
 
 read -p "确认发布 v$NEW_VERSION? [y/N] " -n 1 -r
@@ -168,32 +215,65 @@ else
 fi
 
 echo ""
-echo "8️⃣  上传 OSS（完成后才能同步网站）"
-echo "   需要上传以下对象:"
-echo "   - dist/installer/$WINDOWS_ASSET"
-echo "   - dist/installer/$MACOS_ASSET"
-echo "   - latest.json"
-echo "   - CHANGELOG.md"
-echo ""
-echo "   推荐顺序:"
-echo "   1. Windows 安装包"
-echo "   2. macOS 安装包"
-echo "   3. latest.json"
-echo "   4. CHANGELOG.md"
-echo ""
-echo "   示例命令:"
-echo "   python3 ~/.agents/skills/aliyun-oss-upload/scripts/oss_upload.py upload-file dist/installer/$WINDOWS_ASSET --bucket snowfox-release"
-echo "   python3 ~/.agents/skills/aliyun-oss-upload/scripts/oss_upload.py upload-file dist/installer/$MACOS_ASSET --bucket snowfox-release"
-echo "   python3 ~/.agents/skills/aliyun-oss-upload/scripts/oss_upload.py upload-file latest.json --bucket snowfox-release"
-echo "   python3 ~/.agents/skills/aliyun-oss-upload/scripts/oss_upload.py upload-file CHANGELOG.md --bucket snowfox-release"
-echo ""
-read -p "是否已完成 OSS 上传? [y/N] " -n 1 -r
-echo
 OSS_UPLOADED=false
-if [[ $REPLY =~ ^[Yy]$ ]]; then
+if [[ "$AUTO_UPLOAD" == true ]]; then
+    echo "8️⃣  自动上传 OSS..."
+    if [[ ! -f "$OSS_UPLOAD_SCRIPT" ]]; then
+        echo "❌ 找不到 OSS 上传脚本: $OSS_UPLOAD_SCRIPT"
+        echo "   可用环境变量 OSS_UPLOAD_SCRIPT 指定路径，或去掉 --upload 走手动流程"
+        exit 1
+    fi
+    for ARTIFACT in "dist/installer/$WINDOWS_ASSET" "dist/installer/$MACOS_ASSET"; do
+        if [[ ! -f "$ARTIFACT" ]]; then
+            echo "❌ 找不到安装包: $ARTIFACT"
+            echo "   自动上传要求双平台安装包已就位于 dist/installer/"
+            exit 1
+        fi
+    done
+    # 顺序要求：先双平台安装包，再 latest.json，最后 CHANGELOG.md
+    python3 "$OSS_UPLOAD_SCRIPT" upload-file "dist/installer/$WINDOWS_ASSET" --bucket "$OSS_BUCKET"
+    python3 "$OSS_UPLOAD_SCRIPT" upload-file "dist/installer/$MACOS_ASSET" --bucket "$OSS_BUCKET"
+    python3 "$OSS_UPLOAD_SCRIPT" upload-file latest.json --bucket "$OSS_BUCKET"
+    python3 "$OSS_UPLOAD_SCRIPT" upload-file CHANGELOG.md --bucket "$OSS_BUCKET"
     OSS_UPLOADED=true
+
+    echo ""
+    echo "🔍 发布后校验线上 latest.json..."
+    python3 scripts/verify_release.py
 else
-    echo "⚠️  暂未同步网站。完成 OSS 上传后，请手动运行: ./scripts/sync-website.sh"
+    echo "8️⃣  上传 OSS（完成后才能同步网站）"
+    echo "   需要上传以下对象:"
+    echo "   - dist/installer/$WINDOWS_ASSET"
+    echo "   - dist/installer/$MACOS_ASSET"
+    echo "   - latest.json"
+    echo "   - CHANGELOG.md"
+    echo ""
+    echo "   推荐顺序:"
+    echo "   1. Windows 安装包"
+    echo "   2. macOS 安装包"
+    echo "   3. latest.json"
+    echo "   4. CHANGELOG.md"
+    echo ""
+    echo "   示例命令:"
+    echo "   python3 $OSS_UPLOAD_SCRIPT upload-file dist/installer/$WINDOWS_ASSET --bucket $OSS_BUCKET"
+    echo "   python3 $OSS_UPLOAD_SCRIPT upload-file dist/installer/$MACOS_ASSET --bucket $OSS_BUCKET"
+    echo "   python3 $OSS_UPLOAD_SCRIPT upload-file latest.json --bucket $OSS_BUCKET"
+    echo "   python3 $OSS_UPLOAD_SCRIPT upload-file CHANGELOG.md --bucket $OSS_BUCKET"
+    echo ""
+    echo "   提示: 想自动执行上传 + 校验 + 网站同步，可改用 ./scripts/release.sh --upload"
+    echo ""
+    read -p "是否已完成 OSS 上传? [y/N] " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        OSS_UPLOADED=true
+        echo ""
+        echo "🔍 发布后校验线上 latest.json..."
+        python3 scripts/verify_release.py
+    else
+        echo "⚠️  暂未同步网站。完成 OSS 上传后，请手动运行:"
+        echo "   python3 scripts/verify_release.py   # 发布后校验"
+        echo "   ./scripts/sync-website.sh           # 网站同步"
+    fi
 fi
 
 if [[ "$OSS_UPLOADED" == true ]]; then
@@ -218,9 +298,10 @@ echo ""
 echo "下一步:"
 if [[ "$OSS_UPLOADED" != true ]]; then
     echo "  1. 先上传 OSS: Windows 安装包 / macOS 安装包 / latest.json / CHANGELOG.md"
-    echo "  2. 上传完成后运行: ./scripts/sync-website.sh"
-    echo "  3. 推送到 GitHub: git push && git push --tags"
-    echo "  4. 在 GitHub 创建 Release"
+    echo "  2. 上传完成后校验: python3 scripts/verify_release.py"
+    echo "  3. 再同步网站: ./scripts/sync-website.sh"
+    echo "  4. 推送到 GitHub: git push && git push --tags"
+    echo "  5. 在 GitHub 创建 Release"
 else
     echo "  1. 推送到 GitHub: git push && git push --tags"
     echo "  2. 在 GitHub 创建 Release"

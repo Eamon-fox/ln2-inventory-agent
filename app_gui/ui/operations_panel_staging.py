@@ -3,6 +3,7 @@
 from PySide6.QtCore import QSignalBlocker
 
 from app_gui.i18n import tr
+from app_gui.ui.write_guards import guard_write_action
 from lib.plan_item_factory import (
     build_add_plan_item,
     build_record_plan_item,
@@ -12,9 +13,8 @@ from lib.plan_item_factory import (
 from lib.tool_api import parse_batch_entries
 from lib.validators import parse_positions
 
+@guard_write_action
 def on_add_entry(self):
-    if bool(getattr(self, "_guard_write_action_by_migration_mode", lambda: False)()):
-        return
     self._ensure_today_defaults()
     positions_text = self.a_positions.text().strip()
 
@@ -47,9 +47,8 @@ def _record_takeout_with_action(self, action_text):
         self.t_action.setCurrentText(str(action_text))
     self.on_record_takeout()
 
+@guard_write_action
 def on_record_takeout(self):
-    if bool(getattr(self, "_guard_write_action_by_migration_mode", lambda: False)()):
-        return
     self._ensure_today_defaults()
     action_text = self.t_action.currentData() or self.t_action.currentText()
 
@@ -72,9 +71,8 @@ def on_record_takeout(self):
 
     self.add_plan_items([item])
 
+@guard_write_action
 def on_record_move(self):
-    if bool(getattr(self, "_guard_write_action_by_migration_mode", lambda: False)()):
-        return
     self._ensure_today_defaults()
 
     from app_gui.ui import operations_panel_context as _ops_context
@@ -188,9 +186,8 @@ def _collect_move_batch_from_table(self):
 
     return entries if entries else None
 
+@guard_write_action
 def on_batch_move(self):
-    if bool(getattr(self, "_guard_write_action_by_migration_mode", lambda: False)()):
-        return
     self._ensure_today_defaults()
 
     entries = _resolve_batch_entries_with_fallback(
@@ -341,9 +338,8 @@ def _build_takeout_batch_plan_items(self, entries, *, date_str, action_text):
         )
     return items
 
+@guard_write_action
 def on_batch_takeout(self):
-    if bool(getattr(self, "_guard_write_action_by_migration_mode", lambda: False)()):
-        return
     self._ensure_today_defaults()
 
     entries = _resolve_batch_entries_with_fallback(

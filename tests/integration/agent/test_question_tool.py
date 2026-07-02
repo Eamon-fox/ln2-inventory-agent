@@ -7,7 +7,6 @@ Agent 用户询问工具的交互流程
 """
 
 import threading
-import time
 import tempfile
 from contextlib import contextmanager
 
@@ -115,16 +114,22 @@ class TestQuestionValidation:
 
 class TestAnswerSync:
     def test_set_answer(self, runner):
-        """Verify _set_answer unblocks _answer_event."""
+        """Verify _set_answer unblocks a thread waiting on _answer_event."""
         runner._answer_event.clear()
+        # A separate event lets the worker block until the main thread is already
+        # waiting, so we exercise the unblock path without a fixed sleep.
+        release = threading.Event()
 
-        def delayed_answer():
-            time.sleep(0.05)
+        def answer_worker():
+            release.wait(timeout=5)
             runner._set_answer(["K562-dTAG"])
 
-        threading.Thread(target=delayed_answer).start()
+        worker = threading.Thread(target=answer_worker)
+        worker.start()
+        release.set()
 
         answered = runner._answer_event.wait(timeout=5)
+        worker.join(timeout=5)
         assert answered is True
         assert runner._pending_answer == ["K562-dTAG"]
         assert runner._answer_cancelled is False
@@ -132,14 +137,19 @@ class TestAnswerSync:
     def test_cancel_answer(self, runner):
         """Verify _cancel_answer unblocks _answer_event with cancelled flag."""
         runner._answer_event.clear()
+        release = threading.Event()
 
-        def delayed_cancel():
-            time.sleep(0.05)
+        def cancel_worker():
+            release.wait(timeout=5)
             runner._cancel_answer()
 
-        threading.Thread(target=delayed_cancel).start()
+        worker = threading.Thread(target=cancel_worker)
+        worker.start()
+        release.set()
 
-        runner._answer_event.wait(timeout=5)
+        answered = runner._answer_event.wait(timeout=5)
+        worker.join(timeout=5)
+        assert answered is True
         assert runner._answer_cancelled is True
         assert runner._pending_answer is None
 

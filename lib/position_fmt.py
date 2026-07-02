@@ -15,12 +15,30 @@ BOX_LAYOUT_INDEXING_VALUES = ("numeric", "alphanumeric")
 DEFAULT_BOX_LAYOUT_INDEXING = "numeric"
 
 
+_DEFAULT_GRID_DIM = 9
+
+
+def _grid_dim(layout, key):
+    """Return a positive grid dimension, falling back to the 9x9 default.
+
+    Layout dimensions can come from untrusted sources (import acceptance
+    validates arbitrary YAML). Non-integer or non-positive values fall back to
+    the historical 9x9 default instead of raising, which keeps this module the
+    single source of truth for both steady-state and import validation.
+    """
+    try:
+        value = int((layout or {}).get(key, _DEFAULT_GRID_DIM))
+    except (TypeError, ValueError):
+        return _DEFAULT_GRID_DIM
+    return value if value > 0 else _DEFAULT_GRID_DIM
+
+
 def _cols(layout):
-    return int((layout or {}).get("cols", 9))
+    return _grid_dim(layout, "cols")
 
 
 def _rows(layout):
-    return int((layout or {}).get("rows", 9))
+    return _grid_dim(layout, "rows")
 
 
 def _indexing(layout):

@@ -127,16 +127,22 @@ def test_overview_top_actions_are_icon_only_with_tooltips():
 def test_overview_filter_toggle_updates_tooltip_instead_of_text():
     text = _overview_filters_source_text()
 
-    assert "self.ov_filter_toggle_btn.setToolTip(toggle_label)" in text
-    assert "self.ov_filter_toggle_btn.setText(" not in text
+    assert ".ov_filter_toggle_btn.setToolTip(toggle_label)" in text
+    assert ".ov_filter_toggle_btn.setText(" not in text
 
 
 def test_main_creates_dataset_under_managed_root():
-    text = _source_text()
+    # Dataset creation flow lives in main_window_flows.DatasetFlow;
+    # main.py keeps only a thin delegate (on_create_new_dataset).
+    text = _combined_source_text()
 
     assert "create_managed_dataset_yaml_path(dataset_name)" in text
     assert "QInputDialog.getText(" in text
     assert "QFileDialog.getSaveFileName" not in text
+
+    main_text = _source_text()
+    assert "def on_create_new_dataset(self, update_window=True):" in main_text
+    assert "self._dataset_flow.create_new_dataset(update_window=update_window)" in main_text
 
 
 def test_main_wires_dataset_lifecycle_use_case_into_startup_and_dataset_flow():

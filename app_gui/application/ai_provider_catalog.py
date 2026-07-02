@@ -16,8 +16,10 @@ OBSOLETE_AI_MODELS = {
     },
     "zhipu": {
         "glm-5",
+        "glm-5.1",
     },
     "minimax": {
+        "MiniMax-M2.7",
         "MiniMax-M2.7-highspeed",
         "MiniMax-M2.5-highspeed",
         "MiniMax-M2.5",

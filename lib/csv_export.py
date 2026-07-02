@@ -5,13 +5,7 @@ import os
 
 from .custom_fields import get_effective_fields
 from .position_fmt import format_box_position_compact, position_display_text
-
-
-def _safe_int(value, default):
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
+from .validation_primitives import safe_int as _safe_int
 
 
 def _record_sort_key(record):

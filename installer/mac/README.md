@@ -24,7 +24,7 @@ before invoking PyInstaller, so the bundled macOS app icon stays in sync with th
 Or run PyInstaller directly:
 
 ```bash
-python3.11 -m PyInstaller ln2_inventory.mac.spec
+python3.11 -m PyInstaller snowfox.mac.spec
 ```
 
 ## Output

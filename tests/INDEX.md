@@ -20,7 +20,10 @@
 
 ### inventory/ — 核心库存操作
 
-- test_tool_api.py - Primary Tool API across read and write workflows. <!-- Tool API 全链路读写 -->
+- test_tool_api_write_ops.py - Tool API write/takeout/move/rollback + edit-entry workflows (split from test_tool_api.py). <!-- Tool API 写入/取出/移动/回滚与编辑（由原 test_tool_api.py 拆分） -->
+- test_tool_api_search_stats.py - Tool API search/filter/stats read workflows (split from test_tool_api.py). <!-- Tool API 搜索/筛选/统计读路径（由原 test_tool_api.py 拆分） -->
+- test_tool_api_timeline.py - Tool API timeline/audit/export/recommend workflows (split from test_tool_api.py). <!-- Tool API 时间线/审计/导出/推荐（由原 test_tool_api.py 拆分） -->
+- test_tool_api_layout.py - Tool API custom box-layout and box-count behavior (split from test_tool_api.py). <!-- Tool API 自定义盒型布局与盒数（由原 test_tool_api.py 拆分） -->
 - test_tool_api_extended2.py - Extended Tool API edge cases. <!-- Tool API 扩展场景与边界 -->
 - test_tool_api_invariants.py - Invariant checks for Tool API consistency. <!-- Tool API 一致性不变式 -->
 - test_tool_api_cell_line_migration.py - Cell-line migration via Tool API. <!-- 通过 Tool API 进行 cell_line 字段迁移 -->
@@ -41,7 +44,11 @@
 ### agent/ — AI Agent 与工具调度
 
 - test_react_agent.py - ReAct loop, tool-calling, retry, and finalization. <!-- ReAct 循环、工具调用、重试与结束 -->
-- test_agent_tool_runner.py - Tool dispatch, validation, and handler behavior. <!-- 工具分发、验证与处理器行为 -->
+- test_agent_tool_runner_tools.py - Tool listing, schemas, skills, and i18n coverage (split from test_agent_tool_runner.py). <!-- 工具清单/契约 schema/技能/i18n 覆盖（由原 test_agent_tool_runner.py 拆分） -->
+- test_agent_tool_runner_shell_fs.py - Shell/fs/environment tool scope and corrupt-yaml handling (split from test_agent_tool_runner.py). <!-- shell/fs/environment 工具作用域与损坏 YAML 处理（由原 test_agent_tool_runner.py 拆分） -->
+- test_agent_tool_runner_migration.py - Validate + import-migration-output workflows (split from test_agent_tool_runner.py). <!-- 校验与迁移产物导入（由原 test_agent_tool_runner.py 拆分） -->
+- test_agent_tool_runner_query.py - Search/filter/stats/timeline read workflows (split from test_agent_tool_runner.py). <!-- 搜索/筛选/统计/时间线读路径（由原 test_agent_tool_runner.py 拆分） -->
+- test_agent_tool_runner_write.py - Add/takeout/move/rollback/staging/plan + edit-entry runner behavior (split from test_agent_tool_runner.py). <!-- 新增/取出/移动/回滚/暂存/计划与编辑（由原 test_agent_tool_runner.py 拆分） -->
 - test_agent_missing.py - Agent edge cases and regression guards. <!-- Agent 边界情况与回归防护 -->
 - test_llm_client.py - LLM client payload shaping and response normalization. <!-- LLM 客户端请求构造与响应标准化 -->
 - test_question_tool.py - Question tool flow for agent workflows. <!-- Agent 用户询问工具的交互流程 -->
@@ -50,7 +57,10 @@
 
 ### gui/ — GUI 面板与主窗口
 
-- test_gui_panels_ops_settings.py - Operations + settings panel behavior split from legacy monolith. <!-- Operations 与 Settings 面板行为（由原超大文件拆分） -->
+- test_gui_panels_ops_settings_operations.py - Operations panel behavior: prefill/context/move/takeout/rollback (split from test_gui_panels_ops_settings.py). <!-- Operations 面板：预填/上下文/移动/取出/回滚（由原 test_gui_panels_ops_settings.py 拆分） -->
+- test_gui_panels_ops_settings_settings.py - Settings/help dialog + main-window shortcut behavior (split from test_gui_panels_ops_settings.py). <!-- Settings/帮助对话框与主窗口快捷键（由原 test_gui_panels_ops_settings.py 拆分） -->
+- test_gui_panels_ops_settings_custom_fields.py - Custom-fields dialog + settings custom-field editor behavior (split from test_gui_panels_ops_settings.py). <!-- 自定义字段对话框与设置内自定义字段编辑（由原 test_gui_panels_ops_settings.py 拆分） -->
+- test_gui_panels_ops_settings_plan_table.py - Plan table/plan-store/add-plan-items/execute-plan behavior (split from test_gui_panels_ops_settings.py). <!-- 计划表/计划存储/加入计划项/执行计划（由原 test_gui_panels_ops_settings.py 拆分） -->
 - test_gui_panels_overview.py - Overview panel interactions and marker rendering split from legacy monolith. <!-- Overview 面板交互与标记渲染（由原超大文件拆分） -->
 - test_gui_panels_ai.py - AI panel streaming + event-feed behavior split from legacy monolith. <!-- AI 面板流式输出与事件流行为（由原超大文件拆分） -->
 - test_gui_panels_plan_flows.py - Plan dedup/fallback/undo/print/preflight regressions split from legacy monolith. <!-- Plan 去重/回退/撤销/打印/预检回归（由原超大文件拆分） -->

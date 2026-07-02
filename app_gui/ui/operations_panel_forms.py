@@ -27,6 +27,7 @@ from app_gui.error_localizer import localize_error_payload
 from app_gui.i18n import tr
 from app_gui.ui.icons import Icons, get_icon
 from app_gui.ui.theme import resolve_theme_token
+from app_gui.ui.write_guards import guard_write_action
 
 
 def _read_text_widget_value(widget):
@@ -199,9 +200,8 @@ def _make_editable_field(
             if refresh_callback:
                 refresh_callback()
 
-    def on_confirm():
-        if bool(getattr(self, "_guard_write_action_by_migration_mode", lambda: False)()):
-            return
+    @guard_write_action
+    def on_confirm(self):
         from app_gui.ui import operations_panel_context as _ops_context
         from app_gui.ui import operations_panel_execution as _ops_exec
 
@@ -270,7 +270,7 @@ def _make_editable_field(
             )
 
     lock_btn.clicked.connect(on_lock_toggle)
-    confirm_btn.clicked.connect(on_confirm)
+    confirm_btn.clicked.connect(lambda: on_confirm(self))
 
     return container, field
 

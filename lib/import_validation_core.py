@@ -20,7 +20,11 @@ from .legacy_field_policy import (
     resolve_legacy_field_policy,
     normalize_legacy_custom_field_defs,
 )
-from .position_fmt import is_valid_box_layout_indexing
+from .position_fmt import (
+    get_box_numbers as _get_box_numbers,
+    get_position_range as _get_position_range,
+    is_valid_box_layout_indexing,
+)
 from .schema_aliases import (
     ALL_STRUCTURAL_FIELD_KEYS,
     CANONICAL_STORAGE_EVENTS_KEY,
@@ -64,48 +68,25 @@ def _has_takeout_history(rec: Dict[str, Any]) -> bool:
 
 
 def _position_range(layout: Dict[str, Any]) -> Tuple[int, int]:
-    layout = layout or {}
-    rows = layout.get("rows", 9)
-    cols = layout.get("cols", 9)
-    try:
-        rows = int(rows)
-        cols = int(cols)
-    except Exception:
-        return (1, 81)
-    if rows <= 0 or cols <= 0:
-        return (1, 81)
-    return (1, rows * cols)
+    """Delegate to the canonical position_fmt implementation.
+
+    Kept as a thin wrapper so import validation shares a single source of truth
+    with steady-state validation instead of maintaining a divergent copy.
+    """
+    return _get_position_range(layout or {})
 
 
 def _box_numbers(layout: Dict[str, Any]) -> List[int]:
-    layout = layout or {}
-    raw = layout.get("box_numbers")
-    if isinstance(raw, (list, tuple)):
-        out = []
-        seen = set()
-        for item in raw:
-            try:
-                num = int(item)
-            except Exception:
-                continue
-            if num <= 0 or num in seen:
-                continue
-            seen.add(num)
-            out.append(num)
-        out.sort()
-        if out:
-            return out
+    """Delegate to the canonical position_fmt implementation.
 
-    count = layout.get("box_count")
-    if count is None:
-        return []
-    try:
-        count = int(count)
-    except Exception:
-        return []
-    if count <= 0:
-        return []
-    return list(range(1, count + 1))
+    Note the unified fallback semantics: when neither ``box_numbers`` nor
+    ``box_count`` is present, this now returns the configured ``BOX_RANGE``
+    (via ``position_fmt``) rather than the historical empty list. In practice
+    managed imports always declare ``box_count`` (enforced by
+    ``_validate_box_layout_contract``), so this only affects already-invalid
+    datasets where the missing-layout error is reported anyway.
+    """
+    return list(_get_box_numbers(layout or {}))
 
 
 def _validate_box_layout_contract(layout: Dict[str, Any]) -> List[str]:

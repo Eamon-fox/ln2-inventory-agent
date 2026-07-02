@@ -195,7 +195,7 @@ class YamlOpsSafetyTests(unittest.TestCase):
             )
 
             with patch(
-                "lib.yaml_ops._next_audit_seq_full_scan",
+                "lib.yaml_ops_audit._next_audit_seq_full_scan",
                 side_effect=AssertionError("audit append should not scan the full log"),
             ):
                 write_yaml(
@@ -651,6 +651,98 @@ class YamlOpsSafetyTests(unittest.TestCase):
 
             current = load_yaml(str(yaml_path))
             self.assertEqual(1, current["inventory"][0]["position"])
+
+
+class WriteYamlBeforeDataReuseTests(unittest.TestCase):
+    """Item-3/4 lock: write_yaml reuses caller before_data instead of reloading."""
+
+    def _read_last_audit_instance_id(self, yaml_path):
+        events = read_audit_events(str(yaml_path))
+        self.assertTrue(events)
+        return events[-1].get("inventory_instance_id")
+
+    def test_before_data_skips_internal_load(self):
+        from lib import yaml_ops
+
+        with managed_inventory_root("ln2_before_data_"):
+            yaml_path = _managed_yaml("before-reuse")
+            # Seed a dataset so an existing instance id is on disk.
+            write_yaml(make_data([]), path=str(yaml_path))
+            seeded = load_yaml(str(yaml_path))
+            seeded_instance_id = seeded["meta"]["inventory_instance_id"]
+
+            new_data = make_data([make_record(1, box=1, position=1)])
+            new_data["meta"]["inventory_instance_id"] = seeded_instance_id
+
+            real_load = yaml_ops.load_yaml
+            calls = {"n": 0}
+
+            def _counting_load(*args, **kwargs):
+                calls["n"] += 1
+                return real_load(*args, **kwargs)
+
+            with patch.object(yaml_ops, "load_yaml", _counting_load):
+                write_yaml(
+                    new_data,
+                    path=str(yaml_path),
+                    before_data=seeded,
+                )
+
+            # With before_data supplied, write_yaml must not reload the doc.
+            self.assertEqual(0, calls["n"])
+            self.assertEqual(
+                seeded_instance_id,
+                self._read_last_audit_instance_id(yaml_path),
+            )
+
+    def test_before_data_preserves_instance_id_and_audit(self):
+        with managed_inventory_root("ln2_before_data2_"):
+            yaml_path = _managed_yaml("before-audit")
+            write_yaml(make_data([]), path=str(yaml_path))
+            seeded = load_yaml(str(yaml_path))
+            instance_id = seeded["meta"]["inventory_instance_id"]
+
+            # New payload omits instance id; passing before_data must recover it
+            # identically to the disk-load path.
+            payload = make_data([make_record(2, box=1, position=2)])
+            write_yaml(payload, path=str(yaml_path), before_data=seeded)
+
+            self.assertEqual(instance_id, self._read_last_audit_instance_id(yaml_path))
+            persisted = load_yaml(str(yaml_path))
+            self.assertEqual(instance_id, persisted["meta"]["inventory_instance_id"])
+
+
+class TestSafeLogEvent(unittest.TestCase):
+    """Item-2 lock: diagnostics logging never raises and is not silent on failure."""
+
+    def test_safe_log_event_swallows_and_reports_to_stderr(self):
+        from lib import yaml_ops
+        import io
+
+        captured = io.StringIO()
+        def _boom(*_a, **_k):
+            raise RuntimeError("diagnostics down")
+
+        with patch("lib.diagnostics.log_event", _boom), \
+                patch.object(sys, "stderr", captured):
+            # Must not raise even though log_event blows up.
+            yaml_ops._safe_log_event("yaml.load", yaml_path="x", source="test")
+
+        self.assertIn("diagnostics", captured.getvalue().lower())
+
+    def test_safe_log_event_forwards_fields(self):
+        from lib import yaml_ops
+
+        seen = {}
+        def _capture(event, **fields):
+            seen["event"] = event
+            seen["fields"] = fields
+
+        with patch("lib.diagnostics.log_event", _capture):
+            yaml_ops._safe_log_event("yaml.write", yaml_path="p", source="s")
+
+        self.assertEqual("yaml.write", seen["event"])
+        self.assertEqual({"yaml_path": "p", "source": "s"}, seen["fields"])
 
 
 if __name__ == "__main__":

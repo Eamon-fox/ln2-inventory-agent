@@ -1048,6 +1048,7 @@ def test_main_window_on_rename_dataset_switches_and_appends_audit():
     window._dataset_session = SimpleNamespace(switch_to=MagicMock(return_value=new_yaml))
     window._refresh_home_dataset_choices = MagicMock()
     window.statusBar = MagicMock(return_value=SimpleNamespace(showMessage=status_message))
+    window._dataset_flow = DatasetFlow(window, dataset_lifecycle_use_case=window._dataset_lifecycle)
 
     result = MainWindow.on_rename_dataset(window, old_yaml, "new")
 
@@ -1078,8 +1079,9 @@ def test_main_window_on_rename_dataset_keeps_success_when_audit_append_fails():
     window._dataset_session = SimpleNamespace(switch_to=MagicMock(return_value=new_yaml))
     window._refresh_home_dataset_choices = MagicMock()
     window.statusBar = MagicMock(return_value=SimpleNamespace(showMessage=status_message))
+    window._dataset_flow = DatasetFlow(window, dataset_lifecycle_use_case=window._dataset_lifecycle)
 
-    with patch("app_gui.main.t", side_effect=lambda key, **kwargs: key) as t_mock:
+    with patch("app_gui.main_window_flows.t", side_effect=lambda key, **kwargs: key) as t_mock:
         result = MainWindow.on_rename_dataset(window, old_yaml, "new")
 
     assert result == new_yaml
@@ -1119,6 +1121,7 @@ def test_main_window_on_delete_dataset_switches_and_appends_audit():
     window._dataset_session = SimpleNamespace(switch_to=MagicMock(return_value=switched_yaml))
     window._refresh_home_dataset_choices = MagicMock()
     window.statusBar = MagicMock(return_value=SimpleNamespace(showMessage=status_message))
+    window._dataset_flow = DatasetFlow(window, dataset_lifecycle_use_case=window._dataset_lifecycle)
 
     result = MainWindow.on_delete_dataset(window, old_yaml)
 
@@ -1153,8 +1156,9 @@ def test_main_window_on_delete_dataset_keeps_success_when_audit_append_fails():
     window._dataset_session = SimpleNamespace(switch_to=MagicMock(return_value=switched_yaml))
     window._refresh_home_dataset_choices = MagicMock()
     window.statusBar = MagicMock(return_value=SimpleNamespace(showMessage=status_message))
+    window._dataset_flow = DatasetFlow(window, dataset_lifecycle_use_case=window._dataset_lifecycle)
 
-    with patch("app_gui.main.t", side_effect=lambda key, **kwargs: key) as t_mock:
+    with patch("app_gui.main_window_flows.t", side_effect=lambda key, **kwargs: key) as t_mock:
         result = MainWindow.on_delete_dataset(window, old_yaml)
 
     assert result == switched_yaml
@@ -1193,6 +1197,7 @@ def test_main_window_on_delete_dataset_creates_fallback_when_empty():
     window._dataset_session = SimpleNamespace(switch_to=MagicMock(return_value=fallback_yaml))
     window._refresh_home_dataset_choices = MagicMock()
     window.statusBar = MagicMock(return_value=SimpleNamespace(showMessage=status_message))
+    window._dataset_flow = DatasetFlow(window, dataset_lifecycle_use_case=window._dataset_lifecycle)
 
     result = MainWindow.on_delete_dataset(window, old_yaml)
 

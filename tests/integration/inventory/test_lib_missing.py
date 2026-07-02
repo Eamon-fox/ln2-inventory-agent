@@ -96,7 +96,7 @@ class YamlOpsBackupTests(ManagedPathTestCase):
             from datetime import datetime
 
             fixed_now = datetime(2026, 1, 1, 12, 0, 0)
-            with patch("lib.yaml_ops.datetime") as mock_datetime:
+            with patch("lib.yaml_ops_backup.datetime") as mock_datetime:
                 mock_datetime.now.return_value = fixed_now
                 # force=True bypasses hash/time throttling so we can probe
                 # the timestamp-collision naming path.

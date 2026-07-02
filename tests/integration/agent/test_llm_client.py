@@ -334,12 +334,13 @@ class DeepSeekClientParseTests(unittest.TestCase):
 
 
 class ZhipuClientParseTests(unittest.TestCase):
-    def test_provider_defaults_include_glm_5_1_and_remove_glm_5(self):
+    def test_provider_defaults_include_glm_5_2_and_remove_glm_5(self):
         zhipu_cfg = PROVIDER_DEFAULTS["zhipu"]
 
-        self.assertEqual("glm-5.1", zhipu_cfg["model"])
-        self.assertEqual(["glm-5.1", "glm-4.7"], zhipu_cfg["models"])
+        self.assertEqual("glm-5.2", zhipu_cfg["model"])
+        self.assertEqual(["glm-5.2", "glm-4.7"], zhipu_cfg["models"])
         self.assertNotIn("glm-5", zhipu_cfg["models"])
+        self.assertNotIn("glm-5.1", zhipu_cfg["models"])
 
     def test_build_request_disables_thinking_by_default(self):
         with patch.dict(os.environ, {"ZHIPUAI_API_KEY": "test-key"}, clear=False):
@@ -413,11 +414,12 @@ class ZhipuClientParseTests(unittest.TestCase):
 
 
 class MiniMaxClientParseTests(unittest.TestCase):
-    def test_provider_defaults_include_m2_7_models_and_default(self):
+    def test_provider_defaults_include_m3_models_and_default(self):
         minimax_cfg = PROVIDER_DEFAULTS["minimax"]
 
-        self.assertEqual("MiniMax-M2.7", minimax_cfg["model"])
-        self.assertEqual(["MiniMax-M2.7"], minimax_cfg["models"])
+        self.assertEqual("MiniMax-M3", minimax_cfg["model"])
+        self.assertEqual(["MiniMax-M3"], minimax_cfg["models"])
+        self.assertNotIn("MiniMax-M2.7", minimax_cfg["models"])
         self.assertNotIn("MiniMax-M2.7-highspeed", minimax_cfg["models"])
         self.assertNotIn("MiniMax-M2.5-highspeed", minimax_cfg["models"])
         self.assertNotIn("MiniMax-M2.5", minimax_cfg["models"])

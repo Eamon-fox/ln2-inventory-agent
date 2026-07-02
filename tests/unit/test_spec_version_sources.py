@@ -1,7 +1,7 @@
 """
 Module: test_spec_version_sources
 Layer: unit
-Covers: ln2_inventory.spec / ln2_inventory.mac.spec
+Covers: snowfox.spec / snowfox.mac.spec
 """
 
 import unittest
@@ -9,8 +9,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-WINDOWS_SPEC = ROOT / "ln2_inventory.spec"
-MAC_SPEC = ROOT / "ln2_inventory.mac.spec"
+WINDOWS_SPEC = ROOT / "snowfox.spec"
+MAC_SPEC = ROOT / "snowfox.mac.spec"
 
 
 class TestSpecVersionSources(unittest.TestCase):

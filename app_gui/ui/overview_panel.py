@@ -13,11 +13,20 @@ from app_gui.ui import overview_panel_refresh as _ov_refresh
 from app_gui.ui import overview_panel_runtime as _ov_runtime
 from app_gui.ui.table_entry_draft_store import TableEntryDraftStore
 
-# Module map for maintainers:
-# - _ov_ui: widget tree setup and static UI wiring.
-# - _ov_grid/_ov_table: grid/table rendering and data projection.
-# - _ov_interactions/_ov_zoom: interaction handlers and zoom behavior.
-# - _ov_refresh/_ov_runtime: refresh pipelines and runtime glue logic.
+# Module map for maintainers.
+#
+# Behavioral collaborators — OverviewPanel constructs one instance of each and
+# delegates to it (composition, not cross-file method binding):
+# - _ov_zoom.OverviewZoomController: zoom + box navigation (owns animation objects).
+# - _ov_runtime.OverviewRuntimeController: event filter, grid nav, view-mode, filter debounce.
+# - _ov_refresh.OverviewRefreshController: read-snapshot data-load pipeline.
+# - _ov_filters.OverviewFilterController: grid/table filtering + column filter dialogs.
+# - _ov_interactions.OverviewInteractionController: cell click/hover/context-menu, drag-drop.
+#
+# Still bound as partial-class methods (deep shared-state entanglement / heavy
+# test pinning): _ov_grid (grid render + selection state), _ov_table (table render
+# + data projection), _ov_ui (widget tree construction).
+# Reusable Qt widget classes: _ov_widgets, _ov_cell_button.
 MIME_TYPE_MOVE = _ov_cell_button.MIME_TYPE_MOVE
 TABLE_ROW_TINT_ROLE = Qt.UserRole + 41
 TABLE_ROW_KIND_ROLE = Qt.UserRole + 42
@@ -105,10 +114,13 @@ class OverviewPanel(QWidget):
         self._filter_apply_timer.setSingleShot(True)
         self._filter_apply_timer.timeout.connect(self._on_filter_debounce_timeout)
 
-        # Animation objects for smooth zoom and scroll transitions
-        self._zoom_animation = None
-        self._scroll_h_animation = None
-        self._scroll_v_animation = None
+        # Behavioral collaborators. Zoom owns its animation objects; runtime is
+        # stateless glue that drives the panel through its reference.
+        self._zoom = _ov_zoom.OverviewZoomController(self)
+        self._runtime = _ov_runtime.OverviewRuntimeController(self)
+        self._refresh = _ov_refresh.OverviewRefreshController(self)
+        self._filters = _ov_filters.OverviewFilterController(self)
+        self._interactions = _ov_interactions.OverviewInteractionController(self)
 
         self.setup_ui()
 
@@ -118,12 +130,18 @@ class OverviewPanel(QWidget):
     _update_view_toggle_icons = _ov_ui._update_view_toggle_icons
     _position_floating_actions = _ov_ui._position_floating_actions
 
-    _on_view_mode_changed = _ov_runtime._on_view_mode_changed
-    _emit_export_inventory_csv_request = _ov_runtime._emit_export_inventory_csv_request
-    _on_filter_keyword_changed = _ov_runtime._on_filter_keyword_changed
-    _schedule_apply_filters = _ov_runtime._schedule_apply_filters
-    _on_filter_debounce_timeout = _ov_runtime._on_filter_debounce_timeout
-    _handle_grid_runtime_event = _ov_runtime._handle_grid_runtime_event
+    # Runtime event/view-mode/filter-debounce glue delegates to ``self._runtime``.
+    def _on_view_mode_changed(self, mode):
+        return self._runtime._on_view_mode_changed(mode)
+
+    def _emit_export_inventory_csv_request(self, checked=False):
+        return self._runtime._emit_export_inventory_csv_request(checked)
+
+    def _on_filter_keyword_changed(self, _text=""):
+        return self._runtime._on_filter_keyword_changed(_text)
+
+    def _on_filter_debounce_timeout(self):
+        return self._runtime._on_filter_debounce_timeout()
 
 
     _resolve_table_header_labels = _ov_table._resolve_table_header_labels
@@ -164,7 +182,8 @@ class OverviewPanel(QWidget):
     _set_plan_store_ref = _ov_grid._set_plan_store_ref
     _set_plan_markers_from_items = _ov_grid._set_plan_markers_from_items
 
-    eventFilter = _ov_runtime.eventFilter
+    def eventFilter(self, obj, event):
+        return self._runtime.event_filter(obj, event)
 
     @Slot()
     def _on_plan_store_changed(self):
@@ -190,46 +209,78 @@ class OverviewPanel(QWidget):
         QTimer.singleShot(50, _flush)
 
 
-    _set_zoom = _ov_zoom._set_zoom
-    _apply_zoom = _ov_zoom._apply_zoom
-    _animate_scroll_to = _ov_zoom._animate_scroll_to
-    _calc_fit_zoom = staticmethod(_ov_zoom._calc_fit_zoom)
-    _calc_center_scroll_targets = staticmethod(_ov_zoom._calc_center_scroll_targets)
-    _schedule_center_scroll = _ov_zoom._schedule_center_scroll
-    _fit_one_box = _ov_zoom._fit_one_box
-    _fit_all_boxes = _ov_zoom._fit_all_boxes
-    _update_box_navigation = _ov_zoom._update_box_navigation
-    _jump_to_box = _ov_zoom._jump_to_box
+    # Zoom + box navigation delegate to the collaborator held in ``self._zoom``.
+    def _set_zoom(self, level, animated=False):
+        return self._zoom._set_zoom(level, animated)
 
-    refresh = _ov_refresh.refresh
+    def _fit_one_box(self):
+        return self._zoom._fit_one_box()
 
-    _refresh_filter_options = _ov_filters._refresh_filter_options
-    _apply_filters = _ov_filters._apply_filters
-    _apply_filters_grid = _ov_filters._apply_filters_grid
-    _apply_filters_table = _ov_filters._apply_filters_table
-    on_toggle_filters = _ov_filters.on_toggle_filters
-    on_clear_filters = _ov_filters.on_clear_filters
-    _on_column_filter_clicked = _ov_filters._on_column_filter_clicked
-    _detect_column_type = _ov_filters._detect_column_type
-    _get_unique_column_values = _ov_filters._get_unique_column_values
-    _match_column_filter = _ov_filters._match_column_filter
+    def _fit_all_boxes(self):
+        return self._zoom._fit_all_boxes()
+
+    def _update_box_navigation(self, box_numbers):
+        return self._zoom._update_box_navigation(box_numbers)
+
+    def refresh(self):
+        return self._refresh.refresh()
+
+    # Filtering delegates to the collaborator held in ``self._filters``.
+    def _refresh_filter_options(self, records, box_numbers):
+        return self._filters._refresh_filter_options(records, box_numbers)
+
+    def _apply_filters(self):
+        return self._filters._apply_filters()
+
+    def _apply_filters_table(self, keyword, selected_box, selected_cell):
+        return self._filters._apply_filters_table(keyword, selected_box, selected_cell)
+
+    def on_toggle_filters(self, checked):
+        return self._filters.on_toggle_filters(checked)
+
+    def on_clear_filters(self):
+        return self._filters.on_clear_filters()
+
+    def _on_column_filter_clicked(self, column_index, column_name):
+        return self._filters._on_column_filter_clicked(column_index, column_name)
+
+    def _detect_column_type(self, column_name):
+        return self._filters._detect_column_type(column_name)
+
+    def _get_unique_column_values(self, column_name):
+        return self._filters._get_unique_column_values(column_name)
+
+    def _match_column_filter(self, row_data, column_name, filter_config):
+        return self._filters._match_column_filter(row_data, column_name, filter_config)
 
 
-    on_cell_clicked = _ov_interactions.on_cell_clicked
-    on_cell_double_clicked = _ov_interactions.on_cell_double_clicked
-    on_cell_hovered = _ov_interactions.on_cell_hovered
-    _reset_detail = _ov_interactions._reset_detail
-    _normalize_preview_value = staticmethod(_ov_interactions._normalize_preview_value)
-    _resolve_preview_values = _ov_interactions._resolve_preview_values
-    _emit_hover_stats = _ov_interactions._emit_hover_stats
-    _show_detail = _ov_interactions._show_detail
-    _prefill_grid_cell_to_operations_panel = _ov_interactions._prefill_grid_cell_to_operations_panel
-    _navigate_grid_selection = _ov_interactions._navigate_grid_selection
-    on_cell_context_menu = _ov_interactions.on_cell_context_menu
-    on_box_context_menu = _ov_interactions.on_box_context_menu
-    _create_takeout_plan_item = _ov_interactions._create_takeout_plan_item
-    _create_move_plan_item = _ov_interactions._create_move_plan_item
-    _on_cell_drop = _ov_interactions._on_cell_drop
+    # Cell interaction / hover preview / drag-drop delegate to ``self._interactions``.
+    def on_cell_clicked(self, box_num, position, modifiers=None):
+        return self._interactions.on_cell_clicked(box_num, position, modifiers)
+
+    def on_cell_double_clicked(self, box_num, position):
+        return self._interactions.on_cell_double_clicked(box_num, position)
+
+    def on_cell_hovered(self, box_num, position, force=False):
+        return self._interactions.on_cell_hovered(box_num, position, force)
+
+    def _reset_detail(self):
+        return self._interactions._reset_detail()
+
+    def _show_detail(self, box_num, position, record):
+        return self._interactions._show_detail(box_num, position, record)
+
+    def _navigate_grid_selection(self, direction):
+        return self._interactions._navigate_grid_selection(direction)
+
+    def on_cell_context_menu(self, box_num, position, global_pos):
+        return self._interactions.on_cell_context_menu(box_num, position, global_pos)
+
+    def on_box_context_menu(self, box_num, global_pos):
+        return self._interactions.on_box_context_menu(box_num, global_pos)
+
+    def _on_cell_drop(self, from_box, from_pos, to_box, to_pos, record_id):
+        return self._interactions._on_cell_drop(from_box, from_pos, to_box, to_pos, record_id)
 
     def set_summary_cards_visible(self, visible):
         """Show or hide the summary cards (used when displaying stats in status bar instead)."""

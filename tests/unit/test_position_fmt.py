@@ -193,3 +193,48 @@ class TestLayoutHelpers:
         layout = {"rows": 8, "cols": 12}
         assert get_total_slots(layout) == 96
         assert get_position_range(layout) == (1, 96)
+
+    def test_non_integer_dimensions_fall_back_to_default(self):
+        # Untrusted layouts (e.g. import acceptance on arbitrary YAML) must not
+        # raise; non-int dimensions fall back to the 9x9 default.
+        assert get_total_slots({"rows": "abc", "cols": 9}) == 81
+        assert get_position_range({"rows": None, "cols": "x"}) == (1, 81)
+
+    def test_non_positive_dimensions_fall_back_to_default(self):
+        assert get_total_slots({"rows": 0, "cols": 9}) == 81
+        assert get_position_range({"rows": -3, "cols": 9}) == (1, 81)
+
+
+class TestImportValidationSharesPositionFmt:
+    """Item-1 lock: import validation must delegate to position_fmt, no fork."""
+
+    def test_position_range_delegates(self):
+        from lib import import_validation_core as ivc
+
+        for layout in (
+            {},
+            {"rows": 8, "cols": 12},
+            {"rows": "bad", "cols": 3},
+            {"rows": 0, "cols": 0},
+        ):
+            assert ivc._position_range(layout) == get_position_range(layout)
+
+    def test_box_numbers_delegates(self):
+        from lib import import_validation_core as ivc
+
+        for layout in (
+            {"box_numbers": [3, 1, 2, 2]},
+            {"box_count": 4},
+            {"box_numbers": [], "box_count": 2},
+        ):
+            assert ivc._box_numbers(layout) == list(get_box_numbers(layout))
+
+    def test_missing_layout_falls_back_to_config_box_range(self):
+        # Unified semantics: absent box_numbers AND box_count now follows the
+        # configured BOX_RANGE fallback (previously import returned []).
+        from lib import import_validation_core as ivc
+        from lib.config import BOX_RANGE
+
+        expected = list(range(int(BOX_RANGE[0]), int(BOX_RANGE[1]) + 1))
+        assert ivc._box_numbers({}) == expected
+        assert ivc._box_numbers({}) == list(get_box_numbers({}))

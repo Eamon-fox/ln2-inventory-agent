@@ -510,6 +510,35 @@ class AuditDialogTests(ManagedPathTestCase):
         dialog.audit_table.selectRow(backup_row)
         self.assertTrue(dialog.audit_rollback_selected_btn.isEnabled())
 
+    def test_stage_rollback_emits_signal_without_parent_panel_access(self):
+        events = [
+            {
+                "timestamp": "2026-02-21T09:00:00",
+                "action": "backup",
+                "status": "success",
+                "backup_path": "/tmp/eligible.bak",
+                "audit_seq": 12,
+                "details": {},
+            },
+        ]
+        dialog = self._new_dialog_with_bridge("D:/tmp/inventory.yaml", _TimelineBridge(events))
+        dialog.audit_start_date.setDate(QDate(2000, 1, 1))
+        dialog.audit_end_date.setDate(QDate(2099, 12, 31))
+        dialog.on_load_audit()
+
+        self.assertFalse(hasattr(dialog.parent(), "operations_panel"))
+
+        staged = []
+        dialog.rollback_plan_staged.connect(staged.append)
+        dialog.audit_table.selectRow(0)
+        dialog.on_stage_rollback_from_selected_audit()
+
+        self.assertEqual(1, len(staged))
+        self.assertEqual(1, len(staged[0]))
+        item = staged[0][0]
+        self.assertEqual("rollback", item.get("action"))
+        self.assertEqual("/tmp/eligible.bak", item.get("payload", {}).get("backup_path"))
+
 
 if __name__ == "__main__":
     unittest.main()

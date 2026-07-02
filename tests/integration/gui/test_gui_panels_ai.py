@@ -37,7 +37,7 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
         self.assertEqual("", panel.ai_model_switch_btn.text())
         self.assertFalse(panel.ai_model_switch_btn.icon().isNull())
 
-    def test_ai_panel_model_switch_options_include_zhipu_glm_5_1_and_4_7(self):
+    def test_ai_panel_model_switch_options_include_zhipu_glm_5_2_and_4_7(self):
         panel = self._new_ai_panel()
 
         options = panel._iter_model_switch_options()
@@ -47,11 +47,12 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
             if isinstance(item, dict)
         }
 
-        self.assertIn(("zhipu", "glm-5.1"), option_pairs)
+        self.assertIn(("zhipu", "glm-5.2"), option_pairs)
         self.assertIn(("zhipu", "glm-4.7"), option_pairs)
+        self.assertNotIn(("zhipu", "glm-5.1"), option_pairs)
         self.assertNotIn(("zhipu", "glm-5"), option_pairs)
 
-    def test_ai_panel_model_switch_options_include_minimax_m2_7_models(self):
+    def test_ai_panel_model_switch_options_include_minimax_m3_models(self):
         panel = self._new_ai_panel()
 
         options = panel._iter_model_switch_options()
@@ -61,7 +62,8 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
             if isinstance(item, dict)
         }
 
-        self.assertIn(("minimax", "MiniMax-M2.7"), option_pairs)
+        self.assertIn(("minimax", "MiniMax-M3"), option_pairs)
+        self.assertNotIn(("minimax", "MiniMax-M2.7"), option_pairs)
         self.assertNotIn(("minimax", "MiniMax-M2.7-highspeed"), option_pairs)
         self.assertNotIn(("minimax", "MiniMax-M2.5-highspeed"), option_pairs)
         self.assertNotIn(("minimax", "MiniMax-M2.5"), option_pairs)
@@ -77,7 +79,7 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
             zhipu_action = MagicMock()
 
             def _add_action(label):
-                if "glm-5.1" in str(label):
+                if "glm-5.2" in str(label):
                     return zhipu_action
                 return deepseek_action
 
@@ -89,8 +91,8 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
         self.assertTrue(deepseek_action.setActionGroup.called)
         self.assertTrue(zhipu_action.setActionGroup.called)
         self.assertEqual("zhipu", panel.ai_provider.text())
-        self.assertEqual("glm-5.1", panel.ai_model.text())
-        self.assertEqual("glm-5.1", panel.ai_model_id_label.text())
+        self.assertEqual("glm-5.2", panel.ai_model.text())
+        self.assertEqual("glm-5.2", panel.ai_model_id_label.text())
 
     def test_ai_panel_thought_chunk_is_visible_only_while_active(self):
         panel = self._new_ai_panel()

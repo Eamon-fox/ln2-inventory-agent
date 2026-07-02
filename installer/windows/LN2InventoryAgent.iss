@@ -1,5 +1,5 @@
 ; Inno Setup script for SnowFox.
-; Build prerequisite: pyinstaller ln2_inventory.spec
+; Build prerequisite: pyinstaller snowfox.spec
 
 #define MyAppName "SnowFox"
 #define MyAppPublisher "EamonFox"
@@ -14,7 +14,7 @@
 #define SourceDir "..\\..\\dist\\SnowFox"
 
 #if !DirExists(SourceDir)
-  #error "Missing dist/SnowFox. Build it first with: pyinstaller ln2_inventory.spec"
+  #error "Missing dist/SnowFox. Build it first with: pyinstaller snowfox.spec"
 #endif
 
 #if !FileExists(SourceDir + "\\" + MyAppExeName)

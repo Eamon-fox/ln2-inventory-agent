@@ -312,10 +312,21 @@ def _normalize_search_mode(self, value):
 
 
 def _build_tool_schema_context(self):
+    # Load the document once and dispatch meta/layout/inventory from it, so
+    # building schemas for every tool does not re-read the same YAML file.
+    if hasattr(self, "_load_document"):
+        document = self._load_document()
+    else:  # pragma: no cover - defensive for lightweight test doubles
+        document = {}
+    if not isinstance(document, dict):
+        document = {}
+    meta = document.get("meta") if isinstance(document.get("meta"), dict) else {}
+    inventory = document.get("inventory") if isinstance(document.get("inventory"), list) else []
+    layout = meta.get("box_layout") if isinstance(meta.get("box_layout"), dict) else {}
     return {
-        "meta": self._load_meta() if hasattr(self, "_load_meta") else {},
-        "inventory": self._load_inventory() if hasattr(self, "_load_inventory") else [],
-        "layout": self._load_layout() if hasattr(self, "_load_layout") else {},
+        "meta": meta,
+        "inventory": inventory,
+        "layout": layout,
     }
 
 
@@ -658,9 +669,10 @@ def _validate_tool_input(self, tool_name, payload):
     if not contract:
         return None
 
-    schema = _tool_input_schema(self, tool_name, include_hidden=True)
-    meta = self._load_meta() if hasattr(self, "_load_meta") else {}
-    inventory = self._load_inventory() if hasattr(self, "_load_inventory") else []
+    schema_context = _build_tool_schema_context(self)
+    schema = _tool_input_schema(self, tool_name, include_hidden=True, schema_context=schema_context)
+    meta = schema_context.get("meta") if isinstance(schema_context.get("meta"), dict) else {}
+    inventory = schema_context.get("inventory") if isinstance(schema_context.get("inventory"), list) else []
     runtime_spec = self._runtime_spec(tool_name) if hasattr(self, "_runtime_spec") else None
     validation_payload_adapter = getattr(runtime_spec, "validation_payload_adapter", None)
     if callable(validation_payload_adapter):

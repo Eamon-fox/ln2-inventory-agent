@@ -178,6 +178,7 @@ def tool_set_box_tag(
             yaml_path,
             auto_backup=auto_backup,
             backup_path=request_backup_path,
+            before_data=data,
             audit_meta=api._build_audit_meta(
                 action=action,
                 source=source,

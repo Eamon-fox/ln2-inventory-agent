@@ -1,6 +1,7 @@
 """Plan-table selection and toolbar helpers for OperationsPanel."""
 
 from app_gui.i18n import tr
+from app_gui.ui.write_guards import guard_write_action
 
 
 def _get_selected_plan_rows(self):
@@ -45,11 +46,10 @@ def _refresh_after_plan_items_changed(self):
         sync_selection_fn()
 
 
+@guard_write_action
 def remove_selected_plan_items(self):
     from app_gui.ui import operations_panel_plan_store as _ops_plan_store
 
-    if bool(getattr(self, "_guard_write_action_by_migration_mode", lambda: False)()):
-        return
     rows = _get_selected_plan_rows(self)
     if not rows:
         self.status_message.emit(tr("operations.planNoSelection"), 2000, "warning")

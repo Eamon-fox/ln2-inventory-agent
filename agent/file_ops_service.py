@@ -205,6 +205,8 @@ def _handle_fs_copy(args, *, repo_root, migrate_root):
     try:
         payload["bytes_copied"] = int(destination.stat().st_size)
     except Exception:
+        # bytes_copied is a best-effort informational field; the copy already
+        # succeeded, so a failed stat() must not turn a good result into an error.
         pass
     return payload
 

@@ -8,7 +8,7 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QPushButton, QLabel, QSplitter, QComboBox,
-    QDialog, QFileDialog, QLineEdit, QInputDialog, QMessageBox, QTextEdit, QPlainTextEdit, QCheckBox,
+    QDialog, QFileDialog, QLineEdit, QMessageBox, QTextEdit, QPlainTextEdit, QCheckBox,
 )
 
 if getattr(sys, "frozen", False):
@@ -51,10 +51,8 @@ from app_gui.i18n import t, tr, set_language
 from lib.inventory_paths import (
     assert_allowed_inventory_yaml_path,
     build_dataset_combo_items,
-    create_managed_dataset_yaml_path,
     list_managed_datasets,
     normalize_inventory_yaml_path as _normalize_inventory_yaml_path,
-    sanitize_dataset_name,
 )
 from lib.app_storage import (
     get_legacy_data_root,
@@ -80,7 +78,6 @@ from app_gui.ui.ai_panel import AIPanel
 from app_gui.ui.dialogs import (
     SettingsDialog,
     HelpDialog,
-    NewDatasetDialog,
     CustomFieldsDialog,
 )
 from app_gui.ui.dialogs.common import create_message_box, show_info_message, show_warning_message
@@ -91,6 +88,7 @@ from app_gui.main_window_flows import (
     WindowStateFlow,
     SettingsFlow,
     DatasetFlow,
+    LocalApiFlow,
 )
 from app_gui.dataset_session import DatasetSessionController
 from app_gui.import_journey import ImportJourneyService
@@ -391,6 +389,7 @@ class MainWindow(QMainWindow):
             self._local_open_api_controller,
             port=int((self.gui_config.get("open_api") or {}).get("port", LOCAL_OPEN_API_DEFAULT_PORT) or LOCAL_OPEN_API_DEFAULT_PORT),
         )
+        self._local_api_flow = LocalApiFlow(self)
         self.connect_signals()
         self._setup_shortcuts()
         self.restore_ui_settings()
@@ -421,13 +420,6 @@ class MainWindow(QMainWindow):
 
     def _run_startup_checks(self):
         self._check_release_notice_once()
-
-    def _ensure_dataset_lifecycle(self):
-        lifecycle = getattr(self, "_dataset_lifecycle", None)
-        if lifecycle is None:
-            lifecycle = DatasetLifecycleUseCase()
-            self._dataset_lifecycle = lifecycle
-        return lifecycle
 
     def setup_ui(self):
         container = QWidget()
@@ -957,6 +949,7 @@ class MainWindow(QMainWindow):
             yaml_path_getter=lambda: self.current_yaml_path,
             bridge=self.bridge
         )
+        dialog.rollback_plan_staged.connect(self.operations_panel.add_plan_items)
         dialog.exec()  # Modal dialog
 
     def on_manage_boxes(self, yaml_path_override=None):
@@ -1050,98 +1043,13 @@ class MainWindow(QMainWindow):
         return switched_path
 
     def on_rename_dataset(self, current_yaml_path, new_dataset_name):
-        result = self._ensure_dataset_lifecycle().rename_dataset(
-            current_yaml_path=current_yaml_path or self.current_yaml_path,
-            new_dataset_name=new_dataset_name,
-        )
-        switched = self._dataset_session.switch_to(
-            result.target_path,
-            reason="dataset_rename",
-        )
-        self._refresh_home_dataset_choices(selected_yaml=switched)
-        if result.audit_error:
-            self.statusBar().showMessage(
-                t("settings.renameDatasetSuccessWithAuditWarning", path=switched, error=result.audit_error),
-                6000,
-            )
-        else:
-            self.statusBar().showMessage(
-                t("settings.renameDatasetSuccess", path=switched),
-                4000,
-            )
-        return switched
+        return self._dataset_flow.rename_dataset(current_yaml_path, new_dataset_name)
 
     def on_delete_dataset(self, current_yaml_path):
-        result = self._ensure_dataset_lifecycle().delete_dataset(
-            current_yaml_path=current_yaml_path or self.current_yaml_path,
-        )
-        switched = self._dataset_session.switch_to(
-            result.target_path,
-            reason="dataset_delete",
-        )
-        self._refresh_home_dataset_choices(selected_yaml=switched)
-        if result.audit_error:
-            self.statusBar().showMessage(
-                t("settings.deleteDatasetSuccessWithAuditWarning", path=switched, error=result.audit_error),
-                6000,
-            )
-        else:
-            self.statusBar().showMessage(
-                t("settings.deleteDatasetSuccess", path=switched),
-                4000,
-            )
-        return switched
+        return self._dataset_flow.delete_dataset(current_yaml_path)
 
     def on_create_new_dataset(self, update_window=True):
-        layout_dlg = NewDatasetDialog(self)
-        dialog_result = layout_dlg.exec()
-        if dialog_result == NewDatasetDialog.RESULT_IMPORT_EXISTING:
-            self.on_import_existing_data(parent=self)
-            return
-        if dialog_result != QDialog.Accepted:
-            return
-        box_layout = layout_dlg.get_layout()
-
-        suggested = sanitize_dataset_name("", fallback="inventory")
-        dataset_name, ok = QInputDialog.getText(
-            self,
-            tr("main.new"),
-            tr("main.newDatasetNamePrompt"),
-            text=suggested,
-        )
-        if not ok:
-            return
-        dataset_name = sanitize_dataset_name(dataset_name, fallback="inventory")
-        try:
-            target_path = create_managed_dataset_yaml_path(dataset_name)
-        except Exception as exc:
-            self.statusBar().showMessage(str(exc), 5000)
-            return
-
-        created_path = self._dataset_flow.create_dataset_file(
-            target_path=target_path,
-            box_layout=box_layout,
-            custom_fields_dialog_cls=CustomFieldsDialog,
-        )
-        if not created_path:
-            with suppress(OSError):
-                os.rmdir(os.path.dirname(target_path))
-            return
-
-        if not update_window:
-            return created_path
-
-        try:
-            switched_path = self._dataset_session.switch_to(created_path, reason="new_dataset")
-        except Exception as exc:
-            self.statusBar().showMessage(str(exc), 5000)
-            return
-        self._refresh_home_dataset_choices(selected_yaml=switched_path)
-        self.statusBar().showMessage(
-            t("main.fileCreated", path=self.current_yaml_path),
-            4000,
-        )
-        return created_path
+        return self._dataset_flow.create_new_dataset(update_window=update_window)
 
     def restore_ui_settings(self):
         self._state_flow.restore_ui_settings()
@@ -1160,62 +1068,10 @@ class MainWindow(QMainWindow):
         return True
 
     def _current_local_open_api_config(self):
-        config = self.gui_config.get("open_api", {})
-        try:
-            port = int(config.get("port", LOCAL_OPEN_API_DEFAULT_PORT))
-        except Exception:
-            port = LOCAL_OPEN_API_DEFAULT_PORT
-        if port <= 0:
-            port = LOCAL_OPEN_API_DEFAULT_PORT
-        return {
-            "enabled": bool(config.get("enabled", False)),
-            "port": port,
-        }
+        return self._local_api_flow.current_config()
 
     def _apply_local_open_api_settings(self, *, show_feedback=False):
-        service = getattr(self, "_local_open_api_service", None)
-        if service is None or not hasattr(service, "configure"):
-            return {
-                "ok": False,
-                "running": False,
-                "changed": False,
-                "message": "Local Open API service is unavailable.",
-            }
-
-        config = self._current_local_open_api_config()
-        result = service.configure(
-            enabled=bool(config.get("enabled", False)),
-            port=int(config.get("port", LOCAL_OPEN_API_DEFAULT_PORT)),
-        )
-        if result.get("ok"):
-            if show_feedback:
-                if result.get("running"):
-                    self.statusBar().showMessage(
-                        t("main.localApiStarted", port=result.get("port")),
-                        3000,
-                    )
-                else:
-                    self.statusBar().showMessage(tr("main.localApiStopped"), 3000)
-            return result
-
-        message = t(
-            "main.localApiStartFailed",
-            error=result.get("message") or "unknown error",
-        )
-        self.statusBar().showMessage(message, 6000)
-        if show_feedback:
-            self._emit_system_notice(
-                code="local_api.start_failed",
-                text=message,
-                level="error",
-                source="settings_dialog",
-                timeout_ms=6000,
-                data={
-                    "requested_port": int(config.get("port", LOCAL_OPEN_API_DEFAULT_PORT)),
-                    "error_code": result.get("error_code"),
-                },
-            )
-        return result
+        return self._local_api_flow.apply_settings(show_feedback=show_feedback)
 
 def main():
     # Load GUI config BEFORE creating QApplication to set scale factor

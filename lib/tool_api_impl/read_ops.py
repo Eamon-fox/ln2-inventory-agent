@@ -130,29 +130,14 @@ def tool_list_empty_positions(yaml_path, box=None):
     }
 
 
-def tool_search_records(
-    yaml_path,
-    query=None,
-    mode="fuzzy",
-    max_results=None,
-    case_sensitive=False,
-    box=None,
-    position=None,
-    record_id=None,
-    status="all",
-    sort_by=None,
-    sort_order="desc",
-):
-    """Search records by text and/or structured filters."""
-    data, failure = _load_supported_data(yaml_path)
-    if failure:
-        return failure
+def _search_normalize_filters(*, mode, record_id, box, position, status, sort_by, sort_order, layout):
+    """Validate and normalize search filters.
 
-    records = data.get("inventory", [])
-    layout = api._get_layout(data)
-
+    Returns ``(filters, error)``; exactly one of the two is populated.
+    ``filters`` mirrors the normalized values used by the search flow.
+    """
     if mode not in SEARCH_MODE_VALUES:
-        return {
+        return None, {
             "ok": False,
             "error_code": "invalid_mode",
             "message": "mode must be " + "/".join(SEARCH_MODE_VALUES),
@@ -163,7 +148,7 @@ def tool_search_records(
         try:
             normalized_record_id = int(record_id)
         except (TypeError, ValueError):
-            return {
+            return None, {
                 "ok": False,
                 "error_code": "invalid_record_id",
                 "message": f"record_id must be an integer: {record_id}",
@@ -174,13 +159,13 @@ def tool_search_records(
         try:
             normalized_box = int(display_to_box(box, layout))
         except Exception:
-            return {
+            return None, {
                 "ok": False,
                 "error_code": "invalid_box",
                 "message": f"box must be a valid value: {box}",
             }
         if not validate_box(normalized_box, layout):
-            return {
+            return None, {
                 "ok": False,
                 "error_code": "invalid_box",
                 "message": "Validation failed",
@@ -191,14 +176,14 @@ def tool_search_records(
         try:
             normalized_position = int(api.coerce_position_value(position, layout=layout, field_name="position"))
         except Exception:
-            return {
+            return None, {
                 "ok": False,
                 "error_code": "invalid_position",
                 "message": f"position must be a valid value: {position}",
             }
         if not validate_position(normalized_position, layout):
             pos_lo, pos_hi = get_position_range(layout)
-            return {
+            return None, {
                 "ok": False,
                 "error_code": "invalid_position",
                 "message": f"position must be between {pos_lo}-{pos_hi}",
@@ -208,7 +193,7 @@ def tool_search_records(
     if status not in (None, ""):
         status_value = str(status).strip().lower()
         if status_value not in {"all", "active", "inactive"}:
-            return {
+            return None, {
                 "ok": False,
                 "error_code": "invalid_tool_input",
                 "message": "status must be one of: all, active, inactive",
@@ -217,7 +202,7 @@ def tool_search_records(
 
     normalized_sort_by = normalize_record_sort_field(sort_by, default=DEFAULT_RECORD_SORT_FIELD)
     if normalized_sort_by not in VALID_RECORD_SORT_FIELDS:
-        return {
+        return None, {
             "ok": False,
             "error_code": "invalid_tool_input",
             "message": "sort_by must be one of: box, position, stored_at, id",
@@ -227,13 +212,33 @@ def tool_search_records(
     if sort_order not in (None, ""):
         sort_order_value = str(sort_order).strip().lower()
         if sort_order_value not in {"asc", "desc"}:
-            return {
+            return None, {
                 "ok": False,
                 "error_code": "invalid_tool_input",
                 "message": "sort_order must be one of: asc, desc",
             }
         normalized_sort_order = sort_order_value
 
+    return (
+        {
+            "record_id": normalized_record_id,
+            "box": normalized_box,
+            "position": normalized_position,
+            "status": normalized_status,
+            "sort_by": normalized_sort_by,
+            "sort_order": normalized_sort_order,
+        },
+        None,
+    )
+
+
+def _search_prepare_query(*, query, case_sensitive, normalized_box, normalized_position, layout):
+    """Resolve the text query, applying the box/position shortcut if present.
+
+    Returns ``(normalized_box, normalized_position, query_shortcut,
+    normalized_query, keywords, q)`` where box/position may have been filled
+    in from a location shortcut.
+    """
     raw_query = " ".join(str(query or "").split())
     if raw_query == "*":
         raw_query = ""
@@ -247,8 +252,11 @@ def tool_search_records(
 
     normalized_query = api.normalize_search_text(raw_query, case_sensitive=case_sensitive)
     keywords = normalized_query.split() if normalized_query else []
-    q = normalized_query
+    return normalized_box, normalized_position, query_shortcut, normalized_query, keywords, normalized_query
 
+
+def _search_scope_records(records, *, normalized_record_id, normalized_box, normalized_position, normalized_status):
+    """Narrow records to those matching the structured filters."""
     scoped_records = []
     for rec in records:
         if normalized_record_id is not None:
@@ -281,18 +289,20 @@ def tool_search_records(
             continue
 
         scoped_records.append(rec)
+    return scoped_records
 
-    has_structured_filter = any(
-        value is not None
-        for value in (
-            normalized_record_id,
-            normalized_box,
-            normalized_position,
-        )
-    )
-    if normalized_status != "all":
-        has_structured_filter = True
 
+def _search_apply_text_match(
+    scoped_records,
+    *,
+    mode,
+    q,
+    keywords,
+    case_sensitive,
+    has_structured_filter,
+    normalized_query,
+):
+    """Filter scoped records by the text query for the requested mode."""
     matches = []
     if q:
         for rec in scoped_records:
@@ -313,7 +323,11 @@ def tool_search_records(
                 matches.append(rec)
     elif has_structured_filter or not normalized_query:
         matches = list(scoped_records)
+    return matches
 
+
+def _search_sort_matches(matches, *, normalized_sort_by, normalized_sort_order):
+    """Sort matches by the requested field, with id as the stable tiebreaker."""
     def _coerce_int(value):
         try:
             return int(value)
@@ -369,11 +383,11 @@ def tool_search_records(
             return cmp_primary
         return _compare_record_ids(left_record, right_record)
 
-    matches = sorted(matches, key=cmp_to_key(_compare_records))
+    return sorted(matches, key=cmp_to_key(_compare_records))
 
-    total_count = len(matches)
-    display_matches = matches[:max_results] if (max_results and max_results > 0) else matches
 
+def _search_build_suggestions(*, total_count, normalized_box, normalized_position, has_structured_filter):
+    """Produce follow-up suggestions based on the result count."""
     suggestions = []
     if total_count == 0:
         if normalized_box is not None and normalized_position is not None:
@@ -390,46 +404,159 @@ def tool_search_records(
             )
     elif total_count > 50:
         suggestions.extend(["Too many matches; add more keywords to narrow results"])
+    return suggestions
 
-    slot_lookup = None
-    if normalized_box is not None and normalized_position is not None:
-        slot_matches = []
-        for rec in records:
-            try:
-                rec_box = int(rec.get("box"))
-                rec_pos_raw = rec.get("position")
-                if rec_pos_raw is None:
-                    continue
-                rec_pos = int(rec_pos_raw)
-            except (TypeError, ValueError):
+
+def _search_build_slot_lookup(records, *, normalized_box, normalized_position):
+    """Summarize slot occupancy when both box and position are pinned."""
+    if normalized_box is None or normalized_position is None:
+        return None
+
+    slot_matches = []
+    for rec in records:
+        try:
+            rec_box = int(rec.get("box"))
+            rec_pos_raw = rec.get("position")
+            if rec_pos_raw is None:
                 continue
+            rec_pos = int(rec_pos_raw)
+        except (TypeError, ValueError):
+            continue
 
-            if rec_box == normalized_box and rec_pos == normalized_position:
-                slot_matches.append(rec)
+        if rec_box == normalized_box and rec_pos == normalized_position:
+            slot_matches.append(rec)
 
-        status = "empty"
-        if len(slot_matches) == 1:
-            status = "occupied"
-        elif len(slot_matches) > 1:
-            status = "conflict"
+    status = "empty"
+    if len(slot_matches) == 1:
+        status = "occupied"
+    elif len(slot_matches) > 1:
+        status = "conflict"
 
-        slot_record_ids = []
-        for rec in slot_matches:
-            raw_id = rec.get("id")
-            if raw_id is None:
-                continue
-            try:
-                slot_record_ids.append(int(raw_id))
-            except (TypeError, ValueError):
-                continue
+    slot_record_ids = []
+    for rec in slot_matches:
+        raw_id = rec.get("id")
+        if raw_id is None:
+            continue
+        try:
+            slot_record_ids.append(int(raw_id))
+        except (TypeError, ValueError):
+            continue
 
-        slot_lookup = {
-            "box": normalized_box,
-            "position": normalized_position,
-            "status": status,
-            "record_count": len(slot_matches),
-            "record_ids": slot_record_ids,
-        }
+    return {
+        "box": normalized_box,
+        "position": normalized_position,
+        "status": status,
+        "record_count": len(slot_matches),
+        "record_ids": slot_record_ids,
+    }
+
+
+def tool_search_records(
+    yaml_path,
+    query=None,
+    mode="fuzzy",
+    max_results=None,
+    case_sensitive=False,
+    box=None,
+    position=None,
+    record_id=None,
+    status="all",
+    sort_by=None,
+    sort_order="desc",
+):
+    """Search records by text and/or structured filters."""
+    data, failure = _load_supported_data(yaml_path)
+    if failure:
+        return failure
+
+    records = data.get("inventory", [])
+    layout = api._get_layout(data)
+
+    filters, error = _search_normalize_filters(
+        mode=mode,
+        record_id=record_id,
+        box=box,
+        position=position,
+        status=status,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        layout=layout,
+    )
+    if error:
+        return error
+
+    normalized_record_id = filters["record_id"]
+    normalized_box = filters["box"]
+    normalized_position = filters["position"]
+    normalized_status = filters["status"]
+    normalized_sort_by = filters["sort_by"]
+    normalized_sort_order = filters["sort_order"]
+
+    (
+        normalized_box,
+        normalized_position,
+        query_shortcut,
+        normalized_query,
+        keywords,
+        q,
+    ) = _search_prepare_query(
+        query=query,
+        case_sensitive=case_sensitive,
+        normalized_box=normalized_box,
+        normalized_position=normalized_position,
+        layout=layout,
+    )
+
+    scoped_records = _search_scope_records(
+        records,
+        normalized_record_id=normalized_record_id,
+        normalized_box=normalized_box,
+        normalized_position=normalized_position,
+        normalized_status=normalized_status,
+    )
+
+    has_structured_filter = any(
+        value is not None
+        for value in (
+            normalized_record_id,
+            normalized_box,
+            normalized_position,
+        )
+    )
+    if normalized_status != "all":
+        has_structured_filter = True
+
+    matches = _search_apply_text_match(
+        scoped_records,
+        mode=mode,
+        q=q,
+        keywords=keywords,
+        case_sensitive=case_sensitive,
+        has_structured_filter=has_structured_filter,
+        normalized_query=normalized_query,
+    )
+
+    matches = _search_sort_matches(
+        matches,
+        normalized_sort_by=normalized_sort_by,
+        normalized_sort_order=normalized_sort_order,
+    )
+
+    total_count = len(matches)
+    display_matches = matches[:max_results] if (max_results and max_results > 0) else matches
+
+    suggestions = _search_build_suggestions(
+        total_count=total_count,
+        normalized_box=normalized_box,
+        normalized_position=normalized_position,
+        has_structured_filter=has_structured_filter,
+    )
+
+    slot_lookup = _search_build_slot_lookup(
+        records,
+        normalized_box=normalized_box,
+        normalized_position=normalized_position,
+    )
 
     result = {
         "query": query,
@@ -1004,152 +1131,130 @@ def tool_recommend_positions(yaml_path, count, box_preference=None, strategy="co
     }
 
 
-def tool_generate_stats(
-    yaml_path,
-    box=None,
-    include_inactive=False,
-    full_records_for_gui=False,
+def _stats_parse_bool_flag(value, *, field_name):
+    """Parse a permissive boolean flag; returns ``(ok, value_or_error)``."""
+    if isinstance(value, bool):
+        return True, value
+    if value in (None, ""):
+        return True, False
+    if isinstance(value, (int, float)):
+        return True, bool(value)
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True, True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return True, False
+    return False, {
+        "ok": False,
+        "error_code": "invalid_tool_input",
+        "message": f"{field_name} must be a boolean",
+    }
+
+
+def _stats_record_sort_key(record):
+    """Sort records by position then id, pushing unparseable values last."""
+    pos_raw = record.get("position")
+    rid_raw = record.get("id")
+    try:
+        position_value = int(pos_raw)
+    except (TypeError, ValueError):
+        position_value = 10**9
+    try:
+        rid_value = int(rid_raw)
+    except (TypeError, ValueError):
+        rid_value = 10**9
+    return position_value, rid_value
+
+
+def _stats_apply_preview_payload(result, scoped_records, *, full_records_for_gui_flag):
+    """Attach inventory preview payload (or omission markers) to a stats result."""
+    if full_records_for_gui_flag:
+        result["inventory_preview"] = scoped_records
+        result["inventory_omitted"] = False
+        result["inventory_limit"] = INVENTORY_PREVIEW_LIMIT
+    elif len(scoped_records) <= INVENTORY_PREVIEW_LIMIT:
+        result["inventory_preview"] = scoped_records
+        result["inventory_omitted"] = False
+        result["inventory_limit"] = INVENTORY_PREVIEW_LIMIT
+    else:
+        result["inventory_omitted"] = True
+        result["inventory_omitted_reason"] = "record_count_exceeds_limit"
+        result["inventory_limit"] = INVENTORY_PREVIEW_LIMIT
+        result["next_actions"] = [
+            "Call generate_stats with box=<box_id> to inspect one box.",
+            "Use search_records with a non-empty query and structured filters for targeted lookup.",
+        ]
+
+
+def _stats_build_box_result(
+    data,
+    all_records,
+    records,
+    *,
+    target_box,
+    layout,
+    include_inactive_flag,
+    full_records_for_gui_flag,
 ):
-    """Generate inventory statistics.
-
-    - Global mode (box omitted): returns full-inventory stats.
-    - Box mode (box provided): returns only that box's stats/records.
-    """
-    data, failure = _load_supported_data(yaml_path)
-    if failure:
-        return failure
-
-    all_records = data.get("inventory", [])
-    def _parse_bool_flag(value, *, field_name):
-        if isinstance(value, bool):
-            return True, value
-        if value in (None, ""):
-            return True, False
-        if isinstance(value, (int, float)):
-            return True, bool(value)
-        normalized = str(value).strip().lower()
-        if normalized in {"1", "true", "yes", "y", "on"}:
-            return True, True
-        if normalized in {"0", "false", "no", "n", "off"}:
-            return True, False
-        return False, {
-            "ok": False,
-            "error_code": "invalid_tool_input",
-            "message": f"{field_name} must be a boolean",
-        }
-
-    include_ok, include_parsed = _parse_bool_flag(
-        include_inactive,
-        field_name="include_inactive",
-    )
-    if not include_ok:
-        return include_parsed
-    include_inactive_flag = bool(include_parsed)
-
-    gui_full_ok, gui_full_parsed = _parse_bool_flag(
-        full_records_for_gui,
-        field_name="full_records_for_gui",
-    )
-    if not gui_full_ok:
-        return gui_full_parsed
-    full_records_for_gui_flag = bool(gui_full_parsed)
-    records = list(all_records) if include_inactive_flag else [rec for rec in all_records if rec.get("position") is not None]
-    layout = api._get_layout(data)
-    target_box = None
-    if box not in (None, ""):
+    """Build the single-box stats payload."""
+    box_records = []
+    for rec in records:
         try:
-            target_box = int(display_to_box(box, layout))
-        except Exception:
-            return {
-                "ok": False,
-                "error_code": "invalid_box",
-                "message": "Validation failed",
-            }
-        if not validate_box(target_box, layout):
-            return {
-                "ok": False,
-                "error_code": "invalid_box",
-                "message": "Validation failed",
-            }
-
-    def _record_sort_key(record):
-        pos_raw = record.get("position")
-        rid_raw = record.get("id")
-        try:
-            position_value = int(pos_raw)
+            rec_box = int(rec.get("box"))
         except (TypeError, ValueError):
-            position_value = 10**9
-        try:
-            rid_value = int(rid_raw)
-        except (TypeError, ValueError):
-            rid_value = 10**9
-        return position_value, rid_value
+            continue
+        if rec_box != target_box:
+            continue
+        box_records.append(rec)
+    box_records.sort(key=_stats_record_sort_key)
 
-    def _apply_preview_payload(result, scoped_records):
-        if full_records_for_gui_flag:
-            result["inventory_preview"] = scoped_records
-            result["inventory_omitted"] = False
-            result["inventory_limit"] = INVENTORY_PREVIEW_LIMIT
-        elif len(scoped_records) <= INVENTORY_PREVIEW_LIMIT:
-            result["inventory_preview"] = scoped_records
-            result["inventory_omitted"] = False
-            result["inventory_limit"] = INVENTORY_PREVIEW_LIMIT
-        else:
-            result["inventory_omitted"] = True
-            result["inventory_omitted_reason"] = "record_count_exceeds_limit"
-            result["inventory_limit"] = INVENTORY_PREVIEW_LIMIT
-            result["next_actions"] = [
-                "Call generate_stats with box=<box_id> to inspect one box.",
-                "Use search_records with a non-empty query and structured filters for targeted lookup.",
-            ]
+    per_box_slots = get_total_slots(layout)
+    occupancy = compute_occupancy(all_records)
+    box_key = str(target_box)
+    box_occupied = len(occupancy.get(box_key, []))
+    box_empty = per_box_slots - box_occupied
+    box_rate = (box_occupied / per_box_slots * 100) if per_box_slots > 0 else 0
 
-    if target_box is not None:
-        box_records = []
-        for rec in records:
-            try:
-                rec_box = int(rec.get("box"))
-            except (TypeError, ValueError):
-                continue
-            if rec_box != target_box:
-                continue
-            box_records.append(rec)
-        box_records.sort(key=_record_sort_key)
+    color_key = get_color_key((data or {}).get("meta"))
+    value_counts = defaultdict(int)
+    for rec in box_records:
+        value_counts[rec.get(color_key, "Unknown")] += 1
 
-        per_box_slots = get_total_slots(layout)
-        occupancy = compute_occupancy(all_records)
-        box_key = str(target_box)
-        box_occupied = len(occupancy.get(box_key, []))
-        box_empty = per_box_slots - box_occupied
-        box_rate = (box_occupied / per_box_slots * 100) if per_box_slots > 0 else 0
+    stats_result = {
+        "data": {"meta": (data or {}).get("meta", {})},
+        "meta": (data or {}).get("meta", {}),
+        "layout": layout,
+        "box": target_box,
+        "box_total_slots": per_box_slots,
+        "box_occupied": box_occupied,
+        "box_empty": box_empty,
+        "box_occupancy_rate": box_rate,
+        "box_record_count": len(box_records),
+        "box_records": box_records,
+        "cell_lines": dict(sorted(value_counts.items(), key=lambda x: x[1], reverse=True)),
+        "field_value_counts": {"key": color_key, "counts": dict(sorted(value_counts.items(), key=lambda x: x[1], reverse=True))},
+        "record_count": len(box_records),
+        "include_inactive": include_inactive_flag,
+        "full_records_for_gui": full_records_for_gui_flag,
+    }
+    _stats_apply_preview_payload(
+        stats_result,
+        box_records,
+        full_records_for_gui_flag=full_records_for_gui_flag,
+    )
+    return stats_result
 
-        color_key = get_color_key((data or {}).get("meta"))
-        value_counts = defaultdict(int)
-        for rec in box_records:
-            value_counts[rec.get(color_key, "Unknown")] += 1
 
-        stats_result = {
-            "data": {"meta": (data or {}).get("meta", {})},
-            "meta": (data or {}).get("meta", {}),
-            "layout": layout,
-            "box": target_box,
-            "box_total_slots": per_box_slots,
-            "box_occupied": box_occupied,
-            "box_empty": box_empty,
-            "box_occupancy_rate": box_rate,
-            "box_record_count": len(box_records),
-            "box_records": box_records,
-            "cell_lines": dict(sorted(value_counts.items(), key=lambda x: x[1], reverse=True)),
-            "field_value_counts": {"key": color_key, "counts": dict(sorted(value_counts.items(), key=lambda x: x[1], reverse=True))},
-            "record_count": len(box_records),
-            "include_inactive": include_inactive_flag,
-            "full_records_for_gui": full_records_for_gui_flag,
-        }
-        _apply_preview_payload(stats_result, box_records)
-        return {
-            "ok": True,
-            "result": stats_result,
-        }
-
+def _stats_build_global_result(
+    data,
+    all_records,
+    records,
+    *,
+    layout,
+    include_inactive_flag,
+    full_records_for_gui_flag,
+):
+    """Build the full-inventory stats payload."""
     total_slots = get_total_slots(layout)
     occupancy = compute_occupancy(all_records)
     box_numbers = get_box_numbers(layout)
@@ -1210,8 +1315,88 @@ def tool_generate_stats(
         "include_inactive": include_inactive_flag,
         "full_records_for_gui": full_records_for_gui_flag,
     }
-    _apply_preview_payload(stats_result, records)
+    _stats_apply_preview_payload(
+        stats_result,
+        records,
+        full_records_for_gui_flag=full_records_for_gui_flag,
+    )
+    return stats_result
 
+
+def tool_generate_stats(
+    yaml_path,
+    box=None,
+    include_inactive=False,
+    full_records_for_gui=False,
+):
+    """Generate inventory statistics.
+
+    - Global mode (box omitted): returns full-inventory stats.
+    - Box mode (box provided): returns only that box's stats/records.
+    """
+    data, failure = _load_supported_data(yaml_path)
+    if failure:
+        return failure
+
+    all_records = data.get("inventory", [])
+
+    include_ok, include_parsed = _stats_parse_bool_flag(
+        include_inactive,
+        field_name="include_inactive",
+    )
+    if not include_ok:
+        return include_parsed
+    include_inactive_flag = bool(include_parsed)
+
+    gui_full_ok, gui_full_parsed = _stats_parse_bool_flag(
+        full_records_for_gui,
+        field_name="full_records_for_gui",
+    )
+    if not gui_full_ok:
+        return gui_full_parsed
+    full_records_for_gui_flag = bool(gui_full_parsed)
+    records = list(all_records) if include_inactive_flag else [rec for rec in all_records if rec.get("position") is not None]
+    layout = api._get_layout(data)
+    target_box = None
+    if box not in (None, ""):
+        try:
+            target_box = int(display_to_box(box, layout))
+        except Exception:
+            return {
+                "ok": False,
+                "error_code": "invalid_box",
+                "message": "Validation failed",
+            }
+        if not validate_box(target_box, layout):
+            return {
+                "ok": False,
+                "error_code": "invalid_box",
+                "message": "Validation failed",
+            }
+
+    if target_box is not None:
+        stats_result = _stats_build_box_result(
+            data,
+            all_records,
+            records,
+            target_box=target_box,
+            layout=layout,
+            include_inactive_flag=include_inactive_flag,
+            full_records_for_gui_flag=full_records_for_gui_flag,
+        )
+        return {
+            "ok": True,
+            "result": stats_result,
+        }
+
+    stats_result = _stats_build_global_result(
+        data,
+        all_records,
+        records,
+        layout=layout,
+        include_inactive_flag=include_inactive_flag,
+        full_records_for_gui_flag=full_records_for_gui_flag,
+    )
     return {
         "ok": True,
         "result": stats_result,

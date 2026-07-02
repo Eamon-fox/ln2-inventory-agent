@@ -7,7 +7,7 @@ import sys
 from typing import Callable, Optional
 
 from PySide6.QtCore import QTimer, Qt
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialog, QInputDialog, QMessageBox
 
 from app_gui.application import DatasetLifecycleUseCase
 from app_gui.application.ai_provider_catalog import (
@@ -15,6 +15,7 @@ from app_gui.application.ai_provider_catalog import (
     normalize_ai_provider,
 )
 from app_gui.application.manage_boxes_flow import ManageBoxesFlow as _ManageBoxesFlowImpl
+from app_gui.application.open_api import LOCAL_OPEN_API_DEFAULT_PORT
 from app_gui.application.update_stats import report_update_get
 from app_gui.application.ui_scale_env import build_qt_scale_environment
 from app_gui.gui_config import DEFAULT_MAX_STEPS, save_gui_config
@@ -25,9 +26,15 @@ from app_gui.ui.dialogs.common import (
     create_wrapping_label,
     show_warning_message,
 )
+from app_gui.ui.dialogs.custom_fields_dialog import CustomFieldsDialog
 from app_gui.ui.dialogs.manage_boxes_dialog import ManageBoxesDialog
+from app_gui.ui.dialogs.new_dataset_dialog import NewDatasetDialog
 from app_gui.version import current_release_platform, resolve_platform_release_info
-from lib.inventory_paths import assert_allowed_inventory_yaml_path
+from lib.inventory_paths import (
+    assert_allowed_inventory_yaml_path,
+    create_managed_dataset_yaml_path,
+    sanitize_dataset_name,
+)
 from lib.yaml_ops import load_yaml
 
 
@@ -627,7 +634,7 @@ class SettingsFlow:
 
 
 class DatasetFlow:
-    """Dataset creation workflow extracted from MainWindow."""
+    """Dataset lifecycle workflows (create/rename/delete) extracted from MainWindow."""
 
     def __init__(self, window, *, dataset_lifecycle_use_case=None):
         self._window = window
@@ -649,6 +656,170 @@ class DatasetFlow:
             color_key=color_key,
         )
         return result.target_path
+
+    def create_new_dataset(self, update_window=True):
+        window = self._window
+        layout_dlg = NewDatasetDialog(window)
+        dialog_result = layout_dlg.exec()
+        if dialog_result == NewDatasetDialog.RESULT_IMPORT_EXISTING:
+            window.on_import_existing_data(parent=window)
+            return
+        if dialog_result != QDialog.Accepted:
+            return
+        box_layout = layout_dlg.get_layout()
+
+        suggested = sanitize_dataset_name("", fallback="inventory")
+        dataset_name, ok = QInputDialog.getText(
+            window,
+            tr("main.new"),
+            tr("main.newDatasetNamePrompt"),
+            text=suggested,
+        )
+        if not ok:
+            return
+        dataset_name = sanitize_dataset_name(dataset_name, fallback="inventory")
+        try:
+            target_path = create_managed_dataset_yaml_path(dataset_name)
+        except Exception as exc:
+            window.statusBar().showMessage(str(exc), 5000)
+            return
+
+        created_path = self.create_dataset_file(
+            target_path=target_path,
+            box_layout=box_layout,
+            custom_fields_dialog_cls=CustomFieldsDialog,
+        )
+        if not created_path:
+            with suppress(OSError):
+                os.rmdir(os.path.dirname(target_path))
+            return
+
+        if not update_window:
+            return created_path
+
+        try:
+            switched_path = window._dataset_session.switch_to(created_path, reason="new_dataset")
+        except Exception as exc:
+            window.statusBar().showMessage(str(exc), 5000)
+            return
+        window._refresh_home_dataset_choices(selected_yaml=switched_path)
+        window.statusBar().showMessage(
+            t("main.fileCreated", path=window.current_yaml_path),
+            4000,
+        )
+        return created_path
+
+    def rename_dataset(self, current_yaml_path, new_dataset_name):
+        window = self._window
+        result = self._dataset_lifecycle.rename_dataset(
+            current_yaml_path=current_yaml_path or window.current_yaml_path,
+            new_dataset_name=new_dataset_name,
+        )
+        switched = window._dataset_session.switch_to(
+            result.target_path,
+            reason="dataset_rename",
+        )
+        window._refresh_home_dataset_choices(selected_yaml=switched)
+        if result.audit_error:
+            window.statusBar().showMessage(
+                t("settings.renameDatasetSuccessWithAuditWarning", path=switched, error=result.audit_error),
+                6000,
+            )
+        else:
+            window.statusBar().showMessage(
+                t("settings.renameDatasetSuccess", path=switched),
+                4000,
+            )
+        return switched
+
+    def delete_dataset(self, current_yaml_path):
+        window = self._window
+        result = self._dataset_lifecycle.delete_dataset(
+            current_yaml_path=current_yaml_path or window.current_yaml_path,
+        )
+        switched = window._dataset_session.switch_to(
+            result.target_path,
+            reason="dataset_delete",
+        )
+        window._refresh_home_dataset_choices(selected_yaml=switched)
+        if result.audit_error:
+            window.statusBar().showMessage(
+                t("settings.deleteDatasetSuccessWithAuditWarning", path=switched, error=result.audit_error),
+                6000,
+            )
+        else:
+            window.statusBar().showMessage(
+                t("settings.deleteDatasetSuccess", path=switched),
+                4000,
+            )
+        return switched
+
+
+class LocalApiFlow:
+    """Local Open API configuration workflow extracted from MainWindow."""
+
+    def __init__(self, window):
+        self._window = window
+
+    def current_config(self):
+        window = self._window
+        config = window.gui_config.get("open_api", {})
+        try:
+            port = int(config.get("port", LOCAL_OPEN_API_DEFAULT_PORT))
+        except Exception:
+            port = LOCAL_OPEN_API_DEFAULT_PORT
+        if port <= 0:
+            port = LOCAL_OPEN_API_DEFAULT_PORT
+        return {
+            "enabled": bool(config.get("enabled", False)),
+            "port": port,
+        }
+
+    def apply_settings(self, *, show_feedback=False):
+        window = self._window
+        service = getattr(window, "_local_open_api_service", None)
+        if service is None or not hasattr(service, "configure"):
+            return {
+                "ok": False,
+                "running": False,
+                "changed": False,
+                "message": "Local Open API service is unavailable.",
+            }
+
+        config = self.current_config()
+        result = service.configure(
+            enabled=bool(config.get("enabled", False)),
+            port=int(config.get("port", LOCAL_OPEN_API_DEFAULT_PORT)),
+        )
+        if result.get("ok"):
+            if show_feedback:
+                if result.get("running"):
+                    window.statusBar().showMessage(
+                        t("main.localApiStarted", port=result.get("port")),
+                        3000,
+                    )
+                else:
+                    window.statusBar().showMessage(tr("main.localApiStopped"), 3000)
+            return result
+
+        message = t(
+            "main.localApiStartFailed",
+            error=result.get("message") or "unknown error",
+        )
+        window.statusBar().showMessage(message, 6000)
+        if show_feedback:
+            window._emit_system_notice(
+                code="local_api.start_failed",
+                text=message,
+                level="error",
+                source="settings_dialog",
+                timeout_ms=6000,
+                data={
+                    "requested_port": int(config.get("port", LOCAL_OPEN_API_DEFAULT_PORT)),
+                    "error_code": result.get("error_code"),
+                },
+            )
+        return result
 
 
 class ManageBoxesFlow(_ManageBoxesFlowImpl):

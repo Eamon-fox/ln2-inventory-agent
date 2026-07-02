@@ -1,0 +1,49 @@
+# Pre-commit hooks for SnowFox.
+# 安装： pre-commit install
+# 全量自检： pre-commit run --all-files
+#
+# 设计取舍：
+# - mutating 的基础 hooks（trailing-whitespace / end-of-file-fixer）仅作用于
+#   工程化基建文件（files 白名单），避免对既有大体量历史源码产生大面积
+#   行尾/空行改动噪音、污染他人未提交改动。
+# - check-yaml / check-json 只做校验、不改文件，可覆盖全仓。
+# - ruff 只做检查（不 --fix），与 CI 口径一致；排除规则见 pyproject.toml。
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        files: |
+          (?x)^(
+            \.github/|
+            pyproject\.toml|
+            requirements.*\.txt|
+            \.pre-commit-config\.yaml|
+            tests/conftest\.py|
+            tests/contract/|
+            tests/RUNBOOK\.md|
+            AGENTS\.md|
+            docs/AGENTS\.md
+          )
+      - id: end-of-file-fixer
+        files: |
+          (?x)^(
+            \.github/|
+            pyproject\.toml|
+            requirements.*\.txt|
+            \.pre-commit-config\.yaml|
+            tests/conftest\.py|
+            tests/contract/|
+            tests/RUNBOOK\.md|
+            AGENTS\.md|
+            docs/AGENTS\.md
+          )
+      - id: check-yaml
+      - id: check-json
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.20
+    hooks:
+      - id: ruff
+        name: ruff check
+        args: ["--config", "pyproject.toml"]

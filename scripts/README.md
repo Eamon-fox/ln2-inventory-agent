@@ -10,12 +10,12 @@
 ## 常用仓库路径
 
 - macOS 开发仓库：`/Users/eamon/code/snowfox`
-- Windows 开发仓库：`D:\github_repo\ln2-inventory-agent`
+- Windows 开发仓库：`D:\github_repo\snowfox`
 
 说明：
 
 - Windows 的 `D:\SnowFox` 是安装目录，不是 git 仓库
-- 正式发版时，Windows 侧应在 `D:\github_repo\ln2-inventory-agent` 拉代码、构建安装包
+- 正式发版时，Windows 侧应在 `D:\github_repo\snowfox` 拉代码、构建安装包
 
 ## 脚本边界
 
@@ -54,23 +54,30 @@
 7. 从 `CHANGELOG.md` 生成发布说明产物
 8. 运行 `scripts/validate_version.py`
 9. 提示确认 Windows / macOS 构建结果
-10. 提示上传 OSS
-11. 在确认 OSS 上传后调用 `sync-website.sh`
+10. 提示上传 OSS（默认），或在 `--upload` 模式下自动调用 OSS 上传脚本
+11. 在确认 / 完成 OSS 上传后运行 `scripts/verify_release.py` 做发布后校验，再调用 `sync-website.sh`
 12. 创建 Git 提交和 tag
 
 边界说明：
 
 - `release.sh` 负责把本仓库的版本状态推进到“可发版”
 - `release.sh` 不负责 SSH 到另一台机器自动构建
-- `release.sh` 不负责替你决定在哪台机器上传 OSS
+- `release.sh` 默认不上传 OSS；`--upload` 是可选自动化，只封装对象清单与顺序，凭证与环境仍由本机 OSS 工具决定
 - `release.sh` 不负责承载完整跨机运维编排
 
 使用：
 
 ```bash
 cd ~/code/snowfox
-./scripts/release.sh
+./scripts/release.sh            # 默认：上传步骤只打印手动命令提示
+./scripts/release.sh --upload   # 自动上传 OSS + 发布后校验 + 网站同步
 ```
+
+可用环境变量：
+
+- `SNOWFOX_RELEASE_UPLOAD=1`：等价于 `--upload`
+- `OSS_UPLOAD_SCRIPT`：OSS 上传脚本路径（默认 `~/.agents/skills/aliyun-oss-upload/scripts/oss_upload.py`）
+- `OSS_BUCKET`：发布桶名称（默认 `snowfox-release`）
 
 ### `render_release_artifacts.py`
 
@@ -114,6 +121,28 @@ python3 scripts/render_release_artifacts.py --version 1.3.6
 ```bash
 cd ~/code/snowfox
 python3 scripts/validate_version.py
+```
+
+### `verify_release.py`
+
+发布后校验：比对线上 `latest.json` 与本地是否一致。
+
+当前检查项：
+
+1. 线上 `latest.json` 可获取且为合法 JSON
+2. `version` 与本地一致
+3. 顶层 `download_url`（旧客户端兼容字段）与本地一致
+4. `platforms.windows` / `platforms.macos` 的 `download_url` 与 `asset_name` 与本地一致
+5. 双平台安装包 URL 的 HEAD 可达性（`--skip-assets` 可跳过；`403` 视为防盗链警告，不算失败）
+
+任何不一致会明确报错并以非零退出码结束。
+
+使用：
+
+```bash
+cd ~/code/snowfox
+python3 scripts/verify_release.py
+# 可选: --base-url <发布桶地址> --local <latest.json 路径> --timeout <秒> --skip-assets
 ```
 
 ### `sync-website.sh`
@@ -177,10 +206,11 @@ WEBSITE_HOST=ecs WEBSITE_DIR=/var/www/snowfox.bio ./scripts/sync-website.sh
 3. 运行 `python3 scripts/validate_version.py`
 4. 在 Windows 构建 `dist/installer/SnowFox-Setup-<version>.exe`
 5. 在 macOS 构建 `dist/installer/SnowFox-<version>-macOS.pkg`
-6. 上传两个安装包、`latest.json`、`CHANGELOG.md`
-7. 运行 `./scripts/sync-website.sh`
-8. 用 `docs/releases/v<version>-github-release.md` 填 GitHub Release 页面
-9. 提交、打 tag、推送
+6. 上传两个安装包、`latest.json`、`CHANGELOG.md`（或用 `./scripts/release.sh --upload` 自动执行 6-8）
+7. 运行 `python3 scripts/verify_release.py` 校验线上发布元数据
+8. 运行 `./scripts/sync-website.sh`
+9. 用 `docs/releases/v<version>-github-release.md` 填 GitHub Release 页面
+10. 提交、打 tag、推送
 
 ## 推荐操作方式
 

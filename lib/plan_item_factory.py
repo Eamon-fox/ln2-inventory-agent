@@ -101,6 +101,8 @@ def resolve_record_box(record: Optional[Dict[str, Any]], fallback_box: int = 0) 
         try:
             return int(record.get("box", fallback_box) or fallback_box)
         except Exception:
+            # Intentional silent fallback: a non-numeric cached box value is an
+            # expected pre-validation state; degrade to the fallback box.
             pass
     return int(fallback_box or 0)
 

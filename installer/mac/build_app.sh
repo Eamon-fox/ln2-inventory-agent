@@ -36,6 +36,6 @@ echo "[1/2] Preparing macOS app icon..."
 bash installer/mac/generate_icns.sh
 
 echo "[2/2] Building macOS app bundle with PyInstaller..."
-"$PYTHON_BIN" -m PyInstaller -y ln2_inventory.mac.spec "$@"
+"$PYTHON_BIN" -m PyInstaller -y snowfox.mac.spec "$@"
 
 echo "Done. App bundle is under dist/SnowFox.app"

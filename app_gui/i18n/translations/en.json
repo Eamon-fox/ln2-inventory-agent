@@ -490,11 +490,6 @@
     "planRollbackBackupMissing": "Backup file not found at confirmation time: {path}",
     "planRollbackSourceEvent": "Audit source: {timestamp} | {action} | trace {trace_id}",
     "planChangeRollbackCore": "[High risk] Rollback to {target}",
-    "planChangeAddCore": "Add {count} tube(s) -> Box {box}: [{positions}]",
-    "planChangeSample": "Sample: {sample}",
-    "planChangeMoveCrossBoxTag": " (cross-box)",
-    "planChangeMoveCore": "Move: Box {from_box}:{from_pos} -> Box {to_box}:{to_pos}{suffix}",
-    "planChangeTakeoutCore": "Takeout: Box {box}:{pos} -> taken out",
     "planSummaryNoEffectiveEdit": "No effective field change",
     "planSummaryCrossBox": "Cross-box",
     "noRollbackBackup": "No rollback backup found for this execution.",
@@ -922,6 +917,22 @@
     },
     "response": {
       "nonDict": "Tool `{tool_name}` returned non-dict response."
+    },
+    "runtime": {
+      "runStopped": "Run stopped by user.",
+      "unknownToolHint": "Choose action from available tools.",
+      "questionCancelled": "User cancelled the question.",
+      "answerEmpty": "User answer is empty.",
+      "answerMissingFreeText": "Question is missing free-text option.",
+      "answerFreeTextMismatch": "User answer does not match free-text option.",
+      "answerNotInOptions": "User answer is not one of provided options.",
+      "userAnswered": "User answered: {answer}",
+      "boxAdjustCancelled": "User cancelled the box adjustment.",
+      "invalidConfirmationResult": "Invalid confirmation result payload.",
+      "malformedToolCall": "Model returned malformed tool call payload.",
+      "malformedToolCallHint": "Provide tool name and JSON-object arguments in tool call.",
+      "questionNotAlone": "question tool must be called alone, not with other tools.",
+      "questionNotAloneHint": "Call question separately, then use other tools after getting the answer."
     },
     "stage": {
       "allRejectedByValidation": "All operations rejected by validation: {detail}",

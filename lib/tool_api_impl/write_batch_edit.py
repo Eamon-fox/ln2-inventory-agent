@@ -7,6 +7,7 @@ Tool API.  The batch is atomic: any failed entry blocks the whole write.
 
 from __future__ import annotations
 
+import sys
 from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
@@ -203,6 +204,7 @@ def tool_batch_edit_entries(
             auto_backup=auto_backup,
             backup_path=request_backup_path,
             audit_meta=first_audit,
+            before_data=data,
         )
     except Exception as exc:
         return api._failure_result(
@@ -227,8 +229,10 @@ def tool_batch_edit_entries(
                 warnings=[],
                 audit_meta=audit_meta,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            # Audit logging is best-effort and must not fail the write; surface
+            # on stderr instead of swallowing (matches write_yaml behavior).
+            print(f"warning: failed to append audit log: {exc}", file=sys.stderr)
 
     return {
         "ok": True,

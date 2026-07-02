@@ -164,7 +164,9 @@ def _format_tool_response_positions(response, *, yaml_path=None, layout=None):
     resolved_layout = layout or {}
     if not resolved_layout and yaml_path:
         try:
-            resolved_layout = _get_layout(load_yaml(yaml_path))
+            # readonly: only the layout dict is read for output formatting; the
+            # loaded document is never mutated or persisted here.
+            resolved_layout = _get_layout(load_yaml(yaml_path, readonly=True))
         except Exception:
             resolved_layout = {}
     return format_positions_in_payload(response, layout=resolved_layout)
