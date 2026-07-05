@@ -1,11 +1,11 @@
 ---
 name: snowfox-local-api
-description: Discover, probe, and use the SnowFox local Open API for read-only inventory queries, validation, and GUI handoff. Use when the user wants SnowFox data or wants the GUI prepared without direct writes.
+description: Discover, probe, and use the SnowFox local Open API for read-only inventory queries, validation, and GUI handoff — including staging write plans into the GUI for human confirmation. The API never writes inventory directly; all writes land as staged plans a human executes in the GUI.
 ---
 
 # SnowFox Local Open API
 
-Follow this skill when the user wants to query the current SnowFox session, validate the active dataset, or prepare GUI context without executing write operations.
+Follow this skill when the user wants to query the current SnowFox session, validate the active dataset, prepare GUI context, or stage write operations into the GUI for human confirmation. The API itself never executes writes directly.
 
 ## Core Workflow
 
@@ -25,6 +25,7 @@ Follow this skill when the user wants to query the current SnowFox session, vali
 ## Connection Checklist
 
 - Probe loopback only: `http://127.0.0.1:<port>`
+- The API listens only on the loopback of the host running SnowFox. If you run on a different machine (e.g. managing the host over SSH), set up SSH local port forwarding first (`ssh -L 37666:127.0.0.1:37666 <host>`) or execute the probe/request commands on the host itself; never ask the user to bind the port to a non-loopback address.
 - Default first guess: `37666`
 - First probe: `GET /api/v1/health`
 - Capability probe: `GET /api/v1/capabilities`
@@ -35,6 +36,25 @@ Follow this skill when the user wants to query the current SnowFox session, vali
 ## API Reference
 
 {{LOCAL_OPEN_API_ROUTE_REFERENCE}}
+
+## Staging Writes (stage-plan) Notes
+
+- `POST /api/v1/gui/stage-plan` is the only write-shaped handoff: items only enter the GUI staging area and still require human confirmation in the GUI.
+- `mode` defaults to `merge` (merged into the existing staged plan); `replace` first clears ALL currently staged items, including ones staged by other sources. Before re-sending a correction, `GET /api/v1/gui/stage-plan` to see the current state; to wipe everything intentionally use `POST /api/v1/gui/stage-plan/clear`, not `replace` as a side effect.
+- Payload shapes differ per action: `edit` wraps changes under `payload.fields`; `takeout`/`move` use flat keys. Treat `stage_plan_schema` from `/api/v1/capabilities` as the source of truth.
+- `edit` requires `record_id` to point at a record that actually exists in the current dataset (preflight rejects otherwise); `edit` does NOT need `box`/`position` — the server fills defaults.
+- POST bodies containing non-ASCII text must be sent as UTF-8 bytes. Windows PowerShell 5.1 re-encodes string `-Body` values with the system codepage, turning non-ASCII characters into `?`; convert first: `-Body ([System.Text.Encoding]::UTF8.GetBytes($body))`.
+
+Minimal example (one edit plus one takeout):
+
+```json
+{"items": [
+  {"action": "edit", "record_id": 7,
+   "payload": {"fields": {"note": "thawed one vial"}}},
+  {"action": "takeout", "record_id": 7, "box": 1, "position": 5,
+   "payload": {"date_str": "2026-02-10"}}
+]}
+```
 
 ## Failure Handling
 
@@ -52,6 +72,7 @@ Follow this skill when the user wants to query the current SnowFox session, vali
   - return `report.errors` and `report.warnings` clearly to the user
 - `plan_stage_blocked` or `plan_action_not_allowed`:
   - explain that SnowFox accepted only GUI staging, not direct execution
+  - `GET /api/v1/gui/stage-plan` first to inspect what is already staged, fix the rejected items, and re-send with `merge`; do not reach for `mode: replace` as a shortcut
 
 ## Non-Negotiables
 

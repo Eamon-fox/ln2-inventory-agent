@@ -48,6 +48,11 @@ def test_default_english_local_api_skill_template_mentions_capabilities_schema_g
     assert "call `/api/v1/capabilities` before assuming field names or response keys" in rendered
     assert "`dataset_schema`" in rendered
     assert "`response_shapes`" in rendered
+    # Cross-machine access, staged-write semantics, and POST body encoding.
+    assert "ssh -L 37666:127.0.0.1:37666" in rendered
+    assert "UTF8.GetBytes" in rendered
+    assert "clears ALL currently staged items" in rendered
+    assert '"action": "edit"' in rendered
 
 
 def test_default_chinese_local_api_skill_template_mentions_capabilities_schema_guidance():
@@ -59,3 +64,8 @@ def test_default_chinese_local_api_skill_template_mentions_capabilities_schema_g
     assert "`/api/v1/capabilities`" in rendered
     assert "`dataset_schema`" in rendered
     assert "`response_shapes`" in rendered
+    # Cross-machine access, staged-write semantics, and POST body encoding.
+    assert "ssh -L 37666:127.0.0.1:37666" in rendered
+    assert "UTF8.GetBytes" in rendered
+    assert "清空当前所有已暂存条目" in rendered
+    assert '"action": "edit"' in rendered

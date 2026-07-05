@@ -46,6 +46,13 @@ _LOCAL_OPEN_API_CLIENT_HINTS = {
         "fields like box_tags into mojibake; prefer Invoke-RestMethod, which "
         "parses JSON as UTF-8."
     ),
+    "post_body_encoding": (
+        "POST bodies containing non-ASCII text (e.g. Chinese notes) must be "
+        "sent as UTF-8 bytes, not a string. Windows PowerShell 5.1 re-encodes "
+        "string -Body values with the system default codepage, silently "
+        "turning non-ASCII characters into '?'. Convert first: "
+        "-Body ([System.Text.Encoding]::UTF8.GetBytes($body))."
+    ),
     "powershell_examples": [
         "Invoke-RestMethod -Uri http://127.0.0.1:37666/api/v1/capabilities | "
         "ConvertTo-Json -Depth 8",
@@ -53,7 +60,8 @@ _LOCAL_OPEN_API_CLIENT_HINTS = {
         "payload=@{ fields=@{ note='edited' } } }) } | ConvertTo-Json -Depth 8; "
         "Invoke-RestMethod -Method Post "
         "-Uri http://127.0.0.1:37666/api/v1/gui/stage-plan "
-        "-ContentType 'application/json; charset=utf-8' -Body $body",
+        "-ContentType 'application/json; charset=utf-8' "
+        "-Body ([System.Text.Encoding]::UTF8.GetBytes($body))",
         "Invoke-RestMethod -Method Post "
         "-Uri http://127.0.0.1:37666/api/v1/gui/stage-plan/clear",
     ],
@@ -74,6 +82,10 @@ def _backfill_plan_payload(item):
     Callers may now omit the duplicates; we copy them from the item so the
     shared validators (which cross-check item == payload) still pass. Caller-only
     data (fields/stored_at/date_str) is never invented.
+
+    For ``edit`` the item-level box/position carry no meaning but are still
+    required by the shared plan-item schema; default them to the same values
+    ``lib.plan_item_factory.build_edit_plan_item`` uses (box=0, position=1).
     """
     if not isinstance(item, dict):
         return item
@@ -91,6 +103,10 @@ def _backfill_plan_payload(item):
         if not payload.get("positions") and item.get("position") not in (None, ""):
             payload["positions"] = [item.get("position")]
     elif action == "edit":
+        if item.get("box") in (None, ""):
+            item["box"] = 0
+        if item.get("position") in (None, ""):
+            item["position"] = 1
         _inherit("record_id", "record_id")
     elif action in ("takeout", "move"):
         _inherit("record_id", "record_id")

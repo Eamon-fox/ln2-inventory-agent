@@ -457,8 +457,12 @@ class LocalOpenApiTests(ManagedPathTestCase):
 
         hints = result["client_hints"]
         self.assertIn("utf-8", hints["encoding"].lower())
+        self.assertIn("UTF-8 bytes", hints["post_body_encoding"])
         self.assertTrue(
             any("Invoke-RestMethod" in example for example in hints["powershell_examples"])
+        )
+        self.assertTrue(
+            any("UTF8.GetBytes" in example for example in hints["powershell_examples"])
         )
 
     def test_stage_plan_clear_route_empties_store(self):
@@ -521,6 +525,26 @@ class LocalOpenApiTests(ManagedPathTestCase):
         self.assertFalse(payload["ok"])
         self.assertEqual("invalid_request", payload["error_code"])
         self.assertEqual("mode", payload["field"])
+
+    def test_stage_plan_edit_needs_only_action_and_record_id(self):
+        # Contract: edit item_keys are {action, record_id}; the API defaults
+        # item-level box/position (0, 1) just like build_edit_plan_item does.
+        item = {
+            "action": "edit",
+            "record_id": 1,
+            "payload": {"fields": {"note": "edited via api"}},
+        }
+        status, payload = self.controller.handle_request(
+            "POST", "/api/v1/gui/stage-plan", {}, payload={"items": [item]}
+        )
+        self.assertEqual(200, status, payload)
+        self.assertTrue(payload["ok"], payload)
+        self.assertEqual(1, payload["result"]["staged_count"])
+        staged = self.plan_store.list_items()[0]
+        self.assertEqual(0, staged["box"])
+        self.assertEqual(1, staged["position"])
+        self.assertEqual(1, staged["payload"]["record_id"])
+        self.assertEqual({"note": "edited via api"}, staged["payload"]["fields"])
 
     def test_stage_plan_backfills_omitted_payload_keys(self):
         # payload omits box and positions; they are inherited from the item level.

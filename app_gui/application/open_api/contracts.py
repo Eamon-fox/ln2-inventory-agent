@@ -38,6 +38,9 @@ LOCAL_OPEN_API_STAGE_PLAN_PAYLOAD_SCHEMA = {
         "(fields, stored_at, date_str) is never inferred and must be supplied.",
         "Payload shapes intentionally differ per action: 'edit' wraps changes under "
         "'fields'; 'takeout'/'move' use flat keys.",
+        "'edit' does not need item-level box/position: the API defaults them "
+        "(box=0, position=1) to satisfy the shared plan-item schema, matching "
+        "the GUI's own edit items.",
     ],
     "actions": {
         "add": {

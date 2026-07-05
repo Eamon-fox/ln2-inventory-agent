@@ -1,11 +1,11 @@
 ---
 name: snowfox-local-api
-description: 发现、探测并使用 SnowFox 本地 Open API，用于只读库存查询、校验和 GUI handoff。适用于需要读取 SnowFox 当前会话或准备 GUI 上下文、但不进行直接写入的场景。
+description: 发现、探测并使用 SnowFox 本地 Open API，用于只读库存查询、校验和 GUI handoff（含把写操作暂存进 GUI 等待人工确认）。API 从不直接写库存；所有写入都以暂存计划的形式交给人在 GUI 中执行。
 ---
 
 # SnowFox 本地 Open API
 
-当用户希望查询当前 SnowFox 会话、校验当前打开的数据集，或只是让 GUI 先准备好上下文而不直接执行写操作时，使用这个 Skill。
+当用户希望查询当前 SnowFox 会话、校验当前打开的数据集、让 GUI 先准备好上下文，或把增删改操作暂存进 GUI 等待人工确认时，使用这个 Skill。API 本身从不直接执行写操作。
 
 ## 核心流程
 
@@ -24,7 +24,8 @@ description: 发现、探测并使用 SnowFox 本地 Open API，用于只读库�
 
 ## 连接检查清单
 
-- 只探测本机回环地址：`http://127.0.0.1:<port>`
+- 只探测回环地址：`http://127.0.0.1:<port>`
+- API 只监听 SnowFox 所在主机的回环地址。如果你运行在另一台机器上（例如通过 SSH 管理宿主机），先建立 SSH 本地端口转发（`ssh -L 37666:127.0.0.1:37666 <host>`），或直接在宿主机上执行探测与请求命令；不要引导用户把端口绑定到非回环地址。
 - 第一优先默认端口：`37666`
 - 首次探测：`GET /api/v1/health`
 - 能力探测：`GET /api/v1/capabilities`
@@ -35,6 +36,25 @@ description: 发现、探测并使用 SnowFox 本地 Open API，用于只读库�
 ## API 说明
 
 {{LOCAL_OPEN_API_ROUTE_REFERENCE}}
+
+## 写入暂存（stage-plan）注意事项
+
+- `POST /api/v1/gui/stage-plan` 是唯一的写入型 handoff：条目只进入 GUI 暂存区，仍需人工在 GUI 中确认执行。
+- `mode` 默认 `merge`（合并进现有暂存）；`replace` 会先清空当前所有已暂存条目，包括其他来源暂存的。改错重发前先 `GET /api/v1/gui/stage-plan` 查看现状；需要整体清空时用 `POST /api/v1/gui/stage-plan/clear`，不要用 `replace` 顺带清空。
+- 各 action 的 payload 形状不同：`edit` 把改动包在 `payload.fields` 里，`takeout`/`move` 用平铺键。以 `/api/v1/capabilities` 返回的 `stage_plan_schema` 为准。
+- `edit` 的 `record_id` 必须指向当前数据集中真实存在的记录（预检会拦截）；`edit` 不需要提供 `box`/`position`，服务端会自动补默认值。
+- POST body 含非 ASCII（如中文备注）时，必须以 UTF-8 字节发送。Windows PowerShell 5.1 传字符串 `-Body` 会按系统代码页重编码，中文会变成 `?`；先转字节再传：`-Body ([System.Text.Encoding]::UTF8.GetBytes($body))`。
+
+最小示例（一个 edit 加一个 takeout）：
+
+```json
+{"items": [
+  {"action": "edit", "record_id": 7,
+   "payload": {"fields": {"note": "已复苏一管"}}},
+  {"action": "takeout", "record_id": 7, "box": 1, "position": 5,
+   "payload": {"date_str": "2026-02-10"}}
+]}
+```
 
 ## 失败处理
 
@@ -52,6 +72,7 @@ description: 发现、探测并使用 SnowFox 本地 Open API，用于只读库�
   - 将 `report.errors` 和 `report.warnings` 清晰回传给用户
 - `plan_stage_blocked` 或 `plan_action_not_allowed`：
   - 明确说明这是 GUI 暂存接口，不是直接执行接口
+  - 先 `GET /api/v1/gui/stage-plan` 查看已暂存条目，修正被拒条目后按 `merge` 重发；不要为了省事直接 `mode: replace`
 
 ## 不可违反的规则
 

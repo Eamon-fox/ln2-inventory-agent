@@ -7,6 +7,7 @@ from app_gui.application.open_api.contracts import (
 )
 from app_gui.application.open_api.service import _backfill_plan_payload
 from lib.plan_gate import _validate_item_payload_schema
+from lib.plan_validation import validate_plan_item
 
 
 def test_describe_local_open_api_route_projects_public_fields_from_contract():
@@ -39,6 +40,10 @@ def test_stage_plan_schema_required_keys_match_plan_gate_enforcement():
     actions = LOCAL_OPEN_API_STAGE_PLAN_PAYLOAD_SCHEMA["actions"]
     for action, spec in actions.items():
         example = _backfill_plan_payload(copy.deepcopy(spec["example"]))
+        # Both schema layers run at stage time (lib/plan_gate.validate_plan_batch):
+        # the item-level schema first, then the payload schema. The documented
+        # example must clear both after server-side backfill.
+        assert validate_plan_item(example) is None, (action, "item schema must validate")
         assert _validate_item_payload_schema(example) is None, (action, "baseline must validate")
 
         required_keys = [key for key, meta in spec["payload"].items() if meta.get("required")]
