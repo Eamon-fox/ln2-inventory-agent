@@ -113,6 +113,14 @@ class AgentSessionService:
                 llm = MiniMaxLLMClient(model=chosen_model, api_key=api_key, thinking_enabled=use_thinking)
             else:
                 llm = DeepSeekLLMClient(model=chosen_model, api_key=api_key, thinking_enabled=use_thinking)
+            context_window_env = os.environ.get("SNOWFOX_LLM_CONTEXT_WINDOW")
+            if context_window_env:
+                # Escape hatch for models whose real context window differs
+                # from the provider default budget in context_checkpoint.
+                try:
+                    llm._context_window = int(context_window_env)
+                except (TypeError, ValueError):
+                    pass
             if callable(_expose_llm):
                 _expose_llm(llm)
             from app_gui.plan_executor import preflight_plan

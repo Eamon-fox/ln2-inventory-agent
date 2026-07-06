@@ -2,6 +2,7 @@
 
 import json
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -25,6 +26,42 @@ def _is_stop_requested(stop_event):
         return bool(stop_event is not None and stop_event.is_set())
     except Exception:
         return False
+
+
+def _model_error_is_retryable(model_response):
+    """Only transient failures earn a retry; auth/validation errors won't heal.
+
+    Retryable: transport errors, unexpected stream failures, HTTP 408/429/5xx.
+    Not retryable: API-level errors and other HTTP 4xx (bad key, bad request).
+    """
+    code = str(model_response.get("error_code") or "")
+    if code in ("llm_transport_error", "llm_stream_failed"):
+        return True
+    if code == "llm_http_error":
+        details = model_response.get("details") if isinstance(model_response.get("details"), dict) else {}
+        try:
+            status = int(details.get("http_status") or 0)
+        except Exception:
+            status = 0
+        return status in (408, 429) or status >= 500
+    return False
+
+
+def _wait_for_user_reply(runner, stop_event, timeout_seconds=USER_REPLY_TIMEOUT_SECONDS):
+    """Wait for the GUI reply event without ever parking the thread forever.
+
+    Polls in short slices so the stop button stays responsive. Returns
+    ``"answered"``, ``"cancelled"`` (stop requested) or ``"timeout"``.
+    """
+    deadline = time.monotonic() + float(timeout_seconds)
+    while True:
+        if _is_stop_requested(stop_event):
+            return "cancelled"
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return "timeout"
+        if runner._answer_event.wait(timeout=min(0.2, remaining)):
+            return "answered"
 
 
 def _runtime_msg(self, msg_key, default, **kwargs):
@@ -164,9 +201,19 @@ def _run_tool_call(self, call, tool_names, trace_id, stop_event=None):
         )
 
         runner = self._tools
-        runner._answer_event.wait()
+        wait_outcome = _wait_for_user_reply(runner, stop_event)
 
-        if runner._answer_cancelled:
+        if wait_outcome == "timeout":
+            observation = {
+                "ok": False,
+                "error_code": "question_timeout",
+                "message": _runtime_msg(
+                    self,
+                    "runtime.questionTimeout",
+                    "No user answer within the time limit.",
+                ),
+            }
+        elif wait_outcome == "cancelled" or runner._answer_cancelled:
             observation = {
                 "ok": False,
                 "error_code": "question_cancelled",
@@ -285,8 +332,18 @@ def _run_tool_call(self, call, tool_names, trace_id, stop_event=None):
             },
         )
 
-        runner._answer_event.wait()
-        if runner._answer_cancelled:
+        wait_outcome = _wait_for_user_reply(runner, stop_event)
+        if wait_outcome == "timeout":
+            observation = {
+                "ok": False,
+                "error_code": "user_timeout",
+                "message": _runtime_msg(
+                    self,
+                    "runtime.boxAdjustTimeout",
+                    "No user confirmation within the time limit.",
+                ),
+            }
+        elif wait_outcome == "cancelled" or runner._answer_cancelled:
             observation = {
                 "ok": False,
                 "error_code": "user_cancelled",
@@ -671,6 +728,26 @@ def run(self, user_query, conversation_history=None, on_event=None, stop_event=N
 
             if retry_idx >= 1 or _is_stop_requested(stop_event):
                 break
+
+            if not _model_error_is_retryable(model_response):
+                break
+
+            # Tell the GUI a partial stream may have been shown and a fresh
+            # attempt follows, then back off briefly before re-calling.
+            self._emit_event(
+                on_event,
+                {
+                    "event": "stream_retry",
+                    "type": "stream_retry",
+                    "trace_id": trace_id,
+                    "step": step,
+                    "data": {
+                        "error_code": model_response.get("error_code"),
+                        "message": model_response.get("error"),
+                    },
+                },
+            )
+            time.sleep(1.0)
 
         if model_response.get("error"):
             error_code = str(model_response.get("error_code") or "llm_stream_failed")

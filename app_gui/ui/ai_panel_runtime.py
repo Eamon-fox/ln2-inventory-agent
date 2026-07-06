@@ -533,6 +533,7 @@ def on_progress(self, event):
         "chunk": self._handle_progress_chunk,
         "error": self._handle_progress_error,
         "stream_end": self._handle_progress_stream_end,
+        "stream_retry": self._handle_progress_stream_retry,
         "step_end": self._handle_progress_step_end,
         "max_steps": self._handle_progress_max_steps,
     }
@@ -676,6 +677,14 @@ def _handle_progress_chunk(self, event):
         if indicator is not None:
             indicator.set_tool_name("")
         self._append_stream_chunk(chunk, channel=channel)
+
+
+def _handle_progress_stream_retry(self, event):
+    # A partial answer may already be on screen; mark the cut so the fresh
+    # stream that follows is not read as duplicated output.
+    if getattr(self, "ai_streaming_active", False):
+        self._append_stream_chunk("\n\n" + tr("ai.streamRetryNotice") + "\n\n")
+    self.status_message.emit(tr("ai.streamRetryNotice"), 3000)
 
 
 def _handle_progress_step_end(self, event):

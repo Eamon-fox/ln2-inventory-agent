@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import json
 import math
+import sys
+import time
 import uuid
 from datetime import datetime
 from typing import Any
+
+
+class SummaryModelError(RuntimeError):
+    """Summary-model call failed after retries; checkpointing should degrade."""
 
 
 SUMMARY_SYSTEM_PROMPT = """You are creating a compact checkpoint summary for a long-running LN2 inventory agent session.
@@ -98,9 +104,18 @@ def _dump_json_compact(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
+# Per-model budget overrides, keyed "provider:model" (lowercase). Providers
+# ship models with different context windows; add an entry here when a model
+# diverges from its provider default instead of mis-budgeting it.
+_MODEL_BUDGET_OVERRIDES: dict[str, dict[str, int]] = {}
+
+
 def resolve_model_budget(llm_client) -> dict[str, int]:
-    provider, _model = detect_llm_identity(llm_client)
+    provider, model = detect_llm_identity(llm_client)
     budget = dict(_PROVIDER_BUDGETS.get(provider) or {})
+    model_override = _MODEL_BUDGET_OVERRIDES.get(f"{provider}:{model}".lower())
+    if model_override:
+        budget.update(model_override)
 
     explicit_context_window = getattr(llm_client, "_context_window", None)
     if isinstance(explicit_context_window, int) and explicit_context_window > 0:
@@ -284,10 +299,26 @@ def call_summary_model(llm_client, summary_state, fold_messages: list[dict], sto
     provider, model = detect_llm_identity(llm_client)
     messages = build_summary_call_messages(summary_state, fold_messages)
 
-    try:
-        response = llm_client.chat(messages, tools=None, temperature=0.0, stop_event=stop_event)
-    except TypeError:
-        response = llm_client.chat(messages, tools=None, temperature=0.0)
+    # The summary call fires exactly when the session is at its largest and
+    # most valuable; a transient network blip must not abort the whole run.
+    response = None
+    last_exc = None
+    for attempt in range(3):
+        if stop_event is not None and getattr(stop_event, "is_set", lambda: False)():
+            raise SummaryModelError("Summary call aborted: stop requested.")
+        try:
+            try:
+                response = llm_client.chat(messages, tools=None, temperature=0.0, stop_event=stop_event)
+            except TypeError:
+                response = llm_client.chat(messages, tools=None, temperature=0.0)
+            last_exc = None
+            break
+        except Exception as exc:
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(float(attempt + 1))
+    if last_exc is not None:
+        raise SummaryModelError(f"Summary model call failed after retries: {last_exc}") from last_exc
 
     text = ""
     if isinstance(response, dict):
@@ -346,12 +377,22 @@ def checkpoint_context(system_content: str, raw_messages: list[dict], tool_schem
         if tail:
             current_messages = [dict(item) for item in current_messages]
 
-        normalized_state = call_summary_model(
-            llm_client,
-            normalized_state,
-            fold_messages,
-            stop_event=stop_event,
-        )
+        try:
+            normalized_state = call_summary_model(
+                llm_client,
+                normalized_state,
+                fold_messages,
+                stop_event=stop_event,
+            )
+        except SummaryModelError as exc:
+            # Degrade gracefully: undo the fold and keep the raw tail. Losing
+            # one checkpoint round is recoverable; aborting the session is not.
+            current_messages = fold_messages + current_messages
+            print(
+                f"warning: context checkpoint skipped after summary failures: {exc}",
+                file=sys.stderr,
+            )
+            return current_messages, normalized_state, latest_event
         latest_event = {
             "checkpoint_id": normalized_state["checkpoint_id"],
             "covered_message_count": normalized_state["covered_message_count"],

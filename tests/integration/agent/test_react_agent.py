@@ -573,10 +573,12 @@ class ReactAgentTests(ManagedPathTestCase):
         result = agent.run("add one box", on_event=_on_event)
 
         self.assertTrue(result["ok"])
+        # The wait is event-driven but bounded: every call passes a timeout
+        # slice so the stop button / deadline stays responsive.
         self.assertEqual(1, len(spy_event.wait_calls))
         args, kwargs = spy_event.wait_calls[0]
         self.assertEqual((), args)
-        self.assertEqual({}, kwargs)
+        self.assertGreater(kwargs.get("timeout") or 0, 0)
 
     def test_react_agent_question_returns_answer_and_index(self):
         llm = _SequenceLLM(
@@ -670,10 +672,11 @@ class ReactAgentTests(ManagedPathTestCase):
         result = agent.run("confirm", on_event=_on_event)
 
         self.assertTrue(result["ok"])
+        # Bounded wait: every call passes a timeout slice (stop-button safety).
         self.assertEqual(1, len(spy_event.wait_calls))
         args, kwargs = spy_event.wait_calls[0]
         self.assertEqual((), args)
-        self.assertEqual({}, kwargs)
+        self.assertGreater(kwargs.get("timeout") or 0, 0)
 
     def test_react_agent_question_accepts_other_text_answer(self):
         llm = _SequenceLLM(

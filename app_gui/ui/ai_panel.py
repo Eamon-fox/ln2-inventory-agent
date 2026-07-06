@@ -1123,6 +1123,7 @@ class AIPanel(QWidget):
     _handle_progress_step_end = _ai_runtime._handle_progress_step_end
     _handle_progress_error = staticmethod(_ai_runtime._handle_progress_error)
     _handle_progress_stream_end = _ai_runtime._handle_progress_stream_end
+    _handle_progress_stream_retry = _ai_runtime._handle_progress_stream_retry
     _handle_progress_max_steps = staticmethod(_ai_runtime._handle_progress_max_steps)
     on_finished = _ai_runtime.on_finished
     on_thread_finished = _ai_runtime.on_thread_finished
