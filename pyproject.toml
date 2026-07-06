@@ -25,6 +25,7 @@ dependencies = [
 # 开发/测试依赖与 requirements-dev.txt 同源。
 dev = [
     "pytest==9.0.2",
+    "pytest-cov==7.0.0",
     "ruff==0.15.20",
     "pre-commit==4.6.0",
 ]
@@ -51,11 +52,13 @@ ignore = [
     "F405",  # undefined-local-with-import-star-usage（存量 805，import *）
     "E402",  # module-import-not-at-top-of-file（存量 171，测试 sys.path 注入后再 import）
     "W293",  # blank-line-with-whitespace（存量 65）
-    "F401",  # unused-import（存量 60）
+    "F401",  # unused-import。注意：不能盲目 --fix——本仓库多处 facade 模块
+             # 依赖“导入即再导出”供 import * 消费，自动删除会破坏运行时行为；
+             # 清理需逐文件确认或补 noqa/__all__。
     "F841",  # unused-variable（存量 18）
     "E731",  # lambda-assignment（存量 9）
-    "F821",  # undefined-name（存量 5，import * 引入的名字）
-    "F811",  # redefined-while-unused（存量 1）
+    # F821（undefined-name）与 F811（redefined-while-unused）存量已清零并移出
+    # ignore——这两条能抓真实 NameError/复制粘贴 bug，新代码即刻受约束。
 ]
 
 [tool.pytest.ini_options]

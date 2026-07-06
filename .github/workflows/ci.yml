@@ -3,7 +3,9 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -54,6 +56,64 @@ jobs:
         timeout-minutes: 10
         run: python -m pytest -q tests/unit tests/contract
 
-      - name: Integration tests
+      - name: Integration tests (with coverage)
         timeout-minutes: 25
-        run: python -m pytest -q tests/integration
+        run: >-
+          python -m pytest -q tests/integration
+          --cov=lib --cov=app_gui --cov=agent
+          --cov-report=term
+
+  # 产品交付物是 Windows 桌面应用；至少在 Windows 上跑轻量测试面，
+  # 捕获 Linux 上暴露不了的路径/编码/文件锁差异。
+  windows-tests:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Unit and contract tests
+        timeout-minutes: 15
+        run: python -m pytest -q tests/unit tests/contract
+
+  # 打包链路冒烟：PyInstaller 构建产物能启动即可。tag / 手动触发，
+  # 避免每个 PR 都付构建成本。
+  windows-build-smoke:
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Build with PyInstaller
+        run: pyinstaller snowfox.spec --noconfirm
+
+      - name: Smoke check build output
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist -Recurse -Filter *.exe | Select-Object -First 1
+          if (-not $exe) { throw "PyInstaller build produced no exe" }
+          Write-Host "Built: $($exe.FullName) ($([math]::Round($exe.Length/1MB,1)) MB)"

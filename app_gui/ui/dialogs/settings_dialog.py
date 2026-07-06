@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QInputDialog,
+    QLabel,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,

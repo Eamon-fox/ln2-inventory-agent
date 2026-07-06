@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Iterable
+from typing import Any, Iterable
 
 from .tool_registry import (
     GUI_BRIDGE_READ,

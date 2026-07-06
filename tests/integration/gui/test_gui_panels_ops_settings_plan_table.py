@@ -10,7 +10,6 @@ class GuiPanelsPlanTableTests(GuiPanelsBaseCase):
     def test_plan_store_queued_refresh_keeps_ui_consistent_after_external_clear(self):
         from PySide6.QtCore import QMetaObject, Qt
         from lib.plan_item_factory import build_rollback_plan_item
-        from lib.plan_store import PlanStore
 
         store = PlanStore()
         panel = OperationsPanel(

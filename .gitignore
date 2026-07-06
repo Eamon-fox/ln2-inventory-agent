@@ -78,3 +78,7 @@ CHANGELOG.md
 # Local media exports
 snowfox-promo-1080p.mp4
 snowfox-promo-4k.mp4
+
+# Local scratch/debug leftovers
+tmp_*.log
+nul

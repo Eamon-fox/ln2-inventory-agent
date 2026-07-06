@@ -93,6 +93,7 @@
 - test_path_policy.py - Path escape and security policy enforcement. <!-- 路径逃逸与安全策略执行 -->
 - test_installer_windows_script.py - Windows installer script config preservation. <!-- Windows 安装脚本配置保留检查 -->
 - test_architecture_dependencies.py - Layer dependency boundaries for domain/UI modules. <!-- domain/UI 分层依赖边界约束 -->
+- test_dependency_sync.py - pyproject vs requirements*.txt dependency declarations stay in sync. <!-- pyproject 与 requirements 依赖声明同步门禁 -->
 
 ## 新增测试规则
 

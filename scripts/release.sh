@@ -11,12 +11,16 @@ OSS_UPLOAD_SCRIPT="${OSS_UPLOAD_SCRIPT:-$HOME/.agents/skills/aliyun-oss-upload/s
 
 usage() {
     cat <<'EOF'
-用法: ./scripts/release.sh [--upload]
+用法: ./scripts/release.sh [--upload] [--yes] [--version=X.Y.Z]
 
 选项:
-  --upload    自动执行 OSS 上传、发布后校验（scripts/verify_release.py）与网站同步。
-              也可通过环境变量 SNOWFOX_RELEASE_UPLOAD=1 开启。
-  -h, --help  显示本帮助。
+  --upload         自动执行 OSS 上传、发布后校验（scripts/verify_release.py）与网站同步。
+                   也可通过环境变量 SNOWFOX_RELEASE_UPLOAD=1 开启。
+  --yes, -y        非交互模式：跳过确认提示；"是否已完成构建"改为直接检查
+                   dist/installer/ 产物是否存在；CHANGELOG 改为校验标题存在。
+                   需配合 --version 提供版本号。
+  --version=X.Y.Z  直接指定新版本号（非交互模式必需）。
+  -h, --help       显示本帮助。
 
 默认行为保持不变：只打印 OSS 上传与网站同步的手动命令提示。
 
@@ -28,6 +32,8 @@ EOF
 }
 
 AUTO_UPLOAD=false
+ASSUME_YES=false
+NEW_VERSION_ARG=""
 if [[ "${SNOWFOX_RELEASE_UPLOAD:-0}" == "1" ]]; then
     AUTO_UPLOAD=true
 fi
@@ -35,6 +41,12 @@ for arg in "$@"; do
     case "$arg" in
         --upload)
             AUTO_UPLOAD=true
+            ;;
+        --yes|-y)
+            ASSUME_YES=true
+            ;;
+        --version=*)
+            NEW_VERSION_ARG="${arg#--version=}"
             ;;
         -h|--help)
             usage
@@ -48,6 +60,18 @@ for arg in "$@"; do
     esac
 done
 
+# 交互确认收口：--yes 时自动通过并打印决定，避免脚本卡死在 CI/agent 环境。
+confirm() {
+    local prompt="$1"
+    if [[ "$ASSUME_YES" == true ]]; then
+        echo "$prompt [--yes 自动确认]"
+        return 0
+    fi
+    read -p "$prompt [y/N] " -n 1 -r
+    echo
+    [[ $REPLY =~ ^[Yy]$ ]]
+}
+
 echo "🦊 SnowFox 发布脚本"
 echo "=================="
 
@@ -60,7 +84,15 @@ CURRENT_VERSION="$(python3 -c "import pathlib, re; content = pathlib.Path('app_g
 echo "📦 当前版本: $CURRENT_VERSION"
 echo ""
 
-read -p "请输入新版本号 (如 1.3.6): " NEW_VERSION
+if [[ -n "$NEW_VERSION_ARG" ]]; then
+    NEW_VERSION="$NEW_VERSION_ARG"
+    echo "📦 目标版本: $NEW_VERSION（来自 --version）"
+elif [[ "$ASSUME_YES" == true ]]; then
+    echo "❌ --yes 非交互模式需要 --version=X.Y.Z 提供版本号"
+    exit 1
+else
+    read -p "请输入新版本号 (如 1.3.6): " NEW_VERSION
+fi
 if [[ -z "$NEW_VERSION" ]]; then
     echo "❌ 版本号不能为空"
     exit 1
@@ -90,9 +122,7 @@ else
 fi
 echo ""
 
-read -p "确认发布 v$NEW_VERSION? [y/N] " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+if ! confirm "确认发布 v$NEW_VERSION?"; then
     echo "❌ 已取消"
     exit 1
 fi
@@ -171,9 +201,14 @@ echo ""
 echo "### Fixed"
 echo "- ..."
 echo ""
-read -p "已更新 CHANGELOG.md? [y/N] " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+if [[ "$ASSUME_YES" == true ]]; then
+    # 非交互模式下改为机器校验：CHANGELOG 顶部必须已有本版本标题。
+    if ! grep -q "^## $NEW_VERSION " CHANGELOG.md && ! grep -q "^## $NEW_VERSION$" CHANGELOG.md; then
+        echo "❌ CHANGELOG.md 中未找到 '## $NEW_VERSION' 标题，请先更新"
+        exit 1
+    fi
+    echo "CHANGELOG.md 已包含 v$NEW_VERSION 标题 [--yes 自动校验]"
+elif ! confirm "已更新 CHANGELOG.md?"; then
     echo "❌ 请先更新 CHANGELOG.md"
     exit 1
 fi
@@ -196,22 +231,24 @@ echo "   macOS:"
 echo "   bash installer/mac/build_pkg.sh"
 echo "   期望产物: dist/installer/$MACOS_ASSET"
 echo ""
-read -p "是否已完成 Windows 安装包构建? [y/N] " -n 1 -r
-echo
 WINDOWS_BUILT=false
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    WINDOWS_BUILT=true
-else
-    echo "⚠️  Windows 安装包尚未确认。"
-fi
-
-read -p "是否已完成 macOS 安装包构建? [y/N] " -n 1 -r
-echo
 MACOS_BUILT=false
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    MACOS_BUILT=true
+if [[ "$ASSUME_YES" == true ]]; then
+    # 非交互模式下不问人，直接看产物在不在。
+    [[ -f "dist/installer/$WINDOWS_ASSET" ]] && WINDOWS_BUILT=true
+    [[ -f "dist/installer/$MACOS_ASSET" ]] && MACOS_BUILT=true
+    echo "构建产物检查 [--yes 自动]: Windows=$WINDOWS_BUILT macOS=$MACOS_BUILT"
 else
-    echo "⚠️  macOS 安装包尚未确认。"
+    if confirm "是否已完成 Windows 安装包构建?"; then
+        WINDOWS_BUILT=true
+    else
+        echo "⚠️  Windows 安装包尚未确认。"
+    fi
+    if confirm "是否已完成 macOS 安装包构建?"; then
+        MACOS_BUILT=true
+    else
+        echo "⚠️  macOS 安装包尚未确认。"
+    fi
 fi
 
 echo ""
@@ -262,9 +299,12 @@ else
     echo ""
     echo "   提示: 想自动执行上传 + 校验 + 网站同步，可改用 ./scripts/release.sh --upload"
     echo ""
-    read -p "是否已完成 OSS 上传? [y/N] " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
+    if [[ "$ASSUME_YES" == true ]]; then
+        # 非交互模式不假设上传已完成（这是外部副作用，机器无法在本地确认）。
+        echo "⚠️  --yes 模式不假设 OSS 已上传；完成上传后请手动运行:"
+        echo "   python3 scripts/verify_release.py   # 发布后校验"
+        echo "   ./scripts/sync-website.sh           # 网站同步"
+    elif confirm "是否已完成 OSS 上传?"; then
         OSS_UPLOADED=true
         echo ""
         echo "🔍 发布后校验线上 latest.json..."
@@ -284,7 +324,13 @@ fi
 
 echo ""
 echo "🔟  创建 Git 提交..."
-git add -A
+# 只提交发版真相源文件，避免 git add -A 把工作区里无关改动卷进发布提交
+#（CHANGELOG.md 在 .gitignore 中，本就不进版本库）。
+git add \
+    app_gui/version.py \
+    installer/windows/LN2InventoryAgent.iss \
+    latest.json \
+    "docs/releases/v$NEW_VERSION-github-release.md"
 git commit -m "chore: release v$NEW_VERSION"
 git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION"
 
