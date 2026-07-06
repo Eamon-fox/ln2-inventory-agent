@@ -5,6 +5,9 @@ from copy import deepcopy
 from lib.tool_registry import TOOL_CONTRACTS
 
 LOCAL_OPEN_API_DEFAULT_PORT = 37666
+# Hard cap for POST bodies; anything larger gets 413. Stage-plan batches are
+# small JSON documents — megabytes of body is a client bug or abuse.
+LOCAL_OPEN_API_MAX_BODY_BYTES = 2 * 1024 * 1024
 LOCAL_OPEN_API_VALIDATION_MODES = (
     "auto",
     "current_inventory",

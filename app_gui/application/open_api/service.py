@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
+import sys
+import threading
 from typing import Any, Callable
 
 from app_gui.plan_executor import preflight_plan
@@ -318,6 +321,9 @@ class LocalOpenApiController:
         self._prefill_add_fn = prefill_add_fn
         self._prefill_ai_prompt_fn = prefill_ai_prompt_fn
         self._preflight_fn = preflight_fn
+        # Serializes stage-plan gate+write so concurrent HTTP workers cannot
+        # interleave between reading the staged plan and mutating it.
+        self._stage_lock = threading.Lock()
 
     def handle_request(self, method: str, path: str, query_params: dict[str, list[str]], payload=None):
         normalized_method = str(method or "").upper().strip()
@@ -412,6 +418,12 @@ class LocalOpenApiController:
                         "This API is loopback-only.",
                         "It does not execute inventory write tools.",
                         "GUI handoff routes prepare or stage work for human review.",
+                        "The Host header must be a loopback authority; cross-origin "
+                        "browser requests are rejected (DNS-rebinding guard).",
+                        "An access token can be required by setting open_api.token "
+                        "in the GUI config; present it via 'Authorization: Bearer "
+                        "<token>' or 'X-SnowFox-Token'.",
+                        "POST bodies are limited to 2 MiB.",
                     ],
                 },
                 "validation_modes": list(LOCAL_OPEN_API_VALIDATION_MODES),
@@ -879,39 +891,47 @@ class LocalOpenApiController:
             )
 
         yaml_path = self._current_yaml_path(must_exist=True)
-        existing_for_gate = [] if mode == "replace" else self._plan_store.list_items()
-        gate = validate_stage_request(
-            existing_items=existing_for_gate,
-            incoming_items=normalized_items,
-            yaml_path=yaml_path,
-            bridge=self._bridge,
-            run_preflight=True,
-            preflight_fn=self._preflight_fn,
-        )
-        if gate.get("blocked"):
-            return 409, _response_envelope(
-                ok=False,
-                error_code="plan_stage_blocked",
-                message="Plan items failed validation.",
-                result={
-                    "stats": gate.get("stats") if isinstance(gate.get("stats"), dict) else {},
-                },
-                blocked_items=gate.get("blocked_items") if isinstance(gate.get("blocked_items"), list) else [],
-                errors=gate.get("errors") if isinstance(gate.get("errors"), list) else [],
+        with self._stage_lock:
+            existing_for_gate = [] if mode == "replace" else self._plan_store.list_items()
+            gate = validate_stage_request(
+                existing_items=existing_for_gate,
+                incoming_items=normalized_items,
+                yaml_path=yaml_path,
+                bridge=self._bridge,
+                run_preflight=True,
+                preflight_fn=self._preflight_fn,
             )
+            if gate.get("blocked"):
+                return 409, _response_envelope(
+                    ok=False,
+                    error_code="plan_stage_blocked",
+                    message="Plan items failed validation.",
+                    result={
+                        "stats": gate.get("stats") if isinstance(gate.get("stats"), dict) else {},
+                    },
+                    blocked_items=gate.get("blocked_items") if isinstance(gate.get("blocked_items"), list) else [],
+                    errors=gate.get("errors") if isinstance(gate.get("errors"), list) else [],
+                )
 
-        accepted = list(gate.get("accepted_items") or [])
-        noop_items = list(gate.get("noop_items") or [])
-        if mode == "replace":
-            self._plan_store.replace_all(accepted)
-        elif accepted:
-            self._plan_store.add(accepted)
+            accepted = list(gate.get("accepted_items") or [])
+            noop_items = list(gate.get("noop_items") or [])
+            if mode == "replace":
+                self._plan_store.replace_all(accepted)
+            elif accepted:
+                self._plan_store.add(accepted)
 
         focus = _coerce_bool(body.get("focus"), default=True)
+        focused = False
         if focus and (accepted or noop_items):
             focus_fn = self._focus_window_fn
             if callable(focus_fn):
-                self._call_gui(focus_fn)
+                # The plan is already staged; a focus hiccup (e.g. the GUI main
+                # thread is blocked by a modal) must not turn success into 500.
+                try:
+                    self._call_gui(focus_fn)
+                    focused = True
+                except Exception as exc:
+                    print(f"warning: stage-plan focus failed: {exc}", file=sys.stderr)
 
         return 200, _response_envelope(
             ok=True,
@@ -928,7 +948,7 @@ class LocalOpenApiController:
                 "total_count": self._plan_store.count(),
                 "items": accepted,
                 "noop_items": noop_items,
-                "focused": focus,
+                "focused": focused,
                 "stats": gate.get("stats") if isinstance(gate.get("stats"), dict) else {},
             },
         )

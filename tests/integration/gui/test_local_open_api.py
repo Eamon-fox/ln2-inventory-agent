@@ -92,16 +92,16 @@ class LocalOpenApiTests(ManagedPathTestCase):
         finally:
             super().tearDown()
 
-    def _request(self, path, *, method="GET", payload=None):
+    def _request(self, path, *, method="GET", payload=None, headers=None):
         if not self.service.is_running():
             self.service.start(port=0)
         url = f"http://127.0.0.1:{self.service.bound_port}{path}"
         body = None
-        headers = {}
+        request_headers = dict(headers or {})
         if payload is not None:
             body = json.dumps(payload).encode("utf-8")
-            headers["Content-Type"] = "application/json"
-        request = urllib.request.Request(url, data=body, headers=headers, method=method)
+            request_headers.setdefault("Content-Type", "application/json")
+        request = urllib.request.Request(url, data=body, headers=request_headers, method=method)
         try:
             with urllib.request.urlopen(request, timeout=5) as response:
                 return response.status, json.loads(response.read().decode("utf-8"))
@@ -330,6 +330,84 @@ class LocalOpenApiTests(ManagedPathTestCase):
         self.assertFalse(payload["ok"])
         self.assertEqual("route_not_found", payload["error_code"])
 
+    def test_http_rejects_non_loopback_host_header(self):
+        # DNS-rebinding guard: a rebound domain shows up in the Host header.
+        status, payload = self._request(
+            "/api/v1/health", headers={"Host": "evil.example.com:37666"}
+        )
+        self.assertEqual(403, status)
+        self.assertEqual("forbidden_host", payload["error_code"])
+
+        status, payload = self._request(
+            "/api/v1/health", headers={"Host": "localhost:12345"}
+        )
+        self.assertEqual(200, status)
+
+    def test_http_rejects_cross_origin_browser_requests(self):
+        status, payload = self._request(
+            "/api/v1/health", headers={"Origin": "https://evil.example.com"}
+        )
+        self.assertEqual(403, status)
+        self.assertEqual("forbidden_origin", payload["error_code"])
+
+        status, _ = self._request(
+            "/api/v1/health", headers={"Origin": "http://127.0.0.1:37666"}
+        )
+        self.assertEqual(200, status)
+
+    def test_http_rejects_oversized_post_body(self):
+        status, payload = self._request(
+            "/api/v1/gui/stage-plan",
+            method="POST",
+            payload={"items": [], "padding": "x" * (2 * 1024 * 1024 + 16)},
+        )
+        self.assertEqual(413, status)
+        self.assertEqual("payload_too_large", payload["error_code"])
+
+    def test_http_enforces_token_when_configured(self):
+        self.service.stop()
+        self.service.configure(enabled=True, port=0, token="secret-token")
+        try:
+            status, payload = self._request("/api/v1/health")
+            self.assertEqual(401, status)
+            self.assertEqual("unauthorized", payload["error_code"])
+
+            status, _ = self._request(
+                "/api/v1/health", headers={"Authorization": "Bearer secret-token"}
+            )
+            self.assertEqual(200, status)
+
+            status, _ = self._request(
+                "/api/v1/health", headers={"X-SnowFox-Token": "secret-token"}
+            )
+            self.assertEqual(200, status)
+
+            status, _ = self._request(
+                "/api/v1/health", headers={"Authorization": "Bearer wrong"}
+            )
+            self.assertEqual(401, status)
+        finally:
+            self.service.configure(enabled=True, port=0, token="")
+
+    def test_http_filter_route_accepts_column_filters_json(self):
+        # Regression: _coerce_json_object used json.loads without importing json,
+        # so any request carrying column_filters blew up with a 500.
+        query = urllib.parse.urlencode(
+            {"column_filters": '{"frozen_at": {"type": "text", "text": "2024-01-01"}}'}
+        )
+        status, payload = self._request(f"/api/v1/inventory/filter?{query}")
+        self.assertEqual(200, status, payload)
+        self.assertTrue(payload["ok"], payload)
+        rows = list((payload.get("result") or {}).get("rows") or [])
+        self.assertTrue(rows, payload)
+        self.assertEqual(1, rows[0].get("record_id"))
+
+        bad = urllib.parse.urlencode({"column_filters": "not-json"})
+        status, payload = self._request(f"/api/v1/inventory/filter?{bad}")
+        self.assertEqual(400, status)
+        self.assertEqual("invalid_request", payload["error_code"])
+        self.assertEqual("column_filters", payload["field"])
+
     def test_http_validate_route_rejects_invalid_mode(self):
         status, payload = self._request("/api/v1/inventory/validate?mode=bad-mode")
 
@@ -464,6 +542,24 @@ class LocalOpenApiTests(ManagedPathTestCase):
         self.assertTrue(
             any("UTF8.GetBytes" in example for example in hints["powershell_examples"])
         )
+
+    def test_stage_plan_focus_failure_keeps_success_status(self):
+        # The plan is staged before focus runs; a focus timeout (e.g. modal
+        # dialog blocking the GUI thread) must not turn success into a 500.
+        def _broken_focus():
+            raise TimeoutError("GUI thread busy")
+
+        self.controller._focus_window_fn = _broken_focus
+        item = build_add_plan_item(
+            box=1, positions=[2], stored_at="2024-01-02", fields={}, source="api-test"
+        )
+        status, payload = self.controller.handle_request(
+            "POST", "/api/v1/gui/stage-plan", {}, payload={"items": [item]}
+        )
+        self.assertEqual(200, status, payload)
+        self.assertTrue(payload["ok"], payload)
+        self.assertEqual(1, self.plan_store.count())
+        self.assertFalse(payload["result"]["focused"])
 
     def test_stage_plan_clear_route_empties_store(self):
         item = build_add_plan_item(

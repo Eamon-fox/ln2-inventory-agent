@@ -269,7 +269,7 @@ def test_settings_flow_apply_and_finalize_updates_runtime_state():
         flow.finalize_after_settings()
 
     assert window.gui_config["api_keys"] == {"deepseek": "sk-test"}
-    assert window.gui_config["open_api"] == {"enabled": True, "port": 40123}
+    assert window.gui_config["open_api"] == {"enabled": True, "port": 40123, "token": ""}
     assert window.gui_config["yaml_path"] == window.current_yaml_path
     assert window.ai_panel.ai_provider.value == "deepseek"
     assert window.ai_panel.ai_model.value == "deepseek-v4-flash"

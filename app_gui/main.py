@@ -388,6 +388,7 @@ class MainWindow(QMainWindow):
         self._local_open_api_service = LocalOpenApiService(
             self._local_open_api_controller,
             port=int((self.gui_config.get("open_api") or {}).get("port", LOCAL_OPEN_API_DEFAULT_PORT) or LOCAL_OPEN_API_DEFAULT_PORT),
+            token=str((self.gui_config.get("open_api") or {}).get("token") or ""),
         )
         self._local_api_flow = LocalApiFlow(self)
         self.connect_signals()

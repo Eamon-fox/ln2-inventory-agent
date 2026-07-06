@@ -2,17 +2,56 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from .contracts import LOCAL_OPEN_API_DEFAULT_PORT
+from .contracts import LOCAL_OPEN_API_DEFAULT_PORT, LOCAL_OPEN_API_MAX_BODY_BYTES
 from .service import (
     LocalOpenApiRequestError,
     _coerce_int,
     _response_envelope,
 )
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _extract_host(raw_host):
+    """Return the host part of a Host/Origin authority, without the port."""
+    text = str(raw_host or "").strip().lower()
+    if not text:
+        return ""
+    if text.startswith("["):
+        return text.partition("]")[0][1:]
+    if text.count(":") == 1:
+        return text.split(":", 1)[0]
+    return text
+
+
+def _host_header_is_loopback(host_header):
+    """DNS-rebinding guard: a rebound browser request carries the attacker's
+    domain in Host, so only loopback authorities may pass. An absent Host
+    (non-browser HTTP/1.0 clients) is allowed — rebinding cannot omit it."""
+    text = str(host_header or "").strip()
+    if not text:
+        return True
+    return _extract_host(text) in _LOOPBACK_HOSTS
+
+
+def _origin_is_acceptable(origin_header):
+    """Reject cross-site browser requests. CLI/script clients send no Origin."""
+    text = str(origin_header or "").strip()
+    if not text:
+        return True
+    if text.lower() == "null":
+        return False
+    try:
+        host = _extract_host(urlsplit(text).netloc)
+    except Exception:
+        return False
+    return host in _LOOPBACK_HOSTS
 
 
 class _LoopbackThreadingHTTPServer(ThreadingHTTPServer):
@@ -23,7 +62,7 @@ class _LoopbackThreadingHTTPServer(ThreadingHTTPServer):
 class LocalOpenApiService:
     """Lifecycle wrapper around the loopback-only HTTP server."""
 
-    def __init__(self, controller, *, host="127.0.0.1", port=LOCAL_OPEN_API_DEFAULT_PORT):
+    def __init__(self, controller, *, host="127.0.0.1", port=LOCAL_OPEN_API_DEFAULT_PORT, token=None):
         self._controller = controller
         self._host = str(host or "127.0.0.1")
         self._requested_port = int(port or LOCAL_OPEN_API_DEFAULT_PORT)
@@ -31,6 +70,9 @@ class LocalOpenApiService:
         self._server = None
         self._thread = None
         self._lock = threading.Lock()
+        # Optional shared secret. When set, every request must present it via
+        # "Authorization: Bearer <token>" or "X-SnowFox-Token: <token>".
+        self._token = str(token or "").strip()
 
     @property
     def requested_port(self) -> int:
@@ -48,6 +90,7 @@ class LocalOpenApiService:
 
     def _build_handler(self):
         controller = self._controller
+        required_token = self._token
 
         class _Handler(BaseHTTPRequestHandler):
             server_version = "SnowFoxLocalAPI/1.0"
@@ -61,6 +104,34 @@ class LocalOpenApiService:
             def do_POST(self):
                 self._handle_request("POST")
 
+            def _security_failure(self):
+                """Return an error (status, payload) tuple, or None when allowed."""
+                if not _host_header_is_loopback(self.headers.get("Host")):
+                    return 403, _response_envelope(
+                        ok=False,
+                        error_code="forbidden_host",
+                        message="Host header must be a loopback authority.",
+                    )
+                if not _origin_is_acceptable(self.headers.get("Origin")):
+                    return 403, _response_envelope(
+                        ok=False,
+                        error_code="forbidden_origin",
+                        message="Cross-origin browser requests are not allowed.",
+                    )
+                if required_token:
+                    presented = str(self.headers.get("X-SnowFox-Token") or "").strip()
+                    if not presented:
+                        auth = str(self.headers.get("Authorization") or "").strip()
+                        if auth.lower().startswith("bearer "):
+                            presented = auth[7:].strip()
+                    if not presented or not hmac.compare_digest(presented, required_token):
+                        return 401, _response_envelope(
+                            ok=False,
+                            error_code="unauthorized",
+                            message="A valid access token is required.",
+                        )
+                return None
+
             def _read_payload(self):
                 content_length = _coerce_int(
                     self.headers.get("Content-Length"),
@@ -70,6 +141,21 @@ class LocalOpenApiService:
                 )
                 if not content_length:
                     return None
+                if content_length > LOCAL_OPEN_API_MAX_BODY_BYTES:
+                    # Drain (bounded, fixed-size chunks) so the client sees a
+                    # clean 413 instead of a connection reset mid-upload.
+                    remaining = min(content_length, LOCAL_OPEN_API_MAX_BODY_BYTES * 4)
+                    while remaining > 0:
+                        chunk = self.rfile.read(min(65536, remaining))
+                        if not chunk:
+                            break
+                        remaining -= len(chunk)
+                    self.close_connection = True
+                    raise LocalOpenApiRequestError(
+                        f"Request body exceeds {LOCAL_OPEN_API_MAX_BODY_BYTES} bytes.",
+                        status_code=413,
+                        error_code="payload_too_large",
+                    )
                 raw = self.rfile.read(content_length)
                 if not raw:
                     return None
@@ -98,6 +184,10 @@ class LocalOpenApiService:
                 self.wfile.write(body)
 
             def _handle_request(self, method):
+                denied = self._security_failure()
+                if denied is not None:
+                    self._send_json(*denied)
+                    return
                 try:
                     parsed = urlsplit(self.path)
                     payload = self._read_payload() if method == "POST" else None
@@ -171,7 +261,9 @@ class LocalOpenApiService:
             "port": 0,
         }
 
-    def configure(self, *, enabled, port):
+    def configure(self, *, enabled, port, token=None):
+        if token is not None:
+            self._token = str(token or "").strip()
         desired_port = int(port or LOCAL_OPEN_API_DEFAULT_PORT)
         if not enabled:
             stopped = self.stop()

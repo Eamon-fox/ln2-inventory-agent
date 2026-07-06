@@ -98,6 +98,7 @@ def load_gui_config(path=None):
         except Exception:
             port = LOCAL_OPEN_API_DEFAULT_PORT
         cfg["open_api"]["port"] = port if port > 0 else LOCAL_OPEN_API_DEFAULT_PORT
+        cfg["open_api"]["token"] = str(cfg.get("open_api", {}).get("token") or "").strip()
         cfg["ai"]["model"] = normalize_ai_model(provider, cfg.get("ai", {}).get("model"))
         cfg["ai"]["thinking_enabled"] = bool(cfg.get("ai", {}).get("thinking_enabled", True))
         if not cfg.get("ai", {}).get("custom_prompt"):

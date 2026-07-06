@@ -283,7 +283,7 @@ class StartupFlow:
 
         report_update_get(latest_tag, source)
 
-        from PySide6.QtCore import Qt, QObject, Signal
+        from PySide6.QtCore import QObject, Signal
         from PySide6.QtWidgets import QApplication, QProgressDialog
 
         from app_gui.auto_updater import AutoUpdater
@@ -545,6 +545,8 @@ class SettingsFlow:
         window.gui_config["open_api"] = {
             "enabled": bool(_submission_value(values, "open_api_enabled", False)),
             "port": int(_submission_value(values, "open_api_port", 0) or 0),
+            # token has no dialog field yet; keep whatever the config file holds.
+            "token": str((window.gui_config.get("open_api") or {}).get("token") or "").strip(),
         }
         window.agent_session.set_api_keys(window.gui_config["api_keys"])
         window.ai_panel.apply_runtime_settings(
@@ -773,6 +775,7 @@ class LocalApiFlow:
         return {
             "enabled": bool(config.get("enabled", False)),
             "port": port,
+            "token": str(config.get("token") or "").strip(),
         }
 
     def apply_settings(self, *, show_feedback=False):
@@ -790,6 +793,7 @@ class LocalApiFlow:
         result = service.configure(
             enabled=bool(config.get("enabled", False)),
             port=int(config.get("port", LOCAL_OPEN_API_DEFAULT_PORT)),
+            token=str(config.get("token") or ""),
         )
         if result.get("ok"):
             if show_feedback:
