@@ -24,7 +24,7 @@ dependencies = [
 [project.optional-dependencies]
 # 开发/测试依赖与 requirements-dev.txt 同源。
 dev = [
-    "pytest==9.0.2",
+    "pytest==9.1.1",
     "pytest-cov==7.0.0",
     "ruff==0.15.20",
     "pre-commit==4.6.0",
