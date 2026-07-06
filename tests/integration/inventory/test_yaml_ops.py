@@ -31,6 +31,7 @@ from lib.yaml_ops import (
     list_yaml_backups,
     load_yaml,
     read_audit_events,
+    resolve_instance_id,
     rollback_yaml,
     write_yaml,
 )
@@ -91,6 +92,47 @@ class YamlOpsWriteTests(unittest.TestCase):
             self.assertTrue(yaml_path.exists())
             loaded = load_yaml(str(yaml_path))
             self.assertEqual([], loaded.get("inventory", []))
+
+    def test_write_yaml_atomic_keeps_original_on_dump_failure(self):
+        # A crash mid-dump must never leave a truncated inventory file behind.
+        with managed_inventory_root("ln2_yaml_atomic_"):
+            yaml_path = _managed_yaml("atomic-write")
+            write_yaml(make_data([make_record(1)]), path=str(yaml_path))
+
+            def broken_dump(data, stream, **kwargs):
+                stream.write("meta: {truncated")
+                raise OSError("disk full mid-write")
+
+            with patch("lib.yaml_ops.yaml.safe_dump", side_effect=broken_dump):
+                with self.assertRaises(OSError):
+                    write_yaml(make_data([make_record(2)]), path=str(yaml_path))
+
+            loaded = load_yaml(str(yaml_path))
+            self.assertEqual(1, loaded["inventory"][0]["id"])
+            leftovers = [p for p in yaml_path.parent.iterdir() if p.suffix == ".tmp"]
+            self.assertEqual([], leftovers)
+
+    def test_resolve_instance_id_write_mode_leaves_audit_trail(self):
+        # ensure-instance-id is a real dataset mutation and must be audited.
+        with managed_inventory_root("ln2_yaml_instance_"):
+            yaml_path = _managed_yaml("instance-id")
+            with open(yaml_path, "w", encoding="utf-8") as handle:
+                yaml.safe_dump(make_data([]), handle, allow_unicode=True, sort_keys=False)
+
+            instance_id = resolve_instance_id(str(yaml_path), mode="write")
+            self.assertTrue(instance_id)
+
+            loaded = load_yaml(str(yaml_path))
+            self.assertEqual(instance_id, loaded["meta"]["inventory_instance_id"])
+
+            audit_path = Path(get_audit_log_path(str(yaml_path)))
+            self.assertTrue(audit_path.exists())
+            lines = [
+                json.loads(line)
+                for line in audit_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertTrue(any(event.get("action") == "ensure_instance_id" for event in lines))
 
     def test_load_yaml_repairs_utf8_gbk_mojibake_values(self):
         with managed_inventory_root("ln2_yaml_repair_"):

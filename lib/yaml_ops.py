@@ -14,10 +14,13 @@ into sibling modules and are re-exported here so that every existing
 - ``yaml_ops_backup``   -> timestamped backup create/list/throttle/retention
 """
 import contextvars
+import hashlib
 import os
 import shutil
 import sys
+import tempfile
 import threading
+import time
 import uuid
 from contextlib import contextmanager, suppress
 from copy import deepcopy
@@ -113,6 +116,92 @@ def _safe_log_event(event, **fields):
 
 def _yaml_cache_key(path):
     return os.path.normcase(os.path.normpath(_abs_path(path)))
+
+
+def _atomic_dump_yaml(yaml_abs, data):
+    """Persist *data* to *yaml_abs* atomically (same-dir tmp + fsync + replace).
+
+    A crash mid-write must never leave a truncated inventory file behind; the
+    original document stays intact until os.replace() swaps in the full one.
+    """
+    directory = os.path.dirname(yaml_abs) or "."
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=os.path.basename(yaml_abs) + ".", suffix=".tmp", dir=directory
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False, width=120)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, yaml_abs)
+    except Exception:
+        with suppress(OSError):
+            os.remove(tmp_path)
+        raise
+
+
+@contextmanager
+def _inventory_file_lock(yaml_abs, timeout_seconds=10.0):
+    """Serialize writers of one inventory YAML across processes.
+
+    Takes an OS-level exclusive lock (msvcrt on Windows, fcntl elsewhere) on a
+    lock file in the system temp dir keyed by the normalized YAML path — kept
+    out of the dataset directory so backups, cleanup and dir removal never
+    trip over it. The lock is a best-effort guard: on timeout the write
+    proceeds unlocked (with a stderr warning) rather than failing — losing
+    serialization is recoverable, losing the user's write is not.
+    """
+    path_key = hashlib.sha1(
+        os.path.normcase(os.path.normpath(yaml_abs)).encode("utf-8", errors="ignore")
+    ).hexdigest()
+    lock_path = os.path.join(tempfile.gettempdir(), f"snowfox-yaml-{path_key}.lock")
+    handle = None
+    locked = False
+    try:
+        try:
+            handle = open(lock_path, "a+")
+        except OSError as exc:
+            print(f"warning: cannot open inventory lock file: {exc}", file=sys.stderr)
+            yield
+            return
+        deadline = time.monotonic() + float(timeout_seconds)
+        while True:
+            try:
+                handle.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = True
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    print(
+                        f"warning: timed out waiting for inventory write lock: {lock_path}",
+                        file=sys.stderr,
+                    )
+                    break
+                time.sleep(0.05)
+        yield
+    finally:
+        if handle is not None:
+            if locked:
+                with suppress(OSError):
+                    handle.seek(0)
+                    if os.name == "nt":
+                        import msvcrt
+
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        import fcntl
+
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            with suppress(OSError):
+                handle.close()
 
 
 @contextmanager
@@ -244,9 +333,22 @@ def resolve_instance_id(yaml_path, mode="read"):
             instance_id = str(uuid.uuid4())
             meta["inventory_instance_id"] = instance_id
             data["meta"] = meta
-            with open(yaml_abs, "w", encoding="utf-8") as f:
-                canonical_data, _alias_errors = canonicalize_inventory_document(data)
-                yaml.safe_dump(canonical_data, f, allow_unicode=True, sort_keys=False, width=120)
+            canonical_data, _alias_errors = canonicalize_inventory_document(data)
+            # This is a real mutation of the user's dataset: keep it atomic,
+            # serialized, and visible in the audit trail like every other write.
+            with _inventory_file_lock(yaml_abs):
+                _atomic_dump_yaml(yaml_abs, canonical_data)
+                try:
+                    append_audit_event(
+                        yaml_path=yaml_abs,
+                        before_data=None,
+                        after_data=canonical_data,
+                        backup_path=None,
+                        warnings=[],
+                        audit_meta={"action": "ensure_instance_id", "source": "yaml_ops"},
+                    )
+                except Exception as exc:
+                    print(f"warning: failed to append audit log: {exc}", file=sys.stderr)
 
         return instance_id
 
@@ -582,105 +684,105 @@ def write_yaml(
         validation_scope=validation_scope,
     )
 
-    existing_instance_id = None
-    if before_data is _UNSET:
-        before_data = None
-        if os.path.exists(yaml_abs):
+    # Cross-process critical section: pre-write snapshot, instance guard,
+    # backup, atomic write and audit append must observe a consistent file.
+    with _inventory_file_lock(yaml_abs):
+        if before_data is _UNSET:
+            before_data = None
+            if os.path.exists(yaml_abs):
+                try:
+                    # readonly: only meta.inventory_instance_id + audit meta reads.
+                    before_data = load_yaml(yaml_abs, readonly=True)
+                except Exception as exc:
+                    print(f"warning: failed to load existing YAML before write: {exc}", file=sys.stderr)
+        existing_instance_id = (
+            (before_data or {}).get("meta", {}).get("inventory_instance_id")
+            if isinstance(before_data, dict)
+            else None
+        )
+
+        if not isinstance(data, dict):
+            data = {"meta": {}, "inventory": []}
+        meta = data.get("meta", {})
+        if not isinstance(meta, dict):
+            meta = {}
+
+        # Prefer identity from current file on disk when present; this keeps normal
+        # in-place writes stable even if caller omitted metadata.
+        if existing_instance_id and not str(meta.get("inventory_instance_id") or "").strip():
+            meta["inventory_instance_id"] = str(existing_instance_id)
+
+        meta, guard_info = _apply_instance_guard(meta, yaml_abs)
+        data["meta"] = meta
+        instance_id = str(meta.get("inventory_instance_id") or "").strip()
+
+        effective_backup_path = None
+        raw_backup = str(backup_path or "").strip()
+        if raw_backup:
+            effective_backup_path = _abs_path(raw_backup)
+        elif auto_backup:
             try:
-                # readonly: only meta.inventory_instance_id + audit meta reads.
-                before_data = load_yaml(yaml_abs, readonly=True)
+                effective_backup_path = create_yaml_backup(
+                    yaml_abs,
+                    instance_id_override=instance_id,
+                )
+                if effective_backup_path:
+                    print(f"backup created: {effective_backup_path}")
             except Exception as exc:
-                print(f"warning: failed to load existing YAML before write: {exc}", file=sys.stderr)
-    existing_instance_id = (
-        (before_data or {}).get("meta", {}).get("inventory_instance_id")
-        if isinstance(before_data, dict)
-        else None
-    )
+                print(f"warning: failed to create backup: {exc}", file=sys.stderr)
 
-    if not isinstance(data, dict):
-        data = {"meta": {}, "inventory": []}
-    meta = data.get("meta", {})
-    if not isinstance(meta, dict):
-        meta = {}
-
-    # Prefer identity from current file on disk when present; this keeps normal
-    # in-place writes stable even if caller omitted metadata.
-    if existing_instance_id and not str(meta.get("inventory_instance_id") or "").strip():
-        meta["inventory_instance_id"] = str(existing_instance_id)
-
-    meta, guard_info = _apply_instance_guard(meta, yaml_abs)
-    data["meta"] = meta
-    instance_id = str(meta.get("inventory_instance_id") or "").strip()
-
-    effective_backup_path = None
-    raw_backup = str(backup_path or "").strip()
-    if raw_backup:
-        effective_backup_path = _abs_path(raw_backup)
-    elif auto_backup:
         try:
-            effective_backup_path = create_yaml_backup(
-                yaml_abs,
-                instance_id_override=instance_id,
+            from .diagnostics import span
+        except Exception:
+            span = None
+
+        if span is None:
+            _atomic_dump_yaml(yaml_abs, data)
+        else:
+            with span(
+                "yaml.write",
+                yaml_path=yaml_abs,
+                source="disk",
+                auto_backup=bool(auto_backup),
+                validation_scope=validation_scope,
+            ):
+                _atomic_dump_yaml(yaml_abs, data)
+
+        # Update write-through cache if active
+        if cache_key in _write_through_cache:
+            _write_through_cache[cache_key] = deepcopy(data)
+
+        warnings = []
+        warnings.extend(emit_capacity_warnings(data))
+        size_warning = emit_yaml_size_warning(path=yaml_abs)
+        if size_warning:
+            warnings.append(size_warning)
+
+        effective_audit_meta = dict(audit_meta or {})
+        if guard_info.get("decision") in {"forked_copy", "adopted_rename"}:
+            details = dict(effective_audit_meta.get("details") or {})
+            details.update(
+                {
+                    "instance_guard_decision": guard_info.get("decision"),
+                    "instance_guard_old_id": guard_info.get("old_instance_id"),
+                    "instance_guard_new_id": guard_info.get("new_instance_id"),
+                    "instance_guard_origin_path_before": guard_info.get("origin_before"),
+                    "instance_guard_origin_path_after": guard_info.get("origin_after"),
+                }
             )
-            if effective_backup_path:
-                print(f"backup created: {effective_backup_path}")
+            effective_audit_meta["details"] = details
+
+        try:
+            append_audit_event(
+                yaml_path=yaml_abs,
+                before_data=before_data,
+                after_data=data,
+                backup_path=None,
+                warnings=warnings,
+                audit_meta=effective_audit_meta,
+            )
         except Exception as exc:
-            print(f"warning: failed to create backup: {exc}", file=sys.stderr)
-
-    try:
-        from .diagnostics import span
-    except Exception:
-        span = None
-
-    if span is None:
-        with open(yaml_abs, "w", encoding="utf-8") as f:
-            yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False, width=120)
-    else:
-        with span(
-            "yaml.write",
-            yaml_path=yaml_abs,
-            source="disk",
-            auto_backup=bool(auto_backup),
-            validation_scope=validation_scope,
-        ):
-            with open(yaml_abs, "w", encoding="utf-8") as f:
-                yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False, width=120)
-
-    # Update write-through cache if active
-    if cache_key in _write_through_cache:
-        _write_through_cache[cache_key] = deepcopy(data)
-
-    warnings = []
-    warnings.extend(emit_capacity_warnings(data))
-    size_warning = emit_yaml_size_warning(path=yaml_abs)
-    if size_warning:
-        warnings.append(size_warning)
-
-    effective_audit_meta = dict(audit_meta or {})
-    if guard_info.get("decision") in {"forked_copy", "adopted_rename"}:
-        details = dict(effective_audit_meta.get("details") or {})
-        details.update(
-            {
-                "instance_guard_decision": guard_info.get("decision"),
-                "instance_guard_old_id": guard_info.get("old_instance_id"),
-                "instance_guard_new_id": guard_info.get("new_instance_id"),
-                "instance_guard_origin_path_before": guard_info.get("origin_before"),
-                "instance_guard_origin_path_after": guard_info.get("origin_after"),
-            }
-        )
-        effective_audit_meta["details"] = details
-
-    try:
-        append_audit_event(
-            yaml_path=yaml_abs,
-            before_data=before_data,
-            after_data=data,
-            backup_path=None,
-            warnings=warnings,
-            audit_meta=effective_audit_meta,
-        )
-    except Exception as exc:
-        print(f"warning: failed to append audit log: {exc}", file=sys.stderr)
+            print(f"warning: failed to append audit log: {exc}", file=sys.stderr)
 
     return effective_backup_path
 
