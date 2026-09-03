@@ -17,7 +17,7 @@ from app_gui.application.ai_provider_catalog import (
     normalize_ai_provider,
 )
 from app_gui.gui_config import AI_HISTORY_LIMIT, AI_OPERATION_EVENT_POOL_LIMIT, MAX_AGENT_STEPS
-from app_gui.ui.theme import FONT_SIZE_XS, FONT_SIZE_SM, MONO_FONT_CSS_FAMILY, resolve_theme_token
+from app_gui.ui.theme import FONT_SIZE_MONO, FONT_SIZE_XS, FONT_SIZE_SM, MONO_FONT_CSS_FAMILY, resolve_theme_token
 from app_gui.ui.icons import get_icon, Icons
 from app_gui.ui.dialogs.common import ask_yes_no
 from app_gui.system_notice import build_system_notice, coerce_system_notice
@@ -85,8 +85,49 @@ from app_gui.ui.utils import md_to_html
 
 
 def _md_to_html(text, is_dark=True):
-    """Convert markdown text to HTML for QTextEdit.append()."""
-    return md_to_html(text)
+    """Convert markdown text to HTML for QTextEdit.append().
+
+    mistune emits bare ``<table>`` / ``<pre>`` / ``<code>`` elements; Qt's
+    rich-text engine ignores stylesheets for those, so theme colours are
+    injected inline here to keep tables and code blocks readable.
+    """
+    return _style_chat_html(md_to_html(text), is_dark)
+
+
+def _style_chat_html(html, is_dark=True):
+    if not html:
+        return html
+    mode = "dark" if is_dark else "light"
+    border = resolve_theme_token("chat-panel-border", mode=mode, fallback="rgba(0,0,0,0.08)")
+    header_bg = resolve_theme_token("chat-panel-header-bg", mode=mode, fallback="#f5f5f5")
+    code_bg = resolve_theme_token("chat-code-bg", mode=mode, fallback="#f5f5f5")
+    code_text = resolve_theme_token("chat-code-text", mode=mode, fallback="#1e1e1e")
+    inline_bg = resolve_theme_token("chat-inline-code-bg", mode=mode, fallback="rgba(0,0,0,0.06)")
+    link = resolve_theme_token("chat-link", mode=mode, fallback="#2563eb")
+
+    styled = html
+    styled = styled.replace(
+        "<table>",
+        f'<table border="1" cellspacing="0" cellpadding="4" style="border-collapse: collapse; '
+        f'border-color: {border}; margin: 4px 0;">',
+    )
+    styled = styled.replace("<th>", f'<th style="background-color: {header_bg}; font-weight: 600; text-align: left;">')
+    # Fenced code blocks first (their <code> must not get the inline treatment).
+    block_marker = "\x00SNOWFOX_PRE_CODE\x00"
+    styled = styled.replace("<pre><code", block_marker)
+    styled = styled.replace(
+        "<code>",
+        f'<code style="background-color: {inline_bg}; font-family: {MONO_FONT_CSS_FAMILY}; '
+        f'font-size: {FONT_SIZE_MONO}px; padding: 0 3px;">',
+    )
+    styled = styled.replace(
+        block_marker,
+        f'<pre style="background-color: {code_bg}; color: {code_text}; padding: 6px 8px; margin: 4px 0; '
+        f'font-family: {MONO_FONT_CSS_FAMILY}; font-size: {FONT_SIZE_MONO}px;"><code',
+    )
+    styled = styled.replace("<a href=", f'<a style="color: {link};" href=')
+    styled = styled.replace("<blockquote>", f'<blockquote style="border-left: 3px solid {border}; margin: 4px 0; padding-left: 8px;">')
+    return styled
 
 
 def _preserve_leading_spaces_html(text, html):
@@ -636,9 +677,14 @@ class AIPanel(QWidget):
         color = _get_role_color(role, is_dark)
         self.ai_last_role = role
 
+        muted = _get_role_color("muted", is_dark)
         if compact:
-            return f'<span style="color: {color};">[{role}]</span> '
-        return f'<br/><span style="color: {color}; font-weight: bold;">[{stamp}] {role}</span>'
+            return f'<span style="color: {color}; font-weight: 600;">{role}</span> '
+        # Role first (coloured, semibold), timestamp second (muted, smaller).
+        return (
+            f'<br/><span style="color: {color}; font-weight: 600;">{role}</span>'
+            f'&nbsp;&nbsp;<span style="color: {muted}; font-size: {FONT_SIZE_XS}px;">{stamp}</span>'
+        )
 
     def _append_chat_header(self, role, compact=False):
         """Append a standalone header (used by stream + collapsible paths)."""

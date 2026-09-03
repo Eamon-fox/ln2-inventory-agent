@@ -483,7 +483,8 @@ class GuiPanelsAiStreamTests(GuiPanelsBaseCase):
 
         html = panel.ai_chat.toHtml()
         self.assertEqual(li_before, html.count("<li"))
-        self.assertIn("[Tool]", panel.ai_chat.toPlainText())
+        # Compact header renders the role on its own line (no brackets).
+        self.assertIn("\nTool ", panel.ai_chat.toPlainText())
 
     def test_ai_panel_keeps_view_when_user_scrolled_up_and_new_message_arrives(self):
         panel = self._new_ai_panel()

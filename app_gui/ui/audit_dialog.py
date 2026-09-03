@@ -402,20 +402,30 @@ class AuditLogDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
-        # Filter controls
-        filter_form = QFormLayout()
+        # Filter bar: one compact row (dates, action, status) + actions on the right
+        filter_form = QHBoxLayout()
+        filter_form.setSpacing(6)
+
+        def _filter_label(text):
+            label = QLabel(text)
+            label.setProperty("role", "mutedInline")
+            return label
 
         self.audit_start_date = QDateEdit()
         self.audit_start_date.setCalendarPopup(True)
         self.audit_start_date.setDisplayFormat("yyyy-MM-dd")
         self.audit_start_date.setDate(QDate.currentDate().addDays(-7))
-        filter_form.addRow(tr("operations.from"), self.audit_start_date)
+        self.audit_start_date.setFixedWidth(120)
+        filter_form.addWidget(_filter_label(tr("operations.from")))
+        filter_form.addWidget(self.audit_start_date)
 
         self.audit_end_date = QDateEdit()
         self.audit_end_date.setCalendarPopup(True)
         self.audit_end_date.setDisplayFormat("yyyy-MM-dd")
         self.audit_end_date.setDate(QDate.currentDate())
-        filter_form.addRow(tr("operations.to"), self.audit_end_date)
+        self.audit_end_date.setFixedWidth(120)
+        filter_form.addWidget(_filter_label(tr("operations.to")))
+        filter_form.addWidget(self.audit_end_date)
 
         self.audit_action_filter = QComboBox()
         self.audit_action_filter.addItem(tr("operations.all"), "All")
@@ -425,19 +435,25 @@ class AuditLogDialog(QDialog):
         self.audit_action_filter.addItem(tr("operations.auditActionRollback"), "rollback")
         self.audit_action_filter.addItem(tr("operations.auditActionBackup"), "backup")
         self.audit_action_filter.addItem(tr("operations.auditActionEditCustomFields"), "edit_custom_fields")
-        filter_form.addRow(tr("operations.auditAction"), self.audit_action_filter)
+        self.audit_action_filter.setMinimumWidth(130)
+        filter_form.addSpacing(6)
+        filter_form.addWidget(_filter_label(tr("operations.auditAction")))
+        filter_form.addWidget(self.audit_action_filter)
 
         self.audit_status_filter = QComboBox()
         self.audit_status_filter.addItem(tr("operations.all"), "All")
         self.audit_status_filter.addItem(tr("operations.auditStatusSuccess"), "success")
         self.audit_status_filter.addItem(tr("operations.auditStatusFailed"), "failed")
-        filter_form.addRow(tr("operations.auditStatus"), self.audit_status_filter)
+        self.audit_status_filter.setMinimumWidth(100)
+        filter_form.addSpacing(6)
+        filter_form.addWidget(_filter_label(tr("operations.auditStatus")))
+        filter_form.addWidget(self.audit_status_filter)
+        filter_form.addStretch(1)
 
-        layout.addLayout(filter_form)
-
-        # Action buttons
-        btn_row = QHBoxLayout()
+        # Action buttons share the filter row
+        btn_row = filter_form
         load_btn = QPushButton(tr("operations.loadAuditLog"))
+        load_btn.setProperty("variant", "primary")
         load_btn.setIcon(get_icon(Icons.FOLDER_OPEN))
         load_btn.setIconSize(QSize(16, 16))
         load_btn.clicked.connect(self.on_load_audit)
@@ -450,11 +466,11 @@ class AuditLogDialog(QDialog):
         self.audit_rollback_selected_btn.setEnabled(False)
         btn_row.addWidget(self.audit_rollback_selected_btn)
 
-        btn_row.addStretch()
         layout.addLayout(btn_row)
 
         # Info label
         self.audit_info = QLabel(tr("operations.clickLoadAudit"))
+        self.audit_info.setProperty("role", "mutedInline")
         layout.addWidget(self.audit_info)
 
         # Audit table
