@@ -602,7 +602,6 @@ def _rebuild_boxes(self, rows, cols, box_numbers):
     total_slots = rows * cols
     self._base_cell_size = max(30, min(45, 375 // max(rows, cols)))
     cell_size = max(12, int(self._base_cell_size * self._zoom_level))
-    columns = 3
     for idx, box_num in enumerate(box_numbers):
         group = QGroupBox(_format_box_group_title(box_num, layout))
         group.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
@@ -659,10 +658,54 @@ def _rebuild_boxes(self, rows, cols, box_numbers):
             grid.addWidget(button, r, c)
 
         group_layout.addLayout(grid)
-        self.ov_boxes_layout.addWidget(group, idx // columns, idx % columns)
         self.overview_box_groups[box_num] = group
 
     self.overview_shape = (rows, cols, tuple(box_numbers))
+    self._overview_box_columns = 0
+    _reflow_boxes(self, force=True)
+
+
+def _compute_box_columns(self):
+    """Return how many box groups fit side by side in the grid viewport."""
+    groups = [g for g in getattr(self, "overview_box_groups", {}).values() if g is not None]
+    if not groups:
+        return 1
+    layout = getattr(self, "ov_boxes_layout", None)
+    scroll = getattr(self, "ov_scroll", None)
+    if layout is None or scroll is None:
+        return 1
+    try:
+        group_width = max(1, int(groups[0].sizeHint().width()))
+    except Exception:
+        return 1
+    spacing = max(0, int(layout.horizontalSpacing()))
+    margins = layout.contentsMargins()
+    try:
+        available = int(scroll.viewport().width()) - margins.left() - margins.right()
+    except Exception:
+        available = 0
+    if available <= 0:
+        return 1
+    return max(1, (available + spacing) // (group_width + spacing))
+
+
+def _reflow_boxes(self, force=False):
+    """Re-place box groups so whole boxes wrap instead of being clipped."""
+    layout = getattr(self, "ov_boxes_layout", None)
+    if layout is None:
+        return
+    columns = _compute_box_columns(self)
+    if not force and columns == int(getattr(self, "_overview_box_columns", 0) or 0):
+        return
+    self._overview_box_columns = columns
+    shape = getattr(self, "overview_shape", None)
+    ordered = list(shape[2]) if shape and len(shape) >= 3 else list(self.overview_box_groups.keys())
+    groups = [self.overview_box_groups.get(b) for b in ordered]
+    groups = [g for g in groups if g is not None]
+    while layout.count():
+        layout.takeAt(0)
+    for idx, group in enumerate(groups):
+        layout.addWidget(group, idx // columns, idx % columns)
 
 
 def _paint_cell(self, button, box_num, position, record):

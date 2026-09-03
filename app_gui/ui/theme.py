@@ -16,12 +16,12 @@ FONT_SIZE_CELL = 13      # Grid cells, smallest text (increased for overview rea
 FONT_SIZE_MONO = 12      # Monospace/code blocks
 FONT_SIZE_XS = 12        # Hints, small buttons, secondary text
 FONT_SIZE_SM = 13        # Body text, tooltips
-FONT_SIZE_MD = 14        # Default size for buttons, inputs, titles
+FONT_SIZE_MD = 13        # Default size for buttons, inputs, titles
 FONT_SIZE_LG = 16        # Large titles
 FONT_SIZE_XL = 20        # Extra large (big numbers)
 FONT_SIZE_XXL = 24       # Huge text (rarely used)
 
-FONT_POINT_SIZE = 11     # QApplication global font point size
+FONT_POINT_SIZE = 10     # QApplication global font point size (compact)
 
 # Font weights for better typography hierarchy
 FONT_WEIGHT_NORMAL = 400
@@ -76,10 +76,11 @@ LAYOUT_AI_DEFAULT_WIDTH = 320          # AI panel preferred width
 LAYOUT_SPLITTER_HANDLE_WIDTH = 6       # Width of draggable splitter handles
 
 _CJK_FONT_CANDIDATES = [
-    # Prioritize fonts with thicker strokes for better readability
-    os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "simhei.ttf"),      # SimHei (黑体) - thick strokes
-    os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "msyhbd.ttc"),      # Microsoft YaHei Bold
+    # Prefer modern, hinted UI faces (YaHei) over legacy SimHei/SimSun so CJK
+    # glyphs match the Segoe UI Latin glyphs in weight and rhythm.
     os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "msyh.ttc"),        # Microsoft YaHei Regular
+    os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "msyhbd.ttc"),      # Microsoft YaHei Bold
+    os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "simhei.ttf"),      # SimHei (黑体) - legacy fallback
     os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "simsun.ttc"),      # SimSun
     "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Bold.ttc",
     "/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc",
@@ -171,9 +172,12 @@ def _setup_cjk_font(app):
         "Cantarell",
         "DejaVu Sans",
     ]
+    # Installed CJK UI faces come before the file-loaded family so a loaded
+    # SimHei never shadows YaHei for CJK glyph fallback.
+    fallback_candidates.extend(["Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC"])
     if loaded_family:
         fallback_candidates.append(loaded_family)
-    fallback_candidates.extend(["Microsoft YaHei", "Microsoft YaHei UI", "SimHei", "SimSun"])
+    fallback_candidates.extend(["SimHei", "SimSun"])
 
     family_chain = []
     seen = set()
@@ -195,6 +199,54 @@ def build_mono_font(point_size=FONT_SIZE_MONO):
     font.setFamilies(list(_MONO_FONT_FAMILIES))
     font.setFixedPitch(True)
     return font
+
+
+_QSS_ICON_CACHE_DIR = None
+
+
+def _qss_icon_url(name, color):
+    """Return a QSS ``url(...)`` for a Lucide icon tinted with *color*.
+
+    Qt style sheets cannot recolor SVGs, so a tinted copy is written once per
+    (icon, color) pair into a per-user cache directory.
+    """
+    global _QSS_ICON_CACHE_DIR
+    import tempfile
+
+    try:
+        from app_gui.ui.icons import ICONS_DIR
+    except Exception:
+        return "none"
+    src = os.path.join(ICONS_DIR, f"{name}.svg")
+    if not os.path.isfile(src):
+        return "none"
+    if _QSS_ICON_CACHE_DIR is None:
+        _QSS_ICON_CACHE_DIR = os.path.join(tempfile.gettempdir(), "snowfox-qss-icons")
+    try:
+        os.makedirs(_QSS_ICON_CACHE_DIR, exist_ok=True)
+        safe_color = re.sub(r"[^0-9a-zA-Z]", "", str(color))
+        dst = os.path.join(_QSS_ICON_CACHE_DIR, f"{name}-{safe_color}.svg")
+        if not os.path.isfile(dst):
+            with open(src, "r", encoding="utf-8") as fh:
+                svg = fh.read()
+            svg = svg.replace('stroke="currentColor"', f'stroke="{color}"')
+            with open(dst, "w", encoding="utf-8") as fh:
+                fh.write(svg)
+    except Exception:
+        return "none"
+    return 'url("' + dst.replace("\\", "/") + '")'
+
+
+def _get_icon_vars(mode):
+    """Theme tokens for control glyphs (combo arrows, spin buttons, check marks)."""
+    tokens = get_theme_tokens(mode)
+    muted = tokens.get("text-muted", "#64748b")
+    on_primary = tokens.get("primary-btn-text", "#ffffff")
+    return (
+        f"--icon-chevron-down: {_qss_icon_url('chevron-down', muted)};\n"
+        f"--icon-chevron-up: {_qss_icon_url('chevron-up', muted)};\n"
+        f"--icon-check-on-primary: {_qss_icon_url('check', on_primary)};\n"
+    )
 
 
 def _resolve_qss_vars(stylesheet):
@@ -705,7 +757,7 @@ def _get_common_qss():
         QWidget#overviewViewToggle QPushButton[segmented="right"]:checked {{ border-left-color: var(--accent); }}
         QPushButton#overviewBoxNavButton {{ border: var(--border-thin) solid var(--border-weak); background: transparent; border-radius: var(--radius-xs); font-size: {FONT_SIZE_XS}px; padding: 0; }}
         QPushButton#overviewBoxNavButton:hover {{ background: var(--background-hover); border-color: var(--border-strong); }}
-        QLabel#operationsPlanEmptyLabel {{ color: var(--warning); padding: 16px; font-weight: 500; background-color: var(--background-inset); border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-md); }}
+        QLabel#operationsPlanEmptyLabel {{ color: var(--text-muted); padding: 16px; font-weight: {FONT_WEIGHT_MEDIUM}; background-color: transparent; border: var(--border-thin) dashed var(--border-subtle); border-radius: var(--radius-md); }}
         QTableWidget#operationsPlanTable {{ border: var(--border-thin) solid var(--border-weak); border-radius: var(--radius-md); }}
         QWidget#resultCard {{ background-color: var(--background-inset); border: 1px solid var(--border-weak); border-radius: var(--radius-md); }}
         QWidget#resultCard[state="success"] {{ border-color: var(--success); }}
@@ -901,13 +953,46 @@ def _get_common_qss():
         QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; border: none; width: 0; height: 0; }}
         QTableCornerButton::section {{ background: var(--table-header-bg); border: none; border-bottom: var(--border-thin) solid var(--table-border-soft); border-right: var(--border-thin) solid var(--table-border-soft); }}
         QWidget#OverviewPanel {{ background-color: var(--overview-bg); }}
+        QLabel#overviewStatusLabel {{ color: var(--text-muted); font-size: {FONT_SIZE_XS}px; }}
+        QStatusBar {{ background: var(--background-base); color: var(--text-muted); font-size: {FONT_SIZE_XS}px; border-top: var(--border-thin) solid var(--border-weak); min-height: 22px; max-height: 22px; padding: 0 var(--space-1); }}
+        QStatusBar::item {{ border: none; }}
+        QStatusBar QLabel {{ background: transparent; }}
+        /* Native control glyphs: flat, theme-tinted, compact */
+        QComboBox {{ padding-right: 22px; }}
+        QComboBox::drop-down {{ subcontrol-origin: padding; subcontrol-position: top right; width: 20px; border: none; background: transparent; }}
+        QComboBox::down-arrow {{ image: var(--icon-chevron-down); width: 12px; height: 12px; }}
+        QComboBox::down-arrow:disabled {{ image: none; }}
+        QComboBox QAbstractItemView {{ background-color: var(--background-raised); color: var(--text-strong); border: var(--border-thin) solid var(--border-subtle); border-radius: var(--radius-sm); padding: 2px; outline: none; selection-background-color: var(--accent-muted); selection-color: var(--text-strong); }}
+        QComboBox QAbstractItemView::item {{ min-height: 22px; padding: 0 var(--space-2); border-radius: var(--radius-xs); }}
+        QSpinBox, QDoubleSpinBox, QDateEdit {{ padding-right: 16px; }}
+        QSpinBox::up-button, QDoubleSpinBox::up-button, QDateEdit::up-button {{ subcontrol-origin: border; subcontrol-position: top right; width: 16px; border: none; background: transparent; }}
+        QSpinBox::down-button, QDoubleSpinBox::down-button, QDateEdit::down-button {{ subcontrol-origin: border; subcontrol-position: bottom right; width: 16px; border: none; background: transparent; }}
+        QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover, QDateEdit::up-button:hover, QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover, QDateEdit::down-button:hover {{ background: var(--background-hover); }}
+        QSpinBox::up-arrow, QDoubleSpinBox::up-arrow, QDateEdit::up-arrow {{ image: var(--icon-chevron-up); width: 9px; height: 9px; }}
+        QSpinBox::down-arrow, QDoubleSpinBox::down-arrow, QDateEdit::down-arrow {{ image: var(--icon-chevron-down); width: 9px; height: 9px; }}
+        QDateEdit::drop-down {{ subcontrol-origin: padding; subcontrol-position: top right; width: 20px; border: none; background: transparent; }}
+        QCheckBox {{ spacing: 6px; }}
+        QCheckBox::indicator, QRadioButton::indicator {{ width: 14px; height: 14px; border: var(--border-thin) solid var(--border-strong); border-radius: 3px; background: var(--input-bg); }}
+        QRadioButton::indicator {{ border-radius: 8px; }}
+        QCheckBox::indicator:hover, QRadioButton::indicator:hover {{ border-color: var(--accent); }}
+        QCheckBox::indicator:checked {{ background: var(--accent); border-color: var(--accent); image: var(--icon-check-on-primary); }}
+        QRadioButton::indicator:checked {{ border: 4px solid var(--accent); background: var(--background-raised); }}
+        QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{ border-color: var(--border-weak); background: var(--background-strong); }}
+        QMenu {{ background-color: var(--background-raised); color: var(--text-strong); border: var(--border-thin) solid var(--border-subtle); border-radius: var(--radius-sm); padding: 4px; }}
+        QMenu::item {{ padding: 5px 24px 5px 10px; border-radius: var(--radius-xs); }}
+        QMenu::item:selected {{ background-color: var(--accent-muted); }}
+        QMenu::item:disabled {{ color: var(--text-muted); }}
+        QMenu::separator {{ height: 1px; background: var(--border-weak); margin: 4px 6px; }}
         QSplitter#mainSplitter::handle {{ background-color: var(--splitter-color); }}
         QSplitter#mainSplitter::handle:hover {{ background-color: var(--splitter-hover); }}
     """
-    qss = qss.replace("{FONT_SIZE_SM}", str(FONT_SIZE_SM))
-    qss = qss.replace("{FONT_SIZE_MD}", str(FONT_SIZE_MD))
-    qss = qss.replace("{FONT_SIZE_XS}", str(FONT_SIZE_XS))
-    qss = qss.replace("{FONT_WEIGHT_MEDIUM}", str(FONT_WEIGHT_MEDIUM))
+    # Resolve every {FONT_*} placeholder against module constants so that
+    # BOLD / SEMIBOLD / LG tokens are never left as invalid QSS literals.
+    qss = re.sub(
+        r"\{(FONT_[A-Z_]+)\}",
+        lambda m: str(globals().get(m.group(1), m.group(0))),
+        qss,
+    )
     return qss.replace("{{", "{").replace("}}", "}")
 
 
@@ -965,7 +1050,7 @@ def _apply_theme(app, mode):
         dark_palette.setColor(QPalette.PlaceholderText, QColor(109, 130, 152))
         app.setPalette(dark_palette)
 
-    theme_vars = _get_theme_vars(mode)
+    theme_vars = _get_theme_vars(mode) + _get_icon_vars(mode)
     common_qss = _get_common_qss()
     qss = f":root {{ {theme_vars} }}\n{common_qss}"
     app.setStyleSheet(_resolve_qss_vars(qss))

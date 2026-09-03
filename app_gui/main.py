@@ -538,11 +538,13 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(2, 0)
         root.addWidget(splitter, 1)
 
-        # Status bar for statistics (Excel-like bottom bar)
+        # Statistics live in the single bottom status bar (Excel-like): transient
+        # messages on the left, persistent stats on the right.
         self.stats_bar = QLabel()
         self.stats_bar.setObjectName("mainStatsBar")
-        self.stats_bar.setMinimumHeight(SPACE_4)  # Compact height
-        root.addWidget(self.stats_bar)
+        status_bar = self.statusBar()
+        status_bar.setSizeGripEnabled(False)
+        status_bar.addPermanentWidget(self.stats_bar)
 
         self.setCentralWidget(container)
 

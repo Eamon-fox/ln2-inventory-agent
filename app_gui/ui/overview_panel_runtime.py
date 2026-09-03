@@ -214,6 +214,9 @@ class OverviewRuntimeController:
         p = self._p
         if obj is p.ov_scroll.viewport() and event.type() in (QEvent.Resize, QEvent.Show):
             p._position_floating_actions()
+            reflow = getattr(p, "_reflow_boxes", None)
+            if callable(reflow):
+                reflow()
 
         if self._handle_grid_runtime_event(obj, event):
             return True

@@ -405,20 +405,21 @@ class GuiPanelsOperationsTests(GuiPanelsBaseCase):
         host = panel._op_watermark_host
         watermark = panel._op_watermark
 
+        # target_ratio=0.36 clamped to [140, 240]
         host.setGeometry(0, 0, 500, 420)
         panel._update_operation_watermark_geometry()
-        self.assertEqual(240, watermark.width())
+        self.assertEqual(180, watermark.width())
         self.assertEqual((500 - watermark.width()) // 2, watermark.x())
         self.assertEqual((420 - watermark.height()) // 2, watermark.y())
 
         host.setGeometry(0, 0, 300, 420)
         panel._update_operation_watermark_geometry()
-        self.assertEqual(180, watermark.width())
+        self.assertEqual(140, watermark.width())
         self.assertEqual((300 - watermark.width()) // 2, watermark.x())
 
         host.setGeometry(0, 0, 1200, 700)
         panel._update_operation_watermark_geometry()
-        self.assertEqual(360, watermark.width())
+        self.assertEqual(240, watermark.width())
 
     def test_operations_panel_logo_path_prefers_assets_then_root_fallback(self):
         panel = self._new_operations_panel()

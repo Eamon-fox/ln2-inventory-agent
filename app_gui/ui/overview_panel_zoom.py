@@ -98,6 +98,9 @@ class OverviewZoomController:
         finally:
             if container is not None:
                 container.setUpdatesEnabled(True)
+        reflow = getattr(p, "_reflow_boxes", None)
+        if callable(reflow):
+            reflow(force=True)
 
     def _animate_scroll_to(self, target_h=None, target_v=None, duration=400):
         """Animate scroll bars to target positions."""

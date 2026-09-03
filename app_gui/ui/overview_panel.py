@@ -166,6 +166,7 @@ class OverviewPanel(QWidget):
     _update_box_titles = _ov_grid._update_box_titles
     _warm_hover_animation = _ov_grid._warm_hover_animation
     _rebuild_boxes = _ov_grid._rebuild_boxes
+    _reflow_boxes = _ov_grid._reflow_boxes
     _build_cell_render_signature = _ov_grid._build_cell_render_signature
     _paint_cell = _ov_grid._paint_cell
     _update_cell_label_visibility = _ov_grid._update_cell_label_visibility

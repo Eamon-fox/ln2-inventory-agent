@@ -103,8 +103,10 @@ def setup_ui(self):
     self.ov_filter_advanced_widget.setVisible(False)
     layout.addWidget(self.ov_filter_advanced_widget)
 
+    # Load status is shown inline in the action row (right of the box nav)
+    # so it no longer costs a full line above the grid.
     self.ov_status = QLabel(tr("overview.statusReady"))
-    layout.addWidget(self.ov_status)
+    self.ov_status.setObjectName("overviewStatusLabel")
 
     self.ov_hover_hint = QLabel(tr("overview.hoverHint"))
     self.ov_hover_hint.setObjectName("overviewHoverHint")
@@ -176,6 +178,8 @@ def setup_ui(self):
     self._box_nav_layout.setSpacing(2)
     action_row.addWidget(self._box_nav_container)
 
+    action_row.addSpacing(6)
+    action_row.addWidget(self.ov_status)
     action_row.addStretch()
 
     # Zoom controls - unified component with smart zoom features

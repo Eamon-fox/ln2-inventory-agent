@@ -277,10 +277,10 @@ class OperationsPanel(QWidget):
     def _create_operation_watermark(self, parent):
         watermark = SvgWatermarkLabel(
             parent=parent,
-            opacity=0.09,
-            target_ratio=0.48,
-            min_width=180,
-            max_width=360,
+            opacity=0.05,
+            target_ratio=0.36,
+            min_width=140,
+            max_width=240,
             margin_top=12,
             margin_right=12,
         )

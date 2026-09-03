@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QSignalBlocker
+from PySide6.QtCore import QSize, QSignalBlocker
 from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
@@ -19,6 +19,7 @@ from app_gui.application.ai_provider_catalog import (
 )
 from app_gui.gui_config import DEFAULT_MAX_STEPS, MAX_AGENT_STEPS
 from app_gui.i18n import tr
+from app_gui.ui.icons import Icons, get_icon
 from app_gui.ui.dialogs.settings_dialog_info import info_label
 
 
@@ -145,9 +146,11 @@ def build_locked_api_key_row(dialog, initial_value):
     key_edit.setReadOnly(True)
     row_layout.addWidget(key_edit, 1)
 
-    lock_btn = QPushButton("🔒")
+    lock_btn = QPushButton()
     lock_btn.setObjectName("inlineLockBtn")
-    lock_btn.setFixedSize(16, 16)
+    lock_btn.setIcon(get_icon(Icons.LOCK))
+    lock_btn.setIconSize(QSize(14, 14))
+    lock_btn.setFixedSize(20, 20)
     lock_btn.setToolTip(tr("operations.edit"))
     lock_btn.clicked.connect(
         lambda _checked=False, edit=key_edit, btn=lock_btn: toggle_api_key_lock(edit, btn)
@@ -161,11 +164,11 @@ def toggle_api_key_lock(key_edit, lock_btn) -> None:
     if key_edit.isReadOnly():
         key_edit.setReadOnly(False)
         key_edit.setEchoMode(QLineEdit.Normal)
-        lock_btn.setText("🔓")
+        lock_btn.setIcon(get_icon(Icons.UNLOCK))
         key_edit.setFocus()
         key_edit.selectAll()
         return
 
     key_edit.setReadOnly(True)
     key_edit.setEchoMode(QLineEdit.Password)
-    lock_btn.setText("🔒")
+    lock_btn.setIcon(get_icon(Icons.LOCK))
