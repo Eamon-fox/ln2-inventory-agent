@@ -179,7 +179,7 @@ class SettingsDialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle(tr("settings.title"))
-        self.setMinimumWidth(750)
+        self.setMinimumWidth(860)
         self.setMinimumHeight(650)
         self._config = config or {}
         self._on_create_new_dataset = on_create_new_dataset

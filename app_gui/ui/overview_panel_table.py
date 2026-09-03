@@ -833,7 +833,7 @@ def _render_table_row(self, row_index, row_data, column_type_map):
         item.setFlags(flags)
 
         if column == _TABLE_CONFIRM_COLUMN:
-            item.setTextAlignment(int(Qt.AlignCenter))
+            item.setTextAlignment(Qt.AlignCenter)
             if slot_state in ("staged", "staged_locked"):
                 item.setForeground(QBrush(QColor("#2e7d32")))  # green for confirmed
             elif slot_state == "draft":
