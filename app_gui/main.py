@@ -425,12 +425,18 @@ class MainWindow(QMainWindow):
     def setup_ui(self):
         container = QWidget()
         root = QVBoxLayout(container)
-        root.setContentsMargins(SPACE_2, SPACE_2, SPACE_2, SPACE_1)
+        root.setContentsMargins(SPACE_2, 0, SPACE_2, SPACE_1)
         root.setSpacing(SPACE_1)
 
-        # Top Bar
-        top = QHBoxLayout()
+        # Top Bar: a single 36px strip separated from the workspace by a hairline
+        top_bar = QWidget()
+        top_bar.setObjectName("mainTopBar")
+        top_bar.setAttribute(Qt.WA_StyledBackground, True)
+        top = QHBoxLayout(top_bar)
+        top.setContentsMargins(0, SPACE_1, 0, SPACE_1)
+        top.setSpacing(SPACE_1)
         self.home_dataset_switch_label = QLabel(tr("main.datasetSwitch"))
+        self.home_dataset_switch_label.setProperty("role", "mutedInline")
         top.addWidget(self.home_dataset_switch_label)
 
         self.home_dataset_switch_combo = QComboBox()
@@ -487,7 +493,7 @@ class MainWindow(QMainWindow):
 
         self._refresh_home_dataset_choices(selected_yaml=self.current_yaml_path)
 
-        root.addLayout(top)
+        root.addWidget(top_bar)
 
         # Panels
         splitter = QSplitter(Qt.Horizontal)

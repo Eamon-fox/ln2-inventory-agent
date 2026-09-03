@@ -11,8 +11,10 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QInputDialog,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -214,15 +216,28 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
 
+        # Left anchor navigation + right scrolling form. Sections stay in one
+        # scroll view (so nothing is hidden); the nav just jumps to them.
+        body = QHBoxLayout()
+        body.setSpacing(12)
+        self._section_nav = QListWidget()
+        self._section_nav.setObjectName("settingsNav")
+        self._section_nav.setFixedWidth(120)
+        self._section_nav.setFocusPolicy(Qt.NoFocus)
+        body.addWidget(self._section_nav)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
         scroll_content = QWidget()
         content_layout = QVBoxLayout(scroll_content)
-        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setContentsMargins(0, 0, 8, 0)
         content_layout.setSpacing(16)
         scroll.setWidget(scroll_content)
-        layout.addWidget(scroll, 1)
+        body.addWidget(scroll, 1)
+        layout.addLayout(body, 1)
+        self._section_scroll = scroll
+        self._section_groups = []
         self.yaml_edit = QLineEdit(self._config.get("yaml_path", ""))
         self._initial_yaml_path = self._normalize_yaml_path(
             self._config.get("yaml_path", "")
@@ -231,30 +246,35 @@ class SettingsDialog(QDialog):
         self.dataset_switch_combo = _NoWheelComboBox()
         self.dataset_rename_btn = None
         self.dataset_delete_btn = None
-        content_layout.addWidget(_dataset_section.build_dataset_group(self))
-        content_layout.addWidget(
+        section_groups = [
+            _dataset_section.build_dataset_group(self),
             _ai_section.build_ai_group(
                 self,
                 combo_box_cls=_NoWheelComboBox,
                 spin_box_cls=_NoWheelSpinBox,
                 text_edit_cls=_NoWheelTextEdit,
-            )
-        )
-        content_layout.addWidget(
+            ),
             _local_api_section.build_local_api_group(
                 self,
                 spin_box_cls=_NoWheelSpinBox,
                 plain_text_edit_cls=_ScrollablePlainTextEdit,
-            )
-        )
-        content_layout.addWidget(
+            ),
             _about_section.build_preferences_group(
                 self,
                 combo_box_cls=_NoWheelComboBox,
-            )
-        )
+            ),
+        ]
+        for group in section_groups:
+            content_layout.addWidget(group)
+            self._section_groups.append(group)
+            title_getter = getattr(group, "title", None)
+            self._section_nav.addItem(str(title_getter() if callable(title_getter) else "") or "-")
 
         content_layout.addStretch()
+        self._section_nav.currentRowChanged.connect(self._scroll_to_section)
+        self._section_scroll.verticalScrollBar().valueChanged.connect(self._sync_section_nav)
+        if self._section_nav.count():
+            self._section_nav.setCurrentRow(0)
 
         self._refresh_local_api_skill_template()
 
@@ -270,6 +290,42 @@ class SettingsDialog(QDialog):
         self.yaml_edit.textChanged.connect(self._refresh_yaml_path_validity)
         self._refresh_yaml_path_validity()
         layout.addWidget(buttons)
+
+    def _scroll_to_section(self, row):
+        groups = getattr(self, "_section_groups", None) or []
+        if row < 0 or row >= len(groups):
+            return
+        scroll = getattr(self, "_section_scroll", None)
+        if scroll is None:
+            return
+        self._syncing_section_nav = True
+        try:
+            scroll.verticalScrollBar().setValue(max(0, int(groups[row].y()) - 4))
+        finally:
+            self._syncing_section_nav = False
+
+    def _sync_section_nav(self, value):
+        if getattr(self, "_syncing_section_nav", False):
+            return
+        groups = getattr(self, "_section_groups", None) or []
+        nav = getattr(self, "_section_nav", None)
+        if nav is None or not groups:
+            return
+        scroll = getattr(self, "_section_scroll", None)
+        bar = scroll.verticalScrollBar() if scroll is not None else None
+        if bar is not None and value >= bar.maximum() and bar.maximum() > 0:
+            current = len(groups) - 1
+        else:
+            current = 0
+            for idx, group in enumerate(groups):
+                if int(group.y()) - 8 <= int(value):
+                    current = idx
+        if nav.currentRow() != current:
+            self._syncing_section_nav = True
+            try:
+                nav.setCurrentRow(current)
+            finally:
+                self._syncing_section_nav = False
 
     def _is_valid_inventory_file_path(self, path_text):
         return self._settings_dataset_use_case.is_valid_inventory_file_path(

@@ -914,7 +914,7 @@ def _get_common_qss():
         }}
         QTextEdit#aiChatArea {{ border: none; background-color: transparent; padding: var(--space-1) var(--space-1); color: var(--text-strong); }}
         QWidget#aiPromptDock {{ background-color: transparent; }}
-        QWidget#aiInputContainer {{ background-color: var(--background-raised); border: 1px solid var(--border-weak); }}
+        QWidget#aiInputContainer {{ background-color: var(--background-raised); border: 1px solid var(--border-weak); border-radius: var(--radius-md); }}
         QTextEdit#aiPromptInput {{ border: none; border-radius: var(--space-2); background-color: transparent; padding: var(--space-1) var(--space-1); font-size: {FONT_SIZE_MD}px; color: var(--text-strong); }}
         QTextEdit#exportTaskSourcePreview[state="empty"] {{ color: var(--text-muted); }}
         QTextEdit#exportTaskSourcePreview[state="filled"] {{ color: var(--text-strong); }}
@@ -954,6 +954,14 @@ def _get_common_qss():
         QTableCornerButton::section {{ background: var(--table-header-bg); border: none; border-bottom: var(--border-thin) solid var(--table-border-soft); border-right: var(--border-thin) solid var(--table-border-soft); }}
         QWidget#OverviewPanel {{ background-color: var(--overview-bg); }}
         QLabel#overviewStatusLabel {{ color: var(--text-muted); font-size: {FONT_SIZE_XS}px; }}
+        QGroupBox#overviewBoxCard {{ background-color: var(--background-raised); border: var(--border-thin) solid var(--surface-border-subtle); border-radius: var(--radius-md); margin-top: 9px; padding-top: 2px; font-weight: {FONT_WEIGHT_SEMIBOLD}; }}
+        QGroupBox#overviewBoxCard::title {{ border-left: none; left: 6px; padding: 0 4px; color: var(--text-weak); font-size: {FONT_SIZE_XS}px; font-weight: {FONT_WEIGHT_SEMIBOLD}; }}
+        QLabel#overviewBoxLiveLabel {{ color: var(--text-muted); font-size: {FONT_SIZE_XS}px; font-weight: {FONT_WEIGHT_NORMAL}; }}
+        QWidget#mainTopBar {{ background-color: transparent; border-bottom: var(--border-thin) solid var(--border-weak); }}
+        QListWidget#settingsNav {{ background: transparent; border: none; outline: none; font-size: {FONT_SIZE_SM}px; }}
+        QListWidget#settingsNav::item {{ padding: 6px 10px; margin-bottom: 2px; border-radius: var(--radius-sm); color: var(--text-weak); }}
+        QListWidget#settingsNav::item:hover {{ background: var(--background-hover); }}
+        QListWidget#settingsNav::item:selected {{ background: var(--accent-muted); color: var(--text-strong); font-weight: {FONT_WEIGHT_SEMIBOLD}; }}
         QStatusBar {{ background: var(--background-base); color: var(--text-muted); font-size: {FONT_SIZE_XS}px; border-top: var(--border-thin) solid var(--border-weak); min-height: 22px; max-height: 22px; padding: 0 var(--space-1); }}
         QStatusBar::item {{ border: none; }}
         QStatusBar QLabel {{ background: transparent; }}
@@ -1119,7 +1127,7 @@ def _cell_occupied_style_cached(color, is_selected, mode):
         QPushButton {{
             background-color: {tint_bg};
             color: {text_color};
-            border: 1px solid var(--cell-occupied-hairline);
+            border: 1px solid transparent;
             border-radius: 3px;
             font-weight: 500;
             padding: 1px;
@@ -1160,15 +1168,15 @@ def _cell_empty_style_cached(is_selected, mode):
         """, mode=mode)
     return _resolve_inline_qss("""
         QPushButton {
-            background-color: var(--cell-empty-fresh-bg);
+            background-color: transparent;
             color: var(--cell-empty-fresh-text);
-            border: 1px solid var(--cell-empty-fresh-border);
+            border: 1px dashed var(--cell-empty-fresh-border);
             border-radius: 3px;
             padding: 1px;
 
         }
         QPushButton:hover {
-            border: 1px solid var(--cell-empty-fresh-border);
+            border: 1px solid var(--border-strong);
             background-color: var(--background-raised);
             color: var(--text-weak);
         }

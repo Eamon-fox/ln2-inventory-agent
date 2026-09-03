@@ -604,6 +604,7 @@ def _rebuild_boxes(self, rows, cols, box_numbers):
     cell_size = max(12, int(self._base_cell_size * self._zoom_level))
     for idx, box_num in enumerate(box_numbers):
         group = QGroupBox(_format_box_group_title(box_num, layout))
+        group.setObjectName("overviewBoxCard")
         group.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         group.setToolTip(_format_box_group_tooltip(box_num, layout))
         group.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -618,6 +619,7 @@ def _rebuild_boxes(self, rows, cols, box_numbers):
         group_layout.setSpacing(SPACE_1)
 
         live_label = QLabel(t("overview.occupiedCount", occupied=0, total=total_slots, empty=total_slots))
+        live_label.setObjectName("overviewBoxLiveLabel")
         group_layout.addWidget(live_label)
         self.overview_box_live_labels[box_num] = live_label
 

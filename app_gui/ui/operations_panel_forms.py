@@ -763,23 +763,29 @@ def _build_plan_tab(self):
     )
     self.plan_exec_btn.setIconSize(QSize(16, 16))
     _style_execute_button(self, self.plan_exec_btn)
+    self.plan_exec_btn.setMinimumHeight(30)
     self.plan_exec_btn.clicked.connect(self.execute_plan)
     self.plan_exec_btn.setEnabled(False)
-    toolbar.addWidget(self.plan_exec_btn)
+    # Primary action stretches across the footer; secondary actions are ghosts.
+    toolbar.addWidget(self.plan_exec_btn, 1)
 
     self.plan_print_btn = QPushButton(tr("operations.print"))
+    self.plan_print_btn.setProperty("variant", "ghost")
+    self.plan_print_btn.setMinimumHeight(30)
     self.plan_print_btn.clicked.connect(self.print_plan)
     self.plan_print_btn.setEnabled(False)
     toolbar.addWidget(self.plan_print_btn)
 
     self.plan_clear_btn = QPushButton(tr("operations.clear"))
+    self.plan_clear_btn.setProperty("variant", "ghost")
+    self.plan_clear_btn.setMinimumHeight(30)
     self.plan_clear_btn.setIcon(get_icon(Icons.X))
     self.plan_clear_btn.setIconSize(QSize(16, 16))
     self.plan_clear_btn.setEnabled(False)
     self.plan_clear_btn.clicked.connect(self.clear_plan)
     toolbar.addWidget(self.plan_clear_btn)
 
-    toolbar.addStretch(1)
+    toolbar.setSpacing(4)
     layout.addLayout(toolbar)
 
     return tab
