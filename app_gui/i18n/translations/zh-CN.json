@@ -633,6 +633,7 @@
     "actionRetry": "重试",
     "actionTryAgain": "换个回答",
     "streamThinking": "思考中",
+    "streamWaiting": "等待模型响应",
     "systemNotice": {
       "operationsHeader": "操作 ({count})：",
       "andMore": "... 另有 {count} 条",

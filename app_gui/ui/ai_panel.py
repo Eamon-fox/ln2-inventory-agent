@@ -939,6 +939,7 @@ class AIPanel(QWidget):
         self.ai_stream_thought_active = False
         self.ai_stream_thought_start_ts = None
         self.ai_stream_thought_elapsed_sec = 0.0
+        self.ai_stream_waiting = False
         self.ai_stream_start_pos = None
         self.ai_last_stream_block = None
         self.ai_stream_last_render_ts = 0.0
@@ -952,6 +953,22 @@ class AIPanel(QWidget):
                 self.ai_stream_start_pos = self.ai_chat.textCursor().position()
 
         self._chat_view.run_chat_write(_writer, marks_new=True)
+
+    def _begin_waiting_placeholder(self):
+        """Show an "Agent / waiting for model N.Ns" line immediately.
+
+        Called on ``run_start`` and every ``step_start`` so the user sees a
+        live timer while the request is in flight, before any token arrives.
+        The placeholder is replaced in place by the thought stream or answer.
+        """
+        if self.ai_streaming_active or not hasattr(self.ai_chat, "textCursor"):
+            return
+        self._begin_stream_chat("Agent")
+        self.ai_stream_has_thought = True
+        self.ai_stream_thought_buffer = ""
+        self.ai_stream_waiting = True
+        self._thought_ticker.start()
+        self._rerender_stream_with_thought_markdown_in_place(force=True)
 
     def _append_stream_chunk(self, text, channel="answer"):
         chunk = str(text or "")
@@ -968,6 +985,7 @@ class AIPanel(QWidget):
         if stream_channel == "thought":
             first_thought = not self.ai_stream_has_thought
             self.ai_stream_has_thought = True
+            self.ai_stream_waiting = False
             self.ai_stream_thought_buffer += chunk
             if first_thought or not self.ai_stream_thought_active:
                 self._thought_ticker.start()
@@ -990,7 +1008,17 @@ class AIPanel(QWidget):
     def _end_stream_chat(self):
         if not self.ai_streaming_active:
             return
-        self._reset_stream_thought_state()
+        keep_thought_summary = (
+            not str(self.ai_stream_buffer or "").strip()
+            and bool(self.ai_stream_thought_buffer or getattr(self, "ai_stream_waiting", False))
+        )
+        if keep_thought_summary:
+            # Freeze the timer and collapse the panel to its label line so the
+            # elapsed thinking/waiting time stays visible above the tool call.
+            self._thought_ticker.pause()
+            self.ai_stream_thought_frozen = True
+        else:
+            self._reset_stream_thought_state()
 
         def _writer():
             self._rerender_stream_with_thought_markdown_in_place(force=True)
@@ -1013,6 +1041,7 @@ class AIPanel(QWidget):
         self.ai_stream_start_pos = None
         self.ai_stream_last_render_ts = 0.0
         self.ai_stream_last_render_len = 0
+        self.ai_stream_thought_frozen = False
         self._reset_stream_thought_state()
 
     def _replace_stream_block_with_html(self, block, html_text):
@@ -1072,7 +1101,8 @@ class AIPanel(QWidget):
         answer_html = _preserve_leading_spaces_html(answer_text, answer_html)
 
         combined_html = ""
-        if self.ai_stream_thought_active and self.ai_stream_thought_buffer:
+        thought_visible = self.ai_stream_thought_active or getattr(self, "ai_stream_thought_frozen", False)
+        if thought_visible and (self.ai_stream_thought_buffer or self.ai_stream_waiting):
             combined_html += self._render_stream_thought_panel(is_dark=is_dark)
         if answer_html:
             if combined_html:
@@ -1109,10 +1139,22 @@ class AIPanel(QWidget):
     def _render_stream_thought_panel(self, *, is_dark=True):
         muted_color = _get_role_color("muted", is_dark)
         elapsed = self._escape_html_text(self._thought_ticker.elapsed_text())
-        thought_text = self._escape_html_text(str(self.ai_stream_thought_buffer or ""))
+        thought_raw = str(self.ai_stream_thought_buffer or "")
+        thought_text = self._escape_html_text(thought_raw)
+        frozen = bool(getattr(self, "ai_stream_thought_frozen", False))
+        if thought_raw and frozen:
+            # Collapsed summary: label + elapsed only, the transient text is dropped.
+            label = self._escape_html_text(tr("ai.streamThinking", default="Thinking"))
+            body = f'{label} {elapsed}'
+        elif thought_raw:
+            label = self._escape_html_text(tr("ai.streamThinking", default="Thinking"))
+            body = f'{label} {elapsed}<br/>{thought_text}'
+        else:
+            label = self._escape_html_text(tr("ai.streamWaiting", default="Waiting for model"))
+            body = f'{label} {elapsed}'
         return (
             f'<p class="snowfox-ai-thought" style="margin: 2px 0; color: {muted_color}; font-size: {FONT_SIZE_XS}px;">'
-            f'Thinking {elapsed}<br/>{thought_text}'
+            f'{body}'
             f'</p>'
         )
     def _replace_stream_block_with_markdown(self, block, markdown_text):
@@ -1167,6 +1209,7 @@ class AIPanel(QWidget):
     _handle_progress_tool_start = _ai_runtime._handle_progress_tool_start
     _handle_progress_chunk = _ai_runtime._handle_progress_chunk
     _handle_progress_step_end = _ai_runtime._handle_progress_step_end
+    _handle_progress_step_start = _ai_runtime._handle_progress_step_start
     _handle_progress_error = staticmethod(_ai_runtime._handle_progress_error)
     _handle_progress_stream_end = _ai_runtime._handle_progress_stream_end
     _handle_progress_stream_retry = _ai_runtime._handle_progress_stream_retry

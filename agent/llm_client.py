@@ -1,8 +1,10 @@
 """LLM client abstractions for ReAct agent runtime."""
 
 import json
+import logging
 import os
 import threading
+import time
 import uuid
 from abc import ABC, abstractmethod
 from urllib import error as urlerror
@@ -40,6 +42,9 @@ DEFAULT_PROVIDER = "deepseek"
 
 # Default HTTP timeout (seconds) for a streaming chat completion request.
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 180
+
+# Latency diagnostics: time to first byte / first thought / first answer token.
+_LATENCY_LOG = logging.getLogger("snowfox.llm.latency")
 
 
 def _is_stop_requested(stop_event):
@@ -491,6 +496,15 @@ class OpenAICompatibleClient(LLMClient, ABC):
         pending_tool_calls = {}
         saw_sse = False
         plain_lines = []
+        sent_at = time.monotonic()
+        latency_marks = {"first_byte": None, "thought": None, "answer": None, "tool_call": None}
+
+        def _mark(kind):
+            if latency_marks.get(kind) is None:
+                latency_marks[kind] = time.monotonic() - sent_at
+                _LATENCY_LOG.info(
+                    "%s %s: %s after %.2fs", self.PROVIDER_NAME, self._model, kind, latency_marks[kind]
+                )
 
         try:
             with urlrequest.urlopen(req, timeout=self._timeout) as resp:
@@ -498,6 +512,7 @@ class OpenAICompatibleClient(LLMClient, ABC):
                     self._active_response = resp
                 try:
                     for raw_line in resp:
+                        _mark("first_byte")
                         if self._is_stopping(stop_event):
                             return
 
@@ -526,6 +541,9 @@ class OpenAICompatibleClient(LLMClient, ABC):
                         for event in self._yield_events_from_chunk(chunk, pending_tool_calls):
                             if self._is_stopping(stop_event):
                                 return
+                            event_kind = str(event.get("type") or "") if isinstance(event, dict) else ""
+                            if event_kind in latency_marks:
+                                _mark(event_kind)
                             yield event
                 finally:
                     with self._stop_lock:

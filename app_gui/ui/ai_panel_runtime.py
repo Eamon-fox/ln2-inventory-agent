@@ -1,6 +1,7 @@
 """Runtime and worker lifecycle helpers for AIPanel."""
 
 import json
+import time
 from contextlib import suppress
 
 from PySide6.QtCore import QThread, Qt
@@ -521,6 +522,9 @@ def on_progress(self, event):
         current_prompt = getattr(self, "_current_user_prompt", None)
         if current_prompt:
             self._append_history("user", current_prompt)
+        begin_placeholder = getattr(self, "_begin_waiting_placeholder", None)
+        if callable(begin_placeholder):
+            begin_placeholder()
         return
 
     if self.ai_active_trace_id and trace_id and trace_id != self.ai_active_trace_id:
@@ -535,6 +539,7 @@ def on_progress(self, event):
         "stream_end": self._handle_progress_stream_end,
         "stream_retry": self._handle_progress_stream_retry,
         "step_end": self._handle_progress_step_end,
+        "step_start": self._handle_progress_step_start,
         "max_steps": self._handle_progress_max_steps,
     }
     handler = handlers.get(event_type)
@@ -616,10 +621,38 @@ def _render_agent_error(self, payload, *, trace_id=""):
     return final_text
 
 
+def _handle_progress_step_start(self, event):
+    # Each LLM round (including the ones after a tool result) shows a live
+    # "waiting for model" timer until the first token arrives.
+    begin_placeholder = getattr(self, "_begin_waiting_placeholder", None)
+    if callable(begin_placeholder):
+        begin_placeholder()
+
+
+def _tool_elapsed_text(self):
+    started = getattr(self, "_ai_tool_started_at", None)
+    if not started:
+        return ""
+    return f"{max(0.0, time.monotonic() - float(started)):.1f}s"
+
+
 def _handle_progress_tool_end(self, event):
     data = event.get("data") or {}
     name = str(data.get("name") or event.get("action") or "tool")
     raw_obs = self._extract_progress_observation(event)
+    elapsed_text = _tool_elapsed_text(self)
+    self._ai_tool_started_at = None
+
+    if raw_obs.get("ok"):
+        summary = str(raw_obs.get("message") or "").strip()
+        if not summary and raw_obs.get("result") is not None:
+            summary = compact_json(raw_obs.get("result"), 80)
+        parts = [name]
+        if summary:
+            parts.append(summary)
+        if elapsed_text:
+            parts.append(elapsed_text)
+        self._append_tool_message(" \u00b7 ".join(parts))
 
     if not raw_obs.get("ok"):
         reason = str(raw_obs.get("message") or "").strip()
@@ -654,6 +687,7 @@ def _handle_progress_tool_start(self, event):
 
     data = event.get("data") or {}
     name = str(data.get("name") or event.get("action") or "tool")
+    self._ai_tool_started_at = time.monotonic()
 
     # Update activity indicator with current tool name
     indicator = getattr(self, "_activity_indicator", None)

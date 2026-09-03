@@ -633,6 +633,7 @@
     "actionRetry": "Retry",
     "actionTryAgain": "Try again",
     "streamThinking": "Thinking",
+    "streamWaiting": "Waiting for model",
     "systemNotice": {
       "operationsHeader": "Operations ({count}):",
       "andMore": "... and {count} more",

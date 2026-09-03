@@ -237,6 +237,8 @@ class StreamThoughtTicker:
         panel.ai_stream_thought_active = False
         panel.ai_stream_thought_start_ts = None
         panel.ai_stream_thought_elapsed_sec = 0.0
+        panel.ai_stream_waiting = False
+        panel.ai_stream_thought_frozen = False
 
     def elapsed_text(self):
         panel = self._panel
