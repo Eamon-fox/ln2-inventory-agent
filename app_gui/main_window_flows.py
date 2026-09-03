@@ -454,6 +454,7 @@ class WindowStateFlow:
             f"{tr('overview.empty')}: {empty}  |  "
             f"{tr('overview.occupancyRate')}: {rate:.1f}%"
         )
+        self._last_stats_text = text
         window.stats_bar.setText(text)
 
     def update_hover_stats(self, hover_text):
@@ -462,7 +463,7 @@ class WindowStateFlow:
         if hover_text:
             window.stats_bar.setText(hover_text)
         else:
-            window.stats_bar.setText("")
+            window.stats_bar.setText(getattr(self, "_last_stats_text", "") or "")
 
     def restore_ui_settings(self):
         window = self._window

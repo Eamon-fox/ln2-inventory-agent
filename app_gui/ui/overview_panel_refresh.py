@@ -119,12 +119,14 @@ class OverviewRefreshController:
         if not has_records:
             p.ov_hover_hint.setText(tr("overview.emptyHint"))
             p.ov_hover_hint.setProperty("state", "warning")
+            p.ov_hover_hint.setVisible(True)
             p.ov_hover_hint.style().unpolish(p.ov_hover_hint)
             p.ov_hover_hint.style().polish(p.ov_hover_hint)
             return
 
         p.ov_hover_hint.setText(tr("overview.hoverHint"))
         p.ov_hover_hint.setProperty("state", "default")
+        p.ov_hover_hint.setVisible(False)
         p.ov_hover_hint.style().unpolish(p.ov_hover_hint)
         p.ov_hover_hint.style().polish(p.ov_hover_hint)
 
@@ -149,6 +151,7 @@ class OverviewRefreshController:
             p.ov_status.setText(missing_file_message)
             p.ov_hover_hint.setText(missing_file_message)
             p.ov_hover_hint.setProperty("state", "warning")
+            p.ov_hover_hint.setVisible(True)
             p.ov_hover_hint.style().unpolish(p.ov_hover_hint)
             p.ov_hover_hint.style().polish(p.ov_hover_hint)
             return

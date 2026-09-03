@@ -39,10 +39,10 @@ QToolTip { color: var(--tooltip-color); background-color: var(--tooltip-bg); bor
 QGroupBox { background-color: var(--groupbox-bg); border: var(--border-thin) solid var(--groupbox-border); border-radius: var(--radius-lg); margin-top: var(--space-3); font-weight: {FONT_WEIGHT_MEDIUM}; color: var(--text-weak); padding-top: var(--space-2); }
 QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 var(--space-2); padding-left: var(--space-2); left: var(--space-2); color: var(--text-weak); font-size: {FONT_SIZE_MD}px; border-left: 2px solid var(--accent); }
 QTableWidget { gridline-color: var(--table-border-soft); background-color: var(--table-bg); alternate-background-color: var(--table-alt-bg); selection-background-color: var(--table-selection-bg); border: var(--border-thin) solid var(--table-border-soft); border-radius: var(--radius-md); }
-QTableWidget::item { padding: 6px var(--space-2); border: none; }
+QTableWidget::item { padding: 4px var(--space-2); border: none; }
 QTableWidget::item:hover { background-color: var(--table-hover-bg); }
 QTableWidget::item:selected { background-color: var(--table-selection-bg); color: var(--text-strong); }
-QHeaderView::section { background-color: var(--table-header-bg); color: var(--table-header-text); padding: 7px var(--space-2); border: none; border-bottom: var(--border-thin) solid var(--table-border-soft); border-right: var(--border-thin) solid var(--table-border-soft); font-weight: 500; font-size: {FONT_SIZE_SM}px; }
+QHeaderView::section { background-color: var(--table-header-bg); color: var(--table-header-text); padding: 5px var(--space-2); border: none; border-bottom: var(--border-thin) solid var(--table-border-soft); border-right: var(--border-thin) solid var(--table-border-soft); font-weight: 500; font-size: {FONT_SIZE_SM}px; }
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit { min-height: var(--input-height); max-height: var(--input-height); }
 QLineEdit, QComboBox { padding: 0 var(--space-2); }
 QSpinBox, QDoubleSpinBox, QDateEdit { padding: 0; margin: 0; }

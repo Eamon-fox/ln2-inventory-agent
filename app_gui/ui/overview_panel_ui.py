@@ -112,6 +112,9 @@ def setup_ui(self):
     self.ov_hover_hint.setObjectName("overviewHoverHint")
     self.ov_hover_hint.setProperty("state", "default")
     self.ov_hover_hint.setWordWrap(True)
+    # Hover detail is mirrored into the main status bar; this line only shows
+    # for warning states (empty dataset / missing file) to save a row.
+    self.ov_hover_hint.setVisible(False)
     layout.addWidget(self.ov_hover_hint)
 
     # Combined Action Row: Refresh + View Toggle + Box Navigation + Zoom Controls
